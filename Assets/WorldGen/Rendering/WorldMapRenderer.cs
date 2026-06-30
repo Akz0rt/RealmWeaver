@@ -527,6 +527,34 @@ namespace WorldGen.Rendering
                 : "Self-Test Border Classification: FAIL");
         }
 
+        [ContextMenu("Self-Test: Lake Region Unification")]
+        public void SelfTestLakeRegionUnification()
+        {
+            // Компонент A: одна озёрная клетка (R1), окружена двумя сушными клетками R0 → должна стать R0.
+            var lakeA = new VoronoiCell(1, new System.Numerics.Vector2(1, 0))
+                { IsOcean = false, Biome = Biome.Lake, RegionId = 1, NeighborIds = new List<int> { 10, 11 } };
+            var land10 = new VoronoiCell(10, new System.Numerics.Vector2(0, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 0, NeighborIds = new List<int> { 1 } };
+            var land11 = new VoronoiCell(11, new System.Numerics.Vector2(2, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 0, NeighborIds = new List<int> { 1 } };
+
+            // Компонент B: одна озёрная клетка (R0), окружена двумя сушными клетками R1 → должна стать R1.
+            var lakeB = new VoronoiCell(2, new System.Numerics.Vector2(5, 0))
+                { IsOcean = false, Biome = Biome.Lake, RegionId = 0, NeighborIds = new List<int> { 20, 21 } };
+            var land20 = new VoronoiCell(20, new System.Numerics.Vector2(4, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 1, NeighborIds = new List<int> { 2 } };
+            var land21 = new VoronoiCell(21, new System.Numerics.Vector2(6, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 1, NeighborIds = new List<int> { 2 } };
+
+            var cells = new List<VoronoiCell> { lakeA, land10, land11, lakeB, land20, land21 };
+            LakeRegionUnifier.UnifyLakes(cells);
+
+            bool ok = lakeA.RegionId == 0 && lakeB.RegionId == 1;
+            Debug.Log(ok
+                ? "Self-Test Lake Region Unification: PASS"
+                : $"Self-Test Lake Region Unification: FAIL (lakeA.RegionId={lakeA.RegionId} expected 0; lakeB.RegionId={lakeB.RegionId} expected 1)");
+        }
+
         [ContextMenu("Self-Test: Ocean Connectivity")]
         public void SelfTestOceanConnectivity()
         {

@@ -169,6 +169,9 @@ namespace WorldGen.Generation
             if (landCells.Count >= p.NumberOfRegions)
                 RegionGrowing.GroupCells(cells, landCells, p.NumberOfRegions, p.Seed);
 
+            // --- Унификация озёр: весь связный водоём → один регион (голосование по соседним сушным клеткам) ---
+            LakeRegionUnifier.UnifyLakes(cells);
+
             // --- Температура: отдельная point-based система эпицентров ---
             temperatureEpicenters = GenerateRandomEpicenters(p);
             RegenerateTemperature(cells, p, temperatureEpicenters);
