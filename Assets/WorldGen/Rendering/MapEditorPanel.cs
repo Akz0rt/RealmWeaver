@@ -29,6 +29,7 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
         public CellSelectionController selectionController;
         public BrushToolController brushController;
+        public PoiManager poiManager;
 
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
@@ -62,6 +63,19 @@ namespace WorldGen.Rendering
         Text stepValueLabel;
         Toggle increaseToggle;
 
+        // POI section
+        readonly Dictionary<PoiType, int> poiCounts = new Dictionary<PoiType, int>
+        {
+            { PoiType.City, 3 }, { PoiType.Ruin, 2 }, { PoiType.Dungeon, 2 }, { PoiType.Fortress, 1 }
+        };
+        readonly Dictionary<PoiType, Text> poiCountLabels = new Dictionary<PoiType, Text>();
+        GameObject poiEditSubPanel;
+        InputField poiNameField;
+        InputField poiDescField;
+        InputField poiSpritePathField;
+        Text poiTypeLabel;
+        PoiType addPoiType = PoiType.City;
+
         Font builtinFont;
 
         void Awake()
@@ -76,12 +90,22 @@ namespace WorldGen.Rendering
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged += HandleSelectionChanged;
+            if (poiManager != null)
+            {
+                poiManager.OnSelectionChanged += HandlePoiSelectionChanged;
+                poiManager.OnPoisChanged += RefreshPoiPanel;
+            }
         }
 
         void OnDisable()
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged -= HandleSelectionChanged;
+            if (poiManager != null)
+            {
+                poiManager.OnSelectionChanged -= HandlePoiSelectionChanged;
+                poiManager.OnPoisChanged -= RefreshPoiPanel;
+            }
         }
 
         static void EnsureEventSystemExists()
@@ -219,6 +243,7 @@ namespace WorldGen.Rendering
             brushModeButton = AddModeButton(modeRowGO.transform, "Brush", () => SetMode(EditorMode.Brush));
 
             BuildLayersSection(t);
+            BuildPoiSection(t);
 
             selectionPanelRoot = new GameObject("SelectionOverrideSection");
             selectionPanelRoot.transform.SetParent(t, false);
@@ -736,6 +761,309 @@ namespace WorldGen.Rendering
             tr.anchorMin = Vector2.zero;
             tr.anchorMax = Vector2.one;
             tr.sizeDelta = Vector2.zero;
+        }
+
+        // ── POI section ────────────────────────────────────────────────────────
+
+        void BuildPoiSection(Transform t)
+        {
+            AddLabel(t, "─── Точки интереса ───", bold: false, color: sectionHeaderColor);
+
+            foreach (PoiType type in System.Enum.GetValues(typeof(PoiType)))
+                BuildPoiCountRow(t, type);
+
+            AddButton(t, "Сгенерировать", OnGeneratePois, new Color(0.2f, 0.45f, 0.2f));
+
+            // "Добавить" row: type dropdown + button
+            var addRowGO = new GameObject("AddPoiRow");
+            addRowGO.transform.SetParent(t, false);
+            var addHLayout = addRowGO.AddComponent<HorizontalLayoutGroup>();
+            addHLayout.spacing = 4f;
+            addHLayout.childControlWidth = true;
+            addHLayout.childForceExpandWidth = true;
+            addRowGO.AddComponent<LayoutElement>().preferredHeight = 26f;
+
+            var typeDropdownGO = new GameObject("TypeDropdown");
+            typeDropdownGO.transform.SetParent(addRowGO.transform, false);
+            var typeDropdown = typeDropdownGO.AddComponent<Dropdown>();
+            var typeDropBg = typeDropdownGO.AddComponent<Image>();
+            typeDropBg.color = new Color(0.15f, 0.15f, 0.25f, 0.95f);
+            typeDropdown.targetGraphic = typeDropBg;
+            var typeCaptionGO = new GameObject("Label");
+            typeCaptionGO.transform.SetParent(typeDropdownGO.transform, false);
+            var typeCaptionText = typeCaptionGO.AddComponent<Text>();
+            typeCaptionText.font = builtinFont;
+            typeCaptionText.fontSize = 11;
+            typeCaptionText.color = textColor;
+            typeCaptionText.alignment = TextAnchor.MiddleLeft;
+            var typeCaptionRect = typeCaptionGO.GetComponent<RectTransform>();
+            typeCaptionRect.anchorMin = new Vector2(0.05f, 0f);
+            typeCaptionRect.anchorMax = new Vector2(1f, 1f);
+            typeCaptionRect.sizeDelta = Vector2.zero;
+            typeDropdown.captionText = typeCaptionText;
+            BuildDropdownTemplate(typeDropdown, typeDropdownGO);
+            typeDropdown.AddOptions(new List<string> { "Город", "Руины", "Подземелье", "Крепость" });
+            typeDropdown.RefreshShownValue();
+            typeDropdown.onValueChanged.AddListener(v => addPoiType = (PoiType)v);
+
+            var addBtnGO = new GameObject("AddBtn");
+            addBtnGO.transform.SetParent(addRowGO.transform, false);
+            var addBtnImg = addBtnGO.AddComponent<Image>();
+            addBtnImg.color = new Color(0.2f, 0.4f, 0.6f, 0.9f);
+            var addBtn = addBtnGO.AddComponent<Button>();
+            addBtn.targetGraphic = addBtnImg;
+            addBtn.onClick.AddListener(() => poiManager?.AddOne(addPoiType));
+            var addBtnLE = addBtnGO.AddComponent<LayoutElement>();
+            addBtnLE.preferredWidth = 80f;
+            addBtnLE.preferredHeight = 26f;
+            var addBtnTextGO = new GameObject("Text");
+            addBtnTextGO.transform.SetParent(addBtnGO.transform, false);
+            var addBtnText = addBtnTextGO.AddComponent<Text>();
+            addBtnText.text = "Добавить";
+            addBtnText.font = builtinFont;
+            addBtnText.fontSize = 11;
+            addBtnText.color = Color.white;
+            addBtnText.alignment = TextAnchor.MiddleCenter;
+            var addBtnTextRect = addBtnTextGO.GetComponent<RectTransform>();
+            addBtnTextRect.anchorMin = Vector2.zero;
+            addBtnTextRect.anchorMax = Vector2.one;
+            addBtnTextRect.sizeDelta = Vector2.zero;
+
+            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), new Color(0.5f, 0.2f, 0.2f));
+
+            // Edit sub-panel, hidden until a POI is selected
+            poiEditSubPanel = new GameObject("PoiEditSubPanel");
+            poiEditSubPanel.transform.SetParent(t, false);
+            var subLayout = poiEditSubPanel.AddComponent<VerticalLayoutGroup>();
+            subLayout.spacing = 4f;
+            subLayout.childControlWidth = true;
+            subLayout.childForceExpandWidth = true;
+            var subFitter = poiEditSubPanel.AddComponent<ContentSizeFitter>();
+            subFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            BuildPoiEditSubPanel(poiEditSubPanel.transform);
+            poiEditSubPanel.SetActive(false);
+        }
+
+        void BuildPoiCountRow(Transform parent, PoiType type)
+        {
+            string typeName;
+            switch (type)
+            {
+                case PoiType.City:     typeName = "Города";       break;
+                case PoiType.Ruin:     typeName = "Руины";        break;
+                case PoiType.Dungeon:  typeName = "Подземелья";   break;
+                case PoiType.Fortress: typeName = "Крепости";     break;
+                default:               typeName = type.ToString(); break;
+            }
+
+            var rowGO = new GameObject($"{type}CountRow");
+            rowGO.transform.SetParent(parent, false);
+            var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hLayout.spacing = 4f;
+            hLayout.childControlWidth = false;
+            hLayout.childControlHeight = false;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
+
+            var lbl = new GameObject("Label");
+            lbl.transform.SetParent(rowGO.transform, false);
+            var lblText = lbl.AddComponent<Text>();
+            lblText.text = typeName;
+            lblText.font = builtinFont;
+            lblText.fontSize = 12;
+            lblText.color = textColor;
+            lblText.alignment = TextAnchor.MiddleLeft;
+            lbl.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 20f);
+
+            AddSmallButton(rowGO.transform, "−", () =>
+            {
+                if (poiCounts[type] > 0) poiCounts[type]--;
+                poiCountLabels[type].text = poiCounts[type].ToString();
+            });
+
+            var countLblGO = new GameObject("Count");
+            countLblGO.transform.SetParent(rowGO.transform, false);
+            var countText = countLblGO.AddComponent<Text>();
+            countText.text = poiCounts[type].ToString();
+            countText.font = builtinFont;
+            countText.fontSize = 12;
+            countText.color = textColor;
+            countText.alignment = TextAnchor.MiddleCenter;
+            countLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(26f, 20f);
+            poiCountLabels[type] = countText;
+
+            AddSmallButton(rowGO.transform, "+", () =>
+            {
+                poiCounts[type]++;
+                poiCountLabels[type].text = poiCounts[type].ToString();
+            });
+        }
+
+        void AddSmallButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"SmallBtn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            img.color = new Color(0.35f, 0.35f, 0.35f, 0.9f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(20f, 20f);
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 14;
+            text.color = Color.white;
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr2 = textGO.GetComponent<RectTransform>();
+            tr2.anchorMin = Vector2.zero;
+            tr2.anchorMax = Vector2.one;
+            tr2.sizeDelta = Vector2.zero;
+        }
+
+        void BuildPoiEditSubPanel(Transform t)
+        {
+            AddLabel(t, "─ Выбранная точка ─", bold: false, color: sectionHeaderColor);
+            poiTypeLabel = AddLabel(t, "Тип: —");
+
+            AddLabel(t, "Название:");
+            poiNameField = BuildPoiInputField(t, multiline: false);
+            poiNameField.onEndEdit.AddListener(v =>
+            {
+                var sel = poiManager?.GetSelectedPoi();
+                if (sel != null) poiManager.UpdatePoiName(sel.Id, v);
+            });
+
+            AddLabel(t, "Описание:");
+            poiDescField = BuildPoiInputField(t, multiline: true);
+            poiDescField.onEndEdit.AddListener(v =>
+            {
+                var sel = poiManager?.GetSelectedPoi();
+                if (sel != null) poiManager.UpdatePoiDescription(sel.Id, v);
+            });
+
+            AddLabel(t, "Иконка (путь к файлу):");
+            var spriteRow = new GameObject("SpriteRow");
+            spriteRow.transform.SetParent(t, false);
+            var srLayout = spriteRow.AddComponent<HorizontalLayoutGroup>();
+            srLayout.spacing = 4f;
+            srLayout.childControlWidth = true;
+            srLayout.childForceExpandWidth = true;
+            spriteRow.AddComponent<LayoutElement>().preferredHeight = 22f;
+
+            poiSpritePathField = BuildPoiInputField(spriteRow.transform, multiline: false);
+
+            var applyBtnGO = new GameObject("ApplyBtn");
+            applyBtnGO.transform.SetParent(spriteRow.transform, false);
+            var applyImg = applyBtnGO.AddComponent<Image>();
+            applyImg.color = new Color(0.3f, 0.5f, 0.3f, 0.9f);
+            var applyBtn = applyBtnGO.AddComponent<Button>();
+            applyBtn.targetGraphic = applyImg;
+            applyBtn.onClick.AddListener(() =>
+            {
+                var sel = poiManager?.GetSelectedPoi();
+                if (sel != null) poiManager.UpdatePoiSpritePath(sel.Id, poiSpritePathField.text);
+            });
+            applyBtnGO.AddComponent<LayoutElement>().preferredWidth = 70f;
+            var applyTextGO = new GameObject("Text");
+            applyTextGO.transform.SetParent(applyBtnGO.transform, false);
+            var applyText = applyTextGO.AddComponent<Text>();
+            applyText.text = "Применить";
+            applyText.font = builtinFont;
+            applyText.fontSize = 10;
+            applyText.color = Color.white;
+            applyText.alignment = TextAnchor.MiddleCenter;
+            var applyRect = applyTextGO.GetComponent<RectTransform>();
+            applyRect.anchorMin = Vector2.zero;
+            applyRect.anchorMax = Vector2.one;
+            applyRect.sizeDelta = Vector2.zero;
+
+            AddButton(t, "Удалить точку", () =>
+            {
+                var sel = poiManager?.GetSelectedPoi();
+                if (sel != null) poiManager.DeletePoi(sel.Id);
+            }, new Color(0.55f, 0.15f, 0.15f));
+        }
+
+        InputField BuildPoiInputField(Transform parent, bool multiline)
+        {
+            var go = new GameObject("InputField");
+            go.transform.SetParent(parent, false);
+            var bg = go.AddComponent<Image>();
+            bg.color = new Color(0.15f, 0.15f, 0.2f, 0.95f);
+            var field = go.AddComponent<InputField>();
+            field.targetGraphic = bg;
+            field.lineType = multiline
+                ? InputField.LineType.MultiLineNewline
+                : InputField.LineType.SingleLine;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.font = builtinFont;
+            text.fontSize = 12;
+            text.color = textColor;
+            text.supportRichText = false;
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = new Vector2(0.02f, 0f);
+            textRect.anchorMax = new Vector2(1f, 1f);
+            textRect.sizeDelta = Vector2.zero;
+            field.textComponent = text;
+
+            var phGO = new GameObject("Placeholder");
+            phGO.transform.SetParent(go.transform, false);
+            var phText = phGO.AddComponent<Text>();
+            phText.font = builtinFont;
+            phText.fontSize = 12;
+            phText.color = new Color(0.5f, 0.5f, 0.5f);
+            phText.fontStyle = FontStyle.Italic;
+            var phRect = phGO.GetComponent<RectTransform>();
+            phRect.anchorMin = new Vector2(0.02f, 0f);
+            phRect.anchorMax = new Vector2(1f, 1f);
+            phRect.sizeDelta = Vector2.zero;
+            field.placeholder = phText;
+
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = multiline ? 60f : 22f;
+            le.flexibleWidth = 1f;
+
+            return field;
+        }
+
+        void OnGeneratePois()
+        {
+            if (poiManager == null) return;
+            poiManager.GenerateAll(new Dictionary<PoiType, int>(poiCounts));
+        }
+
+        void HandlePoiSelectionChanged(PoiData selected)
+        {
+            if (selected == null)
+            {
+                poiEditSubPanel?.SetActive(false);
+                return;
+            }
+            poiEditSubPanel?.SetActive(true);
+            if (poiNameField != null) poiNameField.text = selected.Name;
+            if (poiDescField != null) poiDescField.text = selected.Description;
+            if (poiSpritePathField != null) poiSpritePathField.text = selected.CustomSpritePath ?? "";
+
+            string typeName;
+            switch (selected.Type)
+            {
+                case PoiType.City:     typeName = "Город";      break;
+                case PoiType.Ruin:     typeName = "Руины";      break;
+                case PoiType.Dungeon:  typeName = "Подземелье"; break;
+                case PoiType.Fortress: typeName = "Крепость";   break;
+                default:               typeName = selected.Type.ToString(); break;
+            }
+            if (poiTypeLabel != null) poiTypeLabel.text = $"Тип: {typeName}";
+        }
+
+        void RefreshPoiPanel()
+        {
+            // Sub-panel visibility is managed by HandlePoiSelectionChanged; nothing extra needed here.
         }
     }
 }
