@@ -218,6 +218,8 @@ namespace WorldGen.Rendering
             selectionModeButton = AddModeButton(modeRowGO.transform, "Selection & Override", () => SetMode(EditorMode.SelectionOverride));
             brushModeButton = AddModeButton(modeRowGO.transform, "Brush", () => SetMode(EditorMode.Brush));
 
+            BuildLayersSection(t);
+
             selectionPanelRoot = new GameObject("SelectionOverrideSection");
             selectionPanelRoot.transform.SetParent(t, false);
             var selRootLayout = selectionPanelRoot.AddComponent<VerticalLayoutGroup>();
@@ -388,6 +390,31 @@ namespace WorldGen.Rendering
             undoHint.fontSize = 11;
 
             OnBrushValuesChanged();
+        }
+
+        void BuildLayersSection(Transform t)
+        {
+            AddLabel(t, "─── Слои (Combined) ───", bold: false, color: sectionHeaderColor);
+            AddLayerToggleRow(t, "Рельеф", true, on => mapRenderer?.SetShowReliefLayer(on));
+            AddLayerToggleRow(t, "Биом / климат", true, on => mapRenderer?.SetShowBiomeLayer(on));
+            AddLayerToggleRow(t, "Границы регионов", true, on => mapRenderer?.SetShowRegionBordersLayer(on));
+            AddLayerToggleRow(t, "Береговая линия", true, on => mapRenderer?.SetShowCoastlineLayer(on));
+        }
+
+        void AddLayerToggleRow(Transform parent, string label, bool defaultOn, System.Action<bool> onChanged)
+        {
+            var rowGO = new GameObject($"{label}LayerRow");
+            rowGO.transform.SetParent(parent, false);
+            var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hLayout.spacing = 6f;
+            hLayout.childControlWidth = false;
+            hLayout.childControlHeight = false;
+            var rowLE = rowGO.AddComponent<LayoutElement>();
+            rowLE.preferredHeight = 20f;
+
+            var toggle = AddToggle(rowGO.transform, defaultOn);
+            toggle.onValueChanged.AddListener(v => onChanged?.Invoke(v));
+            AddLabel(rowGO.transform, label);
         }
 
         Text AddLabel(Transform parent, string text, bool bold = false, Color? color = null)

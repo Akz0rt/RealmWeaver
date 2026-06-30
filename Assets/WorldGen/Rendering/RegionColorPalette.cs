@@ -81,5 +81,26 @@ namespace WorldGen.Rendering
                 default: return Color.magenta; // сигнал об ошибке - неучтённый биом
             }
         }
+
+        /// <summary>Нейтральный базовый тон, когда слой биома выключен: вода - синяя/озёрная,
+        /// суша - песочный, чтобы рельеф оставался читаемым без биомной раскраски.</summary>
+        public static Color GetNeutralBaseColor(VoronoiCell cell)
+        {
+            if (cell.EffectiveIsOcean) return new Color(0.10f, 0.25f, 0.50f);
+            if (cell.EffectiveIsLake) return new Color(0.30f, 0.55f, 0.65f);
+            return new Color(0.82f, 0.78f, 0.65f); // нейтральная суша (tan)
+        }
+
+        /// <summary>Яркость рельефного затенения [ambient..1] из градиента высоты клетки.
+        /// Псевдонормаль строится из градиента (Y - вверх), освещается направленным светом
+        /// под азимутом lightAzimuthDeg и фиксированным углом возвышения 45°.</summary>
+        public static float HillshadeBrightness(float gradX, float gradY, float strength, float lightAzimuthDeg, float ambient)
+        {
+            var normal = new Vector3(-gradX * strength, 1f, -gradY * strength).normalized;
+            float az = lightAzimuthDeg * Mathf.Deg2Rad;
+            var lightDir = new Vector3(Mathf.Sin(az), 1f, Mathf.Cos(az)).normalized;
+            float ndotl = Mathf.Clamp01(Vector3.Dot(normal, lightDir));
+            return Mathf.Lerp(ambient, 1f, ndotl);
+        }
     }
 }

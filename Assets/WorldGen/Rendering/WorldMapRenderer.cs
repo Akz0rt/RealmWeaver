@@ -5,7 +5,7 @@ using WorldGen.Generation;
 
 namespace WorldGen.Rendering
 {
-    public enum MapDisplayMode { Height, Region, Biome }
+    public enum MapDisplayMode { Height, Region, Biome, Combined }
 
     /// <summary>
     /// Строит единый Mesh для всей карты (один draw call) из списка VoronoiCell.
@@ -83,7 +83,24 @@ namespace WorldGen.Rendering
         public float heightCoolingFactor = 0.6f;
 
         [Header("Отображение")]
-        public MapDisplayMode displayMode = MapDisplayMode.Height;
+        public MapDisplayMode displayMode = MapDisplayMode.Combined;
+
+        [Header("Combined: слои")]
+        public bool showBiomeLayer = true;
+        public bool showReliefLayer = true;
+        public bool showRegionBordersLayer = true;
+        public bool showCoastlineLayer = true;
+
+        [Header("Combined: рельеф (hillshade)")]
+        public float reliefStrength = 3f;
+        public float reliefLightAzimuth = 315f;
+        [Range(0f, 1f)] public float reliefAmbient = 0.5f;
+
+        [Header("Combined: границы")]
+        public Color regionBorderColor = new Color(0.10f, 0.10f, 0.10f, 0.9f);
+        public float regionBorderWidth = 1.5f;
+        public Color coastlineColor = new Color(0.05f, 0.10f, 0.20f, 0.95f);
+        public float coastlineWidth = 2.5f;
 
         [Header("Камера (опционально)")]
         [Tooltip("Если назначено - камера автоматически встанет над центром карты при каждой генерации.")]
@@ -94,6 +111,7 @@ namespace WorldGen.Rendering
         MeshCollider meshCollider;
 
         List<VoronoiCell> cells;
+        Dictionary<int, VoronoiCell> cellById;
         List<Corner> corners;
         List<TemperatureEpicenter> epicenters;
         List<MoistureEpicenter> moistureEpicenters;
@@ -101,6 +119,9 @@ namespace WorldGen.Rendering
         GenerationParams lastGenParams; // храним последние параметры, чтобы RegenerateTemperature мог работать без полной генерации
         int[] triangleToCellId;
         Transform riverContainer; // родительский объект для всех LineRenderer рек - упрощает очистку при перегенерации
+        Transform borderContainer;        // родитель для меш-объектов границ
+        GameObject regionBorderObject;    // меш-лента границ регионов
+        GameObject coastlineObject;       // меш-лента береговой линии
 
         void Awake()
         {
@@ -139,6 +160,7 @@ namespace WorldGen.Rendering
             lastGenParams = genParams;
             BuildMesh(cells);
             BuildRivers();
+            BuildBorders();
 
             if (targetCamera != null)
                 PositionCameraOverMap();
@@ -199,6 +221,62 @@ namespace WorldGen.Rendering
                 mat.color = riverColor;
                 lr.material = mat;
             }
+        }
+
+        /// <summary>Классифицирует граничные рёбра и строит два меш-объекта (границы регионов
+        /// и берег). Видимость каждого зависит от Combined-режима и соответствующего тоггла.</summary>
+        void BuildBorders()
+        {
+            if (borderContainer != null)
+            {
+                DestroyBorderObjectAssets(regionBorderObject);
+                DestroyBorderObjectAssets(coastlineObject);
+                regionBorderObject = null;
+                coastlineObject = null;
+                Destroy(borderContainer.gameObject);
+            }
+            if (cells == null) return;
+
+            var containerGO = new GameObject("MapBorders");
+            containerGO.transform.SetParent(transform, false);
+            borderContainer = containerGO.transform;
+
+            MapBorderBuilder.ClassifyBorderEdges(cells, out var regionEdges, out var coastEdges);
+
+            // Y чуть выше карты (Y=0) и ниже рек (Y=0.5), чтобы избежать z-fighting.
+            regionBorderObject = CreateBorderObject(
+                "RegionBorders", MapBorderBuilder.BuildRibbonMesh(regionEdges, regionBorderWidth, 0.4f), regionBorderColor);
+            coastlineObject = CreateBorderObject(
+                "Coastline", MapBorderBuilder.BuildRibbonMesh(coastEdges, coastlineWidth, 0.3f), coastlineColor);
+
+            bool combined = displayMode == MapDisplayMode.Combined;
+            regionBorderObject.SetActive(combined && showRegionBordersLayer);
+            coastlineObject.SetActive(combined && showCoastlineLayer);
+        }
+
+        GameObject CreateBorderObject(string name, Mesh mesh, Color color)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(borderContainer, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            // Sprites/Default: unlit, без culling (двусторонний), поддерживает material.color - как у рек.
+            var mat = new Material(Shader.Find("Sprites/Default"));
+            mat.color = color;
+            mr.sharedMaterial = mat;
+            return go;
+        }
+
+        /// <summary>Освобождает Mesh и Material объекта границы перед его уничтожением -
+        /// Unity не освобождает эти ассеты автоматически при Destroy самого GameObject,
+        /// а BuildBorders вызывается часто (в т.ч. на каждый water-override), иначе они утекают.</summary>
+        void DestroyBorderObjectAssets(GameObject obj)
+        {
+            if (obj == null) return;
+            var mf = obj.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
+            var mr = obj.GetComponent<MeshRenderer>();
+            if (mr != null && mr.sharedMaterial != null) Destroy(mr.sharedMaterial);
         }
 
         /// <summary>
@@ -268,6 +346,7 @@ namespace WorldGen.Rendering
 
             CellOverrideService.ApplyWaterOverride(targetCells, waterType, beachElevationThreshold);
             RecolorOnly();
+            BuildBorders();
             OnDisplayChanged?.Invoke();
         }
 
@@ -381,6 +460,126 @@ namespace WorldGen.Rendering
             Debug.Log($"WorldMapRenderer: применён override 'вечная зима' к региону {targetRegionId} ({targetCells.Count} клеток).");
         }
 
+        [ContextMenu("Self-Test: Hillshade Brightness")]
+        public void SelfTestHillshade()
+        {
+            const float az = 315f, strength = 3f, ambient = 0.5f;
+
+            float flat = RegionColorPalette.HillshadeBrightness(0f, 0f, strength, az, ambient);
+            // Свет с СЗ (азимут 315): склон, "обращённый к свету" - градиент (+x, -y) - ярче обратного.
+            float toward = RegionColorPalette.HillshadeBrightness(0.707f, -0.707f, strength, az, ambient);
+            float away = RegionColorPalette.HillshadeBrightness(-0.707f, 0.707f, strength, az, ambient);
+
+            bool ok = flat >= ambient - 1e-4f && flat <= 1f + 1e-4f
+                      && toward > away && Mathf.Abs(toward - away) > 1e-3f;
+
+            Debug.Log(ok
+                ? $"Self-Test Hillshade: PASS (flat={flat:F2}, toward={toward:F2}, away={away:F2})"
+                : $"Self-Test Hillshade: FAIL (flat={flat:F2}, toward={toward:F2}, away={away:F2})");
+        }
+
+        [ContextMenu("Self-Test: Border Classification")]
+        public void SelfTestBorderClassification()
+        {
+            // Фикстура: две квадратные клетки, общее ребро (1,0)-(1,1).
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(0.5f, 0.5f))
+            {
+                Polygon = new List<System.Numerics.Vector2>
+                { new(0, 0), new(1, 0), new(1, 1), new(0, 1) },
+                NeighborIds = new List<int> { 1 }
+            };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(1.5f, 0.5f))
+            {
+                Polygon = new List<System.Numerics.Vector2>
+                { new(1, 0), new(2, 0), new(2, 1), new(1, 1) },
+                NeighborIds = new List<int> { 0 }
+            };
+            var fixture = new List<VoronoiCell> { a, b };
+            bool ok = true;
+
+            // 1) Разные регионы, обе суша -> одна граница региона, берегов нет.
+            a.RegionId = 0; b.RegionId = 1; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Grassland;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out var rEdges, out var cEdges);
+            ok &= rEdges.Count == 1 && cEdges.Count == 0;
+
+            // 2) Одна клетка вода -> один берег, границ регионов нет.
+            a.RegionId = 0; b.RegionId = 0; a.IsOcean = false; b.IsOcean = true;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Ocean;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= cEdges.Count == 1 && rEdges.Count == 0;
+
+            // 3) Один регион, обе суша -> ничего.
+            a.RegionId = 0; b.RegionId = 0; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Grassland;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= rEdges.Count == 0 && cEdges.Count == 0;
+
+            // 4) Суша <-> внутреннее озеро (разные регионы) -> 1 граница региона, 0 берегов.
+            //    Озеро входит в регион через RegionGrowing и обводится его границей.
+            a.RegionId = 0; b.RegionId = 1; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Lake;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= rEdges.Count == 1 && cEdges.Count == 0;
+
+            Debug.Log(ok
+                ? "Self-Test Border Classification: PASS"
+                : "Self-Test Border Classification: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Lake Region Unification")]
+        public void SelfTestLakeRegionUnification()
+        {
+            // Компонент A: одна озёрная клетка (R1), окружена двумя сушными клетками R0 → должна стать R0.
+            var lakeA = new VoronoiCell(1, new System.Numerics.Vector2(1, 0))
+                { IsOcean = false, Biome = Biome.Lake, RegionId = 1, NeighborIds = new List<int> { 10, 11 } };
+            var land10 = new VoronoiCell(10, new System.Numerics.Vector2(0, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 0, NeighborIds = new List<int> { 1 } };
+            var land11 = new VoronoiCell(11, new System.Numerics.Vector2(2, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 0, NeighborIds = new List<int> { 1 } };
+
+            // Компонент B: одна озёрная клетка (R0), окружена двумя сушными клетками R1 → должна стать R1.
+            var lakeB = new VoronoiCell(2, new System.Numerics.Vector2(5, 0))
+                { IsOcean = false, Biome = Biome.Lake, RegionId = 0, NeighborIds = new List<int> { 20, 21 } };
+            var land20 = new VoronoiCell(20, new System.Numerics.Vector2(4, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 1, NeighborIds = new List<int> { 2 } };
+            var land21 = new VoronoiCell(21, new System.Numerics.Vector2(6, 0))
+                { IsOcean = false, Biome = Biome.Grassland, RegionId = 1, NeighborIds = new List<int> { 2 } };
+
+            var cells = new List<VoronoiCell> { lakeA, land10, land11, lakeB, land20, land21 };
+            LakeRegionUnifier.UnifyLakes(cells);
+
+            bool ok = lakeA.RegionId == 0 && lakeB.RegionId == 1;
+            Debug.Log(ok
+                ? "Self-Test Lake Region Unification: PASS"
+                : $"Self-Test Lake Region Unification: FAIL (lakeA.RegionId={lakeA.RegionId} expected 0; lakeB.RegionId={lakeB.RegionId} expected 1)");
+        }
+
+        [ContextMenu("Self-Test: Ocean Connectivity")]
+        public void SelfTestOceanConnectivity()
+        {
+            // Цепочка ocean(0) - lake(1) - lake(2) должна вся стать океаном;
+            // изолированное озеро(3), соседствующее только с сушей(4), остаётся озером.
+            VoronoiCell C(int id, bool ocean, params int[] nbrs) =>
+                new VoronoiCell(id, new System.Numerics.Vector2(id, 0f))
+                { IsOcean = ocean, NeighborIds = new List<int>(nbrs) };
+
+            var c0 = C(0, true, 1);
+            var c1 = C(1, false, 0, 2);
+            var c2 = C(2, false, 1);
+            var c3 = C(3, false, 4);
+            var c4 = C(4, false, 3);
+            var cells = new List<VoronoiCell> { c0, c1, c2, c3, c4 };
+            var waterCellIds = new HashSet<int> { 0, 1, 2, 3 }; // клетка 4 - суша
+
+            CellWaterAssigner.PromoteOceanConnectedWater(cells, waterCellIds);
+
+            bool ok = c0.IsOcean && c1.IsOcean && c2.IsOcean && !c3.IsOcean && !c4.IsOcean;
+            Debug.Log(ok
+                ? "Self-Test Ocean Connectivity: PASS"
+                : $"Self-Test Ocean Connectivity: FAIL (c1={c1.IsOcean}, c2={c2.IsOcean}, c3={c3.IsOcean})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
@@ -431,6 +630,9 @@ namespace WorldGen.Rendering
         public void BuildMesh(List<VoronoiCell> sourceCells)
         {
             cells = sourceCells;
+
+            cellById = new Dictionary<int, VoronoiCell>(cells.Count);
+            foreach (var c in cells) cellById[c.Id] = c;
 
             var vertices = new List<Vector3>();
             var colors = new List<Color>();
@@ -504,6 +706,39 @@ namespace WorldGen.Rendering
         {
             displayMode = mode;
             if (cells != null) RecolorOnly();
+            bool combined = mode == MapDisplayMode.Combined;
+            if (regionBorderObject != null) regionBorderObject.SetActive(combined && showRegionBordersLayer);
+            if (coastlineObject != null) coastlineObject.SetActive(combined && showCoastlineLayer);
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowBiomeLayer(bool on)
+        {
+            showBiomeLayer = on;
+            if (cells != null) RecolorOnly();
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowReliefLayer(bool on)
+        {
+            showReliefLayer = on;
+            if (cells != null) RecolorOnly();
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowRegionBordersLayer(bool on)
+        {
+            showRegionBordersLayer = on;
+            if (regionBorderObject != null)
+                regionBorderObject.SetActive(displayMode == MapDisplayMode.Combined && on);
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowCoastlineLayer(bool on)
+        {
+            showCoastlineLayer = on;
+            if (coastlineObject != null)
+                coastlineObject.SetActive(displayMode == MapDisplayMode.Combined && on);
             OnDisplayChanged?.Invoke();
         }
 
@@ -535,6 +770,24 @@ namespace WorldGen.Rendering
             mesh.SetColors(colors);
         }
 
+        /// <summary>Оценивает градиент высоты клетки по соседям (направление "вверх по склону").
+        /// Используется для рельефного затенения в Combined-режиме.</summary>
+        System.Numerics.Vector2 ComputeCellGradient(VoronoiCell cell)
+        {
+            var g = System.Numerics.Vector2.Zero;
+            if (cellById == null) return g;
+            foreach (int nId in cell.NeighborIds)
+            {
+                if (!cellById.TryGetValue(nId, out var n)) continue;
+                var dir = n.Site - cell.Site;
+                float len = dir.Length();
+                if (len < 1e-4f) continue;
+                dir /= len;
+                g += dir * (n.EffectiveElevation - cell.EffectiveElevation);
+            }
+            return g;
+        }
+
         Color GetColorForCell(VoronoiCell cell)
         {
             switch (displayMode)
@@ -550,6 +803,27 @@ namespace WorldGen.Rendering
                 case MapDisplayMode.Biome:
                     // cell.Biome уже пересчитан через CellOverrideService.RecomputeBiome при любом override.
                     return RegionColorPalette.GetBiomeColor(cell.Biome);
+
+                case MapDisplayMode.Combined:
+                {
+                    Biome effBiome = cell.EffectiveIsOcean ? Biome.Ocean
+                                   : cell.EffectiveIsLake ? Biome.Lake
+                                   : cell.Biome;
+                    bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+
+                    Color baseColor = showBiomeLayer
+                        ? RegionColorPalette.GetBiomeColor(effBiome)
+                        : RegionColorPalette.GetNeutralBaseColor(cell);
+
+                    if (showReliefLayer && !isWater)
+                    {
+                        var grad = ComputeCellGradient(cell);
+                        float b = RegionColorPalette.HillshadeBrightness(
+                            grad.X, grad.Y, reliefStrength, reliefLightAzimuth, reliefAmbient);
+                        baseColor = new Color(baseColor.r * b, baseColor.g * b, baseColor.b * b, baseColor.a);
+                    }
+                    return baseColor;
+                }
 
                 case MapDisplayMode.Region:
                 default:

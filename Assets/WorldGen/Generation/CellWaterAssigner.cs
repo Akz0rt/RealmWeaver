@@ -29,6 +29,8 @@ namespace WorldGen.Generation
                 }
             }
 
+            var waterCellIds = new HashSet<int>();
+
             foreach (var cell in cells)
             {
                 if (!cornersByCell.TryGetValue(cell.Id, out var cellCorners) || cellCorners.Count == 0)
@@ -45,9 +47,11 @@ namespace WorldGen.Generation
 
                 if (isWater)
                 {
-                    // Среди водных corners клетки - большинство океан или озеро?
-                    float oceanFractionOfWater = waterCount > 0 ? (float)oceanCount / waterCount : 0f;
-                    cell.IsOcean = oceanFractionOfWater >= 0.5f;
+                    waterCellIds.Add(cell.Id);
+                    // Хотя бы один ocean-corner → клетка граничит с открытым морем → это океан.
+                    // Inland lake corners никогда не бывают ocean (flood fill идёт от края карты),
+                    // поэтому oceanCount > 0 безопасно не затрагивает настоящие внутренние озёра.
+                    cell.IsOcean = oceanCount > 0;
                 }
                 else
                 {
@@ -56,6 +60,39 @@ namespace WorldGen.Generation
 
                 // cell.Height пока не трогаем - не-океанские water клетки (озёра) будут
                 // обработаны на следующем шаге (elevation), где IsLake выводится явно.
+            }
+
+            // Озеро, связанное с океаном через цепочку водных клеток, - это на самом деле часть моря,
+            // а не отдельный внутренний водоём. Промоутим такую воду в океан на уровне клеток.
+            PromoteOceanConnectedWater(cells, waterCellIds);
+        }
+
+        /// <summary>
+        /// BFS от океанских клеток по соседям-водным клеткам: любая водная клетка, достижимая от
+        /// океана через воду, становится океаном. Суша - стена. Настоящие внутренние озёра
+        /// (вода, не связанная с океаном через воду) остаются озёрами (IsOcean = false).
+        /// Вынесено отдельным public-методом, чтобы проверять логику изолированно.
+        /// </summary>
+        public static void PromoteOceanConnectedWater(List<VoronoiCell> cells, HashSet<int> waterCellIds)
+        {
+            var cellById = cells.ToDictionary(c => c.Id);
+            var queue = new Queue<int>();
+
+            foreach (var cell in cells)
+                if (cell.IsOcean) queue.Enqueue(cell.Id);
+
+            while (queue.Count > 0)
+            {
+                var cell = cellById[queue.Dequeue()];
+                foreach (var neighborId in cell.NeighborIds)
+                {
+                    if (!cellById.TryGetValue(neighborId, out var neighbor)) continue;
+                    if (neighbor.IsOcean) continue;          // уже океан
+                    if (!waterCellIds.Contains(neighborId)) continue; // суша - стена, через неё океан не распространяется
+
+                    neighbor.IsOcean = true;
+                    queue.Enqueue(neighborId);
+                }
             }
         }
     }
