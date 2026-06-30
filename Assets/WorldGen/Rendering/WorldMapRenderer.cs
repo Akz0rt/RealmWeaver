@@ -5,7 +5,7 @@ using WorldGen.Generation;
 
 namespace WorldGen.Rendering
 {
-    public enum MapDisplayMode { Height, Region, Biome }
+    public enum MapDisplayMode { Height, Region, Biome, Combined }
 
     /// <summary>
     /// Строит единый Mesh для всей карты (один draw call) из списка VoronoiCell.
@@ -83,7 +83,24 @@ namespace WorldGen.Rendering
         public float heightCoolingFactor = 0.6f;
 
         [Header("Отображение")]
-        public MapDisplayMode displayMode = MapDisplayMode.Height;
+        public MapDisplayMode displayMode = MapDisplayMode.Combined;
+
+        [Header("Combined: слои")]
+        public bool showBiomeLayer = true;
+        public bool showReliefLayer = true;
+        public bool showRegionBordersLayer = true;
+        public bool showCoastlineLayer = true;
+
+        [Header("Combined: рельеф (hillshade)")]
+        public float reliefStrength = 3f;
+        public float reliefLightAzimuth = 315f;
+        [Range(0f, 1f)] public float reliefAmbient = 0.5f;
+
+        [Header("Combined: границы")]
+        public Color regionBorderColor = new Color(0.10f, 0.10f, 0.10f, 0.9f);
+        public float regionBorderWidth = 1.5f;
+        public Color coastlineColor = new Color(0.05f, 0.10f, 0.20f, 0.95f);
+        public float coastlineWidth = 2.5f;
 
         [Header("Камера (опционально)")]
         [Tooltip("Если назначено - камера автоматически встанет над центром карты при каждой генерации.")]
@@ -101,6 +118,9 @@ namespace WorldGen.Rendering
         GenerationParams lastGenParams; // храним последние параметры, чтобы RegenerateTemperature мог работать без полной генерации
         int[] triangleToCellId;
         Transform riverContainer; // родительский объект для всех LineRenderer рек - упрощает очистку при перегенерации
+        Transform borderContainer;        // родитель для меш-объектов границ
+        GameObject regionBorderObject;    // меш-лента границ регионов
+        GameObject coastlineObject;       // меш-лента береговой линии
 
         void Awake()
         {
@@ -139,6 +159,7 @@ namespace WorldGen.Rendering
             lastGenParams = genParams;
             BuildMesh(cells);
             BuildRivers();
+            BuildBorders();
 
             if (targetCamera != null)
                 PositionCameraOverMap();
@@ -199,6 +220,44 @@ namespace WorldGen.Rendering
                 mat.color = riverColor;
                 lr.material = mat;
             }
+        }
+
+        /// <summary>Классифицирует граничные рёбра и строит два меш-объекта (границы регионов
+        /// и берег). Видимость каждого зависит от Combined-режима и соответствующего тоггла.</summary>
+        void BuildBorders()
+        {
+            if (borderContainer != null)
+                Destroy(borderContainer.gameObject);
+            if (cells == null) return;
+
+            var containerGO = new GameObject("MapBorders");
+            containerGO.transform.SetParent(transform, false);
+            borderContainer = containerGO.transform;
+
+            MapBorderBuilder.ClassifyBorderEdges(cells, out var regionEdges, out var coastEdges);
+
+            // Y чуть выше карты (Y=0) и ниже рек (Y=0.5), чтобы избежать z-fighting.
+            regionBorderObject = CreateBorderObject(
+                "RegionBorders", MapBorderBuilder.BuildRibbonMesh(regionEdges, regionBorderWidth, 0.4f), regionBorderColor);
+            coastlineObject = CreateBorderObject(
+                "Coastline", MapBorderBuilder.BuildRibbonMesh(coastEdges, coastlineWidth, 0.3f), coastlineColor);
+
+            bool combined = displayMode == MapDisplayMode.Combined;
+            regionBorderObject.SetActive(combined && showRegionBordersLayer);
+            coastlineObject.SetActive(combined && showCoastlineLayer);
+        }
+
+        GameObject CreateBorderObject(string name, Mesh mesh, Color color)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(borderContainer, false);
+            go.AddComponent<MeshFilter>().mesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            // Sprites/Default: unlit, без culling (двусторонний), поддерживает material.color - как у рек.
+            var mat = new Material(Shader.Find("Sprites/Default"));
+            mat.color = color;
+            mr.sharedMaterial = mat;
+            return go;
         }
 
         /// <summary>
@@ -268,6 +327,7 @@ namespace WorldGen.Rendering
 
             CellOverrideService.ApplyWaterOverride(targetCells, waterType, beachElevationThreshold);
             RecolorOnly();
+            BuildBorders();
             OnDisplayChanged?.Invoke();
         }
 

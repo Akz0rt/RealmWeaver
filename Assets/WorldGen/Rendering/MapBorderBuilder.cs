@@ -91,5 +91,46 @@ namespace WorldGen.Rendering
                 }
             }
         }
+
+        /// <summary>Строит один меш из тонких quad-лент вдоль каждого ребра (ширина width,
+        /// в плоскости XZ на высоте yHeight). Один меш = один draw call на тип границы.</summary>
+        public static UnityEngine.Mesh BuildRibbonMesh(IReadOnlyList<Edge> edges, float width, float yHeight)
+        {
+            var verts = new List<UnityEngine.Vector3>();
+            var tris = new List<int>();
+            float half = width * 0.5f;
+
+            if (edges != null)
+            {
+                foreach (var e in edges)
+                {
+                    var p0 = new UnityEngine.Vector3(e.A.X, yHeight, e.A.Y);
+                    var p1 = new UnityEngine.Vector3(e.B.X, yHeight, e.B.Y);
+                    var dir = p1 - p0;
+                    dir.y = 0f;
+                    if (dir.sqrMagnitude < 1e-8f) continue;
+                    dir.Normalize();
+                    var side = new UnityEngine.Vector3(-dir.z, 0f, dir.x) * half;
+
+                    int bi = verts.Count;
+                    verts.Add(p0 - side);
+                    verts.Add(p0 + side);
+                    verts.Add(p1 + side);
+                    verts.Add(p1 - side);
+
+                    tris.Add(bi + 0); tris.Add(bi + 2); tris.Add(bi + 1);
+                    tris.Add(bi + 0); tris.Add(bi + 3); tris.Add(bi + 2);
+                }
+            }
+
+            var mesh = new UnityEngine.Mesh();
+            mesh.indexFormat = verts.Count > 65000
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateBounds();
+            return mesh;
+        }
     }
 }
