@@ -123,6 +123,12 @@ namespace WorldGen.Rendering
         GameObject regionBorderObject;    // меш-лента границ регионов
         GameObject coastlineObject;       // меш-лента береговой линии
 
+        /// <summary>Fired at the end of GenerateAndRender(). PoiManager subscribes to clear all POIs on regen.</summary>
+        public event System.Action OnWorldRegenerated;
+
+        /// <summary>Read-only access to current cells for POI placement.</summary>
+        public IReadOnlyList<VoronoiCell> Cells => cells;
+
         void Awake()
         {
             meshFilter = GetComponent<MeshFilter>();
@@ -166,6 +172,7 @@ namespace WorldGen.Rendering
                 PositionCameraOverMap();
 
             OnDisplayChanged?.Invoke();
+            OnWorldRegenerated?.Invoke();
         }
 
         /// <summary>Строит LineRenderer для каждой реки, используя позиции corners из River.CornerPath. Толщина линии - через sqrt(flow) на каждом сегменте, как у Patel. Ничего не делает, если enableRivers выключен.</summary>
