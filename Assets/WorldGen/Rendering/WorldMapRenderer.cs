@@ -381,6 +381,48 @@ namespace WorldGen.Rendering
             Debug.Log($"WorldMapRenderer: применён override 'вечная зима' к региону {targetRegionId} ({targetCells.Count} клеток).");
         }
 
+        [ContextMenu("Self-Test: Border Classification")]
+        public void SelfTestBorderClassification()
+        {
+            // Фикстура: две квадратные клетки, общее ребро (1,0)-(1,1).
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(0.5f, 0.5f))
+            {
+                Polygon = new List<System.Numerics.Vector2>
+                { new(0, 0), new(1, 0), new(1, 1), new(0, 1) },
+                NeighborIds = new List<int> { 1 }
+            };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(1.5f, 0.5f))
+            {
+                Polygon = new List<System.Numerics.Vector2>
+                { new(1, 0), new(2, 0), new(2, 1), new(1, 1) },
+                NeighborIds = new List<int> { 0 }
+            };
+            var fixture = new List<VoronoiCell> { a, b };
+            bool ok = true;
+
+            // 1) Разные регионы, обе суша -> одна граница региона, берегов нет.
+            a.RegionId = 0; b.RegionId = 1; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Grassland;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out var rEdges, out var cEdges);
+            ok &= rEdges.Count == 1 && cEdges.Count == 0;
+
+            // 2) Одна клетка вода -> один берег, границ регионов нет.
+            a.RegionId = 0; b.RegionId = 0; a.IsOcean = false; b.IsOcean = true;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Ocean;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= cEdges.Count == 1 && rEdges.Count == 0;
+
+            // 3) Один регион, обе суша -> ничего.
+            a.RegionId = 0; b.RegionId = 0; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Grassland;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= rEdges.Count == 0 && cEdges.Count == 0;
+
+            Debug.Log(ok
+                ? "Self-Test Border Classification: PASS"
+                : "Self-Test Border Classification: FAIL");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
