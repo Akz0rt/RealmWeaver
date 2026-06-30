@@ -515,12 +515,12 @@ namespace WorldGen.Rendering
             MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
             ok &= rEdges.Count == 0 && cEdges.Count == 0;
 
-            // 4) Суша <-> внутреннее озеро (разные регионы) -> НИЧЕГО: озеро не обводится берегом
-            //    и не даёт границы региона (озеро - вода). Так озеро читается как часть региона.
+            // 4) Суша <-> внутреннее озеро (разные регионы) -> 1 граница региона, 0 берегов.
+            //    Озеро входит в регион через RegionGrowing и обводится его границей.
             a.RegionId = 0; b.RegionId = 1; a.IsOcean = false; b.IsOcean = false;
             a.Biome = Biome.Grassland; b.Biome = Biome.Lake;
             MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
-            ok &= rEdges.Count == 0 && cEdges.Count == 0;
+            ok &= rEdges.Count == 1 && cEdges.Count == 0;
 
             Debug.Log(ok
                 ? "Self-Test Border Classification: PASS"

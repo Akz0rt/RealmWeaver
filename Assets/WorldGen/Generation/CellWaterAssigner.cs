@@ -48,9 +48,10 @@ namespace WorldGen.Generation
                 if (isWater)
                 {
                     waterCellIds.Add(cell.Id);
-                    // Среди водных corners клетки - большинство океан или озеро?
-                    float oceanFractionOfWater = waterCount > 0 ? (float)oceanCount / waterCount : 0f;
-                    cell.IsOcean = oceanFractionOfWater >= 0.5f;
+                    // Хотя бы один ocean-corner → клетка граничит с открытым морем → это океан.
+                    // Inland lake corners никогда не бывают ocean (flood fill идёт от края карты),
+                    // поэтому oceanCount > 0 безопасно не затрагивает настоящие внутренние озёра.
+                    cell.IsOcean = oceanCount > 0;
                 }
                 else
                 {

@@ -80,17 +80,18 @@ namespace WorldGen.Rendering
                 var cb = idToCell[ids[1]];
                 bool aOcean = ca.EffectiveIsOcean;
                 bool bOcean = cb.EffectiveIsOcean;
-                bool aWater = aOcean || ca.EffectiveIsLake;
-                bool bWater = bOcean || cb.EffectiveIsLake;
 
                 if (aOcean != bOcean)
                 {
-                    // Берег = граница именно с океаном. Внутренние озёра (озеро<->суша) НЕ обводятся,
-                    // чтобы читались как часть региона, а не как отдельный обособленный объект.
+                    // Берег = граница именно с океаном. Внутренние озёра (озеро<->суша) НЕ обводятся
+                    // береговой линией - только океанский берег.
                     coastEdges.Add(edge);
                 }
-                else if (!aWater && !bWater && ca.RegionId != cb.RegionId)
+                else if (!aOcean && !bOcean && ca.RegionId != cb.RegionId)
                 {
+                    // Граница региона: обе клетки не-океан (суша или озеро) и принадлежат
+                    // разным регионам. Озёра входят в регион через RegionGrowing,
+                    // поэтому граница рисуется вокруг озера как части его региона.
                     regionEdges.Add(edge);
                 }
             }
