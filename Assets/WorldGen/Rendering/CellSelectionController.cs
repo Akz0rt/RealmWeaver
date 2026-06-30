@@ -27,6 +27,8 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
         [Tooltip("Камера, с которой кастуется луч выбора. Если не назначено - используется Camera.main.")]
         public Camera raycastCamera;
+        [Tooltip("If assigned, cell selection is suppressed when POI interaction controller has claimed the input.")]
+        public PoiInteractionController poiController;
 
         [Header("Внешний вид подсветки")]
         public Color selectionColor = new Color(1f, 1f, 0.2f, 0.45f);
@@ -51,6 +53,7 @@ namespace WorldGen.Rendering
 
         void Update()
         {
+            if (poiController != null && poiController.InputConsumedThisFrame) return;
             if (mapRenderer == null || raycastCamera == null) return;
             if (Mouse.current == null) return; // нет подключённой мыши (например, в тестовой среде) - ничего не делаем
 
