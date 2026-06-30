@@ -228,7 +228,13 @@ namespace WorldGen.Rendering
         void BuildBorders()
         {
             if (borderContainer != null)
+            {
+                DestroyBorderObjectAssets(regionBorderObject);
+                DestroyBorderObjectAssets(coastlineObject);
+                regionBorderObject = null;
+                coastlineObject = null;
                 Destroy(borderContainer.gameObject);
+            }
             if (cells == null) return;
 
             var containerGO = new GameObject("MapBorders");
@@ -252,13 +258,25 @@ namespace WorldGen.Rendering
         {
             var go = new GameObject(name);
             go.transform.SetParent(borderContainer, false);
-            go.AddComponent<MeshFilter>().mesh = mesh;
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
             // Sprites/Default: unlit, без culling (двусторонний), поддерживает material.color - как у рек.
             var mat = new Material(Shader.Find("Sprites/Default"));
             mat.color = color;
             mr.sharedMaterial = mat;
             return go;
+        }
+
+        /// <summary>Освобождает Mesh и Material объекта границы перед его уничтожением -
+        /// Unity не освобождает эти ассеты автоматически при Destroy самого GameObject,
+        /// а BuildBorders вызывается часто (в т.ч. на каждый water-override), иначе они утекают.</summary>
+        void DestroyBorderObjectAssets(GameObject obj)
+        {
+            if (obj == null) return;
+            var mf = obj.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null) Destroy(mf.sharedMesh);
+            var mr = obj.GetComponent<MeshRenderer>();
+            if (mr != null && mr.sharedMaterial != null) Destroy(mr.sharedMaterial);
         }
 
         /// <summary>

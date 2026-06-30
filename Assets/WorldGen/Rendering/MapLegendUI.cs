@@ -91,6 +91,25 @@ namespace WorldGen.Rendering
                         entries.Add(new LegendEntry(RegionColorPalette.GetBiomeColor(biome), GetBiomeLabel(biome)));
                     break;
 
+                case MapDisplayMode.Combined:
+                    if (mapRenderer.showBiomeLayer)
+                    {
+                        foreach (Biome biome in System.Enum.GetValues(typeof(Biome)))
+                            entries.Add(new LegendEntry(RegionColorPalette.GetBiomeColor(biome), GetBiomeLabel(biome)));
+                    }
+                    else
+                    {
+                        // Нейтральные тона базовой заливки (совпадают с RegionColorPalette.GetNeutralBaseColor).
+                        entries.Add(new LegendEntry(new Color(0.82f, 0.78f, 0.65f), "Суша"));
+                        entries.Add(new LegendEntry(new Color(0.10f, 0.25f, 0.50f), "Океан"));
+                        entries.Add(new LegendEntry(new Color(0.30f, 0.55f, 0.65f), "Озеро"));
+                    }
+                    if (mapRenderer.showRegionBordersLayer)
+                        entries.Add(new LegendEntry(mapRenderer.regionBorderColor, "Граница региона"));
+                    if (mapRenderer.showCoastlineLayer)
+                        entries.Add(new LegendEntry(mapRenderer.coastlineColor, "Берег"));
+                    break;
+
                 case MapDisplayMode.Region:
                 default:
                     entries.Add(new LegendEntry(new Color(0.15f, 0.35f, 0.60f), "Океан"));
