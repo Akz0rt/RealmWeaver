@@ -33,6 +33,8 @@ namespace WorldGen.Rendering
 
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
+        [Tooltip("Maximum height of the editor panel in pixels. Content scrolls if taller.")]
+        public float panelHeight = 700f;
         public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.7f);
         public Color textColor = Color.white;
         public Color sectionHeaderColor = new Color(0.7f, 0.85f, 1f);
@@ -214,19 +216,46 @@ namespace WorldGen.Rendering
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
             panelRect.anchoredPosition = panelAnchoredPosition;
-            panelRect.sizeDelta = new Vector2(300f, 10f);
+            panelRect.sizeDelta = new Vector2(300f, panelHeight);
 
-            var layout = panelGO.AddComponent<VerticalLayoutGroup>();
+            // ScrollRect so the panel scrolls when content is taller than panelHeight.
+            var scrollRect = panelGO.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.scrollSensitivity = 30f;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewportGO = new GameObject("Viewport");
+            viewportGO.transform.SetParent(panelGO.transform, false);
+            var viewportImg = viewportGO.AddComponent<Image>();
+            viewportImg.color = Color.clear;
+            var viewportMask = viewportGO.AddComponent<Mask>();
+            viewportMask.showMaskGraphic = false;
+            var viewportRect = viewportGO.GetComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = Vector2.zero;
+            viewportRect.offsetMax = Vector2.zero;
+            scrollRect.viewport = viewportRect;
+
+            var contentGO = new GameObject("Content");
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(12, 12, 12, 12);
             layout.spacing = 6f;
             layout.childControlWidth = true;
             layout.childControlHeight = false;
             layout.childForceExpandWidth = true;
-
-            var fitter = panelGO.AddComponent<ContentSizeFitter>();
+            var fitter = contentGO.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var contentRect = contentGO.GetComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0f, 1f);
+            contentRect.anchorMax = new Vector2(1f, 1f);
+            contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.sizeDelta = Vector2.zero;
+            scrollRect.content = contentRect;
 
-            var t = panelGO.transform;
+            var t = contentGO.transform;
 
             AddLabel(t, "Map Editor", bold: true);
 
