@@ -441,6 +441,24 @@ namespace WorldGen.Rendering
             Debug.Log($"WorldMapRenderer: применён override 'вечная зима' к региону {targetRegionId} ({targetCells.Count} клеток).");
         }
 
+        [ContextMenu("Self-Test: Hillshade Brightness")]
+        public void SelfTestHillshade()
+        {
+            const float az = 315f, strength = 3f, ambient = 0.5f;
+
+            float flat = RegionColorPalette.HillshadeBrightness(0f, 0f, strength, az, ambient);
+            // Свет с СЗ (азимут 315): склон, "обращённый к свету" - градиент (+x, -y) - ярче обратного.
+            float toward = RegionColorPalette.HillshadeBrightness(0.707f, -0.707f, strength, az, ambient);
+            float away = RegionColorPalette.HillshadeBrightness(-0.707f, 0.707f, strength, az, ambient);
+
+            bool ok = flat >= ambient - 1e-4f && flat <= 1f + 1e-4f
+                      && toward > away && Mathf.Abs(toward - away) > 1e-3f;
+
+            Debug.Log(ok
+                ? $"Self-Test Hillshade: PASS (flat={flat:F2}, toward={toward:F2}, away={away:F2})"
+                : $"Self-Test Hillshade: FAIL (flat={flat:F2}, toward={toward:F2}, away={away:F2})");
+        }
+
         [ContextMenu("Self-Test: Border Classification")]
         public void SelfTestBorderClassification()
         {
