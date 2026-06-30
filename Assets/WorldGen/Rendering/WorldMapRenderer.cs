@@ -111,6 +111,7 @@ namespace WorldGen.Rendering
         MeshCollider meshCollider;
 
         List<VoronoiCell> cells;
+        Dictionary<int, VoronoiCell> cellById;
         List<Corner> corners;
         List<TemperatureEpicenter> epicenters;
         List<MoistureEpicenter> moistureEpicenters;
@@ -552,6 +553,9 @@ namespace WorldGen.Rendering
         {
             cells = sourceCells;
 
+            cellById = new Dictionary<int, VoronoiCell>(cells.Count);
+            foreach (var c in cells) cellById[c.Id] = c;
+
             var vertices = new List<Vector3>();
             var colors = new List<Color>();
             var triangles = new List<int>();
@@ -624,6 +628,39 @@ namespace WorldGen.Rendering
         {
             displayMode = mode;
             if (cells != null) RecolorOnly();
+            bool combined = mode == MapDisplayMode.Combined;
+            if (regionBorderObject != null) regionBorderObject.SetActive(combined && showRegionBordersLayer);
+            if (coastlineObject != null) coastlineObject.SetActive(combined && showCoastlineLayer);
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowBiomeLayer(bool on)
+        {
+            showBiomeLayer = on;
+            if (cells != null) RecolorOnly();
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowReliefLayer(bool on)
+        {
+            showReliefLayer = on;
+            if (cells != null) RecolorOnly();
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowRegionBordersLayer(bool on)
+        {
+            showRegionBordersLayer = on;
+            if (regionBorderObject != null)
+                regionBorderObject.SetActive(displayMode == MapDisplayMode.Combined && on);
+            OnDisplayChanged?.Invoke();
+        }
+
+        public void SetShowCoastlineLayer(bool on)
+        {
+            showCoastlineLayer = on;
+            if (coastlineObject != null)
+                coastlineObject.SetActive(displayMode == MapDisplayMode.Combined && on);
             OnDisplayChanged?.Invoke();
         }
 
@@ -655,6 +692,24 @@ namespace WorldGen.Rendering
             mesh.SetColors(colors);
         }
 
+        /// <summary>Оценивает градиент высоты клетки по соседям (направление "вверх по склону").
+        /// Используется для рельефного затенения в Combined-режиме.</summary>
+        System.Numerics.Vector2 ComputeCellGradient(VoronoiCell cell)
+        {
+            var g = System.Numerics.Vector2.Zero;
+            if (cellById == null) return g;
+            foreach (int nId in cell.NeighborIds)
+            {
+                if (!cellById.TryGetValue(nId, out var n)) continue;
+                var dir = n.Site - cell.Site;
+                float len = dir.Length();
+                if (len < 1e-4f) continue;
+                dir /= len;
+                g += dir * (n.EffectiveElevation - cell.EffectiveElevation);
+            }
+            return g;
+        }
+
         Color GetColorForCell(VoronoiCell cell)
         {
             switch (displayMode)
@@ -670,6 +725,27 @@ namespace WorldGen.Rendering
                 case MapDisplayMode.Biome:
                     // cell.Biome уже пересчитан через CellOverrideService.RecomputeBiome при любом override.
                     return RegionColorPalette.GetBiomeColor(cell.Biome);
+
+                case MapDisplayMode.Combined:
+                {
+                    Biome effBiome = cell.EffectiveIsOcean ? Biome.Ocean
+                                   : cell.EffectiveIsLake ? Biome.Lake
+                                   : cell.Biome;
+                    bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+
+                    Color baseColor = showBiomeLayer
+                        ? RegionColorPalette.GetBiomeColor(effBiome)
+                        : RegionColorPalette.GetNeutralBaseColor(cell);
+
+                    if (showReliefLayer && !isWater)
+                    {
+                        var grad = ComputeCellGradient(cell);
+                        float b = RegionColorPalette.HillshadeBrightness(
+                            grad.X, grad.Y, reliefStrength, reliefLightAzimuth, reliefAmbient);
+                        baseColor = new Color(baseColor.r * b, baseColor.g * b, baseColor.b * b, baseColor.a);
+                    }
+                    return baseColor;
+                }
 
                 case MapDisplayMode.Region:
                 default:
