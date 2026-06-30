@@ -515,9 +515,41 @@ namespace WorldGen.Rendering
             MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
             ok &= rEdges.Count == 0 && cEdges.Count == 0;
 
+            // 4) Суша <-> внутреннее озеро (разные регионы) -> НИЧЕГО: озеро не обводится берегом
+            //    и не даёт границы региона (озеро - вода). Так озеро читается как часть региона.
+            a.RegionId = 0; b.RegionId = 1; a.IsOcean = false; b.IsOcean = false;
+            a.Biome = Biome.Grassland; b.Biome = Biome.Lake;
+            MapBorderBuilder.ClassifyBorderEdges(fixture, out rEdges, out cEdges);
+            ok &= rEdges.Count == 0 && cEdges.Count == 0;
+
             Debug.Log(ok
                 ? "Self-Test Border Classification: PASS"
                 : "Self-Test Border Classification: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Ocean Connectivity")]
+        public void SelfTestOceanConnectivity()
+        {
+            // Цепочка ocean(0) - lake(1) - lake(2) должна вся стать океаном;
+            // изолированное озеро(3), соседствующее только с сушей(4), остаётся озером.
+            VoronoiCell C(int id, bool ocean, params int[] nbrs) =>
+                new VoronoiCell(id, new System.Numerics.Vector2(id, 0f))
+                { IsOcean = ocean, NeighborIds = new List<int>(nbrs) };
+
+            var c0 = C(0, true, 1);
+            var c1 = C(1, false, 0, 2);
+            var c2 = C(2, false, 1);
+            var c3 = C(3, false, 4);
+            var c4 = C(4, false, 3);
+            var cells = new List<VoronoiCell> { c0, c1, c2, c3, c4 };
+            var waterCellIds = new HashSet<int> { 0, 1, 2, 3 }; // клетка 4 - суша
+
+            CellWaterAssigner.PromoteOceanConnectedWater(cells, waterCellIds);
+
+            bool ok = c0.IsOcean && c1.IsOcean && c2.IsOcean && !c3.IsOcean && !c4.IsOcean;
+            Debug.Log(ok
+                ? "Self-Test Ocean Connectivity: PASS"
+                : $"Self-Test Ocean Connectivity: FAIL (c1={c1.IsOcean}, c2={c2.IsOcean}, c3={c3.IsOcean})");
         }
 
         GenerationParams BuildGenerationParams()

@@ -78,11 +78,15 @@ namespace WorldGen.Rendering
 
                 var ca = idToCell[ids[0]];
                 var cb = idToCell[ids[1]];
-                bool aWater = ca.EffectiveIsOcean || ca.EffectiveIsLake;
-                bool bWater = cb.EffectiveIsOcean || cb.EffectiveIsLake;
+                bool aOcean = ca.EffectiveIsOcean;
+                bool bOcean = cb.EffectiveIsOcean;
+                bool aWater = aOcean || ca.EffectiveIsLake;
+                bool bWater = bOcean || cb.EffectiveIsLake;
 
-                if (aWater != bWater)
+                if (aOcean != bOcean)
                 {
+                    // Берег = граница именно с океаном. Внутренние озёра (озеро<->суша) НЕ обводятся,
+                    // чтобы читались как часть региона, а не как отдельный обособленный объект.
                     coastEdges.Add(edge);
                 }
                 else if (!aWater && !bWater && ca.RegionId != cb.RegionId)
