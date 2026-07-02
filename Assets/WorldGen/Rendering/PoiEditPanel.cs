@@ -4,6 +4,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using WorldGen.Generation;
+using WorldGen.Notes.Rendering;
 
 namespace WorldGen.Rendering
 {
@@ -21,6 +22,8 @@ namespace WorldGen.Rendering
         public PoiManager poiManager;
         [Tooltip("Легенда карты - панель редактирования точки автоматически встаёт на 20px ниже её нижней грани.")]
         public MapLegendUI legendUI;
+        [Tooltip("Notes root — resolves/creates the POI's linked page group when \"Открыть страницы\" is clicked.")]
+        public NotesRootBuilder notesRoot;
 
         [Header("Внешний вид")]
         [Tooltip("Горизонтальный отступ от правого края экрана.")]
@@ -351,6 +354,24 @@ namespace WorldGen.Rendering
                 var sel = poiManager?.GetSelectedPoi();
                 if (sel != null) poiManager.DeletePoi(sel.Id);
             }, new Color(0.55f, 0.15f, 0.15f));
+
+            AddButton(t, "Открыть страницы", OnOpenPagesClicked, new Color(0.25f, 0.5f, 0.4f));
+        }
+
+        void OnOpenPagesClicked()
+        {
+            var sel = poiManager?.GetSelectedPoi();
+            if (sel == null || notesRoot == null) return;
+
+            var doc = notesRoot.DocumentController;
+            var group = doc.FindGroupByPoiId(sel.Id);
+            if (group == null)
+            {
+                group = doc.CreateGroup(sel.Name, sel.Id);
+                doc.CreatePage(group.Id, "Страница 1");
+            }
+
+            doc.OpenPage(group.Pages[0].Id);
         }
 
         Slider AddScaleSliderRow(Transform parent, string label, float defaultValue, System.Action<float> onChanged)

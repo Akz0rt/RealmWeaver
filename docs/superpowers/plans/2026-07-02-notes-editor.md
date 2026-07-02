@@ -1512,17 +1512,18 @@ git commit -m "feat: NotesUndoManager — command-stack undo with confirm-on-del
   - `NotesToolbar.Initialize(CanvasInteractionController controller)` — builds the 5-button toolbar, wires clicks to `SetTool`.
   - Used by Task 11 (scene wiring), consumes file dialog + clipboard image loading described below.
 
-- [ ] **Step 1: Add the StandaloneFileBrowser package**
+- [ ] **Step 1: Vendor StandaloneFileBrowser's Editor-mode source (not a package)**
 
-Unity has no built-in runtime (non-Editor) system file-open dialog. The spec requires a real file picker for the Image tool, so add the `StandaloneFileBrowser` package (git-URL UPM dependency, same pattern already used for `com.nol1fe.delaunator` in this project).
+Unity has no built-in runtime (non-Editor) system file-open dialog. The spec requires a real file picker for the Image tool. `StandaloneFileBrowser` (https://github.com/gkngkc/UnityStandaloneFileBrowser) provides one, but **its repo has no `package.json`**, so it cannot be added as a git-URL UPM dependency (confirmed by attempting it — Unity's Package Manager fails with "Repository does not contain a package manifest"). Vendor its source directly instead, matching this project's existing `FastNoiseLite.cs` convention (a third-party single-file/small dependency copied straight into the codebase rather than package-managed).
 
-In `Packages/manifest.json`, add a new entry to `"dependencies"` (alongside the existing `com.nol1fe.delaunator` line):
+Create three files under `Assets/WorldGen/Notes/Rendering/StandaloneFileBrowser/`, copied verbatim from the upstream repo's `Assets/StandaloneFileBrowser/` folder (MIT licensed):
+- `IStandaloneFileBrowser.cs` — the `SFB.IStandaloneFileBrowser` interface and nothing else.
+- `StandaloneFileBrowser.cs` — the `SFB.StandaloneFileBrowser` static facade and `SFB.ExtensionFilter` struct.
+- `StandaloneFileBrowserEditor.cs` — the `#if UNITY_EDITOR`-guarded implementation backed by `UnityEditor.EditorUtility.OpenFilePanel`.
 
-```json
-    "com.gu.standalonefilebrowser": "https://github.com/gkngkc/UnityStandaloneFileBrowser.git",
-```
+**Known limitation:** only the Editor-mode implementation is vendored. `StandaloneFileBrowser.cs`'s static constructor also has `#elif UNITY_STANDALONE_WIN` / `_OSX` / `_LINUX` branches for real player builds, but those reference platform-specific classes (`StandaloneFileBrowserWindows.cs` etc.) and native plugin DLLs (`Ookii.Dialogs.dll`, `System.Windows.Forms.dll` on Windows) that are **not** vendored here — those branches never compile while running in the Editor (`UNITY_STANDALONE_WIN` etc. are undefined in Editor Play mode), so this is safe for now, but a future standalone `.exe` build of this project would need the missing platform file + native plugins added (with correct per-platform plugin import settings, which needs to be done via the Unity Editor GUI, not hand-written).
 
-Open Unity afterward and let Package Manager resolve it. Expected: no errors in Console; `SFB.StandaloneFileBrowser` type is available (namespace `SFB`).
+Verify compilation: Open Unity. Expected: no errors in Console; `SFB.StandaloneFileBrowser` type is available (namespace `SFB`).
 
 - [ ] **Step 2: Create CanvasInteractionController.cs**
 
@@ -1895,7 +1896,7 @@ Open Unity. Expected: no errors.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add Assets/WorldGen/Notes/Rendering/CanvasInteractionController.cs Assets/WorldGen/Notes/Rendering/ImagePicker.cs Assets/WorldGen/Notes/Rendering/ClipboardImage.cs Assets/WorldGen/Notes/Rendering/NotesToolbar.cs Assets/WorldGen/Notes/Rendering/NotesCanvasController.cs Assets/WorldGen/Notes/Rendering/NoteCardView.cs Assets/WorldGen/Notes/Rendering/ImageObjectView.cs Assets/WorldGen/Notes/Rendering/DrawingObjectView.cs Packages/manifest.json
+git add Assets/WorldGen/Notes/Rendering/CanvasInteractionController.cs Assets/WorldGen/Notes/Rendering/ImagePicker.cs Assets/WorldGen/Notes/Rendering/ClipboardImage.cs Assets/WorldGen/Notes/Rendering/NotesToolbar.cs Assets/WorldGen/Notes/Rendering/NotesCanvasController.cs Assets/WorldGen/Notes/Rendering/NoteCardView.cs Assets/WorldGen/Notes/Rendering/ImageObjectView.cs Assets/WorldGen/Notes/Rendering/DrawingObjectView.cs Assets/WorldGen/Notes/Rendering/StandaloneFileBrowser/
 git commit -m "feat: CanvasInteractionController + NotesToolbar — tool routing, file-picker image tool, drag old-position fix"
 ```
 

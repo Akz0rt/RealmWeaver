@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "com.gu.standalonefilebrowser": "https://github.com/gkngkc/UnityStandaloneFileBrowser.git",
     "com.nol1fe.delaunator": "https://github.com/nol1fe/delaunator-sharp.git?path=DelaunatorSharp.Unity",
     "com.unity.2d.animation": "13.0.2",
     "com.unity.2d.aseprite": "3.0.1",
