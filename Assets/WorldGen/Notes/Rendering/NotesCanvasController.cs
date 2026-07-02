@@ -86,6 +86,7 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Note_{card.Id}");
                     var view = go.AddComponent<NoteCardView>();
                     view.Initialize(card, CanvasContainer);
+                    view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
                     break;
@@ -95,6 +96,7 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Image_{image.Id}");
                     var view = go.AddComponent<ImageObjectView>();
                     view.Initialize(image, CanvasContainer);
+                    view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[image.Id] = view;
                     break;
@@ -104,6 +106,7 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Drawing_{drawing.Id}");
                     var view = go.AddComponent<DrawingObjectView>();
                     view.Initialize(drawing, CanvasContainer);
+                    view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[drawing.Id] = view;
                     break;

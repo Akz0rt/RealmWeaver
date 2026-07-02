@@ -16,6 +16,8 @@ namespace WorldGen.Notes.Rendering
         [Header("External refs")]
         [Tooltip("Root RectTransform of the existing map/editor UI, to be anchored to the left two-thirds.")]
         public RectTransform mapAreaRoot;
+        [Tooltip("Camera rendering the 3D map (usually Main Camera / WorldMapRenderer.targetCamera). Its viewport is clamped to the map area.")]
+        public Camera mapCamera;
 
         public NotesDocumentController DocumentController { get; private set; }
         public NotesCanvasController CanvasController { get; private set; }
@@ -41,6 +43,7 @@ namespace WorldGen.Notes.Rendering
             var layout = gameObject.AddComponent<NotesLayoutController>();
             layout.mapAreaRoot = mapAreaRoot;
             layout.notesAreaRoot = notesAreaRect;
+            layout.mapCamera = mapCamera;
             layout.Apply();
 
             var vLayout = notesAreaGO.AddComponent<VerticalLayoutGroup>();

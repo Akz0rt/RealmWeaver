@@ -10,6 +10,7 @@ namespace WorldGen.Notes.Rendering
     /// PaintAt while the Drawing tool is active and the mouse is held over this object;
     /// CommitToData() persists the current pixels back into DrawingObjectData for saving.
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class DrawingObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         DrawingObjectData data;
@@ -23,6 +24,10 @@ namespace WorldGen.Notes.Rendering
         public string ObjectId => data?.Id;
         public CanvasObjectData Data => data;
         public RectTransform RectTransform => rect;
+
+        /// <summary>When set, self-move-drag is only allowed while its ActiveTool is Select — otherwise
+        /// (e.g. Drawing tool) CanvasInteractionController handles the drag itself (painting).</summary>
+        public CanvasInteractionController interactionController;
 
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
@@ -89,6 +94,8 @@ namespace WorldGen.Notes.Rendering
             data.PixelDataPng = texture.EncodeToPNG();
         }
 
+        bool CanSelfMove => interactionController == null || interactionController.ActiveTool == NotesTool.Select;
+
         public void OnPointerDown(PointerEventData eventData)
         {
             dragStartLocalPos = rect.anchoredPosition;
@@ -98,6 +105,7 @@ namespace WorldGen.Notes.Rendering
 
         public void OnDrag(PointerEventData eventData)
         {
+            if (!CanSelfMove) return;
             dragging = true;
             rect.anchoredPosition = dragStartLocalPos + eventData.position - pressScreenPos;
         }

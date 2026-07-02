@@ -418,6 +418,7 @@ namespace WorldGen.Notes.Rendering
     /// Draggable card showing a NoteCardData's title + body. Drag moves it within its
     /// parent canvas container; a plain click (no movement) fires OnClicked instead.
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class NoteCardView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         NoteCardData data;
@@ -581,6 +582,7 @@ namespace WorldGen.Notes.Rendering
     /// Draggable image object. Decodes ImageObjectData.ImageBytes into a texture on
     /// Initialize (first frame only for animated GIFs — Texture2D.LoadImage doesn't animate).
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class ImageObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         ImageObjectData data;
@@ -702,6 +704,7 @@ namespace WorldGen.Notes.Rendering
     /// PaintAt while the Drawing tool is active and the mouse is held over this object;
     /// CommitToData() persists the current pixels back into DrawingObjectData for saving.
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class DrawingObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         DrawingObjectData data;

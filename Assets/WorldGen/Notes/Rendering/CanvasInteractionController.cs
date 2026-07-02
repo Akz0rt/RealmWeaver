@@ -50,8 +50,10 @@ namespace WorldGen.Notes.Rendering
                 HandlePress();
             else if (Mouse.current.leftButton.isPressed && panning)
                 HandlePan();
+            else if (Mouse.current.leftButton.isPressed && paintingDrawingObjectId != null)
+                HandlePaintDrag();
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
-                panning = false;
+                HandleRelease();
 
             float scroll = Mouse.current.scroll.ReadValue().y;
             if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(Mouse.current.position.ReadValue()))
@@ -73,7 +75,16 @@ namespace WorldGen.Notes.Rendering
                     undoManager.PushCreateNoteCard(canvasController, ScreenToCanvasPoint(screenPos));
                     break;
                 case NotesTool.Drawing:
-                    undoManager.PushCreateDrawing(canvasController, ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
+                    var existingDrawing = FindDrawingObjectAt(screenPos);
+                    if (existingDrawing != null)
+                    {
+                        paintingDrawingObjectId = existingDrawing.ObjectId;
+                        PaintAtScreenPos(existingDrawing, screenPos);
+                    }
+                    else
+                    {
+                        undoManager.PushCreateDrawing(canvasController, ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
+                    }
                     break;
                 case NotesTool.Image:
                     var bytes = ImagePicker.OpenFileDialog();
@@ -89,6 +100,48 @@ namespace WorldGen.Notes.Rendering
             Vector2 delta = screenPos - lastPanScreenPos;
             lastPanScreenPos = screenPos;
             canvasController.Pan(delta);
+        }
+
+        void HandlePaintDrag()
+        {
+            if (canvasController.GetView(paintingDrawingObjectId) is not DrawingObjectView view)
+            {
+                paintingDrawingObjectId = null;
+                return;
+            }
+            PaintAtScreenPos(view, Mouse.current.position.ReadValue());
+        }
+
+        void HandleRelease()
+        {
+            panning = false;
+            if (paintingDrawingObjectId != null)
+            {
+                if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view)
+                    view.CommitToData();
+                paintingDrawingObjectId = null;
+            }
+        }
+
+        /// <summary>Finds the topmost existing DrawingObjectView on the active page whose rect contains the given screen point, or null.</summary>
+        DrawingObjectView FindDrawingObjectAt(Vector2 screenPos)
+        {
+            var page = canvasController.documentController.ActivePage;
+            if (page == null) return null;
+            foreach (var obj in page.Objects)
+            {
+                if (obj is not DrawingObjectData) continue;
+                if (canvasController.GetView(obj.Id) is DrawingObjectView view
+                    && RectTransformUtility.RectangleContainsScreenPoint(view.RectTransform, screenPos, uiCamera))
+                    return view;
+            }
+            return null;
+        }
+
+        void PaintAtScreenPos(DrawingObjectView view, Vector2 screenPos)
+        {
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(view.RectTransform, screenPos, uiCamera, out var local);
+            view.PaintAt(local, brushRadius, brushColor);
         }
 
         bool IsOverViewport(Vector2 screenPos)

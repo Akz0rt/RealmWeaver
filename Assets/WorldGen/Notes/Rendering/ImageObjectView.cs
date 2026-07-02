@@ -9,6 +9,7 @@ namespace WorldGen.Notes.Rendering
     /// Draggable image object. Decodes ImageObjectData.ImageBytes into a texture on
     /// Initialize (first frame only for animated GIFs — Texture2D.LoadImage doesn't animate).
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class ImageObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         ImageObjectData data;
@@ -21,6 +22,9 @@ namespace WorldGen.Notes.Rendering
         public string ObjectId => data?.Id;
         public CanvasObjectData Data => data;
         public RectTransform RectTransform => rect;
+
+        /// <summary>When set, self-move-drag is only allowed while its ActiveTool is Select.</summary>
+        public CanvasInteractionController interactionController;
 
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
@@ -59,8 +63,11 @@ namespace WorldGen.Notes.Rendering
             dragging = false;
         }
 
+        bool CanSelfMove => interactionController == null || interactionController.ActiveTool == NotesTool.Select;
+
         public void OnDrag(PointerEventData eventData)
         {
+            if (!CanSelfMove) return;
             dragging = true;
             rect.anchoredPosition = dragStartLocalPos + eventData.position - pressScreenPos;
         }

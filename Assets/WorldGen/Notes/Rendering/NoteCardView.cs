@@ -9,6 +9,7 @@ namespace WorldGen.Notes.Rendering
     /// Draggable card showing a NoteCardData's title + body. Drag moves it within its
     /// parent canvas container; a plain click (no movement) fires OnClicked instead.
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class NoteCardView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
     {
         NoteCardData data;
@@ -22,6 +23,9 @@ namespace WorldGen.Notes.Rendering
         public string ObjectId => data?.Id;
         public CanvasObjectData Data => data;
         public RectTransform RectTransform => rect;
+
+        /// <summary>When set, self-move-drag is only allowed while its ActiveTool is Select.</summary>
+        public CanvasInteractionController interactionController;
 
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
@@ -104,8 +108,11 @@ namespace WorldGen.Notes.Rendering
             dragging = false;
         }
 
+        bool CanSelfMove => interactionController == null || interactionController.ActiveTool == NotesTool.Select;
+
         public void OnDrag(PointerEventData eventData)
         {
+            if (!CanSelfMove) return;
             dragging = true;
             rect.anchoredPosition = dragStartLocalPos + eventData.position - pressScreenPos;
         }

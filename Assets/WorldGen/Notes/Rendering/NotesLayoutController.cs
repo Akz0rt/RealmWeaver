@@ -13,6 +13,8 @@ namespace WorldGen.Notes.Rendering
         public RectTransform mapAreaRoot;
         [Tooltip("Root RectTransform containing the notes editor UI. Anchored to the right third.")]
         public RectTransform notesAreaRoot;
+        [Tooltip("Camera rendering the 3D map (WorldMapRenderer.targetCamera). Its viewport rect is clamped to the map area so the map doesn't render underneath the notes UI.")]
+        public Camera mapCamera;
 
         [Range(0.1f, 0.9f)]
         [Tooltip("Fraction of screen width given to the map area; the rest goes to notes.")]
@@ -41,6 +43,9 @@ namespace WorldGen.Notes.Rendering
                 notesAreaRoot.offsetMin = Vector2.zero;
                 notesAreaRoot.offsetMax = Vector2.zero;
             }
+
+            if (mapCamera != null)
+                mapCamera.rect = new Rect(0f, 0f, splitFraction, 1f);
         }
     }
 }

@@ -1,8 +1,12 @@
 // Vendored from https://github.com/gkngkc/UnityStandaloneFileBrowser (MIT license).
 // See IStandaloneFileBrowser.cs for why this is vendored instead of a package dependency,
-// and for the standalone-build limitation (only the Editor-mode branch below is vendored;
-// the UNITY_STANDALONE_WIN/OSX/LINUX branches reference platform classes not included here
-// and would need to be added, along with their native plugin DLLs, for a real player build).
+// and for the standalone-build limitation. Modified from upstream: the original static
+// constructor picks a platform wrapper via #if UNITY_STANDALONE_OSX/_WIN/_LINUX/UNITY_EDITOR,
+// but UNITY_STANDALONE_WIN is defined here too (active build target is Windows), which took
+// priority over UNITY_EDITOR in that #elif chain and referenced StandaloneFileBrowserWindows —
+// a class this project doesn't vendor (needs native Ookii.Dialogs/System.Windows.Forms plugin
+// DLLs not included here). Only the Editor-mode branch is kept; a real standalone build would
+// need StandaloneFileBrowserWindows.cs + those native plugins added back.
 using System;
 
 namespace SFB {
@@ -20,13 +24,7 @@ namespace SFB {
         private static IStandaloneFileBrowser _platformWrapper = null;
 
         static StandaloneFileBrowser() {
-#if UNITY_STANDALONE_OSX
-            _platformWrapper = new StandaloneFileBrowserMac();
-#elif UNITY_STANDALONE_WIN
-            _platformWrapper = new StandaloneFileBrowserWindows();
-#elif UNITY_STANDALONE_LINUX
-            _platformWrapper = new StandaloneFileBrowserLinux();
-#elif UNITY_EDITOR
+#if UNITY_EDITOR
             _platformWrapper = new StandaloneFileBrowserEditor();
 #endif
         }
