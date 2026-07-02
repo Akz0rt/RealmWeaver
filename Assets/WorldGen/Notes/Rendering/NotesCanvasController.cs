@@ -15,6 +15,7 @@ namespace WorldGen.Notes.Rendering
         public NotesDocumentController documentController;
         [Tooltip("Viewport RectTransform that clips the canvas content (mask/scroll area).")]
         public RectTransform viewport;
+        public CanvasInteractionController interactionController;
 
         public RectTransform CanvasContainer { get; private set; }
 
@@ -85,6 +86,7 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Note_{card.Id}");
                     var view = go.AddComponent<NoteCardView>();
                     view.Initialize(card, CanvasContainer);
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
                     break;
                 }
@@ -93,6 +95,7 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Image_{image.Id}");
                     var view = go.AddComponent<ImageObjectView>();
                     view.Initialize(image, CanvasContainer);
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[image.Id] = view;
                     break;
                 }
@@ -101,10 +104,21 @@ namespace WorldGen.Notes.Rendering
                     var go = new GameObject($"Drawing_{drawing.Id}");
                     var view = go.AddComponent<DrawingObjectView>();
                     view.Initialize(drawing, CanvasContainer);
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[drawing.Id] = view;
                     break;
                 }
             }
+        }
+
+        void WireEvents(string objectId,
+            System.Action<(System.Action<string> onClicked, System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> onDragEnded)> subscribe)
+        {
+            if (interactionController == null) return;
+            subscribe((
+                onClicked: id => interactionController.HandleObjectClicked(id),
+                onDragEnded: (id, oldPos, newPos) => interactionController.HandleObjectDragEnded(id, oldPos, newPos)
+            ));
         }
 
         void SpawnLink(LinkData link)
