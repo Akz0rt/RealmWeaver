@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using WorldGen.Generation;
 
@@ -11,8 +12,13 @@ namespace WorldGen.Rendering
     /// - Drag marker → reposition; commits WorldPosition + OwnerCellId on mouse-up.
     ///
     /// Uses distance-based hit detection (no physics layers needed).
-    /// Sets InputConsumedThisFrame = true when claiming input so CellSelectionController skips.
+    /// Sets InputConsumedThisFrame = true when claiming input so CellSelectionController and
+    /// BrushToolController skip. DefaultExecutionOrder(-100) guarantees this runs its Update()
+    /// before those two on the very same press frame - otherwise, with unspecified script order,
+    /// they could still see InputConsumedThisFrame == false on the first frame of a POI press
+    /// and briefly select a cell / paint under the cursor before this claims the flag.
     /// </summary>
+    [DefaultExecutionOrder(-100)]
     public class PoiInteractionController : MonoBehaviour
     {
         [Header("Dependencies")]
@@ -22,7 +28,7 @@ namespace WorldGen.Rendering
 
         [Header("Interaction settings")]
         [Tooltip("World-unit radius around a POI center that counts as a hit.")]
-        public float selectRadius = 8f;
+        public float selectRadius = 12f;
         [Tooltip("Screen pixels moved before a press becomes a drag instead of a click.")]
         public float dragThresholdPixels = 5f;
 
@@ -58,6 +64,11 @@ namespace WorldGen.Rendering
 
         void OnPress()
         {
+            // Ignore clicks that land on UI (edit fields, buttons, etc.) — otherwise clicking
+            // into the name/description InputField reads as an empty-map click and deselects.
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+                return;
+
             var mousePos = Mouse.current.position.ReadValue();
             var worldXZ = ProjectToMapPlane(mousePos);
             var hit = FindNearestPoi(worldXZ);

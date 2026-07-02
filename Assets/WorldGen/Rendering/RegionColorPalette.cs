@@ -40,12 +40,10 @@ namespace WorldGen.Rendering
         /// уровнем моря" в традиционном смысле. Вода (океан/озеро) определяется через biome,
         /// а не через сравнение height с порогом - elevation суши уже всегда начинается от 0.
         /// </summary>
-        public static Color GetHeightColor(float height, Biome biome)
+        public static Color GetHeightColor(float height, Biome biome, float waterDepth01 = 0f)
         {
-            if (biome == Biome.Ocean)
-                return new Color(0.10f, 0.25f, 0.50f);
-            if (biome == Biome.Lake)
-                return new Color(0.30f, 0.55f, 0.65f);
+            if (biome == Biome.Ocean) return GetWaterColor(waterDepth01, isOcean: true);
+            if (biome == Biome.Lake) return GetWaterColor(waterDepth01, isOcean: false);
 
             float h = Mathf.Clamp01(height);
 
@@ -56,6 +54,29 @@ namespace WorldGen.Rendering
             if (h < 0.80f)
                 return Color.Lerp(new Color(0.50f, 0.45f, 0.40f), new Color(0.40f, 0.35f, 0.30f), (h - 0.55f) / 0.25f); // горы
             return Color.white; // снег на пиках
+        }
+
+        /// <summary>
+        /// Цвет воды по "глубине" [0=мелководье у берега, 1=самая глубокая точка] - имитирует
+        /// видимый сквозь толщу воды подводный рельеф материка: мелководье светлее и зеленее
+        /// (виден песчаный/скалистый шельф), глубокая часть - тёмно-синяя. Чисто визуальный
+        /// приём поверх плоского меша (Y=0 везде) - геометрия воды не меняется.
+        /// </summary>
+        public static Color GetWaterColor(float depth01, bool isOcean)
+        {
+            float d = Mathf.Clamp01(depth01);
+            if (isOcean)
+            {
+                Color shallow = new Color(0.20f, 0.45f, 0.55f); // мелководье/шельф у берега
+                Color deep = new Color(0.05f, 0.12f, 0.30f);    // глубокий океан
+                return Color.Lerp(shallow, deep, d);
+            }
+            else
+            {
+                Color shallow = new Color(0.45f, 0.65f, 0.60f); // мелководье озера
+                Color deep = new Color(0.20f, 0.40f, 0.50f);    // глубокая часть озера
+                return Color.Lerp(shallow, deep, d);
+            }
         }
 
         public static Color GetBiomeColor(Biome biome)

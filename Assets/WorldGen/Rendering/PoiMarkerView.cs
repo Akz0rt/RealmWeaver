@@ -12,37 +12,42 @@ namespace WorldGen.Rendering
     {
         PoiData poiData;
         SpriteRenderer iconRenderer;
+        Transform iconTransform;
         TextMesh label;
-        float iconWorldSize;
+        Transform labelTransform;
+        float yOffset;
+        float baseIconWorldSize;
+        float baseLabelCharacterSize;
 
         public string PoiId => poiData?.Id;
         public System.Numerics.Vector2 WorldPos => poiData?.WorldPosition ?? default;
 
         /// <summary>
         /// Sets up child icon + label GameObjects. Must be called once after AddComponent.
-        /// yOffset: Y above map surface. iconWorldSize: world-unit side of the icon quad.
+        /// yOffset: Y above map surface. baseIconWorldSize/baseLabelCharacterSize: shared defaults,
+        /// further multiplied per-instance by poiData.IconScale / poiData.LabelScale in Refresh().
         /// </summary>
-        public void Initialize(PoiData data, float yOffset, float iconWorldSize)
+        public void Initialize(PoiData data, float yOffset, float baseIconWorldSize, float baseLabelCharacterSize)
         {
             poiData = data;
-            this.iconWorldSize = iconWorldSize;
+            this.yOffset = yOffset;
+            this.baseIconWorldSize = baseIconWorldSize;
+            this.baseLabelCharacterSize = baseLabelCharacterSize;
 
             // Icon — lies flat in XZ plane (rotate -90° around X so sprite faces up)
             var iconGO = new GameObject("Icon");
             iconGO.transform.SetParent(transform, false);
-            iconGO.transform.localPosition = new Vector3(0f, yOffset, 0f);
             iconGO.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
-            iconGO.transform.localScale = new Vector3(iconWorldSize, iconWorldSize, 1f);
+            iconTransform = iconGO.transform;
             iconRenderer = iconGO.AddComponent<SpriteRenderer>();
 
             // Label — flat text slightly north of the icon in XZ (faces up)
             var labelGO = new GameObject("Label");
             labelGO.transform.SetParent(transform, false);
-            labelGO.transform.localPosition = new Vector3(0f, yOffset, iconWorldSize * 0.5f + 1.5f);
             labelGO.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            labelTransform = labelGO.transform;
             label = labelGO.AddComponent<TextMesh>();
-            label.characterSize = 0.5f;
-            label.fontSize = 24;
+            label.fontSize = 48;
             label.color = Color.white;
             label.anchor = TextAnchor.LowerCenter;
             label.alignment = TextAlignment.Center;
@@ -67,6 +72,18 @@ namespace WorldGen.Rendering
 
             if (iconRenderer != null) iconRenderer.sprite = sprite;
             if (label != null) label.text = poiData.Name;
+
+            // Icon/label sizes are the shared base multiplied by this POI's individual scale.
+            float iconWorldSize = baseIconWorldSize * poiData.IconScale;
+            if (iconTransform != null)
+            {
+                iconTransform.localPosition = new Vector3(0f, yOffset, 0f);
+                iconTransform.localScale = new Vector3(iconWorldSize, iconWorldSize, 1f);
+            }
+            if (labelTransform != null)
+                labelTransform.localPosition = new Vector3(0f, yOffset, iconWorldSize * 0.5f + 1.5f);
+            if (label != null)
+                label.characterSize = baseLabelCharacterSize * poiData.LabelScale;
 
             // Sync local position to data
             transform.localPosition = new Vector3(poiData.WorldPosition.X, 0f, poiData.WorldPosition.Y);

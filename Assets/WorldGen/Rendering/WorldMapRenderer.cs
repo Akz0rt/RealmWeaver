@@ -112,6 +112,8 @@ namespace WorldGen.Rendering
 
         List<VoronoiCell> cells;
         Dictionary<int, VoronoiCell> cellById;
+        Dictionary<int, int> oceanDistanceFromLand; // только для океанских клеток - BFS-расстояние (в клетках) от ближайшей не-океанской суши, для чисто визуальной "глубины"
+        int maxOceanDistanceFromLand = 1;
         List<Corner> corners;
         List<TemperatureEpicenter> epicenters;
         List<MoistureEpicenter> moistureEpicenters;
@@ -640,6 +642,7 @@ namespace WorldGen.Rendering
 
             cellById = new Dictionary<int, VoronoiCell>(cells.Count);
             foreach (var c in cells) cellById[c.Id] = c;
+            oceanDistanceFromLand = ComputeOceanDistanceFromLand();
 
             var vertices = new List<Vector3>();
             var colors = new List<Color>();
@@ -795,6 +798,70 @@ namespace WorldGen.Rendering
             return g;
         }
 
+        /// <summary>
+        /// Multi-source BFS по клеткам от берега (не-океанских клеток) вглубь океана - чисто
+        /// визуальное расстояние "как далеко от суши", НЕ elevation. EffectiveElevation у океанских
+        /// клеток почти всегда 0 (см. ElevationField.ApplyElevation), поэтому она не подходит для
+        /// имитации "чем дальше от берега - тем глубже"; это расстояние - отдельная метрика для рендера.
+        /// </summary>
+        Dictionary<int, int> ComputeOceanDistanceFromLand()
+        {
+            var distance = new Dictionary<int, int>();
+            var queue = new Queue<int>();
+
+            foreach (var cell in cells)
+            {
+                if (cell.EffectiveIsOcean) continue;
+                distance[cell.Id] = 0;
+                foreach (int nId in cell.NeighborIds)
+                {
+                    if (!cellById.TryGetValue(nId, out var n)) continue;
+                    if (n.EffectiveIsOcean && !distance.ContainsKey(n.Id))
+                    {
+                        distance[n.Id] = 1;
+                        queue.Enqueue(n.Id);
+                    }
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                int currentId = queue.Dequeue();
+                int currentDist = distance[currentId];
+                if (!cellById.TryGetValue(currentId, out var current)) continue;
+
+                foreach (int nId in current.NeighborIds)
+                {
+                    if (distance.ContainsKey(nId)) continue;
+                    if (!cellById.TryGetValue(nId, out var n) || !n.EffectiveIsOcean) continue;
+                    distance[nId] = currentDist + 1;
+                    queue.Enqueue(nId);
+                }
+            }
+
+            maxOceanDistanceFromLand = 1;
+            foreach (var cell in cells)
+                if (cell.EffectiveIsOcean && distance.TryGetValue(cell.Id, out var d) && d > maxOceanDistanceFromLand)
+                    maxOceanDistanceFromLand = d;
+
+            return distance;
+        }
+
+        /// <summary>[0,1] "глубина" океанской клетки по расстоянию от берега - 0 у берега, 1 в самой дальней от суши точке. Клетки без записи (не должно случаться для океана) считаются мелководьем.</summary>
+        float GetOceanDepth01(VoronoiCell cell)
+        {
+            if (oceanDistanceFromLand == null) return 0f;
+            if (!oceanDistanceFromLand.TryGetValue(cell.Id, out var d)) return 0f;
+            return (float)d / maxOceanDistanceFromLand;
+        }
+
+        /// <summary>[0,1] "глубина" любой водной клетки для окраски рельефа: океан - по расстоянию от берега, озеро - по elevation (ниже elevation = глубже, т.к. озёра малы и BFS-расстояние там не даёт полезного градиента).</summary>
+        float GetWaterDepth01(VoronoiCell cell)
+        {
+            if (cell.EffectiveIsOcean) return GetOceanDepth01(cell);
+            return 1f - Mathf.Clamp01(cell.EffectiveElevation);
+        }
+
         Color GetColorForCell(VoronoiCell cell)
         {
             switch (displayMode)
@@ -805,7 +872,7 @@ namespace WorldGen.Rendering
                     Biome heightBiome = cell.EffectiveIsOcean ? Biome.Ocean
                                       : cell.EffectiveIsLake ? Biome.Lake
                                       : cell.Biome;
-                    return RegionColorPalette.GetHeightColor(cell.EffectiveElevation, heightBiome);
+                    return RegionColorPalette.GetHeightColor(cell.EffectiveElevation, heightBiome, GetWaterDepth01(cell));
 
                 case MapDisplayMode.Biome:
                     // cell.Biome уже пересчитан через CellOverrideService.RecomputeBiome при любом override.
@@ -818,15 +885,28 @@ namespace WorldGen.Rendering
                                    : cell.Biome;
                     bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
 
-                    Color baseColor = showBiomeLayer
-                        ? RegionColorPalette.GetBiomeColor(effBiome)
-                        : RegionColorPalette.GetNeutralBaseColor(cell);
+                    Color baseColor;
+                    if (isWater && showReliefLayer)
+                    {
+                        // Подводный рельеф: цвет по глубине, а не плоская заливка - имитирует
+                        // видимый сквозь воду шельф материка (для океана - расстояние от берега,
+                        // чем дальше - тем глубже; для озера - по elevation).
+                        baseColor = RegionColorPalette.GetWaterColor(GetWaterDepth01(cell), cell.EffectiveIsOcean);
+                    }
+                    else
+                    {
+                        baseColor = showBiomeLayer
+                            ? RegionColorPalette.GetBiomeColor(effBiome)
+                            : RegionColorPalette.GetNeutralBaseColor(cell);
+                    }
 
-                    if (showReliefLayer && !isWater)
+                    if (showReliefLayer)
                     {
                         var grad = ComputeCellGradient(cell);
                         float b = RegionColorPalette.HillshadeBrightness(
                             grad.X, grad.Y, reliefStrength, reliefLightAzimuth, reliefAmbient);
+                        // Подводный рельеф затеняем мягче (вода приглушает контраст света/тени).
+                        if (isWater) b = Mathf.Lerp(1f, b, 0.5f);
                         baseColor = new Color(baseColor.r * b, baseColor.g * b, baseColor.b * b, baseColor.a);
                     }
                     return baseColor;
@@ -836,7 +916,7 @@ namespace WorldGen.Rendering
                 default:
                     // Используем EffectiveIsOcean - учитывает WaterOverride.
                     if (cell.EffectiveIsOcean)
-                        return new Color(0.15f, 0.35f, 0.60f);
+                        return RegionColorPalette.GetWaterColor(GetOceanDepth01(cell), isOcean: true);
                     return RegionColorPalette.GetRegionColor(cell.RegionId);
             }
         }

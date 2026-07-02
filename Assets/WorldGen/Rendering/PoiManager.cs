@@ -19,8 +19,10 @@ namespace WorldGen.Rendering
         [Header("Marker settings")]
         [Tooltip("Y height above map surface for POI markers.")]
         public float poiYOffset = 0.5f;
-        [Tooltip("Icon side length in world units. Tune to fit ~half a cell diameter (~7-10).")]
-        public float iconWorldSize = 8f;
+        [Tooltip("Base icon side length in world units, before per-POI IconScale is applied.")]
+        public float iconWorldSize = 36f;
+        [Tooltip("Base label character size, before per-POI LabelScale is applied.")]
+        public float labelCharacterSize = 1.5f;
 
         readonly List<PoiData> pois = new List<PoiData>();
         readonly Dictionary<string, PoiMarkerView> markers = new Dictionary<string, PoiMarkerView>();
@@ -56,41 +58,30 @@ namespace WorldGen.Rendering
 
         // ── Generation ─────────────────────────────────────────────────────────
 
-        /// <summary>Clears existing POIs and generates new ones from counts per type.</summary>
-        public void GenerateAll(Dictionary<PoiType, int> counts)
+        /// <summary>Clears existing POIs and generates count new ones, all typed Unknown. DM assigns types afterwards.</summary>
+        public void GenerateAll(int count)
         {
             ClearAll();
             if (mapRenderer?.Cells == null) return;
 
             var candidates = mapRenderer.Cells
                 .Where(c => !c.IsOcean)
-                .OrderBy(_ => Guid.NewGuid()) // shuffle
+                .OrderBy(_ => Guid.NewGuid())
+                .Take(count)
                 .ToList();
 
-            var occupiedCellIds = new HashSet<int>();
-
-            foreach (var kv in counts)
+            foreach (var cell in candidates)
             {
-                var type = kv.Key;
-                int remaining = kv.Value;
-                foreach (var cell in candidates)
-                {
-                    if (remaining <= 0) break;
-                    if (occupiedCellIds.Contains(cell.Id)) continue;
-
-                    var poi = MakePoi(type, cell);
-                    pois.Add(poi);
-                    occupiedCellIds.Add(cell.Id);
-                    SpawnMarker(poi);
-                    remaining--;
-                }
+                var poi = MakePoi(PoiType.Unknown, cell);
+                pois.Add(poi);
+                SpawnMarker(poi);
             }
 
             OnPoisChanged?.Invoke();
         }
 
-        /// <summary>Adds a single POI of the given type to a random unoccupied non-ocean cell.</summary>
-        public void AddOne(PoiType type)
+        /// <summary>Adds a single typeless POI to a random unoccupied non-ocean cell.</summary>
+        public void AddOne()
         {
             if (mapRenderer?.Cells == null) return;
 
@@ -102,7 +93,7 @@ namespace WorldGen.Rendering
             if (candidates.Count == 0) return;
 
             var cell = candidates[UnityEngine.Random.Range(0, candidates.Count)];
-            var poi = MakePoi(type, cell);
+            var poi = MakePoi(PoiType.Unknown, cell);
             pois.Add(poi);
             SpawnMarker(poi);
             OnPoisChanged?.Invoke();
@@ -144,12 +135,53 @@ namespace WorldGen.Rendering
             if (poi != null) poi.Description = desc;
         }
 
+        public void UpdatePoiType(string id, PoiType type)
+        {
+            var poi = pois.FirstOrDefault(p => p.Id == id);
+            if (poi == null) return;
+            poi.Type = type;
+            if (markers.TryGetValue(id, out var m)) m.Refresh();
+        }
+
         public void UpdatePoiSpritePath(string id, string path)
         {
             var poi = pois.FirstOrDefault(p => p.Id == id);
             if (poi == null) return;
             poi.CustomSpritePath = path;
             if (markers.TryGetValue(id, out var m)) m.Refresh();
+        }
+
+        public void UpdatePoiIconScale(string id, float scale)
+        {
+            var poi = pois.FirstOrDefault(p => p.Id == id);
+            if (poi == null) return;
+            poi.IconScale = scale;
+            if (markers.TryGetValue(id, out var m)) m.Refresh();
+        }
+
+        public void UpdatePoiLabelScale(string id, float scale)
+        {
+            var poi = pois.FirstOrDefault(p => p.Id == id);
+            if (poi == null) return;
+            poi.LabelScale = scale;
+            if (markers.TryGetValue(id, out var m)) m.Refresh();
+        }
+
+        public void SnapOwnerCellToPosition(string id)
+        {
+            var poi = pois.FirstOrDefault(p => p.Id == id);
+            if (poi == null || mapRenderer?.Cells == null) return;
+            float bestDistSq = float.MaxValue;
+            int bestCell = poi.OwnerCellId;
+            foreach (var cell in mapRenderer.Cells)
+            {
+                float dx = cell.Site.X - poi.WorldPosition.X;
+                float dy = cell.Site.Y - poi.WorldPosition.Y;
+                float dSq = dx * dx + dy * dy;
+                if (dSq < bestDistSq) { bestDistSq = dSq; bestCell = cell.Id; }
+            }
+            poi.OwnerCellId = bestCell;
+            OnPoisChanged?.Invoke();
         }
 
         public void MovePoiTo(string id, System.Numerics.Vector2 pos, int newOwnerCellId)
@@ -199,7 +231,7 @@ namespace WorldGen.Rendering
             var go = new GameObject($"POI_{poi.Id}");
             go.transform.SetParent(poiContainer, false);
             var view = go.AddComponent<PoiMarkerView>();
-            view.Initialize(poi, poiYOffset, iconWorldSize);
+            view.Initialize(poi, poiYOffset, iconWorldSize, labelCharacterSize);
             markers[poi.Id] = view;
         }
 
@@ -214,6 +246,7 @@ namespace WorldGen.Rendering
         {
             switch (type)
             {
+                case PoiType.Unknown:  return "Точка интереса";
                 case PoiType.City:     return "Город";
                 case PoiType.Ruin:     return "Руины";
                 case PoiType.Dungeon:  return "Подземелье";
@@ -234,29 +267,14 @@ namespace WorldGen.Rendering
                     { IsOcean = false });
 
             // Directly exercise the placement logic (without WorldMapRenderer).
-            var occupiedCellIds = new HashSet<int>();
-            var placed = new List<PoiData>();
-            var counts = new Dictionary<PoiType, int>
-            {
-                { PoiType.City,    2 },
-                { PoiType.Dungeon, 1 },
-            };
+            const int wantCount = 3;
+            var placed = fixtureCells
+                .OrderBy(_ => Guid.NewGuid())
+                .Take(wantCount)
+                .Select(cell => MakePoi(PoiType.Unknown, cell))
+                .ToList();
 
-            var candidates = fixtureCells.OrderBy(_ => Guid.NewGuid()).ToList();
-            foreach (var kv in counts)
-            {
-                int rem = kv.Value;
-                foreach (var cell in candidates)
-                {
-                    if (rem <= 0) break;
-                    if (occupiedCellIds.Contains(cell.Id)) continue;
-                    placed.Add(MakePoi(kv.Key, cell));
-                    occupiedCellIds.Add(cell.Id);
-                    rem--;
-                }
-            }
-
-            bool countOk = placed.Count == 3;
+            bool countOk = placed.Count == wantCount;
             bool cellsValid = placed.All(p => p.OwnerCellId >= 0 && p.OwnerCellId < 5);
             bool noDuplicates = placed.Select(p => p.OwnerCellId).Distinct().Count() == placed.Count;
 
@@ -274,8 +292,8 @@ namespace WorldGen.Rendering
             {
                 var sprite = PoiPlaceholderFactory.GetPlaceholder(type);
                 bool spriteOk = sprite != null
-                    && sprite.texture.width == 32
-                    && sprite.texture.height == 32;
+                    && sprite.texture.width == 64
+                    && sprite.texture.height == 64;
                 if (!spriteOk)
                 {
                     Debug.Log($"Self-Test POI Placeholder Factory: FAIL — {type} sprite invalid");

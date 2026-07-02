@@ -11,17 +11,8 @@ namespace WorldGen.Rendering
     public enum EditorMode { SelectionOverride, Brush }
 
     /// <summary>
-    /// Единая UI-панель редактора карты, объединяющая два прежних раздельных инструмента
-    /// (CellOverridePanel + BrushToolPanel) в один Canvas с переключателем режима сверху -
-    /// убирает визуальное перекрытие панелей и одновременно решает конфликт одновременной
-    /// активности CellSelectionController/BrushToolController: переключение режима здесь
-    /// автоматически включает нужный контроллер и выключает другой.
-    ///
-    /// Режимы:
-    /// - Selection & Override: выбор клеток мышкой (клик/Shift/drag) + применение АБСОЛЮТНЫХ
-    ///   значений climate/landscape override через слайдеры/dropdown.
-    /// - Brush: применение ОТНОСИТЕЛЬНОГО изменения (+/-step) к одному параметру при наведении
-    ///   курсора, пока зажата ЛКМ, с историей Undo (Ctrl+Z).
+    /// UI panel with three tabs: Карта (layer toggles), Редактор (cell override/brush), Точки (POI management).
+    /// Uses ScrollRect inside each tab area so content can exceed the panel height.
     /// </summary>
     public class MapEditorPanel : MonoBehaviour
     {
@@ -33,8 +24,6 @@ namespace WorldGen.Rendering
 
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
-        [Tooltip("Maximum height of the editor panel in pixels. Content scrolls if taller.")]
-        public float panelHeight = 700f;
         public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.7f);
         public Color textColor = Color.white;
         public Color sectionHeaderColor = new Color(0.7f, 0.85f, 1f);
@@ -43,6 +32,17 @@ namespace WorldGen.Rendering
 
         EditorMode currentMode = EditorMode.SelectionOverride;
 
+        // Tab system
+        int activeTab = 0;
+        Button[] tabButtons;
+        GameObject[] tabPanels;
+
+        // Panel auto-sizing
+        RectTransform panelRect;
+        RectTransform contentRect;
+        LayoutElement scrollAreaLE;
+
+        // Editor tab
         Button selectionModeButton;
         Button brushModeButton;
         GameObject selectionPanelRoot;
@@ -65,18 +65,9 @@ namespace WorldGen.Rendering
         Text stepValueLabel;
         Toggle increaseToggle;
 
-        // POI section
-        readonly Dictionary<PoiType, int> poiCounts = new Dictionary<PoiType, int>
-        {
-            { PoiType.City, 3 }, { PoiType.Ruin, 2 }, { PoiType.Dungeon, 2 }, { PoiType.Fortress, 1 }
-        };
-        readonly Dictionary<PoiType, Text> poiCountLabels = new Dictionary<PoiType, Text>();
-        GameObject poiEditSubPanel;
-        InputField poiNameField;
-        InputField poiDescField;
-        InputField poiSpritePathField;
-        Text poiTypeLabel;
-        PoiType addPoiType = PoiType.City;
+        // POI tab
+        int poiCount = 5;
+        Text poiCountLabel;
 
         Font builtinFont;
 
@@ -92,61 +83,73 @@ namespace WorldGen.Rendering
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged += HandleSelectionChanged;
-            if (poiManager != null)
-            {
-                poiManager.OnSelectionChanged += HandlePoiSelectionChanged;
-                poiManager.OnPoisChanged += RefreshPoiPanel;
-            }
         }
 
         void OnDisable()
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged -= HandleSelectionChanged;
-            if (poiManager != null)
-            {
-                poiManager.OnSelectionChanged -= HandlePoiSelectionChanged;
-                poiManager.OnPoisChanged -= RefreshPoiPanel;
-            }
         }
 
         static void EnsureEventSystemExists()
         {
             if (EventSystem.current != null) return;
-
             var go = new GameObject("EventSystem (auto-created)");
             go.AddComponent<EventSystem>();
             go.AddComponent<InputSystemUIInputModule>();
-            Debug.Log("MapEditorPanel: EventSystem не найден в сцене - создан автоматически с InputSystemUIInputModule.");
+            Debug.Log("MapEditorPanel: EventSystem создан автоматически с InputSystemUIInputModule.");
         }
 
         void HandleSelectionChanged(IReadOnlyCollection<VoronoiCell> selected)
         {
-            selectionCountLabel.text = $"Выбрано клеток: {selected.Count}";
+            if (selectionCountLabel != null)
+                selectionCountLabel.text = $"Выбрано клеток: {selected.Count}";
         }
 
         void SetMode(EditorMode mode)
         {
             currentMode = mode;
-
             bool selectionActive = mode == EditorMode.SelectionOverride;
-
             if (selectionController != null) selectionController.enabled = selectionActive;
             if (brushController != null) brushController.brushModeActive = !selectionActive;
-
             selectionPanelRoot.SetActive(selectionActive);
             brushPanelRoot.SetActive(!selectionActive);
+            selectionModeButton.GetComponent<Image>().color = selectionActive ? activeModeColor : inactiveModeColor;
+            brushModeButton.GetComponent<Image>().color = !selectionActive ? activeModeColor : inactiveModeColor;
+            RefreshPanelLayout();
+        }
 
-            var selImg = selectionModeButton.GetComponent<Image>();
-            var brushImg = brushModeButton.GetComponent<Image>();
-            selImg.color = selectionActive ? activeModeColor : inactiveModeColor;
-            brushImg.color = !selectionActive ? activeModeColor : inactiveModeColor;
+        void SetTab(int index)
+        {
+            activeTab = index;
+            for (int i = 0; i < tabPanels.Length; i++)
+                tabPanels[i].SetActive(i == index);
+            for (int i = 0; i < tabButtons.Length; i++)
+                tabButtons[i].GetComponent<Image>().color = i == index ? activeModeColor : inactiveModeColor;
+            RefreshPanelLayout();
+        }
+
+        void RefreshPanelLayout()
+        {
+            if (tabPanels == null || panelRect == null) return;
+
+            Canvas.ForceUpdateCanvases();
+            var activePanelRect = tabPanels[activeTab].GetComponent<RectTransform>();
+            float contentHeight = LayoutUtility.GetPreferredHeight(activePanelRect);
+
+            const float tabBarHeight = 24f;
+            const float contentPadding = 16f; // Content VerticalLayoutGroup top+bottom padding
+            float maxScreenHeight = Screen.height - Mathf.Abs(panelAnchoredPosition.y) - 20f;
+            float desiredScrollHeight = Mathf.Min(contentHeight + contentPadding, maxScreenHeight - tabBarHeight);
+
+            scrollAreaLE.flexibleHeight = 0f;
+            scrollAreaLE.preferredHeight = Mathf.Max(desiredScrollHeight, 0f);
+            panelRect.sizeDelta = new Vector2(panelRect.sizeDelta.x, tabBarHeight + scrollAreaLE.preferredHeight);
         }
 
         void ApplyOverride()
         {
             if (mapRenderer == null || selectionController == null) return;
-
             var selected = selectionController.GetSelectedCells().ToList();
             if (selected.Count == 0) return;
 
@@ -154,16 +157,10 @@ namespace WorldGen.Rendering
                 mapRenderer.ApplyClimateOverride(selected, temperatureSlider.value, null);
             if (moistureToggle.isOn)
                 mapRenderer.ApplyClimateOverride(selected, null, moistureSlider.value);
-
             if (elevationToggle.isOn)
                 mapRenderer.ApplyElevationOverride(selected, elevationSlider.value);
-
             if (waterToggle.isOn)
-            {
-                var waterType = (WaterOverrideType)waterDropdown.value;
-                mapRenderer.ApplyWaterOverride(selected, waterType);
-            }
-
+                mapRenderer.ApplyWaterOverride(selected, (WaterOverrideType)waterDropdown.value);
             if (biomeToggle.isOn)
             {
                 int biomeIdx = biomeDropdown.value;
@@ -181,21 +178,20 @@ namespace WorldGen.Rendering
         void ClearAllOverridesOnSelection()
         {
             if (mapRenderer == null || selectionController == null) return;
-
             var selected = selectionController.GetSelectedCells().ToList();
             if (selected.Count == 0) return;
-
             mapRenderer.ClearAllOverrides(selected);
         }
 
         void OnBrushValuesChanged()
         {
             if (brushController == null) return;
-
             brushController.activeTool = (BrushTool)toolDropdown.value;
             brushController.brushStep = stepSlider.value;
             brushController.increaseMode = increaseToggle.isOn;
         }
+
+        // ── UI Construction ──────────────────────────────────────────────────────
 
         void BuildUI()
         {
@@ -206,31 +202,61 @@ namespace WorldGen.Rendering
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
 
+            // Panel: fixed size, vertical stack of tab bar + scroll area
             var panelGO = new GameObject("EditorPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
-            var panelImage = panelGO.AddComponent<Image>();
-            panelImage.color = panelBackgroundColor;
-
-            var panelRect = panelGO.GetComponent<RectTransform>();
+            panelGO.AddComponent<Image>().color = panelBackgroundColor;
+            var panelVLG = panelGO.AddComponent<VerticalLayoutGroup>();
+            panelVLG.childControlWidth = true;
+            panelVLG.childControlHeight = true;
+            panelVLG.childForceExpandWidth = true;
+            panelVLG.childForceExpandHeight = false;
+            panelVLG.spacing = 0f;
+            panelVLG.padding = new RectOffset(0, 0, 0, 0);
+            panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0f, 1f);
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
             panelRect.anchoredPosition = panelAnchoredPosition;
-            panelRect.sizeDelta = new Vector2(300f, panelHeight);
+            panelRect.sizeDelta = new Vector2(300f, Screen.height - Mathf.Abs(panelAnchoredPosition.y));
 
-            // ScrollRect so the panel scrolls when content is taller than panelHeight.
-            var scrollRect = panelGO.AddComponent<ScrollRect>();
+            // Tab bar (fixed, compact height)
+            var tabBarGO = new GameObject("TabBar");
+            tabBarGO.transform.SetParent(panelGO.transform, false);
+            tabBarGO.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.4f);
+            var tabBarHLG = tabBarGO.AddComponent<HorizontalLayoutGroup>();
+            tabBarHLG.spacing = 1f;
+            tabBarHLG.childControlWidth = true;
+            tabBarHLG.childForceExpandWidth = true;
+            tabBarHLG.childControlHeight = true;
+            tabBarHLG.childForceExpandHeight = true;
+            tabBarHLG.padding = new RectOffset(2, 2, 2, 2);
+            tabBarGO.AddComponent<LayoutElement>().preferredHeight = 20f;
+
+            tabButtons = new Button[3];
+            tabButtons[0] = BuildTabButton(tabBarGO.transform, "Карта",    () => SetTab(0));
+            tabButtons[1] = BuildTabButton(tabBarGO.transform, "Редактор", () => SetTab(1));
+            tabButtons[2] = BuildTabButton(tabBarGO.transform, "Точки",    () => SetTab(2));
+
+            // Scroll area: height is recomputed per-tab in RefreshPanelLayout to match content,
+            // capped at maxContentHeight - this is what lets the panel shrink-to-fit instead of
+            // always reserving full scrollable space.
+            var scrollAreaGO = new GameObject("ScrollArea");
+            scrollAreaGO.transform.SetParent(panelGO.transform, false);
+            scrollAreaLE = scrollAreaGO.AddComponent<LayoutElement>();
+            scrollAreaLE.flexibleHeight = 1f;
+
+            var scrollRect = scrollAreaGO.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
             scrollRect.vertical = true;
             scrollRect.scrollSensitivity = 30f;
             scrollRect.movementType = ScrollRect.MovementType.Clamped;
 
+            // Viewport uses RectMask2D — no Image needed, avoids the alpha=0 stencil issue
+            // that made Mask+Image(clear) clip all children.
             var viewportGO = new GameObject("Viewport");
-            viewportGO.transform.SetParent(panelGO.transform, false);
-            var viewportImg = viewportGO.AddComponent<Image>();
-            viewportImg.color = Color.clear;
-            var viewportMask = viewportGO.AddComponent<Mask>();
-            viewportMask.showMaskGraphic = false;
+            viewportGO.transform.SetParent(scrollAreaGO.transform, false);
+            viewportGO.AddComponent<RectMask2D>();
             var viewportRect = viewportGO.GetComponent<RectTransform>();
             viewportRect.anchorMin = Vector2.zero;
             viewportRect.anchorMax = Vector2.one;
@@ -238,17 +264,17 @@ namespace WorldGen.Rendering
             viewportRect.offsetMax = Vector2.zero;
             scrollRect.viewport = viewportRect;
 
+            // Content: grows to fit children via ContentSizeFitter
             var contentGO = new GameObject("Content");
             contentGO.transform.SetParent(viewportGO.transform, false);
-            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 12, 12);
-            layout.spacing = 6f;
-            layout.childControlWidth = true;
-            layout.childControlHeight = false;
-            layout.childForceExpandWidth = true;
-            var fitter = contentGO.AddComponent<ContentSizeFitter>();
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            var contentRect = contentGO.GetComponent<RectTransform>();
+            var contentVLG = contentGO.AddComponent<VerticalLayoutGroup>();
+            contentVLG.padding = new RectOffset(10, 10, 8, 8);
+            contentVLG.spacing = 5f;
+            contentVLG.childControlWidth = true;
+            contentVLG.childControlHeight = false;
+            contentVLG.childForceExpandWidth = true;
+            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            contentRect = contentGO.GetComponent<RectTransform>();
             contentRect.anchorMin = new Vector2(0f, 1f);
             contentRect.anchorMax = new Vector2(1f, 1f);
             contentRect.pivot = new Vector2(0.5f, 1f);
@@ -257,47 +283,36 @@ namespace WorldGen.Rendering
 
             var t = contentGO.transform;
 
-            AddLabel(t, "Map Editor", bold: true);
+            tabPanels = new GameObject[3];
 
-            var modeRowGO = new GameObject("ModeRow");
-            modeRowGO.transform.SetParent(t, false);
-            var modeRowLayout = modeRowGO.AddComponent<HorizontalLayoutGroup>();
-            modeRowLayout.spacing = 4f;
-            modeRowLayout.childControlWidth = true;
-            modeRowLayout.childForceExpandWidth = true;
-            var modeRowLE = modeRowGO.AddComponent<LayoutElement>();
-            modeRowLE.preferredHeight = 28f;
+            tabPanels[0] = MakeTabPanel(t, "MapTab");
+            BuildMapTab(tabPanels[0].transform);
 
-            selectionModeButton = AddModeButton(modeRowGO.transform, "Selection & Override", () => SetMode(EditorMode.SelectionOverride));
-            brushModeButton = AddModeButton(modeRowGO.transform, "Brush", () => SetMode(EditorMode.Brush));
+            tabPanels[1] = MakeTabPanel(t, "EditorTab");
+            BuildEditorTab(tabPanels[1].transform);
 
-            BuildLayersSection(t);
-            BuildPoiSection(t);
+            tabPanels[2] = MakeTabPanel(t, "PoiTab");
+            BuildPoiTab(tabPanels[2].transform);
 
-            selectionPanelRoot = new GameObject("SelectionOverrideSection");
-            selectionPanelRoot.transform.SetParent(t, false);
-            var selRootLayout = selectionPanelRoot.AddComponent<VerticalLayoutGroup>();
-            selRootLayout.spacing = 5f;
-            selRootLayout.childControlWidth = true;
-            selRootLayout.childForceExpandWidth = true;
-            var selRootFitter = selectionPanelRoot.AddComponent<ContentSizeFitter>();
-            selRootFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            BuildSelectionOverrideSection(selectionPanelRoot.transform);
-
-            brushPanelRoot = new GameObject("BrushSection");
-            brushPanelRoot.transform.SetParent(t, false);
-            var brushRootLayout = brushPanelRoot.AddComponent<VerticalLayoutGroup>();
-            brushRootLayout.spacing = 5f;
-            brushRootLayout.childControlWidth = true;
-            brushRootLayout.childForceExpandWidth = true;
-            var brushRootFitter = brushPanelRoot.AddComponent<ContentSizeFitter>();
-            brushRootFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            BuildBrushSection(brushPanelRoot.transform);
+            SetTab(0);
         }
 
-        Button AddModeButton(Transform parent, string label, System.Action onClick)
+        GameObject MakeTabPanel(Transform parent, string name)
         {
-            var go = new GameObject($"ModeBtn_{label}");
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            var vlg = go.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 5f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = false;
+            go.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            return go;
+        }
+
+        Button BuildTabButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"TabBtn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
             img.color = inactiveModeColor;
@@ -310,16 +325,124 @@ namespace WorldGen.Rendering
             var text = textGO.AddComponent<Text>();
             text.text = label;
             text.font = builtinFont;
-            text.fontSize = 11;
+            text.fontSize = 10;
             text.color = Color.white;
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
             tr.anchorMax = Vector2.one;
             tr.sizeDelta = Vector2.zero;
-
             return btn;
         }
+
+        void BuildMapTab(Transform t)
+        {
+            AddLabel(t, "─── Слои ───", bold: false, color: sectionHeaderColor);
+            AddLayerToggleRow(t, "Рельеф",            true, on => mapRenderer?.SetShowReliefLayer(on));
+            AddLayerToggleRow(t, "Биом / климат",     true, on => mapRenderer?.SetShowBiomeLayer(on));
+            AddLayerToggleRow(t, "Границы регионов",  true, on => mapRenderer?.SetShowRegionBordersLayer(on));
+            AddLayerToggleRow(t, "Береговая линия",   true, on => mapRenderer?.SetShowCoastlineLayer(on));
+        }
+
+        void BuildEditorTab(Transform t)
+        {
+            AddLabel(t, "Режим:", bold: false, color: sectionHeaderColor);
+
+            var modeRowGO = new GameObject("ModeRow");
+            modeRowGO.transform.SetParent(t, false);
+            var modeRowHLG = modeRowGO.AddComponent<HorizontalLayoutGroup>();
+            modeRowHLG.spacing = 4f;
+            modeRowHLG.childControlWidth = true;
+            modeRowHLG.childForceExpandWidth = true;
+            modeRowGO.AddComponent<LayoutElement>().preferredHeight = 28f;
+
+            selectionModeButton = AddModeButton(modeRowGO.transform, "Selection & Override",
+                () => SetMode(EditorMode.SelectionOverride));
+            brushModeButton = AddModeButton(modeRowGO.transform, "Brush",
+                () => SetMode(EditorMode.Brush));
+
+            selectionPanelRoot = new GameObject("SelectionOverrideSection");
+            selectionPanelRoot.transform.SetParent(t, false);
+            var selVLG = selectionPanelRoot.AddComponent<VerticalLayoutGroup>();
+            selVLG.spacing = 5f;
+            selVLG.childControlWidth = true;
+            selVLG.childForceExpandWidth = true;
+            selVLG.childControlHeight = false;
+            selectionPanelRoot.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            BuildSelectionOverrideSection(selectionPanelRoot.transform);
+
+            brushPanelRoot = new GameObject("BrushSection");
+            brushPanelRoot.transform.SetParent(t, false);
+            var brushVLG = brushPanelRoot.AddComponent<VerticalLayoutGroup>();
+            brushVLG.spacing = 5f;
+            brushVLG.childControlWidth = true;
+            brushVLG.childForceExpandWidth = true;
+            brushVLG.childControlHeight = false;
+            brushPanelRoot.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            BuildBrushSection(brushPanelRoot.transform);
+        }
+
+        void BuildPoiTab(Transform t)
+        {
+            AddLabel(t, "─── Точки интереса ───", bold: false, color: sectionHeaderColor);
+
+            var countRowGO = new GameObject("PoiCountRow");
+            countRowGO.transform.SetParent(t, false);
+            var cHLG = countRowGO.AddComponent<HorizontalLayoutGroup>();
+            cHLG.spacing = 4f;
+            cHLG.childControlWidth = false;
+            cHLG.childControlHeight = false;
+            countRowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+
+            var cLblGO = new GameObject("Label");
+            cLblGO.transform.SetParent(countRowGO.transform, false);
+            var cLblText = cLblGO.AddComponent<Text>();
+            cLblText.text = "Количество:";
+            cLblText.font = builtinFont;
+            cLblText.fontSize = 12;
+            cLblText.color = textColor;
+            cLblText.alignment = TextAnchor.MiddleLeft;
+            cLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(100f, 22f);
+
+            AddSmallButton(countRowGO.transform, "−", () =>
+            {
+                if (poiCount > 0) poiCount--;
+                if (poiCountLabel != null) poiCountLabel.text = poiCount.ToString();
+            });
+
+            var countDisplayGO = new GameObject("CountDisplay");
+            countDisplayGO.transform.SetParent(countRowGO.transform, false);
+            poiCountLabel = countDisplayGO.AddComponent<Text>();
+            poiCountLabel.text = poiCount.ToString();
+            poiCountLabel.font = builtinFont;
+            poiCountLabel.fontSize = 12;
+            poiCountLabel.color = textColor;
+            poiCountLabel.alignment = TextAnchor.MiddleCenter;
+            countDisplayGO.GetComponent<RectTransform>().sizeDelta = new Vector2(30f, 22f);
+
+            AddSmallButton(countRowGO.transform, "+", () =>
+            {
+                poiCount++;
+                if (poiCountLabel != null) poiCountLabel.text = poiCount.ToString();
+            });
+
+            AddButton(t, "Сгенерировать точки интереса", OnGeneratePois, new Color(0.2f, 0.45f, 0.2f));
+            AddButton(t, "Добавить одну точку", () => poiManager?.AddOne(), new Color(0.2f, 0.4f, 0.6f));
+            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), new Color(0.5f, 0.2f, 0.2f));
+
+            var hint = AddLabel(t, "Кликните по точке на карте, чтобы её отредактировать в отдельной панели.");
+            hint.color = new Color(0.7f, 0.7f, 0.7f);
+            hint.fontSize = 11;
+            hint.fontStyle = FontStyle.Italic;
+        }
+
+        void OnGeneratePois()
+        {
+            if (poiManager == null) return;
+            poiManager.GenerateAll(poiCount);
+        }
+
+        // ── Sub-section builders ─────────────────────────────────────────────────
 
         void BuildSelectionOverrideSection(Transform t)
         {
@@ -332,7 +455,8 @@ namespace WorldGen.Rendering
             AddLabel(t, "─── Ландшафт ───", bold: false, color: sectionHeaderColor);
             (elevationSlider, _, elevationToggle) = AddSliderRow(t, "Elevation", 0.5f);
 
-            var waterOptions = new List<string> { "Не менять", "Суша (ForceLand)", "Озеро (ForceLake)", "Океан (ForceOcean)" };
+            var waterOptions = new List<string>
+                { "Не менять", "Суша (ForceLand)", "Озеро (ForceLake)", "Океан (ForceOcean)" };
             (waterDropdown, waterToggle) = AddDropdownRow(t, "Water-статус", waterOptions);
 
             var biomeNames = new List<string> { "Авто (computed)" };
@@ -367,27 +491,19 @@ namespace WorldGen.Rendering
             toolCaptionRect.anchorMax = new Vector2(1f, 1f);
             toolCaptionRect.sizeDelta = Vector2.zero;
             toolDropdown.captionText = toolCaptionText;
-
-            BuildDropdownTemplate(toolDropdown, toolDropdownGO); // обязательно ДО AddOptions/RefreshShownValue
+            BuildDropdownTemplate(toolDropdown, toolDropdownGO);
             toolDropdown.AddOptions(new List<string> { "Elevation", "Temperature", "Moisture" });
             toolDropdown.RefreshShownValue();
             toolDropdown.onValueChanged.AddListener(_ => OnBrushValuesChanged());
-
-            var toolDropdownRect = toolDropdownGO.GetComponent<RectTransform>();
-            toolDropdownRect.sizeDelta = new Vector2(0f, 24f);
-            var toolDropdownLE = toolDropdownGO.AddComponent<LayoutElement>();
-            toolDropdownLE.preferredHeight = 24f;
+            toolDropdownGO.AddComponent<LayoutElement>().preferredHeight = 24f;
 
             var dirRowGO = new GameObject("DirectionRow");
             dirRowGO.transform.SetParent(t, false);
-            var dirRowLayout = dirRowGO.AddComponent<HorizontalLayoutGroup>();
-            dirRowLayout.spacing = 6f;
-            dirRowLayout.childControlWidth = false;
-            dirRowLayout.childControlHeight = false;
-            var dirRowFitter = dirRowGO.AddComponent<ContentSizeFitter>();
-            dirRowFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            var dirRowLE = dirRowGO.AddComponent<LayoutElement>();
-            dirRowLE.preferredHeight = 20f;
+            var dirHLG = dirRowGO.AddComponent<HorizontalLayoutGroup>();
+            dirHLG.spacing = 6f;
+            dirHLG.childControlWidth = false;
+            dirHLG.childControlHeight = false;
+            dirRowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             increaseToggle = AddToggle(dirRowGO.transform, true);
             increaseToggle.onValueChanged.AddListener(_ => OnBrushValuesChanged());
@@ -395,12 +511,11 @@ namespace WorldGen.Rendering
 
             var stepRowGO = new GameObject("StepRow");
             stepRowGO.transform.SetParent(t, false);
-            var stepRowLayout = stepRowGO.AddComponent<HorizontalLayoutGroup>();
-            stepRowLayout.spacing = 6f;
-            stepRowLayout.childControlWidth = false;
-            stepRowLayout.childControlHeight = false;
-            var stepRowFitter = stepRowGO.AddComponent<ContentSizeFitter>();
-            stepRowFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var stepHLG = stepRowGO.AddComponent<HorizontalLayoutGroup>();
+            stepHLG.spacing = 6f;
+            stepHLG.childControlWidth = false;
+            stepHLG.childControlHeight = false;
+            stepRowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             var stepLabelGO = new GameObject("Label");
             stepLabelGO.transform.SetParent(stepRowGO.transform, false);
@@ -410,14 +525,12 @@ namespace WorldGen.Rendering
             stepLabelText.fontSize = 12;
             stepLabelText.color = textColor;
             stepLabelText.alignment = TextAnchor.MiddleLeft;
-            var stepLabelRect = stepLabelGO.GetComponent<RectTransform>();
-            stepLabelRect.sizeDelta = new Vector2(40f, 20f);
+            stepLabelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 20f);
 
             var stepSliderGO = new GameObject("Slider");
             stepSliderGO.transform.SetParent(stepRowGO.transform, false);
             stepSlider = BuildSlider(stepSliderGO, 0.02f, 0f, 0.2f);
-            var stepSliderRect = stepSliderGO.GetComponent<RectTransform>();
-            stepSliderRect.sizeDelta = new Vector2(140f, 20f);
+            stepSliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(140f, 20f);
 
             var stepValueGO = new GameObject("Value");
             stepValueGO.transform.SetParent(stepRowGO.transform, false);
@@ -427,8 +540,7 @@ namespace WorldGen.Rendering
             stepValueLabel.fontSize = 12;
             stepValueLabel.color = textColor;
             stepValueLabel.alignment = TextAnchor.MiddleLeft;
-            var stepValueRect = stepValueGO.GetComponent<RectTransform>();
-            stepValueRect.sizeDelta = new Vector2(45f, 20f);
+            stepValueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(45f, 20f);
 
             stepSlider.onValueChanged.AddListener(v =>
             {
@@ -436,23 +548,11 @@ namespace WorldGen.Rendering
                 OnBrushValuesChanged();
             });
 
-            var stepRowLE = stepRowGO.AddComponent<LayoutElement>();
-            stepRowLE.preferredHeight = 20f;
-
             var undoHint = AddLabel(t, "Зажми ЛКМ и веди по карте. Ctrl+Z - отменить мазок.", bold: false);
             undoHint.color = new Color(0.7f, 0.7f, 0.7f);
             undoHint.fontSize = 11;
 
             OnBrushValuesChanged();
-        }
-
-        void BuildLayersSection(Transform t)
-        {
-            AddLabel(t, "─── Слои (Combined) ───", bold: false, color: sectionHeaderColor);
-            AddLayerToggleRow(t, "Рельеф", true, on => mapRenderer?.SetShowReliefLayer(on));
-            AddLayerToggleRow(t, "Биом / климат", true, on => mapRenderer?.SetShowBiomeLayer(on));
-            AddLayerToggleRow(t, "Границы регионов", true, on => mapRenderer?.SetShowRegionBordersLayer(on));
-            AddLayerToggleRow(t, "Береговая линия", true, on => mapRenderer?.SetShowCoastlineLayer(on));
         }
 
         void AddLayerToggleRow(Transform parent, string label, bool defaultOn, System.Action<bool> onChanged)
@@ -463,12 +563,38 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            var rowLE = rowGO.AddComponent<LayoutElement>();
-            rowLE.preferredHeight = 20f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             var toggle = AddToggle(rowGO.transform, defaultOn);
             toggle.onValueChanged.AddListener(v => onChanged?.Invoke(v));
             AddLabel(rowGO.transform, label);
+        }
+
+        // ── Widget helpers ───────────────────────────────────────────────────────
+
+        Button AddModeButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"ModeBtn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            img.color = inactiveModeColor;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 11;
+            text.color = Color.white;
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
+            return btn;
         }
 
         Text AddLabel(Transform parent, string text, bool bold = false, Color? color = null)
@@ -482,19 +608,13 @@ namespace WorldGen.Rendering
             label.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
             label.color = color ?? textColor;
             label.alignment = TextAnchor.MiddleLeft;
-
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = bold ? 20f : 16f;
+            go.AddComponent<LayoutElement>().preferredHeight = bold ? 20f : 16f;
             return label;
         }
 
         /// <summary>
-        /// Строит обязательный template для Dropdown - при программном создании через
-        /// AddComponent&lt;Dropdown&gt;() (в отличие от GameObject -&gt; UI -&gt; Dropdown в редакторе)
-        /// template НЕ создаётся автоматически, и без него Dropdown не может открыть список
-        /// вариантов (ошибка "The dropdown template is not assigned" при попытке клика).
-        /// Структура соответствует стандартному Dropdown template Unity: Template -&gt; Viewport
-        /// (с Mask) -&gt; Content -&gt; Item (Toggle + Background + Checkmark + Label).
+        /// Builds the required Dropdown template. Without this, programmatically created Dropdowns
+        /// cannot open their option list ("The dropdown template is not assigned" error on click).
         /// </summary>
         void BuildDropdownTemplate(Dropdown dropdown, GameObject dropdownGO)
         {
@@ -505,13 +625,12 @@ namespace WorldGen.Rendering
             templateRect.anchorMax = new Vector2(1f, 0f);
             templateRect.pivot = new Vector2(0.5f, 1f);
             templateRect.anchoredPosition = new Vector2(0f, 2f);
-            templateRect.sizeDelta = new Vector2(0f, 150f); // высота выпадающего списка
+            templateRect.sizeDelta = new Vector2(0f, 150f);
 
-            var templateImage = templateGO.AddComponent<Image>();
-            templateImage.color = new Color(0.12f, 0.12f, 0.18f, 0.98f);
+            templateGO.AddComponent<Image>().color = new Color(0.12f, 0.12f, 0.18f, 0.98f);
             var templateCanvas = templateGO.AddComponent<Canvas>();
             templateCanvas.overrideSorting = true;
-            templateCanvas.sortingOrder = 30000; // поверх остальной панели, чтобы список не обрезался layout-группами родителя
+            templateCanvas.sortingOrder = 30000;
             templateGO.AddComponent<GraphicRaycaster>();
 
             var scrollRect = templateGO.AddComponent<ScrollRect>();
@@ -525,9 +644,8 @@ namespace WorldGen.Rendering
             viewportRect.anchorMax = Vector2.one;
             viewportRect.sizeDelta = Vector2.zero;
             viewportRect.pivot = new Vector2(0f, 1f);
-            viewportGO.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.01f); // почти прозрачный - Mask требует Graphic на этом же объекте
-            var mask = viewportGO.AddComponent<Mask>();
-            mask.showMaskGraphic = false;
+            viewportGO.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.01f);
+            viewportGO.AddComponent<Mask>().showMaskGraphic = false;
 
             var contentGO = new GameObject("Content");
             contentGO.transform.SetParent(viewportGO.transform, false);
@@ -581,11 +699,9 @@ namespace WorldGen.Rendering
 
             scrollRect.content = contentRect;
             scrollRect.viewport = viewportRect;
-
             dropdown.template = templateRect;
             dropdown.itemText = itemLabel;
-
-            templateGO.SetActive(false); // Dropdown сам активирует template при открытии списка
+            templateGO.SetActive(false);
         }
 
         (Slider, Text, Toggle) AddSliderRow(Transform parent, string label, float defaultValue)
@@ -596,8 +712,7 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            var rowFitter = rowGO.AddComponent<ContentSizeFitter>();
-            rowFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            rowGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var toggle = AddToggle(rowGO.transform, true);
 
@@ -609,14 +724,12 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             labelText.color = textColor;
             labelText.alignment = TextAnchor.MiddleLeft;
-            var labelRect = labelGO.GetComponent<RectTransform>();
-            labelRect.sizeDelta = new Vector2(90f, 20f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 20f);
 
             var sliderGO = new GameObject("Slider");
             sliderGO.transform.SetParent(rowGO.transform, false);
             var slider = BuildSlider(sliderGO, defaultValue, 0f, 1f);
-            var sliderRect = sliderGO.GetComponent<RectTransform>();
-            sliderRect.sizeDelta = new Vector2(110f, 20f);
+            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(110f, 20f);
 
             var valueGO = new GameObject("Value");
             valueGO.transform.SetParent(rowGO.transform, false);
@@ -626,14 +739,10 @@ namespace WorldGen.Rendering
             valueText.fontSize = 12;
             valueText.color = textColor;
             valueText.alignment = TextAnchor.MiddleLeft;
-            var valueRect = valueGO.GetComponent<RectTransform>();
-            valueRect.sizeDelta = new Vector2(35f, 20f);
+            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
 
             slider.onValueChanged.AddListener(v => valueText.text = v.ToString("F2"));
-
-            var rowLE = rowGO.AddComponent<LayoutElement>();
-            rowLE.preferredHeight = 20f;
-
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
             return (slider, valueText, toggle);
         }
 
@@ -645,8 +754,7 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            var rowFitter = rowGO.AddComponent<ContentSizeFitter>();
-            rowFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            rowGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var toggle = AddToggle(rowGO.transform, false);
 
@@ -658,8 +766,7 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             labelText.color = textColor;
             labelText.alignment = TextAnchor.MiddleLeft;
-            var labelRect = labelGO.GetComponent<RectTransform>();
-            labelRect.sizeDelta = new Vector2(90f, 22f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 22f);
 
             var dropdownGO = new GameObject("Dropdown");
             dropdownGO.transform.SetParent(rowGO.transform, false);
@@ -681,16 +788,11 @@ namespace WorldGen.Rendering
             captionRect.sizeDelta = Vector2.zero;
             dropdown.captionText = captionText;
 
-            BuildDropdownTemplate(dropdown, dropdownGO); // обязательно ДО AddOptions/RefreshShownValue
+            BuildDropdownTemplate(dropdown, dropdownGO);
             dropdown.AddOptions(options);
             dropdown.RefreshShownValue();
-
-            var dropRect = dropdownGO.GetComponent<RectTransform>();
-            dropRect.sizeDelta = new Vector2(155f, 22f);
-
-            var rowLE = rowGO.AddComponent<LayoutElement>();
-            rowLE.preferredHeight = 22f;
-
+            dropdownGO.GetComponent<RectTransform>().sizeDelta = new Vector2(155f, 22f);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
             return (dropdown, toggle);
         }
 
@@ -713,9 +815,7 @@ namespace WorldGen.Rendering
             checkRect.anchorMax = new Vector2(0.85f, 0.85f);
             checkRect.sizeDelta = Vector2.zero;
             toggle.graphic = checkImg;
-
-            var rect = go.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(18f, 18f);
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(18f, 18f);
             return toggle;
         }
 
@@ -728,8 +828,7 @@ namespace WorldGen.Rendering
 
             var bg = new GameObject("Bg");
             bg.transform.SetParent(sliderGO.transform, false);
-            var bgImg = bg.AddComponent<Image>();
-            bgImg.color = new Color(1f, 1f, 1f, 0.15f);
+            bg.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.15f);
             var bgRect = bg.GetComponent<RectTransform>();
             bgRect.anchorMin = new Vector2(0f, 0.25f);
             bgRect.anchorMax = new Vector2(1f, 0.75f);
@@ -737,8 +836,7 @@ namespace WorldGen.Rendering
 
             var fill = new GameObject("Fill");
             fill.transform.SetParent(sliderGO.transform, false);
-            var fillImg = fill.AddComponent<Image>();
-            fillImg.color = new Color(0.3f, 0.6f, 0.9f, 0.9f);
+            fill.AddComponent<Image>().color = new Color(0.3f, 0.6f, 0.9f, 0.9f);
             var fillRect = fill.GetComponent<RectTransform>();
             fillRect.anchorMin = new Vector2(0f, 0.2f);
             fillRect.anchorMax = new Vector2(0f, 0.8f);
@@ -761,7 +859,6 @@ namespace WorldGen.Rendering
             slider.handleRect = handleRect;
             slider.targetGraphic = handleImg;
             slider.direction = Slider.Direction.LeftToRight;
-
             return slider;
         }
 
@@ -774,9 +871,7 @@ namespace WorldGen.Rendering
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
-
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = 26f;
+            go.AddComponent<LayoutElement>().preferredHeight = 26f;
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
@@ -792,141 +887,6 @@ namespace WorldGen.Rendering
             tr.sizeDelta = Vector2.zero;
         }
 
-        // ── POI section ────────────────────────────────────────────────────────
-
-        void BuildPoiSection(Transform t)
-        {
-            AddLabel(t, "─── Точки интереса ───", bold: false, color: sectionHeaderColor);
-
-            foreach (PoiType type in System.Enum.GetValues(typeof(PoiType)))
-                BuildPoiCountRow(t, type);
-
-            AddButton(t, "Сгенерировать", OnGeneratePois, new Color(0.2f, 0.45f, 0.2f));
-
-            // "Добавить" row: type dropdown + button
-            var addRowGO = new GameObject("AddPoiRow");
-            addRowGO.transform.SetParent(t, false);
-            var addHLayout = addRowGO.AddComponent<HorizontalLayoutGroup>();
-            addHLayout.spacing = 4f;
-            addHLayout.childControlWidth = true;
-            addHLayout.childForceExpandWidth = true;
-            addRowGO.AddComponent<LayoutElement>().preferredHeight = 26f;
-
-            var typeDropdownGO = new GameObject("TypeDropdown");
-            typeDropdownGO.transform.SetParent(addRowGO.transform, false);
-            var typeDropdown = typeDropdownGO.AddComponent<Dropdown>();
-            var typeDropBg = typeDropdownGO.AddComponent<Image>();
-            typeDropBg.color = new Color(0.15f, 0.15f, 0.25f, 0.95f);
-            typeDropdown.targetGraphic = typeDropBg;
-            var typeCaptionGO = new GameObject("Label");
-            typeCaptionGO.transform.SetParent(typeDropdownGO.transform, false);
-            var typeCaptionText = typeCaptionGO.AddComponent<Text>();
-            typeCaptionText.font = builtinFont;
-            typeCaptionText.fontSize = 11;
-            typeCaptionText.color = textColor;
-            typeCaptionText.alignment = TextAnchor.MiddleLeft;
-            var typeCaptionRect = typeCaptionGO.GetComponent<RectTransform>();
-            typeCaptionRect.anchorMin = new Vector2(0.05f, 0f);
-            typeCaptionRect.anchorMax = new Vector2(1f, 1f);
-            typeCaptionRect.sizeDelta = Vector2.zero;
-            typeDropdown.captionText = typeCaptionText;
-            BuildDropdownTemplate(typeDropdown, typeDropdownGO);
-            typeDropdown.AddOptions(new List<string> { "Город", "Руины", "Подземелье", "Крепость" });
-            typeDropdown.RefreshShownValue();
-            typeDropdown.onValueChanged.AddListener(v => addPoiType = (PoiType)v);
-
-            var addBtnGO = new GameObject("AddBtn");
-            addBtnGO.transform.SetParent(addRowGO.transform, false);
-            var addBtnImg = addBtnGO.AddComponent<Image>();
-            addBtnImg.color = new Color(0.2f, 0.4f, 0.6f, 0.9f);
-            var addBtn = addBtnGO.AddComponent<Button>();
-            addBtn.targetGraphic = addBtnImg;
-            addBtn.onClick.AddListener(() => poiManager?.AddOne(addPoiType));
-            var addBtnLE = addBtnGO.AddComponent<LayoutElement>();
-            addBtnLE.preferredWidth = 80f;
-            addBtnLE.preferredHeight = 26f;
-            var addBtnTextGO = new GameObject("Text");
-            addBtnTextGO.transform.SetParent(addBtnGO.transform, false);
-            var addBtnText = addBtnTextGO.AddComponent<Text>();
-            addBtnText.text = "Добавить";
-            addBtnText.font = builtinFont;
-            addBtnText.fontSize = 11;
-            addBtnText.color = Color.white;
-            addBtnText.alignment = TextAnchor.MiddleCenter;
-            var addBtnTextRect = addBtnTextGO.GetComponent<RectTransform>();
-            addBtnTextRect.anchorMin = Vector2.zero;
-            addBtnTextRect.anchorMax = Vector2.one;
-            addBtnTextRect.sizeDelta = Vector2.zero;
-
-            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), new Color(0.5f, 0.2f, 0.2f));
-
-            // Edit sub-panel, hidden until a POI is selected
-            poiEditSubPanel = new GameObject("PoiEditSubPanel");
-            poiEditSubPanel.transform.SetParent(t, false);
-            var subLayout = poiEditSubPanel.AddComponent<VerticalLayoutGroup>();
-            subLayout.spacing = 4f;
-            subLayout.childControlWidth = true;
-            subLayout.childForceExpandWidth = true;
-            var subFitter = poiEditSubPanel.AddComponent<ContentSizeFitter>();
-            subFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            BuildPoiEditSubPanel(poiEditSubPanel.transform);
-            poiEditSubPanel.SetActive(false);
-        }
-
-        void BuildPoiCountRow(Transform parent, PoiType type)
-        {
-            string typeName;
-            switch (type)
-            {
-                case PoiType.City:     typeName = "Города";       break;
-                case PoiType.Ruin:     typeName = "Руины";        break;
-                case PoiType.Dungeon:  typeName = "Подземелья";   break;
-                case PoiType.Fortress: typeName = "Крепости";     break;
-                default:               typeName = type.ToString(); break;
-            }
-
-            var rowGO = new GameObject($"{type}CountRow");
-            rowGO.transform.SetParent(parent, false);
-            var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
-            hLayout.spacing = 4f;
-            hLayout.childControlWidth = false;
-            hLayout.childControlHeight = false;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
-
-            var lbl = new GameObject("Label");
-            lbl.transform.SetParent(rowGO.transform, false);
-            var lblText = lbl.AddComponent<Text>();
-            lblText.text = typeName;
-            lblText.font = builtinFont;
-            lblText.fontSize = 12;
-            lblText.color = textColor;
-            lblText.alignment = TextAnchor.MiddleLeft;
-            lbl.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 20f);
-
-            AddSmallButton(rowGO.transform, "−", () =>
-            {
-                if (poiCounts[type] > 0) poiCounts[type]--;
-                poiCountLabels[type].text = poiCounts[type].ToString();
-            });
-
-            var countLblGO = new GameObject("Count");
-            countLblGO.transform.SetParent(rowGO.transform, false);
-            var countText = countLblGO.AddComponent<Text>();
-            countText.text = poiCounts[type].ToString();
-            countText.font = builtinFont;
-            countText.fontSize = 12;
-            countText.color = textColor;
-            countText.alignment = TextAnchor.MiddleCenter;
-            countLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(26f, 20f);
-            poiCountLabels[type] = countText;
-
-            AddSmallButton(rowGO.transform, "+", () =>
-            {
-                poiCounts[type]++;
-                poiCountLabels[type].text = poiCounts[type].ToString();
-            });
-        }
-
         void AddSmallButton(Transform parent, string label, System.Action onClick)
         {
             var go = new GameObject($"SmallBtn_{label}");
@@ -937,6 +897,7 @@ namespace WorldGen.Rendering
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
             go.GetComponent<RectTransform>().sizeDelta = new Vector2(20f, 20f);
+
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
             var text = textGO.AddComponent<Text>();
@@ -945,154 +906,11 @@ namespace WorldGen.Rendering
             text.fontSize = 14;
             text.color = Color.white;
             text.alignment = TextAnchor.MiddleCenter;
-            var tr2 = textGO.GetComponent<RectTransform>();
-            tr2.anchorMin = Vector2.zero;
-            tr2.anchorMax = Vector2.one;
-            tr2.sizeDelta = Vector2.zero;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
         }
 
-        void BuildPoiEditSubPanel(Transform t)
-        {
-            AddLabel(t, "─ Выбранная точка ─", bold: false, color: sectionHeaderColor);
-            poiTypeLabel = AddLabel(t, "Тип: —");
-
-            AddLabel(t, "Название:");
-            poiNameField = BuildPoiInputField(t, multiline: false);
-            poiNameField.onEndEdit.AddListener(v =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.UpdatePoiName(sel.Id, v);
-            });
-
-            AddLabel(t, "Описание:");
-            poiDescField = BuildPoiInputField(t, multiline: true);
-            poiDescField.onEndEdit.AddListener(v =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.UpdatePoiDescription(sel.Id, v);
-            });
-
-            AddLabel(t, "Иконка (путь к файлу):");
-            var spriteRow = new GameObject("SpriteRow");
-            spriteRow.transform.SetParent(t, false);
-            var srLayout = spriteRow.AddComponent<HorizontalLayoutGroup>();
-            srLayout.spacing = 4f;
-            srLayout.childControlWidth = true;
-            srLayout.childForceExpandWidth = true;
-            spriteRow.AddComponent<LayoutElement>().preferredHeight = 22f;
-
-            poiSpritePathField = BuildPoiInputField(spriteRow.transform, multiline: false);
-
-            var applyBtnGO = new GameObject("ApplyBtn");
-            applyBtnGO.transform.SetParent(spriteRow.transform, false);
-            var applyImg = applyBtnGO.AddComponent<Image>();
-            applyImg.color = new Color(0.3f, 0.5f, 0.3f, 0.9f);
-            var applyBtn = applyBtnGO.AddComponent<Button>();
-            applyBtn.targetGraphic = applyImg;
-            applyBtn.onClick.AddListener(() =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.UpdatePoiSpritePath(sel.Id, poiSpritePathField.text);
-            });
-            applyBtnGO.AddComponent<LayoutElement>().preferredWidth = 70f;
-            var applyTextGO = new GameObject("Text");
-            applyTextGO.transform.SetParent(applyBtnGO.transform, false);
-            var applyText = applyTextGO.AddComponent<Text>();
-            applyText.text = "Применить";
-            applyText.font = builtinFont;
-            applyText.fontSize = 10;
-            applyText.color = Color.white;
-            applyText.alignment = TextAnchor.MiddleCenter;
-            var applyRect = applyTextGO.GetComponent<RectTransform>();
-            applyRect.anchorMin = Vector2.zero;
-            applyRect.anchorMax = Vector2.one;
-            applyRect.sizeDelta = Vector2.zero;
-
-            AddButton(t, "Удалить точку", () =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.DeletePoi(sel.Id);
-            }, new Color(0.55f, 0.15f, 0.15f));
-        }
-
-        InputField BuildPoiInputField(Transform parent, bool multiline)
-        {
-            var go = new GameObject("InputField");
-            go.transform.SetParent(parent, false);
-            var bg = go.AddComponent<Image>();
-            bg.color = new Color(0.15f, 0.15f, 0.2f, 0.95f);
-            var field = go.AddComponent<InputField>();
-            field.targetGraphic = bg;
-            field.lineType = multiline
-                ? InputField.LineType.MultiLineNewline
-                : InputField.LineType.SingleLine;
-
-            var textGO = new GameObject("Text");
-            textGO.transform.SetParent(go.transform, false);
-            var text = textGO.AddComponent<Text>();
-            text.font = builtinFont;
-            text.fontSize = 12;
-            text.color = textColor;
-            text.supportRichText = false;
-            var textRect = textGO.GetComponent<RectTransform>();
-            textRect.anchorMin = new Vector2(0.02f, 0f);
-            textRect.anchorMax = new Vector2(1f, 1f);
-            textRect.sizeDelta = Vector2.zero;
-            field.textComponent = text;
-
-            var phGO = new GameObject("Placeholder");
-            phGO.transform.SetParent(go.transform, false);
-            var phText = phGO.AddComponent<Text>();
-            phText.font = builtinFont;
-            phText.fontSize = 12;
-            phText.color = new Color(0.5f, 0.5f, 0.5f);
-            phText.fontStyle = FontStyle.Italic;
-            var phRect = phGO.GetComponent<RectTransform>();
-            phRect.anchorMin = new Vector2(0.02f, 0f);
-            phRect.anchorMax = new Vector2(1f, 1f);
-            phRect.sizeDelta = Vector2.zero;
-            field.placeholder = phText;
-
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = multiline ? 60f : 22f;
-            le.flexibleWidth = 1f;
-
-            return field;
-        }
-
-        void OnGeneratePois()
-        {
-            if (poiManager == null) return;
-            poiManager.GenerateAll(new Dictionary<PoiType, int>(poiCounts));
-        }
-
-        void HandlePoiSelectionChanged(PoiData selected)
-        {
-            if (selected == null)
-            {
-                poiEditSubPanel?.SetActive(false);
-                return;
-            }
-            poiEditSubPanel?.SetActive(true);
-            if (poiNameField != null) poiNameField.text = selected.Name;
-            if (poiDescField != null) poiDescField.text = selected.Description;
-            if (poiSpritePathField != null) poiSpritePathField.text = selected.CustomSpritePath ?? "";
-
-            string typeName;
-            switch (selected.Type)
-            {
-                case PoiType.City:     typeName = "Город";      break;
-                case PoiType.Ruin:     typeName = "Руины";      break;
-                case PoiType.Dungeon:  typeName = "Подземелье"; break;
-                case PoiType.Fortress: typeName = "Крепость";   break;
-                default:               typeName = selected.Type.ToString(); break;
-            }
-            if (poiTypeLabel != null) poiTypeLabel.text = $"Тип: {typeName}";
-        }
-
-        void RefreshPoiPanel()
-        {
-            // Sub-panel visibility is managed by HandlePoiSelectionChanged; nothing extra needed here.
-        }
     }
 }

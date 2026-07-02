@@ -200,7 +200,7 @@ Camera:
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_BackGroundColor: {r: 0.18867922, g: 0.18867922, b: 0.18867922, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -371,6 +371,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.CellSelectionController
   mapRenderer: {fileID: 1583692671}
   raycastCamera: {fileID: 519420031}
+  poiController: {fileID: 1583692677}
   selectionColor: {r: 1, g: 1, b: 0.2, a: 0.45}
   overlayYOffset: 0.3
 --- !u!4 &652760800
@@ -419,6 +420,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.BrushToolController
   mapRenderer: {fileID: 1583692671}
   raycastCamera: {fileID: 519420031}
+  poiController: {fileID: 1583692677}
   activeTool: 0
   brushStep: 0.02
   increaseMode: 1
@@ -452,6 +454,8 @@ GameObject:
   - component: {fileID: 1583692673}
   - component: {fileID: 1583692672}
   - component: {fileID: 1583692671}
+  - component: {fileID: 1583692676}
+  - component: {fileID: 1583692677}
   m_Layer: 0
   m_Name: WorldMap
   m_TagString: Untagged
@@ -479,7 +483,7 @@ MonoBehaviour:
   numberOfRegions: 4
   falloffPower: 2.5
   innerRadius: 0.5
-  seaLevel: 0.35
+  seaLevel: 0.27
   minLakeSize: 20
   elevationCoastWeight: 0.6
   elevationNoiseWeight: 0.4
@@ -503,7 +507,18 @@ MonoBehaviour:
   epicenterMaxRadius: 300
   baseTemperature: 0.5
   heightCoolingFactor: 0.6
-  displayMode: 0
+  displayMode: 3
+  showBiomeLayer: 1
+  showReliefLayer: 1
+  showRegionBordersLayer: 1
+  showCoastlineLayer: 1
+  reliefStrength: 3
+  reliefLightAzimuth: 315
+  reliefAmbient: 0.5
+  regionBorderColor: {r: 0.1, g: 0.1, b: 0.1, a: 0.9}
+  regionBorderWidth: 1.5
+  coastlineColor: {r: 0.05, g: 0.1, b: 0.2, a: 0.95}
+  coastlineWidth: 2.5
   targetCamera: {fileID: 519420031}
 --- !u!64 &1583692672
 MeshCollider:
@@ -599,6 +614,39 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1583692676
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1583692670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6c2fdd295d93cf648aed894c120c7cb8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.PoiManager
+  mapRenderer: {fileID: 1583692671}
+  poiYOffset: 0.5
+  iconWorldSize: 8
+  labelCharacterSize: 1.5
+--- !u!114 &1583692677
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1583692670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b4a1c76f660f2c1439075e166712fd4b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.PoiInteractionController
+  poiManager: {fileID: 1583692676}
+  mapRenderer: {fileID: 1583692671}
+  raycastCamera: {fileID: 519420031}
+  selectRadius: 8
+  dragThresholdPixels: 5
 --- !u!1 &1924083383
 GameObject:
   m_ObjectHideFlags: 0
@@ -659,6 +707,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1944716418}
   - component: {fileID: 1944716417}
+  - component: {fileID: 1944716419}
   m_Layer: 0
   m_Name: MapEditorUI
   m_TagString: Untagged
@@ -681,6 +730,7 @@ MonoBehaviour:
   mapRenderer: {fileID: 1583692671}
   selectionController: {fileID: 652760799}
   brushController: {fileID: 1259932260}
+  poiManager: {fileID: 1583692676}
   panelAnchoredPosition: {x: 20, y: -20}
   panelBackgroundColor: {r: 0, g: 0, b: 0, a: 0.7}
   textColor: {r: 1, g: 1, b: 1, a: 1}
@@ -702,6 +752,27 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1944716419
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1944716416}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e3ffc6427ad1614d83da4b8c2eb8124, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.PoiEditPanel
+  poiManager: {fileID: 1583692676}
+  legendUI: {fileID: 1924083384}
+  rightMargin: 20
+  gapBelowLegend: 20
+  bottomScreenMargin: 20
+  panelWidth: 260
+  panelBackgroundColor: {r: 0, g: 0, b: 0, a: 0.75}
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  sectionHeaderColor: {r: 0.7, g: 0.85, b: 1, a: 1}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

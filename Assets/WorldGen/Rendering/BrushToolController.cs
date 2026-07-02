@@ -26,6 +26,8 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
         [Tooltip("Камера, с которой кастуется луч кисти. Если не назначено - используется Camera.main.")]
         public Camera raycastCamera;
+        [Tooltip("If assigned, brush painting is suppressed when POI interaction controller has claimed the input (e.g. dragging a POI marker).")]
+        public PoiInteractionController poiController;
 
         [Header("Настройки инструмента")]
         public BrushTool activeTool = BrushTool.Elevation;
@@ -47,6 +49,7 @@ namespace WorldGen.Rendering
         void Update()
         {
             if (!brushModeActive) return;
+            if (poiController != null && poiController.InputConsumedThisFrame) return;
             if (mapRenderer == null) return;
             if (raycastCamera == null) raycastCamera = Camera.main;
             if (raycastCamera == null) return;

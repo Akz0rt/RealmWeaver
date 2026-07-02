@@ -31,6 +31,9 @@ namespace WorldGen.Rendering
         VerticalLayoutGroup layoutGroup;
         readonly List<GameObject> currentRows = new List<GameObject>();
 
+        /// <summary>Legend panel's RectTransform, exposed so other UI (e.g. PoiEditPanel) can anchor below it.</summary>
+        public RectTransform PanelRect => panelRect;
+
         void Awake()
         {
             BuildCanvasAndPanel();
