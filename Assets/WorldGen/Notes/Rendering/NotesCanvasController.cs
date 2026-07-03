@@ -273,6 +273,11 @@ namespace WorldGen.Notes.Rendering
                 if (view != null) Destroy(view.gameObject);
                 objectViews.Remove(objectId);
             }
+            if (linkAnchors.TryGetValue(objectId, out var anchors))
+            {
+                if (anchors != null) Destroy(anchors.gameObject);
+                linkAnchors.Remove(objectId);
+            }
             OnSelectionCleared?.Invoke();
         }
 
