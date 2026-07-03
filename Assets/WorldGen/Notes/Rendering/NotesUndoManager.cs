@@ -154,7 +154,7 @@ namespace WorldGen.Notes.Rendering
             var panelGO = new GameObject("Panel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImg = panelGO.AddComponent<UnityEngine.UI.Image>();
-            panelImg.color = new Color(0.1f, 0.1f, 0.1f, 0.95f);
+            panelImg.color = new Color(0f, 0f, 0f, 0.7f);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -174,24 +174,24 @@ namespace WorldGen.Notes.Rendering
             msgRect.anchorMax = new Vector2(1f, 1f);
             msgRect.sizeDelta = Vector2.zero;
 
-            AddDialogButton(panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), () =>
+            AddDialogButton(panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
             {
                 Destroy(confirmDialogGO);
                 onResult(false);
             });
-            AddDialogButton(panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), () =>
+            AddDialogButton(panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), new Color(0.55f, 0.15f, 0.15f), () =>
             {
                 Destroy(confirmDialogGO);
                 onResult(true);
             });
         }
 
-        void AddDialogButton(Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, System.Action onClick)
+        void AddDialogButton(Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Color bgColor, System.Action onClick)
         {
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<UnityEngine.UI.Image>();
-            img.color = new Color(0.35f, 0.35f, 0.35f, 0.9f);
+            img.color = bgColor;
             var btn = go.AddComponent<UnityEngine.UI.Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());

@@ -26,6 +26,13 @@ namespace WorldGen.Notes.Rendering
 
         void Awake()
         {
+            // A script recompile while already in Play Mode re-invokes Awake() on existing
+            // components, but this method builds the entire notes UI imperatively with
+            // `new GameObject(...)` — without this guard, every such hot-reload would stack
+            // another full duplicate hierarchy on top of the one already built (the child
+            // GameObjects survive the reload; only re-running Awake() is new).
+            if (transform.childCount > 0) return;
+
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             EnsureEventSystemExists();
 
@@ -39,6 +46,19 @@ namespace WorldGen.Notes.Rendering
             var notesAreaGO = new GameObject("NotesArea");
             notesAreaGO.transform.SetParent(canvasGO.transform, false);
             var notesAreaRect = notesAreaGO.AddComponent<RectTransform>();
+
+            // NotesLayoutController clamps mapCamera.rect to the left split fraction of the
+            // screen, so the camera's Clear Flags (Skybox/Solid Color) never touch this right
+            // portion of the screen — no camera clears it, ever. This overlay Canvas only paints
+            // pixels where an active Graphic currently covers them, so any gap between/around
+            // child elements (layout spacing, a shrunk list, a hidden tooltip's old footprint)
+            // was left showing whatever pixels a previous frame put there, which read as
+            // "ghosted/duplicated" UI until something forced a full backbuffer clear (e.g.
+            // resizing the window). A full-bleed opaque background here is redrawn by the Canvas
+            // every single frame regardless of what else changes, so it overwrites that stale
+            // data unconditionally.
+            var notesAreaBg = notesAreaGO.AddComponent<Image>();
+            notesAreaBg.color = new Color(0.12f, 0.12f, 0.14f, 1f);
 
             var layout = gameObject.AddComponent<NotesLayoutController>();
             layout.mapAreaRoot = mapAreaRoot;
@@ -57,8 +77,16 @@ namespace WorldGen.Notes.Rendering
             var sidebar = gameObject.AddComponent<NotesTreeSidebar>();
             sidebar.Initialize(DocumentController, notesAreaGO.transform);
 
-            var toolbarRowGO = new GameObject("ToolbarRow");
-            toolbarRowGO.transform.SetParent(notesAreaGO.transform, false);
+            // Created before the viewport so CanvasInteractionController exists (as a component
+            // reference) when NotesToolbar.Initialize wires button clicks to it; its dependent
+            // fields (canvasController/viewportRect) are only read later, after they're assigned
+            // below, never during this construction step.
+            var undoManager = gameObject.AddComponent<NotesUndoManager>();
+            var interaction = gameObject.AddComponent<CanvasInteractionController>();
+            interaction.undoManager = undoManager;
+
+            var toolbar = gameObject.AddComponent<NotesToolbar>();
+            toolbar.Initialize(interaction, notesAreaGO.transform);
 
             var viewportGO = new GameObject("CanvasViewport");
             viewportGO.transform.SetParent(notesAreaGO.transform, false);
@@ -70,19 +98,10 @@ namespace WorldGen.Notes.Rendering
             viewportLE.flexibleHeight = 1f;
 
             CanvasController = gameObject.AddComponent<NotesCanvasController>();
-            CanvasController.documentController = DocumentController;
-            CanvasController.viewport = viewportRect;
+            CanvasController.Initialize(DocumentController, viewportRect, interaction);
 
-            var interaction = gameObject.AddComponent<CanvasInteractionController>();
             interaction.canvasController = CanvasController;
             interaction.viewportRect = viewportRect;
-            CanvasController.interactionController = interaction;
-
-            var undoManager = gameObject.AddComponent<NotesUndoManager>();
-            interaction.undoManager = undoManager;
-
-            var toolbar = gameObject.AddComponent<NotesToolbar>();
-            toolbar.Initialize(interaction, toolbarRowGO.transform);
 
             // NotesDocumentController.Awake() already opened its default page; render it now
             // rather than relying on subscription-order timing across components added this frame.

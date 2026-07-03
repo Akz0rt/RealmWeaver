@@ -24,8 +24,9 @@ namespace WorldGen.Notes.Rendering
 
         public event System.Action OnSelectionCleared;
 
-        void Awake()
+        void EnsureContainer()
         {
+            if (CanvasContainer != null) return;
             var containerGO = new GameObject("CanvasContainer");
             containerGO.transform.SetParent(viewport != null ? viewport : transform, false);
             CanvasContainer = containerGO.AddComponent<RectTransform>();
@@ -36,10 +37,16 @@ namespace WorldGen.Notes.Rendering
             CanvasContainer.sizeDelta = Vector2.zero;
         }
 
-        void OnEnable()
+        // AddComponent<NotesCanvasController>() runs Awake/OnEnable synchronously before the
+        // caller can assign documentController/viewport/interactionController — subscribing in
+        // OnEnable would silently see a null documentController and never subscribe at all, so
+        // page switches would never re-render. Callers must use Initialize, not the raw fields.
+        public void Initialize(NotesDocumentController docController, RectTransform viewportRect, CanvasInteractionController interaction)
         {
-            if (documentController != null)
-                documentController.OnActivePageChanged += HandleActivePageChanged;
+            documentController = docController;
+            viewport = viewportRect;
+            interactionController = interaction;
+            documentController.OnActivePageChanged += HandleActivePageChanged;
         }
 
         void OnDisable()
@@ -57,6 +64,7 @@ namespace WorldGen.Notes.Rendering
 
         public void RebuildFromPage(NotesPage page)
         {
+            EnsureContainer();
             foreach (var view in objectViews.Values)
                 if (view != null) Destroy(view.gameObject);
             objectViews.Clear();
@@ -139,13 +147,28 @@ namespace WorldGen.Notes.Rendering
         RectTransform GetRectTransform(string objectId)
         {
             if (!objectViews.TryGetValue(objectId, out var view) || view == null) return null;
-            return view switch
+            return RectOf(view);
+        }
+
+        static RectTransform RectOf(MonoBehaviour view) => view switch
+        {
+            NoteCardView n => n.RectTransform,
+            ImageObjectView i => i.RectTransform,
+            DrawingObjectView d => d.RectTransform,
+            _ => null
+        };
+
+        /// <summary>True if screenPos lands on any currently-spawned object view's rect — used
+        /// by CanvasInteractionController to avoid starting a canvas pan under an object drag.</summary>
+        public bool IsScreenPointOverObject(Vector2 screenPos, Camera uiCamera)
+        {
+            foreach (var view in objectViews.Values)
             {
-                NoteCardView n => n.RectTransform,
-                ImageObjectView i => i.RectTransform,
-                DrawingObjectView d => d.RectTransform,
-                _ => null
-            };
+                var rt = view != null ? RectOf(view) : null;
+                if (rt != null && RectTransformUtility.RectangleContainsScreenPoint(rt, screenPos, uiCamera))
+                    return true;
+            }
+            return false;
         }
 
         // ── Mutation ───────────────────────────────────────────────────────────

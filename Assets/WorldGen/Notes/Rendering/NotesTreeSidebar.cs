@@ -13,10 +13,10 @@ namespace WorldGen.Notes.Rendering
     {
         NotesDocumentController documentController;
         Font builtinFont;
-        RectTransform panelRect;
         Transform listContent;
         GameObject listGO;
         bool expanded = true;
+        bool rebuildPending;
 
         public void Initialize(NotesDocumentController docController, Transform parent)
         {
@@ -28,7 +28,6 @@ namespace WorldGen.Notes.Rendering
             var vLayout = rootGO.AddComponent<VerticalLayoutGroup>();
             vLayout.childControlWidth = true;
             vLayout.childForceExpandWidth = true;
-            panelRect = rootGO.GetComponent<RectTransform>();
 
             var headerGO = new GameObject("Header");
             headerGO.transform.SetParent(rootGO.transform, false);
@@ -62,16 +61,13 @@ namespace WorldGen.Notes.Rendering
             listGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             listContent = listGO.transform;
 
-            var addGroupGO = new GameObject("AddGroupRow");
-            addGroupGO.transform.SetParent(rootGO.transform, false);
             AddSmallActionButton(rootGO.transform, "+ Группа", () =>
             {
                 var group = documentController.CreateGroup("Новая группа");
                 documentController.CreatePage(group.Id, "Страница 1");
-                Rebuild();
             });
 
-            documentController.OnDocumentChanged += Rebuild;
+            documentController.OnDocumentChanged += RequestRebuild;
             Rebuild();
         }
 
@@ -81,10 +77,29 @@ namespace WorldGen.Notes.Rendering
             listGO.SetActive(expanded);
         }
 
+        void RequestRebuild()
+        {
+            rebuildPending = true;
+        }
+
+        void LateUpdate()
+        {
+            if (!rebuildPending) return;
+            rebuildPending = false;
+            Rebuild();
+        }
+
         void Rebuild()
         {
+            // SetActive(false) takes effect immediately; Destroy() is deferred to end of
+            // frame, so without deactivating first, the old and newly-built rows below would
+            // both render for one frame, showing as overlapping/doubled UI.
             for (int i = listContent.childCount - 1; i >= 0; i--)
-                Destroy(listContent.GetChild(i).gameObject);
+            {
+                var child = listContent.GetChild(i).gameObject;
+                child.SetActive(false);
+                Destroy(child);
+            }
 
             foreach (var group in documentController.Document.Groups)
                 BuildGroupRow(group);
@@ -106,11 +121,11 @@ namespace WorldGen.Notes.Rendering
             string suffix = group.LinkedPoiId != null ? " 📍" : "";
             titleText.text = $"▾ {group.Title}{suffix}";
             titleText.font = builtinFont;
-            titleText.fontSize = 12;
+            titleText.fontSize = 13;
             titleText.fontStyle = FontStyle.Bold;
             titleText.color = new Color(0.7f, 0.85f, 1f);
             titleText.alignment = TextAnchor.MiddleLeft;
-            titleGO.AddComponent<LayoutElement>().preferredHeight = 18f;
+            titleGO.AddComponent<LayoutElement>().preferredHeight = 30f;
 
             foreach (var page in group.Pages)
                 BuildPageRow(groupGO.transform, group, page);
@@ -118,7 +133,6 @@ namespace WorldGen.Notes.Rendering
             AddSmallActionButton(groupGO.transform, "  + Страница", () =>
             {
                 documentController.CreatePage(group.Id, $"Страница {group.Pages.Count + 1}");
-                Rebuild();
             });
         }
 
@@ -131,7 +145,7 @@ namespace WorldGen.Notes.Rendering
             img.color = isActive ? new Color(0.2f, 0.4f, 0.3f, 0.9f) : new Color(1f, 1f, 1f, 0.02f);
             var btn = rowGO.AddComponent<Button>();
             btn.targetGraphic = img;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 18f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
             btn.onClick.AddListener(() =>
             {
                 documentController.OpenPage(page.Id);
@@ -141,15 +155,16 @@ namespace WorldGen.Notes.Rendering
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(rowGO.transform, false);
             var text = textGO.AddComponent<Text>();
-            text.text = $"   • {page.Name}";
+            text.text = $"• {page.Name}";
             text.font = builtinFont;
-            text.fontSize = 11;
+            text.fontSize = 13;
             text.color = Color.white;
             text.alignment = TextAnchor.MiddleLeft;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
             textRect.anchorMax = Vector2.one;
-            textRect.sizeDelta = Vector2.zero;
+            textRect.offsetMin = new Vector2(16f, 0f);
+            textRect.offsetMax = Vector2.zero;
         }
 
         void AddSmallActionButton(Transform parent, string label, System.Action onClick)

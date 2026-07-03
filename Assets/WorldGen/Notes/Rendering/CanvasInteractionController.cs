@@ -30,6 +30,7 @@ namespace WorldGen.Notes.Rendering
 
         string linkDragSourceId;
         string paintingDrawingObjectId;
+        string selectedObjectId;
         bool panning;
         Vector2 lastPanScreenPos;
 
@@ -45,6 +46,7 @@ namespace WorldGen.Notes.Rendering
             if (canvasController == null || Mouse.current == null) return;
 
             HandleClipboardPaste();
+            HandleDeleteKey();
 
             if (Mouse.current.leftButton.wasPressedThisFrame)
                 HandlePress();
@@ -68,6 +70,13 @@ namespace WorldGen.Notes.Rendering
             switch (ActiveTool)
             {
                 case NotesTool.Select:
+                    // A press that lands on an object is left to that object's own
+                    // IPointerDownHandler/IDragHandler (NoteCardView etc.) — starting a pan here
+                    // too would move the whole canvas underneath it at the same time as the
+                    // object drags itself, fighting each other.
+                    if (canvasController.IsScreenPointOverObject(screenPos, uiCamera))
+                        break;
+                    selectedObjectId = null;
                     panning = true;
                     lastPanScreenPos = screenPos;
                     break;
@@ -157,6 +166,26 @@ namespace WorldGen.Notes.Rendering
             return new System.Numerics.Vector2(local.x, local.y);
         }
 
+        /// <summary>Delete key removes the currently selected object (Select tool click, or the
+        /// object just dragged) behind a confirm dialog, per the spec's "Delete key / delete
+        /// button" binding.</summary>
+        void HandleDeleteKey()
+        {
+            if (Keyboard.current == null) return;
+            if (!Keyboard.current.deleteKey.wasPressedThisFrame) return;
+            if (selectedObjectId == null) return;
+
+            var data = FindObjectData(selectedObjectId);
+            if (data == null) { selectedObjectId = null; return; }
+
+            string idToDelete = selectedObjectId;
+            undoManager.RequestDeleteObject(canvasController, data, confirmed =>
+            {
+                if (confirmed && selectedObjectId == idToDelete)
+                    selectedObjectId = null;
+            });
+        }
+
         void HandleClipboardPaste()
         {
             if (Keyboard.current == null) return;
@@ -175,6 +204,12 @@ namespace WorldGen.Notes.Rendering
 
         public void HandleObjectClicked(string objectId)
         {
+            if (ActiveTool == NotesTool.Select)
+            {
+                selectedObjectId = objectId;
+                return;
+            }
+
             if (ActiveTool == NotesTool.Link)
             {
                 if (linkDragSourceId == null)
@@ -191,6 +226,7 @@ namespace WorldGen.Notes.Rendering
 
         public void HandleObjectDragEnded(string objectId, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)
         {
+            selectedObjectId = objectId;
             undoManager.PushMove(canvasController, FindObjectData(objectId), oldPos, newPos);
             canvasController.RefreshLinksFor(objectId);
         }

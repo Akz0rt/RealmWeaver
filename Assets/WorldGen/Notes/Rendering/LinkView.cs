@@ -8,6 +8,7 @@ namespace WorldGen.Notes.Rendering
     /// A line (+ optional arrowhead) between the centers of two canvas object views.
     /// UpdateTransform() must be called whenever either endpoint moves.
     /// </summary>
+    [RequireComponent(typeof(RectTransform))]
     public class LinkView : MonoBehaviour
     {
         LinkData data;
