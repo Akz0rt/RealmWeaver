@@ -45,6 +45,15 @@ namespace WorldGen.Notes.Rendering
             uiCamera = camera;
 
             transform.SetParent(canvasContainer, false);
+            // Explicit zero-size/centered config (matching CanvasContainer's own convention),
+            // rather than relying on RectTransform defaults, so segments/handle/arrow parented
+            // under this transform sit in exactly the same coordinate frame as fromRect/toRect.
+            var selfRect = (RectTransform)transform;
+            selfRect.anchorMin = new Vector2(0.5f, 0.5f);
+            selfRect.anchorMax = new Vector2(0.5f, 0.5f);
+            selfRect.pivot = new Vector2(0.5f, 0.5f);
+            selfRect.anchoredPosition = Vector2.zero;
+            selfRect.sizeDelta = Vector2.zero;
 
             segmentRects = new RectTransform[SegmentCount];
             segmentImages = new Image[SegmentCount];
@@ -97,6 +106,11 @@ namespace WorldGen.Notes.Rendering
             Vector2 toAnchor = GetAnchorPoint(toRect, fromRect.anchoredPosition);
             Vector2 control = GetControlPoint(fromAnchor, toAnchor);
 
+            // TEMP diagnostic — remove once the reported "shifted left" curve offset is diagnosed.
+            Debug.Log($"[LinkDiag] from='{fromRect.name}' pos={fromRect.anchoredPosition} size={fromRect.sizeDelta} " +
+                      $"to='{toRect.name}' pos={toRect.anchoredPosition} size={toRect.sizeDelta} " +
+                      $"=> fromAnchor={fromAnchor} toAnchor={toAnchor} control={control} selfLocalPos={((RectTransform)transform).anchoredPosition}");
+
             Vector2 prev = SampleQuadraticBezier(fromAnchor, control, toAnchor, 0f);
             for (int i = 0; i < SegmentCount; i++)
             {
@@ -122,7 +136,12 @@ namespace WorldGen.Notes.Rendering
         {
             if (Mouse.current == null || segmentRects == null) return;
             var screenPos = Mouse.current.position.ReadValue();
-            bool nowHovering = ContainsScreenPoint(screenPos, uiCamera);
+            // Checking the handle's own rect too (not just the curve segments) matters because
+            // the handle sits away from the curve itself (at the control point, not on the drawn
+            // path) — without this, moving the cursor off the thin curve toward the handle would
+            // immediately hide it again before it could ever be clicked.
+            bool overHandle = RectTransformUtility.RectangleContainsScreenPoint(handleRect, screenPos, uiCamera);
+            bool nowHovering = overHandle || ContainsScreenPoint(screenPos, uiCamera);
             if (nowHovering == hovering) return;
             hovering = nowHovering;
             RefreshHandleVisibility();

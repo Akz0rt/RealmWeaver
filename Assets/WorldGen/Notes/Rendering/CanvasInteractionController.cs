@@ -66,6 +66,14 @@ namespace WorldGen.Notes.Rendering
             var screenPos = Mouse.current.position.ReadValue();
             if (!IsOverViewport(screenPos)) return;
 
+            // A press starting on a link-creation anchor dot is exclusively handled by that
+            // dot's own IPointerDownHandler (AnchorDotHandler) via Unity's event system — without
+            // this check, the active tool's own click action (e.g. Note) would ALSO fire for the
+            // same press, since this polling loop has no idea a UI element under the cursor is
+            // about to start its own gesture.
+            if (canvasController.IsScreenPointOverLinkAnchor(screenPos, uiCamera))
+                return;
+
             switch (ActiveTool)
             {
                 case NotesTool.Select:

@@ -21,6 +21,7 @@ namespace WorldGen.Notes.Rendering
 
         readonly Dictionary<string, MonoBehaviour> objectViews = new Dictionary<string, MonoBehaviour>();
         readonly Dictionary<string, LinkView> linkViews = new Dictionary<string, LinkView>();
+        readonly Dictionary<string, LinkAnchorController> linkAnchors = new Dictionary<string, LinkAnchorController>();
 
         public event System.Action OnSelectionCleared;
 
@@ -71,6 +72,9 @@ namespace WorldGen.Notes.Rendering
             foreach (var link in linkViews.Values)
                 if (link != null) Destroy(link.gameObject);
             linkViews.Clear();
+            foreach (var anchors in linkAnchors.Values)
+                if (anchors != null) Destroy(anchors.gameObject);
+            linkAnchors.Clear();
             OnSelectionCleared?.Invoke();
 
             if (page == null) return;
@@ -132,6 +136,19 @@ namespace WorldGen.Notes.Rendering
             anchorGO.transform.SetParent(CanvasContainer, false);
             var anchors = anchorGO.AddComponent<LinkAnchorController>();
             anchors.Initialize(objectId, hostRect, CanvasContainer, interactionController);
+            linkAnchors[objectId] = anchors;
+        }
+
+        /// <summary>True if screenPos lands on any currently-visible link-creation anchor dot —
+        /// used by CanvasInteractionController to suppress the active tool's own click action
+        /// (e.g. Note/Drawing/Image creation) so it doesn't fire at the same time as an
+        /// anchor-drag gesture starting on the same press.</summary>
+        public bool IsScreenPointOverLinkAnchor(Vector2 screenPos, Camera uiCamera)
+        {
+            foreach (var anchors in linkAnchors.Values)
+                if (anchors != null && anchors.IsScreenPointOverDot(screenPos, uiCamera))
+                    return true;
+            return false;
         }
 
         void WireEvents(string objectId,

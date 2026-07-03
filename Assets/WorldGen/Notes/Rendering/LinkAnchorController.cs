@@ -73,6 +73,18 @@ namespace WorldGen.Notes.Rendering
             foreach (var dot in dots) dot.gameObject.SetActive(hovering);
         }
 
+        /// <summary>True if screenPos lands on one of this object's 4 anchor dots, regardless
+        /// of whether they're currently active — checked before they've had a chance to become
+        /// active on the same frame a hover-then-press happens in quick succession.</summary>
+        public bool IsScreenPointOverDot(Vector2 screenPos, Camera uiCamera)
+        {
+            if (!hovering) return false;
+            foreach (var dot in dots)
+                if (RectTransformUtility.RectangleContainsScreenPoint(dot, screenPos, uiCamera))
+                    return true;
+            return false;
+        }
+
         void PositionDots()
         {
             Vector2 half = hostRect.sizeDelta * 0.5f;
