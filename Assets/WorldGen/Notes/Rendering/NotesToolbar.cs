@@ -28,7 +28,6 @@ namespace WorldGen.Notes.Rendering
         {
             (NotesTool.Select, "Курсор"),
             (NotesTool.Note, "Заметка"),
-            (NotesTool.Link, "Связь"),
             (NotesTool.Drawing, "Рисунок"),
             (NotesTool.Image, "Изображение"),
         };

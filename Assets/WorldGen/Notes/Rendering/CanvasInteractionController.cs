@@ -4,7 +4,7 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Notes.Rendering
 {
-    public enum NotesTool { Select, Note, Link, Drawing, Image }
+    public enum NotesTool { Select, Note, Drawing, Image }
 
     /// <summary>
     /// Routes mouse input to canvas actions based on the active tool:
@@ -28,7 +28,6 @@ namespace WorldGen.Notes.Rendering
 
         public NotesTool ActiveTool { get; private set; } = NotesTool.Select;
 
-        string linkDragSourceId;
         string paintingDrawingObjectId;
         string selectedObjectId;
         bool panning;
@@ -37,7 +36,6 @@ namespace WorldGen.Notes.Rendering
         public void SetTool(NotesTool tool)
         {
             ActiveTool = tool;
-            linkDragSourceId = null;
             paintingDrawingObjectId = null;
         }
 
@@ -205,23 +203,7 @@ namespace WorldGen.Notes.Rendering
         public void HandleObjectClicked(string objectId)
         {
             if (ActiveTool == NotesTool.Select)
-            {
                 selectedObjectId = objectId;
-                return;
-            }
-
-            if (ActiveTool == NotesTool.Link)
-            {
-                if (linkDragSourceId == null)
-                {
-                    linkDragSourceId = objectId;
-                }
-                else if (linkDragSourceId != objectId)
-                {
-                    undoManager.PushCreateLink(canvasController, linkDragSourceId, objectId);
-                    linkDragSourceId = null;
-                }
-            }
         }
 
         public void HandleObjectDragEnded(string objectId, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)

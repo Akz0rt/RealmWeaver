@@ -35,7 +35,6 @@ namespace WorldGen.Notes.Rendering
             {
                 case NotesTool.Select: DrawCursor(tex, size); break;
                 case NotesTool.Note: DrawNote(tex, size); break;
-                case NotesTool.Link: DrawLink(tex, size); break;
                 case NotesTool.Drawing: DrawPencil(tex, size); break;
                 case NotesTool.Image: DrawPicture(tex, size); break;
             }
@@ -63,19 +62,6 @@ namespace WorldGen.Notes.Rendering
             DrawRectOutline(tex, size, min, max, 2f, Color.white);
             float fold = (max.x - min.x) * 0.35f;
             DrawLine(tex, size, new Vector2(max.x - fold, max.y), new Vector2(max.x, max.y - fold), 2f, Color.white);
-        }
-
-        static void DrawLink(Texture2D tex, int size)
-        {
-            var from = new Vector2(size * 0.2f, size * 0.2f);
-            var to = new Vector2(size * 0.75f, size * 0.75f);
-            DrawLine(tex, size, from, to, 2.5f, Color.white);
-            Vector2 dir = (to - from).normalized;
-            Vector2 perp = new Vector2(-dir.y, dir.x);
-            Vector2 tip = to + dir * (size * 0.08f);
-            Vector2 left = to - dir * (size * 0.06f) + perp * (size * 0.08f);
-            Vector2 right = to - dir * (size * 0.06f) - perp * (size * 0.08f);
-            FillTriangle(tex, size, tip, left, right, Color.white);
         }
 
         static void DrawPencil(Texture2D tex, int size)
