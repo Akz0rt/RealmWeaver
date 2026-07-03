@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
+using WorldGen.Notes.Rendering;
 
 namespace WorldGen.Rendering
 {
@@ -21,9 +22,6 @@ namespace WorldGen.Rendering
 
         [Header("Настройки внешнего вида")]
         public Vector2 panelAnchoredPosition = new Vector2(-20f, -20f);
-        [Tooltip("Horizontal anchor fraction of the screen this panel's right edge sits at. 1 = full screen right edge; set to the notes split fraction (e.g. 2/3) when the notes editor occupies the right third of the screen, so this panel stays inside the map area instead of overlapping it.")]
-        [Range(0.1f, 1f)]
-        public float rightBoundaryFraction = 1f;
         public Vector2 swatchSize = new Vector2(20f, 20f);
         public int fontSize = 14;
         public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.55f);
@@ -169,8 +167,8 @@ namespace WorldGen.Rendering
             panelImage.color = panelBackgroundColor;
 
             panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(rightBoundaryFraction, 1f); // привязка к правому верхнему углу карты (не всего экрана)
-            panelRect.anchorMax = new Vector2(rightBoundaryFraction, 1f);
+            panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f); // привязка к правому верхнему углу карты (не всего экрана)
+            panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.pivot = new Vector2(1f, 1f);
             panelRect.anchoredPosition = panelAnchoredPosition;
 

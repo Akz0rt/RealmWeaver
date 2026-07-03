@@ -8,14 +8,12 @@ namespace WorldGen.Notes.Rendering
     /// <summary>
     /// Builds the full notes editor UI hierarchy (layout split, sidebar, toolbar, canvas
     /// viewport) at Awake and wires the sub-controllers together. Attach to an empty
-    /// GameObject in the scene; assign mapAreaRoot to the existing map UI's root RectTransform
-    /// and poiManager to the scene's PoiManager for POI-linked group creation.
+    /// GameObject in the scene; assign mapCamera to the camera rendering the 3D map so its
+    /// viewport gets clamped to the map area (NotesLayoutController.SplitFraction).
     /// </summary>
     public class NotesRootBuilder : MonoBehaviour
     {
         [Header("External refs")]
-        [Tooltip("Root RectTransform of the existing map/editor UI, to be anchored to the left two-thirds.")]
-        public RectTransform mapAreaRoot;
         [Tooltip("Camera rendering the 3D map (usually Main Camera / WorldMapRenderer.targetCamera). Its viewport is clamped to the map area.")]
         public Camera mapCamera;
 
@@ -61,7 +59,6 @@ namespace WorldGen.Notes.Rendering
             notesAreaBg.color = new Color(0.12f, 0.12f, 0.14f, 1f);
 
             var layout = gameObject.AddComponent<NotesLayoutController>();
-            layout.mapAreaRoot = mapAreaRoot;
             layout.notesAreaRoot = notesAreaRect;
             layout.mapCamera = mapCamera;
             layout.Apply();

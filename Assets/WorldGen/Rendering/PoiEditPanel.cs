@@ -28,9 +28,6 @@ namespace WorldGen.Rendering
         [Header("Внешний вид")]
         [Tooltip("Горизонтальный отступ от правого края экрана.")]
         public float rightMargin = 20f;
-        [Tooltip("Horizontal anchor fraction of the screen this panel's right edge sits at. 1 = full screen right edge; set to the notes split fraction (e.g. 2/3) when the notes editor occupies the right third of the screen, so this panel stays inside the map area instead of overlapping it.")]
-        [Range(0.1f, 1f)]
-        public float rightBoundaryFraction = 1f;
         [Tooltip("Отступ снизу от нижней грани легенды.")]
         public float gapBelowLegend = 20f;
         [Tooltip("Отступ от нижнего края экрана, ниже которого панель не опускается.")]
@@ -158,8 +155,8 @@ namespace WorldGen.Rendering
             panelGO.transform.SetParent(canvasGO.transform, false);
             panelGO.AddComponent<Image>().color = panelBackgroundColor;
             panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(rightBoundaryFraction, 1f);
-            panelRect.anchorMax = new Vector2(rightBoundaryFraction, 1f);
+            panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f);
+            panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.pivot = new Vector2(1f, 1f);
             panelRect.sizeDelta = new Vector2(panelWidth, 0f);
 

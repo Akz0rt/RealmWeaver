@@ -9,16 +9,17 @@ namespace WorldGen.Notes.Rendering
     /// </summary>
     public class NotesLayoutController : MonoBehaviour
     {
-        [Tooltip("Root RectTransform containing the map/world UI. Anchored to the left two-thirds.")]
-        public RectTransform mapAreaRoot;
+        /// <summary>Single source of truth for the map/notes screen split — the ONLY place this
+        /// fraction is defined. MapLegendUI and PoiEditPanel read this directly instead of each
+        /// declaring their own copy, which is what let them drift out of sync before. A const
+        /// (not a runtime-assigned static) is used because those two panels apply it inside their
+        /// own Awake(), and Unity does not guarantee this class's Awake() runs first.</summary>
+        public const float SplitFraction = 2f / 3f;
+
         [Tooltip("Root RectTransform containing the notes editor UI. Anchored to the right third.")]
         public RectTransform notesAreaRoot;
         [Tooltip("Camera rendering the 3D map (WorldMapRenderer.targetCamera). Its viewport rect is clamped to the map area so the map doesn't render underneath the notes UI.")]
         public Camera mapCamera;
-
-        [Range(0.1f, 0.9f)]
-        [Tooltip("Fraction of screen width given to the map area; the rest goes to notes.")]
-        public float splitFraction = 2f / 3f;
 
         void Awake()
         {
@@ -28,24 +29,16 @@ namespace WorldGen.Notes.Rendering
         [ContextMenu("Apply Split")]
         public void Apply()
         {
-            if (mapAreaRoot != null)
-            {
-                mapAreaRoot.anchorMin = new Vector2(0f, 0f);
-                mapAreaRoot.anchorMax = new Vector2(splitFraction, 1f);
-                mapAreaRoot.offsetMin = Vector2.zero;
-                mapAreaRoot.offsetMax = Vector2.zero;
-            }
-
             if (notesAreaRoot != null)
             {
-                notesAreaRoot.anchorMin = new Vector2(splitFraction, 0f);
+                notesAreaRoot.anchorMin = new Vector2(SplitFraction, 0f);
                 notesAreaRoot.anchorMax = new Vector2(1f, 1f);
                 notesAreaRoot.offsetMin = Vector2.zero;
                 notesAreaRoot.offsetMax = Vector2.zero;
             }
 
             if (mapCamera != null)
-                mapCamera.rect = new Rect(0f, 0f, splitFraction, 1f);
+                mapCamera.rect = new Rect(0f, 0f, SplitFraction, 1f);
         }
     }
 }
