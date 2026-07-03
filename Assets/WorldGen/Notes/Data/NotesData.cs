@@ -70,5 +70,8 @@ namespace WorldGen.Notes.Data
         public string FromObjectId;
         public string ToObjectId;
         public bool Directed = true;
+        /// <summary>Offset from the straight-line midpoint between the two connected objects'
+        /// anchor points, in canvas units. Null = an automatic bend is computed instead.</summary>
+        public Vector2? ControlPointOffset;
     }
 }
