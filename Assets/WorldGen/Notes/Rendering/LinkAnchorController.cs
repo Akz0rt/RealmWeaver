@@ -93,6 +93,13 @@ namespace WorldGen.Notes.Rendering
             dots[1].anchoredPosition = center + new Vector2(0f, -half.y);
             dots[2].anchoredPosition = center + new Vector2(-half.x, 0f);
             dots[3].anchoredPosition = center + new Vector2(half.x, 0f);
+
+            // Counteract CanvasContainer's zoom scale so the dots stay a constant, comfortably
+            // clickable screen size regardless of how far the canvas is zoomed out.
+            float zoom = canvasContainer.localScale.x;
+            float invZoom = zoom > 0.0001f ? 1f / zoom : 1f;
+            foreach (var dot in dots)
+                dot.localScale = new Vector3(invZoom, invZoom, 1f);
         }
 
         public void BeginDrag(Vector2 screenPos)

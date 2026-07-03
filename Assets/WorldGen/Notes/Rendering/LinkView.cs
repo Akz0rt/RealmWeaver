@@ -106,11 +106,6 @@ namespace WorldGen.Notes.Rendering
             Vector2 toAnchor = GetAnchorPoint(toRect, fromRect.anchoredPosition);
             Vector2 control = GetControlPoint(fromAnchor, toAnchor);
 
-            // TEMP diagnostic — remove once the reported "shifted left" curve offset is diagnosed.
-            Debug.Log($"[LinkDiag] from='{fromRect.name}' pos={fromRect.anchoredPosition} size={fromRect.sizeDelta} " +
-                      $"to='{toRect.name}' pos={toRect.anchoredPosition} size={toRect.sizeDelta} " +
-                      $"=> fromAnchor={fromAnchor} toAnchor={toAnchor} control={control} selfLocalPos={((RectTransform)transform).anchoredPosition}");
-
             Vector2 prev = SampleQuadraticBezier(fromAnchor, control, toAnchor, 0f);
             for (int i = 0; i < SegmentCount; i++)
             {
@@ -135,6 +130,13 @@ namespace WorldGen.Notes.Rendering
         void Update()
         {
             if (Mouse.current == null || segmentRects == null) return;
+
+            // Counteract CanvasContainer's zoom scale so the bend handle stays a constant,
+            // comfortably clickable screen size regardless of how far the canvas is zoomed out.
+            float zoom = transform.parent is RectTransform canvasRect ? canvasRect.localScale.x : 1f;
+            float invZoom = zoom > 0.0001f ? 1f / zoom : 1f;
+            handleRect.localScale = new Vector3(invZoom, invZoom, 1f);
+
             var screenPos = Mouse.current.position.ReadValue();
             // Checking the handle's own rect too (not just the curve segments) matters because
             // the handle sits away from the curve itself (at the control point, not on the drawn
