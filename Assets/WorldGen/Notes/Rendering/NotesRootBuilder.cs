@@ -63,16 +63,30 @@ namespace WorldGen.Notes.Rendering
             layout.mapCamera = mapCamera;
             layout.Apply();
 
-            var vLayout = notesAreaGO.AddComponent<VerticalLayoutGroup>();
-            vLayout.childControlWidth = true;
-            vLayout.childForceExpandWidth = true;
-            vLayout.childControlHeight = true;
-            vLayout.childForceExpandHeight = true;
+            // NotesArea is a left-to-right split: the page-tree sidebar (fixed width,
+            // full height via this group's cross-axis stretch) on the left, and a
+            // RightColumn (toolbar + canvas, flexible width) on the right absorbing all
+            // remaining space — see NotesTreeSidebar for the sidebar's own fixed/collapsed
+            // width handling.
+            var hLayout = notesAreaGO.AddComponent<HorizontalLayoutGroup>();
+            hLayout.childControlWidth = true;
+            hLayout.childForceExpandWidth = true;
+            hLayout.childControlHeight = true;
+            hLayout.childForceExpandHeight = true;
 
             DocumentController = gameObject.AddComponent<NotesDocumentController>();
 
             var sidebar = gameObject.AddComponent<NotesTreeSidebar>();
             sidebar.Initialize(DocumentController, notesAreaGO.transform);
+
+            var rightColumnGO = new GameObject("RightColumn");
+            rightColumnGO.transform.SetParent(notesAreaGO.transform, false);
+            var rightColumnVLayout = rightColumnGO.AddComponent<VerticalLayoutGroup>();
+            rightColumnVLayout.childControlWidth = true;
+            rightColumnVLayout.childForceExpandWidth = true;
+            rightColumnVLayout.childControlHeight = true;
+            rightColumnVLayout.childForceExpandHeight = true;
+            rightColumnGO.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
             // Created before the viewport so CanvasInteractionController exists (as a component
             // reference) when NotesToolbar.Initialize wires button clicks to it; its dependent
@@ -83,10 +97,10 @@ namespace WorldGen.Notes.Rendering
             interaction.undoManager = undoManager;
 
             var toolbar = gameObject.AddComponent<NotesToolbar>();
-            toolbar.Initialize(interaction, notesAreaGO.transform);
+            toolbar.Initialize(interaction, rightColumnGO.transform);
 
             var viewportGO = new GameObject("CanvasViewport");
-            viewportGO.transform.SetParent(notesAreaGO.transform, false);
+            viewportGO.transform.SetParent(rightColumnGO.transform, false);
             viewportGO.AddComponent<RectMask2D>();
             var viewportImg = viewportGO.AddComponent<Image>();
             viewportImg.color = new Color(0.08f, 0.08f, 0.1f, 1f);
