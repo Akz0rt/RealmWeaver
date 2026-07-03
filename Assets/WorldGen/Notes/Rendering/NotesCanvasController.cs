@@ -271,6 +271,30 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        /// <summary>Returns the linkId of the topmost link whose curve contains screenPos, or
+        /// null — used by CanvasInteractionController for click-to-select.</summary>
+        public string FindLinkAt(Vector2 screenPos, Camera uiCamera)
+        {
+            foreach (var kvp in linkViews)
+                if (kvp.Value != null && kvp.Value.ContainsScreenPoint(screenPos, uiCamera))
+                    return kvp.Key;
+            return null;
+        }
+
+        /// <summary>Marks exactly one link (by id, or none if null) as selected, showing its bend
+        /// handle and highlight color.</summary>
+        public void SetSelectedLink(string linkId)
+        {
+            foreach (var kvp in linkViews)
+                kvp.Value?.SetSelected(kvp.Key == linkId);
+        }
+
+        public LinkData FindLinkData(string linkId)
+        {
+            var page = documentController?.ActivePage;
+            return page?.Links.FirstOrDefault(l => l.Id == linkId);
+        }
+
         public MonoBehaviour GetView(string objectId)
         {
             objectViews.TryGetValue(objectId, out var view);

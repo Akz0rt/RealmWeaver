@@ -67,6 +67,14 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        class DeleteLinkCommand : Command
+        {
+            public NotesCanvasController Canvas;
+            public string FromObjectId;
+            public string ToObjectId;
+            public override void Undo() => Canvas.AddLink(FromObjectId, ToObjectId);
+        }
+
         [Header("Confirm dialog UI (built at runtime, not scene-assigned)")]
         public Font builtinFont;
 
@@ -119,6 +127,19 @@ namespace WorldGen.Notes.Rendering
                 {
                     canvas.RemoveObject(data.Id);
                     undoStack.Push(new DeleteObjectCommand { Canvas = canvas, Data = data });
+                }
+                onConfirmed?.Invoke(confirmed);
+            });
+        }
+
+        public void RequestDeleteLink(NotesCanvasController canvas, LinkData data, System.Action<bool> onConfirmed)
+        {
+            ShowConfirmDialog("Удалить связь?", confirmed =>
+            {
+                if (confirmed)
+                {
+                    canvas.RemoveLink(data.Id);
+                    undoStack.Push(new DeleteLinkCommand { Canvas = canvas, FromObjectId = data.FromObjectId, ToObjectId = data.ToObjectId });
                 }
                 onConfirmed?.Invoke(confirmed);
             });

@@ -30,6 +30,7 @@ namespace WorldGen.Notes.Rendering
 
         string paintingDrawingObjectId;
         string selectedObjectId;
+        string selectedLinkId;
         bool panning;
         Vector2 lastPanScreenPos;
 
@@ -74,7 +75,19 @@ namespace WorldGen.Notes.Rendering
                     // object drags itself, fighting each other.
                     if (canvasController.IsScreenPointOverObject(screenPos, uiCamera))
                         break;
+
+                    string linkAt = canvasController.FindLinkAt(screenPos, uiCamera);
+                    if (linkAt != null)
+                    {
+                        selectedObjectId = null;
+                        selectedLinkId = linkAt;
+                        canvasController.SetSelectedLink(linkAt);
+                        break;
+                    }
+
                     selectedObjectId = null;
+                    selectedLinkId = null;
+                    canvasController.SetSelectedLink(null);
                     panning = true;
                     lastPanScreenPos = screenPos;
                     break;
@@ -171,6 +184,21 @@ namespace WorldGen.Notes.Rendering
         {
             if (Keyboard.current == null) return;
             if (!Keyboard.current.deleteKey.wasPressedThisFrame) return;
+
+            if (selectedLinkId != null)
+            {
+                var linkData = canvasController.FindLinkData(selectedLinkId);
+                if (linkData == null) { selectedLinkId = null; return; }
+
+                string linkIdToDelete = selectedLinkId;
+                undoManager.RequestDeleteLink(canvasController, linkData, confirmed =>
+                {
+                    if (confirmed && selectedLinkId == linkIdToDelete)
+                        selectedLinkId = null;
+                });
+                return;
+            }
+
             if (selectedObjectId == null) return;
 
             var data = FindObjectData(selectedObjectId);
@@ -203,7 +231,14 @@ namespace WorldGen.Notes.Rendering
         public void HandleObjectClicked(string objectId)
         {
             if (ActiveTool == NotesTool.Select)
+            {
                 selectedObjectId = objectId;
+                if (selectedLinkId != null)
+                {
+                    selectedLinkId = null;
+                    canvasController.SetSelectedLink(null);
+                }
+            }
         }
 
         public void HandleObjectDragEnded(string objectId, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)
