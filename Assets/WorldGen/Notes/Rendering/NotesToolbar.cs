@@ -30,6 +30,7 @@ namespace WorldGen.Notes.Rendering
             (NotesTool.Note, "Заметка"),
             (NotesTool.Drawing, "Рисунок"),
             (NotesTool.Image, "Изображение"),
+            (NotesTool.Zoom, "Лупа"),
         };
 
         public void Initialize(CanvasInteractionController interactionController, Transform parent)

@@ -4,7 +4,7 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Notes.Rendering
 {
-    public enum NotesTool { Select, Note, Drawing, Image }
+    public enum NotesTool { Select, Note, Drawing, Image, Zoom }
 
     /// <summary>
     /// Routes mouse input to canvas actions based on the active tool:
@@ -33,6 +33,10 @@ namespace WorldGen.Notes.Rendering
         string selectedLinkId;
         bool panning;
         Vector2 lastPanScreenPos;
+        bool zooming;
+        Vector2 zoomStartScreenPos;
+        float zoomStartScale;
+        const float ZoomDragSensitivity = 0.005f;
 
         public void SetTool(NotesTool tool)
         {
@@ -51,6 +55,8 @@ namespace WorldGen.Notes.Rendering
                 HandlePress();
             else if (Mouse.current.leftButton.isPressed && panning)
                 HandlePan();
+            else if (Mouse.current.leftButton.isPressed && zooming)
+                HandleZoomDrag();
             else if (Mouse.current.leftButton.isPressed && paintingDrawingObjectId != null)
                 HandlePaintDrag();
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
@@ -119,6 +125,11 @@ namespace WorldGen.Notes.Rendering
                     if (bytes != null)
                         undoManager.PushCreateImage(canvasController, ScreenToCanvasPoint(screenPos), bytes);
                     break;
+                case NotesTool.Zoom:
+                    zooming = true;
+                    zoomStartScreenPos = screenPos;
+                    zoomStartScale = canvasController.CanvasContainer.localScale.x;
+                    break;
             }
         }
 
@@ -128,6 +139,14 @@ namespace WorldGen.Notes.Rendering
             Vector2 delta = screenPos - lastPanScreenPos;
             lastPanScreenPos = screenPos;
             canvasController.Pan(delta);
+        }
+
+        void HandleZoomDrag()
+        {
+            var screenPos = Mouse.current.position.ReadValue();
+            float deltaX = screenPos.x - zoomStartScreenPos.x;
+            float newScale = zoomStartScale * Mathf.Pow(2f, deltaX * ZoomDragSensitivity);
+            canvasController.ZoomAroundScreenPoint(newScale, zoomStartScreenPos, uiCamera);
         }
 
         void HandlePaintDrag()
@@ -143,6 +162,7 @@ namespace WorldGen.Notes.Rendering
         void HandleRelease()
         {
             panning = false;
+            zooming = false;
             if (paintingDrawingObjectId != null)
             {
                 if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view)

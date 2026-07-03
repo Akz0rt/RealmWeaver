@@ -344,6 +344,26 @@ namespace WorldGen.Notes.Rendering
             SaveCameraState();
         }
 
+        /// <summary>Sets CanvasContainer's zoom to newScale (clamped to [0.25, 3]) while keeping
+        /// the canvas point currently under screenPos visually fixed on screen — used by the
+        /// click-drag Zoom tool (unlike Zoom() above, which always scales around the viewport
+        /// center, used by scroll-wheel zoom).</summary>
+        public void ZoomAroundScreenPoint(float newScale, Vector2 screenPos, Camera uiCamera)
+        {
+            float oldScale = CanvasContainer.localScale.x;
+            float clampedScale = Mathf.Clamp(newScale, 0.25f, 3f);
+            if (Mathf.Approximately(oldScale, clampedScale)) return;
+
+            var parentRect = (RectTransform)CanvasContainer.parent;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(parentRect, screenPos, uiCamera, out var pivotInParent);
+
+            Vector2 offsetFromOrigin = pivotInParent - CanvasContainer.anchoredPosition;
+            float factor = clampedScale / oldScale;
+            CanvasContainer.anchoredPosition += offsetFromOrigin * (1f - factor);
+            CanvasContainer.localScale = new Vector3(clampedScale, clampedScale, 1f);
+            SaveCameraState();
+        }
+
         void SaveCameraState()
         {
             var page = documentController?.ActivePage;

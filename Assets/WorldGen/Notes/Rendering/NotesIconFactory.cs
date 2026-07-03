@@ -37,6 +37,7 @@ namespace WorldGen.Notes.Rendering
                 case NotesTool.Note: DrawNote(tex, size); break;
                 case NotesTool.Drawing: DrawPencil(tex, size); break;
                 case NotesTool.Image: DrawPicture(tex, size); break;
+                case NotesTool.Zoom: DrawZoom(tex, size); break;
             }
 
             tex.Apply();
@@ -88,6 +89,19 @@ namespace WorldGen.Notes.Rendering
             var baseL = new Vector2(min.x + 2f, max.y - 2f);
             var baseR = new Vector2(max.x - 2f, max.y - 2f);
             FillTriangle(tex, size, peak, baseL, baseR, Color.white);
+        }
+
+        static void DrawZoom(Texture2D tex, int size)
+        {
+            var center = new Vector2(size * 0.42f, size * 0.58f);
+            float radius = size * 0.2f;
+            float thickness = 2.5f;
+            FillCircle(tex, size, center, radius, Color.white);
+            FillCircle(tex, size, center, radius - thickness, new Color32(0, 0, 0, 0));
+            Vector2 handleDir = new Vector2(0.7f, -0.7f).normalized;
+            var handleStart = center + handleDir * radius;
+            var handleEnd = center + handleDir * (radius + size * 0.28f);
+            DrawLine(tex, size, handleStart, handleEnd, 3.5f, Color.white);
         }
 
         static void FillTriangle(Texture2D tex, int size, Vector2 a, Vector2 b, Vector2 c, Color color)
