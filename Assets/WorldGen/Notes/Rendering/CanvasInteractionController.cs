@@ -44,6 +44,12 @@ namespace WorldGen.Notes.Rendering
             paintingDrawingObjectId = null;
         }
 
+        void SetSelectedObjectId(string objectId)
+        {
+            selectedObjectId = objectId;
+            canvasController.SetSelectedObject(objectId);
+        }
+
         void Update()
         {
             if (canvasController == null || Mouse.current == null) return;
@@ -79,6 +85,8 @@ namespace WorldGen.Notes.Rendering
             // about to start its own gesture.
             if (canvasController.IsScreenPointOverLinkAnchor(screenPos, uiCamera))
                 return;
+            if (canvasController.IsScreenPointOverResizeHandle(screenPos, uiCamera))
+                return;
 
             switch (ActiveTool)
             {
@@ -93,13 +101,13 @@ namespace WorldGen.Notes.Rendering
                     string linkAt = canvasController.FindLinkAt(screenPos, uiCamera);
                     if (linkAt != null)
                     {
-                        selectedObjectId = null;
+                        SetSelectedObjectId(null);
                         selectedLinkId = linkAt;
                         canvasController.SetSelectedLink(linkAt);
                         break;
                     }
 
-                    selectedObjectId = null;
+                    SetSelectedObjectId(null);
                     selectedLinkId = null;
                     canvasController.SetSelectedLink(null);
                     panning = true;
@@ -236,7 +244,7 @@ namespace WorldGen.Notes.Rendering
             undoManager.RequestDeleteObject(canvasController, data, confirmed =>
             {
                 if (confirmed && selectedObjectId == idToDelete)
-                    selectedObjectId = null;
+                    SetSelectedObjectId(null);
             });
         }
 
@@ -260,7 +268,7 @@ namespace WorldGen.Notes.Rendering
         {
             if (ActiveTool == NotesTool.Select)
             {
-                selectedObjectId = objectId;
+                SetSelectedObjectId(objectId);
                 if (selectedLinkId != null)
                 {
                     selectedLinkId = null;
@@ -271,7 +279,7 @@ namespace WorldGen.Notes.Rendering
 
         public void HandleObjectDragEnded(string objectId, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)
         {
-            selectedObjectId = objectId;
+            SetSelectedObjectId(objectId);
             undoManager.PushMove(canvasController, FindObjectData(objectId), oldPos, newPos);
             canvasController.RefreshLinksFor(objectId);
         }
@@ -281,6 +289,26 @@ namespace WorldGen.Notes.Rendering
         public void CreateLinkFromAnchorDrag(string fromObjectId, string toObjectId)
         {
             undoManager.PushCreateLink(canvasController, fromObjectId, toObjectId);
+        }
+
+        /// <summary>Called live while ObjectResizeController drags a corner handle — applies the
+        /// new size/position immediately for responsive feedback; the undo entry is only pushed
+        /// once, in CommitResize, when the drag ends.</summary>
+        public void ApplyResizePreview(string objectId, System.Numerics.Vector2 newPosition, System.Numerics.Vector2 newSize)
+        {
+            var data = FindObjectData(objectId);
+            if (data == null) return;
+            data.Position = newPosition;
+            data.Size = newSize;
+            canvasController.RefreshView(objectId);
+            canvasController.RefreshLinksFor(objectId);
+        }
+
+        public void CommitResize(string objectId, System.Numerics.Vector2 oldPosition, System.Numerics.Vector2 oldSize)
+        {
+            var data = FindObjectData(objectId);
+            if (data == null) return;
+            undoManager.PushResize(canvasController, data, oldPosition, oldSize);
         }
 
         CanvasObjectData FindObjectData(string objectId)

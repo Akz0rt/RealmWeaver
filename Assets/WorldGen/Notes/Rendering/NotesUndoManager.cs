@@ -49,6 +49,21 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        class ResizeCommand : Command
+        {
+            public NotesCanvasController Canvas;
+            public CanvasObjectData Data;
+            public System.Numerics.Vector2 OldPosition;
+            public System.Numerics.Vector2 OldSize;
+            public override void Undo()
+            {
+                Data.Position = OldPosition;
+                Data.Size = OldSize;
+                Canvas.RefreshView(Data.Id);
+                Canvas.RefreshLinksFor(Data.Id);
+            }
+        }
+
         class DeleteObjectCommand : Command
         {
             public NotesCanvasController Canvas;
@@ -117,6 +132,11 @@ namespace WorldGen.Notes.Rendering
         public void PushMove(NotesCanvasController canvas, CanvasObjectData data, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)
         {
             undoStack.Push(new MoveCommand { Canvas = canvas, Data = data, OldPosition = oldPos });
+        }
+
+        public void PushResize(NotesCanvasController canvas, CanvasObjectData data, System.Numerics.Vector2 oldPosition, System.Numerics.Vector2 oldSize)
+        {
+            undoStack.Push(new ResizeCommand { Canvas = canvas, Data = data, OldPosition = oldPosition, OldSize = oldSize });
         }
 
         public void RequestDeleteObject(NotesCanvasController canvas, CanvasObjectData data, System.Action<bool> onConfirmed)

@@ -22,6 +22,7 @@ namespace WorldGen.Notes.Rendering
         readonly Dictionary<string, MonoBehaviour> objectViews = new Dictionary<string, MonoBehaviour>();
         readonly Dictionary<string, LinkView> linkViews = new Dictionary<string, LinkView>();
         readonly Dictionary<string, LinkAnchorController> linkAnchors = new Dictionary<string, LinkAnchorController>();
+        readonly Dictionary<string, ObjectResizeController> resizeControllers = new Dictionary<string, ObjectResizeController>();
 
         public event System.Action OnSelectionCleared;
 
@@ -75,6 +76,9 @@ namespace WorldGen.Notes.Rendering
             foreach (var anchors in linkAnchors.Values)
                 if (anchors != null) Destroy(anchors.gameObject);
             linkAnchors.Clear();
+            foreach (var resize in resizeControllers.Values)
+                if (resize != null) Destroy(resize.gameObject);
+            resizeControllers.Clear();
             OnSelectionCleared?.Invoke();
 
             if (page == null) return;
@@ -102,6 +106,7 @@ namespace WorldGen.Notes.Rendering
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
+                    AddResizeHandles(view.ObjectId, view.RectTransform);
                     break;
                 }
                 case ImageObjectData image:
@@ -113,6 +118,7 @@ namespace WorldGen.Notes.Rendering
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[image.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
+                    AddResizeHandles(view.ObjectId, view.RectTransform);
                     break;
                 }
                 case DrawingObjectData drawing:
@@ -124,6 +130,7 @@ namespace WorldGen.Notes.Rendering
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[drawing.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
+                    AddResizeHandles(view.ObjectId, view.RectTransform);
                     break;
                 }
             }
@@ -137,6 +144,36 @@ namespace WorldGen.Notes.Rendering
             var anchors = anchorGO.AddComponent<LinkAnchorController>();
             anchors.Initialize(objectId, hostRect, CanvasContainer, interactionController);
             linkAnchors[objectId] = anchors;
+        }
+
+        void AddResizeHandles(string objectId, RectTransform hostRect)
+        {
+            if (interactionController == null) return;
+            var resizeGO = new GameObject($"ResizeHandles_{objectId}");
+            resizeGO.transform.SetParent(CanvasContainer, false);
+            var resize = resizeGO.AddComponent<ObjectResizeController>();
+            resize.Initialize(objectId, hostRect, CanvasContainer, interactionController);
+            resizeControllers[objectId] = resize;
+        }
+
+        /// <summary>True if screenPos lands on any currently-visible resize handle — used by
+        /// CanvasInteractionController to suppress the active tool's own click action, same
+        /// reason as IsScreenPointOverLinkAnchor.</summary>
+        public bool IsScreenPointOverResizeHandle(Vector2 screenPos, Camera uiCamera)
+        {
+            foreach (var resize in resizeControllers.Values)
+                if (resize != null && resize.IsScreenPointOverHandle(screenPos, uiCamera))
+                    return true;
+            return false;
+        }
+
+        /// <summary>Shows resize handles on exactly the selected object (or none if objectId is
+        /// null) — resize handles only appear for the current selection, unlike link anchor dots
+        /// which appear on any hover.</summary>
+        public void SetSelectedObject(string objectId)
+        {
+            foreach (var kvp in resizeControllers)
+                kvp.Value?.SetSelected(kvp.Key == objectId);
         }
 
         /// <summary>True if screenPos lands on any currently-visible link-creation anchor dot —
@@ -278,6 +315,11 @@ namespace WorldGen.Notes.Rendering
                 if (anchors != null) Destroy(anchors.gameObject);
                 linkAnchors.Remove(objectId);
             }
+            if (resizeControllers.TryGetValue(objectId, out var resize))
+            {
+                if (resize != null) Destroy(resize.gameObject);
+                resizeControllers.Remove(objectId);
+            }
             OnSelectionCleared?.Invoke();
         }
 
@@ -327,6 +369,20 @@ namespace WorldGen.Notes.Rendering
         {
             foreach (var link in linkViews.Values)
                 if (link.LinkId != null) link.UpdateTransform();
+        }
+
+        /// <summary>Re-reads the given object's current Position/Size from its data into its live
+        /// view — used during a resize drag (and by ResizeCommand.Undo) instead of duplicating
+        /// the per-view-type switch at every call site.</summary>
+        public void RefreshView(string objectId)
+        {
+            if (!objectViews.TryGetValue(objectId, out var view) || view == null) return;
+            switch (view)
+            {
+                case NoteCardView n: n.Refresh(); break;
+                case ImageObjectView i: i.Refresh(); break;
+                case DrawingObjectView d: d.Refresh(); break;
+            }
         }
 
         // ── Pan / Zoom ─────────────────────────────────────────────────────────
