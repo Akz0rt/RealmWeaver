@@ -59,6 +59,18 @@ namespace WorldGen.Notes.Rendering
             previewGO.SetActive(false);
         }
 
+        // Dots/preview are parented to canvasContainer (not to this GameObject) so their
+        // anchoredPosition lives in the same coordinate space as hostRect — destroying this
+        // component alone would otherwise leave them orphaned, active, and still wired to a
+        // now-destroyed hostRect via PositionDots/BeginDrag.
+        void OnDestroy()
+        {
+            if (dots != null)
+                foreach (var dot in dots)
+                    if (dot != null) Destroy(dot.gameObject);
+            if (previewRect != null) Destroy(previewRect.gameObject);
+        }
+
         void Update()
         {
             PositionDots();

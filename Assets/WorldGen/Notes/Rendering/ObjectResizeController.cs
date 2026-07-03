@@ -65,6 +65,17 @@ namespace WorldGen.Notes.Rendering
             PositionHandles();
         }
 
+        // Handles are parented to canvasContainer (not to this GameObject) so their
+        // anchoredPosition lives in the same coordinate space as hostRect — destroying this
+        // component alone would otherwise leave them orphaned, active, and still wired to a
+        // now-destroyed hostRect via BeginDrag/UpdateDrag.
+        void OnDestroy()
+        {
+            if (handles == null) return;
+            foreach (var h in handles)
+                if (h != null) Destroy(h.gameObject);
+        }
+
         void PositionHandles()
         {
             Vector2 half = hostRect.sizeDelta * 0.5f;
