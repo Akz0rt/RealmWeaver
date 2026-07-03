@@ -1,4 +1,6 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
 
@@ -17,36 +19,59 @@ namespace WorldGen.Notes.Rendering
         const float LineThickness = 3f;
         const float ArrowSize = 14f;
 
+        const float HandleSize = 10f;
+
         LinkData data;
         RectTransform fromRect;
         RectTransform toRect;
         RectTransform[] segmentRects;
+        Image[] segmentImages;
         RectTransform arrowRect;
+        RectTransform handleRect;
+        Camera uiCamera;
+        bool selected;
+        bool hovering;
+
+        static readonly Color NormalColor = new Color(0.9f, 0.9f, 0.9f, 0.9f);
+        static readonly Color SelectedColor = new Color(1f, 0.85f, 0.3f, 0.95f);
 
         public string LinkId => data?.Id;
 
-        public void Initialize(LinkData linkData, RectTransform canvasContainer, RectTransform from, RectTransform to)
+        public void Initialize(LinkData linkData, RectTransform canvasContainer, RectTransform from, RectTransform to, Camera camera)
         {
             data = linkData;
             fromRect = from;
             toRect = to;
+            uiCamera = camera;
 
             transform.SetParent(canvasContainer, false);
 
             segmentRects = new RectTransform[SegmentCount];
+            segmentImages = new Image[SegmentCount];
             for (int i = 0; i < SegmentCount; i++)
             {
                 var segGO = new GameObject($"Segment_{i}");
                 segGO.transform.SetParent(transform, false);
                 var segImg = segGO.AddComponent<Image>();
-                segImg.color = new Color(0.9f, 0.9f, 0.9f, 0.9f);
+                segImg.color = NormalColor;
                 var segRect = segGO.GetComponent<RectTransform>();
                 segRect.pivot = new Vector2(0f, 0.5f);
                 segRect.anchorMin = new Vector2(0f, 0f);
                 segRect.anchorMax = new Vector2(0f, 0f);
                 segRect.sizeDelta = new Vector2(0f, LineThickness);
                 segmentRects[i] = segRect;
+                segmentImages[i] = segImg;
             }
+
+            var handleGO = new GameObject("Handle");
+            handleGO.transform.SetParent(transform, false);
+            var handleImg = handleGO.AddComponent<Image>();
+            handleImg.color = SelectedColor;
+            handleRect = handleGO.GetComponent<RectTransform>();
+            handleRect.sizeDelta = new Vector2(HandleSize, HandleSize);
+            var dragHandler = handleGO.AddComponent<LinkHandleDragHandler>();
+            dragHandler.owner = this;
+            handleGO.SetActive(false);
 
             if (data.Directed)
             {
@@ -89,6 +114,55 @@ namespace WorldGen.Notes.Rendering
                 arrowRect.anchoredPosition = toAnchor;
                 arrowRect.localRotation = Quaternion.Euler(0f, 0f, angle);
             }
+
+            handleRect.anchoredPosition = control;
+        }
+
+        void Update()
+        {
+            if (Mouse.current == null || segmentRects == null) return;
+            var screenPos = Mouse.current.position.ReadValue();
+            bool nowHovering = ContainsScreenPoint(screenPos, uiCamera);
+            if (nowHovering == hovering) return;
+            hovering = nowHovering;
+            RefreshHandleVisibility();
+        }
+
+        /// <summary>True if screenPos lands on any of this link's curve segments — used both
+        /// for hover-driven handle visibility and (by NotesCanvasController.FindLinkAt) for
+        /// click-to-select.</summary>
+        public bool ContainsScreenPoint(Vector2 screenPos, Camera camera)
+        {
+            foreach (var seg in segmentRects)
+                if (RectTransformUtility.RectangleContainsScreenPoint(seg, screenPos, camera))
+                    return true;
+            return false;
+        }
+
+        public void SetSelected(bool value)
+        {
+            selected = value;
+            RefreshHandleVisibility();
+            var color = selected ? SelectedColor : NormalColor;
+            foreach (var img in segmentImages) img.color = color;
+        }
+
+        void RefreshHandleVisibility()
+        {
+            handleRect.gameObject.SetActive(selected || hovering);
+        }
+
+        /// <summary>Called by LinkHandleDragHandler while the user drags the bend handle.</summary>
+        public void OnHandleDragged(Vector2 screenPos)
+        {
+            var canvasRect = (RectTransform)transform.parent;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRect, screenPos, uiCamera, out var local);
+            Vector2 fromAnchor = GetAnchorPoint(fromRect, toRect.anchoredPosition);
+            Vector2 toAnchor = GetAnchorPoint(toRect, fromRect.anchoredPosition);
+            Vector2 midpoint = (fromAnchor + toAnchor) * 0.5f;
+            Vector2 offset = local - midpoint;
+            data.ControlPointOffset = new System.Numerics.Vector2(offset.x, offset.y);
+            UpdateTransform();
         }
 
         static void PositionSegment(RectTransform segRect, Vector2 from, Vector2 to)
@@ -164,5 +238,13 @@ namespace WorldGen.Notes.Rendering
                 ? "Self-Test LinkView — Anchor Point Selection: PASS"
                 : $"Self-Test LinkView — Anchor Point Selection: FAIL (rightOk={rightOk}, topOk={topOk})");
         }
+    }
+
+    /// <summary>Forwards drag events from the link's bend handle back to its owning LinkView —
+    /// kept as a separate component since the handle is a distinct GameObject from LinkView's.</summary>
+    class LinkHandleDragHandler : MonoBehaviour, IDragHandler
+    {
+        public LinkView owner;
+        public void OnDrag(PointerEventData eventData) => owner.OnHandleDragged(eventData.position);
     }
 }

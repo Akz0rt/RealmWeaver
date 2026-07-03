@@ -140,7 +140,8 @@ namespace WorldGen.Notes.Rendering
 
             var go = new GameObject($"Link_{link.Id}");
             var view = go.AddComponent<LinkView>();
-            view.Initialize(link, CanvasContainer, fromRect, toRect);
+            Camera cam = interactionController != null ? interactionController.uiCamera : null;
+            view.Initialize(link, CanvasContainer, fromRect, toRect, cam);
             linkViews[link.Id] = view;
         }
 
