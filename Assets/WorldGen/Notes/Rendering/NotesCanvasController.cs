@@ -97,6 +97,7 @@ namespace WorldGen.Notes.Rendering
                     view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
+                    AddLinkAnchors(view.ObjectId, view.RectTransform);
                     break;
                 }
                 case ImageObjectData image:
@@ -107,6 +108,7 @@ namespace WorldGen.Notes.Rendering
                     view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[image.Id] = view;
+                    AddLinkAnchors(view.ObjectId, view.RectTransform);
                     break;
                 }
                 case DrawingObjectData drawing:
@@ -117,9 +119,19 @@ namespace WorldGen.Notes.Rendering
                     view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[drawing.Id] = view;
+                    AddLinkAnchors(view.ObjectId, view.RectTransform);
                     break;
                 }
             }
+        }
+
+        void AddLinkAnchors(string objectId, RectTransform hostRect)
+        {
+            if (interactionController == null) return;
+            var anchorGO = new GameObject($"LinkAnchors_{objectId}");
+            anchorGO.transform.SetParent(CanvasContainer, false);
+            var anchors = anchorGO.AddComponent<LinkAnchorController>();
+            anchors.Initialize(objectId, hostRect, CanvasContainer, interactionController);
         }
 
         void WireEvents(string objectId,
@@ -170,6 +182,21 @@ namespace WorldGen.Notes.Rendering
                     return true;
             }
             return false;
+        }
+
+        /// <summary>Returns the objectId of the topmost spawned object view whose rect contains
+        /// screenPos, excluding excludeObjectId (the link-drag source) — used by
+        /// LinkAnchorController to find a drop target when an anchor drag is released.</summary>
+        public string FindObjectAt(Vector2 screenPos, Camera uiCamera, string excludeObjectId)
+        {
+            foreach (var kvp in objectViews)
+            {
+                if (kvp.Key == excludeObjectId) continue;
+                var rt = kvp.Value != null ? RectOf(kvp.Value) : null;
+                if (rt != null && RectTransformUtility.RectangleContainsScreenPoint(rt, screenPos, uiCamera))
+                    return kvp.Key;
+            }
+            return null;
         }
 
         // ── Mutation ───────────────────────────────────────────────────────────

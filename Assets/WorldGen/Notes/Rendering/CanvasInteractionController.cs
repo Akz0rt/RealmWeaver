@@ -231,6 +231,13 @@ namespace WorldGen.Notes.Rendering
             canvasController.RefreshLinksFor(objectId);
         }
 
+        /// <summary>Called by LinkAnchorController when an anchor-drag is released over another
+        /// object — creates the link through the undo stack, same as the old click-click flow.</summary>
+        public void CreateLinkFromAnchorDrag(string fromObjectId, string toObjectId)
+        {
+            undoManager.PushCreateLink(canvasController, fromObjectId, toObjectId);
+        }
+
         CanvasObjectData FindObjectData(string objectId)
         {
             var page = canvasController.documentController.ActivePage;
