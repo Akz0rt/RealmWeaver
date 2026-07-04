@@ -5,15 +5,16 @@ using UnityEngine.UI;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Row of fixed-size icon buttons (Select/Note/Link/Drawing/Image) above the notes
-    /// canvas. Clicking a button calls CanvasInteractionController.SetTool and highlights
-    /// itself; hovering shows a floating Russian-label tooltip near the cursor.
+    /// Row of borderless icon buttons (Select/Note/Drawing/Image/Zoom) floating over the
+    /// notes canvas. Clicking a button calls CanvasInteractionController.SetTool and shows a
+    /// circular backdrop behind its icon; hovering shows a dimmer backdrop plus a floating
+    /// Russian-label tooltip near the cursor.
     /// </summary>
     public class NotesToolbar : MonoBehaviour
     {
         public const float ButtonSize = 36f;
-        public Color activeColor = new Color(0.2f, 0.55f, 0.3f);
-        public Color inactiveColor = new Color(0.3f, 0.3f, 0.3f);
+        public Color activeColor = new Color(0.2f, 0.55f, 0.3f, 0.65f);
+        public Color hoverColor = new Color(1f, 1f, 1f, 0.15f);
 
         Font builtinFont;
         Button[] buttons;
@@ -23,6 +24,9 @@ namespace WorldGen.Notes.Rendering
         Text tooltipText;
         CanvasGroup tooltipGroup;
         int hoveredIndex = -1;
+        NotesTool activeTool = NotesTool.Select;
+
+        static Sprite cachedBackdropSprite;
 
         static readonly (NotesTool tool, string label)[] ToolDefs =
         {
@@ -49,7 +53,20 @@ namespace WorldGen.Notes.Rendering
             hLayout.childForceExpandWidth = false;
             hLayout.childForceExpandHeight = false;
             hLayout.childAlignment = TextAnchor.MiddleLeft;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = ButtonSize + 8f;
+            var fitter = rowGO.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Floats over the canvas viewport instead of reserving its own row in a stacked
+            // layout — this GameObject has no LayoutGroup parent controlling it (RightColumn
+            // no longer stacks Toolbar+Viewport, see NotesRootBuilder), so its anchor
+            // (top-left corner) is set directly here; its size comes from ContentSizeFitter
+            // reading its own HorizontalLayoutGroup's computed preferred size above.
+            var rowRect = (RectTransform)rowGO.transform;
+            rowRect.anchorMin = new Vector2(0f, 1f);
+            rowRect.anchorMax = new Vector2(0f, 1f);
+            rowRect.pivot = new Vector2(0f, 1f);
+            rowRect.anchoredPosition = Vector2.zero;
 
             BuildTooltip(rootCanvas.transform);
 
@@ -68,9 +85,14 @@ namespace WorldGen.Notes.Rendering
                 le.preferredHeight = ButtonSize;
 
                 var img = btnGO.AddComponent<Image>();
-                img.color = inactiveColor;
+                img.sprite = GetBackdropSprite();
+                img.color = Color.clear;
                 var btn = btnGO.AddComponent<Button>();
                 btn.targetGraphic = img;
+                // This class manages the backdrop color itself (active/hover/neither) — the
+                // default ColorTint transition would otherwise fight that by re-tinting
+                // targetGraphic.color on every pointer enter/exit/click.
+                btn.transition = Selectable.Transition.None;
                 btn.onClick.AddListener(() => SetActive(tool));
                 buttons[index] = btn;
 
@@ -84,7 +106,6 @@ namespace WorldGen.Notes.Rendering
                 iconRect.anchorMin = new Vector2(0.15f, 0.15f);
                 iconRect.anchorMax = new Vector2(0.85f, 0.85f);
                 iconRect.sizeDelta = Vector2.zero;
-
             }
 
             SetActive(NotesTool.Select);
@@ -105,10 +126,11 @@ namespace WorldGen.Notes.Rendering
                 }
             }
 
-            // Only touch the tooltip when the hovered button actually changes, not every
-            // frame — no need to keep re-setting the same text/position 60 times a second.
+            // Only touch the tooltip/backdrops when the hovered button actually changes, not
+            // every frame — no need to keep re-setting the same state 60 times a second.
             if (newHoveredIndex == hoveredIndex) return;
             hoveredIndex = newHoveredIndex;
+            RefreshButtonVisuals();
 
             if (hoveredIndex >= 0)
                 ShowTooltip(ToolDefs[hoveredIndex].label, screenPos);
@@ -167,8 +189,46 @@ namespace WorldGen.Notes.Rendering
         void SetActive(NotesTool tool)
         {
             controller.SetTool(tool);
-            for (int i = 0; i < ToolDefs.Length; i++)
-                buttons[i].GetComponent<Image>().color = ToolDefs[i].tool == tool ? activeColor : inactiveColor;
+            activeTool = tool;
+            RefreshButtonVisuals();
+        }
+
+        void RefreshButtonVisuals()
+        {
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                var img = buttons[i].GetComponent<Image>();
+                if (ToolDefs[i].tool == activeTool)
+                    img.color = activeColor;
+                else if (i == hoveredIndex)
+                    img.color = hoverColor;
+                else
+                    img.color = Color.clear;
+            }
+        }
+
+        static Sprite GetBackdropSprite()
+        {
+            if (cachedBackdropSprite != null) return cachedBackdropSprite;
+
+            const int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.name = "NotesToolbarBackdrop";
+
+            var center = new Vector2(size * 0.5f, size * 0.5f);
+            float radius = size * 0.5f;
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    var p = new Vector2(x + 0.5f, y + 0.5f);
+                    bool inside = (p - center).sqrMagnitude <= radius * radius;
+                    tex.SetPixel(x, y, inside ? Color.white : Color.clear);
+                }
+            tex.Apply();
+
+            cachedBackdropSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
+            return cachedBackdropSprite;
         }
 
         // ── Self-tests ─────────────────────────────────────────────────────────
@@ -187,5 +247,53 @@ namespace WorldGen.Notes.Rendering
                 ? "Self-Test Notes Toolbar — Icon Caching: PASS"
                 : "Self-Test Notes Toolbar — Icon Caching: FAIL (icon missing or not cached for some tool)");
         }
+
+        [ContextMenu("Self-Test: Notes Toolbar — Active/Hover Backdrop")]
+        public void SelfTestActiveHoverBackdrop()
+        {
+            if (buttons == null)
+            {
+                Debug.Log("Self-Test Notes Toolbar — Active/Hover Backdrop: FAIL (not initialized — enter Play Mode first)");
+                return;
+            }
+
+            bool ok = true;
+            string reason = "";
+
+            SetActive(NotesTool.Select);
+            if (!ColorsApproximatelyEqual(buttons[0].GetComponent<Image>().color, activeColor))
+            { ok = false; reason = "expected Select button to show activeColor after SetActive(Select)"; }
+            if (ok && !ColorsApproximatelyEqual(buttons[1].GetComponent<Image>().color, Color.clear))
+            { ok = false; reason = "expected non-active button to be Color.clear"; }
+
+            if (ok)
+            {
+                hoveredIndex = 1;
+                RefreshButtonVisuals();
+                if (!ColorsApproximatelyEqual(buttons[1].GetComponent<Image>().color, hoverColor))
+                { ok = false; reason = "expected hovered non-active button to show hoverColor"; }
+                else if (!ColorsApproximatelyEqual(buttons[0].GetComponent<Image>().color, activeColor))
+                { ok = false; reason = "expected active button to stay activeColor while a different button is hovered"; }
+            }
+
+            if (ok)
+            {
+                hoveredIndex = 0;
+                RefreshButtonVisuals();
+                if (!ColorsApproximatelyEqual(buttons[0].GetComponent<Image>().color, activeColor))
+                { ok = false; reason = "expected active button to stay activeColor (not hoverColor) when hovered"; }
+            }
+
+            hoveredIndex = -1;
+            RefreshButtonVisuals();
+
+            Debug.Log(ok
+                ? "Self-Test Notes Toolbar — Active/Hover Backdrop: PASS"
+                : $"Self-Test Notes Toolbar — Active/Hover Backdrop: FAIL ({reason})");
+        }
+
+        static bool ColorsApproximatelyEqual(Color a, Color b) =>
+            Mathf.Approximately(a.r, b.r) && Mathf.Approximately(a.g, b.g) &&
+            Mathf.Approximately(a.b, b.b) && Mathf.Approximately(a.a, b.a);
     }
 }
