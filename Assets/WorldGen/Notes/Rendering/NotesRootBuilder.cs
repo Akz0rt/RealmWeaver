@@ -82,6 +82,11 @@ namespace WorldGen.Notes.Rendering
             hLayout.childForceExpandWidth = false;
             hLayout.childControlHeight = true;
             hLayout.childForceExpandHeight = true;
+            // Reserves the same 20px top margin MapEditorPanel/MapLegendUI already assume
+            // (panelAnchoredPosition.y = -20 in both), so the upcoming ProjectMenuBar has
+            // room without needing any change to notesAreaRoot's anchors or the map camera's
+            // viewport rect (RectOffset order is left, right, top, bottom).
+            hLayout.padding = new RectOffset(0, 0, 20, 0);
 
             DocumentController = gameObject.AddComponent<NotesDocumentController>();
 
