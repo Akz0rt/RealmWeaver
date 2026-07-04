@@ -100,6 +100,9 @@ namespace WorldGen.Generation
         /// <summary>Итоговый биом, вычисленный из computed-значений. Финальный эффективный биом (с учётом BiomeOverride) хранится в cell.Biome после вызова ClimateOverrideService.RecomputeBiome.</summary>
         public Biome Biome;
 
+        /// <summary>Parameterless constructor for Newtonsoft.Json deserialization (ProjectSerializer) — fields are populated by the serializer afterward.</summary>
+        public VoronoiCell() { }
+
         public VoronoiCell(int id, Vector2 site)
         {
             Id = id;
