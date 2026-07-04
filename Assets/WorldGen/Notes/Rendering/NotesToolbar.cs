@@ -16,6 +16,11 @@ namespace WorldGen.Notes.Rendering
         public Color activeColor = new Color(0.2f, 0.55f, 0.3f, 0.65f);
         public Color hoverColor = new Color(1f, 1f, 1f, 0.15f);
 
+        /// <summary>The floating row's own RectTransform — exposed so CanvasInteractionController
+        /// can exclude clicks landing on the toolbar from canvas actions (it now floats over the
+        /// same viewport area instead of sitting in its own reserved strip above it).</summary>
+        public RectTransform RowRect { get; private set; }
+
         Font builtinFont;
         Button[] buttons;
         CanvasInteractionController controller;
@@ -67,6 +72,7 @@ namespace WorldGen.Notes.Rendering
             rowRect.anchorMax = new Vector2(0f, 1f);
             rowRect.pivot = new Vector2(0f, 1f);
             rowRect.anchoredPosition = Vector2.zero;
+            RowRect = rowRect;
 
             BuildTooltip(rootCanvas.transform);
 

@@ -18,6 +18,7 @@ namespace WorldGen.Notes.Rendering
         public NotesCanvasController canvasController;
         public NotesUndoManager undoManager;
         public RectTransform viewportRect;
+        public RectTransform toolbarRect;
         public Camera uiCamera; // null for ScreenSpaceOverlay canvases
 
         [Header("Drawing settings")]
@@ -68,15 +69,23 @@ namespace WorldGen.Notes.Rendering
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
                 HandleRelease();
 
+            var scrollScreenPos = Mouse.current.position.ReadValue();
             float scroll = Mouse.current.scroll.ReadValue().y;
-            if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(Mouse.current.position.ReadValue()))
-                canvasController.Zoom(scroll * 0.001f, Mouse.current.position.ReadValue());
+            if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(scrollScreenPos) && !IsOverToolbar(scrollScreenPos))
+                canvasController.Zoom(scroll * 0.001f, scrollScreenPos);
         }
 
         void HandlePress()
         {
             var screenPos = Mouse.current.position.ReadValue();
             if (!IsOverViewport(screenPos)) return;
+
+            // The toolbar floats directly over the canvas viewport (see NotesRootBuilder)
+            // instead of sitting in its own reserved strip above it, so a click landing on a
+            // toolbar button is also geometrically "inside" viewportRect — without this check
+            // the active tool's own click action (e.g. Note) would ALSO fire underneath the
+            // button being clicked to switch tools.
+            if (IsOverToolbar(screenPos)) return;
 
             // A press starting on a link-creation anchor dot is exclusively handled by that
             // dot's own IPointerDownHandler (AnchorDotHandler) via Unity's event system — without
@@ -204,6 +213,12 @@ namespace WorldGen.Notes.Rendering
         {
             if (viewportRect == null) return true;
             return RectTransformUtility.RectangleContainsScreenPoint(viewportRect, screenPos, uiCamera);
+        }
+
+        bool IsOverToolbar(Vector2 screenPos)
+        {
+            if (toolbarRect == null) return false;
+            return RectTransformUtility.RectangleContainsScreenPoint(toolbarRect, screenPos, uiCamera);
         }
 
         System.Numerics.Vector2 ScreenToCanvasPoint(Vector2 screenPos)

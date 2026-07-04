@@ -117,6 +117,7 @@ namespace WorldGen.Notes.Rendering
 
             var toolbar = gameObject.AddComponent<NotesToolbar>();
             toolbar.Initialize(interaction, rightColumnGO.transform);
+            interaction.toolbarRect = toolbar.RowRect;
 
             // NotesDocumentController.Awake() already opened its default page; render it now
             // rather than relying on subscription-order timing across components added this frame.
