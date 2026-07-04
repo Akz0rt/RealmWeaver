@@ -4,15 +4,44 @@ using UnityEngine.UI;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Shared "message + Отмена/Удалить" modal, extracted from NotesUndoManager so
-    /// canvas-object deletion and sidebar group/page deletion reuse the same dialog
-    /// instead of duplicating the UI-building code. Only one dialog is ever shown at once.
+    /// Shared modal dialogs, extracted from NotesUndoManager so canvas-object deletion and
+    /// sidebar group/page deletion reuse the same UI instead of duplicating it. Only one
+    /// dialog is ever shown at once (Show/ShowInfo both replace the previous one).
     /// </summary>
     public static class ConfirmDialog
     {
         static GameObject activeDialogGO;
 
         public static void Show(Font font, string message, System.Action<bool> onResult)
+        {
+            var panelGO = BuildBasePanel(font, message);
+
+            AddDialogButton(font, panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
+            {
+                Object.Destroy(activeDialogGO);
+                onResult(false);
+            });
+            AddDialogButton(font, panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), new Color(0.55f, 0.15f, 0.15f), () =>
+            {
+                Object.Destroy(activeDialogGO);
+                onResult(true);
+            });
+        }
+
+        /// <summary>Single-button acknowledgement dialog, for errors/warnings that need no
+        /// yes/no choice (e.g. project load failures).</summary>
+        public static void ShowInfo(Font font, string message, System.Action onDismiss = null)
+        {
+            var panelGO = BuildBasePanel(font, message);
+
+            AddDialogButton(font, panelGO.transform, "OK", new Vector2(0.25f, 0.1f), new Vector2(0.75f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
+            {
+                Object.Destroy(activeDialogGO);
+                onDismiss?.Invoke();
+            });
+        }
+
+        static GameObject BuildBasePanel(Font font, string message)
         {
             if (activeDialogGO != null) Object.Destroy(activeDialogGO);
 
@@ -31,7 +60,7 @@ namespace WorldGen.Notes.Rendering
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
-            panelRect.sizeDelta = new Vector2(280f, 120f);
+            panelRect.sizeDelta = new Vector2(300f, 120f);
             panelRect.anchoredPosition = Vector2.zero;
 
             var msgGO = new GameObject("Message");
@@ -47,16 +76,7 @@ namespace WorldGen.Notes.Rendering
             msgRect.anchorMax = new Vector2(1f, 1f);
             msgRect.sizeDelta = Vector2.zero;
 
-            AddDialogButton(font, panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
-            {
-                Object.Destroy(activeDialogGO);
-                onResult(false);
-            });
-            AddDialogButton(font, panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), new Color(0.55f, 0.15f, 0.15f), () =>
-            {
-                Object.Destroy(activeDialogGO);
-                onResult(true);
-            });
+            return panelGO;
         }
 
         static void AddDialogButton(Font font, Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Color bgColor, System.Action onClick)
