@@ -302,6 +302,7 @@ namespace WorldGen.Rendering
         public void SelfTestRecentProjectsList()
         {
             string prefsBackup = PlayerPrefs.GetString("Project.RecentPaths", "");
+            PlayerPrefs.SetString("Project.RecentPaths", ""); // start from empty, not whatever the real recent list currently holds
 
             RecentProjectsList.Push("a.dndproj");
             RecentProjectsList.Push("b.dndproj");
@@ -309,16 +310,26 @@ namespace WorldGen.Rendering
             RecentProjectsList.Push("a.dndproj"); // re-push moves it back to front, no duplicate
 
             var list = RecentProjectsList.Get();
-            bool ok = list.Count == 3
+            bool dedupOk = list.Count == 3
                 && list[0] == "a.dndproj"
                 && list[1] == "c.dndproj"
                 && list[2] == "b.dndproj";
 
+            RecentProjectsList.Push("d.dndproj");
+            RecentProjectsList.Push("e.dndproj");
+            RecentProjectsList.Push("f.dndproj"); // 6th distinct entry — list should cap at 5, dropping the oldest ("b.dndproj")
+
+            var cappedList = RecentProjectsList.Get();
+            bool capOk = cappedList.Count == 5
+                && cappedList[0] == "f.dndproj"
+                && !cappedList.Contains("b.dndproj");
+
             PlayerPrefs.SetString("Project.RecentPaths", prefsBackup); // restore whatever was there before the test
 
+            bool ok = dedupOk && capOk;
             Debug.Log(ok
                 ? "Self-Test Recent Projects List: PASS"
-                : $"Self-Test Recent Projects List: FAIL (list=[{string.Join(", ", list)}])");
+                : $"Self-Test Recent Projects List: FAIL (dedupOk={dedupOk}, list=[{string.Join(", ", list)}], capOk={capOk}, cappedList=[{string.Join(", ", cappedList)}])");
         }
     }
 }
