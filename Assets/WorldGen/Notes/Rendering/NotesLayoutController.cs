@@ -17,16 +17,29 @@ namespace WorldGen.Notes.Rendering
         public const float MaxSplitFraction = 0.85f;
         const float DividerWidth = 8f;
 
+        static float? splitFraction;
+
         /// <summary>Single source of truth for the map/notes screen split fraction.
         /// MapLegendUI and PoiEditPanel read this directly instead of each declaring their own
         /// copy, which is what let them drift out of sync before this class existed. Lazily
         /// initialized from PlayerPrefs (falling back to DefaultSplitFraction) the first time
-        /// any code touches this property — a static property's initializer resolves on first
-        /// access regardless of which GameObject's Awake() runs first, the same ordering
-        /// guarantee a plain const used to provide (see
-        /// docs/superpowers/specs/2026-07-03-map-notes-split-single-source-design.md), while
-        /// still allowing later mutation (which a const could never do).</summary>
-        public static float SplitFraction { get; private set; } = PlayerPrefs.GetFloat(PrefsKey, DefaultSplitFraction);
+        /// any code touches this property — this getter resolves on first access regardless of
+        /// which GameObject's Awake() runs first, the same ordering guarantee a plain const used
+        /// to provide (see docs/superpowers/specs/2026-07-03-map-notes-split-single-source-design.md),
+        /// while still allowing later mutation (which a const could never do). The PlayerPrefs
+        /// read deliberately happens here, in a normal method body, rather than in a static field
+        /// initializer — Unity forbids calling PlayerPrefs from a MonoBehaviour type's static
+        /// constructor (which a field initializer compiles into), since AddComponent&lt;T&gt;()
+        /// can trigger it before the engine considers construction finished.</summary>
+        public static float SplitFraction
+        {
+            get
+            {
+                splitFraction ??= PlayerPrefs.GetFloat(PrefsKey, DefaultSplitFraction);
+                return splitFraction.Value;
+            }
+            private set => splitFraction = value;
+        }
 
         /// <summary>Fires whenever SplitFraction changes (including live during a drag) so
         /// panels anchored to the split (MapLegendUI, PoiEditPanel) can update instead of only
