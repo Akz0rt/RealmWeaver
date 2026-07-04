@@ -69,9 +69,17 @@ namespace WorldGen.Notes.Rendering
             // RightColumn (toolbar + canvas, flexible width) on the right absorbing all
             // remaining space — see NotesTreeSidebar for the sidebar's own fixed/collapsed
             // width handling.
+            //
+            // childForceExpandWidth must be false: HorizontalLayoutGroup.GetChildSizes forces
+            // EVERY child's effective flexibleWidth to at least 1 when this is true, regardless
+            // of what each child's own LayoutElement.flexibleWidth says — so the sidebar (which
+            // never sets flexibleWidth, wanting a fixed/dragged width) was silently getting an
+            // equal share of all leftover space on top of its own preferredWidth. Leaving this
+            // false makes RightColumn's own explicit flexibleWidth=1 the only source of
+            // flexible space, so it alone absorbs everything the sidebar doesn't use.
             var hLayout = notesAreaGO.AddComponent<HorizontalLayoutGroup>();
             hLayout.childControlWidth = true;
-            hLayout.childForceExpandWidth = true;
+            hLayout.childForceExpandWidth = false;
             hLayout.childControlHeight = true;
             hLayout.childForceExpandHeight = true;
 
