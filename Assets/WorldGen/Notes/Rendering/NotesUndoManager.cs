@@ -94,7 +94,6 @@ namespace WorldGen.Notes.Rendering
         public Font builtinFont;
 
         readonly Stack<Command> undoStack = new Stack<Command>();
-        GameObject confirmDialogGO;
 
         void Awake()
         {
@@ -141,7 +140,7 @@ namespace WorldGen.Notes.Rendering
 
         public void RequestDeleteObject(NotesCanvasController canvas, CanvasObjectData data, System.Action<bool> onConfirmed)
         {
-            ShowConfirmDialog($"Удалить \"{DescribeObject(data)}\"?", confirmed =>
+            ConfirmDialog.Show(builtinFont, $"Удалить \"{DescribeObject(data)}\"?", confirmed =>
             {
                 if (confirmed)
                 {
@@ -154,7 +153,7 @@ namespace WorldGen.Notes.Rendering
 
         public void RequestDeleteLink(NotesCanvasController canvas, LinkData data, System.Action<bool> onConfirmed)
         {
-            ShowConfirmDialog("Удалить связь?", confirmed =>
+            ConfirmDialog.Show(builtinFont, "Удалить связь?", confirmed =>
             {
                 if (confirmed)
                 {
@@ -179,81 +178,6 @@ namespace WorldGen.Notes.Rendering
             DrawingObjectData => "рисунок",
             _ => "объект"
         };
-
-        void ShowConfirmDialog(string message, System.Action<bool> onResult)
-        {
-            if (confirmDialogGO != null) Destroy(confirmDialogGO);
-
-            var canvasGO = new GameObject("ConfirmDialogCanvas");
-            var canvas = canvasGO.AddComponent<UnityEngine.Canvas>();
-            canvas.renderMode = UnityEngine.RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 32000;
-            canvasGO.AddComponent<UnityEngine.UI.CanvasScaler>();
-            canvasGO.AddComponent<UnityEngine.UI.GraphicRaycaster>();
-            confirmDialogGO = canvasGO;
-
-            var panelGO = new GameObject("Panel");
-            panelGO.transform.SetParent(canvasGO.transform, false);
-            var panelImg = panelGO.AddComponent<UnityEngine.UI.Image>();
-            panelImg.color = new Color(0f, 0f, 0f, 0.7f);
-            var panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0.5f, 0.5f);
-            panelRect.anchorMax = new Vector2(0.5f, 0.5f);
-            panelRect.sizeDelta = new Vector2(280f, 120f);
-            panelRect.anchoredPosition = Vector2.zero;
-
-            var msgGO = new GameObject("Message");
-            msgGO.transform.SetParent(panelGO.transform, false);
-            var msgText = msgGO.AddComponent<UnityEngine.UI.Text>();
-            msgText.text = message;
-            msgText.font = builtinFont;
-            msgText.fontSize = 13;
-            msgText.color = Color.white;
-            msgText.alignment = TextAnchor.MiddleCenter;
-            var msgRect = msgGO.GetComponent<RectTransform>();
-            msgRect.anchorMin = new Vector2(0f, 0.4f);
-            msgRect.anchorMax = new Vector2(1f, 1f);
-            msgRect.sizeDelta = Vector2.zero;
-
-            AddDialogButton(panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
-            {
-                Destroy(confirmDialogGO);
-                onResult(false);
-            });
-            AddDialogButton(panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), new Color(0.55f, 0.15f, 0.15f), () =>
-            {
-                Destroy(confirmDialogGO);
-                onResult(true);
-            });
-        }
-
-        void AddDialogButton(Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Color bgColor, System.Action onClick)
-        {
-            var go = new GameObject($"Btn_{label}");
-            go.transform.SetParent(parent, false);
-            var img = go.AddComponent<UnityEngine.UI.Image>();
-            img.color = bgColor;
-            var btn = go.AddComponent<UnityEngine.UI.Button>();
-            btn.targetGraphic = img;
-            btn.onClick.AddListener(() => onClick?.Invoke());
-            var rect = go.GetComponent<RectTransform>();
-            rect.anchorMin = anchorMin;
-            rect.anchorMax = anchorMax;
-            rect.sizeDelta = Vector2.zero;
-
-            var textGO = new GameObject("Text");
-            textGO.transform.SetParent(go.transform, false);
-            var text = textGO.AddComponent<UnityEngine.UI.Text>();
-            text.text = label;
-            text.font = builtinFont;
-            text.fontSize = 12;
-            text.color = Color.white;
-            text.alignment = TextAnchor.MiddleCenter;
-            var textRect = textGO.GetComponent<RectTransform>();
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.sizeDelta = Vector2.zero;
-        }
 
         // ── Self-tests ─────────────────────────────────────────────────────────
 
