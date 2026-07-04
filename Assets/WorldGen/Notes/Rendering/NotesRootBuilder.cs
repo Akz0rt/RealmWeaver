@@ -81,11 +81,6 @@ namespace WorldGen.Notes.Rendering
 
             var rightColumnGO = new GameObject("RightColumn");
             rightColumnGO.transform.SetParent(notesAreaGO.transform, false);
-            var rightColumnVLayout = rightColumnGO.AddComponent<VerticalLayoutGroup>();
-            rightColumnVLayout.childControlWidth = true;
-            rightColumnVLayout.childForceExpandWidth = true;
-            rightColumnVLayout.childControlHeight = true;
-            rightColumnVLayout.childForceExpandHeight = true;
             rightColumnGO.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
             // Created before the viewport so CanvasInteractionController exists (as a component
@@ -96,23 +91,32 @@ namespace WorldGen.Notes.Rendering
             var interaction = gameObject.AddComponent<CanvasInteractionController>();
             interaction.undoManager = undoManager;
 
-            var toolbar = gameObject.AddComponent<NotesToolbar>();
-            toolbar.Initialize(interaction, rightColumnGO.transform);
-
+            // CanvasViewport is created (and parented) before the toolbar so it's the
+            // back-most sibling under RightColumn — NotesToolbar.Initialize (below) parents
+            // its floating row after this, so it renders and raycasts on top of the canvas
+            // instead of being clipped by CanvasViewport's RectMask2D. RightColumn no longer
+            // has a LayoutGroup of its own (it used to stack Toolbar-then-Viewport); the
+            // viewport now stretches to fill 100% of RightColumn directly via anchors, and the
+            // toolbar positions itself via its own anchors (see NotesToolbar.Initialize).
             var viewportGO = new GameObject("CanvasViewport");
             viewportGO.transform.SetParent(rightColumnGO.transform, false);
             viewportGO.AddComponent<RectMask2D>();
             var viewportImg = viewportGO.AddComponent<Image>();
             viewportImg.color = new Color(0.08f, 0.08f, 0.1f, 1f);
             var viewportRect = viewportGO.GetComponent<RectTransform>();
-            var viewportLE = viewportGO.AddComponent<LayoutElement>();
-            viewportLE.flexibleHeight = 1f;
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = Vector2.zero;
+            viewportRect.offsetMax = Vector2.zero;
 
             CanvasController = gameObject.AddComponent<NotesCanvasController>();
             CanvasController.Initialize(DocumentController, viewportRect, interaction);
 
             interaction.canvasController = CanvasController;
             interaction.viewportRect = viewportRect;
+
+            var toolbar = gameObject.AddComponent<NotesToolbar>();
+            toolbar.Initialize(interaction, rightColumnGO.transform);
 
             // NotesDocumentController.Awake() already opened its default page; render it now
             // rather than relying on subscription-order timing across components added this frame.
