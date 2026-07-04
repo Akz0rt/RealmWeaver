@@ -63,6 +63,13 @@ namespace WorldGen.Notes.Rendering
             vLayout.childForceExpandHeight = false;
             expandedWidth = PlayerPrefs.GetFloat(ExpandedWidthPrefsKey, DefaultExpandedWidth);
             rootLayoutElement = rootGO.AddComponent<LayoutElement>();
+            // minWidth defaults to -1 ("ignore this component's opinion"), which would let
+            // Unity fall back to the content-driven minWidth auto-computed from vLayout's own
+            // active children (header/search/list/etc.) — silently overriding preferredWidth
+            // with a floor higher than MinExpandedWidth whenever content wants more room.
+            // Pinning it to 0 makes preferredWidth (set via SetExpandedWidth's own clamp) the
+            // only thing that determines this column's width.
+            rootLayoutElement.minWidth = 0f;
             rootLayoutElement.preferredWidth = expandedWidth;
 
             var headerGO = new GameObject("Header");
