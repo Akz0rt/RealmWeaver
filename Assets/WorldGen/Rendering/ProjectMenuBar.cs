@@ -139,12 +139,18 @@ namespace WorldGen.Rendering
         {
             var canvasGO = new GameObject("ProjectMenuBarCanvas");
             canvasGO.transform.SetParent(transform, false);
-            canvasTransform = canvasGO.transform;
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 100; // above the map/notes UI, below dropdown/dialog overlays (30000+)
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
+            // Captured only after AddComponent<Canvas>() — adding Canvas to a GameObject that
+            // only has a plain Transform makes Unity destroy that Transform and replace it with
+            // a RectTransform (Canvas requires one). A reference grabbed before this conversion
+            // (canvasGO.transform, pre-Canvas) is left pointing at the destroyed component, so
+            // any later SetParent(that stale reference, ...) silently treats it as a null parent
+            // and drops the child to the scene root instead of throwing.
+            canvasTransform = canvasGO.transform;
 
             var barGO = new GameObject("MenuBar");
             barGO.transform.SetParent(canvasTransform, false);
