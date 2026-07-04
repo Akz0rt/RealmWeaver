@@ -50,9 +50,13 @@ namespace WorldGen.Notes.Rendering
             var tip = new Vector2(size * 0.22f, size * 0.15f);
             var side = new Vector2(size * 0.78f, size * 0.62f);
             FillTriangle(tex, size, top, tip, side, Color.white);
+            // Notch must be drawn transparent, not white — it's cutting the tail flag out of
+            // the silhouette above, same technique DrawZoom uses to punch its ring. The
+            // previous Color.white here painted white over an already-white triangle, so the
+            // notch never actually appeared (silhouette rendered as a plain solid blob).
             var notchA = new Vector2(size * 0.42f, size * 0.62f);
             var notchB = new Vector2(size * 0.6f, size * 0.85f);
-            DrawLine(tex, size, notchA, notchB, 2.5f, Color.white);
+            DrawLine(tex, size, notchA, notchB, 3f, Color.clear);
         }
 
         static void DrawNote(Texture2D tex, int size)
@@ -70,11 +74,14 @@ namespace WorldGen.Notes.Rendering
             var from = new Vector2(size * 0.25f, size * 0.8f);
             var to = new Vector2(size * 0.75f, size * 0.3f);
             DrawLine(tex, size, from, to, 4f, Color.white);
+            // Pointed tip is the bottom-right end (continuing past `to` in the same
+            // direction as the shaft) — enlarged from the original 0.12/0.05 fractions,
+            // which produced a ~4px/~2px arrowhead too small to read as a point at 32px.
             Vector2 dir = (to - from).normalized;
             Vector2 perp = new Vector2(-dir.y, dir.x);
-            Vector2 tip = to + dir * (size * 0.12f);
-            Vector2 left = to + perp * (size * 0.05f);
-            Vector2 right = to - perp * (size * 0.05f);
+            Vector2 tip = to + dir * (size * 0.22f);
+            Vector2 left = to + perp * (size * 0.09f);
+            Vector2 right = to - perp * (size * 0.09f);
             FillTriangle(tex, size, tip, left, right, Color.white);
         }
 
@@ -85,23 +92,29 @@ namespace WorldGen.Notes.Rendering
             var max = new Vector2(size - m, size - m);
             DrawRectOutline(tex, size, min, max, 2f, Color.white);
             FillCircle(tex, size, new Vector2(min.x + (max.x - min.x) * 0.3f, max.y - (max.y - min.y) * 0.28f), size * 0.07f, Color.white);
-            var peak = new Vector2(min.x + (max.x - min.x) * 0.6f, min.y + (max.y - min.y) * 0.25f);
-            var baseL = new Vector2(min.x + 2f, max.y - 2f);
-            var baseR = new Vector2(max.x - 2f, max.y - 2f);
+            // Peak near max.y (top of the frame), base corners near min.y (bottom) — the
+            // previous version had these backwards (peak near min.y, base near max.y),
+            // drawing the mountain upside-down (a "V" instead of a "/\").
+            var peak = new Vector2(min.x + (max.x - min.x) * 0.6f, max.y - (max.y - min.y) * 0.25f);
+            var baseL = new Vector2(min.x + 2f, min.y + 2f);
+            var baseR = new Vector2(max.x - 2f, min.y + 2f);
             FillTriangle(tex, size, peak, baseL, baseR, Color.white);
         }
 
         static void DrawZoom(Texture2D tex, int size)
         {
+            // Lens upper-left, handle extending down-right out of the ring — standard
+            // magnifying-glass orientation. Radius/thickness/handle length enlarged from the
+            // original (0.2/2.5/0.28) for legibility at 32px.
             var center = new Vector2(size * 0.42f, size * 0.58f);
-            float radius = size * 0.2f;
-            float thickness = 2.5f;
+            float radius = size * 0.22f;
+            float thickness = 3f;
             FillCircle(tex, size, center, radius, Color.white);
-            FillCircle(tex, size, center, radius - thickness, new Color32(0, 0, 0, 0));
+            FillCircle(tex, size, center, radius - thickness, Color.clear);
             Vector2 handleDir = new Vector2(0.7f, -0.7f).normalized;
             var handleStart = center + handleDir * radius;
-            var handleEnd = center + handleDir * (radius + size * 0.28f);
-            DrawLine(tex, size, handleStart, handleEnd, 3.5f, Color.white);
+            var handleEnd = center + handleDir * (radius + size * 0.34f);
+            DrawLine(tex, size, handleStart, handleEnd, 4f, Color.white);
         }
 
         static void FillTriangle(Texture2D tex, int size, Vector2 a, Vector2 b, Vector2 c, Color color)
