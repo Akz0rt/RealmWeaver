@@ -12,12 +12,17 @@ namespace WorldGen.Notes.Rendering
     /// shrinks the whole sidebar column down to a narrow strip (just the toggle) so the
     /// canvas can reclaim that width when the tree isn't needed. A search box filters the
     /// list by group title or page name; each row supports double-click-to-rename and a
-    /// persistent "×" delete button (confirmed via ConfirmDialog).
+    /// persistent "×" delete button (confirmed via ConfirmDialog). The column's expanded
+    /// width is user-draggable and persisted across sessions in PlayerPrefs.
     /// </summary>
     public class NotesTreeSidebar : MonoBehaviour
     {
-        public const float ExpandedWidth = 200f;
+        const string ExpandedWidthPrefsKey = "NotesSidebar.ExpandedWidth";
+        const float DefaultExpandedWidth = 200f;
+        public const float MinExpandedWidth = 120f;
+        public const float MaxExpandedWidth = 400f;
         public const float CollapsedWidth = 28f;
+        const float DividerWidth = 8f;
 
         NotesDocumentController documentController;
         Font builtinFont;
@@ -26,11 +31,13 @@ namespace WorldGen.Notes.Rendering
         GameObject headerTextGO;
         GameObject addGroupButtonGO;
         GameObject searchInputGO;
+        GameObject dividerGO;
         InputField searchInput;
         LayoutElement rootLayoutElement;
         bool expanded = true;
         bool rebuildPending;
         string searchQuery = "";
+        float expandedWidth;
 
         // Keyed by page Id so OnActivePageChanged can recolor just the affected rows in place
         // instead of going through Rebuild() — Rebuild() destroys and recreates every row's
@@ -54,8 +61,9 @@ namespace WorldGen.Notes.Rendering
             vLayout.childForceExpandWidth = true;
             vLayout.childControlHeight = true;
             vLayout.childForceExpandHeight = false;
+            expandedWidth = PlayerPrefs.GetFloat(ExpandedWidthPrefsKey, DefaultExpandedWidth);
             rootLayoutElement = rootGO.AddComponent<LayoutElement>();
-            rootLayoutElement.preferredWidth = ExpandedWidth;
+            rootLayoutElement.preferredWidth = expandedWidth;
 
             var headerGO = new GameObject("Header");
             headerGO.transform.SetParent(rootGO.transform, false);
@@ -173,6 +181,22 @@ namespace WorldGen.Notes.Rendering
             documentController.OnDocumentChanged += RequestRebuild;
             documentController.OnActivePageChanged += OnActivePageChanged;
             Rebuild();
+
+            // Anchored at this column's own right edge, pivot=(1,0.5) makes the bar extend
+            // LEFTWARD — staying entirely within the sidebar's own bounds — rather than
+            // straddling into RightColumn, where RightColumn's own content (built later, by
+            // NotesRootBuilder, after this Initialize() call returns) would win any raycast in
+            // the overlapping region.
+            var divider = DraggableDivider.Create(rootGO.transform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 0.5f), DividerWidth);
+            dividerGO = divider.gameObject;
+            divider.OnDragDeltaX += dx => SetExpandedWidth(expandedWidth + dx);
+            divider.OnDragEnd += SaveExpandedWidth;
+            var doubleClick = dividerGO.AddComponent<DoubleClickHandler>();
+            doubleClick.OnDoubleClick = () =>
+            {
+                SetExpandedWidth(DefaultExpandedWidth);
+                SaveExpandedWidth();
+            };
         }
 
         /// <summary>Recolors just the previously/newly active page rows in place — deliberately
@@ -193,8 +217,17 @@ namespace WorldGen.Notes.Rendering
             headerTextGO.SetActive(expanded);
             addGroupButtonGO.SetActive(expanded);
             searchInputGO.SetActive(expanded);
-            rootLayoutElement.preferredWidth = expanded ? ExpandedWidth : CollapsedWidth;
+            dividerGO.SetActive(expanded);
+            rootLayoutElement.preferredWidth = expanded ? expandedWidth : CollapsedWidth;
         }
+
+        void SetExpandedWidth(float value)
+        {
+            expandedWidth = Mathf.Clamp(value, MinExpandedWidth, MaxExpandedWidth);
+            if (expanded) rootLayoutElement.preferredWidth = expandedWidth;
+        }
+
+        void SaveExpandedWidth() => PlayerPrefs.SetFloat(ExpandedWidthPrefsKey, expandedWidth);
 
         void RequestRebuild()
         {
@@ -488,8 +521,8 @@ namespace WorldGen.Notes.Rendering
             string reason = "";
 
             if (!expanded) { ok = false; reason = "expected to start expanded"; }
-            if (ok && !Mathf.Approximately(rootLayoutElement.preferredWidth, ExpandedWidth))
-            { ok = false; reason = $"expected preferredWidth={ExpandedWidth} while expanded, got {rootLayoutElement.preferredWidth}"; }
+            if (ok && !Mathf.Approximately(rootLayoutElement.preferredWidth, expandedWidth))
+            { ok = false; reason = $"expected preferredWidth={expandedWidth} while expanded, got {rootLayoutElement.preferredWidth}"; }
 
             if (ok)
             {
@@ -497,18 +530,18 @@ namespace WorldGen.Notes.Rendering
                 if (expanded) { ok = false; reason = "expected collapsed after first toggle"; }
                 else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, CollapsedWidth))
                 { ok = false; reason = $"expected preferredWidth={CollapsedWidth} while collapsed, got {rootLayoutElement.preferredWidth}"; }
-                else if (listGO.activeSelf || headerTextGO.activeSelf || addGroupButtonGO.activeSelf || searchInputGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput all inactive while collapsed"; }
+                else if (listGO.activeSelf || headerTextGO.activeSelf || addGroupButtonGO.activeSelf || searchInputGO.activeSelf || dividerGO.activeSelf)
+                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput/divider all inactive while collapsed"; }
             }
 
             if (ok)
             {
                 ToggleExpanded();
                 if (!expanded) { ok = false; reason = "expected expanded after second toggle"; }
-                else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, ExpandedWidth))
-                { ok = false; reason = $"expected preferredWidth={ExpandedWidth} after re-expanding, got {rootLayoutElement.preferredWidth}"; }
-                else if (!listGO.activeSelf || !headerTextGO.activeSelf || !addGroupButtonGO.activeSelf || !searchInputGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput all active after re-expanding"; }
+                else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, expandedWidth))
+                { ok = false; reason = $"expected preferredWidth={expandedWidth} after re-expanding, got {rootLayoutElement.preferredWidth}"; }
+                else if (!listGO.activeSelf || !headerTextGO.activeSelf || !addGroupButtonGO.activeSelf || !searchInputGO.activeSelf || !dividerGO.activeSelf)
+                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput/divider all active after re-expanding"; }
             }
 
             Debug.Log(ok
@@ -547,6 +580,37 @@ namespace WorldGen.Notes.Rendering
             Debug.Log(ok
                 ? "Self-Test Notes Tree Sidebar — Search Filter: PASS"
                 : $"Self-Test Notes Tree Sidebar — Search Filter: FAIL ({reason})");
+        }
+
+        [ContextMenu("Self-Test: Notes Tree Sidebar — Width Clamp")]
+        public void SelfTestWidthClamp()
+        {
+            if (rootLayoutElement == null)
+            {
+                Debug.Log("Self-Test Notes Tree Sidebar — Width Clamp: FAIL (not initialized — enter Play Mode first)");
+                return;
+            }
+
+            float original = expandedWidth;
+            bool ok = true;
+            string reason = "";
+
+            SetExpandedWidth(10f);
+            if (!Mathf.Approximately(expandedWidth, MinExpandedWidth))
+            { ok = false; reason = $"expected clamp to {MinExpandedWidth}, got {expandedWidth}"; }
+
+            if (ok)
+            {
+                SetExpandedWidth(1000f);
+                if (!Mathf.Approximately(expandedWidth, MaxExpandedWidth))
+                { ok = false; reason = $"expected clamp to {MaxExpandedWidth}, got {expandedWidth}"; }
+            }
+
+            SetExpandedWidth(original);
+
+            Debug.Log(ok
+                ? "Self-Test Notes Tree Sidebar — Width Clamp: PASS"
+                : $"Self-Test Notes Tree Sidebar — Width Clamp: FAIL ({reason})");
         }
     }
 }
