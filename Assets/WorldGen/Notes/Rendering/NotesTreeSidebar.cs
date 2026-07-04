@@ -19,7 +19,7 @@ namespace WorldGen.Notes.Rendering
     {
         const string ExpandedWidthPrefsKey = "NotesSidebar.ExpandedWidth";
         const float DefaultExpandedWidth = 200f;
-        public const float MinExpandedWidth = 120f;
+        public const float MinExpandedWidth = 40f;
         public const float MaxExpandedWidth = 400f;
         public const float CollapsedWidth = 28f;
         const float DividerWidth = 8f;
