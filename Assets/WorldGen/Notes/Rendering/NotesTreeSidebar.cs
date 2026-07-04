@@ -63,13 +63,18 @@ namespace WorldGen.Notes.Rendering
             vLayout.childForceExpandHeight = false;
             expandedWidth = PlayerPrefs.GetFloat(ExpandedWidthPrefsKey, DefaultExpandedWidth);
             rootLayoutElement = rootGO.AddComponent<LayoutElement>();
-            // minWidth defaults to -1 ("ignore this component's opinion"), which would let
-            // Unity fall back to the content-driven minWidth auto-computed from vLayout's own
-            // active children (header/search/list/etc.) — silently overriding preferredWidth
-            // with a floor higher than MinExpandedWidth whenever content wants more room.
-            // Pinning it to 0 makes preferredWidth (set via SetExpandedWidth's own clamp) the
+            // minWidth/flexibleWidth default to -1 ("ignore this component's opinion"). Left
+            // unset, Unity falls back to vLayout's OWN report of these properties to ITS
+            // parent (notesAreaGO) — vLayout (as a LayoutGroup) reports minWidth from its
+            // content and flexibleWidth as the sum of its children's flexible values (each
+            // forced to >=1 by vLayout.childForceExpandWidth above, needed so header/search/
+            // list stretch to fill this column — but that same flag makes vLayout report a
+            // nonzero flexibleWidth upward too, causing this whole column to compete for and
+            // absorb a share of notesAreaGO's leftover width on top of preferredWidth). Pinning
+            // both to 0 here makes preferredWidth (set via SetExpandedWidth's own clamp) the
             // only thing that determines this column's width.
             rootLayoutElement.minWidth = 0f;
+            rootLayoutElement.flexibleWidth = 0f;
             rootLayoutElement.preferredWidth = expandedWidth;
 
             var headerGO = new GameObject("Header");
