@@ -101,6 +101,18 @@ namespace WorldGen.Notes.Rendering
         public PageGroup FindGroupByPoiId(string poiId) =>
             Document.Groups.FirstOrDefault(g => g.LinkedPoiId == poiId);
 
+        /// <summary>Replaces the entire document with a previously-saved one — used when
+        /// loading a project. Unlike OpenPage, this always fires both events unconditionally
+        /// (a load is a completely fresh state, so listeners must refresh regardless of
+        /// whether the new ActivePage happens to share an Id with the old one).</summary>
+        public void LoadDocument(NotesDocument doc)
+        {
+            Document = doc;
+            ActivePage = Document.Groups.SelectMany(g => g.Pages).FirstOrDefault();
+            OnDocumentChanged?.Invoke();
+            OnActivePageChanged?.Invoke(ActivePage);
+        }
+
         // ── Internals ──────────────────────────────────────────────────────────
 
         PageGroup FindGroup(string groupId) => Document.Groups.FirstOrDefault(g => g.Id == groupId);
@@ -136,6 +148,33 @@ namespace WorldGen.Notes.Rendering
             Debug.Log(ok
                 ? "Self-Test Notes Document CRUD: PASS"
                 : $"Self-Test Notes Document CRUD: FAIL (twoPages={twoPages}, onePageLeft={onePageLeft}, noGroupsLeft={noGroupsLeft})");
+        }
+
+        [ContextMenu("Self-Test: Notes Document Load")]
+        public void SelfTestLoadDocument()
+        {
+            var doc = new NotesDocument();
+            var group = new PageGroup { Title = "Loaded Group" };
+            var page = new NotesPage { Name = "Loaded Page" };
+            group.Pages.Add(page);
+            doc.Groups.Add(group);
+
+            bool docChangedFired = false;
+            NotesPage activePageFromEvent = null;
+            System.Action onDocChanged = () => docChangedFired = true;
+            System.Action<NotesPage> onActivePageChanged = p => activePageFromEvent = p;
+            OnDocumentChanged += onDocChanged;
+            OnActivePageChanged += onActivePageChanged;
+
+            LoadDocument(doc);
+
+            OnDocumentChanged -= onDocChanged;
+            OnActivePageChanged -= onActivePageChanged;
+
+            bool ok = docChangedFired && Document == doc && ActivePage == page && activePageFromEvent == page;
+            Debug.Log(ok
+                ? "Self-Test Notes Document Load: PASS"
+                : $"Self-Test Notes Document Load: FAIL (docChangedFired={docChangedFired}, activePageMatches={ActivePage == page})");
         }
     }
 }

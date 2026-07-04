@@ -99,6 +99,18 @@ namespace WorldGen.Rendering
             OnPoisChanged?.Invoke();
         }
 
+        /// <summary>Replaces all current POIs with a previously-saved list — used when loading a project.</summary>
+        public void LoadPois(List<PoiData> loadedPois)
+        {
+            ClearAll();
+            foreach (var poi in loadedPois)
+            {
+                pois.Add(poi);
+                SpawnMarker(poi);
+            }
+            OnPoisChanged?.Invoke();
+        }
+
         // ── CRUD ───────────────────────────────────────────────────────────────
 
         public void DeletePoi(string id)
@@ -283,6 +295,28 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test POI Generation: PASS"
                 : $"Self-Test POI Generation: FAIL (count={placed.Count} wantOk={countOk}, cellsValid={cellsValid}, noDuplicates={noDuplicates})");
+        }
+
+        [ContextMenu("Self-Test: POI Load")]
+        public void SelfTestLoadPois()
+        {
+            var loaded = new List<PoiData>
+            {
+                new PoiData { Type = PoiType.City, Name = "A", OwnerCellId = 0 },
+                new PoiData { Type = PoiType.Ruin, Name = "B", OwnerCellId = 1 }
+            };
+
+            LoadPois(loaded);
+
+            bool ok = GetAllPois().Count == 2
+                && GetAllPois().Any(p => p.Name == "A")
+                && GetAllPois().Any(p => p.Name == "B");
+
+            ClearAll(); // leave the scene as it was before this test ran
+
+            Debug.Log(ok
+                ? "Self-Test POI Load: PASS"
+                : $"Self-Test POI Load: FAIL (count={loaded.Count})");
         }
 
         [ContextMenu("Self-Test: POI Placeholder Factory")]

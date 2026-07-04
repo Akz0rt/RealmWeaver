@@ -131,6 +131,9 @@ namespace WorldGen.Rendering
         /// <summary>Read-only access to current cells for POI placement.</summary>
         public IReadOnlyList<VoronoiCell> Cells => cells;
 
+        /// <summary>The GenerationParams that actually produced the current Cells (via GenerateAndRender or LoadFromCells) — used by ProjectMenuBar to save it for reference.</summary>
+        public GenerationParams LastGenParams => lastGenParams;
+
         void Awake()
         {
             meshFilter = GetComponent<MeshFilter>();
@@ -166,6 +169,35 @@ namespace WorldGen.Rendering
             cells = WorldGenerator.GenerateWorld(genParams, out epicenters, out moistureEpicenters, out rivers);
             corners = CornerGraphBuilder.Build(cells); // тот же детерминированный пересчёт, что внутри генератора - нужен здесь только для рендера рек по позициям corners
             lastGenParams = genParams;
+            BuildMesh(cells);
+            BuildRivers();
+            BuildBorders();
+
+            if (targetCamera != null)
+                PositionCameraOverMap();
+
+            OnDisplayChanged?.Invoke();
+            OnWorldRegenerated?.Invoke();
+        }
+
+        /// <summary>
+        /// Loads a previously-saved map directly from its full cell list, bypassing
+        /// WorldGenerator entirely — the loaded cells (including manual overrides) are
+        /// authoritative, not reproducible from referenceParams + seed. referenceParams is
+        /// kept only for display/reference and to reposition the camera correctly.
+        /// </summary>
+        public void LoadFromCells(List<VoronoiCell> loadedCells, GenerationParams referenceParams)
+        {
+            cells = loadedCells;
+            corners = CornerGraphBuilder.Build(cells); // same deterministic topology rebuild GenerateAndRender already does; rivers aren't persisted so this is only needed if enableRivers is later re-checked
+            rivers = new List<River>();
+            epicenters = new List<TemperatureEpicenter>();
+            moistureEpicenters = new List<MoistureEpicenter>();
+            lastGenParams = referenceParams;
+            seed = referenceParams.Seed;
+            mapWidth = referenceParams.Width;
+            mapHeight = referenceParams.Height;
+
             BuildMesh(cells);
             BuildRivers();
             BuildBorders();
