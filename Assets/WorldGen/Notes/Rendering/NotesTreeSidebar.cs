@@ -234,10 +234,14 @@ namespace WorldGen.Notes.Rendering
             if (expanded) rootLayoutElement.preferredWidth = expandedWidth;
 
             // TEMPORARY DIAGNOSTIC — remove once the narrowing-limit bug is root-caused.
-            var actualRect = (RectTransform)rootLayoutElement.transform;
+            var sidebarRect = (RectTransform)rootLayoutElement.transform;
+            var notesAreaTransform = sidebarRect.parent as RectTransform;
+            var rightColumnTransform = notesAreaTransform != null ? notesAreaTransform.Find("RightColumn") as RectTransform : null;
+            string notesAreaInfo = notesAreaTransform != null ? $"notesArea.width={notesAreaTransform.rect.width:F1}" : "notesArea=NOTFOUND";
+            string rightColumnInfo = rightColumnTransform != null ? $"rightColumn.width={rightColumnTransform.rect.width:F1}" : "rightColumn=NOTFOUND";
             Debug.Log($"[SidebarWidthDiag] requested={value:F1} clampedTo={expandedWidth:F1} " +
                       $"minWidth={rootLayoutElement.minWidth:F1} preferredWidth={rootLayoutElement.preferredWidth:F1} " +
-                      $"actualRect.width={actualRect.rect.width:F1}");
+                      $"sidebar.actualWidth={sidebarRect.rect.width:F1} {notesAreaInfo} {rightColumnInfo}");
         }
 
         void SaveExpandedWidth() => PlayerPrefs.SetFloat(ExpandedWidthPrefsKey, expandedWidth);
