@@ -232,6 +232,12 @@ namespace WorldGen.Notes.Rendering
         {
             expandedWidth = Mathf.Clamp(value, MinExpandedWidth, MaxExpandedWidth);
             if (expanded) rootLayoutElement.preferredWidth = expandedWidth;
+
+            // TEMPORARY DIAGNOSTIC — remove once the narrowing-limit bug is root-caused.
+            var actualRect = (RectTransform)rootLayoutElement.transform;
+            Debug.Log($"[SidebarWidthDiag] requested={value:F1} clampedTo={expandedWidth:F1} " +
+                      $"minWidth={rootLayoutElement.minWidth:F1} preferredWidth={rootLayoutElement.preferredWidth:F1} " +
+                      $"actualRect.width={actualRect.rect.width:F1}");
         }
 
         void SaveExpandedWidth() => PlayerPrefs.SetFloat(ExpandedWidthPrefsKey, expandedWidth);
