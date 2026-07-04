@@ -62,6 +62,7 @@ namespace WorldGen.Notes.Rendering
             layout.notesAreaRoot = notesAreaRect;
             layout.mapCamera = mapCamera;
             layout.Apply();
+            layout.BuildDivider();
 
             // NotesArea is a left-to-right split: the page-tree sidebar (fixed width,
             // full height via this group's cross-axis stretch) on the left, and a

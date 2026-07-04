@@ -56,6 +56,18 @@ namespace WorldGen.Rendering
             EnsureEventSystemExists();
             BuildUI();
             panelGO.SetActive(false);
+            NotesLayoutController.OnSplitFractionChanged += UpdateSplitAnchor;
+        }
+
+        void OnDestroy()
+        {
+            NotesLayoutController.OnSplitFractionChanged -= UpdateSplitAnchor;
+        }
+
+        void UpdateSplitAnchor(float fraction)
+        {
+            panelRect.anchorMin = new Vector2(fraction, 1f);
+            panelRect.anchorMax = new Vector2(fraction, 1f);
         }
 
         void OnEnable()
