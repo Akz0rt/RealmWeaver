@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
 
@@ -8,7 +10,9 @@ namespace WorldGen.Notes.Rendering
     /// Collapsible accordion tree: groups expand to show their pages. Selecting a page
     /// opens it via NotesDocumentController. Collapsible via a header toggle button, which
     /// shrinks the whole sidebar column down to a narrow strip (just the toggle) so the
-    /// canvas can reclaim that width when the tree isn't needed.
+    /// canvas can reclaim that width when the tree isn't needed. A search box filters the
+    /// list by group title or page name; each row supports double-click-to-rename and a
+    /// persistent "×" delete button (confirmed via ConfirmDialog).
     /// </summary>
     public class NotesTreeSidebar : MonoBehaviour
     {
@@ -21,9 +25,22 @@ namespace WorldGen.Notes.Rendering
         GameObject listGO;
         GameObject headerTextGO;
         GameObject addGroupButtonGO;
+        GameObject searchInputGO;
+        InputField searchInput;
         LayoutElement rootLayoutElement;
         bool expanded = true;
         bool rebuildPending;
+        string searchQuery = "";
+
+        // Keyed by page Id so OnActivePageChanged can recolor just the affected rows in place
+        // instead of going through Rebuild() — Rebuild() destroys and recreates every row's
+        // GameObject, which would reset Unity's double-click tracking (it's keyed by GameObject
+        // identity) before a second click could ever register as a double-click.
+        readonly Dictionary<string, Image> pageRowImages = new Dictionary<string, Image>();
+
+        InputField activeRenameInput;
+        GameObject activeRenameLabelGO;
+        bool renameCancelled;
 
         public void Initialize(NotesDocumentController docController, Transform parent)
         {
@@ -62,6 +79,51 @@ namespace WorldGen.Notes.Rendering
             headerTextRect.anchorMax = new Vector2(1f, 1f);
             headerTextRect.offsetMin = new Vector2(6f, 0f);
             headerTextRect.offsetMax = Vector2.zero;
+
+            searchInputGO = new GameObject("SearchInput");
+            searchInputGO.transform.SetParent(rootGO.transform, false);
+            searchInputGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+            var searchImg = searchInputGO.AddComponent<Image>();
+            searchImg.color = new Color(1f, 1f, 1f, 0.06f);
+            searchInput = searchInputGO.AddComponent<InputField>();
+            searchInput.targetGraphic = searchImg;
+
+            var searchTextGO = new GameObject("Text");
+            searchTextGO.transform.SetParent(searchInputGO.transform, false);
+            var searchText = searchTextGO.AddComponent<Text>();
+            searchText.font = builtinFont;
+            searchText.fontSize = 12;
+            searchText.color = Color.white;
+            searchText.alignment = TextAnchor.MiddleLeft;
+            searchText.supportRichText = false;
+            var searchTextRect = searchTextGO.GetComponent<RectTransform>();
+            searchTextRect.anchorMin = Vector2.zero;
+            searchTextRect.anchorMax = Vector2.one;
+            searchTextRect.offsetMin = new Vector2(6f, 0f);
+            searchTextRect.offsetMax = new Vector2(-6f, 0f);
+            searchInput.textComponent = searchText;
+
+            var placeholderGO = new GameObject("Placeholder");
+            placeholderGO.transform.SetParent(searchInputGO.transform, false);
+            var placeholderText = placeholderGO.AddComponent<Text>();
+            placeholderText.text = "Поиск...";
+            placeholderText.font = builtinFont;
+            placeholderText.fontSize = 12;
+            placeholderText.fontStyle = FontStyle.Italic;
+            placeholderText.color = new Color(1f, 1f, 1f, 0.4f);
+            placeholderText.alignment = TextAnchor.MiddleLeft;
+            var placeholderRect = placeholderGO.GetComponent<RectTransform>();
+            placeholderRect.anchorMin = Vector2.zero;
+            placeholderRect.anchorMax = Vector2.one;
+            placeholderRect.offsetMin = new Vector2(6f, 0f);
+            placeholderRect.offsetMax = new Vector2(-6f, 0f);
+            searchInput.placeholder = placeholderText;
+
+            searchInput.onValueChanged.AddListener(value =>
+            {
+                searchQuery = value;
+                Rebuild();
+            });
 
             listGO = new GameObject("List");
             listGO.transform.SetParent(rootGO.transform, false);
@@ -109,7 +171,19 @@ namespace WorldGen.Notes.Rendering
             });
 
             documentController.OnDocumentChanged += RequestRebuild;
+            documentController.OnActivePageChanged += OnActivePageChanged;
             Rebuild();
+        }
+
+        /// <summary>Recolors just the previously/newly active page rows in place — deliberately
+        /// does NOT call Rebuild() (see pageRowImages' field comment for why).</summary>
+        void OnActivePageChanged(NotesPage page)
+        {
+            foreach (var kvp in pageRowImages)
+            {
+                bool isActive = page != null && kvp.Key == page.Id;
+                kvp.Value.color = isActive ? new Color(0.2f, 0.4f, 0.3f, 0.9f) : new Color(1f, 1f, 1f, 0.02f);
+            }
         }
 
         void ToggleExpanded()
@@ -118,6 +192,7 @@ namespace WorldGen.Notes.Rendering
             listGO.SetActive(expanded);
             headerTextGO.SetActive(expanded);
             addGroupButtonGO.SetActive(expanded);
+            searchInputGO.SetActive(expanded);
             rootLayoutElement.preferredWidth = expanded ? ExpandedWidth : CollapsedWidth;
         }
 
@@ -133,8 +208,25 @@ namespace WorldGen.Notes.Rendering
             Rebuild();
         }
 
+        void Update()
+        {
+            if (activeRenameInput != null && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+                CancelActiveRename();
+        }
+
+        bool MatchesSearch(string text) =>
+            string.IsNullOrEmpty(searchQuery) || text.ToLowerInvariant().Contains(searchQuery.ToLowerInvariant());
+
         void Rebuild()
         {
+            // Any in-progress rename's InputField/label are about to be destroyed below along
+            // with the rest of the old rows — clear the tracking fields so Escape (in Update())
+            // can't touch already-destroyed GameObjects afterward.
+            activeRenameInput = null;
+            activeRenameLabelGO = null;
+            renameCancelled = false;
+            pageRowImages.Clear();
+
             // SetActive(false) takes effect immediately; Destroy() is deferred to end of
             // frame, so without deactivating first, the old and newly-built rows below would
             // both render for one frame, showing as overlapping/doubled UI.
@@ -151,6 +243,17 @@ namespace WorldGen.Notes.Rendering
 
         void BuildGroupRow(PageGroup group)
         {
+            bool titleMatches = MatchesSearch(group.Title);
+            bool hasMatchingPage = false;
+            if (!titleMatches)
+            {
+                foreach (var p in group.Pages)
+                {
+                    if (MatchesSearch(p.Name)) { hasMatchingPage = true; break; }
+                }
+            }
+            if (!titleMatches && !hasMatchingPage) return;
+
             var groupGO = new GameObject($"Group_{group.Id}");
             groupGO.transform.SetParent(listContent, false);
             var groupVLayout = groupGO.AddComponent<VerticalLayoutGroup>();
@@ -161,7 +264,11 @@ namespace WorldGen.Notes.Rendering
 
             var titleGO = new GameObject("Title");
             titleGO.transform.SetParent(groupGO.transform, false);
-            var titleText = titleGO.AddComponent<Text>();
+            titleGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+
+            var titleTextGO = new GameObject("Text");
+            titleTextGO.transform.SetParent(titleGO.transform, false);
+            var titleText = titleTextGO.AddComponent<Text>();
             string suffix = group.LinkedPoiId != null ? " 📍" : "";
             titleText.text = $"▾ {group.Title}{suffix}";
             titleText.font = builtinFont;
@@ -169,10 +276,24 @@ namespace WorldGen.Notes.Rendering
             titleText.fontStyle = FontStyle.Bold;
             titleText.color = new Color(0.7f, 0.85f, 1f);
             titleText.alignment = TextAnchor.MiddleLeft;
-            titleGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+            var titleTextRect = titleTextGO.GetComponent<RectTransform>();
+            titleTextRect.anchorMin = Vector2.zero;
+            titleTextRect.anchorMax = Vector2.one;
+            titleTextRect.offsetMin = Vector2.zero;
+            titleTextRect.offsetMax = Vector2.zero;
+
+            AddRenameAndDelete(titleTextGO, titleGO.transform, titleText, titleTextRect, group.Title,
+                newTitle => documentController.RenameGroup(group.Id, newTitle),
+                () => ConfirmDialog.Show(builtinFont, $"Удалить группу \"{group.Title}\" и все её страницы ({group.Pages.Count})?", confirmed =>
+                {
+                    if (confirmed) documentController.DeleteGroup(group.Id);
+                }));
 
             foreach (var page in group.Pages)
-                BuildPageRow(groupGO.transform, group, page);
+            {
+                if (titleMatches || MatchesSearch(page.Name))
+                    BuildPageRow(groupGO.transform, group, page);
+            }
 
             AddSmallActionButton(groupGO.transform, "  + Страница", () =>
             {
@@ -187,14 +308,15 @@ namespace WorldGen.Notes.Rendering
             var img = rowGO.AddComponent<Image>();
             bool isActive = documentController.ActivePage != null && documentController.ActivePage.Id == page.Id;
             img.color = isActive ? new Color(0.2f, 0.4f, 0.3f, 0.9f) : new Color(1f, 1f, 1f, 0.02f);
+            pageRowImages[page.Id] = img;
             var btn = rowGO.AddComponent<Button>();
             btn.targetGraphic = img;
             rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
-            btn.onClick.AddListener(() =>
-            {
-                documentController.OpenPage(page.Id);
-                Rebuild();
-            });
+            // Deliberately does NOT call Rebuild() here — OnActivePageChanged (subscribed in
+            // Initialize) recolors the affected rows in place instead, so this row's
+            // GameObject survives a click (see pageRowImages' field comment for why that
+            // matters for double-click-to-rename).
+            btn.onClick.AddListener(() => documentController.OpenPage(page.Id));
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(rowGO.transform, false);
@@ -209,6 +331,118 @@ namespace WorldGen.Notes.Rendering
             textRect.anchorMax = Vector2.one;
             textRect.offsetMin = new Vector2(16f, 0f);
             textRect.offsetMax = Vector2.zero;
+
+            // clickCatcherGO is rowGO (not textGO) here specifically so Button and
+            // DoubleClickToRename end up on the SAME GameObject — see this task's header
+            // comment on why attaching it to the child Text instead would break "open page".
+            AddRenameAndDelete(rowGO, rowGO.transform, text, textRect, page.Name,
+                newName => documentController.RenamePage(page.Id, newName),
+                () => ConfirmDialog.Show(builtinFont, $"Удалить страницу \"{page.Name}\"?", confirmed =>
+                {
+                    if (confirmed) documentController.DeletePage(page.Id);
+                }));
+        }
+
+        /// <summary>Shrinks `label`'s rect to leave room for a new "×" delete button anchored to
+        /// the row's right edge, and wires up a double-click-to-rename InputField (same rect as
+        /// the shrunk label) that commits via onRename on Enter/blur or cancels on Escape.</summary>
+        void AddRenameAndDelete(GameObject clickCatcherGO, Transform rowTransform, Text label, RectTransform labelRect, string rawValue, System.Action<string> onRename, System.Action onDeleteRequested)
+        {
+            labelRect.offsetMax = new Vector2(labelRect.offsetMax.x - 20f, labelRect.offsetMax.y);
+
+            var inputGO = new GameObject("RenameInput");
+            inputGO.transform.SetParent(labelRect.parent, false);
+            var inputRect = inputGO.AddComponent<RectTransform>();
+            inputRect.anchorMin = labelRect.anchorMin;
+            inputRect.anchorMax = labelRect.anchorMax;
+            inputRect.offsetMin = labelRect.offsetMin;
+            inputRect.offsetMax = labelRect.offsetMax;
+            var inputImg = inputGO.AddComponent<Image>();
+            inputImg.color = new Color(1f, 1f, 1f, 0.1f);
+            var input = inputGO.AddComponent<InputField>();
+            input.targetGraphic = inputImg;
+
+            var inputTextGO = new GameObject("Text");
+            inputTextGO.transform.SetParent(inputGO.transform, false);
+            var inputText = inputTextGO.AddComponent<Text>();
+            inputText.font = builtinFont;
+            inputText.fontSize = label.fontSize;
+            inputText.color = label.color;
+            inputText.alignment = TextAnchor.MiddleLeft;
+            inputText.supportRichText = false;
+            var inputTextRect = inputTextGO.GetComponent<RectTransform>();
+            inputTextRect.anchorMin = Vector2.zero;
+            inputTextRect.anchorMax = Vector2.one;
+            inputTextRect.offsetMin = new Vector2(4f, 0f);
+            inputTextRect.offsetMax = new Vector2(-4f, 0f);
+            input.textComponent = inputText;
+            inputGO.SetActive(false);
+
+            var doubleClick = clickCatcherGO.AddComponent<DoubleClickToRename>();
+            doubleClick.OnDoubleClick = () => StartRename(label.gameObject, input, rawValue);
+
+            input.onEndEdit.AddListener(newText =>
+            {
+                bool wasCancelled = renameCancelled;
+                activeRenameInput = null;
+                activeRenameLabelGO = null;
+                renameCancelled = false;
+                if (wasCancelled) return;
+                inputGO.SetActive(false);
+                label.gameObject.SetActive(true);
+                if (!string.IsNullOrWhiteSpace(newText))
+                    onRename(newText.Trim());
+            });
+
+            var deleteGO = new GameObject("Delete");
+            deleteGO.transform.SetParent(rowTransform, false);
+            var deleteImg = deleteGO.AddComponent<Image>();
+            deleteImg.color = new Color(1f, 1f, 1f, 0.06f);
+            var deleteBtn = deleteGO.AddComponent<Button>();
+            deleteBtn.targetGraphic = deleteImg;
+            deleteBtn.onClick.AddListener(() => onDeleteRequested());
+            var deleteRect = deleteGO.GetComponent<RectTransform>();
+            deleteRect.anchorMin = new Vector2(1f, 0f);
+            deleteRect.anchorMax = new Vector2(1f, 1f);
+            deleteRect.pivot = new Vector2(1f, 0.5f);
+            deleteRect.sizeDelta = new Vector2(20f, 0f);
+            deleteRect.anchoredPosition = Vector2.zero;
+
+            var deleteTextGO = new GameObject("Text");
+            deleteTextGO.transform.SetParent(deleteGO.transform, false);
+            var deleteText = deleteTextGO.AddComponent<Text>();
+            deleteText.text = "×";
+            deleteText.font = builtinFont;
+            deleteText.fontSize = 14;
+            deleteText.color = new Color(1f, 0.6f, 0.6f);
+            deleteText.alignment = TextAnchor.MiddleCenter;
+            deleteText.raycastTarget = false;
+            var deleteTextRect = deleteTextGO.GetComponent<RectTransform>();
+            deleteTextRect.anchorMin = Vector2.zero;
+            deleteTextRect.anchorMax = Vector2.one;
+            deleteTextRect.sizeDelta = Vector2.zero;
+        }
+
+        void StartRename(GameObject labelGO, InputField input, string rawValue)
+        {
+            activeRenameLabelGO = labelGO;
+            activeRenameInput = input;
+            renameCancelled = false;
+            labelGO.SetActive(false);
+            input.gameObject.SetActive(true);
+            input.text = rawValue;
+            input.Select();
+            input.ActivateInputField();
+        }
+
+        void CancelActiveRename()
+        {
+            if (activeRenameInput == null) return;
+            renameCancelled = true;
+            activeRenameInput.gameObject.SetActive(false);
+            if (activeRenameLabelGO != null) activeRenameLabelGO.SetActive(true);
+            activeRenameInput = null;
+            activeRenameLabelGO = null;
         }
 
         GameObject AddSmallActionButton(Transform parent, string label, System.Action onClick)
@@ -263,8 +497,8 @@ namespace WorldGen.Notes.Rendering
                 if (expanded) { ok = false; reason = "expected collapsed after first toggle"; }
                 else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, CollapsedWidth))
                 { ok = false; reason = $"expected preferredWidth={CollapsedWidth} while collapsed, got {rootLayoutElement.preferredWidth}"; }
-                else if (listGO.activeSelf || headerTextGO.activeSelf || addGroupButtonGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton all inactive while collapsed"; }
+                else if (listGO.activeSelf || headerTextGO.activeSelf || addGroupButtonGO.activeSelf || searchInputGO.activeSelf)
+                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput all inactive while collapsed"; }
             }
 
             if (ok)
@@ -273,13 +507,46 @@ namespace WorldGen.Notes.Rendering
                 if (!expanded) { ok = false; reason = "expected expanded after second toggle"; }
                 else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, ExpandedWidth))
                 { ok = false; reason = $"expected preferredWidth={ExpandedWidth} after re-expanding, got {rootLayoutElement.preferredWidth}"; }
-                else if (!listGO.activeSelf || !headerTextGO.activeSelf || !addGroupButtonGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton all active after re-expanding"; }
+                else if (!listGO.activeSelf || !headerTextGO.activeSelf || !addGroupButtonGO.activeSelf || !searchInputGO.activeSelf)
+                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput all active after re-expanding"; }
             }
 
             Debug.Log(ok
                 ? "Self-Test Notes Tree Sidebar — Collapse Toggle: PASS"
                 : $"Self-Test Notes Tree Sidebar — Collapse Toggle: FAIL ({reason})");
+        }
+
+        [ContextMenu("Self-Test: Notes Tree Sidebar — Search Filter")]
+        public void SelfTestSearchFilter()
+        {
+            if (documentController == null)
+            {
+                Debug.Log("Self-Test Notes Tree Sidebar — Search Filter: FAIL (not initialized — enter Play Mode first)");
+                return;
+            }
+
+            bool ok = true;
+            string reason = "";
+
+            searchQuery = "";
+            Rebuild();
+            int totalRows = listContent.childCount;
+            if (totalRows == 0) { ok = false; reason = "expected at least one group row with no search query"; }
+
+            if (ok)
+            {
+                searchQuery = "zzz_no_such_page_or_group_zzz";
+                Rebuild();
+                if (listContent.childCount != 0)
+                { ok = false; reason = "expected zero rows for a query matching nothing"; }
+            }
+
+            searchQuery = "";
+            Rebuild();
+
+            Debug.Log(ok
+                ? "Self-Test Notes Tree Sidebar — Search Filter: PASS"
+                : $"Self-Test Notes Tree Sidebar — Search Filter: FAIL ({reason})");
         }
     }
 }
