@@ -333,7 +333,7 @@ namespace WorldGen.Notes.Rendering
             textRect.offsetMax = Vector2.zero;
 
             // clickCatcherGO is rowGO (not textGO) here specifically so Button and
-            // DoubleClickToRename end up on the SAME GameObject — see this task's header
+            // DoubleClickHandler end up on the SAME GameObject — see this task's header
             // comment on why attaching it to the child Text instead would break "open page".
             AddRenameAndDelete(rowGO, rowGO.transform, text, textRect, page.Name,
                 newName => documentController.RenamePage(page.Id, newName),
@@ -378,7 +378,7 @@ namespace WorldGen.Notes.Rendering
             input.textComponent = inputText;
             inputGO.SetActive(false);
 
-            var doubleClick = clickCatcherGO.AddComponent<DoubleClickToRename>();
+            var doubleClick = clickCatcherGO.AddComponent<DoubleClickHandler>();
             doubleClick.OnDoubleClick = () => StartRename(label.gameObject, input, rawValue);
 
             input.onEndEdit.AddListener(newText =>
