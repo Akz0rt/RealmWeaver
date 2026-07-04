@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using SFB;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -49,6 +50,11 @@ namespace WorldGen.Rendering
         Slider iconScaleSlider;
         Slider labelScaleSlider;
         Font builtinFont;
+
+        static readonly ExtensionFilter[] IconFilters =
+        {
+            new ExtensionFilter("Images", "png", "jpg", "jpeg", "gif"),
+        };
 
         void Awake()
         {
@@ -141,7 +147,9 @@ namespace WorldGen.Rendering
             poiNameField.text = selected.Name;
             poiDescField.text = selected.Description;
             poiCellLabel.text = $"Клетка: #{selected.OwnerCellId}";
-            poiSpritePathField.text = selected.CustomSpritePath ?? "";
+            poiSpritePathField.text = string.IsNullOrEmpty(selected.CustomSpritePath)
+                ? ""
+                : System.IO.Path.GetFileName(selected.CustomSpritePath);
             iconScaleSlider.SetValueWithoutNotify(selected.IconScale);
             labelScaleSlider.SetValueWithoutNotify(selected.LabelScale);
         }
@@ -313,7 +321,7 @@ namespace WorldGen.Rendering
             snapTr.anchorMax = Vector2.one;
             snapTr.sizeDelta = Vector2.zero;
 
-            AddLabel(t, "Иконка (путь к файлу):");
+            AddLabel(t, "Иконка:");
             var spriteRow = new GameObject("SpriteRow");
             spriteRow.transform.SetParent(t, false);
             var srHLG = spriteRow.AddComponent<HorizontalLayoutGroup>();
@@ -323,31 +331,28 @@ namespace WorldGen.Rendering
             spriteRow.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             poiSpritePathField = BuildInputField(spriteRow.transform, multiline: false);
+            poiSpritePathField.interactable = false;
 
-            var applyBtnGO = new GameObject("ApplyBtn");
-            applyBtnGO.transform.SetParent(spriteRow.transform, false);
-            var applyImg = applyBtnGO.AddComponent<Image>();
-            applyImg.color = new Color(0.3f, 0.5f, 0.3f, 0.9f);
-            var applyBtn = applyBtnGO.AddComponent<Button>();
-            applyBtn.targetGraphic = applyImg;
-            applyBtn.onClick.AddListener(() =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.UpdatePoiSpritePath(sel.Id, poiSpritePathField.text);
-            });
-            applyBtnGO.AddComponent<LayoutElement>().preferredWidth = 70f;
-            var applyTextGO = new GameObject("Text");
-            applyTextGO.transform.SetParent(applyBtnGO.transform, false);
-            var applyText = applyTextGO.AddComponent<Text>();
-            applyText.text = "Применить";
-            applyText.font = builtinFont;
-            applyText.fontSize = 10;
-            applyText.color = Color.white;
-            applyText.alignment = TextAnchor.MiddleCenter;
-            var applyRect = applyTextGO.GetComponent<RectTransform>();
-            applyRect.anchorMin = Vector2.zero;
-            applyRect.anchorMax = Vector2.one;
-            applyRect.sizeDelta = Vector2.zero;
+            var pickBtnGO = new GameObject("PickIconBtn");
+            pickBtnGO.transform.SetParent(spriteRow.transform, false);
+            var pickImg = pickBtnGO.AddComponent<Image>();
+            pickImg.color = new Color(0.3f, 0.5f, 0.3f, 0.9f);
+            var pickBtn = pickBtnGO.AddComponent<Button>();
+            pickBtn.targetGraphic = pickImg;
+            pickBtn.onClick.AddListener(OnPickIconClicked);
+            pickBtnGO.AddComponent<LayoutElement>().preferredWidth = 90f;
+            var pickTextGO = new GameObject("Text");
+            pickTextGO.transform.SetParent(pickBtnGO.transform, false);
+            var pickText = pickTextGO.AddComponent<Text>();
+            pickText.text = "Выбрать файл…";
+            pickText.font = builtinFont;
+            pickText.fontSize = 10;
+            pickText.color = Color.white;
+            pickText.alignment = TextAnchor.MiddleCenter;
+            var pickRect = pickTextGO.GetComponent<RectTransform>();
+            pickRect.anchorMin = Vector2.zero;
+            pickRect.anchorMax = Vector2.one;
+            pickRect.sizeDelta = Vector2.zero;
 
             AddLabel(t, "─── Размер на карте ───", bold: false, color: sectionHeaderColor);
             iconScaleSlider = AddScaleSliderRow(t, "Иконка", 1f, v =>
@@ -384,6 +389,19 @@ namespace WorldGen.Rendering
             }
 
             doc.OpenPage(group.Pages[0].Id);
+        }
+
+        void OnPickIconClicked()
+        {
+            var sel = poiManager?.GetSelectedPoi();
+            if (sel == null) return;
+
+            var paths = StandaloneFileBrowser.OpenFilePanel("Выбрать иконку", "", IconFilters, false);
+            if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0])) return;
+
+            byte[] bytes = System.IO.File.ReadAllBytes(paths[0]);
+            poiManager.UpdatePoiIconBytes(sel.Id, bytes, paths[0]);
+            poiSpritePathField.text = System.IO.Path.GetFileName(paths[0]);
         }
 
         Slider AddScaleSliderRow(Transform parent, string label, float defaultValue, System.Action<float> onChanged)

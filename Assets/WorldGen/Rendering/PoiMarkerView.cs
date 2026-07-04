@@ -34,10 +34,12 @@ namespace WorldGen.Rendering
             this.baseIconWorldSize = baseIconWorldSize;
             this.baseLabelCharacterSize = baseLabelCharacterSize;
 
-            // Icon — lies flat in XZ plane (rotate -90° around X so sprite faces up)
+            // Icon — lies flat in XZ plane (rotate 90° around X so sprite faces up, matching
+            // the label's rotation below — the icon previously used -90°, which produced a
+            // vertically-mirrored image when viewed from the top-down camera).
             var iconGO = new GameObject("Icon");
             iconGO.transform.SetParent(transform, false);
-            iconGO.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            iconGO.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             iconTransform = iconGO.transform;
             iconRenderer = iconGO.AddComponent<SpriteRenderer>();
 
@@ -60,12 +62,18 @@ namespace WorldGen.Rendering
         {
             if (poiData == null) return;
 
-            // Icon sprite: custom if path set and file exists, otherwise placeholder
+            // Icon sprite: embedded bytes first (self-contained, survives save/load), then a
+            // legacy on-disk path (only possible for a POI created and never saved/reloaded
+            // this session), otherwise the type placeholder.
             Sprite sprite = null;
-            if (!string.IsNullOrEmpty(poiData.CustomSpritePath)
+            if (poiData.CustomIconBytes != null && poiData.CustomIconBytes.Length > 0)
+            {
+                sprite = LoadSpriteFromBytes(poiData.CustomIconBytes);
+            }
+            else if (!string.IsNullOrEmpty(poiData.CustomSpritePath)
                 && System.IO.File.Exists(poiData.CustomSpritePath))
             {
-                sprite = LoadCustomSprite(poiData.CustomSpritePath);
+                sprite = LoadSpriteFromBytes(System.IO.File.ReadAllBytes(poiData.CustomSpritePath));
             }
             if (sprite == null)
                 sprite = PoiPlaceholderFactory.GetPlaceholder(poiData.Type);
@@ -102,11 +110,10 @@ namespace WorldGen.Rendering
             transform.localPosition = new Vector3(pos.X, 0f, pos.Y);
         }
 
-        static Sprite LoadCustomSprite(string path)
+        static Sprite LoadSpriteFromBytes(byte[] bytes)
         {
             try
             {
-                var bytes = System.IO.File.ReadAllBytes(path);
                 var tex = new Texture2D(2, 2);
                 if (!tex.LoadImage(bytes)) return null;
                 return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),

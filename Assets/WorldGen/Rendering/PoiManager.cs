@@ -143,11 +143,12 @@ namespace WorldGen.Rendering
             if (markers.TryGetValue(id, out var m)) m.Refresh();
         }
 
-        public void UpdatePoiSpritePath(string id, string path)
+        public void UpdatePoiIconBytes(string id, byte[] bytes, string displayPath)
         {
             var poi = pois.FirstOrDefault(p => p.Id == id);
             if (poi == null) return;
-            poi.CustomSpritePath = path;
+            poi.CustomIconBytes = bytes;
+            poi.CustomSpritePath = displayPath;
             if (markers.TryGetValue(id, out var m)) m.Refresh();
         }
 
