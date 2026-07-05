@@ -246,12 +246,12 @@ namespace WorldGen.Update
 
             try
             {
-                var psi = new ProcessStartInfo(tempPath, "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NOICONS")
+                var psi = new ProcessStartInfo(tempPath, "/VERYSILENT /SUPPRESSMSGBOXES /NOICONS")
                 {
                     UseShellExecute = true
                 };
                 Process.Start(psi);
-                Debug.Log("UpdateChecker: installer launched, waiting for Inno Setup's Restart Manager to close this process.");
+                Debug.Log("UpdateChecker: installer launched, quitting so it can replace this build's files.");
             }
             catch (Exception ex)
             {
@@ -263,12 +263,15 @@ namespace WorldGen.Update
                 yield break;
             }
 
-            // Deliberately NOT calling Application.Quit() here. Inno Setup's /CLOSEAPPLICATIONS
-            // only restarts (via /RESTARTAPPLICATIONS) applications that IT closed through
-            // Restart Manager -- if we quit ourselves first, Setup finds nothing running to
-            // close, so it has nothing registered to restart afterward. Staying alive lets
-            // Setup's file-copy step hit the expected "file in use" condition, which is what
-            // triggers RM to close (and later restart) this process automatically.
+            // Unity standalone builds don't cooperate with Windows Restart Manager (no
+            // RegisterApplicationRestart call, no WM_QUERYENDSESSION handling), so Inno
+            // Setup's /CLOSEAPPLICATIONS can never actually close this process -- confirmed
+            // by real-machine testing, where the installer hung indefinitely waiting for a
+            // graceful shutdown that never came. Quitting ourselves, right after launching
+            // the installer, is what actually lets the silent install proceed. The installer
+            // relaunches the app afterward via its own unconditional [Run] post-install step
+            // (installer/RealmWeaver.iss), not via /RESTARTAPPLICATIONS.
+            Application.Quit();
         }
 
         // ── Self-test ──────────────────────────────────────────────────────────
