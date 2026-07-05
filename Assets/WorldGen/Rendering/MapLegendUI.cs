@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
@@ -176,7 +177,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("LegendPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImage = panelGO.AddComponent<Image>();
-            panelImage.color = panelBackgroundColor;
+            ThemeService.Tag(panelImage, ThemeRole.Panel, 0.55f);
 
             panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f); // привязка к правому верхнему углу карты (не всего экрана)
@@ -226,7 +227,7 @@ namespace WorldGen.Rendering
             textGO.transform.SetParent(row.transform, false);
             var text = textGO.AddComponent<Text>();
             text.text = label;
-            text.color = textColor;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.fontSize = fontSize;
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); // встроенный шрифт Unity - доступен без дополнительных импортов
             text.alignment = TextAnchor.MiddleLeft;

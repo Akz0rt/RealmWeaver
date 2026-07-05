@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -13,7 +14,7 @@ namespace WorldGen.Notes.Rendering
     public class NotesToolbar : MonoBehaviour
     {
         public const float ButtonSize = 36f;
-        public Color activeColor = new Color(0.2f, 0.55f, 0.3f, 0.65f);
+        public Color activeColor = ThemedAlpha(ThemeRole.AccentSoft, 0.65f);
         public Color hoverColor = new Color(1f, 1f, 1f, 0.15f);
 
         /// <summary>The floating row's own RectTransform — exposed so CanvasInteractionController
@@ -106,7 +107,7 @@ namespace WorldGen.Notes.Rendering
                 iconGO.transform.SetParent(btnGO.transform, false);
                 var iconImg = iconGO.AddComponent<Image>();
                 iconImg.sprite = NotesIconFactory.GetIcon(tool);
-                iconImg.color = Color.white;
+                ThemeService.Tag(iconImg, ThemeRole.Txt);
                 iconImg.raycastTarget = false;
                 var iconRect = iconImg.rectTransform;
                 iconRect.anchorMin = new Vector2(0.15f, 0.15f);
@@ -149,7 +150,7 @@ namespace WorldGen.Notes.Rendering
             var tooltipGO = new GameObject("Tooltip");
             tooltipGO.transform.SetParent(canvasRoot, false);
             var img = tooltipGO.AddComponent<Image>();
-            img.color = new Color(0.05f, 0.05f, 0.05f, 0.95f);
+            ThemeService.Tag(img, ThemeRole.Panel2, 0.95f);
             img.raycastTarget = false;
             tooltipRect = tooltipGO.GetComponent<RectTransform>();
             tooltipRect.pivot = new Vector2(0f, 1f);
@@ -160,7 +161,7 @@ namespace WorldGen.Notes.Rendering
             tooltipText = textGO.AddComponent<Text>();
             tooltipText.font = builtinFont;
             tooltipText.fontSize = 11;
-            tooltipText.color = Color.white;
+            ThemeService.Tag(tooltipText, ThemeRole.Txt);
             tooltipText.alignment = TextAnchor.MiddleCenter;
             tooltipText.raycastTarget = false;
             var textRect = textGO.GetComponent<RectTransform>();
@@ -211,6 +212,16 @@ namespace WorldGen.Notes.Rendering
                 else
                     img.color = Color.clear;
             }
+        }
+
+        /// <summary>Resolves a themed role to a Color with a fixed alpha baked in — used for
+        /// fields (like activeColor) that get copied directly into Image.color at runtime rather
+        /// than staying attached to one persistent Graphic, so ThemeService.Tag doesn't apply.</summary>
+        static Color ThemedAlpha(ThemeRole role, float alpha)
+        {
+            var c = ThemeService.Get(role);
+            c.a = alpha;
+            return c;
         }
 
         static Sprite GetBackdropSprite()

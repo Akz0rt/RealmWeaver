@@ -6,6 +6,7 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
@@ -34,9 +35,7 @@ namespace WorldGen.Rendering
         [Tooltip("Отступ от нижнего края экрана, ниже которого панель не опускается.")]
         public float bottomScreenMargin = 20f;
         public float panelWidth = 240f;
-        public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.75f);
-        public Color textColor = Color.white;
-        public Color sectionHeaderColor = new Color(0.7f, 0.85f, 1f);
+        public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
 
         GameObject panelGO;
         RectTransform panelRect;
@@ -173,7 +172,8 @@ namespace WorldGen.Rendering
 
             panelGO = new GameObject("PoiEditPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
-            panelGO.AddComponent<Image>().color = panelBackgroundColor;
+            var panelImg = panelGO.AddComponent<Image>();
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.75f);
             panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
@@ -225,7 +225,7 @@ namespace WorldGen.Rendering
 
             var t = contentGO.transform;
 
-            AddLabel(t, "─ Точка интереса ─", bold: true, color: sectionHeaderColor);
+            AddLabel(t, "─ Точка интереса ─", bold: true, role: ThemeRole.Mut);
 
             AddLabel(t, "Тип:");
             var typeRowGO = new GameObject("TypeDropdownRow");
@@ -234,7 +234,7 @@ namespace WorldGen.Rendering
 
             poiTypeDropdown = typeRowGO.AddComponent<Dropdown>();
             var typeBg = typeRowGO.AddComponent<Image>();
-            typeBg.color = new Color(0.15f, 0.15f, 0.25f, 0.95f);
+            ThemeService.Tag(typeBg, ThemeRole.Panel2, 0.95f);
             poiTypeDropdown.targetGraphic = typeBg;
 
             var typeCaptionGO = new GameObject("Label");
@@ -242,7 +242,7 @@ namespace WorldGen.Rendering
             var typeCaptionText = typeCaptionGO.AddComponent<Text>();
             typeCaptionText.font = builtinFont;
             typeCaptionText.fontSize = 12;
-            typeCaptionText.color = textColor;
+            ThemeService.Tag(typeCaptionText, ThemeRole.Txt);
             typeCaptionText.alignment = TextAnchor.MiddleLeft;
             var typeCaptionRect = typeCaptionGO.GetComponent<RectTransform>();
             typeCaptionRect.anchorMin = new Vector2(0.05f, 0f);
@@ -290,14 +290,14 @@ namespace WorldGen.Rendering
             poiCellLabel.text = "Клетка: —";
             poiCellLabel.font = builtinFont;
             poiCellLabel.fontSize = 12;
-            poiCellLabel.color = textColor;
+            ThemeService.Tag(poiCellLabel, ThemeRole.Txt);
             poiCellLabel.alignment = TextAnchor.MiddleLeft;
             cellLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(120f, 20f);
 
             var snapBtnGO = new GameObject("SnapCellBtn");
             snapBtnGO.transform.SetParent(cellRowGO.transform, false);
             var snapImg = snapBtnGO.AddComponent<Image>();
-            snapImg.color = new Color(0.3f, 0.4f, 0.5f, 0.9f);
+            ThemeService.Tag(snapImg, ThemeRole.Elev, 0.9f);
             var snapBtn = snapBtnGO.AddComponent<Button>();
             snapBtn.targetGraphic = snapImg;
             snapBtnGO.GetComponent<RectTransform>().sizeDelta = new Vector2(76f, 20f);
@@ -314,7 +314,7 @@ namespace WorldGen.Rendering
             snapText.text = "По позиции";
             snapText.font = builtinFont;
             snapText.fontSize = 10;
-            snapText.color = Color.white;
+            ThemeService.Tag(snapText, ThemeRole.Txt);
             snapText.alignment = TextAnchor.MiddleCenter;
             var snapTr = snapTextGO.GetComponent<RectTransform>();
             snapTr.anchorMin = Vector2.zero;
@@ -336,7 +336,7 @@ namespace WorldGen.Rendering
             var pickBtnGO = new GameObject("PickIconBtn");
             pickBtnGO.transform.SetParent(spriteRow.transform, false);
             var pickImg = pickBtnGO.AddComponent<Image>();
-            pickImg.color = new Color(0.3f, 0.5f, 0.3f, 0.9f);
+            ThemeService.Tag(pickImg, ThemeRole.Accent, 0.9f);
             var pickBtn = pickBtnGO.AddComponent<Button>();
             pickBtn.targetGraphic = pickImg;
             pickBtn.onClick.AddListener(OnPickIconClicked);
@@ -347,14 +347,14 @@ namespace WorldGen.Rendering
             pickText.text = "Выбрать файл…";
             pickText.font = builtinFont;
             pickText.fontSize = 10;
-            pickText.color = Color.white;
+            ThemeService.Tag(pickText, ThemeRole.AccentInk);
             pickText.alignment = TextAnchor.MiddleCenter;
             var pickRect = pickTextGO.GetComponent<RectTransform>();
             pickRect.anchorMin = Vector2.zero;
             pickRect.anchorMax = Vector2.one;
             pickRect.sizeDelta = Vector2.zero;
 
-            AddLabel(t, "─── Размер на карте ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Размер на карте ───", bold: false, role: ThemeRole.Mut);
             iconScaleSlider = AddScaleSliderRow(t, "Иконка", 1f, v =>
             {
                 var sel = poiManager?.GetSelectedPoi();
@@ -370,9 +370,9 @@ namespace WorldGen.Rendering
             {
                 var sel = poiManager?.GetSelectedPoi();
                 if (sel != null) poiManager.DeletePoi(sel.Id);
-            }, new Color(0.55f, 0.15f, 0.15f));
+            }, ThemeRole.Danger);
 
-            AddButton(t, "Открыть страницы", OnOpenPagesClicked, new Color(0.25f, 0.5f, 0.4f));
+            AddButton(t, "Открыть страницы", OnOpenPagesClicked, ThemeRole.Accent);
         }
 
         void OnOpenPagesClicked()
@@ -420,7 +420,7 @@ namespace WorldGen.Rendering
             labelText.text = label;
             labelText.font = builtinFont;
             labelText.fontSize = 12;
-            labelText.color = textColor;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
             labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(70f, 20f);
 
@@ -434,7 +434,8 @@ namespace WorldGen.Rendering
 
             var bg = new GameObject("Bg");
             bg.transform.SetParent(sliderGO.transform, false);
-            bg.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.15f);
+            var bgImg = bg.AddComponent<Image>();
+            ThemeService.Tag(bgImg, ThemeRole.Elev);
             var bgRect = bg.GetComponent<RectTransform>();
             bgRect.anchorMin = new Vector2(0f, 0.25f);
             bgRect.anchorMax = new Vector2(1f, 0.75f);
@@ -442,7 +443,8 @@ namespace WorldGen.Rendering
 
             var fill = new GameObject("Fill");
             fill.transform.SetParent(sliderGO.transform, false);
-            fill.AddComponent<Image>().color = new Color(0.3f, 0.6f, 0.9f, 0.9f);
+            var fillImg = fill.AddComponent<Image>();
+            ThemeService.Tag(fillImg, ThemeRole.Accent, 0.9f);
             var fillRect = fill.GetComponent<RectTransform>();
             fillRect.anchorMin = new Vector2(0f, 0.2f);
             fillRect.anchorMax = new Vector2(0f, 0.8f);
@@ -459,7 +461,7 @@ namespace WorldGen.Rendering
             var handle = new GameObject("Handle");
             handle.transform.SetParent(handleArea.transform, false);
             var handleImg = handle.AddComponent<Image>();
-            handleImg.color = Color.white;
+            ThemeService.Tag(handleImg, ThemeRole.Accent);
             var handleRect = handle.GetComponent<RectTransform>();
             handleRect.sizeDelta = new Vector2(12f, 18f);
             slider.handleRect = handleRect;
@@ -472,7 +474,7 @@ namespace WorldGen.Rendering
             valueText.text = defaultValue.ToString("F2");
             valueText.font = builtinFont;
             valueText.fontSize = 12;
-            valueText.color = textColor;
+            ThemeService.Tag(valueText, ThemeRole.Txt);
             valueText.alignment = TextAnchor.MiddleLeft;
             valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
 
@@ -485,7 +487,7 @@ namespace WorldGen.Rendering
             return slider;
         }
 
-        Text AddLabel(Transform parent, string text, bool bold = false, Color? color = null)
+        Text AddLabel(Transform parent, string text, bool bold = false, ThemeRole? role = null)
         {
             var go = new GameObject("Label");
             go.transform.SetParent(parent, false);
@@ -494,18 +496,19 @@ namespace WorldGen.Rendering
             label.font = builtinFont;
             label.fontSize = bold ? 14 : 11;
             label.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
-            label.color = color ?? textColor;
+            ThemeService.Tag(label, role ?? ThemeRole.Txt);
             label.alignment = TextAnchor.MiddleLeft;
             go.AddComponent<LayoutElement>().preferredHeight = bold ? 18f : 14f;
             return label;
         }
 
-        void AddButton(Transform parent, string label, System.Action onClick, Color? bgColor = null)
+        void AddButton(Transform parent, string label, System.Action onClick, ThemeRole? role = null)
         {
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = bgColor ?? new Color(0.25f, 0.45f, 0.7f, 0.9f);
+            if (role.HasValue) ThemeService.Tag(img, role.Value);
+            else ThemeService.Tag(img, ThemeRole.Elev, 0.9f);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -517,7 +520,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 12;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.AccentInk);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
@@ -530,7 +533,7 @@ namespace WorldGen.Rendering
             var go = new GameObject("InputField");
             go.transform.SetParent(parent, false);
             var bg = go.AddComponent<Image>();
-            bg.color = new Color(0.15f, 0.15f, 0.2f, 0.95f);
+            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
             var field = go.AddComponent<InputField>();
             field.targetGraphic = bg;
             field.lineType = multiline
@@ -542,7 +545,7 @@ namespace WorldGen.Rendering
             var text = textGO.AddComponent<Text>();
             text.font = builtinFont;
             text.fontSize = 12;
-            text.color = textColor;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.supportRichText = false;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = new Vector2(0.02f, 0f);
@@ -555,7 +558,7 @@ namespace WorldGen.Rendering
             var phText = phGO.AddComponent<Text>();
             phText.font = builtinFont;
             phText.fontSize = 12;
-            phText.color = new Color(0.5f, 0.5f, 0.5f);
+            ThemeService.Tag(phText, ThemeRole.Mut);
             phText.fontStyle = FontStyle.Italic;
             var phRect = phGO.GetComponent<RectTransform>();
             phRect.anchorMin = new Vector2(0.02f, 0f);
@@ -580,7 +583,8 @@ namespace WorldGen.Rendering
             templateRect.anchoredPosition = new Vector2(0f, 2f);
             templateRect.sizeDelta = new Vector2(0f, 150f);
 
-            templateGO.AddComponent<Image>().color = new Color(0.12f, 0.12f, 0.18f, 0.98f);
+            var templateBg = templateGO.AddComponent<Image>();
+            ThemeService.Tag(templateBg, ThemeRole.Panel2, 0.98f);
             var templateCanvas = templateGO.AddComponent<Canvas>();
             templateCanvas.overrideSorting = true;
             templateCanvas.sortingOrder = 30000;
@@ -619,7 +623,7 @@ namespace WorldGen.Rendering
             var itemBgGO = new GameObject("Item Background");
             itemBgGO.transform.SetParent(itemGO.transform, false);
             var itemBg = itemBgGO.AddComponent<Image>();
-            itemBg.color = new Color(0.25f, 0.4f, 0.6f, 0.6f);
+            ThemeService.Tag(itemBg, ThemeRole.AccentSoft, 0.6f);
             var itemBgRect = itemBgGO.GetComponent<RectTransform>();
             itemBgRect.anchorMin = Vector2.zero;
             itemBgRect.anchorMax = Vector2.one;
@@ -629,7 +633,7 @@ namespace WorldGen.Rendering
             var itemCheckGO = new GameObject("Item Checkmark");
             itemCheckGO.transform.SetParent(itemGO.transform, false);
             var itemCheck = itemCheckGO.AddComponent<Image>();
-            itemCheck.color = new Color(0.3f, 0.9f, 0.4f);
+            ThemeService.Tag(itemCheck, ThemeRole.Accent);
             var itemCheckRect = itemCheckGO.GetComponent<RectTransform>();
             itemCheckRect.anchorMin = new Vector2(0f, 0.5f);
             itemCheckRect.anchorMax = new Vector2(0f, 0.5f);
@@ -642,7 +646,7 @@ namespace WorldGen.Rendering
             var itemLabel = itemLabelGO.AddComponent<Text>();
             itemLabel.font = builtinFont;
             itemLabel.fontSize = 12;
-            itemLabel.color = Color.white;
+            ThemeService.Tag(itemLabel, ThemeRole.Txt);
             itemLabel.alignment = TextAnchor.MiddleLeft;
             var itemLabelRect = itemLabelGO.GetComponent<RectTransform>();
             itemLabelRect.anchorMin = new Vector2(0f, 0f);

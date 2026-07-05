@@ -3,6 +3,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -32,8 +33,8 @@ namespace WorldGen.Notes.Rendering
         bool selected;
         bool hovering;
 
-        static readonly Color NormalColor = new Color(0.9f, 0.9f, 0.9f, 0.9f);
-        static readonly Color SelectedColor = new Color(1f, 0.85f, 0.3f, 0.95f);
+        static readonly Color NormalColor = ThemedAlpha(ThemeRole.Txt, 0.9f);
+        static readonly Color SelectedColor = ThemedAlpha(ThemeRole.Accent, 0.95f);
 
         public string LinkId => data?.Id;
 
@@ -87,7 +88,7 @@ namespace WorldGen.Notes.Rendering
                 var arrowGO = new GameObject("Arrow");
                 arrowGO.transform.SetParent(transform, false);
                 var arrowImg = arrowGO.AddComponent<Image>();
-                arrowImg.color = new Color(0.9f, 0.9f, 0.9f, 0.9f);
+                arrowImg.color = NormalColor;
                 arrowRect = arrowGO.GetComponent<RectTransform>();
                 arrowRect.pivot = new Vector2(1f, 0.5f);
                 arrowRect.anchorMin = new Vector2(0f, 0f);
@@ -234,6 +235,17 @@ namespace WorldGen.Notes.Rendering
         {
             float u = 1f - t;
             return u * u * p0 + 2f * u * t * p1 + t * t * p2;
+        }
+
+        /// <summary>Resolves a themed role to a Color with a fixed alpha baked in — used for
+        /// NormalColor/SelectedColor, which are copied directly into segment/handle Image.color
+        /// at runtime (selected-state toggling) rather than staying attached to one persistent
+        /// Graphic, so ThemeService.Tag doesn't apply here.</summary>
+        static Color ThemedAlpha(ThemeRole role, float alpha)
+        {
+            var c = ThemeService.Get(role);
+            c.a = alpha;
+            return c;
         }
 
         // ── Self-tests ─────────────────────────────────────────────────────────

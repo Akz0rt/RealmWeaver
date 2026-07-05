@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -56,7 +57,7 @@ namespace WorldGen.Notes.Rendering
             // every single frame regardless of what else changes, so it overwrites that stale
             // data unconditionally.
             var notesAreaBg = notesAreaGO.AddComponent<Image>();
-            notesAreaBg.color = new Color(0.12f, 0.12f, 0.14f, 1f);
+            ThemeService.Tag(notesAreaBg, ThemeRole.Bg);
 
             var layout = gameObject.AddComponent<NotesLayoutController>();
             layout.notesAreaRoot = notesAreaRect;
@@ -116,7 +117,7 @@ namespace WorldGen.Notes.Rendering
             viewportGO.transform.SetParent(rightColumnGO.transform, false);
             viewportGO.AddComponent<RectMask2D>();
             var viewportImg = viewportGO.AddComponent<Image>();
-            viewportImg.color = new Color(0.08f, 0.08f, 0.1f, 1f);
+            ThemeService.Tag(viewportImg, ThemeRole.Bg);
             var viewportRect = viewportGO.GetComponent<RectTransform>();
             viewportRect.anchorMin = Vector2.zero;
             viewportRect.anchorMax = Vector2.one;

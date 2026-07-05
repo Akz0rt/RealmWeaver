@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -177,6 +178,82 @@ namespace WorldGen.Generation
             RegenerateTemperature(cells, p, temperatureEpicenters);
 
             return cells;
+        }
+
+        /// <summary>
+        /// Same pipeline as GenerateWorld, split into 5 progress-reportable stages for the
+        /// Generation Progress screen. Temperature is computed right after moisture here
+        /// (rather than at the very end, as in GenerateWorld) so the reported step order
+        /// matches the UI checklist -- safe because BiomeClassifier only reads elevation and
+        /// moisture (see CellClimateAverager.cs:49), and region growing never used temperature
+        /// either. GenerateWorld itself is untouched, kept for self-tests/back-compat.
+        /// </summary>
+        public static IEnumerator GenerateWorldStepped(
+            GenerationParams p,
+            Action<string, float> onProgress,
+            Action<List<VoronoiCell>, List<TemperatureEpicenter>, List<MoistureEpicenter>, List<River>> onComplete)
+        {
+            // --- Step 1/5: Генерация высот ---
+            onProgress?.Invoke("Генерация высот", 0f / 5f);
+            var points = PoissonDiskSampling.Generate(p.Width, p.Height, p.MinPointDistance, p.Seed);
+            var cells = VoronoiBuilder.Build(points, p.Width, p.Height);
+
+            for (int i = 0; i < p.LloydRelaxIterations; i++)
+            {
+                var relaxedPoints = LloydRelaxation.ComputeRelaxedPoints(cells);
+                cells = VoronoiBuilder.Build(relaxedPoints, p.Width, p.Height);
+            }
+
+            var corners = CornerGraphBuilder.Build(cells);
+
+            var islandShapeGen = new HeightmapGenerator(p.Seed, p.Width, p.Height, p.HeightFrequency, p.HeightOctaves,
+                                                          p.WarpAmplitude, falloffPower: p.FalloffPower, innerRadius: p.InnerRadius);
+            IslandShapeAssigner.AssignWaterCorners(corners, islandShapeGen, p.SeaLevel);
+            yield return null;
+
+            // --- Step 2/5: Океаны и озёра ---
+            onProgress?.Invoke("Океаны и озёра", 1f / 5f);
+            CornerOceanFloodFill.MarkOcean(corners, p.Width, p.Height);
+            if (p.MinLakeSize > 1)
+                LakeSizeFilter.RemoveSmallLakes(corners, p.MinLakeSize);
+            CellWaterAssigner.AssignFromCorners(cells, corners);
+
+            ElevationField.ApplyElevation(corners, p.ElevationCoastWeight, p.ElevationNoiseWeight,
+                                            p.Seed, p.ElevationNoiseFrequency, p.ElevationNoiseOctaves);
+            ValueRedistributor.RedistributeElevation(corners);
+            yield return null;
+
+            // --- Step 3/5: Температура и влажность ---
+            onProgress?.Invoke("Температура и влажность", 2f / 5f);
+            var rivers = p.EnableRivers
+                ? RiverTracer.TraceRivers(corners, p.NumberOfRivers, p.Seed, p.RiverMinStartElevation, p.RiverMaxSteps)
+                : new List<River>();
+            var riverCornerIds = RiverFlowAccumulator.GetRiverCornerIds(rivers);
+
+            var moistureEpicenters = GenerateRandomMoistureEpicenters(p);
+            MoistureField.ApplyMoisture(corners, p.MoistureFalloffDistance, moistureEpicenters, riverCornerIds);
+
+            // Temperature moved up from its original end-of-pipeline position in GenerateWorld --
+            // safe reordering, see method doc comment above.
+            var temperatureEpicenters = GenerateRandomEpicenters(p);
+            yield return null;
+
+            // --- Step 4/5: Расчёт биомов ---
+            onProgress?.Invoke("Расчёт биомов", 3f / 5f);
+            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold);
+            RegenerateTemperature(cells, p, temperatureEpicenters);
+            yield return null;
+
+            // --- Step 5/5: Границы регионов ---
+            onProgress?.Invoke("Границы регионов", 4f / 5f);
+            var landCells = cells.Where(c => !c.IsOcean).ToList();
+            if (landCells.Count >= p.NumberOfRegions)
+                RegionGrowing.GroupCells(cells, landCells, p.NumberOfRegions, p.Seed);
+            LakeRegionUnifier.UnifyLakes(cells);
+            yield return null;
+
+            onProgress?.Invoke("Готово", 5f / 5f);
+            onComplete?.Invoke(cells, temperatureEpicenters, moistureEpicenters, rivers);
         }
 
         /// <summary>

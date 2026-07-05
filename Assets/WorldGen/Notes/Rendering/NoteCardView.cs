@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -42,7 +43,7 @@ namespace WorldGen.Notes.Rendering
             rect.pivot = new Vector2(0.5f, 0.5f);
 
             var bg = gameObject.AddComponent<Image>();
-            bg.color = new Color(0.18f, 0.18f, 0.2f, 0.95f);
+            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
 
             var titleGO = new GameObject("Title");
             titleGO.transform.SetParent(transform, false);
@@ -50,7 +51,7 @@ namespace WorldGen.Notes.Rendering
             titleText.font = builtinFont;
             titleText.fontSize = 14;
             titleText.fontStyle = FontStyle.Bold;
-            titleText.color = Color.white;
+            ThemeService.Tag(titleText, ThemeRole.Txt);
             titleText.alignment = TextAnchor.UpperLeft;
             var titleRect = titleGO.GetComponent<RectTransform>();
             titleRect.anchorMin = new Vector2(0f, 1f);
@@ -77,7 +78,7 @@ namespace WorldGen.Notes.Rendering
             var bodyText = bodyTextGO.AddComponent<Text>();
             bodyText.font = builtinFont;
             bodyText.fontSize = 12;
-            bodyText.color = Color.white;
+            ThemeService.Tag(bodyText, ThemeRole.Txt);
             bodyText.supportRichText = false;
             var bodyTextRect = bodyTextGO.GetComponent<RectTransform>();
             bodyTextRect.anchorMin = Vector2.zero;

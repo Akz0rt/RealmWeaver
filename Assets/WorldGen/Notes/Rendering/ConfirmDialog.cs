@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -16,12 +17,12 @@ namespace WorldGen.Notes.Rendering
         {
             var panelGO = BuildBasePanel(font, message);
 
-            AddDialogButton(font, panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
+            AddDialogButton(font, panelGO.transform, "Отмена", new Vector2(0.05f, 0.1f), new Vector2(0.48f, 0.35f), ThemeRole.Elev, () =>
             {
                 Object.Destroy(activeDialogGO);
                 onResult(false);
             });
-            AddDialogButton(font, panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), new Color(0.55f, 0.15f, 0.15f), () =>
+            AddDialogButton(font, panelGO.transform, "Удалить", new Vector2(0.52f, 0.1f), new Vector2(0.95f, 0.35f), ThemeRole.Danger, () =>
             {
                 Object.Destroy(activeDialogGO);
                 onResult(true);
@@ -34,7 +35,7 @@ namespace WorldGen.Notes.Rendering
         {
             var panelGO = BuildBasePanel(font, message);
 
-            AddDialogButton(font, panelGO.transform, "OK", new Vector2(0.25f, 0.1f), new Vector2(0.75f, 0.35f), new Color(0.3f, 0.3f, 0.3f), () =>
+            AddDialogButton(font, panelGO.transform, "OK", new Vector2(0.25f, 0.1f), new Vector2(0.75f, 0.35f), ThemeRole.Elev, () =>
             {
                 Object.Destroy(activeDialogGO);
                 onDismiss?.Invoke();
@@ -56,7 +57,7 @@ namespace WorldGen.Notes.Rendering
             var panelGO = new GameObject("Panel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            panelImg.color = new Color(0f, 0f, 0f, 0.7f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.7f);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -69,7 +70,7 @@ namespace WorldGen.Notes.Rendering
             msgText.text = message;
             msgText.font = font;
             msgText.fontSize = 13;
-            msgText.color = Color.white;
+            ThemeService.Tag(msgText, ThemeRole.Txt);
             msgText.alignment = TextAnchor.MiddleCenter;
             var msgRect = msgGO.GetComponent<RectTransform>();
             msgRect.anchorMin = new Vector2(0f, 0.4f);
@@ -79,12 +80,12 @@ namespace WorldGen.Notes.Rendering
             return panelGO;
         }
 
-        static void AddDialogButton(Font font, Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Color bgColor, System.Action onClick)
+        static void AddDialogButton(Font font, Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, ThemeRole bgRole, System.Action onClick)
         {
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = bgColor;
+            ThemeService.Tag(img, bgRole);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -99,7 +100,7 @@ namespace WorldGen.Notes.Rendering
             text.text = label;
             text.font = font;
             text.fontSize = 12;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;

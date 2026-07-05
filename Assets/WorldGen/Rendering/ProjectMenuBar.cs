@@ -10,6 +10,8 @@ using WorldGen.Generation;
 using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
 using WorldGen.Persistence;
+using WorldGen.Rendering.Theme;
+using ThemeMode = WorldGen.Rendering.Theme.Theme; // "Theme" alone is ambiguous here: it names both the enum and its containing namespace, and namespace wins over the using-directive-imported type when referenced from the parent WorldGen.Rendering namespace.
 
 namespace WorldGen.Rendering
 {
@@ -108,6 +110,9 @@ namespace WorldGen.Rendering
             LoadFrom(paths[0]);
         }
 
+        /// <summary>Lets other screens (e.g. GenerationScreenUI's "Открыть проект…") trigger the same Open flow.</summary>
+        public void TriggerOpenFromExternal() => DoOpen();
+
         void LoadFrom(string path)
         {
             if (mapRenderer == null)
@@ -154,7 +159,8 @@ namespace WorldGen.Rendering
 
             var barGO = new GameObject("MenuBar");
             barGO.transform.SetParent(canvasTransform, false);
-            barGO.AddComponent<Image>().color = new Color(0.08f, 0.08f, 0.1f, 1f);
+            var barImg = barGO.AddComponent<Image>();
+            ThemeService.Tag(barImg, ThemeRole.Panel);
             var barRect = barGO.GetComponent<RectTransform>();
             barRect.anchorMin = new Vector2(0f, 1f);
             barRect.anchorMax = new Vector2(1f, 1f);
@@ -165,7 +171,7 @@ namespace WorldGen.Rendering
             var fileBtnGO = new GameObject("FileButton");
             fileBtnGO.transform.SetParent(barGO.transform, false);
             var fileBtnImg = fileBtnGO.AddComponent<Image>();
-            fileBtnImg.color = new Color(1f, 1f, 1f, 0.06f);
+            ThemeService.Tag(fileBtnImg, ThemeRole.Elev);
             var fileBtn = fileBtnGO.AddComponent<Button>();
             fileBtn.targetGraphic = fileBtnImg;
             fileBtn.onClick.AddListener(ToggleActionsPopup);
@@ -182,7 +188,7 @@ namespace WorldGen.Rendering
             fileLabel.text = "Файл";
             fileLabel.font = builtinFont;
             fileLabel.fontSize = 12;
-            fileLabel.color = Color.white;
+            ThemeService.Tag(fileLabel, ThemeRole.Txt);
             fileLabel.alignment = TextAnchor.MiddleCenter;
             var fileLabelRect = fileLabelGO.GetComponent<RectTransform>();
             fileLabelRect.anchorMin = Vector2.zero;
@@ -216,7 +222,8 @@ namespace WorldGen.Rendering
 
             actionsPopupGO = new GameObject("FileActionsPopup");
             actionsPopupGO.transform.SetParent(canvasTransform, false);
-            actionsPopupGO.AddComponent<Image>().color = new Color(0.12f, 0.12f, 0.16f, 0.98f);
+            var popupImg = actionsPopupGO.AddComponent<Image>();
+            ThemeService.Tag(popupImg, ThemeRole.Panel2, 0.98f);
             var popupRect = actionsPopupGO.GetComponent<RectTransform>();
             popupRect.anchorMin = new Vector2(0f, 1f);
             popupRect.anchorMax = new Vector2(0f, 1f);
@@ -224,7 +231,7 @@ namespace WorldGen.Rendering
             popupRect.anchoredPosition = new Vector2(0f, -BarHeightPixels);
 
             var recentPaths = recentExpanded ? RecentProjectsList.Get().Where(File.Exists).ToList() : null;
-            int rowCount = 4 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
+            int rowCount = 5 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
             popupRect.sizeDelta = new Vector2(200f, rowCount * 26f);
 
             var vlg = actionsPopupGO.AddComponent<VerticalLayoutGroup>();
@@ -241,6 +248,11 @@ namespace WorldGen.Rendering
                 recentExpanded = !recentExpanded;
                 CloseActionsPopup(keepExpandedFlag: true);
                 OpenActionsPopup();
+            });
+            AddPopupAction(actionsPopupGO.transform, ThemeService.Current == ThemeMode.Dark ? "Светлая тема" : "Тёмная тема", () =>
+            {
+                CloseActionsPopup();
+                ThemeService.ApplyTheme(ThemeService.Current == ThemeMode.Dark ? ThemeMode.Light : ThemeMode.Dark);
             });
 
             if (recentExpanded)
@@ -287,7 +299,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 12;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleLeft;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
