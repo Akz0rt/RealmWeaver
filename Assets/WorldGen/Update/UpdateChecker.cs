@@ -9,6 +9,7 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.Networking;
 using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering.Theme;
 using Debug = UnityEngine.Debug;
 
 namespace WorldGen.Update
@@ -118,7 +119,8 @@ namespace WorldGen.Update
 
             bannerGO = new GameObject("UpdateBanner");
             bannerGO.transform.SetParent(bannerCanvasTransform, false);
-            bannerGO.AddComponent<Image>().color = new Color(0.08f, 0.08f, 0.1f, 0.96f);
+            var bannerImg = bannerGO.AddComponent<Image>();
+            ThemeService.Tag(bannerImg, ThemeRole.Panel, 0.96f);
             var rect = bannerGO.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(1f, 1f);
             rect.anchorMax = new Vector2(1f, 1f);
@@ -132,7 +134,7 @@ namespace WorldGen.Update
             statusText.text = $"Доступна версия {latestVersion}";
             statusText.font = builtinFont;
             statusText.fontSize = 12;
-            statusText.color = Color.white;
+            ThemeService.Tag(statusText, ThemeRole.Txt);
             statusText.alignment = TextAnchor.MiddleLeft;
             var statusRect = statusGO.GetComponent<RectTransform>();
             statusRect.anchorMin = new Vector2(0f, 0.55f);
@@ -167,7 +169,7 @@ namespace WorldGen.Update
             text.text = "×";
             text.font = builtinFont;
             text.fontSize = 14;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
@@ -180,7 +182,7 @@ namespace WorldGen.Update
             var go = new GameObject("ActionButton");
             go.transform.SetParent(bannerGO.transform, false);
             var img = go.AddComponent<Image>();
-            img.color = new Color(0.2f, 0.45f, 0.25f, 1f);
+            ThemeService.Tag(img, ThemeRole.Accent);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(OnDownloadClicked);
@@ -195,7 +197,7 @@ namespace WorldGen.Update
             actionLabel.text = "Скачать и установить";
             actionLabel.font = builtinFont;
             actionLabel.fontSize = 12;
-            actionLabel.color = Color.white;
+            ThemeService.Tag(actionLabel, ThemeRole.AccentInk);
             actionLabel.alignment = TextAnchor.MiddleCenter;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
