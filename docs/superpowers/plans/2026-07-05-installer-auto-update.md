@@ -23,7 +23,9 @@
 - Update banner: top-right corner, `LegacyRuntime.ttf` (matches existing UI), `sortingOrder` strictly between `ProjectMenuBar`'s `100` and `ConfirmDialog`'s `32000` — use `500`. Dismissing hides it for the current session only (no persisted "skip this version").
 - Error handling: version-check failures (network/parse) log a `Debug.LogWarning` only, no dialog. Download failures use the existing `ConfirmDialog.ShowInfo(font, message)` pattern (`Assets/WorldGen/Notes/Rendering/ConfirmDialog.cs`).
 - Out of scope (do not build): delta/incremental updates, macOS/Linux builds, "skip this version" persistence, installer code signing, retry/backoff scheduling for the version check, hand-authored changelogs (GitHub's auto-generated release notes are used as-is).
-- **Execution workspace:** all work happens in the git worktree at `D:\D&D\.claude\worktrees\installer-auto-update`, on local branch `worktree-installer-auto-update` — every `git`/Unity-batchmode command in this plan targets that path, not the original `D:\D&D` checkout. Task 2's push to `origin` uses an explicit refspec (`worktree-installer-auto-update:main`) so it publishes directly as `origin/main` and sets that as the branch's upstream — later plain `git push` calls (Tasks 4, 5) then land on `origin/main` too, without ever touching the original checkout's local `main`. That reconciliation happens once, at the end, via `superpowers:finishing-a-development-branch`.
+- **Execution workspace:** all work happens in the git worktree at `D:\D&D\.claude\worktrees\installer-auto-update`, on local branch `worktree-installer-auto-update` — every `git`/Unity-batchmode command in this plan targets that path, not the original `D:\D&D` checkout. That reconciliation with the original checkout's local `main` happens once, at the end, via `superpowers:finishing-a-development-branch`.
+- **Pushing to origin:** the local branch name (`worktree-installer-auto-update`) never matches `origin`'s branch name (`main`), so under git's default `push.default=simple`, a bare `git push` fails with "the upstream branch of your current branch does not match the name of your current branch" — even after `-u` sets the tracking ref. Every push in this plan (Tasks 2, 4, 5) must use the explicit form: `git push origin HEAD:main`.
+- **Unity license activation (corrected 2026-07-05):** `game-ci/unity-request-activation-file@v2` is deprecated ("no longer supported", rejects `unityVersion`). The current process (per https://game.ci/docs/github/activation) needs no GitHub Actions activation-request step at all — a Personal license `.ulf` is generated locally via Unity Hub (Preferences → Licenses → Add → "Get a free personal license"), found on Windows at `C:\ProgramData\Unity\Unity_lic.ulf`. Three repo secrets are required for the `build` job: `UNITY_LICENSE` (the `.ulf` file's full contents), `UNITY_EMAIL` (Unity account email), `UNITY_PASSWORD` (Unity account password) — all three, not just the license file, per current game-ci docs for Personal licenses.
 
 ---
 
@@ -197,64 +199,32 @@ git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: Inno Se
 
 ---
 
-### Task 4: Unity license activation workflow (manual prerequisite)
+### Task 4: Unity license activation (manual prerequisite — no workflow file)
 
-**Files:**
-- Create: `.github/workflows/unity-activation.yml`
+**Files:** none. (The original design for this task — a GitHub Actions "request activation file" workflow — turned out to use a deprecated action; `game-ci/unity-request-activation-file@v2` now fails with "This action is no longer supported" and rejects the `unityVersion` input. The corrected, current process needs no CI-side step at all: the `.ulf` license is generated locally via Unity Hub. A commit already removed the obsolete `.github/workflows/unity-activation.yml` from this branch.)
 
 **Interfaces:**
-- Produces: the `UNITY_LICENSE` repository secret that Task 5's `build` job requires. **Nothing in Task 5 can run successfully until this secret exists.**
+- Produces: the `UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD` repository secrets that Task 5's `build` job requires. **Nothing in Task 5 can run successfully until all three exist.**
 
-- [ ] **Step 1: Write the activation workflow**
+- [ ] **Step 1: STOP — manual, interactive steps only you can do**
 
-Create `.github/workflows/unity-activation.yml`:
+This needs your own Unity Hub login and your Unity account password; it cannot be scripted or done by an agent. Do this yourself, then come back:
 
-```yaml
-name: Unity - Request Activation File
+1. Open **Unity Hub** on this machine (already installed, since it's how the Unity Editor is managed here).
+2. Go to **Preferences → Licenses** (the gear/account icon in Unity Hub).
+3. Click **Add**, choose **"Get a free personal license"**, and complete the activation (sign in with your Unity ID if prompted).
+4. This creates a `.ulf` license file on disk at:
+   ```
+   C:\ProgramData\Unity\Unity_lic.ulf
+   ```
+   (`ProgramData` is hidden by default — enable "Show hidden items" in File Explorer if you don't see it.)
+5. Open that file in a text editor and copy its entire contents (it's XML).
+6. On GitHub: `RealmWeaver` repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**, and create all three of these:
+   - Name `UNITY_LICENSE` — value: the full `.ulf` file contents from step 5.
+   - Name `UNITY_EMAIL` — value: the email address for your Unity account.
+   - Name `UNITY_PASSWORD` — value: the password for your Unity account.
 
-on:
-  workflow_dispatch: {}
-
-jobs:
-  activation:
-    name: Request manual activation file
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Request manual activation file
-        id: getManualLicenseFile
-        uses: game-ci/unity-request-activation-file@v2
-        with:
-          unityVersion: 6000.3.2f1
-
-      - name: Upload activation file
-        uses: actions/upload-artifact@v4
-        with:
-          name: activation-file
-          path: ${{ steps.getManualLicenseFile.outputs.filePath }}
-```
-
-- [ ] **Step 2: Commit and push**
-
-```bash
-git -C "d:/D&D/.claude/worktrees/installer-auto-update" add ".github/workflows/unity-activation.yml"
-git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "ci: workflow to request a Unity manual activation file"
-git -C "d:/D&D/.claude/worktrees/installer-auto-update" push
-```
-
-- [ ] **Step 3: STOP — manual, interactive steps only you can do**
-
-This step needs your own Unity ID login in a browser; it cannot be scripted or done by an agent. Do this yourself, then come back:
-
-1. On GitHub, go to the `RealmWeaver` repo → **Actions** → **Unity - Request Activation File** → **Run workflow** → **Run workflow** (uses `workflow_dispatch`, no inputs).
-2. When the run finishes, open it and download the **activation-file** artifact. Unzip it — you'll have a `.alf` file.
-3. Go to `https://license.unity3d.com/manual` in a browser, log in with your Unity ID, upload the `.alf` file, choose **Unity Personal**, and download the resulting `.ulf` license file.
-4. Open the `.ulf` file in a text editor and copy its entire contents (it's XML).
-5. On GitHub: repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Name: `UNITY_LICENSE`. Value: paste the full `.ulf` contents. Save.
-
-Confirm back in this conversation once `UNITY_LICENSE` is saved as a secret before starting Task 5 — Task 5's `build` job will fail without it.
+Confirm back in this conversation once all three secrets are saved before starting Task 5 — Task 5's `build` job will fail without them. (`UNITY_EMAIL`/`UNITY_PASSWORD` going into GitHub Secrets is worth pausing on: GitHub encrypts secrets at rest and never prints them in logs, but it is still your real account password living in a third-party system — say now if you'd rather not do this and want to explore an alternative before Task 5 is built around it.)
 
 ---
 
@@ -300,6 +270,8 @@ jobs:
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           targetPlatform: StandaloneWindows64
           versioning: Tag
@@ -369,12 +341,12 @@ jobs:
 ```bash
 git -C "d:/D&D/.claude/worktrees/installer-auto-update" add ".github/workflows/release.yml"
 git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "ci: build, package, and release pipeline triggered by version tags"
-git -C "d:/D&D/.claude/worktrees/installer-auto-update" push
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" push origin HEAD:main
 ```
 
 - [ ] **Step 3: Confirm the manual prerequisite is done, then confirm with the user before tagging**
 
-Verify `UNITY_LICENSE` secret exists (Task 4). Tagging and pushing triggers a real public CI run and a real public GitHub Release — confirm with the user before doing this, since it's the first artifact this repo will ever publish.
+Verify all three secrets exist: `UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD` (Task 4). Tagging and pushing triggers a real public CI run and a real public GitHub Release — confirm with the user before doing this, since it's the first artifact this repo will ever publish.
 
 ```bash
 git -C "d:/D&D/.claude/worktrees/installer-auto-update" tag v0.0.1
