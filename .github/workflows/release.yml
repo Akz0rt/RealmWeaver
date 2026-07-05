@@ -32,6 +32,7 @@ jobs:
           targetPlatform: StandaloneWindows64
           versioning: Tag
           unityVersion: 6000.3.2f1
+          buildName: RealmWeaver
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
