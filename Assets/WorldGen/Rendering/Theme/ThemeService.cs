@@ -66,7 +66,8 @@ namespace WorldGen.Rendering.Theme
 
         static Color Hex(string hex)
         {
-            ColorUtility.TryParseHtmlString(hex, out var c);
+            if (!ColorUtility.TryParseHtmlString(hex, out var c))
+                Debug.LogError($"ThemeService: invalid hex color literal '{hex}' — check the palette table.");
             return c;
         }
 
