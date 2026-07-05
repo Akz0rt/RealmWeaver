@@ -681,7 +681,7 @@ namespace WorldGen.Rendering
             var itemCheckGO = new GameObject("Item Checkmark");
             itemCheckGO.transform.SetParent(itemGO.transform, false);
             var itemCheck = itemCheckGO.AddComponent<Image>();
-            ThemeService.Tag(itemCheck, ThemeRole.AccentInk);
+            ThemeService.Tag(itemCheck, ThemeRole.Accent);
             var itemCheckRect = itemCheckGO.GetComponent<RectTransform>();
             itemCheckRect.anchorMin = new Vector2(0f, 0.5f);
             itemCheckRect.anchorMax = new Vector2(0f, 0.5f);
@@ -814,7 +814,7 @@ namespace WorldGen.Rendering
             var checkGO = new GameObject("Check");
             checkGO.transform.SetParent(go.transform, false);
             var checkImg = checkGO.AddComponent<Image>();
-            ThemeService.Tag(checkImg, ThemeRole.AccentInk);
+            ThemeService.Tag(checkImg, ThemeRole.Accent);
             var checkRect = checkGO.GetComponent<RectTransform>();
             checkRect.anchorMin = new Vector2(0.15f, 0.15f);
             checkRect.anchorMax = new Vector2(0.85f, 0.85f);
