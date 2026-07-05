@@ -45,7 +45,7 @@ namespace SFB {
             public int FlagsEx;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct BROWSEINFO {
             public IntPtr hwndOwner;
             public IntPtr pidlRoot;
