@@ -1,11 +1,15 @@
 using System;
 using System.Collections;
+using System.Diagnostics;
+using System.IO;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.Networking;
 using UnityEngine.UI;
+using WorldGen.Notes.Rendering;
+using Debug = UnityEngine.Debug;
 
 namespace WorldGen.Update
 {
@@ -205,7 +209,50 @@ namespace WorldGen.Update
 
         void OnDownloadClicked()
         {
-            // Implemented in Task 8.
+            StartCoroutine(DownloadAndInstall());
+        }
+
+        IEnumerator DownloadAndInstall()
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), $"RealmWeaver-Setup-{latestVersion}.exe");
+
+            actionLabel.text = "Загрузка... 0%";
+
+            using var request = UnityWebRequest.Get(downloadUrl);
+            request.downloadHandler = new DownloadHandlerFile(tempPath);
+            var op = request.SendWebRequest();
+
+            while (!op.isDone)
+            {
+                actionLabel.text = $"Загрузка... {Mathf.RoundToInt(request.downloadProgress * 100f)}%";
+                yield return null;
+            }
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning($"UpdateChecker: download failed: {request.error}");
+                ConfirmDialog.ShowInfo(builtinFont, $"Не удалось скачать обновление: {request.error}");
+                actionLabel.text = "Скачать и установить";
+                yield break;
+            }
+
+            try
+            {
+                var psi = new ProcessStartInfo(tempPath, "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NOICONS")
+                {
+                    UseShellExecute = true
+                };
+                Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"UpdateChecker: failed to launch installer: {ex.Message}");
+                ConfirmDialog.ShowInfo(builtinFont, $"Не удалось запустить установщик: {ex.Message}");
+                actionLabel.text = "Скачать и установить";
+                yield break;
+            }
+
+            Application.Quit();
         }
 
         // ── Self-test ──────────────────────────────────────────────────────────
