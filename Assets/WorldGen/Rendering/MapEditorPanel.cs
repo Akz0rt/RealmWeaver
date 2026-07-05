@@ -26,10 +26,6 @@ namespace WorldGen.Rendering
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
         public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
-        public Color textColor = ThemeService.Get(ThemeRole.Txt);
-        public Color sectionHeaderColor = ThemeService.Get(ThemeRole.Mut);
-        public Color activeModeColor = ThemeService.Get(ThemeRole.Accent);
-        public Color inactiveModeColor = ThemeService.Get(ThemeRole.Elev);
 
         EditorMode currentMode = EditorMode.SelectionOverride;
 
@@ -115,8 +111,8 @@ namespace WorldGen.Rendering
             if (brushController != null) brushController.brushModeActive = !selectionActive;
             selectionPanelRoot.SetActive(selectionActive);
             brushPanelRoot.SetActive(!selectionActive);
-            selectionModeButton.GetComponent<Image>().color = selectionActive ? activeModeColor : inactiveModeColor;
-            brushModeButton.GetComponent<Image>().color = !selectionActive ? activeModeColor : inactiveModeColor;
+            ThemeService.Tag(selectionModeButton.GetComponent<Image>(), selectionActive ? ThemeRole.Accent : ThemeRole.Elev);
+            ThemeService.Tag(brushModeButton.GetComponent<Image>(), !selectionActive ? ThemeRole.Accent : ThemeRole.Elev);
             RefreshPanelLayout();
         }
 
@@ -126,7 +122,7 @@ namespace WorldGen.Rendering
             for (int i = 0; i < tabPanels.Length; i++)
                 tabPanels[i].SetActive(i == index);
             for (int i = 0; i < tabButtons.Length; i++)
-                tabButtons[i].GetComponent<Image>().color = i == index ? activeModeColor : inactiveModeColor;
+                ThemeService.Tag(tabButtons[i].GetComponent<Image>(), i == index ? ThemeRole.Accent : ThemeRole.Elev);
             RefreshPanelLayout();
         }
 
@@ -318,7 +314,7 @@ namespace WorldGen.Rendering
             var go = new GameObject($"TabBtn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = inactiveModeColor;
+            ThemeService.Tag(img, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -340,7 +336,7 @@ namespace WorldGen.Rendering
 
         void BuildMapTab(Transform t)
         {
-            AddLabel(t, "─── Слои ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Слои ───", bold: false, role: ThemeRole.Mut);
             AddLayerToggleRow(t, "Рельеф",            true, on => mapRenderer?.SetShowReliefLayer(on));
             AddLayerToggleRow(t, "Биом / климат",     true, on => mapRenderer?.SetShowBiomeLayer(on));
             AddLayerToggleRow(t, "Границы регионов",  true, on => mapRenderer?.SetShowRegionBordersLayer(on));
@@ -349,7 +345,7 @@ namespace WorldGen.Rendering
 
         void BuildEditorTab(Transform t)
         {
-            AddLabel(t, "Режим:", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "Режим:", bold: false, role: ThemeRole.Mut);
 
             var modeRowGO = new GameObject("ModeRow");
             modeRowGO.transform.SetParent(t, false);
@@ -387,7 +383,7 @@ namespace WorldGen.Rendering
 
         void BuildPoiTab(Transform t)
         {
-            AddLabel(t, "─── Точки интереса ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Точки интереса ───", bold: false, role: ThemeRole.Mut);
 
             var countRowGO = new GameObject("PoiCountRow");
             countRowGO.transform.SetParent(t, false);
@@ -403,7 +399,7 @@ namespace WorldGen.Rendering
             cLblText.text = "Количество:";
             cLblText.font = builtinFont;
             cLblText.fontSize = 12;
-            cLblText.color = textColor;
+            ThemeService.Tag(cLblText, ThemeRole.Txt);
             cLblText.alignment = TextAnchor.MiddleLeft;
             cLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(100f, 22f);
 
@@ -419,7 +415,7 @@ namespace WorldGen.Rendering
             poiCountLabel.text = poiCount.ToString();
             poiCountLabel.font = builtinFont;
             poiCountLabel.fontSize = 12;
-            poiCountLabel.color = textColor;
+            ThemeService.Tag(poiCountLabel, ThemeRole.Txt);
             poiCountLabel.alignment = TextAnchor.MiddleCenter;
             countDisplayGO.GetComponent<RectTransform>().sizeDelta = new Vector2(30f, 22f);
 
@@ -451,11 +447,11 @@ namespace WorldGen.Rendering
         {
             selectionCountLabel = AddLabel(t, "Выбрано клеток: 0");
 
-            AddLabel(t, "─── Климат ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Климат ───", bold: false, role: ThemeRole.Mut);
             (temperatureSlider, _, temperatureToggle) = AddSliderRow(t, "Температура", 0.5f);
             (moistureSlider, _, moistureToggle) = AddSliderRow(t, "Влажность", 0.5f);
 
-            AddLabel(t, "─── Ландшафт ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Ландшафт ───", bold: false, role: ThemeRole.Mut);
             (elevationSlider, _, elevationToggle) = AddSliderRow(t, "Elevation", 0.5f);
 
             var waterOptions = new List<string>
@@ -488,7 +484,7 @@ namespace WorldGen.Rendering
             var toolCaptionText = toolCaptionGO.AddComponent<Text>();
             toolCaptionText.font = builtinFont;
             toolCaptionText.fontSize = 12;
-            toolCaptionText.color = textColor;
+            ThemeService.Tag(toolCaptionText, ThemeRole.Txt);
             toolCaptionText.alignment = TextAnchor.MiddleLeft;
             var toolCaptionRect = toolCaptionGO.GetComponent<RectTransform>();
             toolCaptionRect.anchorMin = new Vector2(0.05f, 0f);
@@ -527,7 +523,7 @@ namespace WorldGen.Rendering
             stepLabelText.text = "Шаг";
             stepLabelText.font = builtinFont;
             stepLabelText.fontSize = 12;
-            stepLabelText.color = textColor;
+            ThemeService.Tag(stepLabelText, ThemeRole.Txt);
             stepLabelText.alignment = TextAnchor.MiddleLeft;
             stepLabelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 20f);
 
@@ -542,7 +538,7 @@ namespace WorldGen.Rendering
             stepValueLabel.text = "0.02";
             stepValueLabel.font = builtinFont;
             stepValueLabel.fontSize = 12;
-            stepValueLabel.color = textColor;
+            ThemeService.Tag(stepValueLabel, ThemeRole.Txt);
             stepValueLabel.alignment = TextAnchor.MiddleLeft;
             stepValueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(45f, 20f);
 
@@ -581,7 +577,7 @@ namespace WorldGen.Rendering
             var go = new GameObject($"ModeBtn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = inactiveModeColor;
+            ThemeService.Tag(img, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -601,7 +597,7 @@ namespace WorldGen.Rendering
             return btn;
         }
 
-        Text AddLabel(Transform parent, string text, bool bold = false, Color? color = null)
+        Text AddLabel(Transform parent, string text, bool bold = false, ThemeRole? role = null)
         {
             var go = new GameObject("Label");
             go.transform.SetParent(parent, false);
@@ -610,7 +606,7 @@ namespace WorldGen.Rendering
             label.font = builtinFont;
             label.fontSize = bold ? 15 : 12;
             label.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
-            label.color = color ?? textColor;
+            ThemeService.Tag(label, role ?? ThemeRole.Txt);
             label.alignment = TextAnchor.MiddleLeft;
             go.AddComponent<LayoutElement>().preferredHeight = bold ? 20f : 16f;
             return label;
@@ -727,7 +723,7 @@ namespace WorldGen.Rendering
             labelText.text = label;
             labelText.font = builtinFont;
             labelText.fontSize = 12;
-            labelText.color = textColor;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
             labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 20f);
 
@@ -742,7 +738,7 @@ namespace WorldGen.Rendering
             valueText.text = defaultValue.ToString("F2");
             valueText.font = builtinFont;
             valueText.fontSize = 12;
-            valueText.color = textColor;
+            ThemeService.Tag(valueText, ThemeRole.Txt);
             valueText.alignment = TextAnchor.MiddleLeft;
             valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
 
@@ -769,7 +765,7 @@ namespace WorldGen.Rendering
             labelText.text = label;
             labelText.font = builtinFont;
             labelText.fontSize = 12;
-            labelText.color = textColor;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
             labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 22f);
 
@@ -785,7 +781,7 @@ namespace WorldGen.Rendering
             var captionText = captionGO.AddComponent<Text>();
             captionText.font = builtinFont;
             captionText.fontSize = 11;
-            captionText.color = textColor;
+            ThemeService.Tag(captionText, ThemeRole.Txt);
             captionText.alignment = TextAnchor.MiddleLeft;
             var captionRect = captionGO.GetComponent<RectTransform>();
             captionRect.anchorMin = new Vector2(0.05f, 0f);
@@ -874,7 +870,8 @@ namespace WorldGen.Rendering
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            ThemeService.Tag(img, role ?? ThemeRole.Elev);
+            var backgroundRole = role ?? ThemeRole.Elev;
+            ThemeService.Tag(img, backgroundRole);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -886,7 +883,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 12;
-            ThemeService.Tag(text, ThemeRole.Txt);
+            ThemeService.Tag(text, backgroundRole == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;

@@ -197,7 +197,7 @@ namespace WorldGen.Rendering
         void BuildSizeSegment(Transform parent)
         {
             string[] labels = { "Малый", "Средний", "Большой" };
-            var rowGO = BuildSegmentRow(parent, "SizeSegment", labels, sizeButtons, 0);
+            var rowGO = BuildSegmentRow(parent, "SizeSegment", labels, sizeButtons, 1);
             for (int i = 0; i < 3; i++)
             {
                 int captured = i;

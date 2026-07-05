@@ -36,8 +36,6 @@ namespace WorldGen.Rendering
         public float bottomScreenMargin = 20f;
         public float panelWidth = 240f;
         public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
-        public Color textColor = ThemeService.Get(ThemeRole.Txt);
-        public Color sectionHeaderColor = ThemeService.Get(ThemeRole.Mut);
 
         GameObject panelGO;
         RectTransform panelRect;
@@ -227,7 +225,7 @@ namespace WorldGen.Rendering
 
             var t = contentGO.transform;
 
-            AddLabel(t, "─ Точка интереса ─", bold: true, color: sectionHeaderColor);
+            AddLabel(t, "─ Точка интереса ─", bold: true, role: ThemeRole.Mut);
 
             AddLabel(t, "Тип:");
             var typeRowGO = new GameObject("TypeDropdownRow");
@@ -244,7 +242,7 @@ namespace WorldGen.Rendering
             var typeCaptionText = typeCaptionGO.AddComponent<Text>();
             typeCaptionText.font = builtinFont;
             typeCaptionText.fontSize = 12;
-            typeCaptionText.color = textColor;
+            ThemeService.Tag(typeCaptionText, ThemeRole.Txt);
             typeCaptionText.alignment = TextAnchor.MiddleLeft;
             var typeCaptionRect = typeCaptionGO.GetComponent<RectTransform>();
             typeCaptionRect.anchorMin = new Vector2(0.05f, 0f);
@@ -292,7 +290,7 @@ namespace WorldGen.Rendering
             poiCellLabel.text = "Клетка: —";
             poiCellLabel.font = builtinFont;
             poiCellLabel.fontSize = 12;
-            poiCellLabel.color = textColor;
+            ThemeService.Tag(poiCellLabel, ThemeRole.Txt);
             poiCellLabel.alignment = TextAnchor.MiddleLeft;
             cellLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(120f, 20f);
 
@@ -356,7 +354,7 @@ namespace WorldGen.Rendering
             pickRect.anchorMax = Vector2.one;
             pickRect.sizeDelta = Vector2.zero;
 
-            AddLabel(t, "─── Размер на карте ───", bold: false, color: sectionHeaderColor);
+            AddLabel(t, "─── Размер на карте ───", bold: false, role: ThemeRole.Mut);
             iconScaleSlider = AddScaleSliderRow(t, "Иконка", 1f, v =>
             {
                 var sel = poiManager?.GetSelectedPoi();
@@ -422,7 +420,7 @@ namespace WorldGen.Rendering
             labelText.text = label;
             labelText.font = builtinFont;
             labelText.fontSize = 12;
-            labelText.color = textColor;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
             labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(70f, 20f);
 
@@ -476,7 +474,7 @@ namespace WorldGen.Rendering
             valueText.text = defaultValue.ToString("F2");
             valueText.font = builtinFont;
             valueText.fontSize = 12;
-            valueText.color = textColor;
+            ThemeService.Tag(valueText, ThemeRole.Txt);
             valueText.alignment = TextAnchor.MiddleLeft;
             valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
 
@@ -489,7 +487,7 @@ namespace WorldGen.Rendering
             return slider;
         }
 
-        Text AddLabel(Transform parent, string text, bool bold = false, Color? color = null)
+        Text AddLabel(Transform parent, string text, bool bold = false, ThemeRole? role = null)
         {
             var go = new GameObject("Label");
             go.transform.SetParent(parent, false);
@@ -498,7 +496,7 @@ namespace WorldGen.Rendering
             label.font = builtinFont;
             label.fontSize = bold ? 14 : 11;
             label.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
-            label.color = color ?? textColor;
+            ThemeService.Tag(label, role ?? ThemeRole.Txt);
             label.alignment = TextAnchor.MiddleLeft;
             go.AddComponent<LayoutElement>().preferredHeight = bold ? 18f : 14f;
             return label;
@@ -547,7 +545,7 @@ namespace WorldGen.Rendering
             var text = textGO.AddComponent<Text>();
             text.font = builtinFont;
             text.fontSize = 12;
-            text.color = textColor;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.supportRichText = false;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = new Vector2(0.02f, 0f);
