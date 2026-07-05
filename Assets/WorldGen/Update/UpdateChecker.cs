@@ -27,6 +27,7 @@ namespace WorldGen.Update
         GameObject bannerGO;
         Text statusText;
         Text actionLabel;
+        Button dismissButton;
 
         string downloadUrl;
         string latestVersion;
@@ -150,6 +151,7 @@ namespace WorldGen.Update
             var img = go.AddComponent<Image>();
             img.color = new Color(1f, 1f, 1f, 0f);
             var btn = go.AddComponent<Button>();
+            dismissButton = btn;
             btn.targetGraphic = img;
             btn.onClick.AddListener(Dismiss);
             var rect = go.GetComponent<RectTransform>();
@@ -216,6 +218,7 @@ namespace WorldGen.Update
         {
             string tempPath = Path.Combine(Path.GetTempPath(), $"RealmWeaver-Setup-{latestVersion}.exe");
 
+            dismissButton.interactable = false;
             actionLabel.text = "Загрузка... 0%";
 
             using var request = UnityWebRequest.Get(downloadUrl);
@@ -233,6 +236,7 @@ namespace WorldGen.Update
                 Debug.LogWarning($"UpdateChecker: download failed: {request.error}");
                 ConfirmDialog.ShowInfo(builtinFont, $"Не удалось скачать обновление: {request.error}");
                 actionLabel.text = "Скачать и установить";
+                dismissButton.interactable = true;
                 yield break;
             }
 
@@ -249,6 +253,7 @@ namespace WorldGen.Update
                 Debug.LogWarning($"UpdateChecker: failed to launch installer: {ex.Message}");
                 ConfirmDialog.ShowInfo(builtinFont, $"Не удалось запустить установщик: {ex.Message}");
                 actionLabel.text = "Скачать и установить";
+                dismissButton.interactable = true;
                 yield break;
             }
 
