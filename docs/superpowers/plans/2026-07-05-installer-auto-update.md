@@ -978,6 +978,8 @@ This task can't be completed by an agent alone — it needs an actual newer tagg
 
 If any step fails, note exactly which one and what happened — that pinpoints whether the problem is in the CI pipeline, the installer script, or the client-side updater, rather than needing to re-debug the whole chain.
 
+**Specific risk flagged by the final whole-branch review, watch closely at Step 5:** the app calls `Application.Quit()` itself immediately after `Process.Start(installer)`, rather than waiting for Inno Setup's Restart Manager (`/CLOSEAPPLICATIONS`) to close it. If the app has already fully exited by the time Setup reaches its close-applications phase, Setup has nothing registered to hand to `/RESTARTAPPLICATIONS`, and the app may not relaunch automatically even though the silent install itself succeeds. **If the app does not come back after Step 5:** this confirms the race — the fix is to remove the app's own `Application.Quit()` call from `DownloadAndInstall()`'s success path in `Assets/WorldGen/Update/UpdateChecker.cs` and let Inno Setup's `AppMutex`/`CloseApplications`/`RestartApplications` mechanism detect and manage the running process entirely on its own (this may also require the app to create a matching named `System.Threading.Mutex` called `RealmWeaverSingleInstanceMutex` on startup, since Inno's `AppMutex` directive detects the app via that exact mutex name, which nothing in the current code creates).
+
 ---
 
 ## Self-Review Notes
