@@ -110,6 +110,9 @@ namespace WorldGen.Rendering
             LoadFrom(paths[0]);
         }
 
+        /// <summary>Lets other screens (e.g. GenerationScreenUI's "Открыть проект…") trigger the same Open flow.</summary>
+        public void TriggerOpenFromExternal() => DoOpen();
+
         void LoadFrom(string path)
         {
             if (mapRenderer == null)
