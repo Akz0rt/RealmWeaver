@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
@@ -176,7 +177,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("LegendPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImage = panelGO.AddComponent<Image>();
-            panelImage.color = panelBackgroundColor;
+            ThemeService.Tag(panelImage, ThemeRole.Panel, 0.55f);
 
             panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f); // привязка к правому верхнему углу карты (не всего экрана)

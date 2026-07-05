@@ -5,6 +5,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using WorldGen.Generation;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
@@ -24,11 +25,11 @@ namespace WorldGen.Rendering
 
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
-        public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.7f);
+        public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
         public Color textColor = Color.white;
-        public Color sectionHeaderColor = new Color(0.7f, 0.85f, 1f);
-        public Color activeModeColor = new Color(0.2f, 0.55f, 0.3f);
-        public Color inactiveModeColor = new Color(0.3f, 0.3f, 0.3f);
+        public Color sectionHeaderColor = ThemeService.Get(ThemeRole.Mut);
+        public Color activeModeColor = ThemeService.Get(ThemeRole.Accent);
+        public Color inactiveModeColor = ThemeService.Get(ThemeRole.Elev);
 
         EditorMode currentMode = EditorMode.SelectionOverride;
 
@@ -205,7 +206,8 @@ namespace WorldGen.Rendering
             // Panel: fixed size, vertical stack of tab bar + scroll area
             var panelGO = new GameObject("EditorPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
-            panelGO.AddComponent<Image>().color = panelBackgroundColor;
+            var panelImg = panelGO.AddComponent<Image>();
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.7f);
             var panelVLG = panelGO.AddComponent<VerticalLayoutGroup>();
             panelVLG.childControlWidth = true;
             panelVLG.childControlHeight = true;
@@ -223,7 +225,8 @@ namespace WorldGen.Rendering
             // Tab bar (fixed, compact height)
             var tabBarGO = new GameObject("TabBar");
             tabBarGO.transform.SetParent(panelGO.transform, false);
-            tabBarGO.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.4f);
+            var tabBarImg = tabBarGO.AddComponent<Image>();
+            ThemeService.Tag(tabBarImg, ThemeRole.Panel2);
             var tabBarHLG = tabBarGO.AddComponent<HorizontalLayoutGroup>();
             tabBarHLG.spacing = 1f;
             tabBarHLG.childControlWidth = true;
@@ -426,12 +429,12 @@ namespace WorldGen.Rendering
                 if (poiCountLabel != null) poiCountLabel.text = poiCount.ToString();
             });
 
-            AddButton(t, "Сгенерировать точки интереса", OnGeneratePois, new Color(0.2f, 0.45f, 0.2f));
-            AddButton(t, "Добавить одну точку", () => poiManager?.AddOne(), new Color(0.2f, 0.4f, 0.6f));
-            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), new Color(0.5f, 0.2f, 0.2f));
+            AddButton(t, "Сгенерировать точки интереса", OnGeneratePois, ThemeRole.Accent);
+            AddButton(t, "Добавить одну точку", () => poiManager?.AddOne(), ThemeRole.Elev);
+            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), ThemeRole.Danger);
 
             var hint = AddLabel(t, "Кликните по точке на карте, чтобы её отредактировать в отдельной панели.");
-            hint.color = new Color(0.7f, 0.7f, 0.7f);
+            ThemeService.Tag(hint, ThemeRole.Mut);
             hint.fontSize = 11;
             hint.fontStyle = FontStyle.Italic;
         }
@@ -464,10 +467,11 @@ namespace WorldGen.Rendering
                 biomeNames.Add(b.ToString());
             (biomeDropdown, biomeToggle) = AddDropdownRow(t, "Биом напрямую", biomeNames);
 
-            AddLabel(t, "─────────────", bold: false, color: new Color(0.5f, 0.5f, 0.5f));
-            AddButton(t, "Применить к выбору", ApplyOverride, new Color(0.2f, 0.5f, 0.2f));
-            AddButton(t, "Очистить все override", ClearAllOverridesOnSelection, new Color(0.5f, 0.2f, 0.2f));
-            AddButton(t, "Сбросить выбор", () => selectionController?.ClearSelection(), new Color(0.25f, 0.35f, 0.5f));
+            var separatorLabel = AddLabel(t, "─────────────", bold: false);
+            ThemeService.Tag(separatorLabel, ThemeRole.Mut);
+            AddButton(t, "Применить к выбору", ApplyOverride, ThemeRole.Accent);
+            AddButton(t, "Очистить все override", ClearAllOverridesOnSelection, ThemeRole.Danger);
+            AddButton(t, "Сбросить выбор", () => selectionController?.ClearSelection(), ThemeRole.Elev);
         }
 
         void BuildBrushSection(Transform t)
@@ -476,7 +480,7 @@ namespace WorldGen.Rendering
             toolDropdownGO.transform.SetParent(t, false);
             toolDropdown = toolDropdownGO.AddComponent<Dropdown>();
             var toolBg = toolDropdownGO.AddComponent<Image>();
-            toolBg.color = new Color(0.15f, 0.15f, 0.25f, 0.95f);
+            ThemeService.Tag(toolBg, ThemeRole.Panel2);
             toolDropdown.targetGraphic = toolBg;
 
             var toolCaptionGO = new GameObject("Label");
@@ -549,7 +553,7 @@ namespace WorldGen.Rendering
             });
 
             var undoHint = AddLabel(t, "Зажми ЛКМ и веди по карте. Ctrl+Z - отменить мазок.", bold: false);
-            undoHint.color = new Color(0.7f, 0.7f, 0.7f);
+            ThemeService.Tag(undoHint, ThemeRole.Mut);
             undoHint.fontSize = 11;
 
             OnBrushValuesChanged();
@@ -627,7 +631,8 @@ namespace WorldGen.Rendering
             templateRect.anchoredPosition = new Vector2(0f, 2f);
             templateRect.sizeDelta = new Vector2(0f, 150f);
 
-            templateGO.AddComponent<Image>().color = new Color(0.12f, 0.12f, 0.18f, 0.98f);
+            var templateBg = templateGO.AddComponent<Image>();
+            ThemeService.Tag(templateBg, ThemeRole.Panel2);
             var templateCanvas = templateGO.AddComponent<Canvas>();
             templateCanvas.overrideSorting = true;
             templateCanvas.sortingOrder = 30000;
@@ -666,7 +671,7 @@ namespace WorldGen.Rendering
             var itemBgGO = new GameObject("Item Background");
             itemBgGO.transform.SetParent(itemGO.transform, false);
             var itemBg = itemBgGO.AddComponent<Image>();
-            itemBg.color = new Color(0.25f, 0.4f, 0.6f, 0.6f);
+            ThemeService.Tag(itemBg, ThemeRole.AccentSoft);
             var itemBgRect = itemBgGO.GetComponent<RectTransform>();
             itemBgRect.anchorMin = Vector2.zero;
             itemBgRect.anchorMax = Vector2.one;
@@ -676,7 +681,7 @@ namespace WorldGen.Rendering
             var itemCheckGO = new GameObject("Item Checkmark");
             itemCheckGO.transform.SetParent(itemGO.transform, false);
             var itemCheck = itemCheckGO.AddComponent<Image>();
-            itemCheck.color = new Color(0.3f, 0.9f, 0.4f);
+            ThemeService.Tag(itemCheck, ThemeRole.AccentInk);
             var itemCheckRect = itemCheckGO.GetComponent<RectTransform>();
             itemCheckRect.anchorMin = new Vector2(0f, 0.5f);
             itemCheckRect.anchorMax = new Vector2(0f, 0.5f);
@@ -772,7 +777,7 @@ namespace WorldGen.Rendering
             dropdownGO.transform.SetParent(rowGO.transform, false);
             var dropdown = dropdownGO.AddComponent<Dropdown>();
             var dropBg = dropdownGO.AddComponent<Image>();
-            dropBg.color = new Color(0.15f, 0.15f, 0.25f, 0.95f);
+            ThemeService.Tag(dropBg, ThemeRole.Panel2);
             dropdown.targetGraphic = dropBg;
 
             var captionGO = new GameObject("Label");
@@ -802,14 +807,14 @@ namespace WorldGen.Rendering
             go.transform.SetParent(parent, false);
             var toggle = go.AddComponent<Toggle>();
             var bg = go.AddComponent<Image>();
-            bg.color = new Color(0.4f, 0.4f, 0.4f, 0.8f);
+            ThemeService.Tag(bg, ThemeRole.Elev);
             toggle.targetGraphic = bg;
             toggle.isOn = defaultOn;
 
             var checkGO = new GameObject("Check");
             checkGO.transform.SetParent(go.transform, false);
             var checkImg = checkGO.AddComponent<Image>();
-            checkImg.color = new Color(0.3f, 0.9f, 0.4f);
+            ThemeService.Tag(checkImg, ThemeRole.AccentInk);
             var checkRect = checkGO.GetComponent<RectTransform>();
             checkRect.anchorMin = new Vector2(0.15f, 0.15f);
             checkRect.anchorMax = new Vector2(0.85f, 0.85f);
@@ -828,7 +833,8 @@ namespace WorldGen.Rendering
 
             var bg = new GameObject("Bg");
             bg.transform.SetParent(sliderGO.transform, false);
-            bg.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.15f);
+            var bgImg = bg.AddComponent<Image>();
+            ThemeService.Tag(bgImg, ThemeRole.Elev);
             var bgRect = bg.GetComponent<RectTransform>();
             bgRect.anchorMin = new Vector2(0f, 0.25f);
             bgRect.anchorMax = new Vector2(1f, 0.75f);
@@ -836,7 +842,8 @@ namespace WorldGen.Rendering
 
             var fill = new GameObject("Fill");
             fill.transform.SetParent(sliderGO.transform, false);
-            fill.AddComponent<Image>().color = new Color(0.3f, 0.6f, 0.9f, 0.9f);
+            var fillImg = fill.AddComponent<Image>();
+            ThemeService.Tag(fillImg, ThemeRole.Accent);
             var fillRect = fill.GetComponent<RectTransform>();
             fillRect.anchorMin = new Vector2(0f, 0.2f);
             fillRect.anchorMax = new Vector2(0f, 0.8f);
@@ -862,12 +869,12 @@ namespace WorldGen.Rendering
             return slider;
         }
 
-        void AddButton(Transform parent, string label, System.Action onClick, Color? bgColor = null)
+        void AddButton(Transform parent, string label, System.Action onClick, ThemeRole? role = null)
         {
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = bgColor ?? new Color(0.25f, 0.45f, 0.7f, 0.9f);
+            ThemeService.Tag(img, role ?? ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
@@ -892,7 +899,7 @@ namespace WorldGen.Rendering
             var go = new GameObject($"SmallBtn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = new Color(0.35f, 0.35f, 0.35f, 0.9f);
+            ThemeService.Tag(img, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
