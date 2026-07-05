@@ -43,6 +43,7 @@ sysinfo.txt
 *.aab
 *.unitypackage
 *.app
+/installer/Output/
 
 # Crashlytics
 crashlytics-build.properties
