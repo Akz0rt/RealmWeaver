@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -39,7 +40,7 @@ namespace WorldGen.Notes.Rendering
                 var dotGO = new GameObject($"AnchorDot_{i}");
                 dotGO.transform.SetParent(canvasContainer, false);
                 var img = dotGO.AddComponent<Image>();
-                img.color = new Color(0.3f, 0.7f, 1f, 0.95f);
+                ThemeService.Tag(img, ThemeRole.Accent, 0.95f);
                 var rect = dotGO.GetComponent<RectTransform>();
                 rect.sizeDelta = new Vector2(DotSize, DotSize);
                 var handler = dotGO.AddComponent<AnchorDotHandler>();
@@ -51,7 +52,7 @@ namespace WorldGen.Notes.Rendering
             var previewGO = new GameObject("LinkPreview");
             previewGO.transform.SetParent(canvasContainer, false);
             var previewImg = previewGO.AddComponent<Image>();
-            previewImg.color = new Color(0.3f, 0.7f, 1f, 0.7f);
+            ThemeService.Tag(previewImg, ThemeRole.Accent, 0.7f);
             previewImg.raycastTarget = false;
             previewRect = previewGO.GetComponent<RectTransform>();
             previewRect.pivot = new Vector2(0f, 0.5f);

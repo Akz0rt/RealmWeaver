@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -80,7 +81,7 @@ namespace WorldGen.Notes.Rendering
             var headerGO = new GameObject("Header");
             headerGO.transform.SetParent(rootGO.transform, false);
             var headerImg = headerGO.AddComponent<Image>();
-            headerImg.color = new Color(0.2f, 0.2f, 0.2f, 0.9f);
+            ThemeService.Tag(headerImg, ThemeRole.Panel2, 0.9f);
             var headerBtn = headerGO.AddComponent<Button>();
             headerBtn.targetGraphic = headerImg;
             headerGO.AddComponent<LayoutElement>().preferredHeight = 22f;
@@ -104,7 +105,7 @@ namespace WorldGen.Notes.Rendering
             searchInputGO.transform.SetParent(rootGO.transform, false);
             searchInputGO.AddComponent<LayoutElement>().preferredHeight = 22f;
             var searchImg = searchInputGO.AddComponent<Image>();
-            searchImg.color = new Color(1f, 1f, 1f, 0.06f);
+            ThemeService.Tag(searchImg, ThemeRole.Elev);
             searchInput = searchInputGO.AddComponent<InputField>();
             searchInput.targetGraphic = searchImg;
 
@@ -130,7 +131,7 @@ namespace WorldGen.Notes.Rendering
             placeholderText.font = builtinFont;
             placeholderText.fontSize = 12;
             placeholderText.fontStyle = FontStyle.Italic;
-            placeholderText.color = new Color(1f, 1f, 1f, 0.4f);
+            ThemeService.Tag(placeholderText, ThemeRole.Mut);
             placeholderText.alignment = TextAnchor.MiddleLeft;
             var placeholderRect = placeholderGO.GetComponent<RectTransform>();
             placeholderRect.anchorMin = Vector2.zero;
@@ -218,7 +219,10 @@ namespace WorldGen.Notes.Rendering
             foreach (var kvp in pageRowImages)
             {
                 bool isActive = page != null && kvp.Key == page.Id;
-                kvp.Value.color = isActive ? new Color(0.2f, 0.4f, 0.3f, 0.9f) : new Color(1f, 1f, 1f, 0.02f);
+                if (isActive)
+                    ThemeService.Tag(kvp.Value, ThemeRole.AccentSoft, 0.9f);
+                else
+                    kvp.Value.color = new Color(1f, 1f, 1f, 0.02f);
             }
         }
 
@@ -319,7 +323,7 @@ namespace WorldGen.Notes.Rendering
             titleText.font = builtinFont;
             titleText.fontSize = 13;
             titleText.fontStyle = FontStyle.Bold;
-            titleText.color = new Color(0.7f, 0.85f, 1f);
+            ThemeService.Tag(titleText, ThemeRole.Mut);
             titleText.alignment = TextAnchor.MiddleLeft;
             var titleTextRect = titleTextGO.GetComponent<RectTransform>();
             titleTextRect.anchorMin = Vector2.zero;
@@ -352,7 +356,10 @@ namespace WorldGen.Notes.Rendering
             rowGO.transform.SetParent(parent, false);
             var img = rowGO.AddComponent<Image>();
             bool isActive = documentController.ActivePage != null && documentController.ActivePage.Id == page.Id;
-            img.color = isActive ? new Color(0.2f, 0.4f, 0.3f, 0.9f) : new Color(1f, 1f, 1f, 0.02f);
+            if (isActive)
+                ThemeService.Tag(img, ThemeRole.AccentSoft, 0.9f);
+            else
+                img.color = new Color(1f, 1f, 1f, 0.02f);
             pageRowImages[page.Id] = img;
             var btn = rowGO.AddComponent<Button>();
             btn.targetGraphic = img;
@@ -403,7 +410,7 @@ namespace WorldGen.Notes.Rendering
             inputRect.offsetMin = labelRect.offsetMin;
             inputRect.offsetMax = labelRect.offsetMax;
             var inputImg = inputGO.AddComponent<Image>();
-            inputImg.color = new Color(1f, 1f, 1f, 0.1f);
+            ThemeService.Tag(inputImg, ThemeRole.Elev);
             var input = inputGO.AddComponent<InputField>();
             input.targetGraphic = inputImg;
 
@@ -442,7 +449,7 @@ namespace WorldGen.Notes.Rendering
             var deleteGO = new GameObject("Delete");
             deleteGO.transform.SetParent(rowTransform, false);
             var deleteImg = deleteGO.AddComponent<Image>();
-            deleteImg.color = new Color(1f, 1f, 1f, 0.06f);
+            ThemeService.Tag(deleteImg, ThemeRole.Elev);
             var deleteBtn = deleteGO.AddComponent<Button>();
             deleteBtn.targetGraphic = deleteImg;
             deleteBtn.onClick.AddListener(() => onDeleteRequested());
@@ -459,7 +466,7 @@ namespace WorldGen.Notes.Rendering
             deleteText.text = "×";
             deleteText.font = builtinFont;
             deleteText.fontSize = 14;
-            deleteText.color = new Color(1f, 0.6f, 0.6f);
+            ThemeService.Tag(deleteText, ThemeRole.Danger);
             deleteText.alignment = TextAnchor.MiddleCenter;
             deleteText.raycastTarget = false;
             var deleteTextRect = deleteTextGO.GetComponent<RectTransform>();
@@ -495,7 +502,7 @@ namespace WorldGen.Notes.Rendering
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = new Color(0.25f, 0.45f, 0.25f, 0.8f);
+            ThemeService.Tag(img, ThemeRole.Accent, 0.8f);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
