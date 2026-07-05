@@ -25,9 +25,9 @@ namespace WorldGen.Update
         Font builtinFont;
         Transform bannerCanvasTransform;
         GameObject bannerGO;
-        Text statusText;
         Text actionLabel;
         Button dismissButton;
+        bool downloading;
 
         string downloadUrl;
         string latestVersion;
@@ -128,7 +128,7 @@ namespace WorldGen.Update
 
             var statusGO = new GameObject("Status");
             statusGO.transform.SetParent(bannerGO.transform, false);
-            statusText = statusGO.AddComponent<Text>();
+            var statusText = statusGO.AddComponent<Text>();
             statusText.text = $"Доступна версия {latestVersion}";
             statusText.font = builtinFont;
             statusText.fontSize = 12;
@@ -211,6 +211,7 @@ namespace WorldGen.Update
 
         void OnDownloadClicked()
         {
+            if (downloading) return;
             StartCoroutine(DownloadAndInstall());
         }
 
@@ -218,11 +219,13 @@ namespace WorldGen.Update
         {
             string tempPath = Path.Combine(Path.GetTempPath(), $"RealmWeaver-Setup-{latestVersion}.exe");
 
+            downloading = true;
             dismissButton.interactable = false;
             actionLabel.text = "Загрузка... 0%";
 
             using var request = UnityWebRequest.Get(downloadUrl);
             request.downloadHandler = new DownloadHandlerFile(tempPath);
+            request.SetRequestHeader("User-Agent", "RealmWeaver-UpdateChecker");
             var op = request.SendWebRequest();
 
             while (!op.isDone)
@@ -237,6 +240,7 @@ namespace WorldGen.Update
                 ConfirmDialog.ShowInfo(builtinFont, $"Не удалось скачать обновление: {request.error}");
                 actionLabel.text = "Скачать и установить";
                 dismissButton.interactable = true;
+                downloading = false;
                 yield break;
             }
 
@@ -254,6 +258,7 @@ namespace WorldGen.Update
                 ConfirmDialog.ShowInfo(builtinFont, $"Не удалось запустить установщик: {ex.Message}");
                 actionLabel.text = "Скачать и установить";
                 dismissButton.interactable = true;
+                downloading = false;
                 yield break;
             }
 
@@ -270,11 +275,12 @@ namespace WorldGen.Update
             bool t3 = UpdateVersionCompare.IsNewer("v1.0.9", "1.1.0");
             bool t4 = UpdateVersionCompare.IsNewer("v2.0.0", "1.9.9");
             bool t5 = !UpdateVersionCompare.IsNewer("garbage", "1.0.0");
+            bool t6 = UpdateVersionCompare.IsNewer("v1.0.2", "1.0.1");
 
-            bool ok = t1 && !t2 && !t3 && t4 && t5;
+            bool ok = t1 && !t2 && !t3 && t4 && t5 && t6;
             Debug.Log(ok
                 ? "Self-Test Version Compare: PASS"
-                : $"Self-Test Version Compare: FAIL (t1={t1}, t2={t2}, t3={t3}, t4={t4}, t5={t5})");
+                : $"Self-Test Version Compare: FAIL (t1={t1}, t2={t2}, t3={t3}, t4={t4}, t5={t5}, t6={t6})");
         }
     }
 }
