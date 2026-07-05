@@ -23,6 +23,7 @@
 - Update banner: top-right corner, `LegacyRuntime.ttf` (matches existing UI), `sortingOrder` strictly between `ProjectMenuBar`'s `100` and `ConfirmDialog`'s `32000` — use `500`. Dismissing hides it for the current session only (no persisted "skip this version").
 - Error handling: version-check failures (network/parse) log a `Debug.LogWarning` only, no dialog. Download failures use the existing `ConfirmDialog.ShowInfo(font, message)` pattern (`Assets/WorldGen/Notes/Rendering/ConfirmDialog.cs`).
 - Out of scope (do not build): delta/incremental updates, macOS/Linux builds, "skip this version" persistence, installer code signing, retry/backoff scheduling for the version check, hand-authored changelogs (GitHub's auto-generated release notes are used as-is).
+- **Execution workspace:** all work happens in the git worktree at `D:\D&D\.claude\worktrees\installer-auto-update`, on local branch `worktree-installer-auto-update` — every `git`/Unity-batchmode command in this plan targets that path, not the original `D:\D&D` checkout. Task 2's push to `origin` uses an explicit refspec (`worktree-installer-auto-update:main`) so it publishes directly as `origin/main` and sets that as the branch's upstream — later plain `git push` calls (Tasks 4, 5) then land on `origin/main` too, without ever touching the original checkout's local `main`. That reconciliation happens once, at the end, via `superpowers:finishing-a-development-branch`.
 
 ---
 
@@ -55,7 +56,7 @@ to:
 Run (adjust the Unity path only if it differs on this machine):
 
 ```bash
-"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/rename_check.log"
+"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D\.claude\worktrees\installer-auto-update" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/rename_check.log"
 ```
 
 Expected: process exits with code 0 and the log ends with `Exiting batchmode successfully now!` (no `error CS` lines — this change touches no code, but confirms Unity still opens the project fine after a hand-edited settings file).
@@ -63,7 +64,7 @@ Expected: process exits with code 0 and the log ends with `Exiting batchmode suc
 - [ ] **Step 3: Confirm the diff is exactly these two lines**
 
 ```bash
-git -C "d:/D&D" diff -- ProjectSettings/ProjectSettings.asset
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" diff -- ProjectSettings/ProjectSettings.asset
 ```
 
 Expected: only `companyName`/`productName` lines changed.
@@ -71,8 +72,8 @@ Expected: only `companyName`/`productName` lines changed.
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C "d:/D&D" add "ProjectSettings/ProjectSettings.asset"
-git -C "d:/D&D" commit -m "rename: productName -> RealmWeaver, companyName -> Akz0rt"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "ProjectSettings/ProjectSettings.asset"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "rename: productName -> RealmWeaver, companyName -> Akz0rt"
 ```
 
 ---
@@ -89,18 +90,20 @@ git -C "d:/D&D" commit -m "rename: productName -> RealmWeaver, companyName -> Ak
 - [ ] **Step 1: Create the repository (ask for confirmation first)**
 
 ```bash
-gh repo create RealmWeaver --public --description "Procedural fantasy world-map + notes tool" --source="d:/D&D" --remote=origin
+gh repo create RealmWeaver --public --description "Procedural fantasy world-map + notes tool" --source="d:/D&D/.claude/worktrees/installer-auto-update" --remote=origin
 ```
 
-Expected: command reports the new repo URL, and `git -C "d:/D&D" remote -v` now lists `origin` pointing at `https://github.com/Akz0rt/RealmWeaver.git` (or the actual authenticated `gh` account if different from `Akz0rt` — use whatever account `gh auth status` reports, and use that same owner name in Task 7's API URL if it differs).
+Expected: command reports the new repo URL, and `git -C "d:/D&D/.claude/worktrees/installer-auto-update" remote -v` now lists `origin` pointing at `https://github.com/Akz0rt/RealmWeaver.git` (or the actual authenticated `gh` account if different from `Akz0rt` — use whatever account `gh auth status` reports, and use that same owner name in Task 7's API URL if it differs).
 
-- [ ] **Step 2: Push all branches**
+- [ ] **Step 2: Publish the worktree branch as origin's `main`**
+
+All work so far (Task 1's rename commit) lives on the local branch `worktree-installer-auto-update`, not on any local `main` — push it directly as `origin/main` with an explicit refspec, and set that as this branch's upstream so later plain `git push` calls (Tasks 4, 5) land in the same place:
 
 ```bash
-git -C "d:/D&D" push -u origin main
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" push -u origin worktree-installer-auto-update:main
 ```
 
-Expected: push succeeds, `main` now has an upstream tracking branch.
+Expected: push succeeds, GitHub shows this branch's commits as `main`, and `git -C "d:/D&D/.claude/worktrees/installer-auto-update" status` now reports the local branch as up to date with `origin/main`.
 
 - [ ] **Step 3: Verify on GitHub**
 
@@ -188,8 +191,8 @@ Expected (only if both preconditions above are met): `installer/Output/RealmWeav
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C "d:/D&D" add "installer/RealmWeaver.iss" ".gitignore"
-git -C "d:/D&D" commit -m "feat: Inno Setup installer script for RealmWeaver"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "installer/RealmWeaver.iss" ".gitignore"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: Inno Setup installer script for RealmWeaver"
 ```
 
 ---
@@ -236,9 +239,9 @@ jobs:
 - [ ] **Step 2: Commit and push**
 
 ```bash
-git -C "d:/D&D" add ".github/workflows/unity-activation.yml"
-git -C "d:/D&D" commit -m "ci: workflow to request a Unity manual activation file"
-git -C "d:/D&D" push
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add ".github/workflows/unity-activation.yml"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "ci: workflow to request a Unity manual activation file"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" push
 ```
 
 - [ ] **Step 3: STOP — manual, interactive steps only you can do**
@@ -364,9 +367,9 @@ jobs:
 - [ ] **Step 2: Commit and push**
 
 ```bash
-git -C "d:/D&D" add ".github/workflows/release.yml"
-git -C "d:/D&D" commit -m "ci: build, package, and release pipeline triggered by version tags"
-git -C "d:/D&D" push
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add ".github/workflows/release.yml"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "ci: build, package, and release pipeline triggered by version tags"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" push
 ```
 
 - [ ] **Step 3: Confirm the manual prerequisite is done, then confirm with the user before tagging**
@@ -374,8 +377,8 @@ git -C "d:/D&D" push
 Verify `UNITY_LICENSE` secret exists (Task 4). Tagging and pushing triggers a real public CI run and a real public GitHub Release — confirm with the user before doing this, since it's the first artifact this repo will ever publish.
 
 ```bash
-git -C "d:/D&D" tag v0.0.1
-git -C "d:/D&D" push origin v0.0.1
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" tag v0.0.1
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" push origin v0.0.1
 ```
 
 - [ ] **Step 4: Watch the pipeline run**
@@ -516,7 +519,7 @@ Expected: `Self-Test Version Compare: PASS`. Then delete the temporary GameObjec
 - [ ] **Step 4: Verify compile via batchmode**
 
 ```bash
-"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task6_compile.log"
+"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D\.claude\worktrees\installer-auto-update" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task6_compile.log"
 ```
 
 Expected: exits 0, log ends with `Exiting batchmode successfully now!`, no `error CS` lines.
@@ -524,14 +527,14 @@ Expected: exits 0, log ends with `Exiting batchmode successfully now!`, no `erro
 - [ ] **Step 5: Commit (including the new .meta files Unity generates for the two new scripts)**
 
 ```bash
-git -C "d:/D&D" status --porcelain -- "Assets/WorldGen/Update/"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" status --porcelain -- "Assets/WorldGen/Update/"
 ```
 
 Expected: both `.cs` files and their `.cs.meta` files listed (Unity generates the `.meta`s the moment it imports the new files — confirmed by Step 4's batchmode run).
 
 ```bash
-git -C "d:/D&D" add "Assets/WorldGen/Update/"
-git -C "d:/D&D" commit -m "feat: SemVer compare helper and UpdateChecker shell"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "Assets/WorldGen/Update/"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: SemVer compare helper and UpdateChecker shell"
 ```
 
 ---
@@ -783,7 +786,7 @@ namespace WorldGen.Update
 - [ ] **Step 2: Verify compile via batchmode**
 
 ```bash
-"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task7_compile.log"
+"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D\.claude\worktrees\installer-auto-update" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task7_compile.log"
 ```
 
 Expected: exits 0, no `error CS` lines.
@@ -797,8 +800,8 @@ Expected: within a few seconds, a dark banner appears in the top-right corner re
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C "d:/D&D" add "Assets/WorldGen/Update/UpdateChecker.cs"
-git -C "d:/D&D" commit -m "feat: fetch latest GitHub release and show update banner"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "Assets/WorldGen/Update/UpdateChecker.cs"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: fetch latest GitHub release and show update banner"
 ```
 
 ---
@@ -889,7 +892,7 @@ IEnumerator DownloadAndInstall()
 - [ ] **Step 2: Verify compile via batchmode**
 
 ```bash
-"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task8_compile.log"
+"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D\.claude\worktrees\installer-auto-update" -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task8_compile.log"
 ```
 
 Expected: exits 0, no `error CS` lines.
@@ -901,8 +904,8 @@ Expected: exits 0, no `error CS` lines.
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C "d:/D&D" add "Assets/WorldGen/Update/UpdateChecker.cs"
-git -C "d:/D&D" commit -m "feat: download and silently install updates from the banner"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "Assets/WorldGen/Update/UpdateChecker.cs"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: download and silently install updates from the banner"
 ```
 
 ---
@@ -910,33 +913,74 @@ git -C "d:/D&D" commit -m "feat: download and silently install updates from the 
 ### Task 9: Wire UpdateChecker into the scene
 
 **Files:**
+- Create (temporary, deleted before commit): `Assets/Editor/TempSceneBootstrap_UpdateChecker.cs`
 - Modify: `Assets/Scenes/SampleScene.unity`
 
 **Interfaces:** none (scene-only change; `UpdateChecker` needs no Inspector field assignments).
 
-- [ ] **Step 1: Add the component in the Unity Editor**
+No one is at an interactive Unity Editor window to click through this manually, so this task adds the GameObject programmatically via a one-off batchmode Editor script, then deletes that script — the only change that ends up committed is the scene file diff, exactly as if it had been done by hand.
 
-In the Unity Editor, open the scene that already hosts `ProjectMenuBar` (`Assets/Scenes/SampleScene.unity`). Add a new empty GameObject named "UpdateChecker" to the scene root, and add the `UpdateChecker` component to it. Save the scene (Ctrl+S).
+- [ ] **Step 1: Write the temporary bootstrap script**
 
-- [ ] **Step 2: Verify the diff and that the .meta is unaffected**
+Create `Assets/Editor/TempSceneBootstrap_UpdateChecker.cs`:
 
-```bash
-git -C "d:/D&D" status --porcelain -- "Assets/Scenes/SampleScene.unity"
-git -C "d:/D&D" diff --stat -- "Assets/Scenes/SampleScene.unity"
+```csharp
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using WorldGen.Update;
+
+public static class TempSceneBootstrap_UpdateChecker
+{
+    public static void Run()
+    {
+        var scene = EditorSceneManager.OpenScene("Assets/Scenes/SampleScene.unity");
+        var go = new GameObject("UpdateChecker");
+        go.AddComponent<UpdateChecker>();
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+    }
+}
 ```
 
-Expected: the scene file shows as modified (new GameObject + component added), no new `.meta` files needed (the scene itself already has one; `UpdateChecker.cs.meta` already exists from Task 6).
+- [ ] **Step 2: Run it via Unity batchmode**
 
-- [ ] **Step 3: Confirm in Play mode**
+```bash
+"/c/Program Files/Unity/Hub/Editor/6000.3.2f1/Editor/Unity.exe" -batchmode -nographics -quit -projectPath "D:\D&D\.claude\worktrees\installer-auto-update" -executeMethod TempSceneBootstrap_UpdateChecker.Run -logFile "C:/Users/User/AppData/Local/Temp/claude/d--D-D/9cfb52f3-f574-4e44-afcd-2e81ce2c79c0/scratchpad/task9_wire.log"
+```
+
+Expected: exits 0, log ends with `Exiting batchmode successfully now!`, no `error CS` lines.
+
+- [ ] **Step 3: Verify the diff**
+
+```bash
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" status --porcelain -- "Assets/Scenes/SampleScene.unity" "Assets/Editor/"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" diff --stat -- "Assets/Scenes/SampleScene.unity"
+```
+
+Expected: `Assets/Scenes/SampleScene.unity` shows as modified (new GameObject + `UpdateChecker` component added), and `Assets/Editor/TempSceneBootstrap_UpdateChecker.cs` + its `.meta` show as untracked.
+
+- [ ] **Step 4: Delete the temporary bootstrap script**
+
+```bash
+rm "d:/D&D/.claude/worktrees/installer-auto-update/Assets/Editor/TempSceneBootstrap_UpdateChecker.cs" \
+   "d:/D&D/.claude/worktrees/installer-auto-update/Assets/Editor/TempSceneBootstrap_UpdateChecker.cs.meta"
+```
+
+If `Assets/Editor/` is now empty, also remove `Assets/Editor/Editor.meta` if Unity generated one for the folder itself and no other files remain in it — check with `ls "d:/D&D/.claude/worktrees/installer-auto-update/Assets/Editor/"` first.
+
+- [ ] **Step 5: Confirm in Play mode**
 
 Enter Play mode with the real (current, non-lowered) `bundleVersion`. Expected: no banner appears (assuming the installed/running version is already the latest tag) and no console errors from `UpdateChecker`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git -C "d:/D&D" add "Assets/Scenes/SampleScene.unity"
-git -C "d:/D&D" commit -m "feat: wire UpdateChecker into the scene"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" add "Assets/Scenes/SampleScene.unity"
+git -C "d:/D&D/.claude/worktrees/installer-auto-update" commit -m "feat: wire UpdateChecker into the scene"
 ```
+
+Confirm the temporary Editor script was NOT added (`git -C "d:/D&D/.claude/worktrees/installer-auto-update" status --porcelain -- "Assets/Editor/"` should show nothing, since Step 4 deleted it before this commit).
 
 ---
 
@@ -946,11 +990,11 @@ git -C "d:/D&D" commit -m "feat: wire UpdateChecker into the scene"
 
 **Interfaces:** none — this exercises everything from Tasks 1–9 together.
 
-This task can't be completed by an agent alone — it needs an actual newer tagged release to update *to*, and a real built/installed `RealmWeaver.exe` to update *from* (not the Editor). Run through this checklist yourself once Tasks 1–9 are done and merged:
+This task can't be completed by an agent alone — it needs an actual newer tagged release to update *to*, and a real built/installed `RealmWeaver.exe` to update *from* (not the Editor). Run through this checklist yourself once Tasks 1–9 are done, reviewed, and merged into the original checkout's `main` via `superpowers:finishing-a-development-branch` (by this point the worktree from earlier tasks may already be gone — use the original checkout at `d:/D&D` for these commands, not the worktree path):
 
 - [ ] **Step 1:** Confirm the current released version is `v0.0.1` (`gh release list --repo Akz0rt/RealmWeaver`).
 - [ ] **Step 2:** Install `RealmWeaver-Setup-0.0.1.exe` on this machine via the normal interactive wizard (Start → Далее → ... → Готово). Confirm Start Menu/Desktop shortcuts exist and the app launches.
-- [ ] **Step 3:** Tag and push `v0.0.2` (any trivial change, e.g. a comment tweak, is enough to have something to build):
+- [ ] **Step 3:** From the original checkout, on `main`, tag and push `v0.0.2` (any trivial change, e.g. a comment tweak, is enough to have something to build):
   ```bash
   git -C "d:/D&D" tag v0.0.2
   git -C "d:/D&D" push origin v0.0.2
