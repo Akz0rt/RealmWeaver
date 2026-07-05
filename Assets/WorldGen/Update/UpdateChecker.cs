@@ -251,6 +251,7 @@ namespace WorldGen.Update
                     UseShellExecute = true
                 };
                 Process.Start(psi);
+                Debug.Log("UpdateChecker: installer launched, waiting for Inno Setup's Restart Manager to close this process.");
             }
             catch (Exception ex)
             {
@@ -262,7 +263,12 @@ namespace WorldGen.Update
                 yield break;
             }
 
-            Application.Quit();
+            // Deliberately NOT calling Application.Quit() here. Inno Setup's /CLOSEAPPLICATIONS
+            // only restarts (via /RESTARTAPPLICATIONS) applications that IT closed through
+            // Restart Manager -- if we quit ourselves first, Setup finds nothing running to
+            // close, so it has nothing registered to restart afterward. Staying alive lets
+            // Setup's file-copy step hit the expected "file in use" condition, which is what
+            // triggers RM to close (and later restart) this process automatically.
         }
 
         // ── Self-test ──────────────────────────────────────────────────────────
