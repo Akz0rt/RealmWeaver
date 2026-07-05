@@ -379,20 +379,27 @@ namespace WorldGen.Rendering
 
         void OnGenerateClicked()
         {
-            var p = new GenerationParams(seedField.text, selectedSize, selectedShape, selectedRegions);
+            var p = new GenerationRequest(seedField.text, selectedSize, selectedShape, selectedRegions);
             controller?.StartGeneration(p);
         }
     }
 
-    /// <summary>Plain data the Generation screen hands to MapScreenController.StartGeneration.</summary>
-    public class GenerationParams
+    /// <summary>
+    /// Plain data the Generation screen hands to MapScreenController.StartGeneration.
+    /// Named GenerationRequest (not GenerationParams) to avoid colliding with
+    /// WorldGen.Generation.GenerationParams: both WorldMapRenderer.cs and this file live in
+    /// namespace WorldGen.Rendering, and a type declared directly in that namespace always
+    /// wins over one pulled in by "using WorldGen.Generation;" -- an unqualified GenerationParams
+    /// here would silently shadow the real one project-wide and break WorldMapRenderer.cs.
+    /// </summary>
+    public class GenerationRequest
     {
         public readonly string SeedText;
         public readonly MapSizePreset Size;
         public readonly LandShapePreset Shape;
         public readonly int RegionCount;
 
-        public GenerationParams(string seedText, MapSizePreset size, LandShapePreset shape, int regionCount)
+        public GenerationRequest(string seedText, MapSizePreset size, LandShapePreset shape, int regionCount)
         {
             SeedText = seedText;
             Size = size;
