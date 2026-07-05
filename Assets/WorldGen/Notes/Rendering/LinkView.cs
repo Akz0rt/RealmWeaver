@@ -33,7 +33,7 @@ namespace WorldGen.Notes.Rendering
         bool selected;
         bool hovering;
 
-        static readonly Color NormalColor = ThemedAlpha(ThemeRole.Border, 0.9f);
+        static readonly Color NormalColor = ThemedAlpha(ThemeRole.Txt, 0.9f);
         static readonly Color SelectedColor = ThemedAlpha(ThemeRole.Accent, 0.95f);
 
         public string LinkId => data?.Id;

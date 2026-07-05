@@ -93,7 +93,7 @@ namespace WorldGen.Notes.Rendering
             headerText.text = "☰ Страницы";
             headerText.font = builtinFont;
             headerText.fontSize = 12;
-            headerText.color = Color.white;
+            ThemeService.Tag(headerText, ThemeRole.Txt);
             headerText.alignment = TextAnchor.MiddleLeft;
             var headerTextRect = headerTextGO.GetComponent<RectTransform>();
             headerTextRect.anchorMin = new Vector2(0f, 0f);
@@ -114,7 +114,7 @@ namespace WorldGen.Notes.Rendering
             var searchText = searchTextGO.AddComponent<Text>();
             searchText.font = builtinFont;
             searchText.fontSize = 12;
-            searchText.color = Color.white;
+            ThemeService.Tag(searchText, ThemeRole.Txt);
             searchText.alignment = TextAnchor.MiddleLeft;
             searchText.supportRichText = false;
             var searchTextRect = searchTextGO.GetComponent<RectTransform>();
@@ -376,7 +376,7 @@ namespace WorldGen.Notes.Rendering
             text.text = $"• {page.Name}";
             text.font = builtinFont;
             text.fontSize = 13;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleLeft;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;
@@ -514,7 +514,7 @@ namespace WorldGen.Notes.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 11;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.AccentInk);
             text.alignment = TextAnchor.MiddleLeft;
             var textRect = textGO.GetComponent<RectTransform>();
             textRect.anchorMin = Vector2.zero;

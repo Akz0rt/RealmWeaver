@@ -26,7 +26,7 @@ namespace WorldGen.Rendering
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
         public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
-        public Color textColor = Color.white;
+        public Color textColor = ThemeService.Get(ThemeRole.Txt);
         public Color sectionHeaderColor = ThemeService.Get(ThemeRole.Mut);
         public Color activeModeColor = ThemeService.Get(ThemeRole.Accent);
         public Color inactiveModeColor = ThemeService.Get(ThemeRole.Elev);
@@ -329,7 +329,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 10;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
@@ -592,7 +592,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 11;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
@@ -694,7 +694,7 @@ namespace WorldGen.Rendering
             var itemLabel = itemLabelGO.AddComponent<Text>();
             itemLabel.font = builtinFont;
             itemLabel.fontSize = 12;
-            itemLabel.color = Color.white;
+            ThemeService.Tag(itemLabel, ThemeRole.Txt);
             itemLabel.alignment = TextAnchor.MiddleLeft;
             var itemLabelRect = itemLabelGO.GetComponent<RectTransform>();
             itemLabelRect.anchorMin = new Vector2(0f, 0f);
@@ -860,7 +860,7 @@ namespace WorldGen.Rendering
             var handle = new GameObject("Handle");
             handle.transform.SetParent(handleArea.transform, false);
             var handleImg = handle.AddComponent<Image>();
-            handleImg.color = Color.white;
+            ThemeService.Tag(handleImg, ThemeRole.Accent);
             var handleRect = handle.GetComponent<RectTransform>();
             handleRect.sizeDelta = new Vector2(12f, 18f);
             slider.handleRect = handleRect;
@@ -886,7 +886,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 12;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
@@ -911,7 +911,7 @@ namespace WorldGen.Rendering
             text.text = label;
             text.font = builtinFont;
             text.fontSize = 14;
-            text.color = Color.white;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;

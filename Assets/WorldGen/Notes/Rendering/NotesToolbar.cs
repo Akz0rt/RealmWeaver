@@ -107,7 +107,7 @@ namespace WorldGen.Notes.Rendering
                 iconGO.transform.SetParent(btnGO.transform, false);
                 var iconImg = iconGO.AddComponent<Image>();
                 iconImg.sprite = NotesIconFactory.GetIcon(tool);
-                iconImg.color = Color.white;
+                ThemeService.Tag(iconImg, ThemeRole.Txt);
                 iconImg.raycastTarget = false;
                 var iconRect = iconImg.rectTransform;
                 iconRect.anchorMin = new Vector2(0.15f, 0.15f);
@@ -161,7 +161,7 @@ namespace WorldGen.Notes.Rendering
             tooltipText = textGO.AddComponent<Text>();
             tooltipText.font = builtinFont;
             tooltipText.fontSize = 11;
-            tooltipText.color = Color.white;
+            ThemeService.Tag(tooltipText, ThemeRole.Txt);
             tooltipText.alignment = TextAnchor.MiddleCenter;
             tooltipText.raycastTarget = false;
             var textRect = textGO.GetComponent<RectTransform>();

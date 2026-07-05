@@ -227,7 +227,7 @@ namespace WorldGen.Rendering
             textGO.transform.SetParent(row.transform, false);
             var text = textGO.AddComponent<Text>();
             text.text = label;
-            text.color = textColor;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.fontSize = fontSize;
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); // встроенный шрифт Unity - доступен без дополнительных импортов
             text.alignment = TextAnchor.MiddleLeft;

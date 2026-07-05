@@ -51,7 +51,7 @@ namespace WorldGen.Notes.Rendering
             titleText.font = builtinFont;
             titleText.fontSize = 14;
             titleText.fontStyle = FontStyle.Bold;
-            titleText.color = Color.white;
+            ThemeService.Tag(titleText, ThemeRole.Txt);
             titleText.alignment = TextAnchor.UpperLeft;
             var titleRect = titleGO.GetComponent<RectTransform>();
             titleRect.anchorMin = new Vector2(0f, 1f);
@@ -78,7 +78,7 @@ namespace WorldGen.Notes.Rendering
             var bodyText = bodyTextGO.AddComponent<Text>();
             bodyText.font = builtinFont;
             bodyText.fontSize = 12;
-            bodyText.color = Color.white;
+            ThemeService.Tag(bodyText, ThemeRole.Txt);
             bodyText.supportRichText = false;
             var bodyTextRect = bodyTextGO.GetComponent<RectTransform>();
             bodyTextRect.anchorMin = Vector2.zero;
