@@ -24,8 +24,13 @@ namespace SFB {
         private static IStandaloneFileBrowser _platformWrapper = null;
 
         static StandaloneFileBrowser() {
+            // UNITY_EDITOR must be checked before UNITY_STANDALONE_WIN -- the latter is
+            // also defined while running in the Editor with Windows as the active build
+            // target, so checking it first would break Editor-mode file dialogs.
 #if UNITY_EDITOR
             _platformWrapper = new StandaloneFileBrowserEditor();
+#elif UNITY_STANDALONE_WIN
+            _platformWrapper = new StandaloneFileBrowserWindows();
 #endif
         }
 
