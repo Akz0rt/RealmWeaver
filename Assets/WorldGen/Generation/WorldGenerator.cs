@@ -44,7 +44,7 @@ namespace WorldGen.Generation
         /// озёр на карте, независимый от seaLevel/формы шума. Поставь больше значение, если
         /// хочешь меньше озёр; 0 или 1 отключает фильтрацию вовсе.
         /// </summary>
-        public int MinLakeSize = 5;
+        public int MinLakeSize = 25;
 
         // --- Elevation (гибрид distance-from-coast + шум, Patel-стиль) ---
 
