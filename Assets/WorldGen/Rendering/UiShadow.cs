@@ -121,7 +121,7 @@ namespace WorldGen.Rendering
             colored = true;
             // Light theme → dark shadow; dark theme → subtle light glow.
             image.color = ThemeService.Current == ThemeMode.Light
-                ? new Color(0f, 0f, 0f, 0.35f)
+                ? new Color(0f, 0f, 0f, 0.5f)
                 : new Color(1f, 1f, 1f, 0.16f);
         }
     }
