@@ -186,7 +186,7 @@ namespace WorldGen.Rendering
             hlg.childForceExpandWidth = true;
             hlg.childControlHeight = true;
             hlg.childForceExpandHeight = true;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 44f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 40f;
 
             AddTypeButton(rowGO.transform, PoiType.City, "Город");
             AddTypeButton(rowGO.transform, PoiType.Ruin, "Руины");
@@ -260,7 +260,7 @@ namespace WorldGen.Rendering
 
         void BuildUI()
         {
-            panelWidth = 300f; // фикс. ширина под макетную раскладку (4 кнопки типа + поля)
+            panelWidth = 280f; // фикс. ширина под макетную раскладку (4 кнопки типа + поля)
 
             var canvasGO = new GameObject("PoiEditCanvas");
             canvasGO.transform.SetParent(transform, false);
@@ -272,7 +272,7 @@ namespace WorldGen.Rendering
             panelGO = new GameObject("PoiEditPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.75f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.98f);
             panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
@@ -311,7 +311,7 @@ namespace WorldGen.Rendering
             var contentGO = new GameObject("Content");
             contentGO.transform.SetParent(viewportGO.transform, false);
             var contentVLG = contentGO.AddComponent<VerticalLayoutGroup>();
-            contentVLG.spacing = 5f;
+            contentVLG.spacing = 4f;
             contentVLG.childControlWidth = true;
             contentVLG.childForceExpandWidth = true;
             contentVLG.childControlHeight = true;
@@ -372,7 +372,7 @@ namespace WorldGen.Rendering
         {
             var rowGO = new GameObject("Header");
             rowGO.transform.SetParent(t, false);
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             var titleGO = new GameObject("Title");
             titleGO.transform.SetParent(rowGO.transform, false);
@@ -425,13 +425,13 @@ namespace WorldGen.Rendering
             hlg.childForceExpandWidth = false;
             hlg.childControlHeight = false;
             hlg.childAlignment = TextAnchor.MiddleLeft;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 34f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
 
             var previewGO = new GameObject("Preview");
             previewGO.transform.SetParent(rowGO.transform, false);
             var pbg = previewGO.AddComponent<Image>();
             ThemeService.Tag(pbg, ThemeRole.Elev);
-            previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(32f, 32f);
+            previewGO.GetComponent<RectTransform>().sizeDelta = new Vector2(28f, 28f);
             var iconGO = new GameObject("Icon");
             iconGO.transform.SetParent(previewGO.transform, false);
             iconPreview = iconGO.AddComponent<Image>();
@@ -456,7 +456,7 @@ namespace WorldGen.Rendering
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
-            go.GetComponent<RectTransform>().sizeDelta = new Vector2(34f, 30f);
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(30f, 28f);
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
@@ -478,7 +478,7 @@ namespace WorldGen.Rendering
             rowGO.transform.SetParent(t, false);
             var bg = rowGO.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Panel2);
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 26f;
 
             var lblGO = new GameObject("Label");
             lblGO.transform.SetParent(rowGO.transform, false);
@@ -517,7 +517,7 @@ namespace WorldGen.Rendering
         {
             var rowGO = new GameObject("Footer");
             rowGO.transform.SetParent(t, false);
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 28f;
 
             var delGO = new GameObject("Delete");
             delGO.transform.SetParent(rowGO.transform, false);
@@ -612,7 +612,7 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 18f;
 
             var labelGO = new GameObject("Label");
             labelGO.transform.SetParent(rowGO.transform, false);
@@ -698,7 +698,7 @@ namespace WorldGen.Rendering
             label.fontStyle = FontStyle.Bold;
             ThemeService.Tag(label, ThemeRole.Mut);
             label.alignment = TextAnchor.MiddleLeft;
-            go.AddComponent<LayoutElement>().preferredHeight = 15f;
+            go.AddComponent<LayoutElement>().preferredHeight = 13f;
             return label;
         }
 
@@ -741,7 +741,7 @@ namespace WorldGen.Rendering
             field.placeholder = phText;
 
             var le = go.AddComponent<LayoutElement>();
-            le.preferredHeight = multiline ? 46f : 22f;
+            le.preferredHeight = multiline ? 40f : 22f;
             le.flexibleWidth = 1f;
             return field;
         }
