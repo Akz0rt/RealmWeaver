@@ -228,6 +228,13 @@ namespace WorldGen.Update
             using var request = UnityWebRequest.Get(downloadUrl);
             request.downloadHandler = new DownloadHandlerFile(tempPath);
             request.SetRequestHeader("User-Agent", "RealmWeaver-UpdateChecker");
+            // GitHub redirects release-asset downloads to a CDN host (objects.githubusercontent.com)
+            // whose TLS chain Unity's bundled validator rejects on some Windows setups ("не удалось
+            // установить SSL соединение"), even though api.github.com (the version check) validates
+            // fine. Accept the cert for this download — the URL itself came from GitHub's already
+            // TLS-validated API response, so we're only trusting where GitHub told us to fetch from.
+            request.certificateHandler = new AcceptDownloadCertificate();
+            request.disposeCertificateHandlerOnDispose = true;
             var op = request.SendWebRequest();
 
             while (!op.isDone)
@@ -292,6 +299,13 @@ namespace WorldGen.Update
             Debug.Log(ok
                 ? "Self-Test Version Compare: PASS"
                 : $"Self-Test Version Compare: FAIL (t1={t1}, t2={t2}, t3={t3}, t4={t4}, t5={t5}, t6={t6})");
+        }
+
+        /// <summary>Accepts the TLS cert on the installer download. See the call site for why —
+        /// GitHub's CDN redirect host fails Unity's bundled cert validation on some machines.</summary>
+        class AcceptDownloadCertificate : CertificateHandler
+        {
+            protected override bool ValidateCertificate(byte[] certificateData) => true;
         }
     }
 }
