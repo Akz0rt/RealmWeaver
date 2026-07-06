@@ -57,6 +57,10 @@ namespace WorldGen.Notes.Rendering
 
             var rootGO = new GameObject("NotesTreeSidebar");
             rootGO.transform.SetParent(parent, false);
+            // Solid panel background so the sidebar reads as its own column instead of blending
+            // into the notes canvas behind it.
+            var rootImg = rootGO.AddComponent<Image>();
+            ThemeService.Tag(rootImg, ThemeRole.Panel);
             var vLayout = rootGO.AddComponent<VerticalLayoutGroup>();
             vLayout.childControlWidth = true;
             vLayout.childForceExpandWidth = true;
@@ -90,10 +94,11 @@ namespace WorldGen.Notes.Rendering
             headerTextGO = new GameObject("Text");
             headerTextGO.transform.SetParent(headerGO.transform, false);
             var headerText = headerTextGO.AddComponent<Text>();
-            headerText.text = "☰ Страницы";
+            headerText.text = "☰ СТРАНИЦЫ";
             headerText.font = builtinFont;
-            headerText.fontSize = 12;
-            ThemeService.Tag(headerText, ThemeRole.Txt);
+            headerText.fontSize = 11;
+            headerText.fontStyle = FontStyle.Bold;
+            ThemeService.Tag(headerText, ThemeRole.Mut);
             headerText.alignment = TextAnchor.MiddleLeft;
             var headerTextRect = headerTextGO.GetComponent<RectTransform>();
             headerTextRect.anchorMin = new Vector2(0f, 0f);
