@@ -124,9 +124,12 @@ namespace WorldGen.Rendering
             layout.childControlWidth = false;
             layout.childAlignment = TextAnchor.MiddleRight;
 
-            AddIconButton(rowGO.transform, "−", () => cameraController?.ZoomBy(1f / 1.15f));
+            // "-" zooms out (sees more, orthographicSize grows -> multiplier > 1), "+" zooms in
+            // (sees less/magnified, orthographicSize shrinks -> multiplier < 1). See
+            // MapCameraController.ZoomBy's doc comment.
+            AddIconButton(rowGO.transform, "−", () => cameraController?.ZoomBy(cameraController.buttonZoomStep));
             zoomPercentLabel = AddZoomLabel(rowGO.transform, () => cameraController?.ResetZoom());
-            AddIconButton(rowGO.transform, "+", () => cameraController?.ZoomBy(1.15f));
+            AddIconButton(rowGO.transform, "+", () => cameraController?.ZoomBy(1f / cameraController.buttonZoomStep));
             AddFitButton(rowGO.transform, () => cameraController?.ResetZoom());
         }
 
