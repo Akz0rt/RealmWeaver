@@ -23,7 +23,7 @@ namespace WorldGen.Rendering
         public int fontSize = 12;
 
         const float PanelWidth = 232f;
-        const int CompactCount = 5;      // rows shown before "Показать все N →"
+        const int CompactCount = 12;     // rows shown before "Показать все N →" (generalized biomes fit; only long Region lists collapse)
 
         Canvas canvas;
         RectTransform panelRect;
@@ -108,15 +108,13 @@ namespace WorldGen.Rendering
                     break;
 
                 case MapDisplayMode.Biome:
-                    foreach (Biome biome in System.Enum.GetValues(typeof(Biome)))
-                        entries.Add(new LegendEntry(RegionColorPalette.GetBiomeColor(biome), GetBiomeLabel(biome)));
+                    entries.AddRange(GeneralizedBiomeEntries());
                     break;
 
                 case MapDisplayMode.Combined:
                     if (mapRenderer.showBiomeLayer)
                     {
-                        foreach (Biome biome in System.Enum.GetValues(typeof(Biome)))
-                            entries.Add(new LegendEntry(RegionColorPalette.GetBiomeColor(biome), GetBiomeLabel(biome)));
+                        entries.AddRange(GeneralizedBiomeEntries());
                     }
                     else
                     {
@@ -142,28 +140,22 @@ namespace WorldGen.Rendering
             return entries;
         }
 
-        static string GetBiomeLabel(Biome biome)
+        /// <summary>Generalized biome categories for the legend — one entry per broad landscape
+        /// type with a representative colour, instead of all 16 fine-grained biomes ("Лес" rather
+        /// than five kinds of forest). The per-cell map colouring still uses the full biome set.</summary>
+        static List<LegendEntry> GeneralizedBiomeEntries()
         {
-            switch (biome)
+            return new List<LegendEntry>
             {
-                case Biome.Ocean: return "Океан";
-                case Biome.Lake: return "Озеро";
-                case Biome.Beach: return "Пляж";
-                case Biome.Snow: return "Снег";
-                case Biome.Tundra: return "Тундра";
-                case Biome.Bare: return "Скалы (bare)";
-                case Biome.Scorched: return "Выжженная земля";
-                case Biome.Taiga: return "Тайга";
-                case Biome.Shrubland: return "Кустарники";
-                case Biome.TemperateDesert: return "Умеренная пустыня";
-                case Biome.TemperateRainForest: return "Умеренный дождевой лес";
-                case Biome.TemperateDeciduousForest: return "Умеренный широколиственный лес";
-                case Biome.Grassland: return "Луга";
-                case Biome.TropicalRainForest: return "Тропический дождевой лес";
-                case Biome.TropicalSeasonalForest: return "Тропический сезонный лес";
-                case Biome.SubtropicalDesert: return "Субтропическая пустыня";
-                default: return biome.ToString();
-            }
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Ocean),                    "Океан"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Lake),                     "Озеро"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Beach),                    "Побережье"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.TemperateDeciduousForest), "Лес"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Grassland),                "Луга"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.SubtropicalDesert),        "Пустыня"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Bare),                     "Горы"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Snow),                     "Снег"),
+            };
         }
 
         // ── UI construction ──────────────────────────────────────────────────────
@@ -283,9 +275,12 @@ namespace WorldGen.Rendering
             swatchGO.transform.SetParent(row.transform, false);
             var swatchImage = swatchGO.AddComponent<Image>();
             swatchImage.color = color;
+            // Pin every swatch to exactly swatchSize (min == preferred, no flex) so they are all
+            // identical regardless of row/label sizing.
             var swatchLE = swatchGO.AddComponent<LayoutElement>();
-            swatchLE.preferredWidth = swatchSize.x;
-            swatchLE.preferredHeight = swatchSize.y;
+            swatchLE.minWidth = swatchLE.preferredWidth = swatchSize.x;
+            swatchLE.minHeight = swatchLE.preferredHeight = swatchSize.y;
+            swatchLE.flexibleWidth = swatchLE.flexibleHeight = 0f;
 
             var textGO = new GameObject("Label");
             textGO.transform.SetParent(row.transform, false);
