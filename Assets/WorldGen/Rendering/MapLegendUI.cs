@@ -22,9 +22,13 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
 
         [Header("Настройки внешнего вида")]
-        public Vector2 panelAnchoredPosition = new Vector2(-20f, -20f);
+        public Vector2 panelAnchoredPosition = new Vector2(20f, 20f);
         public Vector2 swatchSize = new Vector2(20f, 20f);
         public int fontSize = 14;
+
+        // Fixed panel width (Main-screen shell redesign, 2026-07-06). The legend no longer
+        // auto-widens to the longest label; it is pinned to a constant width in the bottom-left.
+        const float PanelWidth = 232f;
 
         Canvas canvas;
         RectTransform panelRect;
@@ -37,18 +41,6 @@ namespace WorldGen.Rendering
         void Awake()
         {
             BuildCanvasAndPanel();
-            NotesLayoutController.OnSplitFractionChanged += UpdateSplitAnchor;
-        }
-
-        void OnDestroy()
-        {
-            NotesLayoutController.OnSplitFractionChanged -= UpdateSplitAnchor;
-        }
-
-        void UpdateSplitAnchor(float fraction)
-        {
-            panelRect.anchorMin = new Vector2(fraction, 1f);
-            panelRect.anchorMax = new Vector2(fraction, 1f);
         }
 
         void OnEnable()
@@ -178,10 +170,15 @@ namespace WorldGen.Rendering
             ThemeService.Tag(panelImage, ThemeRole.Panel, 0.55f);
 
             panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f); // привязка к правому верхнему углу карты (не всего экрана)
-            panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
-            panelRect.pivot = new Vector2(1f, 1f);
-            panelRect.anchoredPosition = panelAnchoredPosition;
+            // Bottom-left of the map area (Main-screen shell redesign, 2026-07-06). The map always
+            // occupies the screen's left edge, so this corner is independent of the map/notes split.
+            // Hardcoded rather than read from the serialized panelAnchoredPosition, whose stale scene
+            // value ({-20,-20}, from the old top-right placement) would otherwise push it off-screen.
+            panelRect.anchorMin = new Vector2(0f, 0f);
+            panelRect.anchorMax = new Vector2(0f, 0f);
+            panelRect.pivot = new Vector2(0f, 0f);
+            panelRect.anchoredPosition = new Vector2(20f, 20f);
+            panelRect.sizeDelta = new Vector2(PanelWidth, panelRect.sizeDelta.y);
 
             layoutGroup = panelGO.AddComponent<VerticalLayoutGroup>();
             layoutGroup.padding = new RectOffset(10, 10, 10, 10);
@@ -193,7 +190,7 @@ namespace WorldGen.Rendering
             layoutGroup.childForceExpandHeight = false;
 
             var fitter = panelGO.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained; // width is fixed (PanelWidth); only height auto-fits content
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 

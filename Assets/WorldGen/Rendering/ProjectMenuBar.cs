@@ -16,15 +16,16 @@ using ThemeMode = WorldGen.Rendering.Theme.Theme; // "Theme" alone is ambiguous 
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Thin (20px) "Файл" menu bar pinned to the top of the screen. 20px was chosen to fit
-    /// inside the top margin MapEditorPanel/MapLegendUI already assume (both use
-    /// panelAnchoredPosition.y = -20) — see NotesRootBuilder's matching 20px top padding on
-    /// the notes side. Hosts Save/Save As/Open/Open Recent, wired to ProjectSerializer.
+    /// 40px application menu bar pinned to the top of the screen (Main-screen shell redesign,
+    /// 2026-07-06). Left side shows a logo square + "REALMWEAVER" wordmark followed by the menu
+    /// items ("Файл" — a real dropdown wired to ProjectSerializer — plus inert "Правка"/"Вид"
+    /// placeholders); the right side shows the current project's file name. The 46px MapToolbarUI
+    /// strip and the docked panels sit directly below this bar (they offset by 40 + 46).
     /// Assign mapRenderer/poiManager/notesRoot in the Inspector.
     /// </summary>
     public class ProjectMenuBar : MonoBehaviour
     {
-        const float BarHeightPixels = 20f;
+        const float BarHeightPixels = 40f;
 
         [Header("Источники")]
         public WorldMapRenderer mapRenderer;
@@ -38,6 +39,7 @@ namespace WorldGen.Rendering
 
         string currentPath; // null = never saved yet this session
         Font builtinFont;
+        Text projectNameText;
         Transform canvasTransform;
         GameObject backdropGO;
         GameObject actionsPopupGO;
@@ -100,6 +102,7 @@ namespace WorldGen.Rendering
             }
 
             currentPath = path;
+            UpdateProjectNameText();
             RecentProjectsList.Push(path);
         }
 
@@ -135,6 +138,7 @@ namespace WorldGen.Rendering
             notesRoot?.DocumentController.LoadDocument(result.Notes);
 
             currentPath = path;
+            UpdateProjectNameText();
             RecentProjectsList.Push(path);
         }
 
@@ -168,6 +172,35 @@ namespace WorldGen.Rendering
             barRect.sizeDelta = new Vector2(0f, BarHeightPixels);
             barRect.anchoredPosition = Vector2.zero;
 
+            // Logo square
+            var logoGO = new GameObject("Logo");
+            logoGO.transform.SetParent(barGO.transform, false);
+            var logoImg = logoGO.AddComponent<Image>();
+            ThemeService.Tag(logoImg, ThemeRole.Accent);
+            var logoRect = logoGO.GetComponent<RectTransform>();
+            logoRect.anchorMin = new Vector2(0f, 0.5f);
+            logoRect.anchorMax = new Vector2(0f, 0.5f);
+            logoRect.pivot = new Vector2(0f, 0.5f);
+            logoRect.anchoredPosition = new Vector2(12f, 0f);
+            logoRect.sizeDelta = new Vector2(16f, 16f);
+
+            // Wordmark
+            var wordmarkGO = new GameObject("Wordmark");
+            wordmarkGO.transform.SetParent(barGO.transform, false);
+            var wordmarkText = wordmarkGO.AddComponent<Text>();
+            wordmarkText.text = "REALMWEAVER";
+            wordmarkText.font = builtinFont;
+            wordmarkText.fontSize = 13;
+            wordmarkText.fontStyle = FontStyle.Bold;
+            wordmarkText.alignment = TextAnchor.MiddleLeft;
+            ThemeService.Tag(wordmarkText, ThemeRole.Txt);
+            var wordmarkRect = wordmarkGO.GetComponent<RectTransform>();
+            wordmarkRect.anchorMin = new Vector2(0f, 0.5f);
+            wordmarkRect.anchorMax = new Vector2(0f, 0.5f);
+            wordmarkRect.pivot = new Vector2(0f, 0.5f);
+            wordmarkRect.anchoredPosition = new Vector2(36f, 0f);
+            wordmarkRect.sizeDelta = new Vector2(140f, 20f);
+
             var fileBtnGO = new GameObject("FileButton");
             fileBtnGO.transform.SetParent(barGO.transform, false);
             var fileBtnImg = fileBtnGO.AddComponent<Image>();
@@ -179,8 +212,8 @@ namespace WorldGen.Rendering
             fileBtnRect.anchorMin = new Vector2(0f, 0f);
             fileBtnRect.anchorMax = new Vector2(0f, 1f);
             fileBtnRect.pivot = new Vector2(0f, 0.5f);
-            fileBtnRect.sizeDelta = new Vector2(70f, 0f);
-            fileBtnRect.anchoredPosition = Vector2.zero;
+            fileBtnRect.sizeDelta = new Vector2(56f, 0f);
+            fileBtnRect.anchoredPosition = new Vector2(130f, 0f); // sits after the logo+wordmark, ahead of the inert Правка/Вид items
 
             var fileLabelGO = new GameObject("Label");
             fileLabelGO.transform.SetParent(fileBtnGO.transform, false);
@@ -194,6 +227,52 @@ namespace WorldGen.Rendering
             fileLabelRect.anchorMin = Vector2.zero;
             fileLabelRect.anchorMax = Vector2.one;
             fileLabelRect.sizeDelta = Vector2.zero;
+
+            // Inert menu placeholders (no Button, no click behaviour — muted static labels)
+            AddInertMenuLabel(barGO.transform, "Правка", xOffset: 190f);
+            AddInertMenuLabel(barGO.transform, "Вид", xOffset: 250f);
+
+            // Right-aligned current project name
+            var projectNameGO = new GameObject("ProjectName");
+            projectNameGO.transform.SetParent(barGO.transform, false);
+            projectNameText = projectNameGO.AddComponent<Text>();
+            projectNameText.font = builtinFont;
+            projectNameText.fontSize = 12;
+            projectNameText.alignment = TextAnchor.MiddleRight;
+            ThemeService.Tag(projectNameText, ThemeRole.Mut);
+            var projectNameRect = projectNameGO.GetComponent<RectTransform>();
+            projectNameRect.anchorMin = new Vector2(1f, 0.5f);
+            projectNameRect.anchorMax = new Vector2(1f, 0.5f);
+            projectNameRect.pivot = new Vector2(1f, 0.5f);
+            projectNameRect.anchoredPosition = new Vector2(-12f, 0f);
+            projectNameRect.sizeDelta = new Vector2(220f, 20f);
+            UpdateProjectNameText();
+        }
+
+        void AddInertMenuLabel(Transform parent, string label, float xOffset)
+        {
+            var go = new GameObject($"Menu_{label}");
+            go.transform.SetParent(parent, false);
+            var text = go.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 13;
+            text.alignment = TextAnchor.MiddleLeft;
+            ThemeService.Tag(text, ThemeRole.Mut);
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.anchoredPosition = new Vector2(xOffset, 0f);
+            rect.sizeDelta = new Vector2(50f, 20f);
+        }
+
+        void UpdateProjectNameText()
+        {
+            if (projectNameText == null) return;
+            projectNameText.text = string.IsNullOrEmpty(currentPath)
+                ? "Проект не сохранён"
+                : System.IO.Path.GetFileName(currentPath);
         }
 
         void ToggleActionsPopup()
@@ -228,7 +307,7 @@ namespace WorldGen.Rendering
             popupRect.anchorMin = new Vector2(0f, 1f);
             popupRect.anchorMax = new Vector2(0f, 1f);
             popupRect.pivot = new Vector2(0f, 1f);
-            popupRect.anchoredPosition = new Vector2(0f, -BarHeightPixels);
+            popupRect.anchoredPosition = new Vector2(130f, -BarHeightPixels); // drop below the repositioned "Файл" button
 
             var recentPaths = recentExpanded ? RecentProjectsList.Get().Where(File.Exists).ToList() : null;
             int rowCount = 5 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
