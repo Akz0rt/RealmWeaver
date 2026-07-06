@@ -112,7 +112,7 @@ namespace WorldGen.Rendering
         {
             var rowGO = new GameObject("ZoomControls");
             rowGO.transform.SetParent(parent, false);
-            var rowRect = rowGO.GetComponent<RectTransform>();
+            var rowRect = rowGO.AddComponent<RectTransform>();
             rowRect.anchorMin = new Vector2(1f, 0.5f);
             rowRect.anchorMax = new Vector2(1f, 0.5f);
             rowRect.pivot = new Vector2(1f, 0.5f);
