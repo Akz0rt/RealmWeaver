@@ -121,7 +121,13 @@ namespace WorldGen.Rendering
 
             var layout = rowGO.AddComponent<HorizontalLayoutGroup>();
             layout.spacing = 6f;
-            layout.childControlWidth = false;
+            // childControlWidth=true is required for each button's LayoutElement.preferredWidth to
+            // take effect; with it false the widths were ignored and "+"/"По размеру" got pushed
+            // off the right edge. forceExpand=false keeps them at their preferred size.
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = false;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
             layout.childAlignment = TextAnchor.MiddleRight;
 
             // "-" zooms out (sees more, orthographicSize grows -> multiplier > 1), "+" zooms in

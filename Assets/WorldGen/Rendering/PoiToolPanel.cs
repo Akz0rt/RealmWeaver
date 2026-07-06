@@ -61,7 +61,8 @@ namespace WorldGen.Rendering
             layout.spacing = 6f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
-            layout.childControlHeight = false;
+            layout.childControlHeight = true;      // respect each child's LayoutElement.preferredHeight
+            layout.childForceExpandHeight = false; // ...and don't stretch to fill (default true = the panel-bloat bug)
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             BuildPoiTab(panelGO.transform);

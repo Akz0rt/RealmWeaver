@@ -213,7 +213,7 @@ namespace WorldGen.Rendering
             fileBtnRect.anchorMax = new Vector2(0f, 1f);
             fileBtnRect.pivot = new Vector2(0f, 0.5f);
             fileBtnRect.sizeDelta = new Vector2(56f, 0f);
-            fileBtnRect.anchoredPosition = new Vector2(130f, 0f); // sits after the logo+wordmark, ahead of the inert Правка/Вид items
+            fileBtnRect.anchoredPosition = new Vector2(158f, 0f); // sits after the logo+wordmark (whose text runs to ~146px), ahead of the inert Правка/Вид items
 
             var fileLabelGO = new GameObject("Label");
             fileLabelGO.transform.SetParent(fileBtnGO.transform, false);
@@ -229,8 +229,8 @@ namespace WorldGen.Rendering
             fileLabelRect.sizeDelta = Vector2.zero;
 
             // Inert menu placeholders (no Button, no click behaviour — muted static labels)
-            AddInertMenuLabel(barGO.transform, "Правка", xOffset: 190f);
-            AddInertMenuLabel(barGO.transform, "Вид", xOffset: 250f);
+            AddInertMenuLabel(barGO.transform, "Правка", xOffset: 228f);
+            AddInertMenuLabel(barGO.transform, "Вид", xOffset: 288f);
 
             // Right-aligned current project name
             var projectNameGO = new GameObject("ProjectName");

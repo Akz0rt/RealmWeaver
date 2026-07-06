@@ -48,7 +48,8 @@ namespace WorldGen.Rendering
             layout.spacing = 6f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
-            layout.childControlHeight = false;
+            layout.childControlHeight = true;      // respect each row's LayoutElement.preferredHeight
+            layout.childForceExpandHeight = false; // ...and don't stretch rows to fill (default true = the bug that bloated this panel)
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var t = panelGO.transform;
