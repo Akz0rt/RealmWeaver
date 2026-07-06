@@ -669,7 +669,9 @@ namespace WorldGen.Rendering
             float maxSide = Mathf.Max(mapWidth, mapHeight);
             targetCamera.transform.position = new Vector3(mapWidth * 0.5f, maxSide * 1.5f, mapHeight * 0.5f);
             targetCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            targetCamera.orthographicSize = maxSide * 0.5f;
+            // Same fit factor MapCameraController uses for "По размеру" (100%), so the map opens
+            // at that reference zoom with margin around it rather than jammed edge-to-edge.
+            targetCamera.orthographicSize = maxSide * MapCameraController.FitFactor;
 
             if (targetCamera.farClipPlane < maxSide * 3f)
                 targetCamera.farClipPlane = maxSide * 3f;

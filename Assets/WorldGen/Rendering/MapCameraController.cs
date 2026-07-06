@@ -14,9 +14,16 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
         public Camera targetCamera;
 
+        /// <summary>Множитель к половине большей стороны карты для «По размеру» (100%).
+        /// 0.5 = карта край-в-край; больше = запас по краям (карта не упирается в тулбар/грани).
+        /// Тот же множитель применяет WorldMapRenderer.PositionCameraOverMap при первой установке.</summary>
+        public const float FitFactor = 0.7f;
+
         [Header("Настройки зума")]
-        [Tooltip("Минимальный orthographicSize (максимальное приближение), доля от naturalFitSize.")]
-        public float minSizeFraction = 0.15f;
+        [Tooltip("Минимальный orthographicSize (максимальное приближение), доля от naturalFitSize. Меньше = можно приблизить сильнее.")]
+        public float minSizeFraction = 0.08f;
+        [Tooltip("Максимальный orthographicSize (максимальное отдаление), доля от naturalFitSize. Больше = можно отдалить сильнее.")]
+        public float maxSizeFraction = 3f;
         [Tooltip("Множитель за одно нажатие кнопки +/- в тулбаре.")]
         public float buttonZoomStep = 1.15f;
         [Tooltip("Чувствительность зума колесом мыши.")]
@@ -64,7 +71,7 @@ namespace WorldGen.Rendering
         {
             if (mapRenderer == null) return;
             float maxSide = Mathf.Max(mapRenderer.mapWidth, mapRenderer.mapHeight);
-            naturalFitSize = maxSide * 0.5f;
+            naturalFitSize = maxSide * FitFactor;
             naturalFitPosition = new Vector3(mapRenderer.mapWidth * 0.5f, maxSide * 1.5f, mapRenderer.mapHeight * 0.5f);
         }
 
@@ -87,16 +94,16 @@ namespace WorldGen.Rendering
         void ApplyZoomDelta(float sizeDelta)
         {
             if (naturalFitSize <= 0f) return;
-            float minSize = naturalFitSize * minSizeFraction;
-            targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize + sizeDelta, minSize, naturalFitSize);
+            targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize + sizeDelta,
+                naturalFitSize * minSizeFraction, naturalFitSize * maxSizeFraction);
         }
 
         /// <summary>Called by MapToolbarUI's "-"/"+" buttons. Positive multiplier > 1 zooms out, &lt; 1 zooms in.</summary>
         public void ZoomBy(float multiplier)
         {
             if (naturalFitSize <= 0f) return;
-            float minSize = naturalFitSize * minSizeFraction;
-            targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize * multiplier, minSize, naturalFitSize);
+            targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize * multiplier,
+                naturalFitSize * minSizeFraction, naturalFitSize * maxSizeFraction);
         }
 
         /// <summary>Called by MapToolbarUI's "100%"/"По размеру" buttons.</summary>
@@ -152,10 +159,10 @@ namespace WorldGen.Rendering
 
             float before = targetCamera.orthographicSize;
 
-            targetCamera.orthographicSize = naturalFitSize * 10f; // way too big
+            targetCamera.orthographicSize = naturalFitSize * maxSizeFraction * 10f; // way too big
             ApplyZoomDelta(0f); // re-applies the clamp with a zero delta
             ZoomBy(1f); // re-clamps at current (still-too-big) value
-            bool clampedHigh = targetCamera.orthographicSize <= naturalFitSize + 0.001f;
+            bool clampedHigh = targetCamera.orthographicSize <= naturalFitSize * maxSizeFraction + 0.001f;
 
             targetCamera.orthographicSize = 0.0001f; // way too small
             ZoomBy(1f);
