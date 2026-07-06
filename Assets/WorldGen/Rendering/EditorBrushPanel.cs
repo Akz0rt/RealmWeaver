@@ -70,12 +70,19 @@ namespace WorldGen.Rendering
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged += HandleSelectionChanged;
+            // Вкладка "Редактор" стала активной — восстановить liveness кисти/выделения по текущему режиму.
+            // (headerTitle != null — значит Awake уже построил UI; на самом первом включении Awake идёт раньше OnEnable.)
+            if (headerTitle != null) SetMode(currentMode);
         }
 
         void OnDisable()
         {
             if (selectionController != null)
                 selectionController.OnSelectionChanged -= HandleSelectionChanged;
+            // Ушли с вкладки "Редактор" — гасим оба редактирующих контроллера, чтобы кисть/выделение
+            // не оставались живыми на других вкладках (Карта/Точки).
+            if (brushController != null) brushController.brushModeActive = false;
+            if (selectionController != null) selectionController.enabled = false;
         }
 
         void HandleSelectionChanged(IReadOnlyCollection<VoronoiCell> selected)
@@ -239,7 +246,6 @@ namespace WorldGen.Rendering
             UiShadow.Add(panelRect);
 
             BuildEditorTab(panelGO.transform);
-            BuildBiomePalette(canvasTransform);
         }
 
         void BuildEditorTab(Transform t)
@@ -328,6 +334,8 @@ namespace WorldGen.Rendering
             {
                 if (brushController != null) brushController.strength = v;
             });
+
+            BuildBiomePaletteSection(t);
 
             AddWideButton(t, "Отменить всё", () => mapRenderer?.UndoAllBrushStrokes());
         }
@@ -544,50 +552,39 @@ namespace WorldGen.Rendering
             onChanged?.Invoke(def);
         }
 
-        // ── Contextual biome palette (bottom-left, Brush + target = Biome) ────────
+        // ── Contextual biome palette (in-panel section, Brush + target = Biome) ───
 
-        void BuildBiomePalette(Transform canvasTransform)
+        void BuildBiomePaletteSection(Transform t)
         {
-            var panelGO = new GameObject("BiomePalette");
-            panelGO.transform.SetParent(canvasTransform, false);
-            var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.92f);
-            var panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0f, 0f);
-            panelRect.anchorMax = new Vector2(0f, 0f);
-            panelRect.pivot = new Vector2(0f, 0f);
-            panelRect.anchoredPosition = new Vector2(20f, 20f);
-            panelRect.sizeDelta = new Vector2(264f, 0f);
-
-            var vlg = panelGO.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(14, 14, 12, 12);
-            vlg.spacing = 8f;
+            var sectionGO = new GameObject("BiomePalette");
+            sectionGO.transform.SetParent(t, false);
+            var vlg = sectionGO.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 6f;
             vlg.childControlWidth = true;
             vlg.childForceExpandWidth = true;
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
-            panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            UiShadow.Add(panelRect);
+            sectionGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            AddCaption(panelGO.transform, "ПАЛИТРА БИОМА · ДЛЯ КИСТИ «БИОМ»");
+            AddCaption(sectionGO.transform, "ПАЛИТРА БИОМА");
 
             var gridGO = new GameObject("SwatchGrid");
-            gridGO.transform.SetParent(panelGO.transform, false);
+            gridGO.transform.SetParent(sectionGO.transform, false);
             var grid = gridGO.AddComponent<GridLayoutGroup>();
             grid.cellSize = new Vector2(26f, 26f);
-            grid.spacing = new Vector2(4f, 4f);
+            grid.spacing = new Vector2(3f, 3f);
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             grid.constraintCount = 8;
 
             var biomes = (Biome[])System.Enum.GetValues(typeof(Biome));
             int rows = Mathf.CeilToInt(biomes.Length / 8f);
-            gridGO.AddComponent<LayoutElement>().preferredHeight = rows * 26f + (rows - 1) * 4f;
+            gridGO.AddComponent<LayoutElement>().preferredHeight = rows * 26f + (rows - 1) * 3f;
 
             foreach (var biome in biomes)
                 AddSwatch(gridGO.transform, biome);
 
-            biomePaletteRoot = panelGO;
-            panelGO.SetActive(false);
+            biomePaletteRoot = sectionGO;
+            sectionGO.SetActive(false);
         }
 
         void AddSwatch(Transform parent, Biome biome)
@@ -788,6 +785,7 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
+            hLayout.childForceExpandWidth = false;
 
             var toggle = AddToggle(rowGO.transform, true);
 
@@ -799,12 +797,12 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
-            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(88f, 20f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(84f, 20f);
 
             var sliderGO = new GameObject("Slider");
             sliderGO.transform.SetParent(rowGO.transform, false);
             var slider = BuildSlider(sliderGO, defaultValue, 0f, 1f);
-            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(96f, 20f);
+            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(68f, 20f);
 
             var valueGO = new GameObject("Value");
             valueGO.transform.SetParent(rowGO.transform, false);
@@ -814,7 +812,7 @@ namespace WorldGen.Rendering
             valueText.fontSize = 12;
             ThemeService.Tag(valueText, ThemeRole.Txt);
             valueText.alignment = TextAnchor.MiddleLeft;
-            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(34f, 20f);
+            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(30f, 20f);
 
             slider.onValueChanged.AddListener(v => valueText.text = v.ToString("F2"));
             rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
@@ -829,6 +827,7 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
+            hLayout.childForceExpandWidth = false;
 
             var toggle = AddToggle(rowGO.transform, false);
 
@@ -840,7 +839,7 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
-            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(88f, 22f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(84f, 22f);
 
             var dropdownGO = new GameObject("Dropdown");
             dropdownGO.transform.SetParent(rowGO.transform, false);
@@ -865,7 +864,7 @@ namespace WorldGen.Rendering
             BuildDropdownTemplate(dropdown, dropdownGO);
             dropdown.AddOptions(options);
             dropdown.RefreshShownValue();
-            dropdownGO.GetComponent<RectTransform>().sizeDelta = new Vector2(140f, 22f);
+            dropdownGO.GetComponent<RectTransform>().sizeDelta = new Vector2(118f, 22f);
             rowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
             return (dropdown, toggle);
         }

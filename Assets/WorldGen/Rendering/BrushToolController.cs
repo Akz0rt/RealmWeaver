@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using WorldGen.Generation;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
@@ -59,22 +60,34 @@ namespace WorldGen.Rendering
         [Tooltip("Если выключено — компонент не реагирует на ввод. Включается при переключении в режим кисти.")]
         public bool brushModeActive = false;
 
+        [Header("Превью области кисти")]
+        [Tooltip("Толщина контура-превью в мировых единицах карты.")]
+        public float cursorLineWidth = 1.6f;
+        [Tooltip("Высота контура над поверхностью карты (локальные единицы), чтобы он рисовался поверх меша.")]
+        public float cursorHeight = 2f;
+
         bool isPainting;
         Vector2 lastPaintSite;   // точка последнего применения в Site-координатах — для мгновенного отклика при движении
         bool hasLastPaintSite;
         float repeatTimer;
 
+        LineRenderer cursorRing;
+        const int CircleSegments = 48;
+
         void Update()
         {
-            if (!brushModeActive) return;
-            if (poiController != null && poiController.InputConsumedThisFrame) return;
-            if (mapRenderer == null) return;
+            if (mapRenderer == null) { HideCursor(); return; }
+            if (cursorRing == null) BuildCursor();
+
+            if (!brushModeActive) { HideCursor(); return; }
+            if (poiController != null && poiController.InputConsumedThisFrame) { HideCursor(); return; }
             if (raycastCamera == null) raycastCamera = Camera.main;
-            if (raycastCamera == null) return;
-            if (Mouse.current == null) return;
+            if (raycastCamera == null) { HideCursor(); return; }
+            if (Mouse.current == null) { HideCursor(); return; }
 
             HandleUndo();
             HandlePainting();
+            UpdateCursor();
         }
 
         void HandleUndo()
@@ -211,6 +224,71 @@ namespace WorldGen.Rendering
                 if (n != null) yield return ReadValue(n);
             }
         }
+
+        // ── Превью области кисти (контур под курсором, как в графредакторах) ──────
+
+        void BuildCursor()
+        {
+            var go = new GameObject("BrushCursor");
+            go.transform.SetParent(mapRenderer.transform, false); // локальные координаты = пространство Site
+            cursorRing = go.AddComponent<LineRenderer>();
+            cursorRing.useWorldSpace = false;
+            cursorRing.loop = true;
+            cursorRing.widthMultiplier = cursorLineWidth;
+            cursorRing.numCornerVertices = 0;
+            cursorRing.numCapVertices = 0;
+            cursorRing.material = new Material(Shader.Find("Sprites/Default"));
+            cursorRing.textureMode = LineTextureMode.Stretch;
+            cursorRing.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            cursorRing.receiveShadows = false;
+            cursorRing.enabled = false;
+        }
+
+        void UpdateCursor()
+        {
+            Vector2 mousePos = Mouse.current.position.ReadValue();
+            Ray ray = raycastCamera.ScreenPointToRay(mousePos);
+            if (!mapRenderer.TryGetSiteHitPoint(ray, out Vector2 site))
+            {
+                HideCursor();
+                return;
+            }
+
+            Color c = ThemeService.Get(ThemeRole.Accent);
+            cursorRing.startColor = c;
+            cursorRing.endColor = c;
+            cursorRing.widthMultiplier = cursorLineWidth;
+
+            if (shape == BrushShape.Square)
+            {
+                cursorRing.positionCount = 4;
+                cursorRing.SetPosition(0, new Vector3(site.x - brushRadius, cursorHeight, site.y - brushRadius));
+                cursorRing.SetPosition(1, new Vector3(site.x + brushRadius, cursorHeight, site.y - brushRadius));
+                cursorRing.SetPosition(2, new Vector3(site.x + brushRadius, cursorHeight, site.y + brushRadius));
+                cursorRing.SetPosition(3, new Vector3(site.x - brushRadius, cursorHeight, site.y + brushRadius));
+            }
+            else
+            {
+                cursorRing.positionCount = CircleSegments;
+                for (int i = 0; i < CircleSegments; i++)
+                {
+                    float a = (i / (float)CircleSegments) * Mathf.PI * 2f;
+                    cursorRing.SetPosition(i, new Vector3(
+                        site.x + Mathf.Cos(a) * brushRadius,
+                        cursorHeight,
+                        site.y + Mathf.Sin(a) * brushRadius));
+                }
+            }
+
+            cursorRing.enabled = true;
+        }
+
+        void HideCursor()
+        {
+            if (cursorRing != null) cursorRing.enabled = false;
+        }
+
+        void OnDisable() => HideCursor();
 
         // ── Self-tests (this project's convention: [ContextMenu] + Debug.Log PASS/FAIL) ──────────
 
