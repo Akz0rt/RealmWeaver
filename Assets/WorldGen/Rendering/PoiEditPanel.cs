@@ -40,7 +40,8 @@ namespace WorldGen.Rendering
         RectTransform panelRect;
         RectTransform contentRect;
         LayoutElement scrollAreaLE;
-        Dropdown poiTypeDropdown;
+        readonly Dictionary<PoiType, (Image bg, Outline outline)> typeButtons =
+            new Dictionary<PoiType, (Image, Outline)>();
         InputField poiNameField;
         InputField poiDescField;
         InputField poiSpritePathField;
@@ -94,26 +95,19 @@ namespace WorldGen.Rendering
 
         void LateUpdate()
         {
-            // Legend height can change (display mode/row count), so re-anchor every frame rather
-            // than only on selection - cheap (a handful of RectTransform reads) and keeps the two
-            // panels visually glued together without needing an explicit "legend changed" event.
-            RepositionUnderLegend();
+            // Content height changes with the selected POI's description length, so re-clamp the
+            // scroll area to the remaining screen space every frame (cheap: a couple of RectTransform reads).
+            RepositionPanel();
         }
 
-        void RepositionUnderLegend()
+        void RepositionPanel()
         {
             if (panelRect == null) return;
 
-            float legendBottomFromTop = 20f; // fallback if legendUI isn't assigned
-            if (legendUI != null && legendUI.PanelRect != null)
-            {
-                var corners = new Vector3[4];
-                legendUI.PanelRect.GetWorldCorners(corners);
-                // corners[0] = bottom-left in world space; ScreenSpaceOverlay world space == screen pixels.
-                legendBottomFromTop = Screen.height - corners[0].y;
-            }
-
-            float topY = -(legendBottomFromTop + gapBelowLegend);
+            // Фиксированная позиция: правый край у линии раздела карта/заметки (anchor = SplitFraction,
+            // pivot справа), верх — сразу под верхней панелью (40 меню + 46 тулбар + отступ). Раньше
+            // панель докалась под легенду, но в Screen A легенда уехала в низ-лево, так что отвязываем.
+            float topY = -(40f + MapToolbarUI.BarHeightPixels + 20f);
             panelRect.anchoredPosition = new Vector2(-rightMargin, topY);
 
             float availableHeight = Screen.height + topY - bottomScreenMargin;
@@ -141,7 +135,7 @@ namespace WorldGen.Rendering
             }
 
             panelGO.SetActive(true);
-            poiTypeDropdown.value = (int)selected.Type;
+            ApplyTypeHighlight(selected.Type);
             poiNameField.text = selected.Name;
             poiDescField.text = selected.Description;
             poiCellLabel.text = $"Клетка: #{selected.OwnerCellId}";
@@ -156,6 +150,88 @@ namespace WorldGen.Rendering
         {
             var sel = poiManager?.GetSelectedPoi();
             if (sel != null) poiCellLabel.text = $"Клетка: #{sel.OwnerCellId}";
+        }
+
+        // ── Type selector (4 icon buttons, replacing the old dropdown) ────────────
+
+        void BuildTypeSelector(Transform t)
+        {
+            var rowGO = new GameObject("TypeSelector");
+            rowGO.transform.SetParent(t, false);
+            var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 4f;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 44f;
+
+            AddTypeButton(rowGO.transform, PoiType.City, "Город");
+            AddTypeButton(rowGO.transform, PoiType.Ruin, "Руины");
+            AddTypeButton(rowGO.transform, PoiType.Dungeon, "Подзем.");
+            AddTypeButton(rowGO.transform, PoiType.Fortress, "Креп.");
+        }
+
+        void AddTypeButton(Transform parent, PoiType type, string label)
+        {
+            var go = new GameObject($"Type_{type}");
+            go.transform.SetParent(parent, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Elev);
+            var outline = go.AddComponent<Outline>();
+            outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+            outline.enabled = false;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = bg;
+            btn.onClick.AddListener(() =>
+            {
+                var sel = poiManager?.GetSelectedPoi();
+                if (sel != null) poiManager.UpdatePoiType(sel.Id, type);
+                ApplyTypeHighlight(type);
+            });
+
+            var iconGO = new GameObject("Icon");
+            iconGO.transform.SetParent(go.transform, false);
+            var icon = iconGO.AddComponent<Image>();
+            icon.sprite = PoiPlaceholderFactory.GetPlaceholder(type);
+            icon.preserveAspect = true;
+            icon.raycastTarget = false;
+            var iconRect = iconGO.GetComponent<RectTransform>();
+            iconRect.anchorMin = new Vector2(0.5f, 1f);
+            iconRect.anchorMax = new Vector2(0.5f, 1f);
+            iconRect.pivot = new Vector2(0.5f, 1f);
+            iconRect.anchoredPosition = new Vector2(0f, -4f);
+            iconRect.sizeDelta = new Vector2(22f, 22f);
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(go.transform, false);
+            var lbl = labelGO.AddComponent<Text>();
+            lbl.text = label;
+            lbl.font = builtinFont;
+            lbl.fontSize = 9;
+            ThemeService.Tag(lbl, ThemeRole.Txt);
+            lbl.alignment = TextAnchor.LowerCenter;
+            lbl.raycastTarget = false;
+            var lblRect = labelGO.GetComponent<RectTransform>();
+            lblRect.anchorMin = new Vector2(0f, 0f);
+            lblRect.anchorMax = new Vector2(1f, 0f);
+            lblRect.pivot = new Vector2(0.5f, 0f);
+            lblRect.anchoredPosition = new Vector2(0f, 3f);
+            lblRect.sizeDelta = new Vector2(0f, 12f);
+
+            typeButtons[type] = (bg, outline);
+        }
+
+        void ApplyTypeHighlight(PoiType type)
+        {
+            foreach (var kvp in typeButtons)
+            {
+                bool on = kvp.Key == type;
+                ThemeService.Tag(kvp.Value.bg, on ? ThemeRole.AccentSoft : ThemeRole.Elev);
+                kvp.Value.outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+                kvp.Value.outline.enabled = on;
+            }
         }
 
         // ── UI Construction ──────────────────────────────────────────────────────
@@ -180,9 +256,9 @@ namespace WorldGen.Rendering
             panelRect.sizeDelta = new Vector2(panelWidth, 0f);
             UiShadow.Add(panelRect);
 
-            // Scroll area: content auto-sizes via ContentSizeFitter, but RepositionUnderLegend()
-            // clamps scrollAreaLE.preferredHeight to whatever screen space remains below the
-            // legend, so tall content scrolls instead of pushing the panel off-screen.
+            // Scroll area: content auto-sizes via ContentSizeFitter, but RepositionPanel() clamps
+            // scrollAreaLE.preferredHeight to whatever screen space remains below the top chrome,
+            // so tall content scrolls instead of pushing the panel off-screen.
             var scrollAreaGO = new GameObject("ScrollArea");
             scrollAreaGO.transform.SetParent(panelGO.transform, false);
             scrollAreaLE = scrollAreaGO.AddComponent<LayoutElement>();
@@ -228,36 +304,7 @@ namespace WorldGen.Rendering
             AddLabel(t, "─ Точка интереса ─", bold: true, role: ThemeRole.Mut);
 
             AddLabel(t, "Тип:");
-            var typeRowGO = new GameObject("TypeDropdownRow");
-            typeRowGO.transform.SetParent(t, false);
-            typeRowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
-
-            poiTypeDropdown = typeRowGO.AddComponent<Dropdown>();
-            var typeBg = typeRowGO.AddComponent<Image>();
-            ThemeService.Tag(typeBg, ThemeRole.Panel2, 0.95f);
-            poiTypeDropdown.targetGraphic = typeBg;
-
-            var typeCaptionGO = new GameObject("Label");
-            typeCaptionGO.transform.SetParent(typeRowGO.transform, false);
-            var typeCaptionText = typeCaptionGO.AddComponent<Text>();
-            typeCaptionText.font = builtinFont;
-            typeCaptionText.fontSize = 12;
-            ThemeService.Tag(typeCaptionText, ThemeRole.Txt);
-            typeCaptionText.alignment = TextAnchor.MiddleLeft;
-            var typeCaptionRect = typeCaptionGO.GetComponent<RectTransform>();
-            typeCaptionRect.anchorMin = new Vector2(0.05f, 0f);
-            typeCaptionRect.anchorMax = new Vector2(1f, 1f);
-            typeCaptionRect.sizeDelta = Vector2.zero;
-            poiTypeDropdown.captionText = typeCaptionText;
-            BuildDropdownTemplate(poiTypeDropdown, typeRowGO);
-            poiTypeDropdown.AddOptions(new List<string>
-                { "Неизвестно", "Город", "Руины", "Подземелье", "Крепость" });
-            poiTypeDropdown.RefreshShownValue();
-            poiTypeDropdown.onValueChanged.AddListener(v =>
-            {
-                var sel = poiManager?.GetSelectedPoi();
-                if (sel != null) poiManager.UpdatePoiType(sel.Id, (PoiType)v);
-            });
+            BuildTypeSelector(t);
 
             AddLabel(t, "Название:");
             poiNameField = BuildInputField(t, multiline: false);
@@ -570,95 +617,6 @@ namespace WorldGen.Rendering
             le.preferredHeight = multiline ? 34f : 20f;
             le.flexibleWidth = 1f;
             return field;
-        }
-
-        void BuildDropdownTemplate(Dropdown dropdown, GameObject dropdownGO)
-        {
-            var templateGO = new GameObject("Template");
-            templateGO.transform.SetParent(dropdownGO.transform, false);
-            var templateRect = templateGO.AddComponent<RectTransform>();
-            templateRect.anchorMin = new Vector2(0f, 0f);
-            templateRect.anchorMax = new Vector2(1f, 0f);
-            templateRect.pivot = new Vector2(0.5f, 1f);
-            templateRect.anchoredPosition = new Vector2(0f, 2f);
-            templateRect.sizeDelta = new Vector2(0f, 150f);
-
-            var templateBg = templateGO.AddComponent<Image>();
-            ThemeService.Tag(templateBg, ThemeRole.Panel2, 0.98f);
-            var templateCanvas = templateGO.AddComponent<Canvas>();
-            templateCanvas.overrideSorting = true;
-            templateCanvas.sortingOrder = 30000;
-            templateGO.AddComponent<GraphicRaycaster>();
-
-            var scrollRect = templateGO.AddComponent<ScrollRect>();
-            scrollRect.horizontal = false;
-            scrollRect.movementType = ScrollRect.MovementType.Clamped;
-
-            var viewportGO = new GameObject("Viewport");
-            viewportGO.transform.SetParent(templateGO.transform, false);
-            var viewportRect = viewportGO.AddComponent<RectTransform>();
-            viewportRect.anchorMin = Vector2.zero;
-            viewportRect.anchorMax = Vector2.one;
-            viewportRect.sizeDelta = Vector2.zero;
-            viewportRect.pivot = new Vector2(0f, 1f);
-            viewportGO.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.01f);
-            viewportGO.AddComponent<Mask>().showMaskGraphic = false;
-
-            var contentGO = new GameObject("Content");
-            contentGO.transform.SetParent(viewportGO.transform, false);
-            var contentRect = contentGO.AddComponent<RectTransform>();
-            contentRect.anchorMin = new Vector2(0f, 1f);
-            contentRect.anchorMax = new Vector2(1f, 1f);
-            contentRect.pivot = new Vector2(0.5f, 1f);
-            contentRect.sizeDelta = new Vector2(0f, 28f);
-
-            var itemGO = new GameObject("Item");
-            itemGO.transform.SetParent(contentGO.transform, false);
-            var itemRect = itemGO.AddComponent<RectTransform>();
-            itemRect.anchorMin = new Vector2(0f, 0.5f);
-            itemRect.anchorMax = new Vector2(1f, 0.5f);
-            itemRect.sizeDelta = new Vector2(0f, 26f);
-            var itemToggle = itemGO.AddComponent<Toggle>();
-
-            var itemBgGO = new GameObject("Item Background");
-            itemBgGO.transform.SetParent(itemGO.transform, false);
-            var itemBg = itemBgGO.AddComponent<Image>();
-            ThemeService.Tag(itemBg, ThemeRole.AccentSoft, 0.6f);
-            var itemBgRect = itemBgGO.GetComponent<RectTransform>();
-            itemBgRect.anchorMin = Vector2.zero;
-            itemBgRect.anchorMax = Vector2.one;
-            itemBgRect.sizeDelta = Vector2.zero;
-            itemToggle.targetGraphic = itemBg;
-
-            var itemCheckGO = new GameObject("Item Checkmark");
-            itemCheckGO.transform.SetParent(itemGO.transform, false);
-            var itemCheck = itemCheckGO.AddComponent<Image>();
-            ThemeService.Tag(itemCheck, ThemeRole.Accent);
-            var itemCheckRect = itemCheckGO.GetComponent<RectTransform>();
-            itemCheckRect.anchorMin = new Vector2(0f, 0.5f);
-            itemCheckRect.anchorMax = new Vector2(0f, 0.5f);
-            itemCheckRect.sizeDelta = new Vector2(16f, 16f);
-            itemCheckRect.anchoredPosition = new Vector2(10f, 0f);
-            itemToggle.graphic = itemCheck;
-
-            var itemLabelGO = new GameObject("Item Label");
-            itemLabelGO.transform.SetParent(itemGO.transform, false);
-            var itemLabel = itemLabelGO.AddComponent<Text>();
-            itemLabel.font = builtinFont;
-            itemLabel.fontSize = 12;
-            ThemeService.Tag(itemLabel, ThemeRole.Txt);
-            itemLabel.alignment = TextAnchor.MiddleLeft;
-            var itemLabelRect = itemLabelGO.GetComponent<RectTransform>();
-            itemLabelRect.anchorMin = new Vector2(0f, 0f);
-            itemLabelRect.anchorMax = new Vector2(1f, 1f);
-            itemLabelRect.offsetMin = new Vector2(28f, 1f);
-            itemLabelRect.offsetMax = new Vector2(-8f, -1f);
-
-            scrollRect.content = contentRect;
-            scrollRect.viewport = viewportRect;
-            dropdown.template = templateRect;
-            dropdown.itemText = itemLabel;
-            templateGO.SetActive(false);
         }
     }
 }

@@ -1,24 +1,43 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using WorldGen.Generation;
 using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// "Точки" tab content - extracted unchanged from MapEditorPanel.BuildPoiTab (Main-screen shell
-    /// redesign, 2026-07-06). Functionally identical to the pre-redesign panel; Screen D's spec
-    /// ("POI Screen Redesign") will replace this class's internals with the real list+search+filter
-    /// design - do not add list/search/filter logic here.
+    /// "Точки" tab — POI list panel (Screen D). Left, full-height column: header + live count +
+    /// "⋯" overflow menu (generate N / clear all), search, filter chips, a scrollable row list
+    /// (shared icon + name + "тип · регион"), and a "+ Добавить точку" footer that arms map
+    /// placement. Two-way selection sync with the map via PoiManager's selection events; the
+    /// actual placement/marker logic lives in PoiManager/PoiInteractionController.
     /// </summary>
     public class PoiToolPanel : MonoBehaviour
     {
         [Header("Источники")]
         public PoiManager poiManager;
 
-        int poiCount = 5;
-        Text poiCountLabel;
-
         Font builtinFont;
+
+        int genCount = 5;
+        Text headerCountLabel;
+        Text genCountLabel;
+        InputField searchField;
+        string searchText = "";
+        PoiType? filterType = null;
+
+        Transform listContent;
+        GameObject overflowPopup;
+        GameObject armedHintGO;
+        Image footerBg;
+        Text footerLabel;
+
+        readonly List<Chip> chips = new List<Chip>();
+        readonly Dictionary<string, RowVisual> rowVisuals = new Dictionary<string, RowVisual>();
+
+        class Chip { public PoiType? Type; public Image Bg; public Text Txt; }
+        struct RowVisual { public Image Bg; public Outline Outline; }
 
         void Awake()
         {
@@ -26,10 +45,99 @@ namespace WorldGen.Rendering
             BuildUI();
         }
 
-        void OnGeneratePois()
+        void OnEnable()
         {
-            if (poiManager == null) return;
-            poiManager.GenerateAll(poiCount);
+            if (poiManager != null)
+            {
+                poiManager.OnPoisChanged += RebuildList;
+                poiManager.OnSelectionChanged += HandleSelectionChanged;
+                poiManager.OnPlacementArmedChanged += HandleArmedChanged;
+            }
+            RebuildList();
+            HandleArmedChanged(poiManager != null && poiManager.PlacementArmed);
+        }
+
+        void OnDisable()
+        {
+            if (poiManager != null)
+            {
+                poiManager.OnPoisChanged -= RebuildList;
+                poiManager.OnSelectionChanged -= HandleSelectionChanged;
+                poiManager.OnPlacementArmedChanged -= HandleArmedChanged;
+                poiManager.DisarmPlacement(); // не оставляем взвод активным при уходе с вкладки
+            }
+            if (overflowPopup != null) overflowPopup.SetActive(false);
+        }
+
+        // ── Event handlers ───────────────────────────────────────────────────────
+
+        void HandleSelectionChanged(PoiData poi) => ApplyRowHighlight(poi?.Id);
+
+        void HandleArmedChanged(bool armed)
+        {
+            if (footerLabel != null) footerLabel.text = armed ? "Отмена (Esc)" : "+ Добавить точку";
+            if (footerBg != null) ThemeService.Tag(footerBg, armed ? ThemeRole.Accent : ThemeRole.Elev);
+            if (footerLabel != null) ThemeService.Tag(footerLabel, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
+            if (armedHintGO != null) armedHintGO.SetActive(armed);
+        }
+
+        void OnSearchChanged(string value)
+        {
+            searchText = value;
+            RebuildList();
+        }
+
+        void OnFilterChanged(PoiType? type)
+        {
+            filterType = type;
+            foreach (var chip in chips)
+            {
+                bool on = chip.Type == type;
+                ThemeService.Tag(chip.Bg, on ? ThemeRole.Accent : ThemeRole.Elev);
+                ThemeService.Tag(chip.Txt, on ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
+            RebuildList();
+        }
+
+        // ── List rebuild ─────────────────────────────────────────────────────────
+
+        void RebuildList()
+        {
+            if (listContent == null) return;
+            for (int i = listContent.childCount - 1; i >= 0; i--)
+                Destroy(listContent.GetChild(i).gameObject);
+            rowVisuals.Clear();
+
+            if (poiManager != null)
+            {
+                string q = (searchText ?? "").Trim().ToLowerInvariant();
+                foreach (var poi in poiManager.GetAllPois())
+                {
+                    if (filterType.HasValue && poi.Type != filterType.Value) continue;
+                    if (q.Length > 0 && !(poi.Name ?? "").ToLowerInvariant().Contains(q)) continue;
+                    BuildRow(poi);
+                }
+                ApplyRowHighlight(poiManager.GetSelectedPoi()?.Id);
+            }
+
+            UpdateCountLabel();
+        }
+
+        void UpdateCountLabel()
+        {
+            int n = poiManager != null ? poiManager.GetAllPois().Count : 0;
+            if (headerCountLabel != null) headerCountLabel.text = n.ToString();
+        }
+
+        void ApplyRowHighlight(string selectedId)
+        {
+            foreach (var kvp in rowVisuals)
+            {
+                bool on = kvp.Key == selectedId;
+                kvp.Value.Bg.color = on ? ThemeService.Get(ThemeRole.AccentSoft) : new Color(0f, 0f, 0f, 0f);
+                kvp.Value.Outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+                kvp.Value.Outline.enabled = on;
+            }
         }
 
         // ── UI Construction ──────────────────────────────────────────────────────
@@ -48,134 +156,456 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("PoiPanel");
             panelGO.transform.SetParent(canvasTransform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.7f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.92f);
             var panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0f, 1f);
+            panelRect.anchorMin = new Vector2(0f, 0f);
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
-            panelRect.anchoredPosition = new Vector2(20f, -20f - MapToolbarUI.BarHeightPixels - 40f); // below 40px menu + 46px toolbar
-            panelRect.sizeDelta = new Vector2(300f, 0f);
+            // left=20, width=262; top below 40px menu + 46px toolbar + 20 gap; bottom 20 from screen bottom.
+            panelRect.offsetMin = new Vector2(20f, 20f);
+            panelRect.offsetMax = new Vector2(20f + 262f, -(40f + MapToolbarUI.BarHeightPixels + 20f));
 
             var layout = panelGO.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 10, 10);
-            layout.spacing = 6f;
+            layout.padding = new RectOffset(12, 12, 12, 12);
+            layout.spacing = 8f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
-            layout.childControlHeight = true;      // respect each child's LayoutElement.preferredHeight
-            layout.childForceExpandHeight = false; // ...and don't stretch to fill (default true = the panel-bloat bug)
-            panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
             UiShadow.Add(panelRect);
 
-            BuildPoiTab(panelGO.transform);
+            BuildHeader(panelGO.transform);
+            BuildSearch(panelGO.transform);
+            BuildFilterChips(panelGO.transform);
+            BuildList(panelGO.transform);
+            BuildArmedHint(panelGO.transform);
+            BuildFooter(panelGO.transform);
+            BuildOverflowPopup(canvasTransform);
         }
 
-        void BuildPoiTab(Transform t)
+        void BuildHeader(Transform t)
         {
-            AddLabel(t, "─── Точки интереса ───", bold: false, role: ThemeRole.Mut);
+            var rowGO = new GameObject("Header");
+            rowGO.transform.SetParent(t, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 24f;
 
-            var countRowGO = new GameObject("PoiCountRow");
-            countRowGO.transform.SetParent(t, false);
-            var cHLG = countRowGO.AddComponent<HorizontalLayoutGroup>();
-            cHLG.spacing = 4f;
-            cHLG.childControlWidth = false;
-            cHLG.childControlHeight = false;
-            countRowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+            var titleGO = new GameObject("Title");
+            titleGO.transform.SetParent(rowGO.transform, false);
+            var title = titleGO.AddComponent<Text>();
+            title.text = "Точки интереса";
+            title.font = builtinFont;
+            title.fontSize = 14;
+            title.fontStyle = FontStyle.Bold;
+            ThemeService.Tag(title, ThemeRole.Txt);
+            title.alignment = TextAnchor.MiddleLeft;
+            var titleRect = titleGO.GetComponent<RectTransform>();
+            titleRect.anchorMin = new Vector2(0f, 0f);
+            titleRect.anchorMax = new Vector2(0.75f, 1f);
+            titleRect.offsetMin = Vector2.zero;
+            titleRect.offsetMax = Vector2.zero;
 
-            var cLblGO = new GameObject("Label");
-            cLblGO.transform.SetParent(countRowGO.transform, false);
-            var cLblText = cLblGO.AddComponent<Text>();
-            cLblText.text = "Количество:";
-            cLblText.font = builtinFont;
-            cLblText.fontSize = 12;
-            ThemeService.Tag(cLblText, ThemeRole.Txt);
-            cLblText.alignment = TextAnchor.MiddleLeft;
-            cLblGO.GetComponent<RectTransform>().sizeDelta = new Vector2(100f, 22f);
+            var countGO = new GameObject("Count");
+            countGO.transform.SetParent(rowGO.transform, false);
+            headerCountLabel = countGO.AddComponent<Text>();
+            headerCountLabel.text = "0";
+            headerCountLabel.font = builtinFont;
+            headerCountLabel.fontSize = 12;
+            ThemeService.Tag(headerCountLabel, ThemeRole.Mut);
+            headerCountLabel.alignment = TextAnchor.MiddleRight;
+            var countRect = countGO.GetComponent<RectTransform>();
+            countRect.anchorMin = new Vector2(0.55f, 0f);
+            countRect.anchorMax = new Vector2(1f, 1f);
+            countRect.offsetMin = new Vector2(0f, 0f);
+            countRect.offsetMax = new Vector2(-28f, 0f);
 
-            AddSmallButton(countRowGO.transform, "−", () =>
-            {
-                if (poiCount > 0) poiCount--;
-                if (poiCountLabel != null) poiCountLabel.text = poiCount.ToString();
-            });
-
-            var countDisplayGO = new GameObject("CountDisplay");
-            countDisplayGO.transform.SetParent(countRowGO.transform, false);
-            poiCountLabel = countDisplayGO.AddComponent<Text>();
-            poiCountLabel.text = poiCount.ToString();
-            poiCountLabel.font = builtinFont;
-            poiCountLabel.fontSize = 12;
-            ThemeService.Tag(poiCountLabel, ThemeRole.Txt);
-            poiCountLabel.alignment = TextAnchor.MiddleCenter;
-            countDisplayGO.GetComponent<RectTransform>().sizeDelta = new Vector2(30f, 22f);
-
-            AddSmallButton(countRowGO.transform, "+", () =>
-            {
-                poiCount++;
-                if (poiCountLabel != null) poiCountLabel.text = poiCount.ToString();
-            });
-
-            AddButton(t, "Сгенерировать точки интереса", OnGeneratePois, ThemeRole.Accent);
-            AddButton(t, "Добавить одну точку", () => poiManager?.AddOne(), ThemeRole.Elev);
-            AddButton(t, "Очистить все", () => poiManager?.ClearAll(), ThemeRole.Danger);
-
-            var hint = AddLabel(t, "Кликните по точке на карте, чтобы её отредактировать в отдельной панели.");
-            ThemeService.Tag(hint, ThemeRole.Mut);
-            hint.fontSize = 11;
-            hint.fontStyle = FontStyle.Italic;
+            var ovBtnGO = new GameObject("Overflow");
+            ovBtnGO.transform.SetParent(rowGO.transform, false);
+            var ovImg = ovBtnGO.AddComponent<Image>();
+            ThemeService.Tag(ovImg, ThemeRole.Elev);
+            var ovBtn = ovBtnGO.AddComponent<Button>();
+            ovBtn.targetGraphic = ovImg;
+            ovBtn.onClick.AddListener(ToggleOverflowPopup);
+            var ovRect = ovBtnGO.GetComponent<RectTransform>();
+            ovRect.anchorMin = new Vector2(1f, 0.5f);
+            ovRect.anchorMax = new Vector2(1f, 0.5f);
+            ovRect.pivot = new Vector2(1f, 0.5f);
+            ovRect.sizeDelta = new Vector2(24f, 22f);
+            var ovTextGO = new GameObject("Text");
+            ovTextGO.transform.SetParent(ovBtnGO.transform, false);
+            var ovText = ovTextGO.AddComponent<Text>();
+            ovText.text = "⋯";
+            ovText.font = builtinFont;
+            ovText.fontSize = 16;
+            ThemeService.Tag(ovText, ThemeRole.Txt);
+            ovText.alignment = TextAnchor.MiddleCenter;
+            var ovTr = ovTextGO.GetComponent<RectTransform>();
+            ovTr.anchorMin = Vector2.zero;
+            ovTr.anchorMax = Vector2.one;
+            ovTr.sizeDelta = Vector2.zero;
         }
 
-        // ── Widget helpers (duplicated from MapEditorPanel, same as every other extracted panel) ──
-
-        Text AddLabel(Transform parent, string text, bool bold = false, ThemeRole? role = null)
+        void BuildSearch(Transform t)
         {
-            var go = new GameObject("Label");
-            go.transform.SetParent(parent, false);
-            var label = go.AddComponent<Text>();
-            label.text = text;
-            label.font = builtinFont;
-            label.fontSize = bold ? 15 : 12;
-            label.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
-            ThemeService.Tag(label, role ?? ThemeRole.Txt);
-            label.alignment = TextAnchor.MiddleLeft;
-            go.AddComponent<LayoutElement>().preferredHeight = bold ? 20f : 16f;
-            return label;
+            var go = new GameObject("Search");
+            go.transform.SetParent(t, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel2);
+            searchField = go.AddComponent<InputField>();
+            searchField.targetGraphic = bg;
+            searchField.lineType = InputField.LineType.SingleLine;
+            go.AddComponent<LayoutElement>().preferredHeight = 28f;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.font = builtinFont;
+            text.fontSize = 12;
+            ThemeService.Tag(text, ThemeRole.Txt);
+            text.supportRichText = false;
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = new Vector2(0f, 0f);
+            textRect.anchorMax = new Vector2(1f, 1f);
+            textRect.offsetMin = new Vector2(8f, 0f);
+            textRect.offsetMax = new Vector2(-8f, 0f);
+            searchField.textComponent = text;
+
+            var phGO = new GameObject("Placeholder");
+            phGO.transform.SetParent(go.transform, false);
+            var ph = phGO.AddComponent<Text>();
+            ph.text = "Поиск…";
+            ph.font = builtinFont;
+            ph.fontSize = 12;
+            ph.fontStyle = FontStyle.Italic;
+            ThemeService.Tag(ph, ThemeRole.Mut);
+            var phRect = phGO.GetComponent<RectTransform>();
+            phRect.anchorMin = new Vector2(0f, 0f);
+            phRect.anchorMax = new Vector2(1f, 1f);
+            phRect.offsetMin = new Vector2(8f, 0f);
+            phRect.offsetMax = new Vector2(-8f, 0f);
+            searchField.placeholder = ph;
+
+            searchField.onValueChanged.AddListener(OnSearchChanged);
         }
 
-        void AddButton(Transform parent, string label, System.Action onClick, ThemeRole? role = null)
+        void BuildFilterChips(Transform t)
         {
-            var go = new GameObject($"Btn_{label}");
-            go.transform.SetParent(parent, false);
-            var img = go.AddComponent<Image>();
-            var backgroundRole = role ?? ThemeRole.Elev;
-            ThemeService.Tag(img, backgroundRole);
+            var container = new GameObject("Chips");
+            container.transform.SetParent(t, false);
+            var vlg = container.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 4f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            container.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var row1 = MakeChipRow(container.transform);
+            AddChip(row1, "Все", null);
+            AddChip(row1, "Города", PoiType.City);
+            AddChip(row1, "Руины", PoiType.Ruin);
+
+            var row2 = MakeChipRow(container.transform);
+            AddChip(row2, "Подземелья", PoiType.Dungeon);
+            AddChip(row2, "Крепости", PoiType.Fortress);
+
+            OnFilterChanged(null); // подсветить "Все"
+        }
+
+        Transform MakeChipRow(Transform parent)
+        {
+            var rowGO = new GameObject("ChipRow");
+            rowGO.transform.SetParent(parent, false);
+            var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 6f;
+            hlg.childControlWidth = false;
+            hlg.childForceExpandWidth = false;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 24f;
+            return rowGO.transform;
+        }
+
+        void AddChip(Transform row, string label, PoiType? type)
+        {
+            var go = new GameObject($"Chip_{label}");
+            go.transform.SetParent(row, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
-            btn.onClick.AddListener(() => onClick?.Invoke());
-            go.AddComponent<LayoutElement>().preferredHeight = 26f;
+            btn.targetGraphic = bg;
+            btn.onClick.AddListener(() => OnFilterChanged(type));
+            var hlg = go.AddComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(10, 10, 3, 3);
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            go.AddComponent<ContentSizeFitter>().horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = 24f;
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
             var text = textGO.AddComponent<Text>();
             text.text = label;
             text.font = builtinFont;
-            text.fontSize = 12;
-            ThemeService.Tag(text, backgroundRole == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt);
+            text.fontSize = 11;
+            ThemeService.Tag(text, ThemeRole.Txt);
             text.alignment = TextAnchor.MiddleCenter;
+
+            chips.Add(new Chip { Type = type, Bg = bg, Txt = text });
+        }
+
+        void BuildList(Transform t)
+        {
+            var scrollGO = new GameObject("ListScroll");
+            scrollGO.transform.SetParent(t, false);
+            var le = scrollGO.AddComponent<LayoutElement>();
+            le.flexibleHeight = 1f;
+            le.minHeight = 80f;
+            var scroll = scrollGO.AddComponent<ScrollRect>();
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.scrollSensitivity = 24f;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewportGO = new GameObject("Viewport");
+            viewportGO.transform.SetParent(scrollGO.transform, false);
+            var vpImg = viewportGO.AddComponent<Image>();
+            vpImg.color = new Color(0f, 0f, 0f, 0.001f); // прозрачный, но raycast-target для колеса
+            viewportGO.AddComponent<RectMask2D>();
+            var vpRect = viewportGO.GetComponent<RectTransform>();
+            vpRect.anchorMin = Vector2.zero;
+            vpRect.anchorMax = Vector2.one;
+            vpRect.offsetMin = Vector2.zero;
+            vpRect.offsetMax = Vector2.zero;
+            scroll.viewport = vpRect;
+
+            var contentGO = new GameObject("Content");
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            var cvlg = contentGO.AddComponent<VerticalLayoutGroup>();
+            cvlg.spacing = 4f;
+            cvlg.childControlWidth = true;
+            cvlg.childForceExpandWidth = true;
+            cvlg.childControlHeight = true;
+            cvlg.childForceExpandHeight = false;
+            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var cRect = contentGO.GetComponent<RectTransform>();
+            cRect.anchorMin = new Vector2(0f, 1f);
+            cRect.anchorMax = new Vector2(1f, 1f);
+            cRect.pivot = new Vector2(0.5f, 1f);
+            cRect.sizeDelta = Vector2.zero;
+            scroll.content = cRect;
+
+            listContent = contentGO.transform;
+        }
+
+        void BuildRow(PoiData poi)
+        {
+            var rowGO = new GameObject($"Row_{poi.Id}");
+            rowGO.transform.SetParent(listContent, false);
+            var bg = rowGO.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0f);
+            var outline = rowGO.AddComponent<Outline>();
+            outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            outline.effectDistance = new Vector2(1f, -1f);
+            outline.enabled = false;
+            var btn = rowGO.AddComponent<Button>();
+            btn.targetGraphic = bg;
+            string id = poi.Id;
+            btn.onClick.AddListener(() => poiManager?.SelectPoi(id));
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 44f;
+
+            var iconGO = new GameObject("Icon");
+            iconGO.transform.SetParent(rowGO.transform, false);
+            var icon = iconGO.AddComponent<Image>();
+            icon.sprite = PoiPlaceholderFactory.GetPlaceholder(poi.Type);
+            icon.preserveAspect = true;
+            var iconRect = iconGO.GetComponent<RectTransform>();
+            iconRect.anchorMin = new Vector2(0f, 0.5f);
+            iconRect.anchorMax = new Vector2(0f, 0.5f);
+            iconRect.pivot = new Vector2(0f, 0.5f);
+            iconRect.anchoredPosition = new Vector2(8f, 0f);
+            iconRect.sizeDelta = new Vector2(28f, 28f);
+
+            var nameGO = new GameObject("Name");
+            nameGO.transform.SetParent(rowGO.transform, false);
+            var nameText = nameGO.AddComponent<Text>();
+            nameText.text = string.IsNullOrEmpty(poi.Name) ? "(без имени)" : poi.Name;
+            nameText.font = builtinFont;
+            nameText.fontSize = 12;
+            nameText.fontStyle = FontStyle.Bold;
+            ThemeService.Tag(nameText, ThemeRole.Txt);
+            nameText.alignment = TextAnchor.LowerLeft;
+            nameText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var nameRect = nameGO.GetComponent<RectTransform>();
+            nameRect.anchorMin = new Vector2(0f, 0.5f);
+            nameRect.anchorMax = new Vector2(1f, 1f);
+            nameRect.offsetMin = new Vector2(44f, 0f);
+            nameRect.offsetMax = new Vector2(-8f, -4f);
+
+            var subGO = new GameObject("Subtitle");
+            subGO.transform.SetParent(rowGO.transform, false);
+            var subText = subGO.AddComponent<Text>();
+            subText.text = $"{TypeName(poi.Type)} · {RegionLabel(poi)}";
+            subText.font = builtinFont;
+            subText.fontSize = 10;
+            ThemeService.Tag(subText, ThemeRole.Mut);
+            subText.alignment = TextAnchor.UpperLeft;
+            subText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var subRect = subGO.GetComponent<RectTransform>();
+            subRect.anchorMin = new Vector2(0f, 0f);
+            subRect.anchorMax = new Vector2(1f, 0.5f);
+            subRect.offsetMin = new Vector2(44f, 4f);
+            subRect.offsetMax = new Vector2(-8f, 0f);
+
+            rowVisuals[poi.Id] = new RowVisual { Bg = bg, Outline = outline };
+        }
+
+        void BuildArmedHint(Transform t)
+        {
+            armedHintGO = new GameObject("ArmedHint");
+            armedHintGO.transform.SetParent(t, false);
+            var hint = armedHintGO.AddComponent<Text>();
+            hint.text = "Кликните по карте, чтобы добавить точку";
+            hint.font = builtinFont;
+            hint.fontSize = 10;
+            hint.fontStyle = FontStyle.Italic;
+            ThemeService.Tag(hint, ThemeRole.Accent);
+            hint.alignment = TextAnchor.MiddleCenter;
+            armedHintGO.AddComponent<LayoutElement>().preferredHeight = 14f;
+            armedHintGO.SetActive(false);
+        }
+
+        void BuildFooter(Transform t)
+        {
+            var go = new GameObject("AddButton");
+            go.transform.SetParent(t, false);
+            footerBg = go.AddComponent<Image>();
+            ThemeService.Tag(footerBg, ThemeRole.Elev);
+            var outline = go.AddComponent<Outline>();
+            outline.effectColor = ThemeService.Get(ThemeRole.Border);
+            outline.effectDistance = new Vector2(1f, -1f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = footerBg;
+            btn.onClick.AddListener(() => poiManager?.TogglePlacement());
+            go.AddComponent<LayoutElement>().preferredHeight = 38f;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            footerLabel = textGO.AddComponent<Text>();
+            footerLabel.text = "+ Добавить точку";
+            footerLabel.font = builtinFont;
+            footerLabel.fontSize = 12;
+            ThemeService.Tag(footerLabel, ThemeRole.Txt);
+            footerLabel.alignment = TextAnchor.MiddleCenter;
             var tr = textGO.GetComponent<RectTransform>();
             tr.anchorMin = Vector2.zero;
             tr.anchorMax = Vector2.one;
             tr.sizeDelta = Vector2.zero;
         }
 
-        void AddSmallButton(Transform parent, string label, System.Action onClick)
+        // ── Overflow popup (⋯): generate N / clear all ──────────────────────────
+
+        void BuildOverflowPopup(Transform canvasTransform)
         {
-            var go = new GameObject($"SmallBtn_{label}");
+            overflowPopup = new GameObject("PoiOverflowPopup");
+            overflowPopup.transform.SetParent(canvasTransform, false);
+            var img = overflowPopup.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Panel2);
+            overflowPopup.AddComponent<Outline>().effectColor = ThemeService.Get(ThemeRole.Border);
+            var rect = overflowPopup.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(40f, -(40f + MapToolbarUI.BarHeightPixels + 20f + 30f));
+            rect.sizeDelta = new Vector2(230f, 110f);
+
+            var vlg = overflowPopup.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(10, 10, 8, 8);
+            vlg.spacing = 6f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            UiShadow.Add(rect);
+
+            // Количество: [-] N [+]
+            var countRow = new GameObject("CountRow");
+            countRow.transform.SetParent(overflowPopup.transform, false);
+            var cHLG = countRow.AddComponent<HorizontalLayoutGroup>();
+            cHLG.spacing = 4f;
+            cHLG.childControlWidth = false;
+            cHLG.childForceExpandWidth = false;
+            cHLG.childControlHeight = false;
+            cHLG.childAlignment = TextAnchor.MiddleLeft;
+            countRow.AddComponent<LayoutElement>().preferredHeight = 22f;
+
+            AddPopupLabel(countRow.transform, "Количество:", 92f);
+            AddStepButton(countRow.transform, "−", () => { if (genCount > 0) genCount--; UpdateGenCountLabel(); });
+            var gcGO = new GameObject("N");
+            gcGO.transform.SetParent(countRow.transform, false);
+            genCountLabel = gcGO.AddComponent<Text>();
+            genCountLabel.text = genCount.ToString();
+            genCountLabel.font = builtinFont;
+            genCountLabel.fontSize = 12;
+            ThemeService.Tag(genCountLabel, ThemeRole.Txt);
+            genCountLabel.alignment = TextAnchor.MiddleCenter;
+            gcGO.GetComponent<RectTransform>().sizeDelta = new Vector2(28f, 20f);
+            AddStepButton(countRow.transform, "+", () => { genCount++; UpdateGenCountLabel(); });
+
+            AddPopupButton(overflowPopup.transform, "Сгенерировать точки интереса", ThemeRole.Accent, () =>
+            {
+                poiManager?.GenerateAll(genCount);
+                overflowPopup.SetActive(false);
+            });
+            AddPopupButton(overflowPopup.transform, "Очистить все", ThemeRole.Danger, () =>
+            {
+                poiManager?.ClearAll();
+                overflowPopup.SetActive(false);
+            });
+
+            overflowPopup.transform.SetAsLastSibling();
+            overflowPopup.SetActive(false);
+        }
+
+        void ToggleOverflowPopup()
+        {
+            if (overflowPopup == null) return;
+            bool show = !overflowPopup.activeSelf;
+            overflowPopup.SetActive(show);
+            if (show) overflowPopup.transform.SetAsLastSibling();
+        }
+
+        void UpdateGenCountLabel()
+        {
+            if (genCountLabel != null) genCountLabel.text = genCount.ToString();
+        }
+
+        void AddPopupLabel(Transform parent, string text, float width)
+        {
+            var go = new GameObject("Label");
+            go.transform.SetParent(parent, false);
+            var label = go.AddComponent<Text>();
+            label.text = text;
+            label.font = builtinFont;
+            label.fontSize = 12;
+            ThemeService.Tag(label, ThemeRole.Txt);
+            label.alignment = TextAnchor.MiddleLeft;
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 20f);
+        }
+
+        void AddStepButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"Step_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick?.Invoke());
-            go.GetComponent<RectTransform>().sizeDelta = new Vector2(20f, 20f);
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(22f, 20f);
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
@@ -189,6 +619,70 @@ namespace WorldGen.Rendering
             tr.anchorMin = Vector2.zero;
             tr.anchorMax = Vector2.one;
             tr.sizeDelta = Vector2.zero;
+        }
+
+        void AddPopupButton(Transform parent, string label, ThemeRole role, System.Action onClick)
+        {
+            var go = new GameObject($"Btn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, role);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+            go.AddComponent<LayoutElement>().preferredHeight = 26f;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 12;
+            ThemeService.Tag(text, role == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt);
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
+        }
+
+        // ── Subtitle helpers ─────────────────────────────────────────────────────
+
+        static string TypeName(PoiType t)
+        {
+            switch (t)
+            {
+                case PoiType.City: return "Город";
+                case PoiType.Ruin: return "Руины";
+                case PoiType.Dungeon: return "Подземелье";
+                case PoiType.Fortress: return "Крепость";
+                default: return "Точка";
+            }
+        }
+
+        static readonly string[] CompassLabels =
+        {
+            "Восточный", "Северо-восточный", "Северный", "Северо-западный",
+            "Западный", "Юго-западный", "Южный", "Юго-восточный",
+        };
+
+        /// <summary>Флейворное имя региона по положению точки относительно центра карты
+        /// (реального именования регионов в проекте пока нет — это читаемая замена).</summary>
+        string RegionLabel(PoiData poi)
+        {
+            var mr = poiManager != null ? poiManager.mapRenderer : null;
+            if (mr == null) return "Регион";
+
+            float cx = mr.mapWidth * 0.5f, cy = mr.mapHeight * 0.5f;
+            float dx = poi.WorldPosition.X - cx;
+            float dy = poi.WorldPosition.Y - cy;
+            float maxSide = Mathf.Max(mr.mapWidth, mr.mapHeight);
+            float dist = Mathf.Sqrt(dx * dx + dy * dy);
+            if (dist < maxSide * 0.18f) return "Центральный регион";
+
+            float ang = Mathf.Atan2(dy, dx) * Mathf.Rad2Deg;
+            int idx = ((Mathf.RoundToInt(ang / 45f) % 8) + 8) % 8;
+            return CompassLabels[idx] + " регион";
         }
     }
 }
