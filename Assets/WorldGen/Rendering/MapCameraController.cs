@@ -128,6 +128,8 @@ namespace WorldGen.Rendering
 
             if (Mouse.current.rightButton.wasPressedThisFrame)
             {
+                // Начало пана — только если курсор не над UI (ПКМ по панели не должен таскать карту).
+                if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
                 dragging = true;
                 lastMousePos = Mouse.current.position.ReadValue();
                 return;
