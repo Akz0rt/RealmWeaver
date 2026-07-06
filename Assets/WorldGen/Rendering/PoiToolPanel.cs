@@ -64,6 +64,7 @@ namespace WorldGen.Rendering
             layout.childControlHeight = true;      // respect each child's LayoutElement.preferredHeight
             layout.childForceExpandHeight = false; // ...and don't stretch to fill (default true = the panel-bloat bug)
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            UiShadow.Add(panelRect);
 
             BuildPoiTab(panelGO.transform);
         }

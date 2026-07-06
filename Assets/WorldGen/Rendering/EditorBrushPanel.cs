@@ -163,6 +163,7 @@ namespace WorldGen.Rendering
             layout.childForceExpandWidth = true;
             layout.childControlHeight = false;
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            UiShadow.Add(panelRect);
 
             BuildEditorTab(panelGO.transform);
         }

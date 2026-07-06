@@ -191,6 +191,7 @@ namespace WorldGen.Rendering
             panelLayout.childControlHeight = true;
             panelLayout.childForceExpandHeight = false;
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            UiShadow.Add(panelRect);
 
             BuildHeaderRow(panelGO.transform);
             BuildRowsArea(panelGO.transform);

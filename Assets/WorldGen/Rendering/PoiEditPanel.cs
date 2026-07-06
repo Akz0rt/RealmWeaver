@@ -178,6 +178,7 @@ namespace WorldGen.Rendering
             panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.pivot = new Vector2(1f, 1f);
             panelRect.sizeDelta = new Vector2(panelWidth, 0f);
+            UiShadow.Add(panelRect);
 
             // Scroll area: content auto-sizes via ContentSizeFitter, but RepositionUnderLegend()
             // clamps scrollAreaLE.preferredHeight to whatever screen space remains below the

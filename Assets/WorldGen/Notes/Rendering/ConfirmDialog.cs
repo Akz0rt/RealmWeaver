@@ -63,6 +63,7 @@ namespace WorldGen.Notes.Rendering
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.sizeDelta = new Vector2(300f, 120f);
             panelRect.anchoredPosition = Vector2.zero;
+            WorldGen.Rendering.UiShadow.Add(panelRect, spread: 26f, alpha: 0.5f);
 
             var msgGO = new GameObject("Message");
             msgGO.transform.SetParent(panelGO.transform, false);

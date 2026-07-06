@@ -74,6 +74,7 @@ namespace WorldGen.Rendering
             cardRect.anchorMax = new Vector2(0.5f, 0.5f);
             cardRect.sizeDelta = new Vector2(cardTargetWidth, 0f);
             cardRect.anchoredPosition = Vector2.zero;
+            UiShadow.Add(cardRect, spread: 30f, alpha: 0.45f);
 
             var scrollRect = cardGO.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
