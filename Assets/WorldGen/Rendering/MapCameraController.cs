@@ -26,8 +26,8 @@ namespace WorldGen.Rendering
         public float maxSizeFraction = 3f;
         [Tooltip("Множитель за одно нажатие кнопки +/- в тулбаре.")]
         public float buttonZoomStep = 1.15f;
-        [Tooltip("Чувствительность зума колесом мыши.")]
-        public float scrollZoomSensitivity = 0.001f;
+        [Tooltip("Доля изменения масштаба за один щелчок колеса (0.12 = 12% за щелчок).")]
+        public float scrollZoomStep = 0.12f;
 
         [Header("Настройки пана")]
         [Tooltip("Множитель скорости пана относительно текущего orthographicSize.")]
@@ -88,7 +88,11 @@ namespace WorldGen.Rendering
             if (Mouse.current == null) return;
             float scroll = Mouse.current.scroll.ReadValue().y;
             if (Mathf.Approximately(scroll, 0f)) return;
-            ApplyZoomDelta(-scroll * scrollZoomSensitivity * targetCamera.orthographicSize);
+            // Sign-based step, independent of the platform's raw scroll magnitude (Windows reports
+            // 120/notch, other setups 1/notch) so one notch always changes zoom by scrollZoomStep.
+            // Scroll up (positive) = zoom in = smaller orthographicSize (multiplier < 1).
+            float factor = scroll > 0f ? (1f - scrollZoomStep) : (1f + scrollZoomStep);
+            ZoomBy(factor);
         }
 
         void ApplyZoomDelta(float sizeDelta)

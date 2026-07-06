@@ -16,6 +16,7 @@ namespace WorldGen.Notes.Rendering
         public const float MinSplitFraction = 0.3f;
         public const float MaxSplitFraction = 0.85f;
         const float DividerWidth = 8f;
+        const float TopChromeHeight = 86f; // 40px menu bar (ProjectMenuBar) + 46px map toolbar (MapToolbarUI)
 
         static float? splitFraction;
 
@@ -77,7 +78,9 @@ namespace WorldGen.Notes.Rendering
                 notesAreaRoot.anchorMin = new Vector2(SplitFraction, 0f);
                 notesAreaRoot.anchorMax = new Vector2(1f, 1f);
                 notesAreaRoot.offsetMin = Vector2.zero;
-                notesAreaRoot.offsetMax = Vector2.zero;
+                // Inset the top by the full-width top chrome (40px menu bar + 46px map toolbar),
+                // otherwise the notes toolbar/sidebar render underneath and are covered by it.
+                notesAreaRoot.offsetMax = new Vector2(0f, -TopChromeHeight);
             }
 
             if (mapCamera != null)
