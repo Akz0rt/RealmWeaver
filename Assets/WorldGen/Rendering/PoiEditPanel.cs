@@ -272,7 +272,7 @@ namespace WorldGen.Rendering
             panelGO = new GameObject("PoiEditPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.98f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel);
             panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(NotesLayoutController.SplitFraction, 1f);
             panelRect.anchorMax = new Vector2(NotesLayoutController.SplitFraction, 1f);
@@ -653,11 +653,13 @@ namespace WorldGen.Rendering
             fillRect.sizeDelta = Vector2.zero;
             slider.fillRect = fillRect;
 
+            // Контейнер ручки занимает только среднюю полосу по высоте — Slider растягивает ручку
+            // на высоту контейнера, поэтому так бегунок получается невысоким; ширину задаём малой.
             var handleArea = new GameObject("HandleArea");
             handleArea.transform.SetParent(sliderGO.transform, false);
             var haRect = handleArea.AddComponent<RectTransform>();
-            haRect.anchorMin = Vector2.zero;
-            haRect.anchorMax = Vector2.one;
+            haRect.anchorMin = new Vector2(0f, 0.25f);
+            haRect.anchorMax = new Vector2(1f, 0.75f);
             haRect.sizeDelta = Vector2.zero;
 
             var handle = new GameObject("Handle");
@@ -665,7 +667,7 @@ namespace WorldGen.Rendering
             var handleImg = handle.AddComponent<Image>();
             ThemeService.Tag(handleImg, ThemeRole.Accent);
             var handleRect = handle.GetComponent<RectTransform>();
-            handleRect.sizeDelta = new Vector2(10f, 14f);
+            handleRect.sizeDelta = new Vector2(6f, 0f); // узкий бегунок; высота — по контейнеру ручки
             slider.handleRect = handleRect;
             slider.targetGraphic = handleImg;
             slider.direction = Slider.Direction.LeftToRight;

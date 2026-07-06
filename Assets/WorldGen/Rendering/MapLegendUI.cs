@@ -172,7 +172,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("LegendPanel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImage = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImage, ThemeRole.Panel, 0.92f);
+            ThemeService.Tag(panelImage, ThemeRole.Panel);
             AddBorder(panelGO, ThemeRole.Border);
             panelRect = panelGO.GetComponent<RectTransform>();
             // Bottom-left of the map area (Main-screen shell redesign). Hardcoded rather than read

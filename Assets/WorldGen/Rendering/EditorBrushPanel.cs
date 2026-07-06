@@ -230,7 +230,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("EditorPanel");
             panelGO.transform.SetParent(canvasTransform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.92f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0f, 1f);
             panelRect.anchorMax = new Vector2(0f, 1f);

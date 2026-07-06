@@ -37,7 +37,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("LayersPanel");
             panelGO.transform.SetParent(canvasTransform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.96f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel);
             AddBorder(panelGO, ThemeRole.Border);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0f, 1f);

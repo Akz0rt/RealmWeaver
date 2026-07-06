@@ -162,7 +162,7 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("PoiPanel");
             panelGO.transform.SetParent(canvasTransform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.98f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0f, 0f);
             panelRect.anchorMax = new Vector2(0f, 1f);
@@ -377,7 +377,7 @@ namespace WorldGen.Rendering
             hlg.childControlWidth = false;
             hlg.childForceExpandWidth = false;
             hlg.childControlHeight = true;
-            hlg.childForceExpandHeight = true;
+            hlg.childForceExpandHeight = false; // иначе строка сама «растягивается» и чипы становятся высокими
             hlg.childAlignment = TextAnchor.MiddleLeft;
             rowGO.AddComponent<LayoutElement>().preferredHeight = 24f;
             return rowGO.transform;
