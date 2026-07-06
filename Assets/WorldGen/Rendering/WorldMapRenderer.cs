@@ -109,6 +109,7 @@ namespace WorldGen.Rendering
         MeshFilter meshFilter;
         MeshRenderer meshRenderer;
         MeshCollider meshCollider;
+        bool cameraPlacedOnce;
 
         List<VoronoiCell> cells;
         Dictionary<int, VoronoiCell> cellById;
@@ -657,9 +658,14 @@ namespace WorldGen.Rendering
             };
         }
 
-        /// <summary>Ставит назначенную камеру по центру карты сверху вниз - убирает необходимость настраивать камеру руками при смене размеров карты.</summary>
+        /// <summary>Ставит назначенную камеру по центру карты сверху вниз - но только один раз за
+        /// сессию, чтобы не сбрасывать пользовательский зум/пан при повторной генерации/загрузке
+        /// (см. MapCameraController).</summary>
         void PositionCameraOverMap()
         {
+            if (cameraPlacedOnce) return;
+            cameraPlacedOnce = true;
+
             float maxSide = Mathf.Max(mapWidth, mapHeight);
             targetCamera.transform.position = new Vector3(mapWidth * 0.5f, maxSide * 1.5f, mapHeight * 0.5f);
             targetCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
