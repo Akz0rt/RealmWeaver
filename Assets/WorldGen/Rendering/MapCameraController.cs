@@ -28,41 +28,44 @@ namespace WorldGen.Rendering
         [Tooltip("Насколько за пределы карты (в тех же мировых единицах) можно панить.")]
         public float panMargin = 50f;
 
-        float naturalFitSize = -1f;
+        float naturalFitSize = 0f;
         Vector3 naturalFitPosition;
         bool dragging;
         Vector2 lastMousePos;
 
-        public float NaturalFitSize
-        {
-            get
-            {
-                EnsureNaturalFitComputed();
-                return naturalFitSize;
-            }
-        }
+        public float NaturalFitSize => naturalFitSize;
 
         public float CurrentZoomPercent
         {
             get
             {
-                EnsureNaturalFitComputed();
                 if (targetCamera == null || naturalFitSize <= 0f) return 100f;
                 return naturalFitSize / targetCamera.orthographicSize * 100f;
             }
         }
 
-        void EnsureNaturalFitComputed()
+        void Awake()
         {
-            if (naturalFitSize > 0f || mapRenderer == null) return;
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated += ComputeNaturalFit;
+        }
+
+        void OnDestroy()
+        {
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= ComputeNaturalFit;
+        }
+
+        /// <summary>Recomputes the fit-to-map size/position from the just-regenerated map. Subscribed to
+        /// WorldMapRenderer.OnWorldRegenerated, which fires right after PositionCameraOverMap() runs.</summary>
+        void ComputeNaturalFit()
+        {
+            if (mapRenderer == null || targetCamera == null) return;
             naturalFitSize = Mathf.Max(mapRenderer.mapWidth, mapRenderer.mapHeight) * 0.5f;
-            if (targetCamera != null) naturalFitPosition = targetCamera.transform.position;
+            naturalFitPosition = targetCamera.transform.position;
         }
 
         void Update()
         {
-            if (targetCamera == null) return;
-            EnsureNaturalFitComputed();
+            if (mapRenderer == null || targetCamera == null) return;
 
             HandleScrollZoom();
             HandleRightMouseDragPan();
@@ -78,6 +81,7 @@ namespace WorldGen.Rendering
 
         void ApplyZoomDelta(float sizeDelta)
         {
+            if (naturalFitSize <= 0f) return;
             float minSize = naturalFitSize * minSizeFraction;
             targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize + sizeDelta, minSize, naturalFitSize);
         }
@@ -85,7 +89,7 @@ namespace WorldGen.Rendering
         /// <summary>Called by MapToolbarUI's "-"/"+" buttons. Positive multiplier > 1 zooms out, &lt; 1 zooms in.</summary>
         public void ZoomBy(float multiplier)
         {
-            EnsureNaturalFitComputed();
+            if (naturalFitSize <= 0f) return;
             float minSize = naturalFitSize * minSizeFraction;
             targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize * multiplier, minSize, naturalFitSize);
         }
@@ -93,7 +97,7 @@ namespace WorldGen.Rendering
         /// <summary>Called by MapToolbarUI's "100%"/"По размеру" buttons.</summary>
         public void ResetZoom()
         {
-            EnsureNaturalFitComputed();
+            if (naturalFitSize <= 0f) return;
             targetCamera.orthographicSize = naturalFitSize;
             targetCamera.transform.position = naturalFitPosition;
         }
@@ -134,11 +138,16 @@ namespace WorldGen.Rendering
         [ContextMenu("Self-Test: Zoom Clamp")]
         public void SelfTestZoomClamp()
         {
-            EnsureNaturalFitComputed();
+            if (targetCamera == null)
+            {
+                Debug.LogWarning("Self-Test Zoom Clamp: targetCamera is not assigned.");
+                return;
+            }
+
             float before = targetCamera.orthographicSize;
 
             targetCamera.orthographicSize = naturalFitSize * 10f; // way too big
-            ApplyZoomDelta(0f); // triggers clamp via ZoomBy path instead
+            ApplyZoomDelta(0f); // re-applies the clamp with a zero delta
             ZoomBy(1f); // re-clamps at current (still-too-big) value
             bool clampedHigh = targetCamera.orthographicSize <= naturalFitSize + 0.001f;
 
