@@ -24,16 +24,13 @@ namespace WorldGen.Rendering
 
         const float PanelWidth = 232f;
         const int CompactCount = 5;      // rows shown before "Показать все N →"
-        const float MaxRowsHeight = 320f; // rows area caps here and scrolls beyond it
 
         Canvas canvas;
         RectTransform panelRect;
         Text headerTitle;
         Text chevron;
-        GameObject rowsViewportGO;
-        RectTransform rowsContentRect;
-        LayoutElement rowsViewportLE;
-        ScrollRect rowsScroll;
+        GameObject rowsContainerGO;
+        Transform rowsParent;
         readonly List<GameObject> currentRows = new List<GameObject>();
 
         bool collapsed;
@@ -73,8 +70,7 @@ namespace WorldGen.Rendering
             if (entries.Count > CompactCount)
                 AddToggleAllRow(entries.Count);
 
-            if (rowsViewportGO != null) rowsViewportGO.SetActive(!collapsed);
-            ClampRowsHeight();
+            if (rowsContainerGO != null) rowsContainerGO.SetActive(!collapsed);
         }
 
         string CurrentModeName()
@@ -85,16 +81,6 @@ namespace WorldGen.Rendering
                 case MapDisplayMode.Region: return "ОБЛАСТИ";
                 default: return "БИОМЫ";
             }
-        }
-
-        void ClampRowsHeight()
-        {
-            if (rowsViewportLE == null || rowsContentRect == null) return;
-            Canvas.ForceUpdateCanvases();
-            float h = collapsed ? 0f : LayoutUtility.GetPreferredHeight(rowsContentRect);
-            float capped = Mathf.Min(h, MaxRowsHeight);
-            rowsViewportLE.preferredHeight = capped;
-            if (rowsScroll != null) rowsScroll.vertical = h > MaxRowsHeight;
         }
 
         // ── Entry data (unchanged from the pre-redesign legend) ──────────────────
@@ -258,46 +244,31 @@ namespace WorldGen.Rendering
 
         void BuildRowsArea(Transform parent)
         {
-            rowsViewportGO = new GameObject("RowsViewport");
-            rowsViewportGO.transform.SetParent(parent, false);
-            rowsViewportGO.AddComponent<RectMask2D>();
-            rowsViewportLE = rowsViewportGO.AddComponent<LayoutElement>();
-            rowsScroll = rowsViewportGO.AddComponent<ScrollRect>();
-            rowsScroll.horizontal = false;
-            rowsScroll.vertical = false;
-            rowsScroll.movementType = ScrollRect.MovementType.Clamped;
-            rowsScroll.scrollSensitivity = 18f;
-            var viewportRect = rowsViewportGO.GetComponent<RectTransform>();
-            rowsScroll.viewport = viewportRect;
-
-            var contentGO = new GameObject("RowsContent");
-            contentGO.transform.SetParent(rowsViewportGO.transform, false);
-            var cl = contentGO.AddComponent<VerticalLayoutGroup>();
+            // Plain container (no ScrollRect/RectMask2D): the panel's own ContentSizeFitter grows
+            // the card up from the bottom-left to fit whatever rows are shown. An earlier scroll/
+            // mask attempt clipped rows on the left and broke the vertical growth.
+            rowsContainerGO = new GameObject("Rows");
+            rowsContainerGO.transform.SetParent(parent, false);
+            var cl = rowsContainerGO.AddComponent<VerticalLayoutGroup>();
             cl.spacing = 3f;
             cl.childControlWidth = true;
             cl.childForceExpandWidth = true;
             cl.childControlHeight = true;
             cl.childForceExpandHeight = false;
-            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-            rowsContentRect = contentGO.GetComponent<RectTransform>();
-            rowsContentRect.anchorMin = new Vector2(0f, 1f);
-            rowsContentRect.anchorMax = new Vector2(1f, 1f);
-            rowsContentRect.pivot = new Vector2(0.5f, 1f);
-            rowsScroll.content = rowsContentRect;
+            rowsParent = rowsContainerGO.transform;
         }
 
         void ToggleCollapsed()
         {
             collapsed = !collapsed;
             if (chevron != null) chevron.text = collapsed ? "▸" : "▾";
-            if (rowsViewportGO != null) rowsViewportGO.SetActive(!collapsed);
-            ClampRowsHeight();
+            if (rowsContainerGO != null) rowsContainerGO.SetActive(!collapsed);
         }
 
         void AddRow(Color color, string label)
         {
             var row = new GameObject("LegendRow");
-            row.transform.SetParent(rowsContentRect, false);
+            row.transform.SetParent(rowsParent, false);
             row.AddComponent<LayoutElement>().preferredHeight = 18f;
 
             var rowLayout = row.AddComponent<HorizontalLayoutGroup>();
@@ -335,7 +306,7 @@ namespace WorldGen.Rendering
         void AddToggleAllRow(int total)
         {
             var go = new GameObject("ToggleAll");
-            go.transform.SetParent(rowsContentRect, false);
+            go.transform.SetParent(rowsParent, false);
             go.AddComponent<LayoutElement>().preferredHeight = 18f;
             var text = go.AddComponent<Text>();
             text.text = showAll ? "Свернуть ↑" : $"Показать все {total} →";
