@@ -172,7 +172,7 @@ namespace WorldGen.Rendering
 
             var layout = panelGO.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(12, 12, 12, 12);
-            layout.spacing = 7f;
+            layout.spacing = 6f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
             layout.childControlHeight = true;
@@ -354,22 +354,14 @@ namespace WorldGen.Rendering
 
         void BuildFilterChips(Transform t)
         {
-            var container = new GameObject("Chips");
-            container.transform.SetParent(t, false);
-            var vlg = container.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 4f;
-            vlg.childControlWidth = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandHeight = false;
-            container.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            var row1 = MakeChipRow(container.transform);
+            // Строки чипов — прямые дети панели (без контейнера с ContentSizeFitter: тот внутри
+            // управляемого VLG раздувается и создаёт огромные пустые интервалы).
+            var row1 = MakeChipRow(t);
             AddChip(row1, "Все", null);
             AddChip(row1, "Города", PoiType.City);
             AddChip(row1, "Руины", PoiType.Ruin);
 
-            var row2 = MakeChipRow(container.transform);
+            var row2 = MakeChipRow(t);
             AddChip(row2, "Подземелья", PoiType.Dungeon);
             AddChip(row2, "Крепости", PoiType.Fortress);
 

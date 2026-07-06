@@ -612,17 +612,18 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 18f;
+            hLayout.childAlignment = TextAnchor.MiddleLeft;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
 
             var labelGO = new GameObject("Label");
             labelGO.transform.SetParent(rowGO.transform, false);
             var labelText = labelGO.AddComponent<Text>();
             labelText.text = label;
             labelText.font = builtinFont;
-            labelText.fontSize = 12;
+            labelText.fontSize = 11;
             ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
-            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(70f, 20f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(68f, 20f);
 
             var sliderGO = new GameObject("Slider");
             sliderGO.transform.SetParent(rowGO.transform, false);
@@ -630,15 +631,16 @@ namespace WorldGen.Rendering
             slider.minValue = 0.25f;
             slider.maxValue = 4f;
             slider.value = defaultValue;
-            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(110f, 20f);
+            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(100f, 20f);
 
+            // Тонкий трек: полоса ~3px по центру строки, маленькая ручка — чтобы не «толстить» и не лезть на соседей.
             var bg = new GameObject("Bg");
             bg.transform.SetParent(sliderGO.transform, false);
             var bgImg = bg.AddComponent<Image>();
             ThemeService.Tag(bgImg, ThemeRole.Elev);
             var bgRect = bg.GetComponent<RectTransform>();
-            bgRect.anchorMin = new Vector2(0f, 0.25f);
-            bgRect.anchorMax = new Vector2(1f, 0.75f);
+            bgRect.anchorMin = new Vector2(0f, 0.42f);
+            bgRect.anchorMax = new Vector2(1f, 0.58f);
             bgRect.sizeDelta = Vector2.zero;
 
             var fill = new GameObject("Fill");
@@ -646,8 +648,8 @@ namespace WorldGen.Rendering
             var fillImg = fill.AddComponent<Image>();
             ThemeService.Tag(fillImg, ThemeRole.Accent, 0.9f);
             var fillRect = fill.GetComponent<RectTransform>();
-            fillRect.anchorMin = new Vector2(0f, 0.2f);
-            fillRect.anchorMax = new Vector2(0f, 0.8f);
+            fillRect.anchorMin = new Vector2(0f, 0.42f);
+            fillRect.anchorMax = new Vector2(0f, 0.58f);
             fillRect.sizeDelta = Vector2.zero;
             slider.fillRect = fillRect;
 
@@ -663,7 +665,7 @@ namespace WorldGen.Rendering
             var handleImg = handle.AddComponent<Image>();
             ThemeService.Tag(handleImg, ThemeRole.Accent);
             var handleRect = handle.GetComponent<RectTransform>();
-            handleRect.sizeDelta = new Vector2(12f, 18f);
+            handleRect.sizeDelta = new Vector2(10f, 14f);
             slider.handleRect = handleRect;
             slider.targetGraphic = handleImg;
             slider.direction = Slider.Direction.LeftToRight;
@@ -673,10 +675,10 @@ namespace WorldGen.Rendering
             var valueText = valueGO.AddComponent<Text>();
             valueText.text = defaultValue.ToString("F2");
             valueText.font = builtinFont;
-            valueText.fontSize = 12;
+            valueText.fontSize = 11;
             ThemeService.Tag(valueText, ThemeRole.Txt);
-            valueText.alignment = TextAnchor.MiddleLeft;
-            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
+            valueText.alignment = TextAnchor.MiddleRight;
+            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 20f);
 
             slider.onValueChanged.AddListener(v =>
             {
