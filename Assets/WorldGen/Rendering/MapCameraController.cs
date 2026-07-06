@@ -109,6 +109,7 @@ namespace WorldGen.Rendering
 
         void HandleRightMouseDragPan()
         {
+            if (naturalFitSize <= 0f) return;
             if (Mouse.current == null) return;
 
             if (Mouse.current.rightButton.wasPressedThisFrame)

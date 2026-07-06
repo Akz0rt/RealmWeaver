@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
-using WorldGen.Notes.Rendering;
 using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering

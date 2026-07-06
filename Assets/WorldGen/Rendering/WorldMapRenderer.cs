@@ -669,6 +669,7 @@ namespace WorldGen.Rendering
             float maxSide = Mathf.Max(mapWidth, mapHeight);
             targetCamera.transform.position = new Vector3(mapWidth * 0.5f, maxSide * 1.5f, mapHeight * 0.5f);
             targetCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            targetCamera.orthographicSize = maxSide * 0.5f;
 
             if (targetCamera.farClipPlane < maxSide * 3f)
                 targetCamera.farClipPlane = maxSide * 3f;
