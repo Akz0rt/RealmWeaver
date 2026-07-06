@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 namespace WorldGen.Rendering
@@ -86,6 +87,8 @@ namespace WorldGen.Rendering
         void HandleScrollZoom()
         {
             if (Mouse.current == null) return;
+            // Скролл над UI (панели, списки, попапы) крутит этот UI, а не зумит карту.
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
             float scroll = Mouse.current.scroll.ReadValue().y;
             if (Mathf.Approximately(scroll, 0f)) return;
             // Sign-based step, independent of the platform's raw scroll magnitude (Windows reports
