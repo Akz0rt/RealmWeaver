@@ -55,12 +55,17 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Recomputes the fit-to-map size/position from the just-regenerated map. Subscribed to
-        /// WorldMapRenderer.OnWorldRegenerated, which fires right after PositionCameraOverMap() runs.</summary>
+        /// WorldMapRenderer.OnWorldRegenerated, which fires right after PositionCameraOverMap() runs.
+        /// Mirrors WorldMapRenderer.PositionCameraOverMap()'s formula directly instead of reading
+        /// targetCamera.transform.position - that guarded method only repositions the camera once per
+        /// session (cameraPlacedOnce), so on the second-and-later regenerations the live camera transform
+        /// may be wherever the user last panned it, which would otherwise corrupt naturalFitPosition.</summary>
         void ComputeNaturalFit()
         {
-            if (mapRenderer == null || targetCamera == null) return;
-            naturalFitSize = Mathf.Max(mapRenderer.mapWidth, mapRenderer.mapHeight) * 0.5f;
-            naturalFitPosition = targetCamera.transform.position;
+            if (mapRenderer == null) return;
+            float maxSide = Mathf.Max(mapRenderer.mapWidth, mapRenderer.mapHeight);
+            naturalFitSize = maxSide * 0.5f;
+            naturalFitPosition = new Vector3(mapRenderer.mapWidth * 0.5f, maxSide * 1.5f, mapRenderer.mapHeight * 0.5f);
         }
 
         void Update()
