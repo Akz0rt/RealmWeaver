@@ -51,6 +51,7 @@ namespace WorldGen.Rendering
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            DisplayModeService.ApplySaved(); // restore windowed/fullscreen preference at launch
             EnsureEventSystemExists();
             BuildUI();
         }
@@ -332,11 +333,16 @@ namespace WorldGen.Rendering
 
             if (kind == MenuKind.View)
             {
-                popupRect.sizeDelta = new Vector2(160f, 26f);
+                popupRect.sizeDelta = new Vector2(190f, 52f);
                 AddPopupAction(actionsPopupGO.transform, ThemeService.Current == ThemeMode.Dark ? "Светлая тема" : "Тёмная тема", () =>
                 {
                     CloseActionsPopup();
                     ThemeService.ApplyTheme(ThemeService.Current == ThemeMode.Dark ? ThemeMode.Light : ThemeMode.Dark);
+                });
+                AddPopupAction(actionsPopupGO.transform, DisplayModeService.IsWindowed ? "Полноэкранный режим" : "Оконный режим", () =>
+                {
+                    CloseActionsPopup();
+                    DisplayModeService.Toggle();
                 });
                 return;
             }

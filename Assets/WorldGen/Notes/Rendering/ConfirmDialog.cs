@@ -62,11 +62,12 @@ namespace WorldGen.Notes.Rendering
             canvasGO.AddComponent<GraphicRaycaster>();
             activeDialogGO = canvasGO;
 
-            // Backdrop: dims + swallows clicks (Button with no listener), never dismisses.
+            // Backdrop: opaque app-background fill that swallows clicks (Button with no listener),
+            // never dismisses. Fully opaque per request — the modal reads on a solid background.
             var backdropGO = new GameObject("Backdrop");
             backdropGO.transform.SetParent(canvasGO.transform, false);
             var backdropImg = backdropGO.AddComponent<Image>();
-            backdropImg.color = new Color(0f, 0f, 0f, 0.55f);
+            ThemeService.Tag(backdropImg, ThemeRole.Bg);
             backdropImg.raycastTarget = true;
             backdropGO.AddComponent<Button>(); // no onClick → blocks without dismissing
             var backdropRect = backdropGO.GetComponent<RectTransform>();
