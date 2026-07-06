@@ -35,7 +35,6 @@ namespace WorldGen.Rendering
         [Tooltip("Отступ от нижнего края экрана, ниже которого панель не опускается.")]
         public float bottomScreenMargin = 20f;
         public float panelWidth = 240f;
-        public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
 
         GameObject panelGO;
         RectTransform panelRect;

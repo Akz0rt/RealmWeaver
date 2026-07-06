@@ -29,6 +29,10 @@ namespace WorldGen.Rendering
         readonly List<Image> checklistDots = new List<Image>();
         int currentStepIndex = -1;
 
+        RectTransform cardRect;
+        RectTransform contentRect;
+        float cardTargetWidth;
+
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -55,26 +59,56 @@ namespace WorldGen.Rendering
             bgRect.anchorMax = Vector2.one;
             bgRect.sizeDelta = Vector2.zero;
 
+            // Width is capped to the screen so the card never overhangs a narrow window; height
+            // is derived from actual content in ApplyCardHeight below, with a ScrollRect as the
+            // fallback for screens too short to show it all -- see GenerationScreenUI.cs for the
+            // same treatment (a fixed-size card there overflowed off-screen at some resolutions).
+            cardTargetWidth = Mathf.Min(560f, Screen.width - 40f);
+
             var cardGO = new GameObject("ProgressCard");
             cardGO.transform.SetParent(canvasTransform, false);
             var cardImg = cardGO.AddComponent<Image>();
             ThemeService.Tag(cardImg, ThemeRole.Panel);
-            var cardRect = cardGO.GetComponent<RectTransform>();
+            cardRect = cardGO.GetComponent<RectTransform>();
             cardRect.anchorMin = new Vector2(0.5f, 0.5f);
             cardRect.anchorMax = new Vector2(0.5f, 0.5f);
-            cardRect.sizeDelta = new Vector2(560f, 420f);
+            cardRect.sizeDelta = new Vector2(cardTargetWidth, 0f);
             cardRect.anchoredPosition = Vector2.zero;
 
-            var layout = cardGO.AddComponent<VerticalLayoutGroup>();
+            var scrollRect = cardGO.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewportGO = new GameObject("Viewport");
+            viewportGO.transform.SetParent(cardGO.transform, false);
+            viewportGO.AddComponent<RectMask2D>();
+            var viewportRect = viewportGO.GetComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = Vector2.zero;
+            viewportRect.offsetMax = Vector2.zero;
+            scrollRect.viewport = viewportRect;
+
+            var contentGO = new GameObject("Content");
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(28, 28, 28, 28);
             layout.spacing = 12f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
             layout.childControlHeight = false;
             layout.childForceExpandHeight = false;
+            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            contentRect = contentGO.GetComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0f, 1f);
+            contentRect.anchorMax = new Vector2(1f, 1f);
+            contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.sizeDelta = Vector2.zero;
+            scrollRect.content = contentRect;
 
             var titleGO = new GameObject("Title");
-            titleGO.transform.SetParent(cardGO.transform, false);
+            titleGO.transform.SetParent(contentGO.transform, false);
             var title = titleGO.AddComponent<Text>();
             title.text = "Создание мира…";
             title.font = builtinFont;
@@ -84,7 +118,7 @@ namespace WorldGen.Rendering
             titleGO.AddComponent<LayoutElement>().preferredHeight = 26f;
 
             var stepLineGO = new GameObject("StepLine");
-            stepLineGO.transform.SetParent(cardGO.transform, false);
+            stepLineGO.transform.SetParent(contentGO.transform, false);
             stepLineGO.AddComponent<LayoutElement>().preferredHeight = 20f;
             var stepLineLayout = stepLineGO.AddComponent<HorizontalLayoutGroup>();
             stepLineLayout.childControlWidth = true;
@@ -107,9 +141,20 @@ namespace WorldGen.Rendering
             percentLabel.alignment = TextAnchor.MiddleRight;
             ThemeService.Tag(percentLabel, ThemeRole.Accent);
 
-            BuildProgressBar(cardGO.transform);
-            BuildChecklist(cardGO.transform);
-            BuildCancelButton(cardGO.transform);
+            BuildProgressBar(contentGO.transform);
+            BuildChecklist(contentGO.transform);
+            BuildCancelButton(contentGO.transform);
+
+            ApplyCardHeight();
+        }
+
+        void ApplyCardHeight()
+        {
+            Canvas.ForceUpdateCanvases();
+            float contentHeight = LayoutUtility.GetPreferredHeight(contentRect);
+            const float screenMargin = 40f; // breathing room from top/bottom screen edge
+            float maxHeight = Screen.height - screenMargin * 2f;
+            cardRect.sizeDelta = new Vector2(cardTargetWidth, Mathf.Min(contentHeight, maxHeight));
         }
 
         void BuildProgressBar(Transform parent)

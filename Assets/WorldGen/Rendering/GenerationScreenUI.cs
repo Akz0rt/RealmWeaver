@@ -34,6 +34,10 @@ namespace WorldGen.Rendering
         Button[] shapeButtons = new Button[3];
         Text regionsValueLabel;
 
+        RectTransform cardRect;
+        RectTransform contentRect;
+        float cardTargetWidth;
+
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -88,41 +92,82 @@ namespace WorldGen.Rendering
             bgRect.anchorMax = Vector2.one;
             bgRect.sizeDelta = Vector2.zero;
 
+            // Width is capped to the screen so the card never overhangs a narrow window; height
+            // is derived from actual content in ApplyCardHeight below, with a ScrollRect as the
+            // fallback for screens too short to show it all -- content must never render outside
+            // the card background or off the bottom of the screen, regardless of resolution.
+            cardTargetWidth = Mathf.Min(560f, Screen.width - 40f);
+
             var cardGO = new GameObject("GenerationCard");
             cardGO.transform.SetParent(canvasTransform, false);
             var cardImg = cardGO.AddComponent<Image>();
             ThemeService.Tag(cardImg, ThemeRole.Panel);
-            var cardRect = cardGO.GetComponent<RectTransform>();
+            cardRect = cardGO.GetComponent<RectTransform>();
             cardRect.anchorMin = new Vector2(0.5f, 0.5f);
             cardRect.anchorMax = new Vector2(0.5f, 0.5f);
-            cardRect.sizeDelta = new Vector2(560f, 520f);
+            cardRect.sizeDelta = new Vector2(cardTargetWidth, 0f);
             cardRect.anchoredPosition = Vector2.zero;
 
-            var layout = cardGO.AddComponent<VerticalLayoutGroup>();
+            var scrollRect = cardGO.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewportGO = new GameObject("Viewport");
+            viewportGO.transform.SetParent(cardGO.transform, false);
+            viewportGO.AddComponent<RectMask2D>();
+            var viewportRect = viewportGO.GetComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.offsetMin = Vector2.zero;
+            viewportRect.offsetMax = Vector2.zero;
+            scrollRect.viewport = viewportRect;
+
+            var contentGO = new GameObject("Content");
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(28, 28, 28, 28);
             layout.spacing = 14f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
             layout.childControlHeight = false;
             layout.childForceExpandHeight = false;
+            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            contentRect = contentGO.GetComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0f, 1f);
+            contentRect.anchorMax = new Vector2(1f, 1f);
+            contentRect.pivot = new Vector2(0.5f, 1f);
+            contentRect.sizeDelta = Vector2.zero;
+            scrollRect.content = contentRect;
 
-            AddLabel(cardGO.transform, "Создать карту мира", 20, bold: true, role: ThemeRole.Txt, height: 26f);
-            AddLabel(cardGO.transform, "Карта ещё не сгенерирована", 12, bold: false, role: ThemeRole.Mut, height: 18f);
+            AddLabel(contentGO.transform, "Создать карту мира", 20, bold: true, role: ThemeRole.Txt, height: 26f);
+            AddLabel(contentGO.transform, "Карта ещё не сгенерирована", 12, bold: false, role: ThemeRole.Mut, height: 18f);
 
-            AddFieldLabel(cardGO.transform, "СИД");
-            BuildSeedRow(cardGO.transform);
+            AddFieldLabel(contentGO.transform, "СИД");
+            BuildSeedRow(contentGO.transform);
 
-            AddFieldLabel(cardGO.transform, "РАЗМЕР КАРТЫ");
-            BuildSizeSegment(cardGO.transform);
+            AddFieldLabel(contentGO.transform, "РАЗМЕР КАРТЫ");
+            BuildSizeSegment(contentGO.transform);
 
-            AddFieldLabel(cardGO.transform, "ФОРМА СУШИ");
-            BuildShapeSegment(cardGO.transform);
+            AddFieldLabel(contentGO.transform, "ФОРМА СУШИ");
+            BuildShapeSegment(contentGO.transform);
 
-            AddFieldLabel(cardGO.transform, "ДЕТАЛИЗАЦИЯ · РЕГИОНОВ");
-            BuildRegionsSlider(cardGO.transform);
+            AddFieldLabel(contentGO.transform, "ДЕТАЛИЗАЦИЯ · РЕГИОНОВ");
+            BuildRegionsSlider(contentGO.transform);
 
-            BuildGenerateButton(cardGO.transform);
-            BuildOpenProjectButton(cardGO.transform);
+            BuildGenerateButton(contentGO.transform);
+            BuildOpenProjectButton(contentGO.transform);
+
+            ApplyCardHeight();
+        }
+
+        void ApplyCardHeight()
+        {
+            Canvas.ForceUpdateCanvases();
+            float contentHeight = LayoutUtility.GetPreferredHeight(contentRect);
+            const float screenMargin = 40f; // breathing room from top/bottom screen edge
+            float maxHeight = Screen.height - screenMargin * 2f;
+            cardRect.sizeDelta = new Vector2(cardTargetWidth, Mathf.Min(contentHeight, maxHeight));
         }
 
         void AddLabel(Transform parent, string text, int fontSize, bool bold, ThemeRole role, float height)
@@ -294,7 +339,7 @@ namespace WorldGen.Rendering
 
             var fillAreaGO = new GameObject("Fill Area");
             fillAreaGO.transform.SetParent(sliderGO.transform, false);
-            var fillAreaRect = fillAreaGO.GetComponent<RectTransform>();
+            var fillAreaRect = fillAreaGO.AddComponent<RectTransform>();
             fillAreaRect.anchorMin = new Vector2(0f, 0.4f);
             fillAreaRect.anchorMax = new Vector2(1f, 0.6f);
             var fillGO = new GameObject("Fill");

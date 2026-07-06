@@ -25,7 +25,6 @@ namespace WorldGen.Rendering
 
         [Header("Внешний вид")]
         public Vector2 panelAnchoredPosition = new Vector2(20f, -20f);
-        public Color panelBackgroundColor = ThemeService.Get(ThemeRole.Panel);
 
         EditorMode currentMode = EditorMode.SelectionOverride;
 

@@ -25,8 +25,6 @@ namespace WorldGen.Rendering
         public Vector2 panelAnchoredPosition = new Vector2(-20f, -20f);
         public Vector2 swatchSize = new Vector2(20f, 20f);
         public int fontSize = 14;
-        public Color panelBackgroundColor = new Color(0f, 0f, 0f, 0.55f);
-        public Color textColor = Color.white;
 
         Canvas canvas;
         RectTransform panelRect;
