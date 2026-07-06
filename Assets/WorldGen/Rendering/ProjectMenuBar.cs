@@ -45,6 +45,9 @@ namespace WorldGen.Rendering
         GameObject actionsPopupGO;
         bool recentExpanded;
 
+        enum MenuKind { File, View }
+        MenuKind openMenuKind;
+
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -207,7 +210,7 @@ namespace WorldGen.Rendering
             ThemeService.Tag(fileBtnImg, ThemeRole.Elev);
             var fileBtn = fileBtnGO.AddComponent<Button>();
             fileBtn.targetGraphic = fileBtnImg;
-            fileBtn.onClick.AddListener(ToggleActionsPopup);
+            fileBtn.onClick.AddListener(() => ToggleMenu(MenuKind.File));
             var fileBtnRect = fileBtnGO.GetComponent<RectTransform>();
             fileBtnRect.anchorMin = new Vector2(0f, 0f);
             fileBtnRect.anchorMax = new Vector2(0f, 1f);
@@ -229,8 +232,8 @@ namespace WorldGen.Rendering
             fileLabelRect.sizeDelta = Vector2.zero;
 
             // Inert menu placeholders (no Button, no click behaviour — muted static labels)
-            AddInertMenuLabel(barGO.transform, "Правка", xOffset: 228f);
-            AddInertMenuLabel(barGO.transform, "Вид", xOffset: 288f);
+            AddMenuLabel(barGO.transform, "Правка", xOffset: 228f);
+            AddMenuLabel(barGO.transform, "Вид", xOffset: 288f, onClick: () => ToggleMenu(MenuKind.View), role: ThemeRole.Txt);
 
             // Right-aligned current project name
             var projectNameGO = new GameObject("ProjectName");
@@ -249,7 +252,9 @@ namespace WorldGen.Rendering
             UpdateProjectNameText();
         }
 
-        void AddInertMenuLabel(Transform parent, string label, float xOffset)
+        /// <summary>Top-bar menu label. With onClick null it's an inert muted placeholder
+        /// (Правка); with an onClick it becomes a clickable menu (Вид → theme popup).</summary>
+        void AddMenuLabel(Transform parent, string label, float xOffset, System.Action onClick = null, ThemeRole role = ThemeRole.Mut)
         {
             var go = new GameObject($"Menu_{label}");
             go.transform.SetParent(parent, false);
@@ -258,7 +263,14 @@ namespace WorldGen.Rendering
             text.font = builtinFont;
             text.fontSize = 13;
             text.alignment = TextAnchor.MiddleLeft;
-            ThemeService.Tag(text, ThemeRole.Mut);
+            ThemeService.Tag(text, role);
+            if (onClick != null)
+            {
+                var btn = go.AddComponent<Button>();
+                btn.targetGraphic = text;
+                btn.transition = Selectable.Transition.None; // don't tint the label text on hover/press
+                btn.onClick.AddListener(() => onClick());
+            }
             var rect = go.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(0f, 0.5f);
             rect.anchorMax = new Vector2(0f, 0.5f);
@@ -275,14 +287,16 @@ namespace WorldGen.Rendering
                 : System.IO.Path.GetFileName(currentPath);
         }
 
-        void ToggleActionsPopup()
+        void ToggleMenu(MenuKind kind)
         {
-            if (actionsPopupGO != null) { CloseActionsPopup(); return; }
+            if (actionsPopupGO != null && openMenuKind == kind) { CloseActionsPopup(); return; }
+            if (actionsPopupGO != null) CloseActionsPopup();
             recentExpanded = false;
-            OpenActionsPopup();
+            openMenuKind = kind;
+            OpenMenu(kind);
         }
 
-        void OpenActionsPopup()
+        void OpenMenu(MenuKind kind)
         {
             // Backdrop first, popup second — under this project's established "later sibling
             // always wins raycasts" rule, the popup (created after) receives clicks over the
@@ -299,7 +313,7 @@ namespace WorldGen.Rendering
             backdropRect.anchorMax = Vector2.one;
             backdropRect.sizeDelta = Vector2.zero;
 
-            actionsPopupGO = new GameObject("FileActionsPopup");
+            actionsPopupGO = new GameObject("MenuPopup");
             actionsPopupGO.transform.SetParent(canvasTransform, false);
             var popupImg = actionsPopupGO.AddComponent<Image>();
             ThemeService.Tag(popupImg, ThemeRole.Panel2, 0.98f);
@@ -307,17 +321,30 @@ namespace WorldGen.Rendering
             popupRect.anchorMin = new Vector2(0f, 1f);
             popupRect.anchorMax = new Vector2(0f, 1f);
             popupRect.pivot = new Vector2(0f, 1f);
-            popupRect.anchoredPosition = new Vector2(130f, -BarHeightPixels); // drop below the repositioned "Файл" button
-
-            var recentPaths = recentExpanded ? RecentProjectsList.Get().Where(File.Exists).ToList() : null;
-            int rowCount = 5 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
-            popupRect.sizeDelta = new Vector2(200f, rowCount * 26f);
+            // Drop below the button that opened this menu (Файл @158 / Вид @288).
+            popupRect.anchoredPosition = new Vector2(kind == MenuKind.File ? 158f : 288f, -BarHeightPixels);
 
             var vlg = actionsPopupGO.AddComponent<VerticalLayoutGroup>();
             vlg.childControlWidth = true;
             vlg.childForceExpandWidth = true;
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
+
+            if (kind == MenuKind.View)
+            {
+                popupRect.sizeDelta = new Vector2(160f, 26f);
+                AddPopupAction(actionsPopupGO.transform, ThemeService.Current == ThemeMode.Dark ? "Светлая тема" : "Тёмная тема", () =>
+                {
+                    CloseActionsPopup();
+                    ThemeService.ApplyTheme(ThemeService.Current == ThemeMode.Dark ? ThemeMode.Light : ThemeMode.Dark);
+                });
+                return;
+            }
+
+            // MenuKind.File
+            var recentPaths = recentExpanded ? RecentProjectsList.Get().Where(File.Exists).ToList() : null;
+            int rowCount = 4 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
+            popupRect.sizeDelta = new Vector2(200f, rowCount * 26f);
 
             AddPopupAction(actionsPopupGO.transform, "Сохранить", () => { CloseActionsPopup(); DoSave(); });
             AddPopupAction(actionsPopupGO.transform, "Сохранить как…", () => { CloseActionsPopup(); DoSaveAs(); });
@@ -326,12 +353,7 @@ namespace WorldGen.Rendering
             {
                 recentExpanded = !recentExpanded;
                 CloseActionsPopup(keepExpandedFlag: true);
-                OpenActionsPopup();
-            });
-            AddPopupAction(actionsPopupGO.transform, ThemeService.Current == ThemeMode.Dark ? "Светлая тема" : "Тёмная тема", () =>
-            {
-                CloseActionsPopup();
-                ThemeService.ApplyTheme(ThemeService.Current == ThemeMode.Dark ? ThemeMode.Light : ThemeMode.Dark);
+                OpenMenu(MenuKind.File);
             });
 
             if (recentExpanded)
