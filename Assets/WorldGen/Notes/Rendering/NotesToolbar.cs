@@ -79,7 +79,7 @@ namespace WorldGen.Notes.Rendering
             rowRect.anchorMin = new Vector2(0f, 1f);
             rowRect.anchorMax = new Vector2(0f, 1f);
             rowRect.pivot = new Vector2(0f, 1f);
-            rowRect.anchoredPosition = Vector2.zero;
+            rowRect.anchoredPosition = new Vector2(12f, -8f); // small gap from the sidebar / top edge
             RowRect = rowRect;
 
             BuildTooltip(rootCanvas.transform);

@@ -45,6 +45,10 @@ namespace WorldGen.Notes.Rendering
         // GameObject, which would reset Unity's double-click tracking (it's keyed by GameObject
         // identity) before a second click could ever register as a double-click.
         readonly Dictionary<string, Image> pageRowImages = new Dictionary<string, Image>();
+        // Accent outline per page row, toggled on/off in place alongside pageRowImages so the
+        // active page gets a thin gold border.
+        readonly Dictionary<string, Outline> pageRowOutlines = new Dictionary<string, Outline>();
+        Text headerTextComponent;
 
         InputField activeRenameInput;
         GameObject activeRenameLabelGO;
@@ -100,6 +104,7 @@ namespace WorldGen.Notes.Rendering
             headerText.fontStyle = FontStyle.Bold;
             ThemeService.Tag(headerText, ThemeRole.Mut);
             headerText.alignment = TextAnchor.MiddleLeft;
+            headerTextComponent = headerText;
             var headerTextRect = headerTextGO.GetComponent<RectTransform>();
             headerTextRect.anchorMin = new Vector2(0f, 0f);
             headerTextRect.anchorMax = new Vector2(1f, 1f);
@@ -229,16 +234,20 @@ namespace WorldGen.Notes.Rendering
                 else
                     kvp.Value.color = new Color(1f, 1f, 1f, 0.02f);
             }
+            foreach (var kvp in pageRowOutlines)
+                kvp.Value.enabled = page != null && kvp.Key == page.Id;
         }
 
         void ToggleExpanded()
         {
             expanded = !expanded;
             listGO.SetActive(expanded);
-            headerTextGO.SetActive(expanded);
             addGroupButtonGO.SetActive(expanded);
             searchInputGO.SetActive(expanded);
             dividerGO.SetActive(expanded);
+            // Header stays visible when collapsed, shrunk to just the "☰" glyph, so it doubles as
+            // the affordance to expand the sidebar back.
+            headerTextComponent.text = expanded ? "☰ СТРАНИЦЫ" : "☰";
             rootLayoutElement.preferredWidth = expanded ? expandedWidth : CollapsedWidth;
         }
 
@@ -280,6 +289,7 @@ namespace WorldGen.Notes.Rendering
             activeRenameLabelGO = null;
             renameCancelled = false;
             pageRowImages.Clear();
+            pageRowOutlines.Clear();
 
             // SetActive(false) takes effect immediately; Destroy() is deferred to end of
             // frame, so without deactivating first, the old and newly-built rows below would
@@ -366,6 +376,12 @@ namespace WorldGen.Notes.Rendering
             else
                 img.color = new Color(1f, 1f, 1f, 0.02f);
             pageRowImages[page.Id] = img;
+            // Thin gold outline marking the active page, toggled in place by OnActivePageChanged.
+            var rowOutline = rowGO.AddComponent<Outline>();
+            rowOutline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            rowOutline.effectDistance = new Vector2(1f, -1f);
+            rowOutline.enabled = isActive;
+            pageRowOutlines[page.Id] = rowOutline;
             var btn = rowGO.AddComponent<Button>();
             btn.targetGraphic = img;
             rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
@@ -554,8 +570,8 @@ namespace WorldGen.Notes.Rendering
                 if (expanded) { ok = false; reason = "expected collapsed after first toggle"; }
                 else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, CollapsedWidth))
                 { ok = false; reason = $"expected preferredWidth={CollapsedWidth} while collapsed, got {rootLayoutElement.preferredWidth}"; }
-                else if (listGO.activeSelf || headerTextGO.activeSelf || addGroupButtonGO.activeSelf || searchInputGO.activeSelf || dividerGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput/divider all inactive while collapsed"; }
+                else if (listGO.activeSelf || addGroupButtonGO.activeSelf || searchInputGO.activeSelf || dividerGO.activeSelf)
+                { ok = false; reason = "expected list/addGroupButton/searchInput/divider all inactive while collapsed"; }
             }
 
             if (ok)
@@ -564,8 +580,8 @@ namespace WorldGen.Notes.Rendering
                 if (!expanded) { ok = false; reason = "expected expanded after second toggle"; }
                 else if (!Mathf.Approximately(rootLayoutElement.preferredWidth, expandedWidth))
                 { ok = false; reason = $"expected preferredWidth={expandedWidth} after re-expanding, got {rootLayoutElement.preferredWidth}"; }
-                else if (!listGO.activeSelf || !headerTextGO.activeSelf || !addGroupButtonGO.activeSelf || !searchInputGO.activeSelf || !dividerGO.activeSelf)
-                { ok = false; reason = "expected list/headerText/addGroupButton/searchInput/divider all active after re-expanding"; }
+                else if (!listGO.activeSelf || !addGroupButtonGO.activeSelf || !searchInputGO.activeSelf || !dividerGO.activeSelf)
+                { ok = false; reason = "expected list/addGroupButton/searchInput/divider all active after re-expanding"; }
             }
 
             Debug.Log(ok
