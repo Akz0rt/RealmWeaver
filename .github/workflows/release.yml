@@ -86,8 +86,19 @@ jobs:
           name: installer
           path: installer-output
 
+      - name: Compute installer SHA-256
+        id: hash
+        run: |
+          FILE=$(ls installer-output/RealmWeaver-Setup-*.exe)
+          echo "sha256=$(sha256sum "$FILE" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: installer-output/RealmWeaver-Setup-*.exe
           generate_release_notes: true
+          # The in-app updater downloads the .exe over a cert-bypassed GitHub CDN connection
+          # (Unity TLS quirk), so it verifies this SHA-256 — delivered over the TLS-validated
+          # api.github.com release body — before running the installer.
+          body: |
+            sha256: ${{ steps.hash.outputs.sha256 }}

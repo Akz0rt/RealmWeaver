@@ -8,6 +8,7 @@ namespace WorldGen.Update
     public class GitHubRelease
     {
         public string tag_name;
+        public string body;   // release notes — the pipeline embeds "sha256: <hex>" here for integrity verification
         public List<GitHubReleaseAsset> assets;
     }
 
@@ -15,6 +16,7 @@ namespace WorldGen.Update
     {
         public string name;
         public string browser_download_url;
+        public string digest; // GitHub-provided "sha256:<hex>" (when present) — preferred integrity source
     }
 
     /// <summary>

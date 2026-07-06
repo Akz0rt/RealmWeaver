@@ -32,6 +32,7 @@ namespace WorldGen.Update
 
         string downloadUrl;
         string latestVersion;
+        string expectedSha256; // integrity hash from the TLS-validated api.github.com response
 
         void Awake()
         {
@@ -99,7 +100,55 @@ namespace WorldGen.Update
 
             latestVersion = release.tag_name.TrimStart('v', 'V');
             downloadUrl = installerAsset.browser_download_url;
+            expectedSha256 = ExtractSha256(installerAsset.digest, release.body);
             ShowBanner();
+        }
+
+        /// <summary>Expected installer SHA-256, taken over the TLS-validated api.github.com channel:
+        /// GitHub's own asset digest if present, else a "sha256: &lt;hex&gt;" line in the release body.</summary>
+        static string ExtractSha256(string assetDigest, string releaseBody)
+        {
+            return MatchSha256(assetDigest) ?? MatchSha256(releaseBody);
+        }
+
+        static string MatchSha256(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(text, @"sha256[:=]\s*([0-9a-fA-F]{64})");
+            return m.Success ? m.Groups[1].Value.ToLowerInvariant() : null;
+        }
+
+        /// <summary>Verifies the downloaded file's SHA-256 equals the expected hash. Fails (returns
+        /// false) when no hash is available — a release without a checksum is treated as untrusted.</summary>
+        static bool VerifyDownload(string path, string expected, out string error)
+        {
+            if (string.IsNullOrEmpty(expected))
+            {
+                error = "у релиза нет контрольной суммы (sha256), установка отменена в целях безопасности.";
+                return false;
+            }
+
+            string actual;
+            try
+            {
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                using var stream = File.OpenRead(path);
+                actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            }
+            catch (Exception ex)
+            {
+                error = $"не удалось вычислить контрольную сумму: {ex.Message}";
+                return false;
+            }
+
+            if (actual != expected)
+            {
+                error = "контрольная сумма файла не совпала — возможна подмена, установка отменена.";
+                return false;
+            }
+
+            error = null;
+            return true;
         }
 
         // ── Banner UI ──────────────────────────────────────────────────────────
@@ -247,6 +296,20 @@ namespace WorldGen.Update
             {
                 Debug.LogWarning($"UpdateChecker: download failed: {request.error}");
                 ConfirmDialog.ShowInfo(builtinFont, "Не удалось скачать обновление", request.error);
+                actionLabel.text = "Скачать и установить";
+                dismissButton.interactable = true;
+                downloading = false;
+                yield break;
+            }
+
+            // The .exe arrived over a cert-bypassed CDN connection (see the download request above),
+            // so verify its SHA-256 against the hash delivered over the TLS-validated api.github.com
+            // channel BEFORE running it. Fail closed — never launch an installer we can't verify.
+            if (!VerifyDownload(tempPath, expectedSha256, out string verifyError))
+            {
+                Debug.LogWarning($"UpdateChecker: integrity check failed: {verifyError}");
+                try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+                ConfirmDialog.ShowInfo(builtinFont, "Обновление не прошло проверку", verifyError);
                 actionLabel.text = "Скачать и установить";
                 dismissButton.interactable = true;
                 downloading = false;
