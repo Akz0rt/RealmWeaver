@@ -54,6 +54,10 @@ namespace WorldGen.Rendering
             if (poiManager == null || raycastCamera == null) return;
             if (Mouse.current == null) return;
 
+            // Esc снимает взвод размещения без создания точки.
+            if (poiManager.PlacementArmed && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+                poiManager.DisarmPlacement();
+
             if (Mouse.current.leftButton.wasPressedThisFrame)
                 OnPress();
             else if (Mouse.current.leftButton.isPressed && tracking)
@@ -75,16 +79,28 @@ namespace WorldGen.Rendering
 
             if (hit != null)
             {
+                // Выбор существующей точки в приоритете над размещением (даже если взвод активен).
                 tracking = true;
                 isDragging = false;
                 trackedPoiId = hit.PoiId;
                 pressScreenPos = mousePos;
                 InputConsumedThisFrame = true;
+                return;
             }
-            else
+
+            if (poiManager.PlacementArmed)
             {
-                poiManager.DeselectAll();
+                // Клик по пустой клетке карты — создаём точку здесь и снимаем взвод.
+                if (GetCellIdAt(mousePos) >= 0)
+                {
+                    poiManager.AddAt(worldXZ);
+                    poiManager.DisarmPlacement();
+                    InputConsumedThisFrame = true;
+                }
+                return; // взвод активен, но мимо карты — остаёмся взведёнными, не сбрасываем выбор
             }
+
+            poiManager.DeselectAll();
         }
 
         void OnHeld()

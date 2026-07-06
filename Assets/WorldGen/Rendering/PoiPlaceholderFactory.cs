@@ -5,9 +5,10 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Generates a 32x32 sprite per PoiType at first request and caches it.
-    /// Each sprite is a colored circle with a 5x7 pixel Cyrillic glyph (Г/Р/Д/К).
-    /// No external assets required.
+    /// Generates a 64x64 sprite per PoiType at first request and caches it (one shared instance,
+    /// reused by on-map markers, the POI list rows, and the edit-panel type buttons). Each sprite is
+    /// a colored circle with a primitive white pictogram: дом (Город), колонны (Руины), арка
+    /// (Подземелье), зубчатая стена (Крепость), «?» (Unknown). No external assets required.
     /// </summary>
     public static class PoiPlaceholderFactory
     {
@@ -22,58 +23,58 @@ namespace WorldGen.Rendering
             { PoiType.Fortress, new Color32( 74,  96, 128, 255) },
         };
 
-        // 5x7 pixel glyphs. glyphs[type][row, col], row 0 = top, true = white pixel.
+        // 7x7 pixel pictograms. glyphs[type][row, col], row 0 = top, true = white pixel.
         static readonly Dictionary<PoiType, bool[,]> glyphs = new Dictionary<PoiType, bool[,]>
         {
             [PoiType.Unknown] = new bool[,]  // ?
             {
-                { false, true,  true,  true,  false },
-                { true,  false, false, false, true  },
-                { false, false, false, false, true  },
-                { false, false, true,  true,  false },
-                { false, false, true,  false, false },
-                { false, false, false, false, false },
-                { false, false, true,  false, false },
+                { false, true,  true,  true,  true,  true,  false },
+                { true,  true,  false, false, false, true,  true  },
+                { false, false, false, false, true,  true,  false },
+                { false, false, false, true,  true,  false, false },
+                { false, false, false, true,  false, false, false },
+                { false, false, false, false, false, false, false },
+                { false, false, false, true,  false, false, false },
             },
-            [PoiType.City] = new bool[,]  // Г
+            [PoiType.City] = new bool[,]  // дом с проёмом (трапеция-крыша + корпус + дверь)
             {
-                { true,  true,  true,  true,  true  },
-                { true,  false, false, false, false },
-                { true,  true,  false, false, false },
-                { true,  false, false, false, false },
-                { true,  false, false, false, false },
-                { true,  false, false, false, false },
-                { true,  false, false, false, false },
+                { false, false, true,  true,  true,  false, false },
+                { false, true,  true,  true,  true,  true,  false },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  false, true,  true,  true  },
+                { true,  true,  true,  false, true,  true,  true  },
+                { true,  true,  true,  false, true,  true,  true  },
             },
-            [PoiType.Ruin] = new bool[,]  // Р
+            [PoiType.Ruin] = new bool[,]  // 3 колонны на основании
             {
-                { true,  true,  true,  false, false },
-                { true,  false, false, true,  false },
-                { true,  false, false, true,  false },
-                { true,  true,  true,  false, false },
-                { true,  false, false, false, false },
-                { true,  false, false, false, false },
-                { true,  false, false, false, false },
+                { false, true,  false, true,  false, true,  false },
+                { false, true,  false, true,  false, true,  false },
+                { false, true,  false, true,  false, true,  false },
+                { false, true,  false, true,  false, true,  false },
+                { false, true,  false, true,  false, true,  false },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { false, false, false, false, false, false, false },
             },
-            [PoiType.Dungeon] = new bool[,]  // Д
+            [PoiType.Dungeon] = new bool[,]  // арка (округлый верх, открытый проём)
             {
-                { false, true,  true,  true,  false },
-                { false, true,  false, true,  false },
-                { false, true,  false, true,  false },
-                { false, true,  false, true,  false },
-                { true,  true,  true,  true,  true  },
-                { true,  false, false, false, true  },
-                { false, false, false, false, false },
+                { false, false, true,  true,  true,  false, false },
+                { false, true,  true,  true,  true,  true,  false },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  false, false, false, true,  true  },
+                { true,  true,  false, false, false, true,  true  },
+                { true,  true,  false, false, false, true,  true  },
+                { true,  true,  false, false, false, true,  true  },
             },
-            [PoiType.Fortress] = new bool[,]  // К
+            [PoiType.Fortress] = new bool[,]  // зубчатая стена
             {
-                { true,  false, false, true,  false },
-                { true,  false, true,  false, false },
-                { true,  true,  false, false, false },
-                { true,  true,  false, false, false },
-                { true,  false, true,  false, false },
-                { true,  false, false, true,  false },
-                { true,  false, false, false, true  },
+                { true,  false, true,  false, true,  false, true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { true,  true,  true,  true,  true,  true,  true  },
+                { false, false, false, false, false, false, false },
             },
         };
 
@@ -114,15 +115,18 @@ namespace WorldGen.Rendering
                     tex.SetPixel(x, y, px);
                 }
 
-            // Overlay 5x7 glyph, scaled up and centered in circle
+            // Overlay the pictogram, scaled up and centered in the circle. Grid size is read from the
+            // bitmap so different-shaped glyphs share this one drawing path.
             var glyph = glyphs[type];
-            const int glyphScale = 4;
-            int glyphW = 5 * glyphScale, glyphH = 7 * glyphScale;
+            int rows = glyph.GetLength(0);
+            int cols = glyph.GetLength(1);
+            int glyphScale = Mathf.Max(1, Mathf.FloorToInt(size * 0.55f / Mathf.Max(rows, cols)));
+            int glyphW = cols * glyphScale, glyphH = rows * glyphScale;
             int startX = (size - glyphW) / 2;
             int startY = (size - glyphH) / 2;
-            for (int row = 0; row < 7; row++)
+            for (int row = 0; row < rows; row++)
             {
-                for (int col = 0; col < 5; col++)
+                for (int col = 0; col < cols; col++)
                 {
                     if (!glyph[row, col]) continue;
                     for (int sy = 0; sy < glyphScale; sy++)

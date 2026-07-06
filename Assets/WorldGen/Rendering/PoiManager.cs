@@ -31,6 +31,10 @@ namespace WorldGen.Rendering
 
         public event Action<PoiData> OnSelectionChanged;
         public event Action OnPoisChanged;
+        public event Action<bool> OnPlacementArmedChanged;
+
+        /// <summary>true — «+ Добавить точку» взведён: следующий клик по пустой клетке карты создаст точку.</summary>
+        public bool PlacementArmed { get; private set; }
 
         public IReadOnlyList<PoiData> GetAllPois() => pois;
 
@@ -221,6 +225,61 @@ namespace WorldGen.Rendering
 
         public void DeselectAll() => SelectPoi(null);
 
+        // ── Placement arming (arm-then-click на карте) ───────────────────────────
+
+        public void ArmPlacement()
+        {
+            if (PlacementArmed) return;
+            PlacementArmed = true;
+            OnPlacementArmedChanged?.Invoke(true);
+        }
+
+        public void DisarmPlacement()
+        {
+            if (!PlacementArmed) return;
+            PlacementArmed = false;
+            OnPlacementArmedChanged?.Invoke(false);
+        }
+
+        public void TogglePlacement()
+        {
+            if (PlacementArmed) DisarmPlacement();
+            else ArmPlacement();
+        }
+
+        /// <summary>
+        /// Создаёт точку в конкретной позиции карты (arm-then-click), владелец — ближайшая
+        /// не-океаническая клетка, и выделяет её. null, если карта пуста.
+        /// </summary>
+        public PoiData AddAt(System.Numerics.Vector2 pos)
+        {
+            if (mapRenderer?.Cells == null) return null;
+
+            VoronoiCell best = null;
+            float bestSq = float.MaxValue;
+            foreach (var c in mapRenderer.Cells)
+            {
+                if (c.IsOcean) continue;
+                float dx = c.Site.X - pos.X, dy = c.Site.Y - pos.Y;
+                float d = dx * dx + dy * dy;
+                if (d < bestSq) { bestSq = d; best = c; }
+            }
+            if (best == null) return null;
+
+            var poi = new PoiData
+            {
+                Type = PoiType.Unknown,
+                Name = DefaultName(PoiType.Unknown),
+                OwnerCellId = best.Id,
+                WorldPosition = pos,
+            };
+            pois.Add(poi);
+            SpawnMarker(poi);
+            OnPoisChanged?.Invoke();
+            SelectPoi(poi.Id);
+            return poi;
+        }
+
         /// <summary>Returns the PoiMarkerView for the given POI id, or null if not found.</summary>
         public PoiMarkerView GetMarkerView(string id)
         {
@@ -329,9 +388,12 @@ namespace WorldGen.Rendering
                 bool spriteOk = sprite != null
                     && sprite.texture.width == 64
                     && sprite.texture.height == 64;
-                if (!spriteOk)
+                // Иконка должна быть ОДНИМ кэшированным экземпляром (её делят маркеры, список и
+                // панель редактирования) — проверяем идентичность ссылки при повторном запросе.
+                bool sameInstance = ReferenceEquals(sprite, PoiPlaceholderFactory.GetPlaceholder(type));
+                if (!spriteOk || !sameInstance)
                 {
-                    Debug.Log($"Self-Test POI Placeholder Factory: FAIL — {type} sprite invalid");
+                    Debug.Log($"Self-Test POI Placeholder Factory: FAIL — {type} (valid={spriteOk}, cached={sameInstance})");
                     ok = false;
                 }
             }
