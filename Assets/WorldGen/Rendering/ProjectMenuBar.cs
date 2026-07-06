@@ -87,7 +87,7 @@ namespace WorldGen.Rendering
             }
             if (mapRenderer.Cells == null)
             {
-                ConfirmDialog.ShowInfo(builtinFont, "Сначала сгенерируйте карту.");
+                ConfirmDialog.ShowInfo(builtinFont, "Карта ещё не создана", "Сначала сгенерируйте карту.");
                 return;
             }
 
@@ -100,7 +100,7 @@ namespace WorldGen.Rendering
             }
             catch (System.Exception ex)
             {
-                ConfirmDialog.ShowInfo(builtinFont, $"Не удалось сохранить файл: {ex.Message}");
+                ConfirmDialog.ShowInfo(builtinFont, "Не удалось сохранить файл", ex.Message);
                 return;
             }
 
@@ -130,11 +130,11 @@ namespace WorldGen.Rendering
             var result = ProjectSerializer.Load(path);
             if (!result.Success)
             {
-                ConfirmDialog.ShowInfo(builtinFont, result.ErrorMessage);
+                ConfirmDialog.ShowInfo(builtinFont, "Ошибка", result.ErrorMessage);
                 return;
             }
             if (!string.IsNullOrEmpty(result.WarningMessage))
-                ConfirmDialog.ShowInfo(builtinFont, result.WarningMessage);
+                ConfirmDialog.ShowInfo(builtinFont, "Предупреждение", result.WarningMessage);
 
             mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
             poiManager?.LoadPois(result.Pois);

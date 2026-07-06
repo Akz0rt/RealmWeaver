@@ -239,7 +239,7 @@ namespace WorldGen.Update
             if (request.result != UnityWebRequest.Result.Success)
             {
                 Debug.LogWarning($"UpdateChecker: download failed: {request.error}");
-                ConfirmDialog.ShowInfo(builtinFont, $"Не удалось скачать обновление: {request.error}");
+                ConfirmDialog.ShowInfo(builtinFont, "Не удалось скачать обновление", request.error);
                 actionLabel.text = "Скачать и установить";
                 dismissButton.interactable = true;
                 downloading = false;
@@ -258,7 +258,7 @@ namespace WorldGen.Update
             catch (Exception ex)
             {
                 Debug.LogWarning($"UpdateChecker: failed to launch installer: {ex.Message}");
-                ConfirmDialog.ShowInfo(builtinFont, $"Не удалось запустить установщик: {ex.Message}");
+                ConfirmDialog.ShowInfo(builtinFont, "Не удалось запустить установщик", ex.Message);
                 actionLabel.text = "Скачать и установить";
                 dismissButton.interactable = true;
                 downloading = false;

@@ -140,7 +140,7 @@ namespace WorldGen.Notes.Rendering
 
         public void RequestDeleteObject(NotesCanvasController canvas, CanvasObjectData data, System.Action<bool> onConfirmed)
         {
-            ConfirmDialog.Show(builtinFont, $"Удалить \"{DescribeObject(data)}\"?", confirmed =>
+            ConfirmDialog.Show(builtinFont, "Удалить объект?", $"«{DescribeObject(data)}»", confirmed =>
             {
                 if (confirmed)
                 {
@@ -153,7 +153,7 @@ namespace WorldGen.Notes.Rendering
 
         public void RequestDeleteLink(NotesCanvasController canvas, LinkData data, System.Action<bool> onConfirmed)
         {
-            ConfirmDialog.Show(builtinFont, "Удалить связь?", confirmed =>
+            ConfirmDialog.Show(builtinFont, "Удалить связь?", "", confirmed =>
             {
                 if (confirmed)
                 {

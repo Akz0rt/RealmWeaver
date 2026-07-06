@@ -348,7 +348,7 @@ namespace WorldGen.Notes.Rendering
 
             AddRenameAndDelete(titleTextGO, titleGO.transform, titleText, titleTextRect, group.Title,
                 newTitle => documentController.RenameGroup(group.Id, newTitle),
-                () => ConfirmDialog.Show(builtinFont, $"Удалить группу \"{group.Title}\" и все её страницы ({group.Pages.Count})?", confirmed =>
+                () => ConfirmDialog.Show(builtinFont, "Удалить группу?", $"«{group.Title}» и все её страницы ({group.Pages.Count})", confirmed =>
                 {
                     if (confirmed) documentController.DeleteGroup(group.Id);
                 }));
@@ -410,7 +410,7 @@ namespace WorldGen.Notes.Rendering
             // comment on why attaching it to the child Text instead would break "open page".
             AddRenameAndDelete(rowGO, rowGO.transform, text, textRect, page.Name,
                 newName => documentController.RenamePage(page.Id, newName),
-                () => ConfirmDialog.Show(builtinFont, $"Удалить страницу \"{page.Name}\"?", confirmed =>
+                () => ConfirmDialog.Show(builtinFont, "Удалить страницу?", $"«{page.Name}»", confirmed =>
                 {
                     if (confirmed) documentController.DeletePage(page.Id);
                 }));
