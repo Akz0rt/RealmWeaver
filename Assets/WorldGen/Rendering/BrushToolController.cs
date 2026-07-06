@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using WorldGen.Generation;
 using WorldGen.Rendering.Theme;
@@ -85,9 +86,15 @@ namespace WorldGen.Rendering
             if (raycastCamera == null) { HideCursor(); return; }
             if (Mouse.current == null) { HideCursor(); return; }
 
+            // Курсор над UI (панель кисти, тулбар, меню, любой raycast-target) — не рисуем по карте
+            // "сквозь" интерфейс и не показываем контур области под панелью.
+            bool pointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+
             HandleUndo();
-            HandlePainting();
-            UpdateCursor();
+            HandlePainting(pointerOverUI);
+
+            if (pointerOverUI && !isPainting) HideCursor();
+            else UpdateCursor();
         }
 
         void HandleUndo()
@@ -103,10 +110,11 @@ namespace WorldGen.Rendering
             }
         }
 
-        void HandlePainting()
+        void HandlePainting(bool pointerOverUI)
         {
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
+                if (pointerOverUI) return; // клик по UI не должен начинать мазок по карте
                 isPainting = true;
                 hasLastPaintSite = false;
                 mapRenderer.BeginBrushStroke();

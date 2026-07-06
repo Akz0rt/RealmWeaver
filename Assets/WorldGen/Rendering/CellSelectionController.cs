@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using WorldGen.Generation;
 
@@ -62,6 +63,8 @@ namespace WorldGen.Rendering
 
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
+                // Клик по UI (панель, тулбар, меню) не должен выделять клетку карты "сквозь" интерфейс.
+                if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
                 isDragging = true;
                 var cell = RaycastCell();
                 if (cell == null) return;
