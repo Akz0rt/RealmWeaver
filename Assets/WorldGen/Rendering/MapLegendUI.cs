@@ -292,10 +292,15 @@ namespace WorldGen.Rendering
             var text = textGO.AddComponent<Text>();
             text.text = label;
             ThemeService.Tag(text, ThemeRole.Txt);
-            text.fontSize = fontSize;
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             text.alignment = TextAnchor.MiddleLeft;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Truncate;
+            // Best-fit shrinks only the labels that would otherwise overrun the card's right edge
+            // (e.g. "Умеренный широколиственный лес"); short labels stay at the max size.
+            text.resizeTextForBestFit = true;
+            text.resizeTextMinSize = 9;
+            text.resizeTextMaxSize = fontSize;
             var textLE = textGO.AddComponent<LayoutElement>();
             textLE.flexibleWidth = 1f;
             textLE.preferredHeight = 16f;
