@@ -1,50 +1,68 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using WorldGen.Generation;
 
 namespace WorldGen.Rendering
 {
-    public enum BrushTool { Elevation, Temperature, Moisture }
+    /// <summary>Что редактирует кисть. Elevation/Temperature/Moisture — относительное изменение;
+    /// Biome — прямая замена биома выбранным из палитры.</summary>
+    public enum BrushTool { Elevation, Temperature, Moisture, Biome }
+
+    /// <summary>Режим для Elevation/Temperature/Moisture. Для Biome не применяется.</summary>
+    public enum BrushMode { Raise, Lower, Smooth }
+
+    /// <summary>Форма отпечатка кисти.</summary>
+    public enum BrushShape { Circle, Square }
 
     /// <summary>
-    /// Режим "кисти" - применяет ОТНОСИТЕЛЬНОЕ изменение (+delta или -delta) к выбранному
-    /// параметру клетки (elevation/temperature/moisture), пока зажата ЛКМ. При заходе на новую
-    /// клетку delta применяется сразу (мгновенный отклик при движении кистью); пока курсор стоит
-    /// на одной клетке - delta доливается каждые repeatInterval секунд (не зависит от FPS).
-    /// Один проход кистью (от нажатия до отпускания ЛКМ) - одна Undo-операция, откатывающая
-    /// разом все клетки, затронутые за этот проход (Ctrl+Z).
+    /// Radius-кисть: пока зажата ЛКМ, применяет изменение ко ВСЕМ клеткам в круге/квадрате
+    /// заданного радиуса вокруг точки под курсором (а не к одной клетке, как раньше).
+    /// Режимы:
+    ///   • Поднять/Опустить — прибавляет ±(brushStep · Сила) к elevation/temperature/moisture каждой клетки.
+    ///   • Сгладить — каждую клетку сдвигает на долю Силы к среднему между ней и её соседями.
+    ///   • Биом — жёстко ставит BiomeOverride = выбранный биом (Сила не участвует).
+    /// При заходе на новую точку изменение применяется сразу (мгновенный отклик при движении);
+    /// пока курсор стоит на месте — доливается каждые repeatInterval секунд (не зависит от FPS).
+    /// Один проход (нажатие→отпускание ЛКМ) — одна Undo-операция, откатывающая все затронутые
+    /// клетки разом (Ctrl+Z). "Отменить всё" (кнопка панели) откатывает все мазки сессии сразу.
     ///
-    /// Использует новый Input System (UnityEngine.InputSystem), как и CellSelectionController.
-    ///
-    /// Этот компонент работает НЕЗАВИСИМО от CellSelectionController - рекомендуется включать
-    /// только один из двух режимов одновременно (либо выбор клеток для панели override, либо
-    /// кисть), чтобы не было конфликта интерпретации кликов мыши. См. brushModeActive ниже.
+    /// Работает НЕЗАВИСИМО от CellSelectionController — включай только один режим одновременно
+    /// (см. brushModeActive), чтобы не было конфликта интерпретации кликов мыши.
     /// </summary>
     public class BrushToolController : MonoBehaviour
     {
         [Header("Источники")]
         public WorldMapRenderer mapRenderer;
-        [Tooltip("Камера, с которой кастуется луч кисти. Если не назначено - используется Camera.main.")]
+        [Tooltip("Камера, с которой кастуется луч кисти. Если не назначено — используется Camera.main.")]
         public Camera raycastCamera;
         [Tooltip("If assigned, brush painting is suppressed when POI interaction controller has claimed the input (e.g. dragging a POI marker).")]
         public PoiInteractionController poiController;
 
         [Header("Настройки инструмента")]
         public BrushTool activeTool = BrushTool.Elevation;
-        [Tooltip("Величина изменения за одно применение кисти к клетке (за один кадр наведения).")]
+        public BrushMode mode = BrushMode.Raise;
+        public BrushShape shape = BrushShape.Circle;
+        [Tooltip("Радиус кисти в мировых единицах карты (то же пространство, что VoronoiCell.Site).")]
+        public float brushRadius = 42f;
+        [Tooltip("Базовая величина изменения за одно применение к клетке (до умножения на Силу).")]
         public float brushStep = 0.02f;
-        [Tooltip("true - увеличивает значение (+step), false - уменьшает (-step).")]
-        public bool increaseMode = true;
-        [Tooltip("Интервал в секундах между повторными применениями кисти, пока ЛКМ зажата на одной клетке без движения. Не зависит от FPS. 0.05 = 20 применений/сек.")]
+        [Range(0f, 1f)]
+        [Tooltip("Сила кисти 0..1 — множитель дельты для Поднять/Опустить и доля усреднения для Сгладить. Для биома не используется.")]
+        public float strength = 0.6f;
+        [Tooltip("Выбранный биом для режима 'Биом'. null — красить нечем (клик игнорируется).")]
+        public Biome? selectedBiome = null;
+        [Tooltip("Интервал в секундах между повторными применениями, пока ЛКМ зажата на месте. Не зависит от FPS.")]
         public float repeatInterval = 0.05f;
 
         [Header("Включение режима")]
-        [Tooltip("Если выключено - компонент не реагирует на ввод вообще. Включай вручную при переключении в режим кисти (например, через UI-кнопку), чтобы не конфликтовать с CellSelectionController.")]
+        [Tooltip("Если выключено — компонент не реагирует на ввод. Включается при переключении в режим кисти.")]
         public bool brushModeActive = false;
 
         bool isPainting;
-        VoronoiCell lastPaintedCell; // клетка, к которой применяли последней - для мгновенного отклика при переходе на новую клетку
-        float repeatTimer;           // накопленное время на текущей клетке для повторного применения по интервалу
+        Vector2 lastPaintSite;   // точка последнего применения в Site-координатах — для мгновенного отклика при движении
+        bool hasLastPaintSite;
+        float repeatTimer;
 
         void Update()
         {
@@ -77,7 +95,7 @@ namespace WorldGen.Rendering
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
                 isPainting = true;
-                lastPaintedCell = null;
+                hasLastPaintSite = false;
                 mapRenderer.BeginBrushStroke();
                 PaintAtCursor();
             }
@@ -96,47 +114,145 @@ namespace WorldGen.Rendering
         {
             Vector2 mousePos = Mouse.current.position.ReadValue();
             Ray ray = raycastCamera.ScreenPointToRay(mousePos);
-            var cell = mapRenderer.GetCellUnderRay(ray);
-            if (cell == null) return;
+            if (!mapRenderer.TryGetSiteHitPoint(ray, out Vector2 site)) return;
 
-            if (cell != lastPaintedCell)
+            // В режиме биома без выбранного биома красить нечем — no-op (не ошибка).
+            if (activeTool == BrushTool.Biome && selectedBiome == null) return;
+
+            // Перешли на заметно новую точку — применяем сразу (мгновенный отклик), сбрасываем таймер.
+            const float moveEpsilonSqr = 0.0001f;
+            if (!hasLastPaintSite || (site - lastPaintSite).sqrMagnitude > moveEpsilonSqr)
             {
-                // Перешли на новую клетку - применяем сразу для мгновенного отклика при движении кистью
-                // и сбрасываем таймер повтора.
-                lastPaintedCell = cell;
+                hasLastPaintSite = true;
+                lastPaintSite = site;
                 repeatTimer = 0f;
-                ApplyDelta(cell);
+                ApplyStamp(site);
                 return;
             }
 
-            // Курсор стоит на той же клетке - доливаем delta через фиксированные интервалы времени.
-            // Накапливаем реальное время (Time.deltaTime), поэтому скорость изменения не зависит от FPS.
-            // while с вычитанием интервала "догоняет" пропущенные применения при просадках кадров.
+            // Курсор стоит на месте — доливаем через фиксированные интервалы реального времени.
             float interval = Mathf.Max(repeatInterval, 0.0001f);
             repeatTimer += Time.deltaTime;
             while (repeatTimer >= interval)
             {
                 repeatTimer -= interval;
-                ApplyDelta(cell);
+                ApplyStamp(site);
             }
         }
 
-        void ApplyDelta(VoronoiCell cell)
+        void ApplyStamp(Vector2 site)
         {
-            float signedDelta = increaseMode ? brushStep : -brushStep;
+            var affected = BrushOps.CellsInRadius(
+                mapRenderer.Cells, site.x, site.y, brushRadius, shape == BrushShape.Square);
+            if (affected.Count == 0) return;
 
+            if (activeTool == BrushTool.Biome)
+            {
+                Biome biome = selectedBiome.Value;
+                foreach (var cell in affected)
+                    mapRenderer.BrushSetBiome(cell, biome);
+                return;
+            }
+
+            if (mode == BrushMode.Smooth)
+            {
+                ApplySmooth(affected);
+                return;
+            }
+
+            float signedDelta = (mode == BrushMode.Raise ? +1f : -1f) * brushStep * strength;
+            if (signedDelta == 0f) return;
+            foreach (var cell in affected)
+                ApplyDelta(cell, signedDelta);
+        }
+
+        void ApplyDelta(VoronoiCell cell, float signedDelta)
+        {
             switch (activeTool)
             {
-                case BrushTool.Elevation:
-                    mapRenderer.BrushAdjustElevation(cell, signedDelta);
-                    break;
-                case BrushTool.Temperature:
-                    mapRenderer.BrushAdjustTemperature(cell, signedDelta);
-                    break;
-                case BrushTool.Moisture:
-                    mapRenderer.BrushAdjustMoisture(cell, signedDelta);
-                    break;
+                case BrushTool.Elevation: mapRenderer.BrushAdjustElevation(cell, signedDelta); break;
+                case BrushTool.Temperature: mapRenderer.BrushAdjustTemperature(cell, signedDelta); break;
+                case BrushTool.Moisture: mapRenderer.BrushAdjustMoisture(cell, signedDelta); break;
             }
+        }
+
+        void ApplySmooth(List<VoronoiCell> affected)
+        {
+            // Считаем целевые дельты по ТЕКУЩИМ значениям всех клеток заранее, и лишь потом применяем,
+            // чтобы изменение одной клетки в цикле не искажало чтение соседей у следующих в том же отпечатке.
+            var deltas = new List<(VoronoiCell cell, float delta)>(affected.Count);
+            foreach (var cell in affected)
+            {
+                float current = ReadValue(cell);
+                float target = BrushOps.SmoothedValue(current, NeighborValues(cell), strength);
+                deltas.Add((cell, target - current));
+            }
+            foreach (var (cell, delta) in deltas)
+            {
+                if (delta != 0f) ApplyDelta(cell, delta);
+            }
+        }
+
+        float ReadValue(VoronoiCell cell)
+        {
+            switch (activeTool)
+            {
+                case BrushTool.Temperature: return cell.EffectiveTemperature;
+                case BrushTool.Moisture: return cell.EffectiveMoisture;
+                default: return cell.EffectiveElevation; // Elevation
+            }
+        }
+
+        IEnumerable<float> NeighborValues(VoronoiCell cell)
+        {
+            foreach (int nid in cell.NeighborIds)
+            {
+                var n = mapRenderer.GetCellById(nid);
+                if (n != null) yield return ReadValue(n);
+            }
+        }
+
+        // ── Self-tests (this project's convention: [ContextMenu] + Debug.Log PASS/FAIL) ──────────
+
+        [ContextMenu("Self-Test: Brush Radius Query")]
+        public void SelfTestRadiusQuery()
+        {
+            var cells = new List<VoronoiCell>
+            {
+                new VoronoiCell(0, new System.Numerics.Vector2(0f, 0f)),  // центр
+                new VoronoiCell(1, new System.Numerics.Vector2(3f, 0f)),  // внутри круга и квадрата r=5
+                new VoronoiCell(2, new System.Numerics.Vector2(4f, 4f)),  // dist≈5.66 — вне круга r=5, внутри квадрата
+                new VoronoiCell(3, new System.Numerics.Vector2(10f, 0f)), // вне обоих
+            };
+
+            var circle = BrushOps.CellsInRadius(cells, 0f, 0f, 5f, square: false);
+            var square = BrushOps.CellsInRadius(cells, 0f, 0f, 5f, square: true);
+
+            bool circleOk = circle.Count == 2 && circle.Exists(c => c.Id == 0) && circle.Exists(c => c.Id == 1);
+            bool squareOk = square.Count == 3 && square.Exists(c => c.Id == 2) && !square.Exists(c => c.Id == 3);
+
+            Debug.Log(circleOk && squareOk
+                ? "Self-Test Brush Radius Query: PASS"
+                : $"Self-Test Brush Radius Query: FAIL (circle={circle.Count}, square={square.Count})");
+        }
+
+        [ContextMenu("Self-Test: Smooth Averaging")]
+        public void SelfTestSmoothAveraging()
+        {
+            // current=1, соседи {0,0} → среднее(1,0,0)=1/3.
+            float full = BrushOps.SmoothedValue(1f, new[] { 0f, 0f }, 1f);      // = 1/3
+            float half = BrushOps.SmoothedValue(1f, new[] { 0f, 0f }, 0.5f);    // = 1 + (1/3-1)*0.5 = 2/3
+            float none = BrushOps.SmoothedValue(1f, new[] { 0f, 0f }, 0f);      // = 1
+            float noNeighbors = BrushOps.SmoothedValue(0.7f, new float[0], 1f); // = 0.7 (среднее = само значение)
+
+            bool ok = Mathf.Abs(full - (1f / 3f)) < 1e-5f
+                      && Mathf.Abs(half - (2f / 3f)) < 1e-5f
+                      && Mathf.Abs(none - 1f) < 1e-5f
+                      && Mathf.Abs(noNeighbors - 0.7f) < 1e-5f;
+
+            Debug.Log(ok
+                ? "Self-Test Smooth Averaging: PASS"
+                : $"Self-Test Smooth Averaging: FAIL (full={full}, half={half}, none={none}, noNeighbors={noNeighbors})");
         }
     }
 }

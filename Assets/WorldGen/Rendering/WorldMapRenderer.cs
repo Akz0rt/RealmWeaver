@@ -132,6 +132,13 @@ namespace WorldGen.Rendering
         /// <summary>Read-only access to current cells for POI placement.</summary>
         public IReadOnlyList<VoronoiCell> Cells => cells;
 
+        /// <summary>Клетка по Id через готовую карту cellById (O(1)). null — если нет карты или Id неизвестен. Используется radius-кистью в режиме "Сгладить" для чтения соседей.</summary>
+        public VoronoiCell GetCellById(int id)
+        {
+            if (cellById != null && cellById.TryGetValue(id, out var cell)) return cell;
+            return null;
+        }
+
         /// <summary>The GenerationParams that actually produced the current Cells (via GenerateAndRender or LoadFromCells) — used by ProjectMenuBar to save it for reference.</summary>
         public GenerationParams LastGenParams => lastGenParams;
 
@@ -474,6 +481,37 @@ namespace WorldGen.Rendering
         }
 
         public int BrushUndoStackCount => brushUndo.UndoStackCount;
+
+        /// <summary>
+        /// Отменяет ВСЕ мазки кисти за сессию разом — откатывает каждую затронутую клетку к её
+        /// состоянию до самого первого мазка и очищает историю. Кнопка "Отменить всё" в панели кисти.
+        /// </summary>
+        public void UndoAllBrushStrokes()
+        {
+            if (cells == null) return;
+            bool any = false;
+            while (brushUndo.UndoStackCount > 0)
+                any |= brushUndo.Undo();
+            if (any)
+            {
+                RecolorOnly();
+                OnDisplayChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Прямая установка биома клетки кистью (hard set BiomeOverride — высший приоритет) с записью
+        /// "досмазкового" состояния в текущий Undo-мазок. В отличие от Adjust* это не относительное
+        /// изменение, а замена категории; Сила кисти для биома не применяется.
+        /// </summary>
+        public void BrushSetBiome(VoronoiCell cell, Biome biome)
+        {
+            if (cells == null) return;
+            brushUndo.RecordBeforeChange(cell);
+            cell.BiomeOverride = biome;
+            CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+            RecolorOnly();
+        }
 
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя
         /// влажность) к случайно выбранному региону на карте - демонстрация API ApplyClimateOverride
@@ -1047,6 +1085,24 @@ namespace WorldGen.Rendering
                 return cells.FirstOrDefault(c => c.Id == cellId);
             }
             return null;
+        }
+
+        /// <summary>
+        /// Точка попадания луча по коллайдеру карты, переведённая в координаты Site (x = Site.X,
+        /// y = Site.Y — плоскость карты XZ). Возвращает false, если луч не задел карту. Используется
+        /// radius-кистью, чтобы запросить все клетки в круге/квадрате вокруг курсора.
+        /// </summary>
+        public bool TryGetSiteHitPoint(Ray ray, out Vector2 sitePoint, float maxDistance = 2000f)
+        {
+            sitePoint = Vector2.zero;
+            if (cells == null) return false;
+            if (meshCollider.Raycast(ray, out RaycastHit hit, maxDistance))
+            {
+                Vector3 local = transform.InverseTransformPoint(hit.point);
+                sitePoint = new Vector2(local.x, local.z);
+                return true;
+            }
+            return false;
         }
     }
 }

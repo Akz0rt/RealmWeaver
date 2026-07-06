@@ -8,16 +8,13 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// "Редактор" tab content - extracted unchanged from MapEditorPanel.BuildEditorTab (Main-screen
-    /// shell redesign, 2026-07-06). Functionally identical to the pre-redesign panel; Screen C's
-    /// spec ("Editor-Brush Panel Redesign") will replace this class's internals with the real
-    /// radius-brush design - do not add radius/shape/biome-target logic here.
+    /// "Редактор" — панель кисти. Основной режим "Кисть" (radius-кисть по мокапу Screen C:
+    /// Что редактируем / Режим / Форма / Размер / Сила / Отменить всё + контекстная палитра биома)
+    /// плюс сохранённый вторичный режим "Точное выделение" (старый Selection+Override), доступный
+    /// через переключатель в шапке. Вся логика применения кисти — в BrushToolController.
     /// </summary>
     public class EditorBrushPanel : MonoBehaviour
     {
-        // Nested (rather than top-level like the original WorldGen.Rendering.EditorMode) solely to
-        // avoid a duplicate-type clash with MapEditorPanel.cs's own top-level EditorMode enum while
-        // that file still exists (it is deleted in Task 5). No behavioral difference.
         public enum EditorMode { SelectionOverride, Brush }
 
         [Header("Источники")]
@@ -25,29 +22,37 @@ namespace WorldGen.Rendering
         public CellSelectionController selectionController;
         public BrushToolController brushController;
 
-        EditorMode currentMode = EditorMode.SelectionOverride;
+        EditorMode currentMode = EditorMode.Brush;
 
-        Button selectionModeButton;
-        Button brushModeButton;
+        // Header
+        Text headerTitle;
+        Text headerLink;
+
+        // Sub-roots
         GameObject selectionPanelRoot;
         GameObject brushPanelRoot;
 
-        Text selectionCountLabel;
-        Slider temperatureSlider;
-        Slider moistureSlider;
-        Toggle temperatureToggle;
-        Toggle moistureToggle;
-        Slider elevationSlider;
-        Toggle elevationToggle;
-        Dropdown waterDropdown;
-        Toggle waterToggle;
-        Dropdown biomeDropdown;
-        Toggle biomeToggle;
+        // Brush controls
+        readonly Dictionary<BrushTool, Image> targetPillBg = new Dictionary<BrushTool, Image>();
+        readonly Dictionary<BrushTool, Text> targetPillTxt = new Dictionary<BrushTool, Text>();
+        readonly Dictionary<BrushMode, Image> modeSegBg = new Dictionary<BrushMode, Image>();
+        readonly Dictionary<BrushMode, Text> modeSegTxt = new Dictionary<BrushMode, Text>();
+        GameObject modeCaptionGO;
+        GameObject modeSegmentGO;
+        Image circleIconBg, squareIconBg;
+        Outline circleIconOutline, squareIconOutline;
+        Slider sizeSlider, strengthSlider;
+        Text sizeValue, strengthValue;
 
-        Dropdown toolDropdown;
-        Slider stepSlider;
-        Text stepValueLabel;
-        Toggle increaseToggle;
+        // Biome palette (contextual, shown only in Brush mode with target = Biome)
+        GameObject biomePaletteRoot;
+        readonly Dictionary<Biome, Outline> swatchOutline = new Dictionary<Biome, Outline>();
+
+        // Selection & Override widgets (unchanged behaviour)
+        Text selectionCountLabel;
+        Slider temperatureSlider, moistureSlider, elevationSlider;
+        Toggle temperatureToggle, moistureToggle, elevationToggle, waterToggle, biomeToggle;
+        Dropdown waterDropdown, biomeDropdown;
 
         Font builtinFont;
 
@@ -55,7 +60,10 @@ namespace WorldGen.Rendering
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             BuildUI();
-            SetMode(EditorMode.SelectionOverride);
+            SetMode(EditorMode.Brush);
+            OnTargetChanged(BrushTool.Elevation);
+            OnModeChanged(BrushMode.Raise);
+            OnShapeChanged(BrushShape.Circle);
         }
 
         void OnEnable()
@@ -76,17 +84,89 @@ namespace WorldGen.Rendering
                 selectionCountLabel.text = $"Выбрано клеток: {selected.Count}";
         }
 
+        // ── Mode switching (Кисть ↔ Точное выделение) ────────────────────────────
+
         void SetMode(EditorMode mode)
         {
             currentMode = mode;
             bool selectionActive = mode == EditorMode.SelectionOverride;
             if (selectionController != null) selectionController.enabled = selectionActive;
             if (brushController != null) brushController.brushModeActive = !selectionActive;
+
             selectionPanelRoot.SetActive(selectionActive);
             brushPanelRoot.SetActive(!selectionActive);
-            ThemeService.Tag(selectionModeButton.GetComponent<Image>(), selectionActive ? ThemeRole.Accent : ThemeRole.Elev);
-            ThemeService.Tag(brushModeButton.GetComponent<Image>(), !selectionActive ? ThemeRole.Accent : ThemeRole.Elev);
+
+            headerTitle.text = selectionActive ? "Точное выделение" : "Кисть";
+            headerLink.text = selectionActive ? "← Кисть" : "Точное выделение";
+
+            UpdateBiomePaletteVisibility();
         }
+
+        // ── Target / Mode / Shape handlers ───────────────────────────────────────
+
+        void OnTargetChanged(BrushTool target)
+        {
+            if (brushController != null) brushController.activeTool = target;
+
+            foreach (var kvp in targetPillBg)
+            {
+                bool on = kvp.Key == target;
+                ThemeService.Tag(kvp.Value, on ? ThemeRole.Accent : ThemeRole.Elev);
+                ThemeService.Tag(targetPillTxt[kvp.Key], on ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
+
+            // Режим (Поднять/Опустить/Сгладить) бессмыслен для категории — прячем на биоме.
+            bool isBiome = target == BrushTool.Biome;
+            if (modeCaptionGO != null) modeCaptionGO.SetActive(!isBiome);
+            if (modeSegmentGO != null) modeSegmentGO.SetActive(!isBiome);
+
+            UpdateBiomePaletteVisibility();
+        }
+
+        void OnModeChanged(BrushMode mode)
+        {
+            if (brushController != null) brushController.mode = mode;
+            foreach (var kvp in modeSegBg)
+            {
+                bool on = kvp.Key == mode;
+                ThemeService.Tag(kvp.Value, on ? ThemeRole.Accent : ThemeRole.Elev);
+                ThemeService.Tag(modeSegTxt[kvp.Key], on ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
+        }
+
+        void OnShapeChanged(BrushShape shape)
+        {
+            if (brushController != null) brushController.shape = shape;
+            bool circle = shape == BrushShape.Circle;
+            ThemeService.Tag(circleIconBg, circle ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            ThemeService.Tag(squareIconBg, !circle ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            circleIconOutline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            squareIconOutline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            circleIconOutline.enabled = circle;
+            squareIconOutline.enabled = !circle;
+        }
+
+        void OnBiomeSelected(Biome biome)
+        {
+            if (brushController != null) brushController.selectedBiome = biome;
+            foreach (var kvp in swatchOutline)
+            {
+                bool on = kvp.Key == biome;
+                kvp.Value.effectColor = ThemeService.Get(ThemeRole.Accent);
+                kvp.Value.enabled = on;
+            }
+        }
+
+        void UpdateBiomePaletteVisibility()
+        {
+            if (biomePaletteRoot == null) return;
+            bool show = currentMode == EditorMode.Brush
+                        && brushController != null
+                        && brushController.activeTool == BrushTool.Biome;
+            biomePaletteRoot.SetActive(show);
+        }
+
+        // ── Selection & Override apply (unchanged) ───────────────────────────────
 
         void ApplyOverride()
         {
@@ -124,14 +204,6 @@ namespace WorldGen.Rendering
             mapRenderer.ClearAllOverrides(selected);
         }
 
-        void OnBrushValuesChanged()
-        {
-            if (brushController == null) return;
-            brushController.activeTool = (BrushTool)toolDropdown.value;
-            brushController.brushStep = stepSlider.value;
-            brushController.increaseMode = increaseToggle.isOn;
-        }
-
         // ── UI Construction ──────────────────────────────────────────────────────
 
         void BuildUI()
@@ -148,189 +220,190 @@ namespace WorldGen.Rendering
             var panelGO = new GameObject("EditorPanel");
             panelGO.transform.SetParent(canvasTransform, false);
             var panelImg = panelGO.AddComponent<Image>();
-            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.7f);
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.92f);
             var panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0f, 1f);
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
-            panelRect.anchoredPosition = new Vector2(20f, -20f - MapToolbarUI.BarHeightPixels - 40f); // below 40px menu + 46px toolbar
+            panelRect.anchoredPosition = new Vector2(20f, -20f - MapToolbarUI.BarHeightPixels - 40f); // ниже 40px меню + 46px тулбар
             panelRect.sizeDelta = new Vector2(264f, 0f);
 
             var layout = panelGO.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 10, 10);
-            layout.spacing = 6f;
+            layout.padding = new RectOffset(14, 14, 12, 12);
+            layout.spacing = 9f;
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
-            layout.childControlHeight = false;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             UiShadow.Add(panelRect);
 
             BuildEditorTab(panelGO.transform);
+            BuildBiomePalette(canvasTransform);
         }
 
         void BuildEditorTab(Transform t)
         {
-            AddLabel(t, "Режим:", bold: false, role: ThemeRole.Mut);
+            BuildHeaderRow(t);
 
-            var modeRowGO = new GameObject("ModeRow");
-            modeRowGO.transform.SetParent(t, false);
-            var modeRowHLG = modeRowGO.AddComponent<HorizontalLayoutGroup>();
-            modeRowHLG.spacing = 4f;
-            modeRowHLG.childControlWidth = true;
-            modeRowHLG.childForceExpandWidth = true;
-            modeRowGO.AddComponent<LayoutElement>().preferredHeight = 28f;
-
-            selectionModeButton = AddModeButton(modeRowGO.transform, "Selection & Override",
-                () => SetMode(EditorMode.SelectionOverride));
-            brushModeButton = AddModeButton(modeRowGO.transform, "Brush",
-                () => SetMode(EditorMode.Brush));
-
-            selectionPanelRoot = new GameObject("SelectionOverrideSection");
-            selectionPanelRoot.transform.SetParent(t, false);
-            var selVLG = selectionPanelRoot.AddComponent<VerticalLayoutGroup>();
-            selVLG.spacing = 5f;
-            selVLG.childControlWidth = true;
-            selVLG.childForceExpandWidth = true;
-            selVLG.childControlHeight = false;
-            selectionPanelRoot.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            selectionPanelRoot = MakeSection(t, "SelectionOverrideSection");
             BuildSelectionOverrideSection(selectionPanelRoot.transform);
 
-            brushPanelRoot = new GameObject("BrushSection");
-            brushPanelRoot.transform.SetParent(t, false);
-            var brushVLG = brushPanelRoot.AddComponent<VerticalLayoutGroup>();
-            brushVLG.spacing = 5f;
-            brushVLG.childControlWidth = true;
-            brushVLG.childForceExpandWidth = true;
-            brushVLG.childControlHeight = false;
-            brushPanelRoot.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            brushPanelRoot = MakeSection(t, "BrushSection");
             BuildBrushSection(brushPanelRoot.transform);
         }
 
-        // ── Sub-section builders ─────────────────────────────────────────────────
-
-        void BuildSelectionOverrideSection(Transform t)
+        GameObject MakeSection(Transform t, string name)
         {
-            selectionCountLabel = AddLabel(t, "Выбрано клеток: 0");
-
-            AddLabel(t, "─── Климат ───", bold: false, role: ThemeRole.Mut);
-            (temperatureSlider, _, temperatureToggle) = AddSliderRow(t, "Температура", 0.5f);
-            (moistureSlider, _, moistureToggle) = AddSliderRow(t, "Влажность", 0.5f);
-
-            AddLabel(t, "─── Ландшафт ───", bold: false, role: ThemeRole.Mut);
-            (elevationSlider, _, elevationToggle) = AddSliderRow(t, "Elevation", 0.5f);
-
-            var waterOptions = new List<string>
-                { "Не менять", "Суша (ForceLand)", "Озеро (ForceLake)", "Океан (ForceOcean)" };
-            (waterDropdown, waterToggle) = AddDropdownRow(t, "Water-статус", waterOptions);
-
-            var biomeNames = new List<string> { "Авто (computed)" };
-            foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
-                biomeNames.Add(b.ToString());
-            (biomeDropdown, biomeToggle) = AddDropdownRow(t, "Биом напрямую", biomeNames);
-
-            var separatorLabel = AddLabel(t, "─────────────", bold: false);
-            ThemeService.Tag(separatorLabel, ThemeRole.Mut);
-            AddButton(t, "Применить к выбору", ApplyOverride, ThemeRole.Accent);
-            AddButton(t, "Очистить все override", ClearAllOverridesOnSelection, ThemeRole.Danger);
-            AddButton(t, "Сбросить выбор", () => selectionController?.ClearSelection(), ThemeRole.Elev);
+            var go = new GameObject(name);
+            go.transform.SetParent(t, false);
+            var vlg = go.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 9f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            go.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            return go;
         }
+
+        void BuildHeaderRow(Transform t)
+        {
+            var rowGO = new GameObject("Header");
+            rowGO.transform.SetParent(t, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
+
+            var titleGO = new GameObject("Title");
+            titleGO.transform.SetParent(rowGO.transform, false);
+            headerTitle = titleGO.AddComponent<Text>();
+            headerTitle.text = "Кисть";
+            headerTitle.font = builtinFont;
+            headerTitle.fontSize = 14;
+            headerTitle.fontStyle = FontStyle.Bold;
+            ThemeService.Tag(headerTitle, ThemeRole.Txt);
+            headerTitle.alignment = TextAnchor.MiddleLeft;
+            var titleRect = titleGO.GetComponent<RectTransform>();
+            titleRect.anchorMin = new Vector2(0f, 0f);
+            titleRect.anchorMax = new Vector2(0.6f, 1f);
+            titleRect.offsetMin = Vector2.zero;
+            titleRect.offsetMax = Vector2.zero;
+
+            var linkGO = new GameObject("ModeSwitch");
+            linkGO.transform.SetParent(rowGO.transform, false);
+            headerLink = linkGO.AddComponent<Text>();
+            headerLink.text = "Точное выделение";
+            headerLink.font = builtinFont;
+            headerLink.fontSize = 11;
+            ThemeService.Tag(headerLink, ThemeRole.Accent);
+            headerLink.alignment = TextAnchor.MiddleRight;
+            var linkRect = linkGO.GetComponent<RectTransform>();
+            linkRect.anchorMin = new Vector2(0.4f, 0f);
+            linkRect.anchorMax = new Vector2(1f, 1f);
+            linkRect.offsetMin = Vector2.zero;
+            linkRect.offsetMax = Vector2.zero;
+            var linkBtn = linkGO.AddComponent<Button>();
+            linkBtn.targetGraphic = headerLink;
+            linkBtn.onClick.AddListener(() =>
+                SetMode(currentMode == EditorMode.Brush ? EditorMode.SelectionOverride : EditorMode.Brush));
+        }
+
+        // ── Brush section (mockup Screen C) ──────────────────────────────────────
 
         void BuildBrushSection(Transform t)
         {
-            var toolDropdownGO = new GameObject("ToolDropdown");
-            toolDropdownGO.transform.SetParent(t, false);
-            toolDropdown = toolDropdownGO.AddComponent<Dropdown>();
-            var toolBg = toolDropdownGO.AddComponent<Image>();
-            ThemeService.Tag(toolBg, ThemeRole.Panel2);
-            toolDropdown.targetGraphic = toolBg;
+            AddCaption(t, "ЧТО РЕДАКТИРУЕМ");
+            BuildTargetGrid(t);
 
-            var toolCaptionGO = new GameObject("Label");
-            toolCaptionGO.transform.SetParent(toolDropdownGO.transform, false);
-            var toolCaptionText = toolCaptionGO.AddComponent<Text>();
-            toolCaptionText.font = builtinFont;
-            toolCaptionText.fontSize = 12;
-            ThemeService.Tag(toolCaptionText, ThemeRole.Txt);
-            toolCaptionText.alignment = TextAnchor.MiddleLeft;
-            var toolCaptionRect = toolCaptionGO.GetComponent<RectTransform>();
-            toolCaptionRect.anchorMin = new Vector2(0.05f, 0f);
-            toolCaptionRect.anchorMax = new Vector2(1f, 1f);
-            toolCaptionRect.sizeDelta = Vector2.zero;
-            toolDropdown.captionText = toolCaptionText;
-            BuildDropdownTemplate(toolDropdown, toolDropdownGO);
-            toolDropdown.AddOptions(new List<string> { "Elevation", "Temperature", "Moisture" });
-            toolDropdown.RefreshShownValue();
-            toolDropdown.onValueChanged.AddListener(_ => OnBrushValuesChanged());
-            toolDropdownGO.AddComponent<LayoutElement>().preferredHeight = 24f;
+            modeCaptionGO = AddCaption(t, "РЕЖИМ").gameObject;
+            BuildModeSegment(t);
 
-            var dirRowGO = new GameObject("DirectionRow");
-            dirRowGO.transform.SetParent(t, false);
-            var dirHLG = dirRowGO.AddComponent<HorizontalLayoutGroup>();
-            dirHLG.spacing = 6f;
-            dirHLG.childControlWidth = false;
-            dirHLG.childControlHeight = false;
-            dirRowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
+            BuildShapeRow(t);
 
-            increaseToggle = AddToggle(dirRowGO.transform, true);
-            increaseToggle.onValueChanged.AddListener(_ => OnBrushValuesChanged());
-            AddLabel(dirRowGO.transform, "Увеличение (+) / Уменьшение (-)");
-
-            var stepRowGO = new GameObject("StepRow");
-            stepRowGO.transform.SetParent(t, false);
-            var stepHLG = stepRowGO.AddComponent<HorizontalLayoutGroup>();
-            stepHLG.spacing = 6f;
-            stepHLG.childControlWidth = false;
-            stepHLG.childControlHeight = false;
-            stepRowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
-
-            var stepLabelGO = new GameObject("Label");
-            stepLabelGO.transform.SetParent(stepRowGO.transform, false);
-            var stepLabelText = stepLabelGO.AddComponent<Text>();
-            stepLabelText.text = "Шаг";
-            stepLabelText.font = builtinFont;
-            stepLabelText.fontSize = 12;
-            ThemeService.Tag(stepLabelText, ThemeRole.Txt);
-            stepLabelText.alignment = TextAnchor.MiddleLeft;
-            stepLabelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 20f);
-
-            var stepSliderGO = new GameObject("Slider");
-            stepSliderGO.transform.SetParent(stepRowGO.transform, false);
-            stepSlider = BuildSlider(stepSliderGO, 0.02f, 0f, 0.2f);
-            stepSliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(140f, 20f);
-
-            var stepValueGO = new GameObject("Value");
-            stepValueGO.transform.SetParent(stepRowGO.transform, false);
-            stepValueLabel = stepValueGO.AddComponent<Text>();
-            stepValueLabel.text = "0.02";
-            stepValueLabel.font = builtinFont;
-            stepValueLabel.fontSize = 12;
-            ThemeService.Tag(stepValueLabel, ThemeRole.Txt);
-            stepValueLabel.alignment = TextAnchor.MiddleLeft;
-            stepValueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(45f, 20f);
-
-            stepSlider.onValueChanged.AddListener(v =>
+            BuildLabeledSlider(t, "Размер", 8f, 120f, 42f, out sizeSlider, out sizeValue, isPercent: false, v =>
             {
-                stepValueLabel.text = v.ToString("F2");
-                OnBrushValuesChanged();
+                if (brushController != null) brushController.brushRadius = v;
             });
 
-            var undoHint = AddLabel(t, "Зажми ЛКМ и веди по карте. Ctrl+Z - отменить мазок.", bold: false);
-            ThemeService.Tag(undoHint, ThemeRole.Mut);
-            undoHint.fontSize = 11;
+            BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, isPercent: true, v =>
+            {
+                if (brushController != null) brushController.strength = v;
+            });
 
-            OnBrushValuesChanged();
+            AddWideButton(t, "Отменить всё", () => mapRenderer?.UndoAllBrushStrokes());
         }
 
-        // ── Widget helpers (duplicated from MapEditorPanel, same as every other extracted panel) ──
-
-        Button AddModeButton(Transform parent, string label, System.Action onClick)
+        void BuildTargetGrid(Transform t)
         {
-            var go = new GameObject($"ModeBtn_{label}");
+            var gridGO = new GameObject("TargetGrid");
+            gridGO.transform.SetParent(t, false);
+            var grid = gridGO.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(115f, 28f);
+            grid.spacing = new Vector2(6f, 6f);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = 2;
+            gridGO.AddComponent<LayoutElement>().preferredHeight = 28f * 2f + 6f;
+
+            AddPill(gridGO.transform, BrushTool.Elevation, "Высота");
+            AddPill(gridGO.transform, BrushTool.Temperature, "Температура");
+            AddPill(gridGO.transform, BrushTool.Moisture, "Влажность");
+            AddPill(gridGO.transform, BrushTool.Biome, "Биом");
+        }
+
+        void AddPill(Transform parent, BrushTool target, string label)
+        {
+            var go = new GameObject($"Pill_{target}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, ThemeRole.Elev);
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
-            btn.onClick.AddListener(() => onClick?.Invoke());
+            btn.onClick.AddListener(() => OnTargetChanged(target));
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = "● " + label;
+            text.font = builtinFont;
+            text.fontSize = 12;
+            ThemeService.Tag(text, ThemeRole.Txt);
+            text.alignment = TextAnchor.MiddleLeft;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.offsetMin = new Vector2(10f, 0f);
+            tr.offsetMax = new Vector2(-4f, 0f);
+
+            targetPillBg[target] = img;
+            targetPillTxt[target] = text;
+        }
+
+        void BuildModeSegment(Transform t)
+        {
+            var rowGO = new GameObject("ModeSegment");
+            rowGO.transform.SetParent(t, false);
+            modeSegmentGO = rowGO;
+            var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 2f;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+
+            AddSegment(rowGO.transform, BrushMode.Raise, "Поднять");
+            AddSegment(rowGO.transform, BrushMode.Lower, "Опустить");
+            AddSegment(rowGO.transform, BrushMode.Smooth, "Сгладить");
+        }
+
+        void AddSegment(Transform parent, BrushMode mode, string label)
+        {
+            var go = new GameObject($"Seg_{mode}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Elev);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => OnModeChanged(mode));
 
             var textGO = new GameObject("Text");
             textGO.transform.SetParent(go.transform, false);
@@ -344,7 +417,237 @@ namespace WorldGen.Rendering
             tr.anchorMin = Vector2.zero;
             tr.anchorMax = Vector2.one;
             tr.sizeDelta = Vector2.zero;
-            return btn;
+
+            modeSegBg[mode] = img;
+            modeSegTxt[mode] = text;
+        }
+
+        void BuildShapeRow(Transform t)
+        {
+            var rowGO = new GameObject("ShapeRow");
+            rowGO.transform.SetParent(t, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(rowGO.transform, false);
+            var label = labelGO.AddComponent<Text>();
+            label.text = "Форма";
+            label.font = builtinFont;
+            label.fontSize = 12;
+            ThemeService.Tag(label, ThemeRole.Txt);
+            label.alignment = TextAnchor.MiddleLeft;
+            var labelRect = labelGO.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0.6f, 1f);
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+
+            (circleIconBg, circleIconOutline) = AddShapeIcon(rowGO.transform, "○", BrushShape.Circle, xOffset: -34f);
+            (squareIconBg, squareIconOutline) = AddShapeIcon(rowGO.transform, "□", BrushShape.Square, xOffset: 0f);
+        }
+
+        (Image, Outline) AddShapeIcon(Transform parent, string glyph, BrushShape shape, float xOffset)
+        {
+            var go = new GameObject($"Shape_{shape}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Elev);
+            var outline = go.AddComponent<Outline>();
+            outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+            outline.enabled = false;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => OnShapeChanged(shape));
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.sizeDelta = new Vector2(28f, 28f);
+            rect.anchoredPosition = new Vector2(xOffset, 0f);
+
+            var textGO = new GameObject("Glyph");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = glyph;
+            text.font = builtinFont;
+            text.fontSize = 16;
+            ThemeService.Tag(text, ThemeRole.Txt);
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
+
+            return (img, outline);
+        }
+
+        void BuildLabeledSlider(Transform t, string label, float min, float max, float def,
+                                out Slider slider, out Text valueLabel, bool isPercent,
+                                System.Action<float> onChanged)
+        {
+            // Контейнер группирует "подпись+значение" и слайдер вплотную (иначе межэлементный
+            // отступ VLG разносит их так же, как соседние блоки, и группа теряется).
+            var groupGO = new GameObject($"{label}Group");
+            groupGO.transform.SetParent(t, false);
+            var gvlg = groupGO.AddComponent<VerticalLayoutGroup>();
+            gvlg.spacing = 3f;
+            gvlg.childControlWidth = true;
+            gvlg.childForceExpandWidth = true;
+            gvlg.childControlHeight = true;
+            gvlg.childForceExpandHeight = false;
+            groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Строка: подпись слева + значение справа (Accent).
+            var headGO = new GameObject($"{label}Head");
+            headGO.transform.SetParent(groupGO.transform, false);
+            headGO.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(headGO.transform, false);
+            var labelText = labelGO.AddComponent<Text>();
+            labelText.text = label;
+            labelText.font = builtinFont;
+            labelText.fontSize = 12;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
+            labelText.alignment = TextAnchor.MiddleLeft;
+            var labelRect = labelGO.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0.6f, 1f);
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+
+            var valGO = new GameObject("Value");
+            valGO.transform.SetParent(headGO.transform, false);
+            valueLabel = valGO.AddComponent<Text>();
+            valueLabel.font = builtinFont;
+            valueLabel.fontSize = 11;
+            ThemeService.Tag(valueLabel, ThemeRole.Accent);
+            valueLabel.alignment = TextAnchor.MiddleRight;
+            var valRect = valGO.GetComponent<RectTransform>();
+            valRect.anchorMin = new Vector2(0.4f, 0f);
+            valRect.anchorMax = new Vector2(1f, 1f);
+            valRect.offsetMin = Vector2.zero;
+            valRect.offsetMax = Vector2.zero;
+
+            // Слайдер под строкой.
+            var sliderGO = new GameObject($"{label}Slider");
+            sliderGO.transform.SetParent(groupGO.transform, false);
+            slider = BuildSlider(sliderGO, def, min, max);
+            sliderGO.AddComponent<LayoutElement>().preferredHeight = 14f;
+
+            var valText = valueLabel;
+            System.Action<float> refresh = v =>
+                valText.text = isPercent ? $"{Mathf.RoundToInt(v * 100f)}%" : $"{Mathf.RoundToInt(v)} px";
+            refresh(def);
+            slider.onValueChanged.AddListener(v => { refresh(v); onChanged?.Invoke(v); });
+            onChanged?.Invoke(def);
+        }
+
+        // ── Contextual biome palette (bottom-left, Brush + target = Biome) ────────
+
+        void BuildBiomePalette(Transform canvasTransform)
+        {
+            var panelGO = new GameObject("BiomePalette");
+            panelGO.transform.SetParent(canvasTransform, false);
+            var panelImg = panelGO.AddComponent<Image>();
+            ThemeService.Tag(panelImg, ThemeRole.Panel, 0.92f);
+            var panelRect = panelGO.GetComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(0f, 0f);
+            panelRect.anchorMax = new Vector2(0f, 0f);
+            panelRect.pivot = new Vector2(0f, 0f);
+            panelRect.anchoredPosition = new Vector2(20f, 20f);
+            panelRect.sizeDelta = new Vector2(264f, 0f);
+
+            var vlg = panelGO.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(14, 14, 12, 12);
+            vlg.spacing = 8f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            UiShadow.Add(panelRect);
+
+            AddCaption(panelGO.transform, "ПАЛИТРА БИОМА · ДЛЯ КИСТИ «БИОМ»");
+
+            var gridGO = new GameObject("SwatchGrid");
+            gridGO.transform.SetParent(panelGO.transform, false);
+            var grid = gridGO.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(26f, 26f);
+            grid.spacing = new Vector2(4f, 4f);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = 8;
+
+            var biomes = (Biome[])System.Enum.GetValues(typeof(Biome));
+            int rows = Mathf.CeilToInt(biomes.Length / 8f);
+            gridGO.AddComponent<LayoutElement>().preferredHeight = rows * 26f + (rows - 1) * 4f;
+
+            foreach (var biome in biomes)
+                AddSwatch(gridGO.transform, biome);
+
+            biomePaletteRoot = panelGO;
+            panelGO.SetActive(false);
+        }
+
+        void AddSwatch(Transform parent, Biome biome)
+        {
+            var go = new GameObject($"Swatch_{biome}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            img.color = RegionColorPalette.GetBiomeColor(biome); // фиксированный цвет биома, не тема
+            var outline = go.AddComponent<Outline>();
+            outline.effectColor = ThemeService.Get(ThemeRole.Accent);
+            outline.effectDistance = new Vector2(2f, -2f);
+            outline.enabled = false;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => OnBiomeSelected(biome));
+            swatchOutline[biome] = outline;
+        }
+
+        // ── Selection & Override section (preserved from prior extraction) ────────
+
+        void BuildSelectionOverrideSection(Transform t)
+        {
+            selectionCountLabel = AddLabel(t, "Выбрано клеток: 0");
+
+            AddLabel(t, "─── Климат ───", bold: false, role: ThemeRole.Mut);
+            (temperatureSlider, _, temperatureToggle) = AddSliderRow(t, "Температура", 0.5f);
+            (moistureSlider, _, moistureToggle) = AddSliderRow(t, "Влажность", 0.5f);
+
+            AddLabel(t, "─── Ландшафт ───", bold: false, role: ThemeRole.Mut);
+            (elevationSlider, _, elevationToggle) = AddSliderRow(t, "Высота", 0.5f);
+
+            var waterOptions = new List<string>
+                { "Не менять", "Суша (ForceLand)", "Озеро (ForceLake)", "Океан (ForceOcean)" };
+            (waterDropdown, waterToggle) = AddDropdownRow(t, "Water-статус", waterOptions);
+
+            var biomeNames = new List<string> { "Авто (computed)" };
+            foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
+                biomeNames.Add(b.ToString());
+            (biomeDropdown, biomeToggle) = AddDropdownRow(t, "Биом напрямую", biomeNames);
+
+            AddWideButton(t, "Применить к выбору", ApplyOverride, ThemeRole.Accent);
+            AddWideButton(t, "Очистить все override", ClearAllOverridesOnSelection, ThemeRole.Danger);
+            AddWideButton(t, "Сбросить выбор", () => selectionController?.ClearSelection());
+        }
+
+        // ── Shared widget helpers ────────────────────────────────────────────────
+
+        Text AddCaption(Transform parent, string text)
+        {
+            var go = new GameObject("Caption");
+            go.transform.SetParent(parent, false);
+            var label = go.AddComponent<Text>();
+            label.text = text;
+            label.font = builtinFont;
+            label.fontSize = 10;
+            label.fontStyle = FontStyle.Bold;
+            ThemeService.Tag(label, ThemeRole.Mut);
+            label.alignment = TextAnchor.MiddleLeft;
+            go.AddComponent<LayoutElement>().preferredHeight = 14f;
+            return label;
         }
 
         Text AddLabel(Transform parent, string text, bool bold = false, ThemeRole? role = null)
@@ -362,10 +665,32 @@ namespace WorldGen.Rendering
             return label;
         }
 
-        /// <summary>
-        /// Builds the required Dropdown template. Without this, programmatically created Dropdowns
-        /// cannot open their option list ("The dropdown template is not assigned" error on click).
-        /// </summary>
+        void AddWideButton(Transform parent, string label, System.Action onClick, ThemeRole? role = null)
+        {
+            var go = new GameObject($"Btn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            var backgroundRole = role ?? ThemeRole.Elev;
+            ThemeService.Tag(img, backgroundRole);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+            go.AddComponent<LayoutElement>().preferredHeight = 32f;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 12;
+            ThemeService.Tag(text, backgroundRole == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt);
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
+        }
+
         void BuildDropdownTemplate(Dropdown dropdown, GameObject dropdownGO)
         {
             var templateGO = new GameObject("Template");
@@ -463,7 +788,6 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            rowGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var toggle = AddToggle(rowGO.transform, true);
 
@@ -475,12 +799,12 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
-            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 20f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(88f, 20f);
 
             var sliderGO = new GameObject("Slider");
             sliderGO.transform.SetParent(rowGO.transform, false);
             var slider = BuildSlider(sliderGO, defaultValue, 0f, 1f);
-            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(110f, 20f);
+            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(96f, 20f);
 
             var valueGO = new GameObject("Value");
             valueGO.transform.SetParent(rowGO.transform, false);
@@ -490,7 +814,7 @@ namespace WorldGen.Rendering
             valueText.fontSize = 12;
             ThemeService.Tag(valueText, ThemeRole.Txt);
             valueText.alignment = TextAnchor.MiddleLeft;
-            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(35f, 20f);
+            valueGO.GetComponent<RectTransform>().sizeDelta = new Vector2(34f, 20f);
 
             slider.onValueChanged.AddListener(v => valueText.text = v.ToString("F2"));
             rowGO.AddComponent<LayoutElement>().preferredHeight = 20f;
@@ -505,7 +829,6 @@ namespace WorldGen.Rendering
             hLayout.spacing = 6f;
             hLayout.childControlWidth = false;
             hLayout.childControlHeight = false;
-            rowGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var toggle = AddToggle(rowGO.transform, false);
 
@@ -517,7 +840,7 @@ namespace WorldGen.Rendering
             labelText.fontSize = 12;
             ThemeService.Tag(labelText, ThemeRole.Txt);
             labelText.alignment = TextAnchor.MiddleLeft;
-            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(90f, 22f);
+            labelGO.GetComponent<RectTransform>().sizeDelta = new Vector2(88f, 22f);
 
             var dropdownGO = new GameObject("Dropdown");
             dropdownGO.transform.SetParent(rowGO.transform, false);
@@ -542,7 +865,7 @@ namespace WorldGen.Rendering
             BuildDropdownTemplate(dropdown, dropdownGO);
             dropdown.AddOptions(options);
             dropdown.RefreshShownValue();
-            dropdownGO.GetComponent<RectTransform>().sizeDelta = new Vector2(155f, 22f);
+            dropdownGO.GetComponent<RectTransform>().sizeDelta = new Vector2(140f, 22f);
             rowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
             return (dropdown, toggle);
         }
@@ -613,32 +936,6 @@ namespace WorldGen.Rendering
             slider.targetGraphic = handleImg;
             slider.direction = Slider.Direction.LeftToRight;
             return slider;
-        }
-
-        void AddButton(Transform parent, string label, System.Action onClick, ThemeRole? role = null)
-        {
-            var go = new GameObject($"Btn_{label}");
-            go.transform.SetParent(parent, false);
-            var img = go.AddComponent<Image>();
-            var backgroundRole = role ?? ThemeRole.Elev;
-            ThemeService.Tag(img, backgroundRole);
-            var btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
-            btn.onClick.AddListener(() => onClick?.Invoke());
-            go.AddComponent<LayoutElement>().preferredHeight = 26f;
-
-            var textGO = new GameObject("Text");
-            textGO.transform.SetParent(go.transform, false);
-            var text = textGO.AddComponent<Text>();
-            text.text = label;
-            text.font = builtinFont;
-            text.fontSize = 12;
-            ThemeService.Tag(text, backgroundRole == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt);
-            text.alignment = TextAnchor.MiddleCenter;
-            var tr = textGO.GetComponent<RectTransform>();
-            tr.anchorMin = Vector2.zero;
-            tr.anchorMax = Vector2.one;
-            tr.sizeDelta = Vector2.zero;
         }
     }
 }
