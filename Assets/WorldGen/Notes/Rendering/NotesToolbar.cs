@@ -51,6 +51,13 @@ namespace WorldGen.Notes.Rendering
 
             var rowGO = new GameObject("NotesToolbar");
             rowGO.transform.SetParent(parent, false);
+            // Container background so the icons read as one grouped toolbar (per 01-main mockup)
+            // instead of borderless icons floating loose over the canvas.
+            var rowBg = rowGO.AddComponent<Image>();
+            ThemeService.Tag(rowBg, ThemeRole.Bg, 0.9f);
+            var rowOutline = rowGO.AddComponent<Outline>();
+            rowOutline.effectColor = ThemeService.Get(ThemeRole.Border);
+            rowOutline.effectDistance = new Vector2(1f, -1f);
             var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
             hLayout.spacing = 6f;
             hLayout.padding = new RectOffset(6, 6, 4, 4);
