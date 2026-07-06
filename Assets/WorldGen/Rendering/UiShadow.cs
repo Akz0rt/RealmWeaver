@@ -1,117 +1,63 @@
 using UnityEngine;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
+using ThemeMode = WorldGen.Rendering.Theme.Theme;
 
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Soft drop shadows for floating uGUI cards/panels/dialogs. Generates one 9-sliced
-    /// soft-edge sprite at runtime (no external assets, like PoiPlaceholderFactory) and drops a
-    /// shadow Image behind a panel as a sibling, kept matched to the panel's rect by
-    /// UiShadowFollower (so it tracks ContentSizeFitter-driven size changes).
+    /// Drop shadow for floating uGUI cards/panels/dialogs, used to lift them off the background
+    /// and stand in for a border. Implemented with the built-in <see cref="Shadow"/> mesh effect
+    /// on the panel's own graphic — so the shadow always tracks the panel's rect exactly, with no
+    /// separate follower object to drift or mis-size. Theme-aware: a dark shadow in the light
+    /// theme, a light glow in the dark theme (a hard shadow reads as dirt on a dark background).
     /// </summary>
     public static class UiShadow
     {
-        static Sprite softSprite;
-        const int TexSize = 64;
-        const int Border = 20; // 9-slice border = soft falloff width
-
-        static Sprite GetSoftShadowSprite()
-        {
-            if (softSprite != null) return softSprite;
-
-            var tex = new Texture2D(TexSize, TexSize, TextureFormat.RGBA32, false)
-            {
-                name = "UiSoftShadow",
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear
-            };
-
-            var pixels = new Color32[TexSize * TexSize];
-            int innerMin = Border;
-            int innerMax = TexSize - 1 - Border;
-            for (int y = 0; y < TexSize; y++)
-            {
-                for (int x = 0; x < TexSize; x++)
-                {
-                    // Distance outside the opaque inner rectangle (0 inside it).
-                    float dx = Mathf.Max(0, Mathf.Max(innerMin - x, x - innerMax));
-                    float dy = Mathf.Max(0, Mathf.Max(innerMin - y, y - innerMax));
-                    float d = Mathf.Sqrt(dx * dx + dy * dy);
-                    float a = 1f - Mathf.Clamp01(d / Border);
-                    a *= a; // ease → softer falloff
-                    pixels[y * TexSize + x] = new Color32(255, 255, 255, (byte)(a * 255f));
-                }
-            }
-            tex.SetPixels32(pixels);
-            tex.Apply();
-
-            softSprite = Sprite.Create(tex, new Rect(0, 0, TexSize, TexSize), new Vector2(0.5f, 0.5f),
-                100f, 0, SpriteMeshType.FullRect, new Vector4(Border, Border, Border, Border));
-            return softSprite;
-        }
-
-        /// <summary>Adds a soft shadow behind <paramref name="panel"/> (inserted as the sibling just
-        /// before it, so it renders behind). The panel must be a direct child of a Canvas or a
-        /// non-layout container — not a child of a LayoutGroup, where the extra sibling would
-        /// disturb the layout.</summary>
+        // spread/alpha kept for call-site compatibility; the themed component sets its own values.
         public static void Add(RectTransform panel, float spread = 22f, float alpha = 0.4f)
-            => Add(panel, spread, new Vector2(0f, -6f), alpha);
-
-        public static void Add(RectTransform panel, float spread, Vector2 offset, float alpha)
         {
             if (panel == null) return;
-
-            var shadowGO = new GameObject("Shadow");
-            shadowGO.transform.SetParent(panel.parent, false);
-            shadowGO.transform.SetSiblingIndex(panel.GetSiblingIndex()); // before the panel → renders behind it
-
-            var img = shadowGO.AddComponent<Image>();
-            img.sprite = GetSoftShadowSprite();
-            img.type = Image.Type.Sliced;
-            img.color = new Color(0f, 0f, 0f, alpha);
-            img.raycastTarget = false;
-
-            var follower = shadowGO.AddComponent<UiShadowFollower>();
-            follower.Configure(panel, offset, spread);
+            if (panel.GetComponent<UiThemedShadow>() == null)
+                panel.gameObject.AddComponent<UiThemedShadow>();
         }
+
+        public static void Add(RectTransform panel, float spread, Vector2 offset, float alpha) => Add(panel, spread, alpha);
     }
 
-    /// <summary>Keeps a shadow Image matched to its target panel's rect (+spread, +offset) every
-    /// frame, so shadows track panels that resize via ContentSizeFitter or reposition at runtime.</summary>
-    public class UiShadowFollower : MonoBehaviour
+    /// <summary>Keeps a <see cref="Shadow"/> effect on this graphic coloured for the current theme,
+    /// updating when the theme is toggled (polled — ThemeService has no change event).</summary>
+    [RequireComponent(typeof(Graphic))]
+    public class UiThemedShadow : MonoBehaviour
     {
-        RectTransform target;
-        RectTransform self;
-        Image image;
-        Vector2 offset;
-        float spread;
+        Shadow shadow;
+        ThemeMode lastTheme;
+        bool applied;
 
-        public void Configure(RectTransform target, Vector2 offset, float spread)
+        void OnEnable()
         {
-            this.target = target;
-            this.offset = offset;
-            this.spread = spread;
-            self = GetComponent<RectTransform>();
-            image = GetComponent<Image>();
-            Match();
+            if (shadow == null) shadow = GetComponent<Shadow>();
+            if (shadow == null) shadow = gameObject.AddComponent<Shadow>();
+            shadow.effectDistance = new Vector2(4f, -5f);
+            shadow.useGraphicAlpha = false;
+            applied = false;
+            Apply();
         }
 
-        void LateUpdate() => Match();
-
-        void Match()
+        void Update()
         {
-            if (target == null || self == null) return;
-            // The shadow is a sibling of the panel, so it stays active even when the panel is
-            // hidden via panel.SetActive(false) (e.g. PoiEditPanel) — hide the shadow to match.
-            bool visible = target.gameObject.activeInHierarchy;
-            if (image != null) image.enabled = visible;
-            if (!visible) return;
+            if (!applied || ThemeService.Current != lastTheme) Apply();
+        }
 
-            self.anchorMin = target.anchorMin;
-            self.anchorMax = target.anchorMax;
-            self.pivot = target.pivot;
-            self.anchoredPosition = target.anchoredPosition + offset;
-            self.sizeDelta = target.sizeDelta + new Vector2(spread * 2f, spread * 2f);
+        void Apply()
+        {
+            if (shadow == null) return;
+            lastTheme = ThemeService.Current;
+            applied = true;
+            // Light theme → soft dark shadow; dark theme → subtle light glow.
+            shadow.effectColor = ThemeService.Current == ThemeMode.Light
+                ? new Color(0f, 0f, 0f, 0.32f)
+                : new Color(1f, 1f, 1f, 0.14f);
         }
     }
 }
