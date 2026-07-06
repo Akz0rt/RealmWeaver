@@ -138,28 +138,36 @@ namespace WorldGen.Generation
 
         // --- Relative ("кисть") изменения - применяются к ОДНОЙ клетке за раз, прибавляют
         // delta к текущему ЭФФЕКТИВНОМУ значению (учитывает уже применённый override, если есть) ---
+        //
+        // Кисть высоты/температуры/влажности снимает жёсткий BiomeOverride (если он был поставлен
+        // кистью-биомом или через панель), чтобы биом снова вычислялся по физике: пользователь может
+        // закрасить биом, а потом "поводить" по нему кистью параметров - и биом пересчитается под них.
+        // Снятое значение сохраняется в Undo-снимке мазка (CellSnapshot), так что Ctrl+Z его вернёт.
 
-        /// <summary>Прибавляет delta к текущей эффективной elevation клетки (clamped [0,1]).</summary>
+        /// <summary>Прибавляет delta к текущей эффективной elevation клетки (clamped [0,1]); снимает biome-override.</summary>
         public static void AdjustElevation(VoronoiCell cell, float delta, float beachElevationThreshold)
         {
             float current = cell.EffectiveElevation;
             cell.ElevationOverride = System.Math.Clamp(current + delta, 0f, 1f);
+            cell.BiomeOverride = null;
             RecomputeBiome(cell, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к текущей эффективной температуре клетки (clamped [0,1]).</summary>
+        /// <summary>Прибавляет delta к текущей эффективной температуре клетки (clamped [0,1]); снимает biome-override.</summary>
         public static void AdjustTemperature(VoronoiCell cell, float delta, float beachElevationThreshold)
         {
             float current = cell.EffectiveTemperature;
             cell.TemperatureOverride = System.Math.Clamp(current + delta, 0f, 1f);
+            cell.BiomeOverride = null;
             RecomputeBiome(cell, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к текущей эффективной влажности клетки (clamped [0,1]).</summary>
+        /// <summary>Прибавляет delta к текущей эффективной влажности клетки (clamped [0,1]); снимает biome-override.</summary>
         public static void AdjustMoisture(VoronoiCell cell, float delta, float beachElevationThreshold)
         {
             float current = cell.EffectiveMoisture;
             cell.MoistureOverride = System.Math.Clamp(current + delta, 0f, 1f);
+            cell.BiomeOverride = null;
             RecomputeBiome(cell, beachElevationThreshold);
         }
 

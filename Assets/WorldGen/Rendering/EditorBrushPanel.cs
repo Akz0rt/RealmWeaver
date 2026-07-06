@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Rendering.Theme;
@@ -47,6 +48,8 @@ namespace WorldGen.Rendering
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
         readonly Dictionary<Biome, Outline> swatchOutline = new Dictionary<Biome, Outline>();
+        GameObject biomeTooltipGO;
+        Text biomeTooltipText;
 
         // Selection & Override widgets (unchanged behaviour)
         Text selectionCountLabel;
@@ -246,6 +249,7 @@ namespace WorldGen.Rendering
             UiShadow.Add(panelRect);
 
             BuildEditorTab(panelGO.transform);
+            BuildBiomeTooltip(canvasTransform);
         }
 
         void BuildEditorTab(Transform t)
@@ -601,6 +605,87 @@ namespace WorldGen.Rendering
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => OnBiomeSelected(biome));
             swatchOutline[biome] = outline;
+
+            // Подсказка с названием биома при наведении.
+            var trigger = go.AddComponent<EventTrigger>();
+            var enter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            enter.callback.AddListener(_ => ShowBiomeTooltip(biome, go));
+            trigger.triggers.Add(enter);
+            var exit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
+            exit.callback.AddListener(_ => HideBiomeTooltip());
+            trigger.triggers.Add(exit);
+        }
+
+        // ── Biome tooltip (hover a swatch → show its biome name) ──────────────────
+
+        void BuildBiomeTooltip(Transform canvasTransform)
+        {
+            biomeTooltipGO = new GameObject("BiomeTooltip");
+            biomeTooltipGO.transform.SetParent(canvasTransform, false);
+            var img = biomeTooltipGO.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Panel2);
+            img.raycastTarget = false;
+            var hlg = biomeTooltipGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(8, 8, 3, 3);
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+            var fitter = biomeTooltipGO.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            var rect = biomeTooltipGO.GetComponent<RectTransform>();
+            rect.pivot = new Vector2(0.5f, 0f); // якорь снизу-по-центру: ставим над образцом
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(biomeTooltipGO.transform, false);
+            biomeTooltipText = textGO.AddComponent<Text>();
+            biomeTooltipText.font = builtinFont;
+            biomeTooltipText.fontSize = 11;
+            ThemeService.Tag(biomeTooltipText, ThemeRole.Txt);
+            biomeTooltipText.alignment = TextAnchor.MiddleCenter;
+            biomeTooltipText.raycastTarget = false;
+
+            biomeTooltipGO.SetActive(false);
+        }
+
+        void ShowBiomeTooltip(Biome biome, GameObject swatch)
+        {
+            if (biomeTooltipGO == null) return;
+            biomeTooltipText.text = BiomeDisplayName(biome);
+            biomeTooltipGO.SetActive(true);
+            biomeTooltipGO.transform.SetAsLastSibling(); // поверх остального на канвасе
+            // Оба на одном ScreenSpaceOverlay-канвасе → position в экранных пикселях; ставим над образцом.
+            biomeTooltipGO.GetComponent<RectTransform>().position = swatch.transform.position + new Vector3(0f, 22f, 0f);
+        }
+
+        void HideBiomeTooltip()
+        {
+            if (biomeTooltipGO != null) biomeTooltipGO.SetActive(false);
+        }
+
+        static string BiomeDisplayName(Biome b)
+        {
+            switch (b)
+            {
+                case Biome.Ocean: return "Океан";
+                case Biome.Lake: return "Озеро";
+                case Biome.Beach: return "Побережье";
+                case Biome.Snow: return "Снег";
+                case Biome.Tundra: return "Тундра";
+                case Biome.Bare: return "Скалы";
+                case Biome.Scorched: return "Выжженная земля";
+                case Biome.Taiga: return "Тайга";
+                case Biome.Shrubland: return "Кустарник";
+                case Biome.TemperateDesert: return "Умеренная пустыня";
+                case Biome.TemperateRainForest: return "Умеренный дождевой лес";
+                case Biome.TemperateDeciduousForest: return "Листопадный лес";
+                case Biome.Grassland: return "Луга";
+                case Biome.TropicalRainForest: return "Тропический лес";
+                case Biome.TropicalSeasonalForest: return "Тропический сезонный лес";
+                case Biome.SubtropicalDesert: return "Субтропическая пустыня";
+                default: return b.ToString();
+            }
         }
 
         // ── Selection & Override section (preserved from prior extraction) ────────
