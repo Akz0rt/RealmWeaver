@@ -1770,8 +1770,9 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Bounding rect (в пикселях текстуры) клеток, затронутых кистью, расширенный на
-        /// smoothRadius - чтобы захватить область, куда блендинг "протекает" из соседних клеток,
-        /// которые сами не изменились, но их пиксели рядом с границей должны пересчитаться.</summary>
+        /// smoothRadius (протекание блендинга из соседних неизменённых клеток) плюс coastlineGlowWidth
+        /// (ореол берега тянется на столько пикселей от суши, поэтому его полоса тоже должна
+        /// пересчитаться при правке берега) - все эти пиксели рядом с границей должны пересчитаться.</summary>
         void ComputeTouchedPixelRect(IEnumerable<VoronoiCell> touchedCells, out int rx, out int ry, out int rw, out int rh)
         {
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;

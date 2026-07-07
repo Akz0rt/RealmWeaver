@@ -59,6 +59,18 @@ Not compiler-verified (Editor locked) — reviewer hand-traced types/usings/sign
 - #3: dropped unused `VoronoiCell cell` param from ColorForLandPixel + its one call site in BakePaintedPixel (kept on ColorForWaterPixel — water path uses it for lake-vs-ocean color).
 - Findings #2 (concave-bay color fringe) and #4 (RasterizeIsLand per-scanline edge scan perf) left as-is per review (cosmetic / YAGNI-deferred). Applied changes are manual-review-only until Editor recompiles.
 
+## Follow-up feature: Wide coastline glow (3rd plan on same branch)
+
+Spec: docs/superpowers/specs/2026-07-07-coastline-glow-width-design.md (committed 6b242db)
+Plan: docs/superpowers/plans/2026-07-07-coastline-glow-width.md (committed 21a42e1) — 2 tasks
+Base for this feature's tasks: 21a42e1
+Goal: widen only the water-side light glow (keep the 1px dark land outline) into a broad soft halo via a chamfer coast-distance field (cost independent of glow width). New field coastlineGlowWidth (int 0-64, default 16).
+Pre-flight review: clean — Task 1 adds a utility method + CoastDistance buffer (no signature changes, compiles standalone), Task 2 consumes it. No inter-task compile break.
+
+- Task 1: complete (commit 21a42e1..8d13161, review clean — Approved, zero findings; reviewer hand-traced the chamfer math against both fixtures (not just transcription), confirmed neighbor offsets/weights exact, and verified the seam test is genuinely discriminating (sub-rect has no land inside → correctness depends entirely on out-of-rect buffer reads).)
+- Task 2: complete (commit 8d13161..fd8008c, review clean — Approved; reviewer verified all 6 edits formula-exact + dark outline untouched (HasNeighborWithWaterStatus still single-called with wantWater:true, old water-side wantWater:false call fully removed, no dead code) + field-name consistency across config/BuildRasterConfig/DT-call/pad + both self-tests non-vacuous (delta-vs-glowWidth=0 technique cancels ripple noise). 1 Minor: ComputeTouchedPixelRect xml-doc still only mentions smoothRadius, not the new glowWidth term — fixed post-review, doc-only.)
+- Both tasks complete + reviewed clean. Feature commits: 8d13161, fd8008c (base 21a42e1).
+
 ## Minor findings (for final-review triage)
 - Task 1 (`Noise.cs:19`): `(uint)h / 4294967296f` narrows to float 24-bit mantissa before dividing, ~6e-8 relative deviation from JS's double-precision result — brief-specified code, not implementer-introduced, harmless for visual terrain gen.
 - Task 2 (`NearestCellLookup.cs`): `MaxRingSearch = 128` cap contradicts the "null only if index is empty" doc comment (unreachable in practice at this project's map scale); `FindWithinRadius`'s ring span is one ring wider than strictly necessary (perf-only, errs safe); ring-0 early exit is a no-op except at exact distance 0 (perf-only). All three inherited verbatim from the plan's own code, not implementer choices.
