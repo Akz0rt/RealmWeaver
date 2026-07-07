@@ -1524,6 +1524,153 @@ namespace WorldGen.Rendering
                 : "Self-Test Coastline Glow Zero Width Off: FAIL (пиксель у кромки заметно ближе к Glow при glowWidth=0 - свечение не выключилось)");
         }
 
+        /// <summary>Плоская заливка: 3 клетки-полосы (все суша, воды нет). A,B - Grassland одной высоты
+        /// (0.5 → средняя полоса, без модуляции); C - Snow. Пиксель в центре A и пиксель A у границы с B
+        /// различаются лишь на величину зерна (зона ровная, слились). Клетка C (другой биом) - скачок
+        /// цвета много больше зерна.</summary>
+        [ContextMenu("Self-Test: Flat Fill Merges Same-Biome Zones")]
+        public void SelfTestFlatFillMergesZones()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(1f, 1f)) { Biome = Biome.Grassland, Height = 0.5f, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site, 1f);
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(3f, 1f)) { Biome = Biome.Grassland, Height = 0.5f, IsOcean = false };
+            b.Polygon = SquarePolygon(b.Site, 1f);
+            var c = new VoronoiCell(2, new System.Numerics.Vector2(5f, 1f)) { Biome = Biome.Snow, Height = 0.5f, IsOcean = false };
+            c.Polygon = SquarePolygon(c.Site, 1f);
+            var fixtureCells = new List<VoronoiCell> { a, b, c };
+            var fixtureById = fixtureCells.ToDictionary(cc => cc.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 2f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 60, TexHeight = 20, MapWidth = 6f, MapHeight = 2f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 0, CoastlineGlowWidth = 0,
+                FlatRegionFill = true, ElevationBands = 5, ElevationBandContrast = 40f,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 2f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(60, 20);
+            var tex = new Texture2D(60, 20, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 60, 20);
+
+            Color aCenter = tex.GetPixel(10, 10);  // world (1.05,1.05) - A
+            Color aNearB = tex.GetPixel(19, 10);   // world (1.95,1.05) - A у границы с B (тот же биом+высота)
+            Color cCenter = tex.GetPixel(50, 10);  // world (5.05,1.05) - C (Snow)
+
+            float D(Color p, Color q) => Mathf.Abs(p.r - q.r) + Mathf.Abs(p.g - q.g) + Mathf.Abs(p.b - q.b);
+            bool merged = D(aCenter, aNearB) < 0.15f;       // только зерно (~0.082 макс)
+            bool biomeDiffers = D(aCenter, cCenter) > 0.25f; // Grassland(plains) vs Snow - крупный скачок
+
+            Destroy(tex);
+            bool ok = merged && biomeDiffers;
+            Debug.Log(ok
+                ? "Self-Test Flat Fill Merges Same-Biome Zones: PASS"
+                : $"Self-Test Flat Fill Merges Same-Biome Zones: FAIL (merged={merged} d={D(aCenter, aNearB):F3}, biomeDiffers={biomeDiffers} d={D(aCenter, cCenter):F3})");
+        }
+
+        /// <summary>Полосы высоты: одинаковый биом (Grassland), клетка elev 0.1 (нижняя полоса, темнее)
+        /// vs elev 0.9 (верхняя, светлее) - заметно разный тон при ShowReliefLayer=true; при
+        /// ShowReliefLayer=false обе дают базовый тон (различие лишь на зерно). Заодно квантование:
+        /// 0.1 и 0.9 попадают в разные полосы.</summary>
+        [ContextMenu("Self-Test: Flat Fill Elevation Bands")]
+        public void SelfTestFlatFillElevationBands()
+        {
+            var lo = new VoronoiCell(0, new System.Numerics.Vector2(1f, 1f)) { Biome = Biome.Grassland, Height = 0.1f, IsOcean = false };
+            lo.Polygon = SquarePolygon(lo.Site, 1f);
+            var hi = new VoronoiCell(1, new System.Numerics.Vector2(3f, 1f)) { Biome = Biome.Grassland, Height = 0.9f, IsOcean = false };
+            hi.Polygon = SquarePolygon(hi.Site, 1f);
+            var fixtureCells = new List<VoronoiCell> { lo, hi };
+            var fixtureById = fixtureCells.ToDictionary(cc => cc.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 2f);
+
+            WorldGen.Rendering.MapRaster.MapRasterConfig MakeConfig(bool relief) => new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 40, TexHeight = 20, MapWidth = 4f, MapHeight = 2f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 0, CoastlineGlowWidth = 0,
+                FlatRegionFill = true, ElevationBands = 5, ElevationBandContrast = 40f,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 2f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = relief,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            (Color loP, Color hiP) Bake(bool relief)
+            {
+                var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(40, 20);
+                var tex = new Texture2D(40, 20, TextureFormat.RGBA32, false);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, MakeConfig(relief), tex, buffers, 0, 0, 40, 20);
+                Color lp = tex.GetPixel(10, 10);  // world (1.05,1.05) - low
+                Color hp = tex.GetPixel(30, 10);  // world (3.05,1.05) - high
+                Destroy(tex);
+                return (lp, hp);
+            }
+
+            float D(Color p, Color q) => Mathf.Abs(p.r - q.r) + Mathf.Abs(p.g - q.g) + Mathf.Abs(p.b - q.b);
+            var on = Bake(true);
+            var off = Bake(false);
+            bool bandsDiffer = D(on.loP, on.hiP) > 0.15f;  // нижняя(темнее) vs верхняя(светлее)
+            bool gateOff = D(off.loP, off.hiP) < 0.15f;     // рельеф выкл → обе базовый plains (только зерно)
+
+            bool ok = bandsDiffer && gateOff;
+            Debug.Log(ok
+                ? "Self-Test Flat Fill Elevation Bands: PASS"
+                : $"Self-Test Flat Fill Elevation Bands: FAIL (bandsDiffer={bandsDiffer} d={D(on.loP, on.hiP):F3}, gateOff={gateOff} d={D(off.loP, off.hiP):F3})");
+        }
+
+        /// <summary>Тумблер FlatRegionFill реально переключает путь: пиксель в клетке A у границы с
+        /// клеткой B ДРУГОГО биома. Flat=true → чистый цвет A (plains). Flat=false → блендинг plains+snow
+        /// (сосед B в радиусе). Результаты заметно отличаются.</summary>
+        [ContextMenu("Self-Test: Flat Fill Toggle Vs Blend")]
+        public void SelfTestFlatFillToggleVsBlend()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(1f, 1f)) { Biome = Biome.Grassland, Height = 0.5f, Temperature = 0.5f, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site, 1f);
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(3f, 1f)) { Biome = Biome.Snow, Height = 0.5f, Temperature = 0.5f, IsOcean = false };
+            b.Polygon = SquarePolygon(b.Site, 1f);
+            var fixtureCells = new List<VoronoiCell> { a, b };
+            var fixtureById = fixtureCells.ToDictionary(cc => cc.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 3f);
+
+            Color BakePixel(bool flat, int px, int py)
+            {
+                var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+                {
+                    TexWidth = 40, TexHeight = 20, MapWidth = 4f, MapHeight = 2f, Seed = 1,
+                    SmoothBorders = true, CoastlineSmoothness = 0, CoastlineGlowWidth = 0,
+                    FlatRegionFill = flat, ElevationBands = 5, ElevationBandContrast = 40f,
+                    Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                    ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 3f,
+                    ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                    ShowBiomeLayer = true, ShowReliefLayer = true,
+                    HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+                };
+                var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(40, 20);
+                var tex = new Texture2D(40, 20, TextureFormat.RGBA32, false);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 40, 20);
+                Color c = tex.GetPixel(px, py);
+                Destroy(tex);
+                return c;
+            }
+
+            // Клетка A у самой границы с B (world ~1.95 → пиксель 19, ближайшая клетка A).
+            Color flatPix = BakePixel(true, 19, 10);
+            Color blendPix = BakePixel(false, 19, 10);
+            float d = Mathf.Abs(flatPix.r - blendPix.r) + Mathf.Abs(flatPix.g - blendPix.g) + Mathf.Abs(flatPix.b - blendPix.b);
+
+            bool ok = d > 0.1f;
+            Debug.Log(ok
+                ? "Self-Test Flat Fill Toggle Vs Blend: PASS"
+                : $"Self-Test Flat Fill Toggle Vs Blend: FAIL (flat vs blend delta={d:F3}, ожидалось >0.1)");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams

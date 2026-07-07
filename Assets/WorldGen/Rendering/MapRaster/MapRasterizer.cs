@@ -36,6 +36,23 @@ namespace WorldGen.Rendering.MapRaster
         /// docs/superpowers/specs/2026-07-07-coastline-glow-width-design.md.</summary>
         public int CoastlineGlowWidth = 16;
 
+        /// <summary>Плоская заливка суши вместо блендинга (только Combined+SmoothBorders): цвет =
+        /// биом-семейство ближайшей клетки, модулированный дискретной полосой высоты; ровный тон +
+        /// зерно. false = старый блендинг-путь (ColorForLandPixel). Дефолт здесь false (не true),
+        /// чтобы существующие painted-самотесты, не задающие это поле, шли по блендинг-пути как раньше
+        /// (в плоском режиме BakePaintedFields пропускается и buffers.Elevation не заполняется).
+        /// Пользовательский дефолт "включено" - у сериализованного WorldMapRenderer.flatRegionFill
+        /// (Task 2). См. design doc docs/superpowers/specs/2026-07-07-flat-region-fill-design.md.</summary>
+        public bool FlatRegionFill = false;
+
+        /// <summary>Число дискретных полос высоты в плоской заливке (гейт ShowReliefLayer). >1 -
+        /// выше = светлее по ступеням; 1 или меньше - без модуляции высоты.</summary>
+        public int ElevationBands = 5;
+
+        /// <summary>Размах светлоты между нижней и верхней полосой высоты, % (0 = полосы не различаются
+        /// по тону; 40 ≈ ±20% от базового цвета).</summary>
+        public float ElevationBandContrast = 40f;
+
         /// <summary>Соответствуют существующим тумблерам MapLayersPanel - выключение биомного слоя
         /// даёт нейтральную земляную заливку вместо цвета семейства биома; выключение рельефа
         /// убирает hillshade/холодный подсвет на суше и градиент глубины на воде (плоский цвет).</summary>
@@ -194,7 +211,8 @@ namespace WorldGen.Rendering.MapRaster
                 }
                 if (config.CoastlineGlowWidth > 0)
                     ComputeCoastDistanceRect(buffers, w, h, config.CoastlineGlowWidth + 1f, rectX, rectY, rectW, rectH);
-                BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
+                if (!config.FlatRegionFill)
+                    BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
             }
         }
 
@@ -404,8 +422,10 @@ namespace WorldGen.Rendering.MapRaster
             float varAmt = config.RegionVariation / 100f;
 
             bool isWater = !buffers.IsLand[idx];
-            return isWater
-                ? ColorForWaterPixel(cell, buffers, x, y, w, h, config, palette, coldAmt)
+            if (isWater)
+                return ColorForWaterPixel(cell, buffers, x, y, w, h, config, palette, coldAmt);
+            return config.FlatRegionFill
+                ? ColorForLandPixelFlat(cell, buffers, x, y, w, h, config, palette)
                 : ColorForLandPixel(buffers, idx, x, y, w, h, config, palette, coldAmt, varAmt);
         }
 
@@ -507,6 +527,44 @@ namespace WorldGen.Rendering.MapRaster
                 float lf = 1f + rgB * 0.24f * varAmt;
                 r *= lf; g *= lf; b *= lf;
             }
+
+            return ClampColor32(r, g, b);
+        }
+
+        /// <summary>Плоская заливка суши (только Combined+SmoothBorders+FlatRegionFill): базовый цвет =
+        /// биом-семейство БЛИЖАЙШЕЙ клетки напрямую (без блендинга), модулированный дискретной полосой
+        /// высоты (выше = светлее). Соседние клетки одного биома+полосы дают один тон - зоны сливаются
+        /// без внутренних граней. Плюс тёмная береговая обводка (1px) и лёгкое зерно. Убрано (относительно
+        /// ColorForLandPixel): блендинг, тонировка по температуре, региональный шум, hillshade, лайтнесс-
+        /// вариация. См. design doc docs/superpowers/specs/2026-07-07-flat-region-fill-design.md.</summary>
+        static Color32 ColorForLandPixelFlat(
+            VoronoiCell cell, MapRasterBuffers buffers,
+            int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette)
+        {
+            // Базовый цвет = семейство биома ближайшей клетки (или нейтральный тан, если слой биомов выкл).
+            Color32 fam = config.ShowBiomeLayer
+                ? MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(cell.Biome))
+                : new Color32(209, 199, 166, 255);
+            float r = fam.r, g = fam.g, b = fam.b;
+
+            // Полоса высоты (гейт ShowReliefLayer): дискретная ступень тона, выше = светлее.
+            if (config.ShowReliefLayer && config.ElevationBands > 1)
+            {
+                int band = Mathf.Clamp((int)(cell.EffectiveElevation * config.ElevationBands), 0, config.ElevationBands - 1);
+                float t = band / (float)(config.ElevationBands - 1);      // нормированная ступень [0,1]
+                float factor = 1f + (t - 0.5f) * (config.ElevationBandContrast / 100f);
+                r *= factor; g *= factor; b *= factor;
+            }
+
+            // Тёмная береговая обводка со стороны суши (1px, жёсткая замена) - как в ColorForLandPixel.
+            if (HasNeighborWithWaterStatus(buffers, x, y, w, h, wantWater: true))
+            {
+                r = palette.Outline.r; g = palette.Outline.g; b = palette.Outline.b;
+            }
+
+            // Лёгкое зерно (шаг 8) - поверх, включая обводку (как в ColorForLandPixel).
+            float grain = (Noise.ValueNoise(x * 0.5f, y * 0.5f, config.Seed + 61) - 0.5f) * 7f;
+            r += grain; g += grain; b += grain;
 
             return ClampColor32(r, g, b);
         }
