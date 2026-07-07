@@ -156,8 +156,9 @@ namespace WorldGen.Rendering.MapRaster
             ColorAndVignetteRect(cellById, displayMode, config, texture, buffers, rectX, rectY, rectW, rectH);
         }
 
-        /// <summary>Проход 1 (cellId) + проход 1.5 (контур берега + BakePaintedFields, если painted)
-        /// для заданного прямоугольника. Трассировка/сглаживание контура (CoastlineContour) всегда
+        /// <summary>Проход 1 (cellId) + проход 1.5 (контур берега + BakePaintedFields в НЕ-плоском
+        /// режиме, если painted; при FlatRegionFill блендинг пропускается - плоская раскраска читает
+        /// ближайшую клетку напрямую) для заданного прямоугольника. Трассировка/сглаживание контура (CoastlineContour) всегда
         /// выполняется заново на ВСЕХ клетках карты (дёшево - масштаб числа клеток, не пикселей),
         /// растеризация в IsLand - только в переданный rect (безопасно для частичных перезапеканий
         /// кистью). Сам по себе не читает ничего ЗА пределами rect в буферах, поэтому безопасно
@@ -217,9 +218,11 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         /// <summary>Проход 2 (цвет) + проход 3 (виньетка) для заданного прямоугольника. Требует, чтобы
-        /// CellId/Elevation/Temperature/FamilyColor/IsLand уже были заполнены BakeFieldsRect не только
-        /// для этого прямоугольника, но и для его непосредственно соседних строк/столбцов (градиент
-        /// рельефа и проверка берега читают ±1 пиксель за границу rect).</summary>
+        /// нужные буферы были заполнены BakeFieldsRect не только для этого прямоугольника, но и для его
+        /// непосредственно соседних строк/столбцов (проверка берега читает ±1 пиксель за границу rect).
+        /// В блендинг-режиме нужны CellId/Elevation/Temperature/FamilyColor/IsLand (градиент рельефа тоже
+        /// читает ±1). В плоском режиме (FlatRegionFill) Elevation/Temperature/FamilyColor НЕ заполняются
+        /// и не читаются - плоской раскраске нужны только CellId + IsLand (и CoastDistance для свечения воды).</summary>
         public static void ColorAndVignetteRect(
             IReadOnlyDictionary<int, VoronoiCell> cellById,
             MapDisplayMode displayMode,
