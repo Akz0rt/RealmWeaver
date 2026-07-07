@@ -116,11 +116,17 @@ namespace WorldGen.Rendering
         /// Псевдонормаль строится из градиента (Y - вверх), освещается направленным светом
         /// под азимутом lightAzimuthDeg и фиксированным углом возвышения 45°.</summary>
         public static float HillshadeBrightness(float gradX, float gradY, float strength, float lightAzimuthDeg, float ambient)
+            => HillshadeBrightness(gradX, gradY, strength, lightAzimuthDeg, ambient, out _);
+
+        /// <summary>Тот же расчёт, но дополнительно возвращает сырой N·L (до Lerp с ambient) -
+        /// нужен MapRasterizer для "холодного лунного" подсвета освещённых склонов поверх обычного
+        /// hillshade (см. design doc, шаг 6).</summary>
+        public static float HillshadeBrightness(float gradX, float gradY, float strength, float lightAzimuthDeg, float ambient, out float ndotl)
         {
             var normal = new Vector3(-gradX * strength, 1f, -gradY * strength).normalized;
             float az = lightAzimuthDeg * Mathf.Deg2Rad;
             var lightDir = new Vector3(Mathf.Sin(az), 1f, Mathf.Cos(az)).normalized;
-            float ndotl = Mathf.Clamp01(Vector3.Dot(normal, lightDir));
+            ndotl = Mathf.Clamp01(Vector3.Dot(normal, lightDir));
             return Mathf.Lerp(ambient, 1f, ndotl);
         }
     }
