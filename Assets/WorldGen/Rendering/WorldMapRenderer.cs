@@ -741,6 +741,9 @@ namespace WorldGen.Rendering
                 new VoronoiCell(3, new System.Numerics.Vector2(20f, 20f)),
                 new VoronoiCell(4, new System.Numerics.Vector2(10f, 10f)),
             };
+            // NearestCellLookup исключает вырожденные клетки (Polygon.Count меньше 3) - без этого
+            // вся фикстура была бы отброшена и FindNearest везде возвращал бы null.
+            foreach (var c in fixtureCells) c.Polygon = SquarePolygon(c.Site);
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 10f);
 
             bool ok = true;
@@ -777,11 +780,25 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Biome Family Coverage: PASS" : "Self-Test Biome Family Coverage: FAIL");
         }
 
+        /// <summary>Маленький квадратный полигон вокруг site - нужен фикстурам самотестов, работающих
+        /// с NearestCellLookup/MapRasterizer, чтобы пройти проверку Polygon.Count меньше 3 (клетки без
+        /// полигона считаются вырожденными "клетками-призраками" и исключаются из индекса - см. Self-Test:
+        /// Degenerate Cell Excluded From Raster Lookup, где это исключение как раз проверяется).</summary>
+        static List<System.Numerics.Vector2> SquarePolygon(System.Numerics.Vector2 site, float half = 1f) => new List<System.Numerics.Vector2>
+        {
+            new(site.X - half, site.Y - half),
+            new(site.X + half, site.Y - half),
+            new(site.X + half, site.Y + half),
+            new(site.X - half, site.Y + half),
+        };
+
         [ContextMenu("Self-Test: Raster Hard Mode Parity")]
         public void SelfTestRasterHardModeParity()
         {
             var a = new VoronoiCell(0, new System.Numerics.Vector2(2.5f, 5f)) { Biome = Biome.Grassland, RegionId = 0, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site);
             var b = new VoronoiCell(1, new System.Numerics.Vector2(7.5f, 5f)) { Biome = Biome.Grassland, RegionId = 1, IsOcean = false };
+            b.Polygon = SquarePolygon(b.Site);
             var fixtureCells = new List<VoronoiCell> { a, b };
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
 
@@ -824,7 +841,9 @@ namespace WorldGen.Rendering
         public void SelfTestRasterElevationInvariant()
         {
             var a = new VoronoiCell(0, new System.Numerics.Vector2(3f, 3f)) { Biome = Biome.Grassland, Height = 0.42f, Temperature = 0.5f, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site);
             var b = new VoronoiCell(1, new System.Numerics.Vector2(7f, 7f)) { Biome = Biome.Grassland, Height = 0.6f, Temperature = 0.5f, IsOcean = false };
+            b.Polygon = SquarePolygon(b.Site);
             var fixtureCells = new List<VoronoiCell> { a, b };
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
 
@@ -876,6 +895,7 @@ namespace WorldGen.Rendering
         public void SelfTestDegenerateCellExcludedFromLookup()
         {
             var good = new VoronoiCell(0, new System.Numerics.Vector2(5f, 5f)) { Biome = Biome.Grassland, IsOcean = false };
+            good.Polygon = SquarePolygon(good.Site);
             // "Клетка-призрак": Polygon не заполнен (Count == 0 меньше 3), Biome остаётся на
             // C#-дефолте (Ocean), IsOcean = false - именно так выглядит клетка, которую
             // CellClimateAverager.ApplyToCells пропустил при классификации.
@@ -943,7 +963,9 @@ namespace WorldGen.Rendering
         public void SelfTestChunkedBakeContinuity()
         {
             var a = new VoronoiCell(0, new System.Numerics.Vector2(3f, 5f)) { Biome = Biome.Grassland, Height = 0.2f, Temperature = 0.5f, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site);
             var b = new VoronoiCell(1, new System.Numerics.Vector2(7f, 5f)) { Biome = Biome.Grassland, Height = 0.8f, Temperature = 0.5f, IsOcean = false };
+            b.Polygon = SquarePolygon(b.Site);
             var fixtureCells = new List<VoronoiCell> { a, b };
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
 
@@ -1031,6 +1053,7 @@ namespace WorldGen.Rendering
         public void SelfTestLayerTogglesAffectRasterOutput()
         {
             var a = new VoronoiCell(0, new System.Numerics.Vector2(5f, 5f)) { Biome = Biome.Grassland, Height = 0.8f, Temperature = 0.5f, IsOcean = false };
+            a.Polygon = SquarePolygon(a.Site);
             var fixtureCells = new List<VoronoiCell> { a };
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a };
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
