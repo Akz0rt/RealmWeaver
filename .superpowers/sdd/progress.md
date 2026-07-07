@@ -54,6 +54,11 @@ Verified end-to-end composition across full/chunked-stepped/brush-partial bakes:
   4. RasterizeIsLand scans all loop edges per scanline even for a tiny brush rect: O(rectH × E_total), E_total ~×2^smoothness. Design doc explicitly accepted full-retrace cost (YAGNI). Monitor; if brush lag appears, Y-bucket loop edges or clip to rect X-span, not incremental.
 Not compiler-verified (Editor locked) — reviewer hand-traced types/usings/signatures, found nothing that won't compile.
 
+### Post-review cleanup (commit 599fbb8) — findings #1 + #3 applied at user's request
+- #1: BakeFieldsRect now guards `loops.Count == 0` — if any cell is land, fills the rect IsLand=true (all-land) instead of letting even-odd write all-water; else all-water. Only triggers when no coastline exists (brush ForceLand over last water cell); normal maps always have a coastline so the else branch (RasterizeIsLand) is unchanged. No existing self-test changes behavior (parity + brush tests both keep a coastline → else branch).
+- #3: dropped unused `VoronoiCell cell` param from ColorForLandPixel + its one call site in BakePaintedPixel (kept on ColorForWaterPixel — water path uses it for lake-vs-ocean color).
+- Findings #2 (concave-bay color fringe) and #4 (RasterizeIsLand per-scanline edge scan perf) left as-is per review (cosmetic / YAGNI-deferred). Applied changes are manual-review-only until Editor recompiles.
+
 ## Minor findings (for final-review triage)
 - Task 1 (`Noise.cs:19`): `(uint)h / 4294967296f` narrows to float 24-bit mantissa before dividing, ~6e-8 relative deviation from JS's double-precision result — brief-specified code, not implementer-introduced, harmless for visual terrain gen.
 - Task 2 (`NearestCellLookup.cs`): `MaxRingSearch = 128` cap contradicts the "null only if index is empty" doc comment (unreachable in practice at this project's map scale); `FindWithinRadius`'s ring span is one ring wider than strictly necessary (perf-only, errs safe); ring-0 early exit is a no-op except at exact distance 0 (perf-only). All three inherited verbatim from the plan's own code, not implementer choices.
