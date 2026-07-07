@@ -241,9 +241,13 @@ namespace WorldGen.Rendering.MapRaster
                 {
                     if (config.SmoothRegionBorders)
                     {
-                        RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
-                            buffers.FamilyLabel, FamilyCategoryOf, FamilyPriority, rectX, rectY, rectW, rectH);
-                        if (config.ElevationBands > 1)
+                        // Гейтим проходы по слоям: ColorForLandPixelFlat читает FamilyLabel только при
+                        // ShowBiomeLayer, BandLabel только при ShowReliefLayer && ElevationBands>1 -
+                        // при выключенном слое трассировать незачем (метка не читается).
+                        if (config.ShowBiomeLayer)
+                            RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
+                                buffers.FamilyLabel, FamilyCategoryOf, FamilyPriority, rectX, rectY, rectW, rectH);
+                        if (config.ShowReliefLayer && config.ElevationBands > 1)
                         {
                             int bands = config.ElevationBands;
                             RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
@@ -655,8 +659,14 @@ namespace WorldGen.Rendering.MapRaster
         /// пиксель, чья ближайшая клетка водная (тонкая каёмка на вогнутых участках берега) - у такой
         /// каёмки берём береговой тон вместо краша MapPalette.FamilyToSlot на Sea/Lake.</summary>
         static Color32 FlatFamilyColor(MapPaletteTheme theme, Biome biome)
+            => FlatFamilyColor(theme, MapPalette.GetFamily(biome));
+
+        /// <summary>Плоский цвет семейства с той же защитой Sea/Lake→Coast. Отдельная перегрузка по
+        /// BiomeFamily - чтобы сглаженная метка семейства (ColorForLandPixelFlat) тоже проходила через
+        /// guard, а не кастилась прямо в GetSlotColor (defense-in-depth: сейчас метки не содержат Sea/Lake,
+        /// т.к. FamilyPriority их не включает, но правка приоритетов/enum не должна ронять рендер).</summary>
+        static Color32 FlatFamilyColor(MapPaletteTheme theme, BiomeFamily family)
         {
-            var family = MapPalette.GetFamily(biome);
             if (family == BiomeFamily.Sea || family == BiomeFamily.Lake)
                 family = BiomeFamily.Coast;
             return MapPalette.GetSlotColor(theme, family);
@@ -680,7 +690,7 @@ namespace WorldGen.Rendering.MapRaster
             {
                 int fLabel = config.SmoothRegionBorders ? buffers.FamilyLabel[idx] : -1;
                 fam = fLabel >= 0
-                    ? MapPalette.GetSlotColor(config.Theme, (BiomeFamily)fLabel)
+                    ? FlatFamilyColor(config.Theme, (BiomeFamily)fLabel)   // guard Sea/Lake→Coast
                     : FlatFamilyColor(config.Theme, cell.Biome);
             }
             else
