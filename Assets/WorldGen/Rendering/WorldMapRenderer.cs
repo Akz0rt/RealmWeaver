@@ -1154,6 +1154,50 @@ namespace WorldGen.Rendering
                 : $"Self-Test Coastline Contour Tracing: FAIL (oneLoop={oneLoop}, fourPoints={fourPoints}, cornersMatch={cornersMatch}, smoothedPointCountOk={smoothedPointCountOk})");
         }
 
+        /// <summary>Синтетический контур "остров с озером внутри" (без реальных VoronoiCell/Corner -
+        /// RasterizeIsLand работает напрямую с петлями точек). Карта 14x14, текстура 14x14 (1
+        /// тексель на мировую единицу) - внешняя петля 0..10, внутренняя (озеро) 3..7. Пиксель
+        /// (12,12) заведомо ЗА пределами внешней петли (0..10) - проверяет случай "снаружи".</summary>
+        [ContextMenu("Self-Test: Coastline Contour Rasterize IsLand")]
+        public void SelfTestCoastlineContourRasterizeIsLand()
+        {
+            var outerLoop = new List<System.Numerics.Vector2>
+            {
+                new(0f, 0f), new(10f, 0f), new(10f, 10f), new(0f, 10f),
+            };
+            var innerLoop = new List<System.Numerics.Vector2> // "озеро" внутри острова
+            {
+                new(3f, 3f), new(7f, 3f), new(7f, 7f), new(3f, 7f),
+            };
+            var loops = new List<List<System.Numerics.Vector2>> { outerLoop, innerLoop };
+
+            const int texSize = 14;
+            const float mapSize = 14f;
+            var isLand = new bool[texSize * texSize];
+            WorldGen.Rendering.MapRaster.CoastlineContour.RasterizeIsLand(loops, isLand, texSize, texSize, mapSize, mapSize, 0, 0, texSize, texSize);
+
+            bool insideIslandOnly = isLand[1 * texSize + 1];  // мир (1.5,1.5) - внутри острова, вне озера
+            bool insideLake = isLand[5 * texSize + 5];        // мир (5.5,5.5) - внутри озера - должно быть false
+            bool outsideIsland = isLand[12 * texSize + 12];   // мир (12.5,12.5) - за пределами острова
+
+            bool fullRectOk = insideIslandOnly && !insideLake && !outsideIsland;
+
+            // Частичное обновление: перерастеризуем маленький под-прямоугольник [0,0,2,2] ДРУГИМ
+            // (пустым) набором петель - остальная маска должна остаться нетронутой. Это ровно то,
+            // чем пользуется кисть через существующий dirty rect (см. design doc "Кисть и живое
+            // обновление") - доказывает, что растеризация безопасна для частичных перезапеканий.
+            var emptyLoops = new List<List<System.Numerics.Vector2>>();
+            WorldGen.Rendering.MapRaster.CoastlineContour.RasterizeIsLand(emptyLoops, isLand, texSize, texSize, mapSize, mapSize, 0, 0, 2, 2);
+
+            bool subRectCleared = !isLand[0 * texSize + 0] && !isLand[1 * texSize + 1];
+            bool restUntouched = !isLand[5 * texSize + 5] && isLand[1 * texSize + 8]; // (8,1) вне озера и вне под-прямоугольника - должен остаться true
+
+            bool ok = fullRectOk && subRectCleared && restUntouched;
+            Debug.Log(ok
+                ? "Self-Test Coastline Contour Rasterize IsLand: PASS"
+                : $"Self-Test Coastline Contour Rasterize IsLand: FAIL (fullRectOk={fullRectOk}, subRectCleared={subRectCleared}, restUntouched={restUntouched})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams

@@ -67,6 +67,53 @@ namespace WorldGen.Rendering.MapRaster
             return loops;
         }
 
+        /// <summary>Растеризует набор замкнутых петель (см. TraceSmoothedLoops) в булеву маску
+        /// even-odd правилом (стандартный scanline polygon fill) - петли озёр внутри острова
+        /// автоматически становятся "дырками", без явного различения типа петли. Пишет ТОЛЬКО
+        /// внутри [rectX, rectX+rectW) x [rectY, rectY+rectH) в уже существующий массив isLand -
+        /// безопасно вызывать повторно для под-прямоугольника (кисть), не трогая остальную маску.</summary>
+        public static void RasterizeIsLand(
+            IReadOnlyList<List<Vector2>> loops, bool[] isLand,
+            int texWidth, int texHeight, float mapWidth, float mapHeight,
+            int rectX, int rectY, int rectW, int rectH)
+        {
+            var crossings = new List<float>();
+
+            for (int y = rectY; y < rectY + rectH; y++)
+            {
+                float worldY = (y + 0.5f) / texHeight * mapHeight;
+
+                crossings.Clear();
+                foreach (var loop in loops)
+                {
+                    int n = loop.Count;
+                    for (int i = 0; i < n; i++)
+                    {
+                        var a = loop[i];
+                        var b = loop[(i + 1) % n];
+                        if ((a.Y <= worldY) == (b.Y <= worldY)) continue; // ребро не пересекает эту строку
+                        float t = (worldY - a.Y) / (b.Y - a.Y);
+                        crossings.Add(a.X + t * (b.X - a.X));
+                    }
+                }
+                crossings.Sort();
+
+                int rowBase = y * texWidth;
+                bool inside = false;
+                int crossingIdx = 0;
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    float worldX = (x + 0.5f) / texWidth * mapWidth;
+                    while (crossingIdx < crossings.Count && crossings[crossingIdx] <= worldX)
+                    {
+                        inside = !inside;
+                        crossingIdx++;
+                    }
+                    isLand[rowBase + x] = inside;
+                }
+            }
+        }
+
         static List<int> SharedCellIds(Corner a, Corner b)
         {
             var result = new List<int>();
