@@ -1332,6 +1332,70 @@ namespace WorldGen.Rendering
                 : $"Self-Test Coastline Mask Updates Within Brush Dirty Rect: FAIL (wasLandBefore={wasLandBefore}, isLandAfter={isLandAfter})");
         }
 
+        /// <summary>Distance transform: единственный пиксель суши в центре 11x11, проверка что
+        /// CoastDistance даёт приближённое евклидово расстояние в пикселях (ортогональный шаг 1,
+        /// диагональный √2), суша = 0, и клампится на maxDist.</summary>
+        [ContextMenu("Self-Test: Coast Distance Transform")]
+        public void SelfTestCoastDistanceTransform()
+        {
+            const int n = 11;
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(n, n);
+            for (int i = 0; i < n * n; i++) buffers.IsLand[i] = false;
+            buffers.IsLand[5 * n + 5] = true; // суша только в (x=5,y=5)
+
+            WorldGen.Rendering.MapRaster.MapRasterizer.ComputeCoastDistanceRect(buffers, n, n, 20f, 0, 0, n, n);
+
+            const float D2 = 1.41421356f;
+            bool center0 = Mathf.Abs(buffers.CoastDistance[5 * n + 5] - 0f) < 0.01f;      // (5,5)
+            bool ortho1 = Mathf.Abs(buffers.CoastDistance[5 * n + 6] - 1f) < 0.01f;       // (6,5)
+            bool ortho2 = Mathf.Abs(buffers.CoastDistance[7 * n + 5] - 2f) < 0.01f;       // (5,7)
+            bool diag2 = Mathf.Abs(buffers.CoastDistance[7 * n + 7] - 2f * D2) < 0.01f;   // (7,7)
+            bool ortho3 = Mathf.Abs(buffers.CoastDistance[5 * n + 8] - 3f) < 0.01f;       // (8,5)
+
+            // Кламп: с maxDist=2 дальний пиксель (8,5) (истинно 3) обрезается до 2.
+            var clampBuf = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(n, n);
+            for (int i = 0; i < n * n; i++) clampBuf.IsLand[i] = false;
+            clampBuf.IsLand[5 * n + 5] = true;
+            WorldGen.Rendering.MapRaster.MapRasterizer.ComputeCoastDistanceRect(clampBuf, n, n, 2f, 0, 0, n, n);
+            bool clamped = Mathf.Abs(clampBuf.CoastDistance[5 * n + 8] - 2f) < 0.01f;
+
+            bool ok = center0 && ortho1 && ortho2 && diag2 && ortho3 && clamped;
+            Debug.Log(ok
+                ? "Self-Test Coast Distance Transform: PASS"
+                : $"Self-Test Coast Distance Transform: FAIL (center0={center0}, ortho1={ortho1}, ortho2={ortho2}, diag2={diag2}, ortho3={ortho3}, clamped={clamped})");
+        }
+
+        /// <summary>Бесшовность частичного пересчёта: land в (5,5), полный DT = эталон; затем та же
+        /// IsLand + CoastDistance предзаполнены эталоном (как после прошлого полного запека), и
+        /// пересчитываем ТОЛЬКО под-прямоугольник (7,7,3,3), НЕ содержащий сушу. Единственный способ
+        /// для этих пикселей получить верное расстояние - засев с границы rect из буфера; если он
+        /// работает, под-прямоугольник совпадает с эталоном пиксель-в-пиксель.</summary>
+        [ContextMenu("Self-Test: Coast Distance Transform Seam-Safe Partial")]
+        public void SelfTestCoastDistanceTransformSeamSafe()
+        {
+            const int n = 11;
+            var full = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(n, n);
+            for (int i = 0; i < n * n; i++) full.IsLand[i] = false;
+            full.IsLand[5 * n + 5] = true;
+            WorldGen.Rendering.MapRaster.MapRasterizer.ComputeCoastDistanceRect(full, n, n, 20f, 0, 0, n, n);
+
+            var partial = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(n, n);
+            System.Array.Copy(full.IsLand, partial.IsLand, n * n);
+            System.Array.Copy(full.CoastDistance, partial.CoastDistance, n * n);
+            // Под-прямоугольник x∈[7,9], y∈[7,9] - суша (5,5) снаружи него.
+            WorldGen.Rendering.MapRaster.MapRasterizer.ComputeCoastDistanceRect(partial, n, n, 20f, 7, 7, 3, 3);
+
+            bool match = true;
+            for (int y = 7; y < 10; y++)
+                for (int x = 7; x < 10; x++)
+                    if (Mathf.Abs(partial.CoastDistance[y * n + x] - full.CoastDistance[y * n + x]) > 0.001f)
+                        match = false;
+
+            Debug.Log(match
+                ? "Self-Test Coast Distance Transform Seam-Safe Partial: PASS"
+                : "Self-Test Coast Distance Transform Seam-Safe Partial: FAIL (partial sub-rect diverged from full DT - seam seeding broken)");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams

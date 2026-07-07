@@ -59,6 +59,12 @@ namespace WorldGen.Rendering.MapRaster
         /// <summary>true = суша по сглаженному контуру берега (только Combined+SmoothBorders -
         /// см. CoastlineContour). В прочих режимах не заполняется и не читается.</summary>
         public bool[] IsLand;
+
+        /// <summary>Приближённое (chamfer) расстояние в пикселях от водного пикселя до ближайшей
+        /// суши (по IsLand); суша = 0; клампится на glowWidth+1. Только Combined+SmoothBorders при
+        /// CoastlineGlowWidth > 0 - см. MapRasterizer.ComputeCoastDistanceRect. Питает широкую
+        /// подсветку берега в ColorForWaterPixel.</summary>
+        public float[] CoastDistance;
     }
 
     /// <summary>
@@ -83,6 +89,7 @@ namespace WorldGen.Rendering.MapRaster
                 FamilyColor = new Color32[n],
                 PreVignette = new Color32[n],
                 IsLand = new bool[n],
+                CoastDistance = new float[n],
             };
         }
 
@@ -249,6 +256,59 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         // ---- Painted-pipeline hooks ----
+
+        /// <summary>Заполняет buffers.CoastDistance для пикселей внутри rect: приближённое (chamfer,
+        /// веса 1 / √2 - нормализованы в пиксели) расстояние до ближайшего пикселя суши по
+        /// buffers.IsLand; суша = 0, вода = расстояние, клампленное сверху на maxDist (дальше
+        /// свечению не нужно - там оно 0; заодно maxDist играет роль +∞ при инициализации).
+        /// Соседей ЗА границей rect читает из уже заполненного buffers.CoastDistance (валидные
+        /// значения предыдущего полного запека) - это делает частичный (кистью) пересчёт бесшовным.
+        /// Границы проверяются по ИЗОБРАЖЕНИЮ (x-1>=0, x+1<w), не по rect, поэтому крайние пиксели
+        /// rect читают внешних соседей из буфера. При полном запеке (rect = всё изображение) внешних
+        /// соседей нет, инициализация воды = maxDist работает как +∞. См. design doc
+        /// docs/superpowers/specs/2026-07-07-coastline-glow-width-design.md.</summary>
+        public static void ComputeCoastDistanceRect(
+            MapRasterBuffers buffers, int w, int h, float maxDist,
+            int rectX, int rectY, int rectW, int rectH)
+        {
+            const float D1 = 1f;             // ортогональный шаг (1 пиксель)
+            const float D2 = 1.41421356f;    // диагональный шаг (√2)
+
+            // Инициализация: суша = 0, вода = maxDist (роль +∞ и клампа разом).
+            for (int y = rectY; y < rectY + rectH; y++)
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    int idx = y * w + x;
+                    buffers.CoastDistance[idx] = buffers.IsLand[idx] ? 0f : maxDist;
+                }
+
+            // Прямой проход (сверху-слева вниз-вправо): релаксация от уже обработанных соседей
+            // (in-rect - свежие этого прохода; out-of-rect - валидные из буфера прошлого запека).
+            for (int y = rectY; y < rectY + rectH; y++)
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    int idx = y * w + x;
+                    float d = buffers.CoastDistance[idx];
+                    if (x - 1 >= 0) d = Mathf.Min(d, buffers.CoastDistance[idx - 1] + D1);
+                    if (y - 1 >= 0) d = Mathf.Min(d, buffers.CoastDistance[idx - w] + D1);
+                    if (x - 1 >= 0 && y - 1 >= 0) d = Mathf.Min(d, buffers.CoastDistance[idx - w - 1] + D2);
+                    if (x + 1 < w && y - 1 >= 0) d = Mathf.Min(d, buffers.CoastDistance[idx - w + 1] + D2);
+                    buffers.CoastDistance[idx] = Mathf.Min(d, maxDist);
+                }
+
+            // Обратный проход (снизу-справа вверх-влево).
+            for (int y = rectY + rectH - 1; y >= rectY; y--)
+                for (int x = rectX + rectW - 1; x >= rectX; x--)
+                {
+                    int idx = y * w + x;
+                    float d = buffers.CoastDistance[idx];
+                    if (x + 1 < w) d = Mathf.Min(d, buffers.CoastDistance[idx + 1] + D1);
+                    if (y + 1 < h) d = Mathf.Min(d, buffers.CoastDistance[idx + w] + D1);
+                    if (x + 1 < w && y + 1 < h) d = Mathf.Min(d, buffers.CoastDistance[idx + w + 1] + D2);
+                    if (x - 1 >= 0 && y + 1 < h) d = Mathf.Min(d, buffers.CoastDistance[idx + w - 1] + D2);
+                    buffers.CoastDistance[idx] = Mathf.Min(d, maxDist);
+                }
+        }
 
         /// <summary>Проход 1.5 (только суша, только painted-режим): блендированные elevation/
         /// temperature/базовый цвет семейства среди соседей в радиусе smoothRadius, вес
