@@ -1099,6 +1099,61 @@ namespace WorldGen.Rendering
                 : $"Self-Test Layer Toggles Affect Raster Output: FAIL (biomeDiffers={biomeDiffers}, reliefDiffers={reliefDiffers})");
         }
 
+        /// <summary>Фикстура: сетка сайтов 3x3 (по аналогии с SquarePolygon-фикстурами других
+        /// self-тестов), центральная клетка (1,1) - суша, 8 окружающих - океан. Для регулярной
+        /// сетки Vороного-ячейки центра-сайта - в точности единичные квадраты (SquarePolygon) -
+        /// это ХОРОШО ИЗВЕСТНЫЙ факт (Vороной регулярной решётки точек = решётка прямоугольников),
+        /// поэтому такая фикстура одновременно и простая для ручной проверки, и геометрически
+        /// корректная настоящая Vороной-конфигурация (не просто "квадратики для теста").
+        /// Ожидание: ровно одна замкнутая петля - 4 угла центральной клетки.</summary>
+        [ContextMenu("Self-Test: Coastline Contour Tracing")]
+        public void SelfTestCoastlineContourTracing()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Grassland : Biome.Ocean,
+                        IsOcean = !isCenter,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                }
+            }
+            var fixtureById = fixtureCells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+
+            var loopsUnsmoothed = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(corners, fixtureById, smoothingIterations: 0);
+            bool oneLoop = loopsUnsmoothed.Count == 1;
+            bool fourPoints = oneLoop && loopsUnsmoothed[0].Count == 4;
+
+            bool ContainsPointNear(List<System.Numerics.Vector2> loop, System.Numerics.Vector2 target, float eps)
+            {
+                foreach (var p in loop)
+                    if ((p - target).Length() < eps) return true;
+                return false;
+            }
+
+            bool cornersMatch = fourPoints
+                && ContainsPointNear(loopsUnsmoothed[0], new System.Numerics.Vector2(0.5f, 0.5f), 0.01f)
+                && ContainsPointNear(loopsUnsmoothed[0], new System.Numerics.Vector2(1.5f, 0.5f), 0.01f)
+                && ContainsPointNear(loopsUnsmoothed[0], new System.Numerics.Vector2(1.5f, 1.5f), 0.01f)
+                && ContainsPointNear(loopsUnsmoothed[0], new System.Numerics.Vector2(0.5f, 1.5f), 0.01f);
+
+            var loopsSmoothed = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(corners, fixtureById, smoothingIterations: 2);
+            bool smoothedPointCountOk = loopsSmoothed.Count == 1 && loopsSmoothed[0].Count == 16; // 4 * 2^2
+
+            bool ok = oneLoop && fourPoints && cornersMatch && smoothedPointCountOk;
+            Debug.Log(ok
+                ? "Self-Test Coastline Contour Tracing: PASS"
+                : $"Self-Test Coastline Contour Tracing: FAIL (oneLoop={oneLoop}, fourPoints={fourPoints}, cornersMatch={cornersMatch}, smoothedPointCountOk={smoothedPointCountOk})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
