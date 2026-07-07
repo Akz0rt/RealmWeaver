@@ -110,6 +110,8 @@ namespace WorldGen.Rendering
         [Range(40f, 100f)] public float darkness = 72f;
         [Tooltip("Сглаженные границы биомов + полный 'нарисованный' конвейер (тонировка, рельеф, зерно, свечение берега). Выключено = старый плоский вид один-в-один, только через текстуру.")]
         public bool smoothBorders = true;
+        [Tooltip("Число итераций сглаживания Чайкина для контура берега (только Combined+smoothBorders). 0 = точные грани клеток Вороного (текущее поведение при выключенном сглаживании).")]
+        [Range(0, 5)] public int coastlineSmoothness = 3;
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
@@ -1266,6 +1268,70 @@ namespace WorldGen.Rendering
                 : "Self-Test Coastline Mask Matches Hard Categorization At Zero Smoothness: FAIL (IsLand mask disagrees with nearest-cell test somewhere on the grid)");
         }
 
+        /// <summary>Симулирует мазок кисти, меняющий WaterOverride соседней клетки (как
+        /// BrushSetBiome/"Сила: вода" в редакторе), и перезапекает ТОЛЬКО маленький прямоугольник
+        /// вокруг нее - как реальный RebakeAffectedCells. Проверяет, что IsLand-маска внутри этого
+        /// прямоугольника отражает новое состояние без пересборки графа Corner (топология графа не
+        /// меняется от WaterOverride - меняется только то, какие клетки считаются водой при
+        /// трассировке, см. CoastlineContour.TraceSmoothedLoops) и без полного RebakeAll.</summary>
+        [ContextMenu("Self-Test: Coastline Mask Updates Within Brush Dirty Rect")]
+        public void SelfTestCoastlineMaskUpdatesWithBrushDirtyRect()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            VoronoiCell edited = null;
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Grassland : Biome.Ocean,
+                        IsOcean = !isCenter,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                    if (c == 2 && r == 1) edited = cell; // сосед справа от острова - "мазок кисти" превратит его в сушу
+                }
+            }
+            var fixtureById = fixtureCells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 30, TexHeight = 30, MapWidth = 3f, MapHeight = 3f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 2,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 0.6f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(30, 30);
+            var tex = new Texture2D(30, 30, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 30, 30);
+
+            const int px = 22, py = 10; // мир (2.25, 1.05) - внутри клетки (2,1), до правки - океан
+            bool wasLandBefore = buffers.IsLand[py * 30 + px];
+
+            // "Мазок кисти": превращаем соседнюю клетку в сушу (как WaterOverride=ForceLand в
+            // редакторе), затем перезапекаем ТОЛЬКО небольшой dirty rect вокруг неё - тем же
+            // экземпляром corners, без пересборки графа (см. summary метода).
+            edited.WaterOverride = WaterOverrideType.ForceLand;
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 20, 5, 10, 10);
+
+            bool isLandAfter = buffers.IsLand[py * 30 + px];
+
+            Destroy(tex);
+            bool ok = !wasLandBefore && isLandAfter;
+            Debug.Log(ok
+                ? "Self-Test Coastline Mask Updates Within Brush Dirty Rect: PASS"
+                : $"Self-Test Coastline Mask Updates Within Brush Dirty Rect: FAIL (wasLandBefore={wasLandBefore}, isLandAfter={isLandAfter})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
@@ -1498,6 +1564,7 @@ namespace WorldGen.Rendering
                 RegionVariation = regionVariation,
                 Darkness = darkness,
                 SmoothBorders = smoothBorders,
+                CoastlineSmoothness = coastlineSmoothness,
                 SmoothRadius = minPointDistance * 1.5f,
                 ReliefStrength = reliefStrength,
                 ReliefLightAzimuth = reliefLightAzimuth,
