@@ -112,6 +112,8 @@ namespace WorldGen.Rendering
         public bool smoothBorders = true;
         [Tooltip("Число итераций сглаживания Чайкина для контура берега (только Combined+smoothBorders). 0 = точные грани клеток Вороного (текущее поведение при выключенном сглаживании).")]
         [Range(0, 5)] public int coastlineSmoothness = 3;
+        [Tooltip("Ширина светлого ореола берега со стороны воды, в пикселях (только Combined+smoothBorders). 0 = нет свечения. Масштабируется через поле дистанции - стоимость не зависит от ширины.")]
+        [Range(0, 64)] public int coastlineGlowWidth = 16;
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
@@ -1396,6 +1398,132 @@ namespace WorldGen.Rendering
                 : "Self-Test Coast Distance Transform Seam-Safe Partial: FAIL (partial sub-rect diverged from full DT - seam seeding broken)");
         }
 
+        /// <summary>Градиентное свечение: остров (центральная клетка 3x3) на текстуре 30x30 над
+        /// картой 3x3 (10px/ед.), CoastlineSmoothness=0 (берег ровно по грани клетки x=1.5→пиксель 15),
+        /// glowWidth=8. Дельта цвета водного пикселя от того же пикселя, запечённого с glowWidth=0
+        /// (без свечения) = вклад ореола. Проверка: у кромки (dist≈1) вклад заметно больше, чем на
+        /// ~4px, а дальше glowWidth (~10px) вклада нет вовсе.</summary>
+        [ContextMenu("Self-Test: Coastline Glow Gradient")]
+        public void SelfTestCoastlineGlowGradient()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            for (int r = 0; r < 3; r++)
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Grassland : Biome.Ocean,
+                        IsOcean = !isCenter,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                }
+            var fixtureById = fixtureCells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 1f);
+
+            WorldGen.Rendering.MapRaster.MapRasterConfig MakeConfig(int glowWidth) => new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 30, TexHeight = 30, MapWidth = 3f, MapHeight = 3f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 0, CoastlineGlowWidth = glowWidth,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 0.6f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            Color BakePixel(int glowWidth, int px, int py)
+            {
+                var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(30, 30);
+                var tex = new Texture2D(30, 30, TextureFormat.RGBA32, false);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, MakeConfig(glowWidth), tex, buffers, 0, 0, 30, 30);
+                Color c = tex.GetPixel(px, py);
+                Destroy(tex);
+                return c;
+            }
+
+            float Delta(int px, int py)
+            {
+                Color on = BakePixel(8, px, py);
+                Color off = BakePixel(0, px, py);
+                return Mathf.Abs(on.r - off.r) + Mathf.Abs(on.g - off.g) + Mathf.Abs(on.b - off.b);
+            }
+
+            // Все три пикселя - вода справа от острова (грань суши на x=1.5 → пиксель 15), y=10.
+            float nearDelta = Delta(16, 10); // ~1px от берега
+            float midDelta = Delta(19, 10);  // ~4px
+            float farDelta = Delta(25, 10);  // ~10px > glowWidth 8
+
+            bool ok = nearDelta > midDelta && midDelta > 0.001f && farDelta < 0.001f;
+            Debug.Log(ok
+                ? "Self-Test Coastline Glow Gradient: PASS"
+                : $"Self-Test Coastline Glow Gradient: FAIL (nearDelta={nearDelta:F3}, midDelta={midDelta:F3}, farDelta={farDelta:F3}; ожидалось near>mid>0 и far≈0)");
+        }
+
+        /// <summary>glowWidth=0 → свечения нет: водный пиксель у самой кромки берега равен базовому
+        /// водному цвету (тому, что был бы вообще без прохода свечения). Регрессия на guard от
+        /// деления на ноль и на "0 = выключено".</summary>
+        [ContextMenu("Self-Test: Coastline Glow Zero Width Off")]
+        public void SelfTestCoastlineGlowZeroWidthOff()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            for (int r = 0; r < 3; r++)
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Grassland : Biome.Ocean,
+                        IsOcean = !isCenter,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                }
+            var fixtureById = fixtureCells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 30, TexHeight = 30, MapWidth = 3f, MapHeight = 3f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 0, CoastlineGlowWidth = 0,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 0.6f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(30, 30);
+            var tex = new Texture2D(30, 30, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 30, 30);
+
+            // Базовый водный цвет ColdTwilight shallow (30,84,100) без ряби (для океанской клетки
+            // рябь есть - поэтому сравниваем "нет сдвига в сторону Glow", а не точное равенство):
+            // при glowWidth=0 пиксель у кромки не должен быть ближе к Glow (120,200,214), чем
+            // пиксель глубоко в воде (оба - только базовый цвет + рябь, без ореола).
+            Color shorePixel = tex.GetPixel(16, 10);   // ~1px от берега
+            Color deepPixel = tex.GetPixel(28, 10);    // глубоко в воде, у края карты
+            // Color32 (байты 0-255), НЕ Color - иначе неявная конверсия нормализовала бы в 0-1
+            // и деление на 255 ниже стало бы неверным.
+            Color32 glow = WorldGen.Rendering.MapRaster.MapPalette.GetSlotColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, WorldGen.Rendering.MapRaster.PaletteSlot.Glow);
+
+            float DistToGlow(Color c) => Mathf.Abs(c.r - glow.r / 255f) + Mathf.Abs(c.g - glow.g / 255f) + Mathf.Abs(c.b - glow.b / 255f);
+            // Без свечения близость к Glow у кромки и в глубине примерно одинакова (разница только
+            // от ряби, малая ~0.12); свечение сделало бы shorePixel заметно ближе к Glow (сдвиг ~0.4+).
+            bool noGlowHalo = Mathf.Abs(DistToGlow(shorePixel) - DistToGlow(deepPixel)) < 0.2f;
+
+            Destroy(tex);
+            Debug.Log(noGlowHalo
+                ? "Self-Test Coastline Glow Zero Width Off: PASS"
+                : "Self-Test Coastline Glow Zero Width Off: FAIL (пиксель у кромки заметно ближе к Glow при glowWidth=0 - свечение не выключилось)");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
@@ -1629,6 +1757,7 @@ namespace WorldGen.Rendering
                 Darkness = darkness,
                 SmoothBorders = smoothBorders,
                 CoastlineSmoothness = coastlineSmoothness,
+                CoastlineGlowWidth = coastlineGlowWidth,
                 SmoothRadius = minPointDistance * 1.5f,
                 ReliefStrength = reliefStrength,
                 ReliefLightAzimuth = reliefLightAzimuth,
@@ -1662,7 +1791,10 @@ namespace WorldGen.Rendering
 
             if (!any) { rx = ry = rw = rh = 0; return; }
 
-            float pad = minPointDistance * 1.5f;
+            // Отступ = smoothRadius (протекание блендинга) + coastlineGlowWidth (ореол берега тянется
+            // на столько пикселей от суши, поэтому пиксели в этой полосе должны пересчитаться при
+            // правке берега кистью). glowWidth в пикселях -> мировые единицы через worldPerPixel.
+            float pad = minPointDistance * 1.5f + coastlineGlowWidth * (mapWidth / texWidth);
             minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
 
             int px0 = Mathf.Clamp(Mathf.FloorToInt(minX / mapWidth * texWidth), 0, texWidth - 1);

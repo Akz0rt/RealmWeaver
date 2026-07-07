@@ -30,6 +30,12 @@ namespace WorldGen.Rendering.MapRaster
         /// docs/superpowers/specs/2026-07-07-coastline-contour-smoothing-design.md.</summary>
         public int CoastlineSmoothness = 3;
 
+        /// <summary>Ширина светлого ореола берега со стороны воды, в пикселях (только Combined+
+        /// SmoothBorders). 0 = нет свечения; масштабируется через поле дистанции CoastDistance,
+        /// стоимость не зависит от ширины. См. design doc
+        /// docs/superpowers/specs/2026-07-07-coastline-glow-width-design.md.</summary>
+        public int CoastlineGlowWidth = 16;
+
         /// <summary>Соответствуют существующим тумблерам MapLayersPanel - выключение биомного слоя
         /// даёт нейтральную земляную заливку вместо цвета семейства биома; выключение рельефа
         /// убирает hillshade/холодный подсвет на суше и градиент глубины на воде (плоский цвет).</summary>
@@ -186,6 +192,8 @@ namespace WorldGen.Rendering.MapRaster
                 {
                     CoastlineContour.RasterizeIsLand(loops, buffers.IsLand, w, h, config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
                 }
+                if (config.CoastlineGlowWidth > 0)
+                    ComputeCoastDistanceRect(buffers, w, h, config.CoastlineGlowWidth + 1f, rectX, rectY, rectW, rectH);
                 BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
             }
         }
@@ -425,9 +433,15 @@ namespace WorldGen.Rendering.MapRaster
                 r += ripple; g += ripple; b += ripple;
             }
 
-            if (HasNeighborWithWaterStatus(buffers, x, y, w, h, wantWater: false))
+            // Свечение берега со стороны воды - широкий мягкий ореол по полю дистанции CoastDistance
+            // (см. ComputeCoastDistanceRect): полная сила у самой кромки, плавно до нуля на
+            // расстоянии CoastlineGlowWidth пикселей. Ширину задаёт поле; стоимость не зависит от
+            // неё (в отличие от старой пососедней проверки в 1px). Тёмная обводка суши не трогается.
+            float glowWidth = config.CoastlineGlowWidth;
+            float glowT = glowWidth > 0f ? Mathf.Clamp01(1f - buffers.CoastDistance[y * w + x] / glowWidth) : 0f;
+            if (glowT > 0f)
             {
-                float gk = 0.32f + coldAmt * 0.5f;
+                float gk = (0.32f + coldAmt * 0.5f) * glowT;
                 r += (palette.Glow.r - r) * gk;
                 g += (palette.Glow.g - g) * gk;
                 b += (palette.Glow.b - b) * gk;
