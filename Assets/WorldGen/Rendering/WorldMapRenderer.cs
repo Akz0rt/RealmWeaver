@@ -167,6 +167,12 @@ namespace WorldGen.Rendering
             EnsureRasterMaterial();
         }
 
+        void OnDestroy()
+        {
+            if (rasterTexture != null) Destroy(rasterTexture);
+            if (rasterMaterial != null) Destroy(rasterMaterial);
+        }
+
         /// <summary>Sprites/Default: unlit, double-sided (Cull Off) - как у рек/границ в этом же файле
         /// (см. BuildRivers/CreateBorderObject). Предпочтён встроенному Unlit/Texture, чтобы не зависеть
         /// от winding order квада - не нужно подбирать точный порядок вершин, как в старом
@@ -1263,7 +1269,9 @@ namespace WorldGen.Rendering
             ComputeTexSize(out texWidth, out texHeight);
 
             var config = BuildRasterConfig();
+            var oldTexture = rasterTexture;
             rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, displayMode, config, out rasterBuffers);
+            if (oldTexture != null) Destroy(oldTexture);
             EnsureRasterMaterial();
             rasterMaterial.mainTexture = rasterTexture;
         }
@@ -1376,6 +1384,7 @@ namespace WorldGen.Rendering
             if (cells == null) yield break;
             ComputeTexSize(out texWidth, out texHeight);
 
+            if (rasterTexture != null) Destroy(rasterTexture);
             rasterTexture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false)
             {
                 filterMode = FilterMode.Bilinear,
