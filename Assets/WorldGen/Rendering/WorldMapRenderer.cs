@@ -729,6 +729,49 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Biome Family Coverage: PASS" : "Self-Test Biome Family Coverage: FAIL");
         }
 
+        [ContextMenu("Self-Test: Raster Hard Mode Parity")]
+        public void SelfTestRasterHardModeParity()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(2.5f, 5f)) { Biome = Biome.Grassland, RegionId = 0, IsOcean = false };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(7.5f, 5f)) { Biome = Biome.Grassland, RegionId = 1, IsOcean = false };
+            var fixtureCells = new List<VoronoiCell> { a, b };
+            var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
+
+            var savedDisplayMode = displayMode;
+            displayMode = MapDisplayMode.Region;
+            Color expectedA = GetColorForCell(a);
+
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 10,
+                TexHeight = 10,
+                MapWidth = 10f,
+                MapHeight = 10f,
+                Seed = 1,
+                SmoothBorders = false,
+                HardModeColor = GetColorForCell,
+                WaterDepth01 = _ => 0f,
+            };
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(10, 10);
+            var tex = new Texture2D(10, 10, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, displayMode, config, tex, buffers, 0, 0, 10, 10);
+
+            // Пиксель (2,5) на текстуре 10x10 для карты 10x10 сэмплирует мировую точку (2.5, 5.5) -
+            // ближе всего к Site клетки a (2.5, 5).
+            Color actual = tex.GetPixel(2, 5);
+            bool ok = Mathf.Abs(expectedA.r - actual.r) < 0.01f
+                      && Mathf.Abs(expectedA.g - actual.g) < 0.01f
+                      && Mathf.Abs(expectedA.b - actual.b) < 0.01f;
+
+            displayMode = savedDisplayMode;
+            Destroy(tex);
+
+            Debug.Log(ok
+                ? "Self-Test Raster Hard Mode Parity: PASS"
+                : $"Self-Test Raster Hard Mode Parity: FAIL (expected={expectedA}, actual={actual})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
