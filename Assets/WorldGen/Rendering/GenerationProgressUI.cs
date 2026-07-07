@@ -17,7 +17,7 @@ namespace WorldGen.Rendering
         static readonly string[] StepLabels =
         {
             "Генерация высот", "Океаны и озёра", "Температура и влажность",
-            "Расчёт биомов", "Границы регионов"
+            "Расчёт биомов", "Границы регионов", "Отрисовка карты"
         };
 
         Font builtinFont;

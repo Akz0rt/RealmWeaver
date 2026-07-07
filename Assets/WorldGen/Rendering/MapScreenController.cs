@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
@@ -116,14 +117,18 @@ namespace WorldGen.Rendering
         {
             RefreshScreenStateForGenerating();
 
+            List<VoronoiCell> generatedCells = null;
             yield return WorldGenerator.GenerateWorldStepped(genParams,
                 (label, frac) => progressScreen.SetStep(label, frac),
-                (cells, tempEpicenters, moistureEpicenters, rivers) =>
-                {
-                    mapRenderer.LoadFromCells(cells, genParams);
-                    activeGeneration = null;
-                    RefreshScreenState();
-                });
+                (cells, tempEpicenters, moistureEpicenters, rivers) => generatedCells = cells);
+
+            mapRenderer.PrepareLoadFromCells(generatedCells, genParams);
+            yield return mapRenderer.RebakeAllStepped(bakeFrac => progressScreen.SetStep("Отрисовка карты", (5f + bakeFrac) / 6f));
+            mapRenderer.FinishLoadFromCells();
+
+            progressScreen.SetStep("Готово", 1f);
+            activeGeneration = null;
+            RefreshScreenState();
         }
 
         void RefreshScreenStateForGenerating()
