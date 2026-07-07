@@ -78,6 +78,18 @@ Traced all 3 bake paths (full/chunked-stepped/brush-partial). Confirmed: DT is O
   3. Future subproject-6 glowWidth slider MUST route through RebakeAll not RebakeRegion (partial DT seeds from buffer clamped at previous glowWidth+1 → raising width + partial-only rebake would under-glow at rect edge). Unreachable now (no UI/OnValidate). RECORDED durably in the glow design spec's Риски section.
 Not compiler/test-verified (Editor locked) — reviewer hand-traced signatures/types/division, found nothing that won't compile.
 
+## Follow-up feature: Flat region fill + elevation bands (4th plan on same branch)
+
+Spec: docs/superpowers/specs/2026-07-07-flat-region-fill-design.md (committed 3cbf6b6)
+Plan: docs/superpowers/plans/2026-07-07-flat-region-fill.md (committed eb0e82b) — 2 tasks
+Base for this feature's tasks: eb0e82b
+Goal: toggle flatRegionFill (user-default on) — replace smooth cross-biome blend with flat per-region fill: color = nearest-cell biome family modulated by discrete elevation bands (higher=lighter), even tone + light grain. Skips the expensive BakePaintedFields blend pass. Water/smoothed-coast/glow unchanged. Approach A: faceted internal biome/band boundaries (smoothing them is a possible future iteration). Params: flatRegionFill(bool), elevationBands(int 2-8, def 5), elevationBandContrast(float % 0-100, def 40).
+Pre-flight review: clean. NOTE the deliberate default asymmetry — MapRasterConfig.FlatRegionFill defaults FALSE (so existing painted self-tests that don't set it keep the blend path and don't break on buffers.Elevation being unpopulated), while the serialized WorldMapRenderer.flatRegionFill defaults TRUE (user-facing "on"). Between Task 1 and Task 2 production is temporarily on blend (BuildRasterConfig not yet wired).
+
+- Task 1: complete (commit eb0e82b..48faf1c, review clean — Approved; reviewer traced band formula (elev 0.1/0.5/0.9→factor 0.8/1.0/1.2), verified config default false + blend path untouched + guard leaves IsLand/CoastDistance unconditional + all 3 self-tests non-vacuous (checked against actual palette table + grain amplitude + confirmed all-land guard makes IsLand uniformly true so no coast contamination). 1 Minor: no direct ElevationBands=1 divide-by-zero regression test (code verified correct via the ElevationBands>1 gate; coverage-only).)
+- Task 2: complete (commit 48faf1c..bebdcef, review clean — Approved, zero findings; reviewer verified 3 fields correct type/attr/default/position + wiring names match MapRasterConfig case-sensitively (independently checked MapRasterizer.cs) + diff scoped to WorldMapRenderer.cs only, 9 insertions/0 deletions).
+- Both tasks complete + reviewed clean. Feature commits: 48faf1c, bebdcef (base eb0e82b).
+
 ## Minor findings (for final-review triage)
 - Task 1 (`Noise.cs:19`): `(uint)h / 4294967296f` narrows to float 24-bit mantissa before dividing, ~6e-8 relative deviation from JS's double-precision result — brief-specified code, not implementer-introduced, harmless for visual terrain gen.
 - Task 2 (`NearestCellLookup.cs`): `MaxRingSearch = 128` cap contradicts the "null only if index is empty" doc comment (unreachable in practice at this project's map scale); `FindWithinRadius`'s ring span is one ring wider than strictly necessary (perf-only, errs safe); ring-0 early exit is a no-op except at exact distance 0 (perf-only). All three inherited verbatim from the plan's own code, not implementer choices.
