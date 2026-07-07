@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
+using WorldGen.Rendering.MapRaster;
 
 namespace WorldGen.Rendering
 {
@@ -102,6 +103,16 @@ namespace WorldGen.Rendering
         public Color coastlineColor = new Color(0.05f, 0.10f, 0.20f, 0.95f);
         public float coastlineWidth = 2.5f;
 
+        [Header("Combined: тёмный рендер (MapRaster)")]
+        public MapPaletteTheme paletteTheme = MapPaletteTheme.ColdTwilight;
+        [Range(0f, 100f)] public float coldLight = 58f;
+        [Range(0f, 100f)] public float regionVariation = 45f;
+        [Range(40f, 100f)] public float darkness = 72f;
+        [Tooltip("Сглаженные границы биомов + полный 'нарисованный' конвейер (тонировка, рельеф, зерно, свечение берега). Выключено = старый плоский вид один-в-один, только через текстуру.")]
+        public bool smoothBorders = true;
+        [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
+        public int rasterLongSide = 2048;
+
         [Header("Камера (опционально)")]
         [Tooltip("Если назначено - камера автоматически встанет над центром карты при каждой генерации.")]
         public Camera targetCamera;
@@ -120,11 +131,16 @@ namespace WorldGen.Rendering
         List<MoistureEpicenter> moistureEpicenters;
         List<River> rivers;
         GenerationParams lastGenParams; // храним последние параметры, чтобы RegenerateTemperature мог работать без полной генерации
-        int[] triangleToCellId;
         Transform riverContainer; // родительский объект для всех LineRenderer рек - упрощает очистку при перегенерации
         Transform borderContainer;        // родитель для меш-объектов границ
         GameObject regionBorderObject;    // меш-лента границ регионов
         GameObject coastlineObject;       // меш-лента береговой линии
+
+        NearestCellLookup nearestLookup;
+        Texture2D rasterTexture;
+        Material rasterMaterial;
+        MapRasterBuffers rasterBuffers;
+        int texWidth, texHeight;
 
         /// <summary>Fired at the end of GenerateAndRender(). PoiManager subscribes to clear all POIs on regen.</summary>
         public event System.Action OnWorldRegenerated;
@@ -148,8 +164,20 @@ namespace WorldGen.Rendering
             meshRenderer = GetComponent<MeshRenderer>();
             meshCollider = GetComponent<MeshCollider>();
 
-            if (meshRenderer.sharedMaterial == null)
-                Debug.LogWarning("WorldMapRenderer: материал не назначен. Цвета клеток не будут видны без шейдера, читающего Vertex Color.");
+            EnsureRasterMaterial();
+        }
+
+        /// <summary>Sprites/Default: unlit, double-sided (Cull Off) - как у рек/границ в этом же файле
+        /// (см. BuildRivers/CreateBorderObject). Предпочтён встроенному Unlit/Texture, чтобы не зависеть
+        /// от winding order квада - не нужно подбирать точный порядок вершин, как в старом
+        /// BuildMesh для fan-триангуляции клеток. Материал создаётся в коде, поэтому
+        /// Assets/WorldGen/Rendering/WorldMaterial.mat больше не используется этим рендерером
+        /// (оставлен нетронутым - см. плановые ограничения).</summary>
+        void EnsureRasterMaterial()
+        {
+            if (rasterMaterial != null) return;
+            rasterMaterial = new Material(Shader.Find("Sprites/Default"));
+            meshRenderer.material = rasterMaterial;
         }
 
         /// <summary>
@@ -196,8 +224,18 @@ namespace WorldGen.Rendering
         /// </summary>
         public void LoadFromCells(List<VoronoiCell> loadedCells, GenerationParams referenceParams)
         {
+            PrepareLoadFromCells(loadedCells, referenceParams);
+            RebakeAll();
+            FinishLoadFromCells();
+        }
+
+        /// <summary>Первая половина LoadFromCells (данные + геометрия квада, без запека текстуры) -
+        /// используется напрямую MapScreenController, чтобы вставить между ней и FinishLoadFromCells
+        /// чанковый RebakeAllStepped с прогресс-баром вместо синхронного RebakeAll.</summary>
+        public void PrepareLoadFromCells(List<VoronoiCell> loadedCells, GenerationParams referenceParams)
+        {
             cells = loadedCells;
-            corners = CornerGraphBuilder.Build(cells); // same deterministic topology rebuild GenerateAndRender already does; rivers aren't persisted so this is only needed if enableRivers is later re-checked
+            corners = CornerGraphBuilder.Build(cells);
             rivers = new List<River>();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
@@ -206,7 +244,14 @@ namespace WorldGen.Rendering
             mapWidth = referenceParams.Width;
             mapHeight = referenceParams.Height;
 
-            BuildMesh(cells);
+            RebuildSpatialIndex();
+            BuildQuadMesh();
+        }
+
+        /// <summary>Вторая половина LoadFromCells (реки, границы, камера, события) - вызывается
+        /// MapScreenController после RebakeAllStepped.</summary>
+        public void FinishLoadFromCells()
+        {
             BuildRivers();
             BuildBorders();
 
@@ -272,6 +317,12 @@ namespace WorldGen.Rendering
             }
         }
 
+        /// <summary>Combined+smoothBorders уже рисует собственное свечение берега в самой текстуре -
+        /// риббон береговой линии дублировал бы эффект, поэтому скрывается именно в этом случае.
+        /// В Height/Region/Biome и Combined-без-сглаживания риббон работает как раньше.</summary>
+        bool ShouldShowCoastlineRibbon() =>
+            displayMode == MapDisplayMode.Combined && showCoastlineLayer && !smoothBorders;
+
         /// <summary>Классифицирует граничные рёбра и строит два меш-объекта (границы регионов
         /// и берег). Видимость каждого зависит от Combined-режима и соответствующего тоггла.</summary>
         void BuildBorders()
@@ -300,7 +351,7 @@ namespace WorldGen.Rendering
 
             bool combined = displayMode == MapDisplayMode.Combined;
             regionBorderObject.SetActive(combined && showRegionBordersLayer);
-            coastlineObject.SetActive(combined && showCoastlineLayer);
+            coastlineObject.SetActive(ShouldShowCoastlineRibbon());
         }
 
         GameObject CreateBorderObject(string name, Mesh mesh, Color color)
@@ -347,7 +398,7 @@ namespace WorldGen.Rendering
             WorldGenerator.RegenerateTemperature(cells, genParams, epicenters);
             lastGenParams = genParams;
 
-            RecolorOnly(); // только перекрашиваем - геометрия и биомы не менялись
+            RebakeAll(); // только перекрашиваем - геометрия и биомы не менялись
             OnDisplayChanged?.Invoke();
         }
 
@@ -364,7 +415,7 @@ namespace WorldGen.Rendering
             }
 
             CellOverrideService.ApplyClimateOverride(targetCells, temperature, moisture, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -374,7 +425,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ClearClimateOverride(targetCells, clearTemperature, clearMoisture, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -384,7 +435,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyElevationOverride(targetCells, elevation, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -394,7 +445,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyWaterOverride(targetCells, waterType, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             BuildBorders();
             OnDisplayChanged?.Invoke();
         }
@@ -405,7 +456,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyBiomeOverride(targetCells, biome, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -415,7 +466,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ClearAllOverrides(targetCells, beachElevationThreshold);
-            RecolorOnly();
+            RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -426,24 +477,24 @@ namespace WorldGen.Rendering
         /// <summary>Начинает новый мазок кистью - вызывать при нажатии ЛКМ в режиме кисти.</summary>
         public void BeginBrushStroke() => brushUndo.BeginStroke();
 
-        /// <summary>Завершает текущий мазок кистью, кладёт его в историю Undo - вызывать при отпускании ЛКМ.</summary>
+        /// <summary>Завершает текущий мазок кистью, кладёт его в историю Undo - вызывать при отпускании ЛКМ.
+        /// Полный рибейк здесь больше не нужен: BrushToolController.ApplyStamp уже вызвал
+        /// RebakeAffectedCells для каждого стемпа мазка, текстура уже в актуальном состоянии.</summary>
         public void EndBrushStroke()
         {
             brushUndo.EndStroke();
-            // Перекрашиваем/перестраиваем меш один раз по завершении мазка - во время самого мазка
-            // (BrushAdjust*) рендер уже обновляется на каждое изменение, так что здесь это просто
-            // финальная подстраховка на случай рассинхрона.
-            if (cells != null) RecolorOnly();
             OnDisplayChanged?.Invoke();
         }
 
-        /// <summary>Прибавляет delta к elevation клетки (относительное изменение, кисть). Записывает "досмазковое" состояние клетки в текущий мазок перед изменением.</summary>
+        /// <summary>Прибавляет delta к elevation клетки (относительное изменение, кисть). Записывает
+        /// "досмазковое" состояние клетки в текущий мазок перед изменением. Не перезапекает текстуру -
+        /// BrushToolController вызывает RebakeAffectedCells один раз на весь стемп (см. roadmap-пункт
+        /// про перекраску кистью).</summary>
         public void BrushAdjustElevation(VoronoiCell cell, float delta)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
             CellOverrideService.AdjustElevation(cell, delta, beachElevationThreshold);
-            RecolorOnly();
         }
 
         /// <summary>Прибавляет delta к температуре клетки (относительное изменение, кисть).</summary>
@@ -452,7 +503,6 @@ namespace WorldGen.Rendering
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
             CellOverrideService.AdjustTemperature(cell, delta, beachElevationThreshold);
-            RecolorOnly();
         }
 
         /// <summary>Прибавляет delta к влажности клетки (относительное изменение, кисть).</summary>
@@ -461,7 +511,6 @@ namespace WorldGen.Rendering
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
             CellOverrideService.AdjustMoisture(cell, delta, beachElevationThreshold);
-            RecolorOnly();
         }
 
         /// <summary>
@@ -474,7 +523,7 @@ namespace WorldGen.Rendering
             bool didUndo = brushUndo.Undo();
             if (didUndo)
             {
-                RecolorOnly();
+                RebakeAll();
                 OnDisplayChanged?.Invoke();
             }
             return didUndo;
@@ -494,7 +543,7 @@ namespace WorldGen.Rendering
                 any |= brushUndo.Undo();
             if (any)
             {
-                RecolorOnly();
+                RebakeAll();
                 OnDisplayChanged?.Invoke();
             }
         }
@@ -510,7 +559,6 @@ namespace WorldGen.Rendering
             brushUndo.RecordBeforeChange(cell);
             cell.BiomeOverride = biome;
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
-            RecolorOnly();
         }
 
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя
@@ -873,62 +921,47 @@ namespace WorldGen.Rendering
         public void BuildMesh(List<VoronoiCell> sourceCells)
         {
             cells = sourceCells;
+            RebuildSpatialIndex();
+            BuildQuadMesh();
+            RebakeAll();
+        }
 
+        /// <summary>cellById/oceanDistanceFromLand/nearestLookup всегда пересчитываются вместе -
+        /// общий шаг для BuildMesh (генерация/ContextMenu) и PrepareLoadFromCells (генерация через
+        /// прогресс-экран, см. MapScreenController).</summary>
+        void RebuildSpatialIndex()
+        {
             cellById = new Dictionary<int, VoronoiCell>(cells.Count);
             foreach (var c in cells) cellById[c.Id] = c;
             oceanDistanceFromLand = ComputeOceanDistanceFromLand();
+            nearestLookup = new NearestCellLookup(cells, minPointDistance);
+        }
 
-            var vertices = new List<Vector3>();
-            var colors = new List<Color>();
-            var triangles = new List<int>();
-            var triToCell = new List<int>();
-
-            foreach (var cell in cells)
-            {
-                // Пропускаем вырожденные клетки (например, полностью обрезанные за пределы карты при clipping).
-                if (cell.Polygon.Count < 3) continue;
-
-                int baseIndex = vertices.Count;
-                Color cellColor = GetColorForCell(cell);
-
-                // Вершина 0 локального веера - центр клетки.
-                vertices.Add(ToWorldPos(cell.Site));
-                colors.Add(cellColor);
-
-                // Вершины периметра по порядку, plus дублируем первую вершину в конец,
-                // чтобы fan triangulation замкнул полигон без отдельного "замыкающего" треугольника.
-                foreach (var p in cell.Polygon)
-                {
-                    vertices.Add(ToWorldPos(p));
-                    colors.Add(cellColor);
-                }
-                vertices.Add(ToWorldPos(cell.Polygon[0])); // дублированная замыкающая вершина
-                colors.Add(cellColor);
-
-                int vertCountInFan = cell.Polygon.Count + 2; // центр + периметр + дубликат первой
-                var fanTris = PolygonTriangulator.TriangulateFan(vertCountInFan);
-
-                for (int i = 0; i < fanTris.Length; i += 3)
-                {
-                    // Порядок индексов 0,2,1 (а не 0,1,2) - разворачивает winding order треугольника.
-                    // Это исправляет backface culling: без этого лицевая сторона меша смотрела вниз
-                    // (от карты в землю) вместо вверх к камере, потому что Voronoi-полигон от
-                    // DelaunatorSharp идёт в порядке, противоположном тому, что Unity считает "лицевым"
-                    // при взгляде с +Y в left-handed координатах.
-                    triangles.Add(baseIndex + fanTris[i]);
-                    triangles.Add(baseIndex + fanTris[i + 2]);
-                    triangles.Add(baseIndex + fanTris[i + 1]);
-                    triToCell.Add(cell.Id);
-                }
-            }
-
+        /// <summary>Один плоский квад mapWidth×mapHeight в плоскости XZ - заменяет тысячи
+        /// клеточных fan-мешей. Цвет приходит из текстуры (см. RebakeAll), не из vertex color.
+        /// Sprites/Default не culлит грани, так что winding order (0,1,2 vs 0,2,1) здесь не важен -
+        /// сравни со старым fan-мешем, где неверный winding "смотрел вниз" и требовал разворота.</summary>
+        void BuildQuadMesh()
+        {
             var mesh = new Mesh();
-            mesh.indexFormat = vertices.Count > 65000
-                ? UnityEngine.Rendering.IndexFormat.UInt32
-                : UnityEngine.Rendering.IndexFormat.UInt16;
+            var vertices = new[]
+            {
+                new Vector3(0f, 0f, 0f),
+                new Vector3(mapWidth, 0f, 0f),
+                new Vector3(mapWidth, 0f, mapHeight),
+                new Vector3(0f, 0f, mapHeight),
+            };
+            var uvs = new[]
+            {
+                new Vector2(0f, 0f),
+                new Vector2(1f, 0f),
+                new Vector2(1f, 1f),
+                new Vector2(0f, 1f),
+            };
+            var triangles = new[] { 0, 1, 2, 0, 2, 3 };
 
             mesh.SetVertices(vertices);
-            mesh.SetColors(colors);
+            mesh.SetUVs(0, uvs);
             mesh.SetTriangles(triangles, 0);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
@@ -936,8 +969,6 @@ namespace WorldGen.Rendering
             meshFilter.mesh = mesh;
             meshCollider.sharedMesh = null; // обязательно сбросить перед переприсваиванием - иначе Unity не обновит коллизию на месте
             meshCollider.sharedMesh = mesh;
-
-            triangleToCellId = triToCell.ToArray();
         }
 
         /// <summary>
@@ -949,24 +980,24 @@ namespace WorldGen.Rendering
         public void SetDisplayMode(MapDisplayMode mode)
         {
             displayMode = mode;
-            if (cells != null) RecolorOnly();
+            if (cells != null) RebakeAll();
             bool combined = mode == MapDisplayMode.Combined;
             if (regionBorderObject != null) regionBorderObject.SetActive(combined && showRegionBordersLayer);
-            if (coastlineObject != null) coastlineObject.SetActive(combined && showCoastlineLayer);
+            if (coastlineObject != null) coastlineObject.SetActive(ShouldShowCoastlineRibbon());
             OnDisplayChanged?.Invoke();
         }
 
         public void SetShowBiomeLayer(bool on)
         {
             showBiomeLayer = on;
-            if (cells != null) RecolorOnly();
+            if (cells != null) RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
         public void SetShowReliefLayer(bool on)
         {
             showReliefLayer = on;
-            if (cells != null) RecolorOnly();
+            if (cells != null) RebakeAll();
             OnDisplayChanged?.Invoke();
         }
 
@@ -982,7 +1013,7 @@ namespace WorldGen.Rendering
         {
             showCoastlineLayer = on;
             if (coastlineObject != null)
-                coastlineObject.SetActive(displayMode == MapDisplayMode.Combined && on);
+                coastlineObject.SetActive(ShouldShowCoastlineRibbon());
             OnDisplayChanged?.Invoke();
         }
 
@@ -996,22 +1027,142 @@ namespace WorldGen.Rendering
                          .Count();
         }
 
-        /// <summary>Перекрашивает существующий меш без полного перестроения геометрии - быстрее при переключении режима отображения.</summary>
-        void RecolorOnly()
+        void RebakeAll()
         {
-            var mesh = meshFilter.mesh;
-            var colors = new List<Color>(mesh.vertexCount);
+            if (cells == null) return;
+            ComputeTexSize(out texWidth, out texHeight);
 
-            foreach (var cell in cells)
+            var config = BuildRasterConfig();
+            rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, displayMode, config, out rasterBuffers);
+            EnsureRasterMaterial();
+            rasterMaterial.mainTexture = rasterTexture;
+        }
+
+        void RebakeRegion(IEnumerable<VoronoiCell> touchedCells)
+        {
+            if (cells == null) return;
+            if (rasterTexture == null) { RebakeAll(); return; }
+
+            ComputeTouchedPixelRect(touchedCells, out int rx, out int ry, out int rw, out int rh);
+            if (rw <= 0 || rh <= 0) return;
+
+            var config = BuildRasterConfig();
+            MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, displayMode, config, rasterTexture, rasterBuffers, rx, ry, rw, rh);
+        }
+
+        /// <summary>Перезапекает текстуру только вокруг клеток, затронутых кистью в последнем
+        /// стемпе - вместо полного RebakeAll на каждое изменение (см. BrushToolController.ApplyStamp).
+        /// Закрывает roadmap-пункт "кисть перекрашивает весь меш на каждое движение".</summary>
+        public void RebakeAffectedCells(IEnumerable<VoronoiCell> touchedCells) => RebakeRegion(touchedCells);
+
+        /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
+        /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,
+        /// не пересчитывая блендинг/тонировку/рельеф/зерно заново. Без вызывающей UI в этом
+        /// подпроекте, но нужен уже сейчас как часть публичного API RebakeAll/RebakeRegion пары.</summary>
+        public void ReapplyDarkness()
+        {
+            if (rasterTexture == null || rasterBuffers == null) return;
+            MapRasterizer.ReapplyDarkness(rasterTexture, rasterBuffers, darkness);
+        }
+
+        void ComputeTexSize(out int w, out int h)
+        {
+            if (mapWidth >= mapHeight)
             {
-                if (cell.Polygon.Count < 3) continue;
-                Color c = GetColorForCell(cell);
-                int vertCountInFan = cell.Polygon.Count + 2;
-                for (int i = 0; i < vertCountInFan; i++)
-                    colors.Add(c);
+                w = Mathf.Max(4, rasterLongSide);
+                h = Mathf.Max(4, Mathf.RoundToInt(rasterLongSide * (mapHeight / mapWidth)));
+            }
+            else
+            {
+                h = Mathf.Max(4, rasterLongSide);
+                w = Mathf.Max(4, Mathf.RoundToInt(rasterLongSide * (mapWidth / mapHeight)));
+            }
+        }
+
+        MapRasterConfig BuildRasterConfig()
+        {
+            return new MapRasterConfig
+            {
+                TexWidth = texWidth,
+                TexHeight = texHeight,
+                MapWidth = mapWidth,
+                MapHeight = mapHeight,
+                Seed = seed,
+                Theme = paletteTheme,
+                ColdLight = coldLight,
+                RegionVariation = regionVariation,
+                Darkness = darkness,
+                SmoothBorders = smoothBorders,
+                SmoothRadius = minPointDistance * 1.5f,
+                ReliefStrength = reliefStrength,
+                ReliefLightAzimuth = reliefLightAzimuth,
+                ReliefAmbient = reliefAmbient,
+                HardModeColor = GetColorForCell,
+                WaterDepth01 = GetWaterDepth01,
+            };
+        }
+
+        /// <summary>Bounding rect (в пикселях текстуры) клеток, затронутых кистью, расширенный на
+        /// smoothRadius - чтобы захватить область, куда блендинг "протекает" из соседних клеток,
+        /// которые сами не изменились, но их пиксели рядом с границей должны пересчитаться.</summary>
+        void ComputeTouchedPixelRect(IEnumerable<VoronoiCell> touchedCells, out int rx, out int ry, out int rw, out int rh)
+        {
+            float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
+            bool any = false;
+
+            foreach (var cell in touchedCells)
+            {
+                foreach (var p in cell.Polygon)
+                {
+                    any = true;
+                    if (p.X < minX) minX = p.X;
+                    if (p.X > maxX) maxX = p.X;
+                    if (p.Y < minZ) minZ = p.Y;
+                    if (p.Y > maxZ) maxZ = p.Y;
+                }
             }
 
-            mesh.SetColors(colors);
+            if (!any) { rx = ry = rw = rh = 0; return; }
+
+            float pad = minPointDistance * 1.5f;
+            minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
+
+            int px0 = Mathf.Clamp(Mathf.FloorToInt(minX / mapWidth * texWidth), 0, texWidth - 1);
+            int px1 = Mathf.Clamp(Mathf.CeilToInt(maxX / mapWidth * texWidth), 0, texWidth - 1);
+            int py0 = Mathf.Clamp(Mathf.FloorToInt(minZ / mapHeight * texHeight), 0, texHeight - 1);
+            int py1 = Mathf.Clamp(Mathf.CeilToInt(maxZ / mapHeight * texHeight), 0, texHeight - 1);
+
+            rx = px0; ry = py0; rw = px1 - px0 + 1; rh = py1 - py0 + 1;
+        }
+
+        /// <summary>Чанковый (по строкам текстуры) запек для экрана прогресса генерации - RebakeRegion
+        /// уже умеет пересчитывать произвольный прямоугольник "с нуля" (для кисти), здесь он же
+        /// вызывается построчными полосами с yield между ними, чтобы UI не подвисал (см.
+        /// MapScreenController.RunGeneration). Должен вызываться ПОСЛЕ PrepareLoadFromCells.</summary>
+        public System.Collections.IEnumerator RebakeAllStepped(System.Action<float> onProgress)
+        {
+            if (cells == null) yield break;
+            ComputeTexSize(out texWidth, out texHeight);
+
+            rasterTexture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            rasterBuffers = MapRasterizer.CreateEmptyBuffers(texWidth, texHeight);
+            EnsureRasterMaterial();
+            rasterMaterial.mainTexture = rasterTexture;
+
+            var config = BuildRasterConfig();
+            const int chunkRows = 64;
+
+            for (int y0 = 0; y0 < texHeight; y0 += chunkRows)
+            {
+                int rh = Mathf.Min(chunkRows, texHeight - y0);
+                MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, displayMode, config, rasterTexture, rasterBuffers, 0, y0, texWidth, rh);
+                onProgress?.Invoke((y0 + rh) / (float)texHeight);
+                yield return null;
+            }
         }
 
         /// <summary>Оценивает градиент высоты клетки по соседям (направление "вверх по склону").
@@ -1230,14 +1381,18 @@ namespace WorldGen.Rendering
             }
         }
 
-        /// <summary>Возвращает клетку под курсором/прицелом по физическому рейкасту в коллайдер карты.</summary>
+        /// <summary>Возвращает клетку под курсором/прицелом по физическому рейкасту в коллайдер карты -
+        /// через UV попадания на квад (RaycastHit.textureCoord) переведённые в пиксель cellId-буфера,
+        /// а не через индекс треугольника (квад больше не хранит per-cell геометрию, см. BuildQuadMesh).</summary>
         public VoronoiCell GetCellUnderRay(Ray ray, float maxDistance = 2000f)
         {
-            if (cells == null) return null;
+            if (cells == null || rasterBuffers == null) return null;
             if (meshCollider.Raycast(ray, out RaycastHit hit, maxDistance))
             {
-                int cellId = triangleToCellId[hit.triangleIndex];
-                return cells.FirstOrDefault(c => c.Id == cellId);
+                int px = Mathf.Clamp(Mathf.FloorToInt(hit.textureCoord.x * texWidth), 0, texWidth - 1);
+                int py = Mathf.Clamp(Mathf.FloorToInt(hit.textureCoord.y * texHeight), 0, texHeight - 1);
+                int cellId = rasterBuffers.CellId[py * texWidth + px];
+                return GetCellById(cellId);
             }
             return null;
         }
