@@ -1677,6 +1677,65 @@ namespace WorldGen.Rendering
                 : $"Self-Test Flat Fill Toggle Vs Blend: FAIL (flat vs blend delta={d:F3}, ожидалось >0.1)");
         }
 
+        /// <summary>Регрессия на живой краш ArgumentOutOfRangeException (Sea/Lake нет плоского слота):
+        /// в плоском режиме пиксель может быть отнесён к суше (IsLand=true), а его ближайшая клетка -
+        /// водной; тогда FlatFamilyColor обязан подменить водное семейство на Coast, иначе GetSlotColor
+        /// падает. На реальной карте это тонкая каёмка у сглаженного берега на вогнутых участках.
+        /// Фикстура воспроизводит условие проще: 3x3, центр - озеро, 8 вокруг - суша, БЕЗ океана у края
+        /// карты. even-odd заливка стартует "не-суша" от левого края строки, поэтому окружающая суша
+        /// помечается водой, а внутренность озера - сушей (IsLand=true), при этом её ближайшая клетка -
+        /// центральное озеро (вода). Достаточно, чтобы пройти по крашащему пути. Тест: бак не бросает.</summary>
+        [ContextMenu("Self-Test: Flat Fill Coastal Fringe No Crash")]
+        public void SelfTestFlatFillCoastalFringeNoCrash()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            for (int r = 0; r < 3; r++)
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Lake : Biome.Grassland,
+                        Height = isCenter ? 0f : 0.5f,
+                        IsOcean = false,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                }
+            var fixtureById = fixtureCells.ToDictionary(cc => cc.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 30, TexHeight = 30, MapWidth = 3f, MapHeight = 3f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 3, CoastlineGlowWidth = 8,
+                FlatRegionFill = true, ElevationBands = 5, ElevationBandContrast = 40f,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 1.5f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(30, 30);
+            var tex = new Texture2D(30, 30, TextureFormat.RGBA32, false);
+            bool threw = false;
+            try
+            {
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 30, 30);
+            }
+            catch (System.ArgumentOutOfRangeException)
+            {
+                threw = true;
+            }
+            Destroy(tex);
+            Debug.Log(!threw
+                ? "Self-Test Flat Fill Coastal Fringe No Crash: PASS"
+                : "Self-Test Flat Fill Coastal Fringe No Crash: FAIL (плоская раскраска упала на пикселе-суше с водной ближайшей клеткой - Sea/Lake нет плоского слота)");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams

@@ -382,9 +382,12 @@ namespace WorldGen.Rendering.MapRaster
 
                     if (sumW <= 0f)
                     {
+                        // Ни одной land-клетки в радиусе (каёмочный пиксель, чья ближайшая клетка водная):
+                        // FlatFamilyColor подменяет водное семейство на Coast, иначе GetSlotColor(Sea/Lake)
+                        // бросил бы (тот же корень, что чинит плоский путь - defense-in-depth).
                         buffers.Elevation[idx] = cell.EffectiveElevation;
                         buffers.Temperature[idx] = cell.EffectiveTemperature;
-                        buffers.FamilyColor[idx] = MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(cell.Biome));
+                        buffers.FamilyColor[idx] = FlatFamilyColor(config.Theme, cell.Biome);
                     }
                     else
                     {
@@ -534,6 +537,19 @@ namespace WorldGen.Rendering.MapRaster
             return ClampColor32(r, g, b);
         }
 
+        /// <summary>Плоский цвет семейства биома клетки: как GetSlotColor(theme, GetFamily(biome)), но
+        /// водные семейства (Sea/Lake - у них нет плоского слота, глубина воды сэмплируется отдельно)
+        /// подменяются на Coast. Нужно, т.к. сглаженный контур берега (Чайкин) может отнести к суше
+        /// пиксель, чья ближайшая клетка водная (тонкая каёмка на вогнутых участках берега) - у такой
+        /// каёмки берём береговой тон вместо краша MapPalette.FamilyToSlot на Sea/Lake.</summary>
+        static Color32 FlatFamilyColor(MapPaletteTheme theme, Biome biome)
+        {
+            var family = MapPalette.GetFamily(biome);
+            if (family == BiomeFamily.Sea || family == BiomeFamily.Lake)
+                family = BiomeFamily.Coast;
+            return MapPalette.GetSlotColor(theme, family);
+        }
+
         /// <summary>Плоская заливка суши (только Combined+SmoothBorders+FlatRegionFill): базовый цвет =
         /// биом-семейство БЛИЖАЙШЕЙ клетки напрямую (без блендинга), модулированный дискретной полосой
         /// высоты (выше = светлее). Соседние клетки одного биома+полосы дают один тон - зоны сливаются
@@ -545,8 +561,10 @@ namespace WorldGen.Rendering.MapRaster
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette)
         {
             // Базовый цвет = семейство биома ближайшей клетки (или нейтральный тан, если слой биомов выкл).
+            // FlatFamilyColor подменяет водные семейства на Coast - ближайшая клетка каёмочного пикселя
+            // может быть водной (см. коммент FlatFamilyColor).
             Color32 fam = config.ShowBiomeLayer
-                ? MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(cell.Biome))
+                ? FlatFamilyColor(config.Theme, cell.Biome)
                 : new Color32(209, 199, 166, 255);
             float r = fam.r, g = fam.g, b = fam.b;
 
