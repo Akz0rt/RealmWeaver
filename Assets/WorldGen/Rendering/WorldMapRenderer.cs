@@ -863,6 +863,213 @@ namespace WorldGen.Rendering
                 : $"Self-Test Raster Elevation Invariant: FAIL (sampled={sampledElevation:F3}, expected={a.EffectiveElevation:F3})");
         }
 
+        /// <summary>
+        /// Регрессия на баг, найденный при первой реальной генерации мира: клетки с вырожденным
+        /// полигоном (Polygon.Count меньше 3 - например, полностью обрезанные за пределы карты)
+        /// никогда не получают corners (CornerGraphBuilder.Build пропускает их тем же guard'ом),
+        /// из-за чего CellClimateAverager.ApplyToCells тоже пропускает их классификацию - Biome
+        /// остаётся на C#-дефолте (Ocean = 0), хотя IsOcean явно false. Раньше такие "клетки-призраки"
+        /// никогда не попадали в рендер (старый BuildMesh/RecolorOnly явно пропускали Polygon.Count
+        /// меньше 3); фикстура ниже воссоздаёт эту ситуацию напрямую, без запуска полной генерации.
+        /// </summary>
+        [ContextMenu("Self-Test: Degenerate Cell Excluded From Raster Lookup")]
+        public void SelfTestDegenerateCellExcludedFromLookup()
+        {
+            var good = new VoronoiCell(0, new System.Numerics.Vector2(5f, 5f)) { Biome = Biome.Grassland, IsOcean = false };
+            // "Клетка-призрак": Polygon не заполнен (Count == 0 меньше 3), Biome остаётся на
+            // C#-дефолте (Ocean), IsOcean = false - именно так выглядит клетка, которую
+            // CellClimateAverager.ApplyToCells пропустил при классификации.
+            var ghost = new VoronoiCell(1, new System.Numerics.Vector2(5.3f, 5f)) { IsOcean = false };
+            var fixtureCells = new List<VoronoiCell> { good, ghost };
+            var fixtureById = new Dictionary<int, VoronoiCell> { [0] = good, [1] = ghost };
+
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 10,
+                TexHeight = 10,
+                MapWidth = 10f,
+                MapHeight = 10f,
+                Seed = 1,
+                SmoothBorders = true,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f,
+                RegionVariation = 45f,
+                Darkness = 72f,
+                SmoothRadius = 3f,
+                ReliefStrength = 3f,
+                ReliefLightAzimuth = 315f,
+                ReliefAmbient = 0.5f,
+                HardModeColor = GetColorForCell,
+                WaterDepth01 = _ => 0f,
+            };
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(10, 10);
+            var tex = new Texture2D(10, 10, TextureFormat.RGBA32, false);
+
+            bool threw = false;
+            try
+            {
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
+            }
+            catch (System.Exception e)
+            {
+                threw = true;
+                Debug.LogWarning($"Self-Test Degenerate Cell Excluded From Raster Lookup threw: {e.GetType().Name}: {e.Message}");
+            }
+
+            bool ghostFoundAsNearest = lookup.FindNearest(new System.Numerics.Vector2(5.3f, 5f))?.Id == 1;
+            bool ghostFoundInRadius = false;
+            foreach (var (cell, _) in lookup.FindWithinRadius(new System.Numerics.Vector2(5f, 5f), 5f))
+                if (cell.Id == 1) ghostFoundInRadius = true;
+
+            bool ok = !threw && !ghostFoundAsNearest && !ghostFoundInRadius;
+
+            Destroy(tex);
+            Debug.Log(ok
+                ? "Self-Test Degenerate Cell Excluded From Raster Lookup: PASS"
+                : $"Self-Test Degenerate Cell Excluded From Raster Lookup: FAIL (threw={threw}, ghostFoundAsNearest={ghostFoundAsNearest}, ghostFoundInRadius={ghostFoundInRadius})");
+        }
+
+        /// <summary>
+        /// Регрессия на горизонтальные полосы, найденные при живом тестировании RebakeAllStepped:
+        /// прежняя реализация звала полный RebakeRegion (cellId + BakePaintedFields + раскраска +
+        /// виньетка) отдельно на каждый чанк строк, так что раскраска последней строки чанка читала
+        /// градиент рельефа/проверку берега на СЛЕДУЮЩУЮ строку - а та принадлежала ещё не запечённому
+        /// чанку и её Elevation/CellId были нулями по умолчанию, а не настоящими значениями. Тест
+        /// сравнивает "честный" полный запек с двухфазным (BakeFieldsRect на всё изображение, потом
+        /// ColorAndVignetteRect по кускам) - на границе кусков они должны совпасть пиксель-в-пиксель.
+        /// </summary>
+        [ContextMenu("Self-Test: Chunked Bake Continuity")]
+        public void SelfTestChunkedBakeContinuity()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(3f, 5f)) { Biome = Biome.Grassland, Height = 0.2f, Temperature = 0.5f, IsOcean = false };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(7f, 5f)) { Biome = Biome.Grassland, Height = 0.8f, Temperature = 0.5f, IsOcean = false };
+            var fixtureCells = new List<VoronoiCell> { a, b };
+            var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
+
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 20,
+                TexHeight = 20,
+                MapWidth = 10f,
+                MapHeight = 10f,
+                Seed = 1,
+                SmoothBorders = true,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f,
+                RegionVariation = 0f, // без шума региональной вариации - сравнение пикселей должно быть точным
+                Darkness = 72f,
+                SmoothRadius = 4f,
+                ReliefStrength = 3f,
+                ReliefLightAzimuth = 315f,
+                ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true,
+                ShowReliefLayer = true,
+                HardModeColor = GetColorForCell,
+                WaterDepth01 = _ => 0f,
+            };
+
+            // Эталон: честный полный запек одним вызовом.
+            var buffersRef = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
+            var texRef = new Texture2D(20, 20, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texRef, buffersRef, 0, 0, 20, 20);
+
+            // Двухфазный чанковый запек (исправление) - поля на всё изображение разом, затем
+            // раскраска двумя чанками по 10 строк (граница ровно на строке 10).
+            var buffersChunked = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
+            var texChunked = new Texture2D(20, 20, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.BakeFieldsRect(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, buffersChunked, 0, 0, 20, 20);
+            WorldGen.Rendering.MapRaster.MapRasterizer.ColorAndVignetteRect(fixtureById, MapDisplayMode.Combined, config, texChunked, buffersChunked, 0, 0, 20, 10);
+            WorldGen.Rendering.MapRaster.MapRasterizer.ColorAndVignetteRect(fixtureById, MapDisplayMode.Combined, config, texChunked, buffersChunked, 0, 10, 20, 10);
+
+            // Наивный чанковый запек (старый баг, до исправления) - полный RebakeRegion (все 3
+            // прохода разом) отдельно на каждый чанк, будто BakeFieldsRect никогда не прогонялся
+            // на всё изображение заранее. Должен РАСХОДИТЬСЯ с эталоном ровно на границе - это
+            // доказывает, что тест действительно ловит регресс, а не просто тавтологически проверяет
+            // сам себя.
+            var buffersNaive = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
+            var texNaive = new Texture2D(20, 20, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 0, 20, 10);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 10, 20, 10);
+
+            bool fixedMatchesRef = true, naiveDiffersFromRef = false;
+            for (int x = 0; x < 20; x++)
+            {
+                for (int y = 8; y <= 11; y++) // как раз вокруг границы чанков (строка 10)
+                {
+                    Color pr = texRef.GetPixel(x, y);
+                    Color pc = texChunked.GetPixel(x, y);
+                    Color pn = texNaive.GetPixel(x, y);
+
+                    if (Mathf.Abs(pr.r - pc.r) > 0.004f || Mathf.Abs(pr.g - pc.g) > 0.004f || Mathf.Abs(pr.b - pc.b) > 0.004f)
+                        fixedMatchesRef = false;
+                    if (Mathf.Abs(pr.r - pn.r) > 0.004f || Mathf.Abs(pr.g - pn.g) > 0.004f || Mathf.Abs(pr.b - pn.b) > 0.004f)
+                        naiveDiffersFromRef = true;
+                }
+            }
+
+            bool ok = fixedMatchesRef && naiveDiffersFromRef;
+
+            Destroy(texRef);
+            Destroy(texChunked);
+            Destroy(texNaive);
+            Debug.Log(ok
+                ? "Self-Test Chunked Bake Continuity: PASS"
+                : $"Self-Test Chunked Bake Continuity: FAIL (fixedMatchesRef={fixedMatchesRef}, naiveDiffersFromRef={naiveDiffersFromRef} - naive должен был разойтись, доказывая что баг реален)");
+        }
+
+        /// <summary>
+        /// Регрессия: тумблеры "Биом"/"Рельеф" (MapLayersPanel, существующие поля showBiomeLayer/
+        /// showReliefLayer) никогда не попадали в MapRasterConfig, поэтому в painted-конвейере
+        /// (Combined+smoothBorders) их выключение не давало вообще никакого визуального эффекта -
+        /// притом что RebakeAll() всё равно честно перезапекал всю текстуру (несколько секунд впустую).
+        /// Тест печёт одну и ту же клетку с обоими значениями каждого тумблера и проверяет, что цвет
+        /// пикселя действительно меняется.
+        /// </summary>
+        [ContextMenu("Self-Test: Layer Toggles Affect Raster Output")]
+        public void SelfTestLayerTogglesAffectRasterOutput()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(5f, 5f)) { Biome = Biome.Grassland, Height = 0.8f, Temperature = 0.5f, IsOcean = false };
+            var fixtureCells = new List<VoronoiCell> { a };
+            var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a };
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+
+            WorldGen.Rendering.MapRaster.MapRasterConfig MakeConfig(bool showBiome, bool showRelief) => new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 10, TexHeight = 10, MapWidth = 10f, MapHeight = 10f, Seed = 1,
+                SmoothBorders = true, Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 4f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.3f,
+                ShowBiomeLayer = showBiome, ShowReliefLayer = showRelief,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            Color BakePixel(bool showBiome, bool showRelief)
+            {
+                var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(10, 10);
+                var tex = new Texture2D(10, 10, TextureFormat.RGBA32, false);
+                var config = MakeConfig(showBiome, showRelief);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
+                Color c = tex.GetPixel(5, 5);
+                Destroy(tex);
+                return c;
+            }
+
+            Color biomeOn = BakePixel(true, true);
+            Color biomeOff = BakePixel(false, true);
+            Color reliefOn = BakePixel(true, true);
+            Color reliefOff = BakePixel(true, false);
+
+            bool biomeDiffers = Mathf.Abs(biomeOn.r - biomeOff.r) > 0.02f || Mathf.Abs(biomeOn.g - biomeOff.g) > 0.02f || Mathf.Abs(biomeOn.b - biomeOff.b) > 0.02f;
+            bool reliefDiffers = Mathf.Abs(reliefOn.r - reliefOff.r) > 0.02f || Mathf.Abs(reliefOn.g - reliefOff.g) > 0.02f || Mathf.Abs(reliefOn.b - reliefOff.b) > 0.02f;
+
+            bool ok = biomeDiffers && reliefDiffers;
+            Debug.Log(ok
+                ? "Self-Test Layer Toggles Affect Raster Output: PASS"
+                : $"Self-Test Layer Toggles Affect Raster Output: FAIL (biomeDiffers={biomeDiffers}, reliefDiffers={reliefDiffers})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
@@ -1097,6 +1304,8 @@ namespace WorldGen.Rendering
                 ReliefStrength = reliefStrength,
                 ReliefLightAzimuth = reliefLightAzimuth,
                 ReliefAmbient = reliefAmbient,
+                ShowBiomeLayer = showBiomeLayer,
+                ShowReliefLayer = showReliefLayer,
                 HardModeColor = GetColorForCell,
                 WaterDepth01 = GetWaterDepth01,
             };
@@ -1154,12 +1363,21 @@ namespace WorldGen.Rendering
             rasterMaterial.mainTexture = rasterTexture;
 
             var config = BuildRasterConfig();
-            const int chunkRows = 64;
 
+            // Сначала cellId + блендированные поля (elevation/temperature/цвет семейства) для ВСЕГО
+            // изображения разом - без этого шага раскраска по чанкам ниже читала бы ещё не запечённые
+            // (нулевые) значения соседней строки на границе каждого чанка (градиент рельефа и проверка
+            // берега смотрят на ±1 пиксель), что давало видимый горизонтальный артефакт каждые chunkRows
+            // строк. FindWithinRadius внутри этого прохода - геометрический запрос по NearestCellLookup,
+            // не по буферу, поэтому сам этот проход корректен независимо от порядка/чанкования.
+            MapRasterizer.BakeFieldsRect(cells, cellById, nearestLookup, displayMode, config, rasterBuffers, 0, 0, texWidth, texHeight);
+            yield return null;
+
+            const int chunkRows = 64;
             for (int y0 = 0; y0 < texHeight; y0 += chunkRows)
             {
                 int rh = Mathf.Min(chunkRows, texHeight - y0);
-                MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, displayMode, config, rasterTexture, rasterBuffers, 0, y0, texWidth, rh);
+                MapRasterizer.ColorAndVignetteRect(cellById, displayMode, config, rasterTexture, rasterBuffers, 0, y0, texWidth, rh);
                 onProgress?.Invoke((y0 + rh) / (float)texHeight);
                 yield return null;
             }

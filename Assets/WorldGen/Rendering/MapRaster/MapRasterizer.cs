@@ -24,6 +24,12 @@ namespace WorldGen.Rendering.MapRaster
         public float ReliefLightAzimuth = 315f;
         public float ReliefAmbient = 0.5f;
 
+        /// <summary>Соответствуют существующим тумблерам MapLayersPanel - выключение биомного слоя
+        /// даёт нейтральную земляную заливку вместо цвета семейства биома; выключение рельефа
+        /// убирает hillshade/холодный подсвет на суше и градиент глубины на воде (плоский цвет).</summary>
+        public bool ShowBiomeLayer = true;
+        public bool ShowReliefLayer = true;
+
         /// <summary>Цвет клетки для Height/Region/Biome и Combined-без-сглаживания - привязан к
         /// WorldMapRenderer.GetColorForCell конкретного экземпляра, чтобы не дублировать эту логику.</summary>
         public Func<VoronoiCell, Color> HardModeColor;
@@ -89,7 +95,10 @@ namespace WorldGen.Rendering.MapRaster
 
         /// <summary>Перезапекает прямоугольную под-область текстуры/буферов на месте. rectX/Y/W/H уже
         /// в пиксельных координатах и уже включают отступ под smoothRadius - эта функция не добавляет
-        /// собственный отступ (см. WorldMapRenderer.ComputeTouchedPixelRect в Task 7/8).</summary>
+        /// собственный отступ (см. WorldMapRenderer.ComputeTouchedPixelRect в Task 7/8). Требует, чтобы
+        /// вне прямоугольника буферы либо не существовали вовсе (полный запек - rect = всё изображение),
+        /// либо уже содержали валидные данные предыдущего полного запека (кисть) - см. BakeFieldsRect
+        /// про единственный случай, где это предположение не выполняется.</summary>
         public static void RebakeRegion(
             IReadOnlyList<VoronoiCell> cells,
             IReadOnlyDictionary<int, VoronoiCell> cellById,
@@ -100,10 +109,31 @@ namespace WorldGen.Rendering.MapRaster
             MapRasterBuffers buffers,
             int rectX, int rectY, int rectW, int rectH)
         {
+            BakeFieldsRect(cells, cellById, lookup, displayMode, config, buffers, rectX, rectY, rectW, rectH);
+            ColorAndVignetteRect(cellById, displayMode, config, texture, buffers, rectX, rectY, rectW, rectH);
+        }
+
+        /// <summary>Проход 1 (cellId) + проход 1.5 (BakePaintedFields, если painted) для заданного
+        /// прямоугольника. Сам по себе не читает ничего ЗА пределами rect (FindWithinRadius - это
+        /// геометрический запрос по NearestCellLookup, не по буферу), поэтому безопасно вызывать
+        /// для части изображения, даже если буферы вне rect ещё вообще не заполнены - в отличие от
+        /// ColorAndVignetteRect, которому нужны уже готовые соседние строки/пиксели для градиента
+        /// рельефа и проверки берега (см. WorldMapRenderer.RebakeAllStepped - именно поэтому чанковый
+        /// запек сначала прогоняет этот проход целиком на всё изображение, и только потом раскраску
+        /// по чанкам; раньше оба прохода шли по одному и тому же чанку разом, что давало горизонтальный
+        /// артефакт на границе каждого чанка - соседняя, ещё не запечённая строка читалась как elevation=0).</summary>
+        public static void BakeFieldsRect(
+            IReadOnlyList<VoronoiCell> cells,
+            IReadOnlyDictionary<int, VoronoiCell> cellById,
+            NearestCellLookup lookup,
+            MapDisplayMode displayMode,
+            MapRasterConfig config,
+            MapRasterBuffers buffers,
+            int rectX, int rectY, int rectW, int rectH)
+        {
             int w = config.TexWidth, h = config.TexHeight;
             bool painted = displayMode == MapDisplayMode.Combined && config.SmoothBorders;
 
-            // Проход 1: ближайшая клетка на пиксель (cellId-буфер) - нужен всегда.
             for (int y = rectY; y < rectY + rectH; y++)
             {
                 for (int x = rectX; x < rectX + rectW; x++)
@@ -118,8 +148,23 @@ namespace WorldGen.Rendering.MapRaster
             {
                 BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
             }
+        }
 
-            // Проход финальной раскраски (до виньетки - кэшируется в PreVignette).
+        /// <summary>Проход 2 (цвет) + проход 3 (виньетка) для заданного прямоугольника. Требует, чтобы
+        /// CellId/Elevation/Temperature/FamilyColor уже были заполнены BakeFieldsRect не только для
+        /// этого прямоугольника, но и для его непосредственно соседних строк/столбцов (градиент рельефа
+        /// и проверка берега читают ±1 пиксель за границу rect).</summary>
+        public static void ColorAndVignetteRect(
+            IReadOnlyDictionary<int, VoronoiCell> cellById,
+            MapDisplayMode displayMode,
+            MapRasterConfig config,
+            Texture2D texture,
+            MapRasterBuffers buffers,
+            int rectX, int rectY, int rectW, int rectH)
+        {
+            int w = config.TexWidth, h = config.TexHeight;
+            bool painted = displayMode == MapDisplayMode.Combined && config.SmoothBorders;
+
             for (int y = rectY; y < rectY + rectH; y++)
             {
                 for (int x = rectX; x < rectX + rectW; x++)
@@ -266,9 +311,15 @@ namespace WorldGen.Rendering.MapRaster
             VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt)
         {
-            float depth = Mathf.Clamp01(config.WaterDepth01(cell));
             Color32 shallowOrLakeS = cell.EffectiveIsLake ? palette.LakeS : palette.Shallow;
             Color32 deep = cell.EffectiveIsLake ? palette.LakeD : palette.Abyss;
+
+            // Слой рельефа выключен (тумблер MapLayersPanel) - плоский цвет мелководья без
+            // градиента глубины, как "рельеф выключен" для суши ниже отключает hillshade.
+            if (!config.ShowReliefLayer)
+                return ClampColor32(shallowOrLakeS.r, shallowOrLakeS.g, shallowOrLakeS.b);
+
+            float depth = Mathf.Clamp01(config.WaterDepth01(cell));
 
             float r = Mathf.Lerp(shallowOrLakeS.r, deep.r, depth);
             float g = Mathf.Lerp(shallowOrLakeS.g, deep.g, depth);
@@ -295,7 +346,9 @@ namespace WorldGen.Rendering.MapRaster
             VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById, int idx,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt, float varAmt)
         {
-            Color32 fam = buffers.FamilyColor[idx];
+            // Слой биомов выключен (тумблер MapLayersPanel) - нейтральная земляная заливка вместо
+            // цвета семейства биома, как старый GetNeutralBaseColor для суши.
+            Color32 fam = config.ShowBiomeLayer ? buffers.FamilyColor[idx] : new Color32(209, 199, 166, 255);
             float r = fam.r, g = fam.g, b = fam.b;
 
             // Региональная тонировка (шаг 5а) - к tintCool/tintWarm по температуре, вес 0.38 фиксирован.
@@ -320,7 +373,7 @@ namespace WorldGen.Rendering.MapRaster
                 // Береговая обводка (шаг 7, сторона суши) - жёсткая замена, перекрывает hillshade.
                 r = palette.Outline.r; g = palette.Outline.g; b = palette.Outline.b;
             }
-            else
+            else if (config.ShowReliefLayer)
             {
                 // Рельеф + холодный лунный подсвет (шаг 6).
                 float gradX = (buffers.Elevation[ClampIdx(x - 1, y, w, h)] - buffers.Elevation[ClampIdx(x + 1, y, w, h)]) * 0.5f;
@@ -332,6 +385,7 @@ namespace WorldGen.Rendering.MapRaster
                 g = g * brightness + palette.Light.g * ndotl * coldAmt;
                 b = b * brightness + palette.Light.b * ndotl * coldAmt;
             }
+            // else: слой рельефа выключен - оставляем базовый (тонированный) цвет без hillshade.
 
             // Зерно (шаг 8) - применяется всегда, включая береговую обводку (как в референсе).
             float grain = (Noise.ValueNoise(x * 0.5f, y * 0.5f, config.Seed + 61) - 0.5f) * 7f;

@@ -21,6 +21,16 @@ namespace WorldGen.Rendering.MapRaster
             this.bucketSize = MathF.Max(bucketSize, 0.001f);
             foreach (var cell in cells)
             {
+                // Клетки с вырожденным полигоном (например, полностью обрезанные за пределы
+                // карты при clipping) никогда не получают corners в CornerGraphBuilder.Build
+                // (тот же guard: Polygon.Count < 3), из-за чего CellClimateAverager.ApplyToCells
+                // пропускает их классификацию и Biome остаётся на C#-дефолте (Ocean = 0), хотя
+                // IsOcean явно false - несогласованность, которую MapPalette.GetFamily/FamilyToSlot
+                // ловит как ошибку (Sea/Lake без плоского слота). Старый рендер (fan-mesh BuildMesh/
+                // RecolorOnly) точно так же исключал такие клетки из отображения - здесь то же самое
+                // исключение, применённое к новому пространственному индексу.
+                if (cell.Polygon.Count < 3) continue;
+
                 var key = KeyOf(cell.Site.X, cell.Site.Y);
                 if (!buckets.TryGetValue(key, out var list))
                 {
