@@ -120,6 +120,10 @@ namespace WorldGen.Rendering
         [Range(2, 8)] public int elevationBands = 5;
         [Tooltip("Размах светлоты между нижней и верхней полосой высоты, %. 0 = полосы не различаются по тону.")]
         [Range(0f, 100f)] public float elevationBandContrast = 40f;
+        [Tooltip("Сглаживать (кривить) внутренние границы плоской заливки - семейств биомов и полос высоты - как берег (только Combined+smoothBorders+flatRegionFill). Выкл = грани по клеткам Вороного.")]
+        public bool smoothRegionBorders = true;
+        [Tooltip("Округлость контуров (берег, биомы, полосы): прореживание вершин перед сглаживанием, в долях среднего размера клетки. 0 = по всем вершинам (детальнее), выше = круглее.")]
+        [Range(0f, 3f)] public float borderRoundness = 1f;
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
@@ -2216,6 +2220,8 @@ namespace WorldGen.Rendering
                 FlatRegionFill = flatRegionFill,
                 ElevationBands = elevationBands,
                 ElevationBandContrast = elevationBandContrast,
+                SmoothRegionBorders = smoothRegionBorders,
+                BorderRoundnessDistance = borderRoundness * minPointDistance,
                 SmoothRadius = minPointDistance * 1.5f,
                 ReliefStrength = reliefStrength,
                 ReliefLightAzimuth = reliefLightAzimuth,
@@ -2230,7 +2236,9 @@ namespace WorldGen.Rendering
         /// <summary>Bounding rect (в пикселях текстуры) клеток, затронутых кистью, расширенный на
         /// smoothRadius (протекание блендинга из соседних неизменённых клеток) плюс coastlineGlowWidth
         /// (ореол берега тянется на столько пикселей от суши, поэтому его полоса тоже должна
-        /// пересчитаться при правке берега) - все эти пиксели рядом с границей должны пересчитаться.</summary>
+        /// пересчитаться при правке берега) плюс borderRoundness * minPointDistance (сглаженная/
+        /// прореженная граница семейств биомов/полос высоты может сдвинуться на эту величину при
+        /// правке кистью) - все эти пиксели рядом с границей должны пересчитаться.</summary>
         void ComputeTouchedPixelRect(IEnumerable<VoronoiCell> touchedCells, out int rx, out int ry, out int rw, out int rh)
         {
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
@@ -2252,10 +2260,12 @@ namespace WorldGen.Rendering
 
             // Отступ = smoothRadius (протекание блендинга) + coastlineGlowWidth (ореол берега тянется
             // на столько пикселей от суши, поэтому пиксели в этой полосе должны пересчитаться при
-            // правке берега кистью). glowWidth в пикселях -> мировые единицы через worldPerPixel
+            // правке берега кистью) + borderRoundness * minPointDistance (сглаженная/прореженная
+            // граница семейств биомов/полос высоты может сдвинуться на эту величину при правке
+            // кистью). glowWidth в пикселях -> мировые единицы через worldPerPixel
             // (mapWidth/texWidth). Текстура сохраняет аспект (см. ComputeTexSize), поэтому один
             // множитель по X верен и для Y с точностью до RoundToInt (<0.1%, поглощается Floor/Ceil).
-            float pad = minPointDistance * 1.5f + coastlineGlowWidth * (mapWidth / texWidth);
+            float pad = minPointDistance * 1.5f + coastlineGlowWidth * (mapWidth / texWidth) + borderRoundness * minPointDistance;
             minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
 
             int px0 = Mathf.Clamp(Mathf.FloorToInt(minX / mapWidth * texWidth), 0, texWidth - 1);
