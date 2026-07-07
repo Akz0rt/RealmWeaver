@@ -772,6 +772,49 @@ namespace WorldGen.Rendering
                 : $"Self-Test Raster Hard Mode Parity: FAIL (expected={expectedA}, actual={actual})");
         }
 
+        [ContextMenu("Self-Test: Raster Elevation Invariant")]
+        public void SelfTestRasterElevationInvariant()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(3f, 3f)) { Biome = Biome.Grassland, Height = 0.42f, Temperature = 0.5f, IsOcean = false };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(7f, 7f)) { Biome = Biome.Grassland, Height = 0.6f, Temperature = 0.5f, IsOcean = false };
+            var fixtureCells = new List<VoronoiCell> { a, b };
+            var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
+
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 20,
+                TexHeight = 20,
+                MapWidth = 10f,
+                MapHeight = 10f,
+                Seed = 1,
+                SmoothBorders = true,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f,
+                RegionVariation = 0f,
+                Darkness = 40f,
+                SmoothRadius = 0.01f, // почти отключаем блендинг с соседом b - проверяем чистый сэмпл клетки a
+                ReliefStrength = 3f,
+                ReliefLightAzimuth = 315f,
+                ReliefAmbient = 0.5f,
+                HardModeColor = GetColorForCell,
+                WaterDepth01 = _ => 0f,
+            };
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
+            var tex = new Texture2D(20, 20, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 20, 20);
+
+            int px = Mathf.FloorToInt(3f / 10f * 20f);
+            int py = Mathf.FloorToInt(3f / 10f * 20f);
+            float sampledElevation = buffers.Elevation[py * 20 + px];
+            bool ok = Mathf.Abs(sampledElevation - a.EffectiveElevation) < 0.02f;
+
+            Destroy(tex);
+            Debug.Log(ok
+                ? "Self-Test Raster Elevation Invariant: PASS"
+                : $"Self-Test Raster Elevation Invariant: FAIL (sampled={sampledElevation:F3}, expected={a.EffectiveElevation:F3})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams

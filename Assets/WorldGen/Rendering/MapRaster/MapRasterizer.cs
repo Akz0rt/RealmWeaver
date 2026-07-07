@@ -170,21 +170,204 @@ namespace WorldGen.Rendering.MapRaster
             texture.Apply(false);
         }
 
-        // ---- Painted-pipeline hooks - stubbed here, implemented in Task 6 ----
+        // ---- Painted-pipeline hooks (Task 6) ----
 
+        /// <summary>Проход 1.5 (только суша, только painted-режим): блендированные elevation/
+        /// temperature/базовый цвет семейства среди соседей в радиусе smoothRadius, вес
+        /// 1/(distance²+1) - см. design doc, шаг 3. Вода не блендится (шаг 2: категория
+        /// суша/океан/озеро всегда "hard" по ближайшей клетке).</summary>
         static void BakePaintedFields(
             IReadOnlyList<VoronoiCell> cells, IReadOnlyDictionary<int, VoronoiCell> cellById, NearestCellLookup lookup,
             MapRasterConfig config, MapRasterBuffers buffers, int rectX, int rectY, int rectW, int rectH)
         {
-            throw new NotImplementedException("Реализуется в Task 6 (painted pipeline).");
+            int w = config.TexWidth, h = config.TexHeight;
+
+            for (int y = rectY; y < rectY + rectH; y++)
+            {
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    int idx = y * w + x;
+                    var cell = cellById[buffers.CellId[idx]];
+                    bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+
+                    if (isWater)
+                    {
+                        buffers.Elevation[idx] = cell.EffectiveElevation;
+                        buffers.Temperature[idx] = cell.EffectiveTemperature;
+                        continue;
+                    }
+
+                    var point = PixelToSite(x, y, w, h, config.MapWidth, config.MapHeight);
+                    float sumW = 0f, elev = 0f, temp = 0f, cr = 0f, cg = 0f, cb = 0f;
+
+                    foreach (var (neighbor, distance) in lookup.FindWithinRadius(point, config.SmoothRadius))
+                    {
+                        if (neighbor.EffectiveIsOcean || neighbor.EffectiveIsLake) continue;
+                        float weight = 1f / (distance * distance + 1f);
+                        sumW += weight;
+                        elev += weight * neighbor.EffectiveElevation;
+                        temp += weight * neighbor.EffectiveTemperature;
+                        Color32 fc = MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(neighbor.Biome));
+                        cr += weight * fc.r; cg += weight * fc.g; cb += weight * fc.b;
+                    }
+
+                    if (sumW <= 0f)
+                    {
+                        buffers.Elevation[idx] = cell.EffectiveElevation;
+                        buffers.Temperature[idx] = cell.EffectiveTemperature;
+                        buffers.FamilyColor[idx] = MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(cell.Biome));
+                    }
+                    else
+                    {
+                        buffers.Elevation[idx] = elev / sumW;
+                        buffers.Temperature[idx] = temp / sumW;
+                        buffers.FamilyColor[idx] = new Color32(
+                            (byte)Mathf.Clamp(cr / sumW, 0f, 255f),
+                            (byte)Mathf.Clamp(cg / sumW, 0f, 255f),
+                            (byte)Mathf.Clamp(cb / sumW, 0f, 255f), 255);
+                    }
+                }
+            }
         }
+
+        struct ResolvedPalette
+        {
+            public Color32 Shallow, Abyss, LakeS, LakeD, Glow, Outline, Light, TintCool, TintWarm;
+        }
+
+        static ResolvedPalette ResolvePalette(MapPaletteTheme theme) => new ResolvedPalette
+        {
+            Shallow = MapPalette.GetSlotColor(theme, PaletteSlot.Shallow),
+            Abyss = MapPalette.GetSlotColor(theme, PaletteSlot.Abyss),
+            LakeS = MapPalette.GetSlotColor(theme, PaletteSlot.LakeS),
+            LakeD = MapPalette.GetSlotColor(theme, PaletteSlot.LakeD),
+            Glow = MapPalette.GetSlotColor(theme, PaletteSlot.Glow),
+            Outline = MapPalette.GetSlotColor(theme, PaletteSlot.Outline),
+            Light = MapPalette.GetSlotColor(theme, PaletteSlot.Light),
+            TintCool = MapPalette.GetSlotColor(theme, PaletteSlot.TintCool),
+            TintWarm = MapPalette.GetSlotColor(theme, PaletteSlot.TintWarm),
+        };
 
         static Color32 BakePaintedPixel(
             VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
             int idx, int x, int y, int w, int h, MapRasterConfig config)
         {
-            throw new NotImplementedException("Реализуется в Task 6 (painted pipeline).");
+            var palette = ResolvePalette(config.Theme);
+            float coldAmt = 0.10f + (config.ColdLight / 100f) * 0.30f;
+            float varAmt = config.RegionVariation / 100f;
+
+            bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+            return isWater
+                ? ColorForWaterPixel(cell, buffers, cellById, x, y, w, h, config, palette, coldAmt)
+                : ColorForLandPixel(cell, buffers, cellById, idx, x, y, w, h, config, palette, coldAmt, varAmt);
         }
+
+        static Color32 ColorForWaterPixel(
+            VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
+            int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt)
+        {
+            float depth = Mathf.Clamp01(config.WaterDepth01(cell));
+            Color32 shallowOrLakeS = cell.EffectiveIsLake ? palette.LakeS : palette.Shallow;
+            Color32 deep = cell.EffectiveIsLake ? palette.LakeD : palette.Abyss;
+
+            float r = Mathf.Lerp(shallowOrLakeS.r, deep.r, depth);
+            float g = Mathf.Lerp(shallowOrLakeS.g, deep.g, depth);
+            float b = Mathf.Lerp(shallowOrLakeS.b, deep.b, depth);
+
+            if (!cell.EffectiveIsLake)
+            {
+                float ripple = (Noise.Fbm(x / 40f, y / 26f, config.Seed + 401, 2) - 0.5f) * 10f;
+                r += ripple; g += ripple; b += ripple;
+            }
+
+            if (HasNeighborWithWaterStatus(buffers, cellById, x, y, w, h, wantWater: false))
+            {
+                float gk = 0.32f + coldAmt * 0.5f;
+                r += (palette.Glow.r - r) * gk;
+                g += (palette.Glow.g - g) * gk;
+                b += (palette.Glow.b - b) * gk;
+            }
+
+            return ClampColor32(r, g, b);
+        }
+
+        static Color32 ColorForLandPixel(
+            VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById, int idx,
+            int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt, float varAmt)
+        {
+            Color32 fam = buffers.FamilyColor[idx];
+            float r = fam.r, g = fam.g, b = fam.b;
+
+            // Региональная тонировка (шаг 5а) - к tintCool/tintWarm по температуре, вес 0.38 фиксирован.
+            float temperature = buffers.Temperature[idx];
+            float wn = Mathf.InverseLerp(0.28f, 0.70f, temperature);
+            float tr = Mathf.Lerp(palette.TintCool.r, palette.TintWarm.r, wn);
+            float tg = Mathf.Lerp(palette.TintCool.g, palette.TintWarm.g, wn);
+            float tb = Mathf.Lerp(palette.TintCool.b, palette.TintWarm.b, wn);
+            r += (tr - r) * 0.38f; g += (tg - g) * 0.38f; b += (tb - b) * 0.38f;
+
+            // Региональная вариация - крупнозернистый цветовой шум (шаг 5б).
+            if (varAmt > 0f)
+            {
+                float nx = x / (float)w, ny = y / (float)h;
+                float rgA = Noise.Fbm(nx * 1.6f + 20f, ny * 1.6f + 40f, config.Seed + 1500, 2);
+                float rr = (rgA - 0.5f) * 38f * varAmt;
+                r += rr; g += rr * 0.9f; b += rr * 0.7f;
+            }
+
+            if (HasNeighborWithWaterStatus(buffers, cellById, x, y, w, h, wantWater: true))
+            {
+                // Береговая обводка (шаг 7, сторона суши) - жёсткая замена, перекрывает hillshade.
+                r = palette.Outline.r; g = palette.Outline.g; b = palette.Outline.b;
+            }
+            else
+            {
+                // Рельеф + холодный лунный подсвет (шаг 6).
+                float gradX = (buffers.Elevation[ClampIdx(x - 1, y, w, h)] - buffers.Elevation[ClampIdx(x + 1, y, w, h)]) * 0.5f;
+                float gradY = (buffers.Elevation[ClampIdx(x, y - 1, w, h)] - buffers.Elevation[ClampIdx(x, y + 1, w, h)]) * 0.5f;
+                float brightness = RegionColorPalette.HillshadeBrightness(
+                    gradX, gradY, config.ReliefStrength, config.ReliefLightAzimuth, config.ReliefAmbient, out float ndotl);
+
+                r = r * brightness + palette.Light.r * ndotl * coldAmt;
+                g = g * brightness + palette.Light.g * ndotl * coldAmt;
+                b = b * brightness + palette.Light.b * ndotl * coldAmt;
+            }
+
+            // Зерно (шаг 8) - применяется всегда, включая береговую обводку (как в референсе).
+            float grain = (Noise.ValueNoise(x * 0.5f, y * 0.5f, config.Seed + 61) - 0.5f) * 7f;
+            r += grain; g += grain; b += grain;
+
+            // Дополнительная лайтнесс-вариация (шаг 9, только суша).
+            if (varAmt > 0f)
+            {
+                float nx = x / (float)w, ny = y / (float)h;
+                float rgB = Noise.Fbm(nx * 2.0f + 50f, ny * 2.0f + 70f, config.Seed + 1600, 2) - 0.5f;
+                float lf = 1f + rgB * 0.24f * varAmt;
+                r *= lf; g *= lf; b *= lf;
+            }
+
+            return ClampColor32(r, g, b);
+        }
+
+        static bool HasNeighborWithWaterStatus(
+            MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
+            int x, int y, int w, int h, bool wantWater)
+        {
+            return Check(ClampIdx(x - 1, y, w, h)) || Check(ClampIdx(x + 1, y, w, h))
+                || Check(ClampIdx(x, y - 1, w, h)) || Check(ClampIdx(x, y + 1, w, h));
+
+            bool Check(int idx)
+            {
+                var c = cellById[buffers.CellId[idx]];
+                bool isWater = c.EffectiveIsOcean || c.EffectiveIsLake;
+                return isWater == wantWater;
+            }
+        }
+
+        static int ClampIdx(int x, int y, int w, int h) => Mathf.Clamp(y, 0, h - 1) * w + Mathf.Clamp(x, 0, w - 1);
+
+        static Color32 ClampColor32(float r, float g, float b) => new Color32(
+            (byte)Mathf.Clamp(r, 0f, 255f), (byte)Mathf.Clamp(g, 0f, 255f), (byte)Mathf.Clamp(b, 0f, 255f), 255);
 
         static System.Numerics.Vector2 PixelToSite(int x, int y, int w, int h, float mapWidth, float mapHeight)
         {
