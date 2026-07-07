@@ -69,7 +69,14 @@ Pre-flight review: clean — Task 1 adds a utility method + CoastDistance buffer
 
 - Task 1: complete (commit 21a42e1..8d13161, review clean — Approved, zero findings; reviewer hand-traced the chamfer math against both fixtures (not just transcription), confirmed neighbor offsets/weights exact, and verified the seam test is genuinely discriminating (sub-rect has no land inside → correctness depends entirely on out-of-rect buffer reads).)
 - Task 2: complete (commit 8d13161..fd8008c, review clean — Approved; reviewer verified all 6 edits formula-exact + dark outline untouched (HasNeighborWithWaterStatus still single-called with wantWater:true, old water-side wantWater:false call fully removed, no dead code) + field-name consistency across config/BuildRasterConfig/DT-call/pad + both self-tests non-vacuous (delta-vs-glowWidth=0 technique cancels ripple noise). 1 Minor: ComputeTouchedPixelRect xml-doc still only mentions smoothRadius, not the new glowWidth term — fixed post-review, doc-only.)
-- Both tasks complete + reviewed clean. Feature commits: 8d13161, fd8008c (base 21a42e1).
+- Both tasks complete + reviewed clean. Feature commits: 8d13161, fd8008c, f47fc42 (doc nit) (base 21a42e1).
+
+### Final whole-feature review (opus, range 21a42e1..f47fc42) — Ready to merge: YES, no Critical/Important
+Traced all 3 bake paths (full/chunked-stepped/brush-partial). Confirmed: DT is O(pixels), glow-width-independent (single CoastDistance[idx] read, no rescan); chunked seam avoided (BakeFieldsRect runs once whole-image → CoastDistance fully populated before any ColorAndVignetteRect chunk; glow read has ZERO neighbor dependency so seam-free by construction); DT ordered after final IsLand (both the all-land guard branch and RasterizeIsLand complete before the DT call); glowWidth=0 double-guarded (DT skipped AND glowT=0 → CoastDistance never read); dark outline untouched (HasNeighborWithWaterStatus single caller wantWater:true, old water call gone, no dead code); compile trace clean. 3 Minor:
+  1. Pad uses X world-per-pixel factor for both axes — verified harmless (aspect preserved mod RoundToInt, <0.1%, absorbed by Floor/Ceil slack + smoothRadius). FIXED: clarified the inline comment (no code change).
+  2. No end-to-end brush-glow color-seam test — logic already covered by (DT seam-safe) + (color reads only CoastDistance[idx], no neighbor); low risk. Deferred (add when Editor free).
+  3. Future subproject-6 glowWidth slider MUST route through RebakeAll not RebakeRegion (partial DT seeds from buffer clamped at previous glowWidth+1 → raising width + partial-only rebake would under-glow at rect edge). Unreachable now (no UI/OnValidate). RECORDED durably in the glow design spec's Риски section.
+Not compiler/test-verified (Editor locked) — reviewer hand-traced signatures/types/division, found nothing that won't compile.
 
 ## Minor findings (for final-review triage)
 - Task 1 (`Noise.cs:19`): `(uint)h / 4294967296f` narrows to float 24-bit mantissa before dividing, ~6e-8 relative deviation from JS's double-precision result — brief-specified code, not implementer-introduced, harmless for visual terrain gen.

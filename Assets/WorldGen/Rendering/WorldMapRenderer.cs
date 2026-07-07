@@ -1794,7 +1794,9 @@ namespace WorldGen.Rendering
 
             // Отступ = smoothRadius (протекание блендинга) + coastlineGlowWidth (ореол берега тянется
             // на столько пикселей от суши, поэтому пиксели в этой полосе должны пересчитаться при
-            // правке берега кистью). glowWidth в пикселях -> мировые единицы через worldPerPixel.
+            // правке берега кистью). glowWidth в пикселях -> мировые единицы через worldPerPixel
+            // (mapWidth/texWidth). Текстура сохраняет аспект (см. ComputeTexSize), поэтому один
+            // множитель по X верен и для Y с точностью до RoundToInt (<0.1%, поглощается Floor/Ceil).
             float pad = minPointDistance * 1.5f + coastlineGlowWidth * (mapWidth / texWidth);
             minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
 
