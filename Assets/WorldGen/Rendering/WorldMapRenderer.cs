@@ -114,6 +114,12 @@ namespace WorldGen.Rendering
         [Range(0, 5)] public int coastlineSmoothness = 3;
         [Tooltip("Ширина светлого ореола берега со стороны воды, в пикселях (только Combined+smoothBorders). 0 = нет свечения. Масштабируется через поле дистанции - стоимость не зависит от ширины.")]
         [Range(0, 64)] public int coastlineGlowWidth = 16;
+        [Tooltip("Плоская заливка суши вместо блендинга (только Combined+smoothBorders): один тон на зону биом+высота, чёткие границы. Выкл = плавный блендинг между биомами.")]
+        public bool flatRegionFill = true;
+        [Tooltip("Число дискретных полос высоты в плоской заливке (гейт слоя рельефа). Выше = светлее по ступеням.")]
+        [Range(2, 8)] public int elevationBands = 5;
+        [Tooltip("Размах светлоты между нижней и верхней полосой высоты, %. 0 = полосы не различаются по тону.")]
+        [Range(0f, 100f)] public float elevationBandContrast = 40f;
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
@@ -1905,6 +1911,9 @@ namespace WorldGen.Rendering
                 SmoothBorders = smoothBorders,
                 CoastlineSmoothness = coastlineSmoothness,
                 CoastlineGlowWidth = coastlineGlowWidth,
+                FlatRegionFill = flatRegionFill,
+                ElevationBands = elevationBands,
+                ElevationBandContrast = elevationBandContrast,
                 SmoothRadius = minPointDistance * 1.5f,
                 ReliefStrength = reliefStrength,
                 ReliefLightAzimuth = reliefLightAzimuth,
