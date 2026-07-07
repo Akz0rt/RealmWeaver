@@ -682,6 +682,34 @@ namespace WorldGen.Rendering
                 : $"Self-Test Noise Determinism And Range: FAIL (h1={h1}, h3={h3}, v1={v1}, f1={f1})");
         }
 
+        [ContextMenu("Self-Test: Nearest Cell Lookup")]
+        public void SelfTestNearestCellLookup()
+        {
+            var fixtureCells = new List<VoronoiCell>
+            {
+                new VoronoiCell(0, new System.Numerics.Vector2(0f, 0f)),
+                new VoronoiCell(1, new System.Numerics.Vector2(20f, 0f)),
+                new VoronoiCell(2, new System.Numerics.Vector2(0f, 20f)),
+                new VoronoiCell(3, new System.Numerics.Vector2(20f, 20f)),
+                new VoronoiCell(4, new System.Numerics.Vector2(10f, 10f)),
+            };
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 10f);
+
+            bool ok = true;
+            ok &= lookup.FindNearest(new System.Numerics.Vector2(1f, 1f))?.Id == 0;
+            ok &= lookup.FindNearest(new System.Numerics.Vector2(19f, 1f))?.Id == 1;
+            ok &= lookup.FindNearest(new System.Numerics.Vector2(1f, 19f))?.Id == 2;
+            ok &= lookup.FindNearest(new System.Numerics.Vector2(19f, 19f))?.Id == 3;
+            ok &= lookup.FindNearest(new System.Numerics.Vector2(10f, 10f))?.Id == 4;
+
+            // Точка (10,0) равноудалена (dist=10) от клеток 0, 1 и 4 - проверяем только, что
+            // возвращается ОДИН ИЗ валидных кандидатов, а не null и не клетка 2/3 (те дальше).
+            var boundary = lookup.FindNearest(new System.Numerics.Vector2(10f, 0f));
+            ok &= boundary != null && (boundary.Id == 0 || boundary.Id == 1 || boundary.Id == 4);
+
+            Debug.Log(ok ? "Self-Test Nearest Cell Lookup: PASS" : "Self-Test Nearest Cell Lookup: FAIL");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
