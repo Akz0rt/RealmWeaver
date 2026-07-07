@@ -1213,6 +1213,78 @@ namespace WorldGen.Rendering
                 : $"Self-Test Coastline Contour Rasterize IsLand: FAIL (fullRectOk={fullRectOk}, subRectCleared={subRectCleared}, restUntouched={restUntouched})");
         }
 
+        /// <summary>Прореживание: петля из ~12 вершин (периметр блока суши 3x3 в сетке 5x5, окружён
+        /// океаном) при decimationDistance>0 даёт МЕНЬШЕ вершин, чем при 0 (сравниваем при
+        /// smoothingIterations=0, чтобы изолировать прореживание от Chaikin). Мелкая петля (одна
+        /// клетка суши = 4 угла, ≤ 8) - защита: число вершин не меняется.</summary>
+        [ContextMenu("Self-Test: Contour Decimation Reduces Vertices")]
+        public void SelfTestContourDecimation()
+        {
+            // Сетка 5x5: центр 3x3 - суша (Grassland), рамка - океан → одна петля периметра ~12 вершин.
+            List<VoronoiCell> BuildGrid(int size, System.Func<int, int, bool> isLand)
+            {
+                var cells = new List<VoronoiCell>();
+                int id = 0;
+                for (int r = 0; r < size; r++)
+                    for (int c = 0; c < size; c++)
+                    {
+                        bool land = isLand(c, r);
+                        var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                        { Biome = land ? Biome.Grassland : Biome.Ocean, IsOcean = !land };
+                        cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                        cells.Add(cell);
+                    }
+                return cells;
+            }
+
+            var block = BuildGrid(5, (c, r) => c >= 1 && c <= 3 && r >= 1 && r <= 3);
+            var blockById = block.ToDictionary(c => c.Id);
+            var blockCorners = WorldGen.Generation.CornerGraphBuilder.Build(block);
+
+            int Verts(List<List<System.Numerics.Vector2>> ls) { int n = 0; foreach (var l in ls) n += l.Count; return n; }
+
+            var undec = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(blockCorners, blockById, smoothingIterations: 0, decimationDistance: 0f);
+            var dec = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(blockCorners, blockById, smoothingIterations: 0, decimationDistance: 2f);
+            bool reduced = Verts(dec) > 0 && Verts(dec) < Verts(undec);
+
+            // Мелкая петля: одна клетка суши в центре 3x3, рамка океан → 4 угла ≤ 8 → защита.
+            var single = BuildGrid(3, (c, r) => c == 1 && r == 1);
+            var singleById = single.ToDictionary(c => c.Id);
+            var singleCorners = WorldGen.Generation.CornerGraphBuilder.Build(single);
+            var sUndec = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(singleCorners, singleById, smoothingIterations: 0, decimationDistance: 0f);
+            var sDec = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(singleCorners, singleById, smoothingIterations: 0, decimationDistance: 5f);
+            bool guarded = Verts(sUndec) == Verts(sDec) && Verts(sUndec) == 4;
+
+            bool ok = reduced && guarded;
+            Debug.Log(ok
+                ? "Self-Test Contour Decimation Reduces Vertices: PASS"
+                : $"Self-Test Contour Decimation Reduces Vertices: FAIL (reduced={reduced} undec={Verts(undec)} dec={Verts(dec)}; guarded={guarded} sUndec={Verts(sUndec)} sDec={Verts(sDec)})");
+        }
+
+        /// <summary>RasterizeRegionLabel пишет метку ТОЛЬКО внутри петли, не затирая внешние пиксели.
+        /// Квадрат (2,2)-(8,8) в мире 10x10 (текстура 10x10, 1 тексель/ед). Буфер предзаполнен 7:
+        /// центр (5,5) должен стать 3, угол (0,0) снаружи - остаться 7.</summary>
+        [ContextMenu("Self-Test: Rasterize Region Label Writes Inside Only")]
+        public void SelfTestRasterizeRegionLabel()
+        {
+            var square = new List<System.Numerics.Vector2> { new(2f, 2f), new(8f, 2f), new(8f, 8f), new(2f, 8f) };
+            var loops = new List<List<System.Numerics.Vector2>> { square };
+
+            const int size = 10;
+            var label = new int[size * size];
+            for (int i = 0; i < label.Length; i++) label[i] = 7;
+
+            WorldGen.Rendering.MapRaster.CoastlineContour.RasterizeRegionLabel(loops, label, 3, size, size, 10f, 10f, 0, 0, size, size);
+
+            bool insideSet = label[5 * size + 5] == 3;    // мир (5.5,5.5) внутри
+            bool outsideKept = label[0 * size + 0] == 7;  // мир (0.5,0.5) снаружи - не затёрт
+
+            bool ok = insideSet && outsideKept;
+            Debug.Log(ok
+                ? "Self-Test Rasterize Region Label Writes Inside Only: PASS"
+                : $"Self-Test Rasterize Region Label Writes Inside Only: FAIL (insideSet={insideSet}, outsideKept={outsideKept})");
+        }
+
         /// <summary>Регрессия/паритет: при coastlineSmoothness=0 IsLand-маска (через трассировку +
         /// растеризацию несглаженного контура) должна СОВПАДАТЬ пиксель-в-пиксель со старым тестом
         /// "ближайшая клетка - океан/озеро?" - это математически ожидаемо (nearest-site тест и

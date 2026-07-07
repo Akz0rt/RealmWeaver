@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -15,21 +16,18 @@ namespace WorldGen.Rendering.MapRaster
     {
         static bool IsWaterCell(VoronoiCell cell) => cell.EffectiveIsOcean || cell.EffectiveIsLake;
 
-        /// <summary>Трассирует все замкнутые петли границы суша/вода (материк/острова И озёра —
-        /// один и тот же проход, тип петли не важен, см. design doc) и сглаживает каждую
-        /// smoothingIterations итерациями Chaikin. Разомкнутые/вырожденные цепочки (не должны
-        /// встречаться в штатном случае — падение высоты к краю карты гарантирует замкнутость,
-        /// см. design doc "Риски") пропускаются, не бросают исключение.</summary>
+        /// <summary>Трассирует все замкнутые петли границы категории (клетки, где inRegion различается
+        /// по разные стороны ребра) и сглаживает каждую smoothingIterations итерациями Chaikin, с
+        /// предварительным прореживанием вершин на decimationDistance (см. DecimateClosedLoop).
+        /// Берег - частный случай (inRegion = IsWaterCell); семейства/полосы - другие предикаты (см.
+        /// MapRasterizer.RasterizeSmoothedCategoryRect). Разомкнутые/вырожденные цепочки пропускаются.</summary>
         public static List<List<Vector2>> TraceSmoothedLoops(
-            IReadOnlyList<Corner> corners, IReadOnlyDictionary<int, VoronoiCell> cellById, int smoothingIterations)
+            IReadOnlyList<Corner> corners, IReadOnlyDictionary<int, VoronoiCell> cellById,
+            Func<VoronoiCell, bool> inRegion, int smoothingIterations, float decimationDistance)
         {
             var cornerById = new Dictionary<int, Corner>(corners.Count);
             foreach (var c in corners) cornerById[c.Id] = c;
 
-            // boundaryNeighbors[cornerId] = Id соседних corners, с которыми этот corner связан
-            // ребром на границе вода/суша (в невырожденной точке диаграммы Вороного - ровно 2,
-            // см. design doc: чётность 2-раскраски треугольного цикла из 3 клеток, встречающихся
-            // в одной точке).
             var boundaryNeighbors = new Dictionary<int, List<int>>();
 
             foreach (var corner in corners)
@@ -40,11 +38,11 @@ namespace WorldGen.Rendering.MapRaster
                     if (!cornerById.TryGetValue(neighborId, out var neighbor)) continue;
 
                     var shared = SharedCellIds(corner, neighbor);
-                    if (shared.Count != 2) continue; // ребро по краю карты (1 клетка) - не берег
+                    if (shared.Count != 2) continue; // ребро по краю карты (1 клетка) - не граница
 
-                    bool water0 = cellById.TryGetValue(shared[0], out var c0) && IsWaterCell(c0);
-                    bool water1 = cellById.TryGetValue(shared[1], out var c1) && IsWaterCell(c1);
-                    if (water0 == water1) continue; // обе клетки одной категории - не граница
+                    bool in0 = cellById.TryGetValue(shared[0], out var c0) && inRegion(c0);
+                    bool in1 = cellById.TryGetValue(shared[1], out var c1) && inRegion(c1);
+                    if (in0 == in1) continue; // обе клетки одной категории - не граница
 
                     AddBoundaryNeighbor(boundaryNeighbors, corner.Id, neighbor.Id);
                     AddBoundaryNeighbor(boundaryNeighbors, neighbor.Id, corner.Id);
@@ -61,10 +59,45 @@ namespace WorldGen.Rendering.MapRaster
                 if (loopIds == null) continue; // разомкнутая/вырожденная цепочка - пропускаем
 
                 var points = loopIds.Select(id => cornerById[id].Position).ToList();
+                points = DecimateClosedLoop(points, decimationDistance, MinDecimateVertices);
                 loops.Add(ChaikinSmoothClosed(points, smoothingIterations));
             }
 
             return loops;
+        }
+
+        /// <summary>Водная обёртка (контур берега): inRegion = IsWaterCell. Сохраняет старую 3-арг
+        /// сигнатуру (decimationDistance по умолчанию 0 = без прореживания).</summary>
+        public static List<List<Vector2>> TraceSmoothedLoops(
+            IReadOnlyList<Corner> corners, IReadOnlyDictionary<int, VoronoiCell> cellById,
+            int smoothingIterations, float decimationDistance = 0f)
+            => TraceSmoothedLoops(corners, cellById, IsWaterCell, smoothingIterations, decimationDistance);
+
+        /// <summary>Петли с ≤ этого числа вершин не прорежаются (мелкие острова/полоски биома -
+        /// защита от схлопывания).</summary>
+        const int MinDecimateVertices = 8;
+
+        /// <summary>Прорежает замкнутую петлю по длине дуги: оставляет вершину каждые minSegmentDistance
+        /// мировых единиц вдоль контура. Реже вершины → крупнее радиусы Chaikin → круглее граница.
+        /// minSegmentDistance ≤ 0 ИЛИ петля ≤ minKeepGuard вершин → возвращает исходную петлю без
+        /// изменений; результат никогда не короче 4 вершин (иначе откат к исходной петле).</summary>
+        static List<Vector2> DecimateClosedLoop(List<Vector2> points, float minSegmentDistance, int minKeepGuard)
+        {
+            if (minSegmentDistance <= 0f || points.Count <= minKeepGuard) return points;
+
+            var kept = new List<Vector2> { points[0] };
+            float acc = 0f;
+            for (int i = 1; i < points.Count; i++)
+            {
+                acc += Vector2.Distance(points[i - 1], points[i]);
+                if (acc >= minSegmentDistance)
+                {
+                    kept.Add(points[i]);
+                    acc = 0f;
+                }
+            }
+            if (kept.Count < 4) return points; // прорезали слишком агрессивно - откат
+            return kept;
         }
 
         /// <summary>Растеризует набор замкнутых петель (см. TraceSmoothedLoops) в булеву маску
@@ -110,6 +143,52 @@ namespace WorldGen.Rendering.MapRaster
                         crossingIdx++;
                     }
                     isLand[rowBase + x] = inside;
+                }
+            }
+        }
+
+        /// <summary>Как RasterizeIsLand (even-odd scanline), но пишет целочисленную метку labelValue
+        /// ТОЛЬКО там, где пиксель ВНУТРИ петель, не затирая внешние пиксели. Позволяет растеризовать
+        /// несколько категорий последовательно в один буфер-метку (старшая перезаписывает младшую на
+        /// перекрытиях). Пишет только в [rectX,rectX+rectW) x [rectY,rectY+rectH).</summary>
+        public static void RasterizeRegionLabel(
+            IReadOnlyList<List<Vector2>> loops, int[] label, int labelValue,
+            int texWidth, int texHeight, float mapWidth, float mapHeight,
+            int rectX, int rectY, int rectW, int rectH)
+        {
+            var crossings = new List<float>();
+
+            for (int y = rectY; y < rectY + rectH; y++)
+            {
+                float worldY = (y + 0.5f) / texHeight * mapHeight;
+
+                crossings.Clear();
+                foreach (var loop in loops)
+                {
+                    int n = loop.Count;
+                    for (int i = 0; i < n; i++)
+                    {
+                        var a = loop[i];
+                        var b = loop[(i + 1) % n];
+                        if ((a.Y <= worldY) == (b.Y <= worldY)) continue;
+                        float t = (worldY - a.Y) / (b.Y - a.Y);
+                        crossings.Add(a.X + t * (b.X - a.X));
+                    }
+                }
+                crossings.Sort();
+
+                int rowBase = y * texWidth;
+                bool inside = false;
+                int crossingIdx = 0;
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    float worldX = (x + 0.5f) / texWidth * mapWidth;
+                    while (crossingIdx < crossings.Count && crossings[crossingIdx] <= worldX)
+                    {
+                        inside = !inside;
+                        crossingIdx++;
+                    }
+                    if (inside) label[rowBase + x] = labelValue; // пишем ТОЛЬКО внутри
                 }
             }
         }
