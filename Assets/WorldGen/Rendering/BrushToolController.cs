@@ -172,12 +172,14 @@ namespace WorldGen.Rendering
                 Biome biome = selectedBiome.Value;
                 foreach (var cell in affected)
                     mapRenderer.BrushSetBiome(cell, biome);
+                mapRenderer.RebakeAffectedCells(affected);
                 return;
             }
 
             if (mode == BrushMode.Smooth)
             {
                 ApplySmooth(affected);
+                mapRenderer.RebakeAffectedCells(affected);
                 return;
             }
 
@@ -185,6 +187,7 @@ namespace WorldGen.Rendering
             if (signedDelta == 0f) return;
             foreach (var cell in affected)
                 ApplyDelta(cell, signedDelta);
+            mapRenderer.RebakeAffectedCells(affected);
         }
 
         void ApplyDelta(VoronoiCell cell, float signedDelta)
