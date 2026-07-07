@@ -663,39 +663,50 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         /// <summary>Плоская заливка суши (только Combined+SmoothBorders+FlatRegionFill): базовый цвет =
-        /// биом-семейство БЛИЖАЙШЕЙ клетки напрямую (без блендинга), модулированный дискретной полосой
-        /// высоты (выше = светлее). Соседние клетки одного биома+полосы дают один тон - зоны сливаются
-        /// без внутренних граней. Плюс тёмная береговая обводка (1px) и лёгкое зерно. Убрано (относительно
-        /// ColorForLandPixel): блендинг, тонировка по температуре, региональный шум, hillshade, лайтнесс-
-        /// вариация. См. design doc docs/superpowers/specs/2026-07-07-flat-region-fill-design.md.</summary>
+        /// семейство биома, модулированное дискретной полосой высоты (выше = светлее). При
+        /// SmoothRegionBorders семейство и полоса берутся из СГЛАЖЕННЫХ меток (buffers.FamilyLabel/
+        /// BandLabel); при метке -1 (клин тройного стыка) или выключенном сглаживании - откат к
+        /// БЛИЖАЙШЕЙ клетке (как раньше). Плюс тёмная береговая обводка (1px) и лёгкое зерно.
+        /// См. docs/superpowers/specs/2026-07-07-curved-biome-borders-design.md.</summary>
         static Color32 ColorForLandPixelFlat(
             VoronoiCell cell, MapRasterBuffers buffers,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette)
         {
-            // Базовый цвет = семейство биома ближайшей клетки (или нейтральный тан, если слой биомов выкл).
-            // FlatFamilyColor подменяет водные семейства на Coast - ближайшая клетка каёмочного пикселя
-            // может быть водной (см. коммент FlatFamilyColor).
-            Color32 fam = config.ShowBiomeLayer
-                ? FlatFamilyColor(config.Theme, cell.Biome)
-                : new Color32(209, 199, 166, 255);
+            int idx = y * w + x;
+
+            // Базовый цвет семейства: сглаженная метка (если есть) или ближайшая клетка (откат).
+            Color32 fam;
+            if (config.ShowBiomeLayer)
+            {
+                int fLabel = config.SmoothRegionBorders ? buffers.FamilyLabel[idx] : -1;
+                fam = fLabel >= 0
+                    ? MapPalette.GetSlotColor(config.Theme, (BiomeFamily)fLabel)
+                    : FlatFamilyColor(config.Theme, cell.Biome);
+            }
+            else
+            {
+                fam = new Color32(209, 199, 166, 255);
+            }
             float r = fam.r, g = fam.g, b = fam.b;
 
-            // Полоса высоты (гейт ShowReliefLayer): дискретная ступень тона, выше = светлее.
+            // Полоса высоты (гейт ShowReliefLayer): сглаженная метка (если есть) или высота ближайшей клетки.
             if (config.ShowReliefLayer && config.ElevationBands > 1)
             {
-                int band = Mathf.Clamp((int)(cell.EffectiveElevation * config.ElevationBands), 0, config.ElevationBands - 1);
+                int band = config.SmoothRegionBorders ? buffers.BandLabel[idx] : -1;
+                if (band < 0)
+                    band = Mathf.Clamp((int)(cell.EffectiveElevation * config.ElevationBands), 0, config.ElevationBands - 1);
                 float t = band / (float)(config.ElevationBands - 1);      // нормированная ступень [0,1]
                 float factor = 1f + (t - 0.5f) * (config.ElevationBandContrast / 100f);
                 r *= factor; g *= factor; b *= factor;
             }
 
-            // Тёмная береговая обводка со стороны суши (1px, жёсткая замена) - как в ColorForLandPixel.
+            // Тёмная береговая обводка со стороны суши (1px, жёсткая замена).
             if (HasNeighborWithWaterStatus(buffers, x, y, w, h, wantWater: true))
             {
                 r = palette.Outline.r; g = palette.Outline.g; b = palette.Outline.b;
             }
 
-            // Лёгкое зерно (шаг 8) - поверх, включая обводку (как в ColorForLandPixel).
+            // Лёгкое зерно - поверх, включая обводку.
             float grain = (Noise.ValueNoise(x * 0.5f, y * 0.5f, config.Seed + 61) - 0.5f) * 7f;
             r += grain; g += grain; b += grain;
 

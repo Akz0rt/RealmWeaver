@@ -1397,6 +1397,65 @@ namespace WorldGen.Rendering
                 : $"Self-Test Smoothed Category Single Region: FAIL (threw={threw}, landLabeled={landLabeled}, waterUnlabeled={waterUnlabeled})");
         }
 
+        /// <summary>Паритет глубины: в глубине региона сглаженная метка = семейство/полоса ближайшей
+        /// клетки, поэтому цвет глубинного пикселя при SmoothRegionBorders on и off совпадает (сглаживание
+        /// двигает только приграничные пиксели). Доказывает, что метки корректно питают цвет и путь не
+        /// падает. Та же фикстура 5x5 (Snow-столбец + Grassland, рамка океан).</summary>
+        [ContextMenu("Self-Test: Smoothed Flat Fill Interior Parity")]
+        public void SelfTestSmoothedFlatFillInteriorParity()
+        {
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < 5; r++)
+                for (int c = 0; c < 5; c++)
+                {
+                    bool land = c >= 1 && c <= 3 && r >= 1 && r <= 3;
+                    bool snow = land && c == 1;
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = !land ? Biome.Ocean : (snow ? Biome.Snow : Biome.Grassland),
+                        IsOcean = !land, Height = snow ? 0.9f : 0.1f,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var byId = cells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            Color Bake(bool smooth, int px, int py)
+            {
+                var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+                {
+                    TexWidth = 50, TexHeight = 50, MapWidth = 5f, MapHeight = 5f, Seed = 1,
+                    SmoothBorders = true, CoastlineSmoothness = 2, CoastlineGlowWidth = 0,
+                    FlatRegionFill = true, SmoothRegionBorders = smooth, BorderRoundnessDistance = 0f,
+                    ElevationBands = 5, ElevationBandContrast = 40f,
+                    Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                    ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 1.5f,
+                    ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                    ShowBiomeLayer = true, ShowReliefLayer = true,
+                    HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+                };
+                var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(50, 50);
+                var tex = new Texture2D(50, 50, TextureFormat.RGBA32, false);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(cells, byId, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 50, 50);
+                Color col = tex.GetPixel(px, py);
+                Destroy(tex);
+                return col;
+            }
+
+            float D(Color p, Color q) => Mathf.Abs(p.r - q.r) + Mathf.Abs(p.g - q.g) + Mathf.Abs(p.b - q.b);
+            // Глубинный Grassland (30,20) и Snow (10,20) - вдали от границы Snow/Grass (px 15) и берега.
+            bool grassParity = D(Bake(true, 30, 20), Bake(false, 30, 20)) < 0.01f;
+            bool snowParity = D(Bake(true, 10, 20), Bake(false, 10, 20)) < 0.01f;
+
+            bool ok = grassParity && snowParity;
+            Debug.Log(ok
+                ? "Self-Test Smoothed Flat Fill Interior Parity: PASS"
+                : $"Self-Test Smoothed Flat Fill Interior Parity: FAIL (grassParity={grassParity} d={D(Bake(true, 30, 20), Bake(false, 30, 20)):F3}, snowParity={snowParity} d={D(Bake(true, 10, 20), Bake(false, 10, 20)):F3})");
+        }
+
         /// <summary>Регрессия/паритет: при coastlineSmoothness=0 IsLand-маска (через трассировку +
         /// растеризацию несглаженного контура) должна СОВПАДАТЬ пиксель-в-пиксель со старым тестом
         /// "ближайшая клетка - океан/озеро?" - это математически ожидаемо (nearest-site тест и
