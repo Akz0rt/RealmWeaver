@@ -2078,7 +2078,11 @@ namespace WorldGen.Rendering
                 new Vector2(1f, 1f),
                 new Vector2(0f, 1f),
             };
-            var triangles = new[] { 0, 1, 2, 0, 2, 3 };
+            // Обмотка так, чтобы лицо (нормаль) смотрело ВВЕРХ (+Y) — к камере сверху. Иначе MeshCollider.Raycast
+            // бьёт в изнанку квада, а Unity по умолчанию (Physics.queriesHitBackfaces=false) back-face не ловит,
+            // и весь хит-тест карты (кисть/выделение/POI через TryGetSiteHitPoint/GetCellUnderRay) молча не работает.
+            // Материал карты двусторонний (Sprites/Default, Cull Off), поэтому на отрисовку обмотка не влияет.
+            var triangles = new[] { 0, 2, 1, 0, 3, 2 };
 
             mesh.SetVertices(vertices);
             mesh.SetUVs(0, uvs);
