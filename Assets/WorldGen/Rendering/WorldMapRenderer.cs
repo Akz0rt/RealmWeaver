@@ -710,6 +710,25 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Nearest Cell Lookup: PASS" : "Self-Test Nearest Cell Lookup: FAIL");
         }
 
+        [ContextMenu("Self-Test: Biome Family Coverage")]
+        public void SelfTestBiomeFamilyCoverage()
+        {
+            bool ok = true;
+            foreach (Biome biome in System.Enum.GetValues(typeof(Biome)))
+            {
+                try
+                {
+                    WorldGen.Rendering.MapRaster.MapPalette.GetFamily(biome);
+                }
+                catch (System.Exception)
+                {
+                    ok = false;
+                    Debug.LogWarning($"MapPalette.GetFamily не обрабатывает Biome.{biome}");
+                }
+            }
+            Debug.Log(ok ? "Self-Test Biome Family Coverage: PASS" : "Self-Test Biome Family Coverage: FAIL");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
