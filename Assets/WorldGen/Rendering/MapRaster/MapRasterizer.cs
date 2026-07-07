@@ -53,6 +53,18 @@ namespace WorldGen.Rendering.MapRaster
         /// по тону; 40 ≈ ±20% от базового цвета).</summary>
         public float ElevationBandContrast = 40f;
 
+        /// <summary>Сглаживать (кривить) внутренние границы плоской заливки - семейств биомов и полос
+        /// высоты - тем же контуром, что и берег (маски по категориям, см. RasterizeSmoothedCategoryRect).
+        /// Дефолт здесь false (как FlatRegionFill): существующие самотесты плоской заливки, не задающие
+        /// поле, идут прежним путём "ближайшая клетка". Пользовательский дефолт true - у сериализованного
+        /// WorldMapRenderer.smoothRegionBorders. См. docs/superpowers/specs/2026-07-07-curved-biome-borders-design.md.</summary>
+        public bool SmoothRegionBorders = false;
+
+        /// <summary>Дистанция прореживания вершин контура (мировые единицы) перед Chaikin - для берега,
+        /// границ семейств и полос. Реже вершины → круглее. 0 = без прореживания (текущее поведение).
+        /// Резолвится в WorldMapRenderer.BuildRasterConfig как borderRoundness * minPointDistance.</summary>
+        public float BorderRoundnessDistance = 0f;
+
         /// <summary>Соответствуют существующим тумблерам MapLayersPanel - выключение биомного слоя
         /// даёт нейтральную земляную заливку вместо цвета семейства биома; выключение рельефа
         /// убирает hillshade/холодный подсвет на суше и градиент глубины на воде (плоский цвет).</summary>
@@ -88,6 +100,15 @@ namespace WorldGen.Rendering.MapRaster
         /// CoastlineGlowWidth > 0 - см. MapRasterizer.ComputeCoastDistanceRect. Питает широкую
         /// подсветку берега в ColorForWaterPixel.</summary>
         public float[] CoastDistance;
+
+        /// <summary>Семейство биома на пиксель для сглаженной плоской заливки (индекс BiomeFamily; -1 =
+        /// нет метки → откат к ближайшей клетке). Только Combined+SmoothBorders+FlatRegionFill+
+        /// SmoothRegionBorders. Водные семейства (Sea/Lake) сюда не попадают. См. RasterizeSmoothedCategoryRect.</summary>
+        public int[] FamilyLabel;
+
+        /// <summary>Полоса высоты на пиксель для сглаженной плоской заливки (индекс полосы; -1 = нет
+        /// метки → откат к ближайшей клетке). Только при ElevationBands > 1 и SmoothRegionBorders.</summary>
+        public int[] BandLabel;
     }
 
     /// <summary>
@@ -102,7 +123,7 @@ namespace WorldGen.Rendering.MapRaster
         public static MapRasterBuffers CreateEmptyBuffers(int width, int height)
         {
             int n = width * height;
-            return new MapRasterBuffers
+            var b = new MapRasterBuffers
             {
                 Width = width,
                 Height = height,
@@ -113,7 +134,11 @@ namespace WorldGen.Rendering.MapRaster
                 PreVignette = new Color32[n],
                 IsLand = new bool[n],
                 CoastDistance = new float[n],
+                FamilyLabel = new int[n],
+                BandLabel = new int[n],
             };
+            for (int i = 0; i < n; i++) { b.FamilyLabel[i] = -1; b.BandLabel[i] = -1; }
+            return b;
         }
 
         /// <summary>Удобная обёртка: полный запек всего изображения "с нуля" в новую текстуру.</summary>
@@ -189,7 +214,7 @@ namespace WorldGen.Rendering.MapRaster
 
             if (painted)
             {
-                var loops = CoastlineContour.TraceSmoothedLoops(corners, cellById, config.CoastlineSmoothness);
+                var loops = CoastlineContour.TraceSmoothedLoops(corners, cellById, config.CoastlineSmoothness, config.BorderRoundnessDistance);
                 if (loops.Count == 0)
                 {
                     // Нет ни одной петли границы вода/суша - вся карта однородна (все клетки одной
@@ -212,8 +237,25 @@ namespace WorldGen.Rendering.MapRaster
                 }
                 if (config.CoastlineGlowWidth > 0)
                     ComputeCoastDistanceRect(buffers, w, h, config.CoastlineGlowWidth + 1f, rectX, rectY, rectW, rectH);
-                if (!config.FlatRegionFill)
+                if (config.FlatRegionFill)
+                {
+                    if (config.SmoothRegionBorders)
+                    {
+                        RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
+                            buffers.FamilyLabel, FamilyCategoryOf, FamilyPriority, rectX, rectY, rectW, rectH);
+                        if (config.ElevationBands > 1)
+                        {
+                            int bands = config.ElevationBands;
+                            RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
+                                buffers.BandLabel, c => BandCategoryOf(c, bands), BandPriorityAscending(bands),
+                                rectX, rectY, rectW, rectH);
+                        }
+                    }
+                }
+                else
+                {
                     BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
+                }
             }
         }
 
@@ -535,6 +577,76 @@ namespace WorldGen.Rendering.MapRaster
             }
 
             return ClampColor32(r, g, b);
+        }
+
+        static bool IsLandCell(VoronoiCell c) => !(c.EffectiveIsOcean || c.EffectiveIsLake);
+
+        /// <summary>Категория "семейство биома" для сглаживания: индекс BiomeFamily суши, -1 для воды
+        /// (регионы семейств ограничены сушей; Sea/Lake никогда не попадают в метку).</summary>
+        static int FamilyCategoryOf(VoronoiCell c) => IsLandCell(c) ? (int)MapPalette.GetFamily(c.Biome) : -1;
+
+        /// <summary>Категория "полоса высоты" для сглаживания: индекс полосы суши, -1 для воды.</summary>
+        static int BandCategoryOf(VoronoiCell c, int bands) =>
+            IsLandCell(c) ? Mathf.Clamp((int)(c.EffectiveElevation * bands), 0, bands - 1) : -1;
+
+        /// <summary>Порядок приоритета семейств при композитинге масок (младший → старший; старший
+        /// рисуется позже и выигрывает перекрытия). Характерные семейства (скалы/снег) сверху, чтобы их
+        /// кривые читались чётко. См. design doc.</summary>
+        static readonly int[] FamilyPriority =
+        {
+            (int)BiomeFamily.Plains, (int)BiomeFamily.Moor, (int)BiomeFamily.Forest, (int)BiomeFamily.ForestWarm,
+            (int)BiomeFamily.Coast, (int)BiomeFamily.Tundra, (int)BiomeFamily.Highland, (int)BiomeFamily.Badlands, (int)BiomeFamily.Snow,
+        };
+
+        /// <summary>Порядок приоритета полос высоты: по возрастанию индекса (выше = сверху).</summary>
+        static int[] BandPriorityAscending(int bands)
+        {
+            var order = new int[bands];
+            for (int i = 0; i < bands; i++) order[i] = i;
+            return order;
+        }
+
+        /// <summary>Общий проход "сгладить категориальное поле над сушей": сбрасывает labelBuffer в rect
+        /// на -1, находит категории, встречающиеся в rect (rect уже расширен вызывающим на
+        /// BorderRoundnessDistance - см. WorldMapRenderer.ComputeTouchedPixelRect), и для каждой в
+        /// порядке priorityOrder трассирует+прорежает+сглаживает границу (categoryOf==cat) и растеризует
+        /// метку ТОЛЬКО внутри (RasterizeRegionLabel). Старшая категория перезаписывает младшую на
+        /// перекрытиях; пиксели без метки (клинья тройных стыков) остаются -1 → откат к ближайшей клетке
+        /// в ColorForLandPixelFlat. Петли трассируются глобально, но здесь - только присутствующие в rect
+        /// категории (на кисти это 1-3 из всех).</summary>
+        static void RasterizeSmoothedCategoryRect(
+            IReadOnlyDictionary<int, VoronoiCell> cellById, List<Corner> corners,
+            MapRasterConfig config, MapRasterBuffers buffers,
+            int[] labelBuffer, Func<VoronoiCell, int> categoryOf, IReadOnlyList<int> priorityOrder,
+            int rectX, int rectY, int rectW, int rectH)
+        {
+            int w = config.TexWidth;
+
+            for (int y = rectY; y < rectY + rectH; y++)
+                for (int x = rectX; x < rectX + rectW; x++)
+                    labelBuffer[y * w + x] = -1;
+
+            var present = new HashSet<int>();
+            for (int y = rectY; y < rectY + rectH; y++)
+                for (int x = rectX; x < rectX + rectW; x++)
+                {
+                    int cat = categoryOf(cellById[buffers.CellId[y * w + x]]);
+                    if (cat >= 0) present.Add(cat);
+                }
+            if (present.Count == 0) return;
+
+            foreach (int category in priorityOrder)
+            {
+                if (!present.Contains(category)) continue;
+                int cat = category; // захват для лямбды
+                var loops = CoastlineContour.TraceSmoothedLoops(
+                    corners, cellById, c => categoryOf(c) == cat,
+                    config.CoastlineSmoothness, config.BorderRoundnessDistance);
+                if (loops.Count == 0) continue;
+                CoastlineContour.RasterizeRegionLabel(
+                    loops, labelBuffer, category, w, config.TexHeight,
+                    config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
+            }
         }
 
         /// <summary>Плоский цвет семейства биома клетки: как GetSlotColor(theme, GetFamily(biome)), но

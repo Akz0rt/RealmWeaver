@@ -1285,6 +1285,118 @@ namespace WorldGen.Rendering
                 : $"Self-Test Rasterize Region Label Writes Inside Only: FAIL (insideSet={insideSet}, outsideKept={outsideKept})");
         }
 
+        /// <summary>Метки семейств/полос: сетка 5x5, рамка - океан, внутренний 3x3 - суша; левый
+        /// столбец внутреннего блока (c=1) - Snow (высота 0.9 → верхняя полоса), правые два (c=2,3) -
+        /// Grassland (высота 0.1 → нижняя полоса). Оба региона окружены водой/друг другом → петли
+        /// замкнуты. Глубинный пиксель каждого региона получает верную метку семейства и полосы.</summary>
+        [ContextMenu("Self-Test: Smoothed Category Labels")]
+        public void SelfTestSmoothedCategoryLabels()
+        {
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < 5; r++)
+                for (int c = 0; c < 5; c++)
+                {
+                    bool land = c >= 1 && c <= 3 && r >= 1 && r <= 3;
+                    bool snow = land && c == 1;
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = !land ? Biome.Ocean : (snow ? Biome.Snow : Biome.Grassland),
+                        IsOcean = !land,
+                        Height = snow ? 0.9f : 0.1f,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var byId = cells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 50, TexHeight = 50, MapWidth = 5f, MapHeight = 5f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 2, CoastlineGlowWidth = 0,
+                FlatRegionFill = true, SmoothRegionBorders = true, BorderRoundnessDistance = 0f,
+                ElevationBands = 5, ElevationBandContrast = 40f,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 1.5f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(50, 50);
+            WorldGen.Rendering.MapRaster.MapRasterizer.BakeFieldsRect(cells, byId, lookup, corners, MapDisplayMode.Combined, config, buffers, 0, 0, 50, 50);
+
+            // Глубинные пиксели (центры клеток, 10 текс/ед): Grassland (c=3,r=2)→(30,20); Snow (c=1,r=2)→(10,20).
+            int grassIdx = 20 * 50 + 30;
+            int snowIdx = 20 * 50 + 10;
+            int plains = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Plains;
+            int snowFam = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Snow;
+
+            bool grassFamOk = buffers.FamilyLabel[grassIdx] == plains;
+            bool snowFamOk = buffers.FamilyLabel[snowIdx] == snowFam;
+            bool grassBandOk = buffers.BandLabel[grassIdx] == 0;  // 0.1*5=0
+            bool snowBandOk = buffers.BandLabel[snowIdx] == 4;    // 0.9*5=4
+
+            bool ok = grassFamOk && snowFamOk && grassBandOk && snowBandOk;
+            Debug.Log(ok
+                ? "Self-Test Smoothed Category Labels: PASS"
+                : $"Self-Test Smoothed Category Labels: FAIL (grassFam={buffers.FamilyLabel[grassIdx]}/{plains}, snowFam={buffers.FamilyLabel[snowIdx]}/{snowFam}, grassBand={buffers.BandLabel[grassIdx]}/0, snowBand={buffers.BandLabel[snowIdx]}/4)");
+        }
+
+        /// <summary>Регрессия: одна категория суши + вода. Сетка 5x5, рамка океан, внутренний 3x3 весь
+        /// Grassland (одна высота). Все глубинные пиксели суши получают метку Plains; водный пиксель
+        /// остаётся -1 (сентинел, не затёрт). Без исключений.</summary>
+        [ContextMenu("Self-Test: Smoothed Category Single Region")]
+        public void SelfTestSmoothedCategorySingleRegion()
+        {
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < 5; r++)
+                for (int c = 0; c < 5; c++)
+                {
+                    bool land = c >= 1 && c <= 3 && r >= 1 && r <= 3;
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                    { Biome = land ? Biome.Grassland : Biome.Ocean, IsOcean = !land, Height = 0.5f };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var byId = cells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 50, TexHeight = 50, MapWidth = 5f, MapHeight = 5f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 2, CoastlineGlowWidth = 0,
+                FlatRegionFill = true, SmoothRegionBorders = true, BorderRoundnessDistance = 1f,
+                ElevationBands = 5, ElevationBandContrast = 40f,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 1.5f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(50, 50);
+            bool threw = false;
+            try
+            {
+                WorldGen.Rendering.MapRaster.MapRasterizer.BakeFieldsRect(cells, byId, lookup, corners, MapDisplayMode.Combined, config, buffers, 0, 0, 50, 50);
+            }
+            catch (System.Exception e) { threw = true; Debug.LogError($"Single-region bake threw: {e}"); }
+
+            int plains = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Plains;
+            bool landLabeled = buffers.FamilyLabel[20 * 50 + 20] == plains && buffers.FamilyLabel[20 * 50 + 30] == plains;
+            bool waterUnlabeled = buffers.FamilyLabel[0] == -1;  // угол (0,0) - океан, метки нет
+
+            bool ok = !threw && landLabeled && waterUnlabeled;
+            Debug.Log(ok
+                ? "Self-Test Smoothed Category Single Region: PASS"
+                : $"Self-Test Smoothed Category Single Region: FAIL (threw={threw}, landLabeled={landLabeled}, waterUnlabeled={waterUnlabeled})");
+        }
+
         /// <summary>Регрессия/паритет: при coastlineSmoothness=0 IsLand-маска (через трассировку +
         /// растеризацию несглаженного контура) должна СОВПАДАТЬ пиксель-в-пиксель со старым тестом
         /// "ближайшая клетка - океан/озеро?" - это математически ожидаемо (nearest-site тест и
