@@ -660,6 +660,28 @@ namespace WorldGen.Rendering
                 : $"Self-Test Ocean Connectivity: FAIL (c1={c1.IsOcean}, c2={c2.IsOcean}, c3={c3.IsOcean})");
         }
 
+        [ContextMenu("Self-Test: Noise Determinism And Range")]
+        public void SelfTestNoise()
+        {
+            float h1 = WorldGen.Rendering.MapRaster.Noise.Hash(3, 7, 42);
+            float h2 = WorldGen.Rendering.MapRaster.Noise.Hash(3, 7, 42);
+            float h3 = WorldGen.Rendering.MapRaster.Noise.Hash(4, 7, 42);
+
+            float v1 = WorldGen.Rendering.MapRaster.Noise.ValueNoise(1.3f, 2.7f, 5);
+            float v2 = WorldGen.Rendering.MapRaster.Noise.ValueNoise(1.3f, 2.7f, 5);
+
+            float f1 = WorldGen.Rendering.MapRaster.Noise.Fbm(0.5f, 0.5f, 9, 4);
+            float f2 = WorldGen.Rendering.MapRaster.Noise.Fbm(0.5f, 0.5f, 9, 4);
+
+            bool ok = h1 == h2 && h1 != h3 && h1 >= 0f && h1 < 1f
+                      && v1 == v2 && v1 >= 0f && v1 < 1f
+                      && f1 == f2 && f1 >= 0f && f1 <= 1f;
+
+            Debug.Log(ok
+                ? "Self-Test Noise Determinism And Range: PASS"
+                : $"Self-Test Noise Determinism And Range: FAIL (h1={h1}, h3={h3}, v1={v1}, f1={f1})");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             return new GenerationParams
