@@ -813,6 +813,7 @@ namespace WorldGen.Rendering
             Color expectedA = GetColorForCell(a);
 
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
             var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
             {
                 TexWidth = 10,
@@ -826,7 +827,7 @@ namespace WorldGen.Rendering
             };
             var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(10, 10);
             var tex = new Texture2D(10, 10, TextureFormat.RGBA32, false);
-            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, displayMode, config, tex, buffers, 0, 0, 10, 10);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, displayMode, config, tex, buffers, 0, 0, 10, 10);
 
             // Пиксель (2,5) на текстуре 10x10 для карты 10x10 сэмплирует мировую точку (2.5, 5.5) -
             // ближе всего к Site клетки a (2.5, 5).
@@ -854,6 +855,7 @@ namespace WorldGen.Rendering
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
 
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
             var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
             {
                 TexWidth = 20,
@@ -875,7 +877,7 @@ namespace WorldGen.Rendering
             };
             var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
             var tex = new Texture2D(20, 20, TextureFormat.RGBA32, false);
-            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 20, 20);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 20, 20);
 
             int px = Mathf.FloorToInt(3f / 10f * 20f);
             int py = Mathf.FloorToInt(3f / 10f * 20f);
@@ -910,6 +912,7 @@ namespace WorldGen.Rendering
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = good, [1] = ghost };
 
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
             var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
             {
                 TexWidth = 10,
@@ -935,7 +938,7 @@ namespace WorldGen.Rendering
             bool threw = false;
             try
             {
-                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
             }
             catch (System.Exception e)
             {
@@ -976,6 +979,7 @@ namespace WorldGen.Rendering
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a, [1] = b };
 
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
             var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
             {
                 TexWidth = 20,
@@ -1001,13 +1005,13 @@ namespace WorldGen.Rendering
             // Эталон: честный полный запек одним вызовом.
             var buffersRef = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
             var texRef = new Texture2D(20, 20, TextureFormat.RGBA32, false);
-            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texRef, buffersRef, 0, 0, 20, 20);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, texRef, buffersRef, 0, 0, 20, 20);
 
             // Двухфазный чанковый запек (исправление) - поля на всё изображение разом, затем
             // раскраска двумя чанками по 10 строк (граница ровно на строке 10).
             var buffersChunked = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
             var texChunked = new Texture2D(20, 20, TextureFormat.RGBA32, false);
-            WorldGen.Rendering.MapRaster.MapRasterizer.BakeFieldsRect(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, buffersChunked, 0, 0, 20, 20);
+            WorldGen.Rendering.MapRaster.MapRasterizer.BakeFieldsRect(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, buffersChunked, 0, 0, 20, 20);
             WorldGen.Rendering.MapRaster.MapRasterizer.ColorAndVignetteRect(fixtureById, MapDisplayMode.Combined, config, texChunked, buffersChunked, 0, 0, 20, 10);
             WorldGen.Rendering.MapRaster.MapRasterizer.ColorAndVignetteRect(fixtureById, MapDisplayMode.Combined, config, texChunked, buffersChunked, 0, 10, 20, 10);
 
@@ -1018,8 +1022,8 @@ namespace WorldGen.Rendering
             // сам себя.
             var buffersNaive = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(20, 20);
             var texNaive = new Texture2D(20, 20, TextureFormat.RGBA32, false);
-            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 0, 20, 10);
-            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 10, 20, 10);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 0, 20, 10);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, texNaive, buffersNaive, 0, 10, 20, 10);
 
             bool fixedMatchesRef = true, naiveDiffersFromRef = false;
             for (int x = 0; x < 20; x++)
@@ -1063,6 +1067,7 @@ namespace WorldGen.Rendering
             var fixtureCells = new List<VoronoiCell> { a };
             var fixtureById = new Dictionary<int, VoronoiCell> { [0] = a };
             var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 5f);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
 
             WorldGen.Rendering.MapRaster.MapRasterConfig MakeConfig(bool showBiome, bool showRelief) => new WorldGen.Rendering.MapRaster.MapRasterConfig
             {
@@ -1079,7 +1084,7 @@ namespace WorldGen.Rendering
                 var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(10, 10);
                 var tex = new Texture2D(10, 10, TextureFormat.RGBA32, false);
                 var config = MakeConfig(showBiome, showRelief);
-                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
+                WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 10, 10);
                 Color c = tex.GetPixel(5, 5);
                 Destroy(tex);
                 return c;
@@ -1196,6 +1201,69 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Coastline Contour Rasterize IsLand: PASS"
                 : $"Self-Test Coastline Contour Rasterize IsLand: FAIL (fullRectOk={fullRectOk}, subRectCleared={subRectCleared}, restUntouched={restUntouched})");
+        }
+
+        /// <summary>Регрессия/паритет: при coastlineSmoothness=0 IsLand-маска (через трассировку +
+        /// растеризацию несглаженного контура) должна СОВПАДАТЬ пиксель-в-пиксель со старым тестом
+        /// "ближайшая клетка - океан/озеро?" - это математически ожидаемо (nearest-site тест и
+        /// point-in-polygon той же самой Vороной-ячейки эквивалентны по построению диаграммы
+        /// Vороного), проверяем это явно как регрессионную защиту.</summary>
+        [ContextMenu("Self-Test: Coastline Mask Matches Hard Categorization At Zero Smoothness")]
+        public void SelfTestCoastlineMaskMatchesHardCategorization()
+        {
+            var fixtureCells = new List<VoronoiCell>();
+            int nextId = 0;
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    bool isCenter = c == 1 && r == 1;
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = isCenter ? Biome.Grassland : Biome.Ocean,
+                        IsOcean = !isCenter,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    fixtureCells.Add(cell);
+                }
+            }
+            var fixtureById = fixtureCells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(fixtureCells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(fixtureCells, 1f);
+
+            var config = new WorldGen.Rendering.MapRaster.MapRasterConfig
+            {
+                TexWidth = 30, TexHeight = 30, MapWidth = 3f, MapHeight = 3f, Seed = 1,
+                SmoothBorders = true, CoastlineSmoothness = 0,
+                Theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight,
+                ColdLight = 58f, RegionVariation = 0f, Darkness = 0f, SmoothRadius = 0.6f,
+                ReliefStrength = 3f, ReliefLightAzimuth = 315f, ReliefAmbient = 0.5f,
+                ShowBiomeLayer = true, ShowReliefLayer = true,
+                HardModeColor = GetColorForCell, WaterDepth01 = _ => 0f,
+            };
+
+            var buffers = WorldGen.Rendering.MapRaster.MapRasterizer.CreateEmptyBuffers(30, 30);
+            var tex = new Texture2D(30, 30, TextureFormat.RGBA32, false);
+            WorldGen.Rendering.MapRaster.MapRasterizer.RebakeRegion(fixtureCells, fixtureById, lookup, corners, MapDisplayMode.Combined, config, tex, buffers, 0, 0, 30, 30);
+
+            bool mismatchFound = false;
+            for (int y = 0; y < 30 && !mismatchFound; y++)
+            {
+                for (int x = 0; x < 30 && !mismatchFound; x++)
+                {
+                    float px = (x + 0.5f) / 30f * 3f;
+                    float pz = (y + 0.5f) / 30f * 3f;
+                    var nearest = lookup.FindNearest(new System.Numerics.Vector2(px, pz));
+                    bool expectedIsLand = !(nearest.EffectiveIsOcean || nearest.EffectiveIsLake);
+                    bool actualIsLand = buffers.IsLand[y * 30 + x];
+                    if (expectedIsLand != actualIsLand) mismatchFound = true;
+                }
+            }
+
+            Destroy(tex);
+            Debug.Log(!mismatchFound
+                ? "Self-Test Coastline Mask Matches Hard Categorization At Zero Smoothness: PASS"
+                : "Self-Test Coastline Mask Matches Hard Categorization At Zero Smoothness: FAIL (IsLand mask disagrees with nearest-cell test somewhere on the grid)");
         }
 
         GenerationParams BuildGenerationParams()
@@ -1369,7 +1437,7 @@ namespace WorldGen.Rendering
 
             var config = BuildRasterConfig();
             var oldTexture = rasterTexture;
-            rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, displayMode, config, out rasterBuffers);
+            rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, corners, displayMode, config, out rasterBuffers);
             if (oldTexture != null) Destroy(oldTexture);
             EnsureRasterMaterial();
             rasterMaterial.mainTexture = rasterTexture;
@@ -1384,7 +1452,7 @@ namespace WorldGen.Rendering
             if (rw <= 0 || rh <= 0) return;
 
             var config = BuildRasterConfig();
-            MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, displayMode, config, rasterTexture, rasterBuffers, rx, ry, rw, rh);
+            MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, corners, displayMode, config, rasterTexture, rasterBuffers, rx, ry, rw, rh);
         }
 
         /// <summary>Перезапекает текстуру только вокруг клеток, затронутых кистью в последнем
@@ -1501,7 +1569,7 @@ namespace WorldGen.Rendering
             // берега смотрят на ±1 пиксель), что давало видимый горизонтальный артефакт каждые chunkRows
             // строк. FindWithinRadius внутри этого прохода - геометрический запрос по NearestCellLookup,
             // не по буферу, поэтому сам этот проход корректен независимо от порядка/чанкования.
-            MapRasterizer.BakeFieldsRect(cells, cellById, nearestLookup, displayMode, config, rasterBuffers, 0, 0, texWidth, texHeight);
+            MapRasterizer.BakeFieldsRect(cells, cellById, nearestLookup, corners, displayMode, config, rasterBuffers, 0, 0, texWidth, texHeight);
             yield return null;
 
             const int chunkRows = 64;

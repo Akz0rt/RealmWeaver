@@ -24,6 +24,12 @@ namespace WorldGen.Rendering.MapRaster
         public float ReliefLightAzimuth = 315f;
         public float ReliefAmbient = 0.5f;
 
+        /// <summary>Число итераций Chaikin-сглаживания контура берега (только Combined+
+        /// SmoothBorders). 0 = точные грани клеток Вороного (без трассировки/сглаживания
+        /// вообще - см. MapRasterizer.BakeFieldsRect). См. design doc
+        /// docs/superpowers/specs/2026-07-07-coastline-contour-smoothing-design.md.</summary>
+        public int CoastlineSmoothness = 3;
+
         /// <summary>Соответствуют существующим тумблерам MapLayersPanel - выключение биомного слоя
         /// даёт нейтральную земляную заливку вместо цвета семейства биома; выключение рельефа
         /// убирает hillshade/холодный подсвет на суше и градиент глубины на воде (плоский цвет).</summary>
@@ -49,13 +55,18 @@ namespace WorldGen.Rendering.MapRaster
         public float[] Temperature;
         public Color32[] FamilyColor;
         public Color32[] PreVignette;
+
+        /// <summary>true = суша по сглаженному контуру берега (только Combined+SmoothBorders -
+        /// см. CoastlineContour). В прочих режимах не заполняется и не читается.</summary>
+        public bool[] IsLand;
     }
 
     /// <summary>
     /// Запекает клетки Вороного в Texture2D + параллельный cellId-буфер для хит-тестинга.
     /// Height/Region/Biome и Combined-без-сглаживания используют "hard" сэмплинг (ближайшая клетка,
     /// без блендинга, через HardModeColor - визуально идентично старому vertex-color рендеру).
-    /// Combined+smoothBorders включает полный "нарисованный" конвейер (см. Task 6).
+    /// Combined+smoothBorders включает полный "нарисованный" конвейер (см. Task 6 подпроекта 1) +
+    /// сглаженный контур берега вместо категоризации по ближайшей клетке (см. CoastlineContour).
     /// </summary>
     public static class MapRasterizer
     {
@@ -71,6 +82,7 @@ namespace WorldGen.Rendering.MapRaster
                 Temperature = new float[n],
                 FamilyColor = new Color32[n],
                 PreVignette = new Color32[n],
+                IsLand = new bool[n],
             };
         }
 
@@ -79,6 +91,7 @@ namespace WorldGen.Rendering.MapRaster
             IReadOnlyList<VoronoiCell> cells,
             IReadOnlyDictionary<int, VoronoiCell> cellById,
             NearestCellLookup lookup,
+            List<Corner> corners,
             MapDisplayMode displayMode,
             MapRasterConfig config,
             out MapRasterBuffers buffers)
@@ -89,43 +102,42 @@ namespace WorldGen.Rendering.MapRaster
                 wrapMode = TextureWrapMode.Clamp
             };
             buffers = CreateEmptyBuffers(config.TexWidth, config.TexHeight);
-            RebakeRegion(cells, cellById, lookup, displayMode, config, texture, buffers, 0, 0, config.TexWidth, config.TexHeight);
+            RebakeRegion(cells, cellById, lookup, corners, displayMode, config, texture, buffers, 0, 0, config.TexWidth, config.TexHeight);
             return texture;
         }
 
         /// <summary>Перезапекает прямоугольную под-область текстуры/буферов на месте. rectX/Y/W/H уже
         /// в пиксельных координатах и уже включают отступ под smoothRadius - эта функция не добавляет
-        /// собственный отступ (см. WorldMapRenderer.ComputeTouchedPixelRect в Task 7/8). Требует, чтобы
+        /// собственный отступ (см. WorldMapRenderer.ComputeTouchedPixelRect). Требует, чтобы
         /// вне прямоугольника буферы либо не существовали вовсе (полный запек - rect = всё изображение),
-        /// либо уже содержали валидные данные предыдущего полного запека (кисть) - см. BakeFieldsRect
-        /// про единственный случай, где это предположение не выполняется.</summary>
+        /// либо уже содержали валидные данные предыдущего полного запека (кисть).</summary>
         public static void RebakeRegion(
             IReadOnlyList<VoronoiCell> cells,
             IReadOnlyDictionary<int, VoronoiCell> cellById,
             NearestCellLookup lookup,
+            List<Corner> corners,
             MapDisplayMode displayMode,
             MapRasterConfig config,
             Texture2D texture,
             MapRasterBuffers buffers,
             int rectX, int rectY, int rectW, int rectH)
         {
-            BakeFieldsRect(cells, cellById, lookup, displayMode, config, buffers, rectX, rectY, rectW, rectH);
+            BakeFieldsRect(cells, cellById, lookup, corners, displayMode, config, buffers, rectX, rectY, rectW, rectH);
             ColorAndVignetteRect(cellById, displayMode, config, texture, buffers, rectX, rectY, rectW, rectH);
         }
 
-        /// <summary>Проход 1 (cellId) + проход 1.5 (BakePaintedFields, если painted) для заданного
-        /// прямоугольника. Сам по себе не читает ничего ЗА пределами rect (FindWithinRadius - это
-        /// геометрический запрос по NearestCellLookup, не по буферу), поэтому безопасно вызывать
-        /// для части изображения, даже если буферы вне rect ещё вообще не заполнены - в отличие от
-        /// ColorAndVignetteRect, которому нужны уже готовые соседние строки/пиксели для градиента
-        /// рельефа и проверки берега (см. WorldMapRenderer.RebakeAllStepped - именно поэтому чанковый
-        /// запек сначала прогоняет этот проход целиком на всё изображение, и только потом раскраску
-        /// по чанкам; раньше оба прохода шли по одному и тому же чанку разом, что давало горизонтальный
-        /// артефакт на границе каждого чанка - соседняя, ещё не запечённая строка читалась как elevation=0).</summary>
+        /// <summary>Проход 1 (cellId) + проход 1.5 (контур берега + BakePaintedFields, если painted)
+        /// для заданного прямоугольника. Трассировка/сглаживание контура (CoastlineContour) всегда
+        /// выполняется заново на ВСЕХ клетках карты (дёшево - масштаб числа клеток, не пикселей),
+        /// растеризация в IsLand - только в переданный rect (безопасно для частичных перезапеканий
+        /// кистью). Сам по себе не читает ничего ЗА пределами rect в буферах, поэтому безопасно
+        /// вызывать для части изображения, даже если буферы вне rect ещё вообще не заполнены - в
+        /// отличие от ColorAndVignetteRect, которому нужны уже готовые соседние строки/пиксели.</summary>
         public static void BakeFieldsRect(
             IReadOnlyList<VoronoiCell> cells,
             IReadOnlyDictionary<int, VoronoiCell> cellById,
             NearestCellLookup lookup,
+            List<Corner> corners,
             MapDisplayMode displayMode,
             MapRasterConfig config,
             MapRasterBuffers buffers,
@@ -146,14 +158,16 @@ namespace WorldGen.Rendering.MapRaster
 
             if (painted)
             {
+                var loops = CoastlineContour.TraceSmoothedLoops(corners, cellById, config.CoastlineSmoothness);
+                CoastlineContour.RasterizeIsLand(loops, buffers.IsLand, w, h, config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
                 BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
             }
         }
 
         /// <summary>Проход 2 (цвет) + проход 3 (виньетка) для заданного прямоугольника. Требует, чтобы
-        /// CellId/Elevation/Temperature/FamilyColor уже были заполнены BakeFieldsRect не только для
-        /// этого прямоугольника, но и для его непосредственно соседних строк/столбцов (градиент рельефа
-        /// и проверка берега читают ±1 пиксель за границу rect).</summary>
+        /// CellId/Elevation/Temperature/FamilyColor/IsLand уже были заполнены BakeFieldsRect не только
+        /// для этого прямоугольника, но и для его непосредственно соседних строк/столбцов (градиент
+        /// рельефа и проверка берега читают ±1 пиксель за границу rect).</summary>
         public static void ColorAndVignetteRect(
             IReadOnlyDictionary<int, VoronoiCell> cellById,
             MapDisplayMode displayMode,
@@ -172,7 +186,7 @@ namespace WorldGen.Rendering.MapRaster
                     int idx = y * w + x;
                     var cell = cellById[buffers.CellId[idx]];
                     buffers.PreVignette[idx] = painted
-                        ? BakePaintedPixel(cell, buffers, cellById, idx, x, y, w, h, config)
+                        ? BakePaintedPixel(cell, buffers, idx, x, y, w, h, config)
                         : (Color32)config.HardModeColor(cell);
                 }
             }
@@ -215,12 +229,14 @@ namespace WorldGen.Rendering.MapRaster
             texture.Apply(false);
         }
 
-        // ---- Painted-pipeline hooks (Task 6) ----
+        // ---- Painted-pipeline hooks ----
 
         /// <summary>Проход 1.5 (только суша, только painted-режим): блендированные elevation/
         /// temperature/базовый цвет семейства среди соседей в радиусе smoothRadius, вес
-        /// 1/(distance²+1) - см. design doc, шаг 3. Вода не блендится (шаг 2: категория
-        /// суша/океан/озеро всегда "hard" по ближайшей клетке).</summary>
+        /// 1/(distance²+1). Категория суша/вода берётся из уже растеризованной buffers.IsLand
+        /// (сглаженный контур - см. BakeFieldsRect), НЕ из cell.EffectiveIsOcean/IsLake напрямую -
+        /// иначе пиксель, который сглаженный контур относит к суше, но чья ближайшая клетка
+        /// технически вода, никогда не получил бы своего FamilyColor (оставался бы чёрным).</summary>
         static void BakePaintedFields(
             IReadOnlyList<VoronoiCell> cells, IReadOnlyDictionary<int, VoronoiCell> cellById, NearestCellLookup lookup,
             MapRasterConfig config, MapRasterBuffers buffers, int rectX, int rectY, int rectW, int rectH)
@@ -233,7 +249,7 @@ namespace WorldGen.Rendering.MapRaster
                 {
                     int idx = y * w + x;
                     var cell = cellById[buffers.CellId[idx]];
-                    bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+                    bool isWater = !buffers.IsLand[idx];
 
                     if (isWater)
                     {
@@ -294,21 +310,20 @@ namespace WorldGen.Rendering.MapRaster
         };
 
         static Color32 BakePaintedPixel(
-            VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
-            int idx, int x, int y, int w, int h, MapRasterConfig config)
+            VoronoiCell cell, MapRasterBuffers buffers, int idx, int x, int y, int w, int h, MapRasterConfig config)
         {
             var palette = ResolvePalette(config.Theme);
             float coldAmt = 0.10f + (config.ColdLight / 100f) * 0.30f;
             float varAmt = config.RegionVariation / 100f;
 
-            bool isWater = cell.EffectiveIsOcean || cell.EffectiveIsLake;
+            bool isWater = !buffers.IsLand[idx];
             return isWater
-                ? ColorForWaterPixel(cell, buffers, cellById, x, y, w, h, config, palette, coldAmt)
-                : ColorForLandPixel(cell, buffers, cellById, idx, x, y, w, h, config, palette, coldAmt, varAmt);
+                ? ColorForWaterPixel(cell, buffers, x, y, w, h, config, palette, coldAmt)
+                : ColorForLandPixel(cell, buffers, idx, x, y, w, h, config, palette, coldAmt, varAmt);
         }
 
         static Color32 ColorForWaterPixel(
-            VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
+            VoronoiCell cell, MapRasterBuffers buffers,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt)
         {
             Color32 shallowOrLakeS = cell.EffectiveIsLake ? palette.LakeS : palette.Shallow;
@@ -331,7 +346,7 @@ namespace WorldGen.Rendering.MapRaster
                 r += ripple; g += ripple; b += ripple;
             }
 
-            if (HasNeighborWithWaterStatus(buffers, cellById, x, y, w, h, wantWater: false))
+            if (HasNeighborWithWaterStatus(buffers, x, y, w, h, wantWater: false))
             {
                 float gk = 0.32f + coldAmt * 0.5f;
                 r += (palette.Glow.r - r) * gk;
@@ -343,7 +358,7 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         static Color32 ColorForLandPixel(
-            VoronoiCell cell, MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById, int idx,
+            VoronoiCell cell, MapRasterBuffers buffers, int idx,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt, float varAmt)
         {
             // Слой биомов выключен (тумблер MapLayersPanel) - нейтральная земляная заливка вместо
@@ -368,7 +383,7 @@ namespace WorldGen.Rendering.MapRaster
                 r += rr; g += rr * 0.9f; b += rr * 0.7f;
             }
 
-            if (HasNeighborWithWaterStatus(buffers, cellById, x, y, w, h, wantWater: true))
+            if (HasNeighborWithWaterStatus(buffers, x, y, w, h, wantWater: true))
             {
                 // Береговая обводка (шаг 7, сторона суши) - жёсткая замена, перекрывает hillshade.
                 r = palette.Outline.r; g = palette.Outline.g; b = palette.Outline.b;
@@ -404,17 +419,15 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         static bool HasNeighborWithWaterStatus(
-            MapRasterBuffers buffers, IReadOnlyDictionary<int, VoronoiCell> cellById,
-            int x, int y, int w, int h, bool wantWater)
+            MapRasterBuffers buffers, int x, int y, int w, int h, bool wantWater)
         {
             return Check(ClampIdx(x - 1, y, w, h)) || Check(ClampIdx(x + 1, y, w, h))
                 || Check(ClampIdx(x, y - 1, w, h)) || Check(ClampIdx(x, y + 1, w, h));
 
             bool Check(int idx)
             {
-                var c = cellById[buffers.CellId[idx]];
-                bool isWater = c.EffectiveIsOcean || c.EffectiveIsLake;
-                return isWater == wantWater;
+                bool isWaterPixel = !buffers.IsLand[idx];
+                return isWaterPixel == wantWater;
             }
         }
 
