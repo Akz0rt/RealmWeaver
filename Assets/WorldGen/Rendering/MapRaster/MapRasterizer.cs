@@ -159,7 +159,26 @@ namespace WorldGen.Rendering.MapRaster
             if (painted)
             {
                 var loops = CoastlineContour.TraceSmoothedLoops(corners, cellById, config.CoastlineSmoothness);
-                CoastlineContour.RasterizeIsLand(loops, buffers.IsLand, w, h, config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
+                if (loops.Count == 0)
+                {
+                    // Нет ни одной петли границы вода/суша - вся карта однородна (все клетки одной
+                    // категории). RasterizeIsLand по even-odd правилу залил бы прямоугольник целиком
+                    // водой (0 пересечений на строке = "снаружи"), но если хоть одна клетка - суша,
+                    // значит воды нет вовсе и правильный результат - вся суша. Достижимо только кистью
+                    // (ForceLand на последнюю водную клетку); при генерации край карты всегда топится
+                    // falloff'ом, так что петля берега всегда есть. См. финальное ревью фичи, находка #1.
+                    bool anyLand = false;
+                    foreach (var c in cells)
+                        if (!(c.EffectiveIsOcean || c.EffectiveIsLake)) { anyLand = true; break; }
+
+                    for (int y = rectY; y < rectY + rectH; y++)
+                        for (int x = rectX; x < rectX + rectW; x++)
+                            buffers.IsLand[y * w + x] = anyLand;
+                }
+                else
+                {
+                    CoastlineContour.RasterizeIsLand(loops, buffers.IsLand, w, h, config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
+                }
                 BakePaintedFields(cells, cellById, lookup, config, buffers, rectX, rectY, rectW, rectH);
             }
         }
@@ -319,7 +338,7 @@ namespace WorldGen.Rendering.MapRaster
             bool isWater = !buffers.IsLand[idx];
             return isWater
                 ? ColorForWaterPixel(cell, buffers, x, y, w, h, config, palette, coldAmt)
-                : ColorForLandPixel(cell, buffers, idx, x, y, w, h, config, palette, coldAmt, varAmt);
+                : ColorForLandPixel(buffers, idx, x, y, w, h, config, palette, coldAmt, varAmt);
         }
 
         static Color32 ColorForWaterPixel(
@@ -358,7 +377,7 @@ namespace WorldGen.Rendering.MapRaster
         }
 
         static Color32 ColorForLandPixel(
-            VoronoiCell cell, MapRasterBuffers buffers, int idx,
+            MapRasterBuffers buffers, int idx,
             int x, int y, int w, int h, MapRasterConfig config, ResolvedPalette palette, float coldAmt, float varAmt)
         {
             // Слой биомов выключен (тумблер MapLayersPanel) - нейтральная земляная заливка вместо
