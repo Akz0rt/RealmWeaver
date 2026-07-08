@@ -110,6 +110,8 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetVector("_CellIdTexel", new Vector4(1f / texW, 1f / texH, 0, 0));
             var outline = MapPalette.GetSlotColor(theme, PaletteSlot.Outline);
             Material.SetColor("_OutlineColor", new Color(outline.r / 255f, outline.g / 255f, outline.b / 255f, 1f));
+            SetSlot("_BiomeLineColor", theme, PaletteSlot.Outline);
+            Material.SetFloat("_BiomeLineStrength", 0.5f);
 
             // Рельеф: ступени высоты + hillshade + холодный лунный подсвет. Стартовые из CPU-дефолтов.
             Material.SetFloat("_ElevBands", 5f);

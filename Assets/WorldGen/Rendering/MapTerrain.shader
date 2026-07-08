@@ -30,6 +30,9 @@ Shader "WorldGen/MapTerrain"
             float4 _OutlineColor;
             float2 _CellIdTexel;   // (1/texW, 1/texH) - шаг соседа для обводки, независим от зума
 
+            float4 _BiomeLineColor;
+            float _BiomeLineStrength;
+
             sampler2D _LabelTex;   // R=familyLabel, G=bandLabel (255 = нет метки), B=сглаженная маска суша/вода
             float2 _LabelTexel;
 
@@ -194,6 +197,20 @@ Shader "WorldGen/MapTerrain"
                         float bright = lerp(_ReliefAmbient, 1.0, ndotl);
                         col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
                     }
+
+                    // тонкая тёмная линия между разными СЕМЕЙСТВАМИ биомов (не на берегу:
+                    // Coast=2 исключён, там будет мягкий пляж; 255 = клин, тоже пропускаем)
+                    float2 flt = _LabelTexel * 1.5;
+                    int fa = labelAt(i.uv + float2(flt.x, 0)).x;
+                    int fb = labelAt(i.uv - float2(flt.x, 0)).x;
+                    int fc = labelAt(i.uv + float2(0, flt.y)).x;
+                    int fd = labelAt(i.uv - float2(0, flt.y)).x;
+                    bool famEdge =
+                        (fa != famL && fa != 255 && fa != 2) ||
+                        (fb != famL && fb != 255 && fb != 2) ||
+                        (fc != famL && fc != 255 && fc != 2) ||
+                        (fd != famL && fd != 255 && fd != 2);
+                    if (famEdge && famL != 2) col = lerp(col, _BiomeLineColor.rgb, _BiomeLineStrength);
 
                     // тёмная обводка берега (сторона суши) - всегда; по сглаженной маске суша/вода,
                     // чтобы обводка следовала гладкому берегу, а не гранёным клеткам.
