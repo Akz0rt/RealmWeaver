@@ -142,6 +142,15 @@ namespace WorldGen.Rendering.GpuMap
             UploadPalette(theme);
         }
 
+        /// <summary>Параметры сглаживания контуров label'ов (используются при следующем bake).
+        /// smoothing = число итераций Chaikin; decimation = мировая дистанция прореживания вершин
+        /// (больше = меньше вершин = круглее край, как старый BorderRoundnessDistance).</summary>
+        public void SetContourParams(int smoothing, float decimation)
+        {
+            bakedSmoothing = Mathf.Max(0, smoothing);
+            bakedDecimation = Mathf.Max(0f, decimation);
+        }
+
         /// <summary>Слои Биом/Рельеф - мгновенно через uniform (без пере-бейка). См. шейдер _ShowBiome/_ShowRelief.</summary>
         public void SetLayers(bool showBiome, bool showRelief)
         {
