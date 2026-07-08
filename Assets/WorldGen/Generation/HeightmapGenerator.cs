@@ -1,37 +1,41 @@
 namespace WorldGen.Generation
 {
     /// <summary>
-    /// Генератор высоты рельефа через многослойный (fractal) OpenSimplex2-шум с предварительным
-    /// domain warping (искажением координат), плюс island falloff - функция, которая гарантированно
-    /// "топит" края карты под уровень моря, формируя единый материк произвольной формы, окружённый
-    /// океаном, независимо от того, что нагенерировал сам шум по краям.
+    /// Генератор высоты рельефа: многослойный OpenSimplex2-шум с domain warping + island falloff,
+    /// который топит края карты под уровень моря, формируя материк, окружённый океаном.
     ///
-    /// ВАЖНОЕ ИЗМЕНЕНИЕ: добавлен innerRadius - доля карты от центра (по Chebyshev-расстоянию),
-    /// которая гарантированно НЕ топится falloff'ом вообще (falloff = 0 внутри этого радиуса).
-    /// Без этого параметра falloff растёт слишком резко даже при разумных значениях falloffPower,
-    /// и материк может занимать лишь малую долю карты, оставляя непропорционально много воды
-    /// (при innerRadius=0 и falloffPower=2.5 доля воды доходила до ~78% площади карты).
+    /// Falloff — РАДИАЛЬНЫЙ (евклидов) от, возможно, смещённого по сиду центра материка, с добавкой
+    /// низкочастотного "берегового" шума (изрезанность: полуострова/бухты) и гарантированной водной
+    /// кромкой у самой границы карты (borderWaterMargin) — чтобы материк никогда не упирался в край
+    /// и вода на краю текстуры бесшовно стыковалась с фоном редактора (см. camera-bg companion).
     ///
-    /// ЗАВИСИМОСТЬ: требует файл FastNoiseLite.cs (однофайловая библиотека, не NuGet/UPM-пакет).
-    /// Скачать актуальную версию: https://github.com/Auburn/FastNoiseLite/blob/master/CSharp/FastNoiseLite.cs
-    /// Положить рядом в ту же папку Generation (или в отдельную ThirdParty-папку проекта).
+    /// ЗАВИСИМОСТЬ: FastNoiseLite.cs (однофайловая либа, лежит рядом в папке Generation).
     /// </summary>
     public class HeightmapGenerator
     {
         readonly FastNoiseLite baseNoise;
         readonly FastNoiseLite warpNoise;
+        readonly FastNoiseLite coastNoise;
         readonly float mapWidth;
         readonly float mapHeight;
         readonly float falloffPower;
         readonly float innerRadius;
+        readonly float coastRoughness;
+        readonly float borderWaterMargin;
+        readonly float centerOffsetX;
+        readonly float centerOffsetY;
 
         public HeightmapGenerator(int seed, float mapWidth, float mapHeight, float baseFrequency = 0.01f, int octaves = 4,
-                                    float warpAmplitude = 40f, float warpFrequency = 0.01f, float falloffPower = 2.5f, float innerRadius = 0.5f)
+                                    float warpAmplitude = 40f, float warpFrequency = 0.01f, float falloffPower = 1.8f,
+                                    float innerRadius = 0.2f, float coastRoughness = 0.2f, float coastRoughnessFrequency = 0.004f,
+                                    float continentCenterJitter = 0.18f, float borderWaterMargin = 0.06f)
         {
             this.mapWidth = mapWidth;
             this.mapHeight = mapHeight;
             this.falloffPower = falloffPower;
             this.innerRadius = innerRadius;
+            this.coastRoughness = coastRoughness;
+            this.borderWaterMargin = borderWaterMargin;
 
             baseNoise = new FastNoiseLite(seed);
             baseNoise.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);
@@ -39,54 +43,65 @@ namespace WorldGen.Generation
             baseNoise.SetFractalOctaves(octaves);
             baseNoise.SetFrequency(baseFrequency);
 
-            // Отдельный инстанс для domain warp - намеренно другой seed, чтобы паттерн warp
-            // не коррелировал с паттерном базового шума высоты.
             warpNoise = new FastNoiseLite(seed + 1);
             warpNoise.SetDomainWarpType(FastNoiseLite.DomainWarpType.OpenSimplex2);
             warpNoise.SetDomainWarpAmp(warpAmplitude);
             warpNoise.SetFrequency(warpFrequency);
+
+            // Низкочастотный шум для изрезанности берега - свой seed-сдвиг, чтобы не коррелировать.
+            coastNoise = new FastNoiseLite(seed + 4000);
+            coastNoise.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);
+            coastNoise.SetFractalType(FastNoiseLite.FractalType.FBm);
+            coastNoise.SetFractalOctaves(3);
+            coastNoise.SetFrequency(coastRoughnessFrequency);
+
+            // Детерминированное по сиду смещение центра материка (в нормированном [-1,1] пространстве).
+            var rng = new System.Random(seed + 5000);
+            centerOffsetX = (float)(rng.NextDouble() * 2.0 - 1.0) * continentCenterJitter;
+            centerOffsetY = (float)(rng.NextDouble() * 2.0 - 1.0) * continentCenterJitter;
         }
 
         /// <summary>
-        /// Возвращает высоту в диапазоне примерно [0, 1] (возможны небольшие отрицательные значения
-        /// у самого края карты из-за falloff - это нормально, дальше всё, что ниже SeaLevel, считается водой).
+        /// Высота примерно в [0,1] (у края возможны отрицательные из-за falloff - это нормально,
+        /// всё ниже SeaLevel считается водой).
         /// </summary>
         public float GetHeight(float x, float y)
         {
             float wx = x, wy = y;
-            warpNoise.DomainWarp(ref wx, ref wy); // искажает wx, wy "по месту" (ref-параметры)
+            warpNoise.DomainWarp(ref wx, ref wy);
 
-            float raw = baseNoise.GetNoise(wx, wy); // диапазон [-1, 1]
-            float normalized = (raw + 1f) * 0.5f;    // нормализуем в [0, 1]
+            float raw = baseNoise.GetNoise(wx, wy);   // [-1, 1]
+            float normalized = (raw + 1f) * 0.5f;     // [0, 1]
 
             float falloff = ComputeFalloff(x, y);
             return normalized - falloff;
         }
 
         /// <summary>
-        /// Falloff растёт от центра карты (0 внутри innerRadius) к краям (около 1 у самой границы),
-        /// возведённый в степень falloffPower для контроля резкости спада к берегу.
-        /// Использован square bump (Chebyshev-подобное расстояние через max(|nx|,|ny|)),
-        /// который даёт более "квадратный" материк, ближе к границам прямоугольной карты,
-        /// чем чисто евклидовый остров-круг - что лучше заполняет прямоугольную область карты.
-        ///
-        /// innerRadius - доля расстояния от центра (в той же шкале [0,1], что и d), внутри которой
-        /// falloff гарантированно равен 0 - материк никогда не топится в этой зоне независимо
-        /// от шума. Без этого параметра (innerRadius=0) falloff растёт от центра сразу,
-        /// что при разумных falloffPower даёт слишком много воды на карте (см. комментарий класса).
+        /// Радиальный falloff от смещённого центра материка + береговой шум, плюс гарантированная
+        /// водная кромка у самой границы карты.
         /// </summary>
         float ComputeFalloff(float x, float y)
         {
-            float nx = 2f * (x / mapWidth) - 1f;   // нормализация в [-1, 1]
-            float ny = 2f * (y / mapHeight) - 1f;
+            // Координаты относительно ЦЕНТРА КАРТЫ - для гарантии водной кромки по периметру.
+            float mnx = 2f * (x / mapWidth) - 1f;
+            float mny = 2f * (y / mapHeight) - 1f;
+            float border = System.MathF.Max(System.MathF.Abs(mnx), System.MathF.Abs(mny));
+            if (border > 1f - borderWaterMargin) return 1f; // гарантированный водный "ров" у края
 
-            float d = System.MathF.Max(System.MathF.Abs(nx), System.MathF.Abs(ny));
+            // Координаты относительно смещённого ЦЕНТРА МАТЕРИКА - для радиальной формы.
+            float nx = mnx - centerOffsetX;
+            float ny = mny - centerOffsetY;
+            float d = System.MathF.Sqrt(nx * nx + ny * ny);
+
+            // Изрезанность берега: гуляющий радиус. GetNoise∈[-1,1] → вклад ±0.5·coastRoughness.
+            d += coastNoise.GetNoise(x, y) * 0.5f * coastRoughness;
 
             if (d < innerRadius) return 0f;
 
             float adjusted = (d - innerRadius) / (1f - innerRadius);
+            adjusted = System.Math.Clamp(adjusted, 0f, 1f);
             return System.MathF.Pow(adjusted, falloffPower);
         }
     }
 }
-

@@ -89,6 +89,8 @@ namespace WorldGen.Rendering
                 NumberOfRegions = mapRenderer.numberOfRegions,
                 FalloffPower = mapRenderer.falloffPower,
                 InnerRadius = mapRenderer.innerRadius,
+                CoastRoughness = mapRenderer.coastRoughness,
+                ContinentCenterJitter = mapRenderer.continentCenterJitter,
                 SeaLevel = mapRenderer.seaLevel,
                 MinLakeSize = mapRenderer.minLakeSize,
                 ElevationCoastWeight = mapRenderer.elevationCoastWeight,

@@ -26,7 +26,7 @@ namespace WorldGen.Generation
         /// (материк занимает больше площади). Разумный диапазон - 1.5 (рваные берега) до 4
         /// (почти прямоугольный материк).
         /// </summary>
-        public float FalloffPower = 2.5f;
+        public float FalloffPower = 1.8f;
 
         /// <summary>
         /// Доля расстояния от центра карты (в [0,1]), внутри которой материк гарантированно
@@ -34,7 +34,16 @@ namespace WorldGen.Generation
         /// разумных FalloffPower вода может занимать неожиданно большую долю карты. Стандартное
         /// значение 0.5 даёт сбалансированное соотношение материк/океан.
         /// </summary>
-        public float InnerRadius = 0.5f;
+        public float InnerRadius = 0.2f;
+
+        /// <summary>Амплитуда низкочастотного берегового шума (изрезанность берега: полуострова/бухты). 0 = гладкий берег.</summary>
+        public float CoastRoughness = 0.2f;
+        /// <summary>Частота берегового шума. Меньше = крупные мысы/заливы; больше = мелкая рябь берега.</summary>
+        public float CoastRoughnessFrequency = 0.004f;
+        /// <summary>Разброс центра материка по сидам в нормированном [-1,1] пространстве (0 = всегда центр карты). Держать ≤ 0.2.</summary>
+        public float ContinentCenterJitter = 0.18f;
+        /// <summary>Доля у самой границы карты, гарантированно затопленная (водная кромка для бесшовной стыковки с фоном).</summary>
+        public float BorderWaterMargin = 0.06f;
 
         /// <summary>Порог island-shape функции, ниже которого corner считается водой. [0, 1].</summary>
         public float SeaLevel = 0.35f;
@@ -134,7 +143,9 @@ namespace WorldGen.Generation
 
             // --- Island shape: land/water на corners, ДО elevation ---
             var islandShapeGen = new HeightmapGenerator(p.Seed, p.Width, p.Height, p.HeightFrequency, p.HeightOctaves,
-                                                          p.WarpAmplitude, falloffPower: p.FalloffPower, innerRadius: p.InnerRadius);
+                                                          p.WarpAmplitude, falloffPower: p.FalloffPower, innerRadius: p.InnerRadius,
+                                                          coastRoughness: p.CoastRoughness, coastRoughnessFrequency: p.CoastRoughnessFrequency,
+                                                          continentCenterJitter: p.ContinentCenterJitter, borderWaterMargin: p.BorderWaterMargin);
             IslandShapeAssigner.AssignWaterCorners(corners, islandShapeGen, p.SeaLevel);
 
             // --- Ocean/lake flood fill на corners ---
@@ -209,7 +220,9 @@ namespace WorldGen.Generation
             var corners = CornerGraphBuilder.Build(cells);
 
             var islandShapeGen = new HeightmapGenerator(p.Seed, p.Width, p.Height, p.HeightFrequency, p.HeightOctaves,
-                                                          p.WarpAmplitude, falloffPower: p.FalloffPower, innerRadius: p.InnerRadius);
+                                                          p.WarpAmplitude, falloffPower: p.FalloffPower, innerRadius: p.InnerRadius,
+                                                          coastRoughness: p.CoastRoughness, coastRoughnessFrequency: p.CoastRoughnessFrequency,
+                                                          continentCenterJitter: p.ContinentCenterJitter, borderWaterMargin: p.BorderWaterMargin);
             IslandShapeAssigner.AssignWaterCorners(corners, islandShapeGen, p.SeaLevel);
             yield return null;
 

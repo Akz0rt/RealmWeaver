@@ -866,8 +866,8 @@ MonoBehaviour:
   minPointDistance: 8
   lloydIterations: 2
   numberOfRegions: 4
-  falloffPower: 2.5
-  innerRadius: 0.5
+  falloffPower: 1.8
+  innerRadius: 0.2
   seaLevel: 0.27
   minLakeSize: 20
   elevationCoastWeight: 0.6

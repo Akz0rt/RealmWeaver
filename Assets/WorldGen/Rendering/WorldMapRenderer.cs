@@ -35,6 +35,10 @@ namespace WorldGen.Rendering
         [Tooltip("Минимальный размер связной группы corners, чтобы остаться озером. Больше значение = меньше озёр. 0 или 1 отключает фильтрацию.")]
         public int minLakeSize = 5;
 
+        [Header("Форма материка")]
+        [Range(0f, 0.5f)] public float coastRoughness = 0.2f;
+        [Range(0f, 0.2f)] public float continentCenterJitter = 0.18f;
+
         [Header("Elevation (Patel-стиль: distance-from-coast + шум)")]
         [Tooltip("Вес компонента 'расстояние от берега' в итоговой elevation. coastWeight + noiseWeight обычно должны давать ~1.0.")]
         public float elevationCoastWeight = 0.6f;
@@ -832,6 +836,30 @@ namespace WorldGen.Rendering
                 }
             }
             Debug.Log(ok ? "Self-Test Biome Family Coverage: PASS" : "Self-Test Biome Family Coverage: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Island Shape Ocean Border")]
+        public void SelfTestIslandShapeOceanBorder()
+        {
+            var gen = new WorldGen.Generation.HeightmapGenerator(seed: 7, mapWidth: 500f, mapHeight: 500f);
+            const float seaLevel = 0.35f;
+
+            // Все 4 середины рёбер попадают в borderWaterMargin (0.06) → falloff=1 → высота < 0 < seaLevel.
+            bool edgesWater =
+                gen.GetHeight(250f, 2f)   < seaLevel &&
+                gen.GetHeight(250f, 498f) < seaLevel &&
+                gen.GetHeight(2f,   250f) < seaLevel &&
+                gen.GetHeight(498f, 250f) < seaLevel;
+
+            // Детерминизм: один сид → один результат.
+            float a = gen.GetHeight(123f, 234f);
+            var gen2 = new WorldGen.Generation.HeightmapGenerator(seed: 7, mapWidth: 500f, mapHeight: 500f);
+            bool deterministic = gen2.GetHeight(123f, 234f) == a;
+
+            bool ok = edgesWater && deterministic;
+            Debug.Log(ok
+                ? "Self-Test Island Shape Ocean Border: PASS"
+                : $"Self-Test Island Shape Ocean Border: FAIL (edgesWater={edgesWater}, deterministic={deterministic})");
         }
 
         /// <summary>Маленький квадратный полигон вокруг site - нужен фикстурам самотестов, работающих
@@ -2071,6 +2099,8 @@ namespace WorldGen.Rendering
                 NumberOfRegions = numberOfRegions,
                 FalloffPower = falloffPower,
                 InnerRadius = innerRadius,
+                CoastRoughness = coastRoughness,
+                ContinentCenterJitter = continentCenterJitter,
                 SeaLevel = seaLevel,
                 MinLakeSize = minLakeSize,
                 ElevationCoastWeight = elevationCoastWeight,
