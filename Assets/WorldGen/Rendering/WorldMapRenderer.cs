@@ -89,7 +89,7 @@ namespace WorldGen.Rendering
         [Header("Combined: слои")]
         public bool showBiomeLayer = true;
         public bool showReliefLayer = true;
-        public bool showRegionBordersLayer = true;
+        public bool showRegionBordersLayer = false; // оверлей границ регионов - пока выключен по просьбе пользователя, вернёмся позже
         public bool showCoastlineLayer = true;
 
         [Header("Combined: рельеф (hillshade)")]
