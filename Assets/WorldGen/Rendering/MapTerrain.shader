@@ -32,6 +32,15 @@ Shader "WorldGen/MapTerrain"
             float4 _OutlineColor;
             float2 _CellIdTexel;   // (1/texW, 1/texH) - шаг соседа для обводки, независим от зума
 
+            float _ElevBands;
+            float _BandContrast;
+            float _ReliefStrength;
+            float _ReliefStep;     // шаг градиента высоты в UV (~размер клетки, чтобы сосед был другой клеткой)
+            float _LightAzimuth;
+            float _ReliefAmbient;
+            float _ColdLight;
+            float4 _LightColor;
+
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
             v2f vert (appdata_base v)
@@ -99,12 +108,32 @@ Shader "WorldGen/MapTerrain"
                 float4 a = attr(cid, 0);
                 int family = (int)(a.r + 0.5);
                 int water = (int)(a.a + 0.5);   // 0=суша, 1=океан, 2=озеро
+                float elev = a.g;
                 float3 col = _Palette[family].rgb;
 
-                // Тёмная обводка берега (сторона суши): пиксель-суша, у которого хоть один сосед - вода.
-                // НЕ на границах клеток одного семейства - только суша/вода.
                 if (water == 0)
                 {
+                    // ступень высоты (выше = светлее по дискретным полосам)
+                    int bands = max(2, (int)_ElevBands);
+                    int band = clamp((int)(elev * bands), 0, bands - 1);
+                    float bt = band / max(1.0, (float)(bands - 1));
+                    col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+
+                    // рельефное затенение из градиента высоты соседних клеток + холодный лунный подсвет
+                    float s = _ReliefStep;
+                    float eL = attr(cellAt(wuv - float2(s, 0)), 0).g;
+                    float eR = attr(cellAt(wuv + float2(s, 0)), 0).g;
+                    float eD = attr(cellAt(wuv - float2(0, s)), 0).g;
+                    float eU = attr(cellAt(wuv + float2(0, s)), 0).g;
+                    float gx = (eL - eR) * 0.5, gy = (eD - eU) * 0.5;
+                    float3 nrm = normalize(float3(-gx * _ReliefStrength, 1, -gy * _ReliefStrength));
+                    float az = radians(_LightAzimuth);
+                    float3 L = normalize(float3(sin(az), 1, cos(az)));
+                    float ndotl = saturate(dot(nrm, L));
+                    float bright = lerp(_ReliefAmbient, 1.0, ndotl);
+                    col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
+
+                    // тёмная обводка берега (сторона суши)
                     float2 t = _CellIdTexel * 2.0;
                     int w = waterAt(wuv + float2(t.x, 0)) + waterAt(wuv - float2(t.x, 0))
                           + waterAt(wuv + float2(0, t.y)) + waterAt(wuv - float2(0, t.y));

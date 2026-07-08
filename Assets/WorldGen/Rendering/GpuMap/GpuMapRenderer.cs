@@ -47,6 +47,17 @@ namespace WorldGen.Rendering.GpuMap
             var outline = MapPalette.GetSlotColor(theme, PaletteSlot.Outline);
             Material.SetColor("_OutlineColor", new Color(outline.r / 255f, outline.g / 255f, outline.b / 255f, 1f));
 
+            // Рельеф: ступени высоты + hillshade + холодный лунный подсвет. Стартовые из CPU-дефолтов.
+            Material.SetFloat("_ElevBands", 5f);
+            Material.SetFloat("_BandContrast", 40f);
+            Material.SetFloat("_ReliefStrength", 3f);
+            Material.SetFloat("_ReliefStep", 0.012f);
+            Material.SetFloat("_LightAzimuth", 315f);
+            Material.SetFloat("_ReliefAmbient", 0.5f);
+            Material.SetFloat("_ColdLight", 0.25f);
+            var light = MapPalette.GetSlotColor(theme, PaletteSlot.Light);
+            Material.SetColor("_LightColor", new Color(light.r / 255f, light.g / 255f, light.b / 255f, 1f));
+
             UploadPalette(theme);
         }
 
