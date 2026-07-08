@@ -41,6 +41,22 @@ Shader "WorldGen/MapTerrain"
             float _ColdLight;
             float4 _LightColor;
 
+            float4 _TintCool;
+            float4 _TintWarm;
+            float4 _SeaShallow;
+            float4 _SeaDeep;
+            float4 _LakeShallow;
+            float4 _LakeDeep;
+            float _Darkness;
+            float _GrainAmount;
+            float _GrainScale;
+            float _TintStrength;   // сила региональной тонировки по температуре (0 = чистый цвет семейства)
+
+            sampler2D _CoastTex;   // RFloat: дистанция до берега в пикселях (0 на суше)
+            float _WaterDepthRange; // px, за сколько от берега вода становится "глубокой"
+            float _GlowWidth;       // px ширины ореола берега (сторона воды)
+            float4 _GlowColor;
+
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
             v2f vert (appdata_base v)
@@ -109,15 +125,37 @@ Shader "WorldGen/MapTerrain"
                 int family = (int)(a.r + 0.5);
                 int water = (int)(a.a + 0.5);   // 0=суша, 1=океан, 2=озеро
                 float elev = a.g;
-                float3 col = _Palette[family].rgb;
+                float temp = a.b;
+                float3 col;
 
-                if (water == 0)
+                if (water > 0)
                 {
+                    // Вода: плавная глубина по полю дистанции берега (мелко у берега → глубоко вдали).
+                    float cd = tex2Dlod(_CoastTex, float4(wuv, 0, 0)).r;
+                    float depth = saturate(cd / max(1.0, _WaterDepthRange));
+                    float3 shallow = (water == 2) ? _LakeShallow.rgb : _SeaShallow.rgb;
+                    float3 deep    = (water == 2) ? _LakeDeep.rgb    : _SeaDeep.rgb;
+                    col = lerp(shallow, deep, depth);
+                    col += (fbm(wuv * 60.0) - 0.5) * 0.04;
+
+                    // широкий светлый ореол у берега (сторона воды)
+                    float glow = saturate(1.0 - cd / max(1.0, _GlowWidth));
+                    col = lerp(col, _GlowColor.rgb, glow * 0.5);
+                }
+                else
+                {
+                    col = _Palette[family].rgb;
+
                     // ступень высоты (выше = светлее по дискретным полосам)
                     int bands = max(2, (int)_ElevBands);
                     int band = clamp((int)(elev * bands), 0, bands - 1);
                     float bt = band / max(1.0, (float)(bands - 1));
                     col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+
+                    // региональная тонировка по температуре (к холодному/тёплому тону) - слабая,
+                    // чтобы не размывать чёткие цвета семейств плоской заливки в дымку.
+                    float wn = saturate((temp - 0.28) / 0.42);
+                    col = lerp(col, lerp(_TintCool.rgb, _TintWarm.rgb, wn), _TintStrength);
 
                     // рельефное затенение из градиента высоты соседних клеток + холодный лунный подсвет
                     float s = _ReliefStep;
@@ -139,6 +177,14 @@ Shader "WorldGen/MapTerrain"
                           + waterAt(wuv + float2(0, t.y)) + waterAt(wuv - float2(0, t.y));
                     if (w > 0) col = lerp(col, _OutlineColor.rgb, 0.7);
                 }
+
+                // зерно (суша и вода)
+                col += (vnoise(i.uv * _GrainScale) - 0.5) * _GrainAmount;
+
+                // виньетка - затемнение к краям карты (суша и вода)
+                float2 dc = i.uv - 0.5;
+                float vign = 1.0 - saturate(length(dc) / 0.5) * saturate(_Darkness / 100.0);
+                col *= vign;
 
                 return fixed4(col, 1);
             }

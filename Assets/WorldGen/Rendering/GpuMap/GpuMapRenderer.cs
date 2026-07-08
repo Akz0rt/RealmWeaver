@@ -13,6 +13,7 @@ namespace WorldGen.Rendering.GpuMap
     {
         public Material Material { get; private set; }
         Texture2D cellIdTex;
+        Texture2D coastDistTex;
         CellAttributeTexture attr;
         MeshRenderer meshRenderer;
 
@@ -31,6 +32,13 @@ namespace WorldGen.Rendering.GpuMap
             if (cellIdTex != null) Destroy(cellIdTex);
             cellIdTex = CellIdTexture.Build(lookup, texW, texH, mapW, mapH);
             attr = new CellAttributeTexture(cells);
+
+            // Поле дистанции берега (для плавной глубины воды + свечения). Строится из cell-id.
+            if (coastDistTex != null) Destroy(coastDistTex);
+            var waterIds = new HashSet<int>();
+            foreach (var c in cells)
+                if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
+            coastDistTex = CoastDistanceTexture.Build(cellIdTex, cid => waterIds.Contains(cid), texW, texH, 96f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
             Material.SetTexture("_AttrTex", attr.Texture);
@@ -54,11 +62,34 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetFloat("_ReliefStep", 0.012f);
             Material.SetFloat("_LightAzimuth", 315f);
             Material.SetFloat("_ReliefAmbient", 0.5f);
-            Material.SetFloat("_ColdLight", 0.25f);
-            var light = MapPalette.GetSlotColor(theme, PaletteSlot.Light);
-            Material.SetColor("_LightColor", new Color(light.r / 255f, light.g / 255f, light.b / 255f, 1f));
+            Material.SetFloat("_ColdLight", 0.12f);
+            SetSlot("_LightColor", theme, PaletteSlot.Light);
+
+            // Тонировка по температуре / цвета воды / зерно / виньетка (Task 7).
+            SetSlot("_TintCool", theme, PaletteSlot.TintCool);
+            SetSlot("_TintWarm", theme, PaletteSlot.TintWarm);
+            SetSlot("_SeaShallow", theme, PaletteSlot.Shallow);
+            SetSlot("_SeaDeep", theme, PaletteSlot.Abyss);
+            SetSlot("_LakeShallow", theme, PaletteSlot.LakeS);
+            SetSlot("_LakeDeep", theme, PaletteSlot.LakeD);
+            Material.SetFloat("_Darkness", 72f);
+            Material.SetFloat("_GrainAmount", 0.03f);
+            Material.SetFloat("_GrainScale", 700f);
+            Material.SetFloat("_TintStrength", 0.1f);
+
+            // Берег: плавная глубина воды + свечение (Task 8).
+            Material.SetTexture("_CoastTex", coastDistTex);
+            Material.SetFloat("_WaterDepthRange", 70f);
+            Material.SetFloat("_GlowWidth", 16f);
+            SetSlot("_GlowColor", theme, PaletteSlot.Glow);
 
             UploadPalette(theme);
+        }
+
+        void SetSlot(string uniform, MapPaletteTheme theme, PaletteSlot slot)
+        {
+            Color32 c = MapPalette.GetSlotColor(theme, slot);
+            Material.SetColor(uniform, new Color(c.r / 255f, c.g / 255f, c.b / 255f, 1f));
         }
 
         void UploadPalette(MapPaletteTheme theme)
@@ -86,6 +117,7 @@ namespace WorldGen.Rendering.GpuMap
         void OnDestroy()
         {
             if (cellIdTex != null) Destroy(cellIdTex);
+            if (coastDistTex != null) Destroy(coastDistTex);
             if (Material != null) Destroy(Material);
         }
     }
