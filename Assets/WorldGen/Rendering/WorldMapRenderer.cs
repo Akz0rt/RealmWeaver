@@ -2459,7 +2459,7 @@ namespace WorldGen.Rendering
             // CPU-запечка ниже - фолбэк при useGpuRenderer=false.
             if (useGpuRenderer && gpuRenderer != null)
             {
-                gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners);
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
                 return;
             }
@@ -2617,7 +2617,7 @@ namespace WorldGen.Rendering
             // GPU-путь: генерация рисуется шейдером; тяжёлый cell-id бэйк идёт чанково с прогрессом.
             if (useGpuRenderer && gpuRenderer != null)
             {
-                var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, onProgress);
+                var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners, onProgress);
                 while (e.MoveNext()) yield return e.Current;
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
                 yield break;

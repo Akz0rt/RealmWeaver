@@ -23,6 +23,14 @@ namespace WorldGen.Rendering.GpuMap
         bool coastDirty;   // во время мазка менялась топология суша/вода → берег пересчитать на отпускании
         const int CoastDownscale = 4;  // поле дистанции считается в 1/4 разрешения (гладкое, билинейное)
 
+        RegionLabelTexture labelTex;
+        int[] familyLabel, bandLabel;
+        List<Corner> bakedCorners;
+        IReadOnlyDictionary<int, VoronoiCell> bakedCellById;
+        int bakedBands = 5;
+        int bakedSmoothing = 2;
+        float bakedDecimation = 0f;
+
         void EnsureMaterial()
         {
             if (Material != null) return;
@@ -32,18 +40,19 @@ namespace WorldGen.Rendering.GpuMap
         }
 
         public void BuildAll(IReadOnlyList<VoronoiCell> cells, NearestCellLookup lookup,
-            int texW, int texH, float mapW, float mapH, MapPaletteTheme theme)
+            int texW, int texH, float mapW, float mapH, MapPaletteTheme theme, IReadOnlyList<Corner> corners)
         {
             EnsureMaterial();
             if (cellIdTex != null) Destroy(cellIdTex);
             cellIdTex = CellIdTexture.Build(lookup, texW, texH, mapW, mapH);
-            FinishBuild(cells, texW, texH, mapW, mapH, theme);
+            FinishBuild(cells, texW, texH, mapW, mapH, theme, corners);
         }
 
         /// <summary>Как BuildAll, но тяжёлый бейк cell-id идёт чанково с прогрессом - экран генерации
         /// не подвисает. Остальное (атрибуты/берег/uniform'ы) быстрое и делается разом в конце.</summary>
         public System.Collections.IEnumerator BuildAllStepped(IReadOnlyList<VoronoiCell> cells, NearestCellLookup lookup,
-            int texW, int texH, float mapW, float mapH, MapPaletteTheme theme, System.Action<float> onProgress)
+            int texW, int texH, float mapW, float mapH, MapPaletteTheme theme, IReadOnlyList<Corner> corners,
+            System.Action<float> onProgress)
         {
             EnsureMaterial();
             if (cellIdTex != null) Destroy(cellIdTex);
@@ -51,10 +60,11 @@ namespace WorldGen.Rendering.GpuMap
             var e = CellIdTexture.BuildStepped(lookup, texW, texH, mapW, mapH, t => built = t, onProgress);
             while (e.MoveNext()) yield return e.Current;
             cellIdTex = built;
-            FinishBuild(cells, texW, texH, mapW, mapH, theme);
+            FinishBuild(cells, texW, texH, mapW, mapH, theme, corners);
         }
 
-        void FinishBuild(IReadOnlyList<VoronoiCell> cells, int texW, int texH, float mapW, float mapH, MapPaletteTheme theme)
+        void FinishBuild(IReadOnlyList<VoronoiCell> cells, int texW, int texH, float mapW, float mapH, MapPaletteTheme theme,
+            IReadOnlyList<Corner> corners)
         {
             if (attr != null && attr.Texture != null) Destroy(attr.Texture); // не течём при перегенерации
             attr = new CellAttributeTexture(cells);
@@ -66,6 +76,21 @@ namespace WorldGen.Rendering.GpuMap
             var idPixels = cellIdTex.GetPixels();
             cellIdArray = new int[idPixels.Length];
             for (int i = 0; i < idPixels.Length; i++) cellIdArray[i] = Mathf.RoundToInt(idPixels[i].r);
+
+            // Сглаженные области (семейство+пояс) → RG8 label-текстура. Шейдер её пока не читает
+            // (Task 4) - здесь только данные, чтобы Task 4 могла включить чтение без пере-бейка.
+            bakedCorners = new List<Corner>(corners);
+            bakedCellById = BuildCellById(cells);
+            int labelLen = texW * texH;
+            familyLabel = new int[labelLen];
+            bandLabel = new int[labelLen];
+            RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel,
+                texW, texH, mapW, mapH, bakedSmoothing, bakedDecimation, bakedBands, 0, 0, texW, texH);
+            if (labelTex == null) labelTex = new RegionLabelTexture();
+            labelTex.Build(familyLabel, bandLabel, texW, texH);
+            Material.SetTexture("_LabelTex", labelTex.Texture);
+            Material.SetVector("_LabelTexel", labelTex.Texel);
+
             waterIds.Clear();
             foreach (var c in cells)
                 if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
@@ -181,12 +206,20 @@ namespace WorldGen.Rendering.GpuMap
             coastDirty = false;
         }
 
+        static IReadOnlyDictionary<int, VoronoiCell> BuildCellById(IReadOnlyList<VoronoiCell> cells)
+        {
+            var d = new Dictionary<int, VoronoiCell>(cells.Count);
+            foreach (var c in cells) d[c.Id] = c;
+            return d;
+        }
+
         void OnDestroy()
         {
             if (cellIdTex != null) Destroy(cellIdTex);
             if (coastDistTex != null) Destroy(coastDistTex);
             if (attr != null && attr.Texture != null) Destroy(attr.Texture);
             if (Material != null) Destroy(Material);
+            labelTex?.Destroy();
         }
     }
 }
