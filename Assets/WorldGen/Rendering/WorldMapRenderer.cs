@@ -27,9 +27,9 @@ namespace WorldGen.Rendering
 
         [Header("Island Shape (форма материка)")]
         [Tooltip("Больше значение = материк занимает больше площади карты, берег обрывается резче у самого края.")]
-        public float falloffPower = 2.5f;
-        [Tooltip("Доля расстояния от центра карты, внутри которой материк гарантированно не топится falloff'ом. Стандартное значение 0.5.")]
-        public float innerRadius = 0.5f;
+        public float falloffPower = 1.8f;
+        [Tooltip("Доля расстояния от центра карты, внутри которой материк гарантированно не топится falloff'ом. Стандартное значение 0.2.")]
+        public float innerRadius = 0.2f;
         [Tooltip("Порог island-shape функции, ниже которого corner считается водой.")]
         public float seaLevel = 0.35f;
         [Tooltip("Минимальный размер связной группы corners, чтобы остаться озером. Больше значение = меньше озёр. 0 или 1 отключает фильтрацию.")]
