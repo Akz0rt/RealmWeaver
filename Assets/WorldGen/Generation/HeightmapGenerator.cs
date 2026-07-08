@@ -16,8 +16,10 @@ namespace WorldGen.Generation
         readonly FastNoiseLite baseNoise;
         readonly FastNoiseLite warpNoise;
         readonly FastNoiseLite coastNoise;
-        readonly float mapWidth;
-        readonly float mapHeight;
+        readonly float coreWidth;
+        readonly float coreHeight;
+        readonly float originX;
+        readonly float originY;
         readonly float falloffPower;
         readonly float innerRadius;
         readonly float coastRoughness;
@@ -25,13 +27,15 @@ namespace WorldGen.Generation
         readonly float centerOffsetX;
         readonly float centerOffsetY;
 
-        public HeightmapGenerator(int seed, float mapWidth, float mapHeight, float baseFrequency = 0.01f, int octaves = 4,
-                                    float warpAmplitude = 40f, float warpFrequency = 0.01f, float falloffPower = 1.8f,
-                                    float innerRadius = 0.2f, float coastRoughness = 0.2f, float coastRoughnessFrequency = 0.004f,
-                                    float continentCenterJitter = 0.18f, float borderWaterMargin = 0.06f)
+        public HeightmapGenerator(int seed, float coreWidth, float coreHeight, float originX, float originY,
+                                  float baseFrequency = 0.01f, int octaves = 4, float warpAmplitude = 40f, float warpFrequency = 0.01f,
+                                  float falloffPower = 1.8f, float innerRadius = 0.2f, float coastRoughness = 0.2f,
+                                  float coastRoughnessFrequency = 0.004f, float continentCenterJitter = 0.18f, float borderWaterMargin = 0.06f)
         {
-            this.mapWidth = mapWidth;
-            this.mapHeight = mapHeight;
+            this.coreWidth = coreWidth;
+            this.coreHeight = coreHeight;
+            this.originX = originX;
+            this.originY = originY;
             this.falloffPower = falloffPower;
             this.innerRadius = innerRadius;
             this.coastRoughness = coastRoughness;
@@ -78,18 +82,18 @@ namespace WorldGen.Generation
         }
 
         /// <summary>
-        /// Радиальный falloff от смещённого центра материка + береговой шум, плюс гарантированная
-        /// водная кромка у самой границы карты.
+        /// Радиальный falloff от смещённого центра материкового ЯДРА + береговой шум, плюс
+        /// гарантированная водная кромка у самой границы ЯДРА (кольцо padding'а снаружи ядра
+        /// тоже попадает под этот же водный "ров", т.к. |mnx|/|mny| там &gt; 1).
         /// </summary>
         float ComputeFalloff(float x, float y)
         {
-            // Координаты относительно ЦЕНТРА КАРТЫ - для гарантии водной кромки по периметру.
-            float mnx = 2f * (x / mapWidth) - 1f;
-            float mny = 2f * (y / mapHeight) - 1f;
+            // Координаты относительно ЦЕНТРА ЯДРА (материка), смещённого в домене на origin.
+            float mnx = 2f * ((x - originX) / coreWidth) - 1f;
+            float mny = 2f * ((y - originY) / coreHeight) - 1f;
             float border = System.MathF.Max(System.MathF.Abs(mnx), System.MathF.Abs(mny));
-            if (border > 1f - borderWaterMargin) return 1f; // гарантированный водный "ров" у края
+            if (border > 1f - borderWaterMargin) return 1f; // водная кромка по краю ЯДРА (кольцо снаружи — тоже океан)
 
-            // Координаты относительно смещённого ЦЕНТРА МАТЕРИКА - для радиальной формы.
             float nx = mnx - centerOffsetX;
             float ny = mny - centerOffsetY;
             float d = System.MathF.Sqrt(nx * nx + ny * ny);
@@ -99,8 +103,7 @@ namespace WorldGen.Generation
 
             if (d < innerRadius) return 0f;
 
-            float adjusted = (d - innerRadius) / (1f - innerRadius);
-            adjusted = System.Math.Clamp(adjusted, 0f, 1f);
+            float adjusted = System.Math.Clamp((d - innerRadius) / (1f - innerRadius), 0f, 1f);
             return System.MathF.Pow(adjusted, falloffPower);
         }
     }

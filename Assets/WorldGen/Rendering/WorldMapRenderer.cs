@@ -25,6 +25,11 @@ namespace WorldGen.Rendering
         public int lloydIterations = 2;
         public int numberOfRegions = 6;
 
+        [Header("Размер материка и океан вокруг")]
+        public float continentWidth = 750f;
+        public float continentHeight = 750f;
+        [Range(0f, 1f)] public float oceanPadding = 0.2f;
+
         [Header("Island Shape (форма материка)")]
         [Tooltip("Больше значение = материк занимает больше площади карты, берег обрывается резче у самого края.")]
         public float falloffPower = 1.8f;
@@ -37,7 +42,7 @@ namespace WorldGen.Rendering
 
         [Header("Форма материка")]
         [Range(0f, 0.5f)] public float coastRoughness = 0.2f;
-        [Range(0f, 0.2f)] public float continentCenterJitter = 0.18f;
+        [Range(0f, 0.2f)] public float continentCenterJitter = 0.01f;
 
         [Header("Elevation (Patel-стиль: distance-from-coast + шум)")]
         [Tooltip("Вес компонента 'расстояние от берега' в итоговой elevation. coastWeight + noiseWeight обычно должны давать ~1.0.")]
@@ -873,7 +878,7 @@ namespace WorldGen.Rendering
         [ContextMenu("Self-Test: Island Shape Ocean Border")]
         public void SelfTestIslandShapeOceanBorder()
         {
-            var gen = new WorldGen.Generation.HeightmapGenerator(seed: 7, mapWidth: 500f, mapHeight: 500f);
+            var gen = new WorldGen.Generation.HeightmapGenerator(seed: 7, coreWidth: 500f, coreHeight: 500f, originX: 0f, originY: 0f);
             const float seaLevel = 0.35f;
 
             // Все 4 середины рёбер попадают в borderWaterMargin (0.06) → falloff=1 → высота < 0 < seaLevel.
@@ -885,13 +890,34 @@ namespace WorldGen.Rendering
 
             // Детерминизм: один сид → один результат.
             float a = gen.GetHeight(123f, 234f);
-            var gen2 = new WorldGen.Generation.HeightmapGenerator(seed: 7, mapWidth: 500f, mapHeight: 500f);
+            var gen2 = new WorldGen.Generation.HeightmapGenerator(seed: 7, coreWidth: 500f, coreHeight: 500f, originX: 0f, originY: 0f);
             bool deterministic = gen2.GetHeight(123f, 234f) == a;
 
             bool ok = edgesWater && deterministic;
             Debug.Log(ok
                 ? "Self-Test Island Shape Ocean Border: PASS"
                 : $"Self-Test Island Shape Ocean Border: FAIL (edgesWater={edgesWater}, deterministic={deterministic})");
+        }
+
+        [ContextMenu("Self-Test: Ocean Padding Frames Continent")]
+        public void SelfTestOceanPaddingFramesContinent()
+        {
+            // Материк 100×100, padding 0.25 → домен 150×150, origin (25,25), ядро [25..125].
+            float core = 100f, pad = 0.25f, origin = core * pad; // 25
+            var gen = new WorldGen.Generation.HeightmapGenerator(seed: 3, coreWidth: core, coreHeight: core, originX: origin, originY: origin);
+            const float seaLevel = 0.35f;
+
+            // Точка в кольце padding (за пределами ядра, напр. (10,75)) → falloff=1 → вода.
+            bool ringIsWater = gen.GetHeight(10f, 75f) < seaLevel && gen.GetHeight(75f, 10f) < seaLevel
+                            && gen.GetHeight(140f, 75f) < seaLevel && gen.GetHeight(75f, 140f) < seaLevel;
+            // Центр ядра (75,75) обычно суша (falloff 0 внутри innerRadius) — детерминизм проверяем повтором.
+            float c = gen.GetHeight(75f, 75f);
+            var gen2 = new WorldGen.Generation.HeightmapGenerator(seed: 3, coreWidth: core, coreHeight: core, originX: origin, originY: origin);
+            bool deterministic = gen2.GetHeight(75f, 75f) == c;
+
+            bool ok = ringIsWater && deterministic;
+            Debug.Log(ok ? "Self-Test Ocean Padding Frames Continent: PASS"
+                         : $"Self-Test Ocean Padding Frames Continent: FAIL (ring={ringIsWater}, det={deterministic})");
         }
 
         /// <summary>Маленький квадратный полигон вокруг site - нужен фикстурам самотестов, работающих
@@ -2149,11 +2175,20 @@ namespace WorldGen.Rendering
 
         GenerationParams BuildGenerationParams()
         {
+            // mapWidth/mapHeight — ПРОИЗВОДНЫЕ от стабильного continentWidth/Height + oceanPadding,
+            // пересчитываются здесь перед КАЖДОЙ генерацией. Рендер/камера/GPU-текстура кадрируют
+            // именно mapWidth/mapHeight (полный домен) - см. PositionCameraOverMap/BuildQuadMesh.
+            // Читать continentWidth (не mapWidth!) как вход - иначе домен рос бы от генерации к генерации.
+            mapWidth = continentWidth * (1f + 2f * oceanPadding);
+            mapHeight = continentHeight * (1f + 2f * oceanPadding);
             return new GenerationParams
             {
                 Seed = seed,
                 Width = mapWidth,
                 Height = mapHeight,
+                ContinentWidth = continentWidth,
+                ContinentHeight = continentHeight,
+                OceanPadding = oceanPadding,
                 MinPointDistance = minPointDistance,
                 LloydRelaxIterations = lloydIterations,
                 NumberOfRegions = numberOfRegions,

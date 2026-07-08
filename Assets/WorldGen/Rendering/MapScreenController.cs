@@ -59,9 +59,9 @@ namespace WorldGen.Rendering
 
             switch (uiParams.Size)
             {
-                case MapSizePreset.Small:  mapRenderer.mapWidth = 350f; mapRenderer.mapHeight = 350f; break;
-                case MapSizePreset.Medium: mapRenderer.mapWidth = 500f; mapRenderer.mapHeight = 500f; break;
-                case MapSizePreset.Large:  mapRenderer.mapWidth = 700f; mapRenderer.mapHeight = 700f; break;
+                case MapSizePreset.Small:  mapRenderer.continentWidth = 350f; mapRenderer.continentHeight = 350f; break;
+                case MapSizePreset.Medium: mapRenderer.continentWidth = 500f; mapRenderer.continentHeight = 500f; break;
+                case MapSizePreset.Large:  mapRenderer.continentWidth = 700f; mapRenderer.continentHeight = 700f; break;
             }
 
             switch (uiParams.Shape)
@@ -78,12 +78,19 @@ namespace WorldGen.Rendering
         {
             // Mirrors WorldMapRenderer.BuildGenerationParams()'s field-by-field copy, since
             // GenerateWorldStepped (unlike GenerateAndRender) is called directly here, not
-            // through WorldMapRenderer.
+            // through WorldMapRenderer. mapWidth/mapHeight are DERIVED from the stable
+            // continentWidth/Height + oceanPadding, recomputed here before every generation -
+            // see WorldMapRenderer.BuildGenerationParams for the runaway-safety rationale.
+            mapRenderer.mapWidth = mapRenderer.continentWidth * (1f + 2f * mapRenderer.oceanPadding);
+            mapRenderer.mapHeight = mapRenderer.continentHeight * (1f + 2f * mapRenderer.oceanPadding);
             return new GenerationParams
             {
                 Seed = mapRenderer.seed,
                 Width = mapRenderer.mapWidth,
                 Height = mapRenderer.mapHeight,
+                ContinentWidth = mapRenderer.continentWidth,
+                ContinentHeight = mapRenderer.continentHeight,
+                OceanPadding = mapRenderer.oceanPadding,
                 MinPointDistance = mapRenderer.minPointDistance,
                 LloydRelaxIterations = mapRenderer.lloydIterations,
                 NumberOfRegions = mapRenderer.numberOfRegions,
