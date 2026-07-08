@@ -552,7 +552,7 @@ namespace WorldGen.Rendering
             bool didUndo = brushUndo.Undo();
             if (didUndo)
             {
-                RebakeAll();
+                RefreshAfterCellDataChange();
                 OnDisplayChanged?.Invoke();
             }
             return didUndo;
@@ -572,7 +572,7 @@ namespace WorldGen.Rendering
                 any |= brushUndo.Undo();
             if (any)
             {
-                RebakeAll();
+                RefreshAfterCellDataChange();
                 OnDisplayChanged?.Invoke();
             }
         }
@@ -2240,7 +2240,22 @@ namespace WorldGen.Rendering
         /// <summary>Перезапекает текстуру только вокруг клеток, затронутых кистью в последнем
         /// стемпе - вместо полного RebakeAll на каждое изменение (см. BrushToolController.ApplyStamp).
         /// Закрывает roadmap-пункт "кисть перекрашивает весь меш на каждое движение".</summary>
-        public void RebakeAffectedCells(IEnumerable<VoronoiCell> touchedCells) => RebakeRegion(touchedCells);
+        public void RebakeAffectedCells(IEnumerable<VoronoiCell> touchedCells)
+        {
+            // GPU: правка = обновить атрибуты изменённых клеток (перезалить крошечную текстуру) -
+            // бесплатно при любом размере кисти. CPU: частичный перезапек rect (фолбэк).
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(touchedCells); return; }
+            RebakeRegion(touchedCells);
+        }
+
+        /// <summary>Обновить отрисовку после изменения ДАННЫХ клеток без смены геометрии (undo,
+        /// climate/biome override многих клеток): GPU - дёшево через перезалив атрибутов, CPU - полный
+        /// перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
+        void RefreshAfterCellDataChange()
+        {
+            if (useGpuRenderer && gpuRenderer != null) gpuRenderer.UpdateCells(cells);
+            else RebakeAll();
+        }
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
         /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,
