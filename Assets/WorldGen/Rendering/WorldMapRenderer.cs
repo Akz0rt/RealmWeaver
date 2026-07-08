@@ -1543,6 +1543,32 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test GPU Attribute Texture: PASS" : $"Self-Test GPU Attribute Texture: FAIL (a0={a0}, b0={b0}, region={a1.r})");
         }
 
+        /// <summary>Регрессионный тест на баг RG16: SetPixels32/GetPixels32 поддерживаются только
+        /// RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются на прочих форматах. На старом RG16 этот
+        /// тест читал бы одни нули и падал; на исправленном RGBA32 круговой путь Build → GetPixels32
+        /// должен вернуть ровно те же family/band, что были закодированы.</summary>
+        [ContextMenu("Self-Test: Region Label Texture Round-Trip")]
+        public void SelfTestRegionLabelTextureRoundTrip()
+        {
+            int[] familyLabel = { 0, 3, 7, -1 };
+            int[] bandLabel   = { 1, 2, -1, 4 };
+            byte[] expectedR  = { 0, 3, 7, 255 }; // family, -1 → sentinel 255
+            byte[] expectedG  = { 1, 2, 255, 4 }; // band, -1 → sentinel 255
+
+            var labelTex = new WorldGen.Rendering.GpuMap.RegionLabelTexture();
+            labelTex.Build(familyLabel, bandLabel, 2, 2);
+            Color32[] got = labelTex.Texture.GetPixels32();
+
+            bool ok = got.Length == 4;
+            for (int i = 0; i < 4 && ok; i++)
+                ok &= got[i].r == expectedR[i] && got[i].g == expectedG[i];
+
+            labelTex.Destroy();
+            Debug.Log(ok
+                ? "Self-Test Region Label Texture Round-Trip: PASS"
+                : $"Self-Test Region Label Texture Round-Trip: FAIL (got=[{string.Join(", ", got.Select(p => $"({p.r},{p.g})"))}], expected=[{string.Join(", ", expectedR.Zip(expectedG, (r, g) => $"({r},{g})"))}])");
+        }
+
         /// <summary>Метки семейств/полос: сетка 5x5, рамка - океан, внутренний 3x3 - суша; левый
         /// столбец внутреннего блока (c=1) - Snow (высота 0.9 → верхняя полоса), правые два (c=2,3) -
         /// Grassland (высота 0.1 → нижняя полоса). Оба региона окружены водой/друг другом → петли

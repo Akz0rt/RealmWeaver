@@ -2,7 +2,9 @@ using UnityEngine;
 
 namespace WorldGen.Rendering.GpuMap
 {
-    /// <summary>RG8-текстура сглаженных областей: R = familyLabel, G = bandLabel (индексы 0..254).
+    /// <summary>RGBA32-текстура сглаженных областей: R = familyLabel, G = bandLabel (индексы 0..254),
+    /// B/A не используются. RGBA32 обязателен: SetPixels32/GetPixels32 поддерживают только
+    /// RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются на прочих форматах (напр. RG16).
     /// Значение 255 = sentinel "нет метки" (клин тройного стыка) → шейдер откатывается к family/band
     /// из attribute-текстуры. Point-фильтр, разрешение = cell-id.</summary>
     public class RegionLabelTexture
@@ -18,7 +20,7 @@ namespace WorldGen.Rendering.GpuMap
         {
             texW = w; texH = h;
             if (Texture != null) Object.Destroy(Texture);
-            Texture = new Texture2D(w, h, TextureFormat.RG16, false)
+            Texture = new Texture2D(w, h, TextureFormat.RGBA32, false)
             { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
             pixels = new Color32[w * h];
             for (int i = 0; i < pixels.Length; i++) pixels[i] = Encode(familyLabel[i], bandLabel[i]);
