@@ -256,12 +256,12 @@ namespace WorldGen.Rendering.MapRaster
                         // при выключенном слое трассировать незачем (метка не читается).
                         if (config.ShowBiomeLayer)
                             RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
-                                buffers.FamilyLabel, FamilyCategoryOf, FamilyPriority, rectX, rectY, rectW, rectH);
+                                buffers.FamilyLabel, RegionCategories.FamilyCategoryOf, RegionCategories.FamilyPriority, rectX, rectY, rectW, rectH);
                         if (config.ShowReliefLayer && config.ElevationBands > 1)
                         {
                             int bands = config.ElevationBands;
                             RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
-                                buffers.BandLabel, c => BandCategoryOf(c, bands), BandPriorityAscending(bands),
+                                buffers.BandLabel, c => RegionCategories.BandCategoryOf(c, bands), RegionCategories.BandPriorityAscending(bands),
                                 rectX, rectY, rectW, rectH);
                         }
                     }
@@ -591,33 +591,6 @@ namespace WorldGen.Rendering.MapRaster
             }
 
             return ClampColor32(r, g, b);
-        }
-
-        static bool IsLandCell(VoronoiCell c) => !(c.EffectiveIsOcean || c.EffectiveIsLake);
-
-        /// <summary>Категория "семейство биома" для сглаживания: индекс BiomeFamily суши, -1 для воды
-        /// (регионы семейств ограничены сушей; Sea/Lake никогда не попадают в метку).</summary>
-        static int FamilyCategoryOf(VoronoiCell c) => IsLandCell(c) ? (int)MapPalette.GetFamily(c.Biome) : -1;
-
-        /// <summary>Категория "полоса высоты" для сглаживания: индекс полосы суши, -1 для воды.</summary>
-        static int BandCategoryOf(VoronoiCell c, int bands) =>
-            IsLandCell(c) ? Mathf.Clamp((int)(c.EffectiveElevation * bands), 0, bands - 1) : -1;
-
-        /// <summary>Порядок приоритета семейств при композитинге масок (младший → старший; старший
-        /// рисуется позже и выигрывает перекрытия). Характерные семейства (скалы/снег) сверху, чтобы их
-        /// кривые читались чётко. См. design doc.</summary>
-        static readonly int[] FamilyPriority =
-        {
-            (int)BiomeFamily.Plains, (int)BiomeFamily.Moor, (int)BiomeFamily.Forest, (int)BiomeFamily.ForestWarm,
-            (int)BiomeFamily.Coast, (int)BiomeFamily.Tundra, (int)BiomeFamily.Highland, (int)BiomeFamily.Badlands, (int)BiomeFamily.Snow,
-        };
-
-        /// <summary>Порядок приоритета полос высоты: по возрастанию индекса (выше = сверху).</summary>
-        static int[] BandPriorityAscending(int bands)
-        {
-            var order = new int[bands];
-            for (int i = 0; i < bands; i++) order[i] = i;
-            return order;
         }
 
         /// <summary>Общий проход "сгладить категориальное поле над сушей": сбрасывает labelBuffer в rect

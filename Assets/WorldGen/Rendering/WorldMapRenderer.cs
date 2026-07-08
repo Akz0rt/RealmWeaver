@@ -2173,6 +2173,22 @@ namespace WorldGen.Rendering
                 : "Self-Test Flat Fill Coastal Fringe No Crash: FAIL (плоская раскраска упала на пикселе-суше с водной ближайшей клеткой - Sea/Lake нет плоского слота)");
         }
 
+        [ContextMenu("Self-Test: Region Categories")]
+        public void SelfTestRegionCategories()
+        {
+            var land = new VoronoiCell(0, new System.Numerics.Vector2(0,0)) { IsOcean = false, Biome = Biome.Grassland, Height = 0.42f };
+            var sea  = new VoronoiCell(1, new System.Numerics.Vector2(1,0)) { IsOcean = true,  Biome = Biome.Ocean };
+            var RC = typeof(WorldGen.Rendering.MapRaster.RegionCategories);
+            bool ok =
+                WorldGen.Rendering.MapRaster.RegionCategories.IsLandCell(land) &&
+                !WorldGen.Rendering.MapRaster.RegionCategories.IsLandCell(sea) &&
+                WorldGen.Rendering.MapRaster.RegionCategories.FamilyCategoryOf(sea) == -1 &&
+                WorldGen.Rendering.MapRaster.RegionCategories.FamilyCategoryOf(land) == (int)WorldGen.Rendering.MapRaster.MapPalette.GetFamily(Biome.Grassland) &&
+                WorldGen.Rendering.MapRaster.RegionCategories.BandCategoryOf(land, 5) == Mathf.Clamp((int)(0.42f * 5), 0, 4) &&
+                WorldGen.Rendering.MapRaster.RegionCategories.BandCategoryOf(sea, 5) == -1;
+            Debug.Log(ok ? "Self-Test Region Categories: PASS" : "Self-Test Region Categories: FAIL");
+        }
+
         GenerationParams BuildGenerationParams()
         {
             // mapWidth/mapHeight — ПРОИЗВОДНЫЕ от стабильного continentWidth/Height + oceanPadding,
