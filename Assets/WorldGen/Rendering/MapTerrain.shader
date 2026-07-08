@@ -57,6 +57,9 @@ Shader "WorldGen/MapTerrain"
             float _GlowWidth;       // px ширины ореола берега (сторона воды)
             float4 _GlowColor;
 
+            float _ShowBiome;   // 1 = цвет семейства, 0 = нейтральная база (слой "Биом/климат")
+            float _ShowRelief;  // 1 = ступени высоты + hillshade, 0 = плоско (слой "Рельеф")
+
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
             v2f vert (appdata_base v)
@@ -144,34 +147,40 @@ Shader "WorldGen/MapTerrain"
                 }
                 else
                 {
-                    col = _Palette[family].rgb;
+                    // слой "Биом": цвет семейства или нейтральная база (пергамент)
+                    col = (_ShowBiome > 0.5) ? _Palette[family].rgb : float3(0.82, 0.78, 0.65);
 
-                    // ступень высоты (выше = светлее по дискретным полосам)
-                    int bands = max(2, (int)_ElevBands);
-                    int band = clamp((int)(elev * bands), 0, bands - 1);
-                    float bt = band / max(1.0, (float)(bands - 1));
-                    col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+                    // слой "Рельеф": ступень высоты (выше = светлее по дискретным полосам)
+                    if (_ShowRelief > 0.5)
+                    {
+                        int bands = max(2, (int)_ElevBands);
+                        int band = clamp((int)(elev * bands), 0, bands - 1);
+                        float bt = band / max(1.0, (float)(bands - 1));
+                        col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+                    }
 
-                    // региональная тонировка по температуре (к холодному/тёплому тону) - слабая,
-                    // чтобы не размывать чёткие цвета семейств плоской заливки в дымку.
+                    // региональная тонировка по температуре (слабая) - всегда
                     float wn = saturate((temp - 0.28) / 0.42);
                     col = lerp(col, lerp(_TintCool.rgb, _TintWarm.rgb, wn), _TintStrength);
 
-                    // рельефное затенение из градиента высоты соседних клеток + холодный лунный подсвет
-                    float s = _ReliefStep;
-                    float eL = attr(cellAt(wuv - float2(s, 0)), 0).g;
-                    float eR = attr(cellAt(wuv + float2(s, 0)), 0).g;
-                    float eD = attr(cellAt(wuv - float2(0, s)), 0).g;
-                    float eU = attr(cellAt(wuv + float2(0, s)), 0).g;
-                    float gx = (eL - eR) * 0.5, gy = (eD - eU) * 0.5;
-                    float3 nrm = normalize(float3(-gx * _ReliefStrength, 1, -gy * _ReliefStrength));
-                    float az = radians(_LightAzimuth);
-                    float3 L = normalize(float3(sin(az), 1, cos(az)));
-                    float ndotl = saturate(dot(nrm, L));
-                    float bright = lerp(_ReliefAmbient, 1.0, ndotl);
-                    col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
+                    // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
+                    if (_ShowRelief > 0.5)
+                    {
+                        float s = _ReliefStep;
+                        float eL = attr(cellAt(wuv - float2(s, 0)), 0).g;
+                        float eR = attr(cellAt(wuv + float2(s, 0)), 0).g;
+                        float eD = attr(cellAt(wuv - float2(0, s)), 0).g;
+                        float eU = attr(cellAt(wuv + float2(0, s)), 0).g;
+                        float gx = (eL - eR) * 0.5, gy = (eD - eU) * 0.5;
+                        float3 nrm = normalize(float3(-gx * _ReliefStrength, 1, -gy * _ReliefStrength));
+                        float az = radians(_LightAzimuth);
+                        float3 L = normalize(float3(sin(az), 1, cos(az)));
+                        float ndotl = saturate(dot(nrm, L));
+                        float bright = lerp(_ReliefAmbient, 1.0, ndotl);
+                        col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
+                    }
 
-                    // тёмная обводка берега (сторона суши)
+                    // тёмная обводка берега (сторона суши) - всегда
                     float2 t = _CellIdTexel * 2.0;
                     int w = waterAt(wuv + float2(t.x, 0)) + waterAt(wuv - float2(t.x, 0))
                           + waterAt(wuv + float2(0, t.y)) + waterAt(wuv - float2(0, t.y));

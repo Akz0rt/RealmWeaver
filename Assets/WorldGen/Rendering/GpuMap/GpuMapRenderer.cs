@@ -95,7 +95,18 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetFloat("_GlowWidth", 16f);
             SetSlot("_GlowColor", theme, PaletteSlot.Glow);
 
+            Material.SetFloat("_ShowBiome", 1f);
+            Material.SetFloat("_ShowRelief", 1f);
+
             UploadPalette(theme);
+        }
+
+        /// <summary>Слои Биом/Рельеф - мгновенно через uniform (без пере-бейка). См. шейдер _ShowBiome/_ShowRelief.</summary>
+        public void SetLayers(bool showBiome, bool showRelief)
+        {
+            if (Material == null) return;
+            Material.SetFloat("_ShowBiome", showBiome ? 1f : 0f);
+            Material.SetFloat("_ShowRelief", showRelief ? 1f : 0f);
         }
 
         void SetSlot(string uniform, MapPaletteTheme theme, PaletteSlot slot)

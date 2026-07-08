@@ -2190,14 +2190,23 @@ namespace WorldGen.Rendering
         public void SetShowBiomeLayer(bool on)
         {
             showBiomeLayer = on;
-            if (cells != null) RebakeAll();
+            if (cells != null)
+            {
+                // GPU: мгновенно через uniform; CPU: полный перезапек (фолбэк).
+                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                else RebakeAll();
+            }
             OnDisplayChanged?.Invoke();
         }
 
         public void SetShowReliefLayer(bool on)
         {
             showReliefLayer = on;
-            if (cells != null) RebakeAll();
+            if (cells != null)
+            {
+                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                else RebakeAll();
+            }
             OnDisplayChanged?.Invoke();
         }
 
@@ -2237,6 +2246,7 @@ namespace WorldGen.Rendering
             if (useGpuRenderer && gpuRenderer != null)
             {
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
                 return;
             }
 
@@ -2395,6 +2405,7 @@ namespace WorldGen.Rendering
             if (useGpuRenderer && gpuRenderer != null)
             {
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
                 onProgress?.Invoke(1f);
                 yield break;
             }
