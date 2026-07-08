@@ -30,7 +30,7 @@ Shader "WorldGen/MapTerrain"
             float4 _OutlineColor;
             float2 _CellIdTexel;   // (1/texW, 1/texH) - шаг соседа для обводки, независим от зума
 
-            sampler2D _LabelTex;   // RG8: R=familyLabel, G=bandLabel (255 = нет метки)
+            sampler2D _LabelTex;   // R=familyLabel, G=bandLabel (255 = нет метки), B=сглаженная маска суша/вода
             float2 _LabelTexel;
 
             float _ElevBands;
@@ -87,6 +87,12 @@ Shader "WorldGen/MapTerrain"
                 return int2((int)(l.x + 0.5), (int)(l.y + 0.5));
             }
 
+            // Сглаженная маска суша/вода в пикселе (B-канал, LINEAR-текстура: суша=255→1.0, вода=0→0.0).
+            bool landAt(float2 uv)
+            {
+                return tex2Dlod(_LabelTex, float4(uv, 0, 0)).b > 0.5;
+            }
+
             float hash21(float2 p)
             {
                 p = frac(p * float2(123.34, 345.45));
@@ -133,13 +139,18 @@ Shader "WorldGen/MapTerrain"
                 float temp = a.b;
                 float3 col;
 
-                if (water > 0)
+                bool renderWater = !landAt(i.uv); // сглаженный берег (baked-маска), а не гранёная per-cell attr.a
+
+                if (renderWater)
                 {
                     // Вода: плавная глубина по полю дистанции берега (мелко у берега → глубоко вдали).
+                    // wt: если сглаженная маска говорит "вода", а per-cell attr - суша (тонкая полоса
+                    // расхождения на границе сглаживания), по умолчанию считаем океаном.
+                    int wt = (water > 0) ? water : 1;
                     float cd = tex2Dlod(_CoastTex, float4(wuv, 0, 0)).r;
                     float depth = saturate(cd / max(1.0, _WaterDepthRange));
-                    float3 shallow = (water == 2) ? _LakeShallow.rgb : _SeaShallow.rgb;
-                    float3 deep    = (water == 2) ? _LakeDeep.rgb    : _SeaDeep.rgb;
+                    float3 shallow = (wt == 2) ? _LakeShallow.rgb : _SeaShallow.rgb;
+                    float3 deep    = (wt == 2) ? _LakeDeep.rgb    : _SeaDeep.rgb;
                     col = lerp(shallow, deep, depth);
                     col += (fbm(wuv * 60.0) - 0.5) * 0.04;
 
@@ -184,10 +195,11 @@ Shader "WorldGen/MapTerrain"
                         col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
                     }
 
-                    // тёмная обводка берега (сторона суши) - всегда
+                    // тёмная обводка берега (сторона суши) - всегда; по сглаженной маске суша/вода,
+                    // чтобы обводка следовала гладкому берегу, а не гранёным клеткам.
                     float2 t = _CellIdTexel * 2.0;
-                    int w = waterAt(wuv + float2(t.x, 0)) + waterAt(wuv - float2(t.x, 0))
-                          + waterAt(wuv + float2(0, t.y)) + waterAt(wuv - float2(0, t.y));
+                    int w = (!landAt(i.uv + float2(t.x, 0)) ? 1 : 0) + (!landAt(i.uv - float2(t.x, 0)) ? 1 : 0)
+                          + (!landAt(i.uv + float2(0, t.y)) ? 1 : 0) + (!landAt(i.uv - float2(0, t.y)) ? 1 : 0);
                     if (w > 0) col = lerp(col, _OutlineColor.rgb, 0.7);
                 }
 

@@ -3,10 +3,11 @@ using UnityEngine;
 namespace WorldGen.Rendering.GpuMap
 {
     /// <summary>RGBA32-текстура сглаженных областей: R = familyLabel, G = bandLabel (индексы 0..254),
-    /// B/A не используются. RGBA32 обязателен: SetPixels32/GetPixels32 поддерживают только
-    /// RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются на прочих форматах (напр. RG16).
-    /// Значение 255 = sentinel "нет метки" (клин тройного стыка) → шейдер откатывается к family/band
-    /// из attribute-текстуры. Point-фильтр, разрешение = cell-id.</summary>
+    /// B = сглаженная маска суша/вода (255 = суша, 0 = вода), A не используется. RGBA32 обязателен:
+    /// SetPixels32/GetPixels32 поддерживают только RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются
+    /// на прочих форматах (напр. RG16). Значение 255 в R/G = sentinel "нет метки" (клин тройного
+    /// стыка) → шейдер откатывается к family/band из attribute-текстуры. Point-фильтр, разрешение =
+    /// cell-id.</summary>
     public class RegionLabelTexture
     {
         public Texture2D Texture { get; private set; }
@@ -16,7 +17,7 @@ namespace WorldGen.Rendering.GpuMap
 
         public Vector4 Texel => new Vector4(1f / texW, 1f / texH, 0, 0);
 
-        public void Build(int[] familyLabel, int[] bandLabel, int w, int h)
+        public void Build(int[] familyLabel, int[] bandLabel, bool[] isLandMask, int w, int h)
         {
             texW = w; texH = h;
             if (Texture != null) Object.Destroy(Texture);
@@ -27,20 +28,20 @@ namespace WorldGen.Rendering.GpuMap
             Texture = new Texture2D(w, h, TextureFormat.RGBA32, false, true)
             { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
             pixels = new Color32[w * h];
-            for (int i = 0; i < pixels.Length; i++) pixels[i] = Encode(familyLabel[i], bandLabel[i]);
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = Encode(familyLabel[i], bandLabel[i], isLandMask[i]);
             Apply();
         }
 
         /// <summary>Патч под-прямоугольника (кисть): пере-кодировать rect из label-буферов и
         /// загрузить на GPU только сам rect (без full-texture re-upload).</summary>
-        public void PatchRect(int[] familyLabel, int[] bandLabel, int rectX, int rectY, int rectW, int rectH)
+        public void PatchRect(int[] familyLabel, int[] bandLabel, bool[] isLandMask, int rectX, int rectY, int rectW, int rectH)
         {
             Color32[] rectPixels = new Color32[rectW * rectH];
             for (int y = 0; y < rectH; y++)
                 for (int x = 0; x < rectW; x++)
                 {
                     int gi = (rectY + y) * texW + (rectX + x);
-                    Color32 c = Encode(familyLabel[gi], bandLabel[gi]);
+                    Color32 c = Encode(familyLabel[gi], bandLabel[gi], isLandMask[gi]);
                     pixels[gi] = c;
                     rectPixels[y * rectW + x] = c;
                 }
@@ -48,11 +49,12 @@ namespace WorldGen.Rendering.GpuMap
             Texture.Apply(false);
         }
 
-        static Color32 Encode(int family, int band)
+        static Color32 Encode(int family, int band, bool isLand)
         {
             byte r = (byte)(family < 0 ? NoLabel : Mathf.Clamp(family, 0, 254));
             byte g = (byte)(band   < 0 ? NoLabel : Mathf.Clamp(band,   0, 254));
-            return new Color32(r, g, 0, 255);
+            byte b = (byte)(isLand ? 255 : 0);
+            return new Color32(r, g, b, 255);
         }
 
         public void Apply() { Texture.SetPixels32(pixels); Texture.Apply(false); }

@@ -1476,8 +1476,9 @@ namespace WorldGen.Rendering
 
             var familyLabel = new int[texW * texH];
             var bandLabel = new int[texW * texH];
+            var isLandMask = new bool[texW * texH];
             WorldGen.Rendering.MapRaster.RegionLabelBaker.BakeRect(
-                byId, corners, cellIdArray, familyLabel, bandLabel,
+                byId, corners, cellIdArray, familyLabel, bandLabel, isLandMask,
                 texW, texH, mapW, mapH, smoothing: 2, decimation: 0f, bands: 5,
                 rectX: 0, rectY: 0, rectW: texW, rectH: texH);
 
@@ -1494,11 +1495,15 @@ namespace WorldGen.Rendering
             bool snowBandOk = bandLabel[snowIdx] == 4;    // 0.9*5=4
             bool waterFamStaysUnset = familyLabel[waterIdx] == -1;
             bool waterBandStaysUnset = bandLabel[waterIdx] == -1;
+            bool grassIsLandOk = isLandMask[grassIdx];
+            bool snowIsLandOk = isLandMask[snowIdx];
+            bool waterIsLandOk = !isLandMask[waterIdx];
 
-            bool bakerOk = grassFamOk && snowFamOk && grassBandOk && snowBandOk && waterFamStaysUnset && waterBandStaysUnset;
+            bool bakerOk = grassFamOk && snowFamOk && grassBandOk && snowBandOk && waterFamStaysUnset && waterBandStaysUnset
+                           && grassIsLandOk && snowIsLandOk && waterIsLandOk;
             Debug.Log(bakerOk
                 ? "Self-Test Region Label Baker: PASS"
-                : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{plains}, snowFam={familyLabel[snowIdx]}/{snowFam}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]})");
+                : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{plains}, snowFam={familyLabel[snowIdx]}/{snowFam}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]}, grassIsLand={isLandMask[grassIdx]}, snowIsLand={isLandMask[snowIdx]}, waterIsLand={isLandMask[waterIdx]})");
         }
 
         [ContextMenu("Self-Test: GPU CellId Texture")]
@@ -1546,27 +1551,29 @@ namespace WorldGen.Rendering
         /// <summary>Регрессионный тест на баг RG16: SetPixels32/GetPixels32 поддерживаются только
         /// RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются на прочих форматах. На старом RG16 этот
         /// тест читал бы одни нули и падал; на исправленном RGBA32 круговой путь Build → GetPixels32
-        /// должен вернуть ровно те же family/band, что были закодированы.</summary>
+        /// должен вернуть ровно те же family/band/isLand, что были закодированы (R/G/B).</summary>
         [ContextMenu("Self-Test: Region Label Texture Round-Trip")]
         public void SelfTestRegionLabelTextureRoundTrip()
         {
             int[] familyLabel = { 0, 3, 7, -1 };
             int[] bandLabel   = { 1, 2, -1, 4 };
+            bool[] isLandMask = { true, true, false, false };
             byte[] expectedR  = { 0, 3, 7, 255 }; // family, -1 → sentinel 255
             byte[] expectedG  = { 1, 2, 255, 4 }; // band, -1 → sentinel 255
+            byte[] expectedB  = { 255, 255, 0, 0 }; // isLand → 255/0
 
             var labelTex = new WorldGen.Rendering.GpuMap.RegionLabelTexture();
-            labelTex.Build(familyLabel, bandLabel, 2, 2);
+            labelTex.Build(familyLabel, bandLabel, isLandMask, 2, 2);
             Color32[] got = labelTex.Texture.GetPixels32();
 
             bool ok = got.Length == 4;
             for (int i = 0; i < 4 && ok; i++)
-                ok &= got[i].r == expectedR[i] && got[i].g == expectedG[i];
+                ok &= got[i].r == expectedR[i] && got[i].g == expectedG[i] && got[i].b == expectedB[i];
 
             labelTex.Destroy();
             Debug.Log(ok
                 ? "Self-Test Region Label Texture Round-Trip: PASS"
-                : $"Self-Test Region Label Texture Round-Trip: FAIL (got=[{string.Join(", ", got.Select(p => $"({p.r},{p.g})"))}], expected=[{string.Join(", ", expectedR.Zip(expectedG, (r, g) => $"({r},{g})"))}])");
+                : $"Self-Test Region Label Texture Round-Trip: FAIL (got=[{string.Join(", ", got.Select(p => $"({p.r},{p.g},{p.b})"))}], expectedR=[{string.Join(",", expectedR)}], expectedG=[{string.Join(",", expectedG)}], expectedB=[{string.Join(",", expectedB)}])");
         }
 
         /// <summary>Метки семейств/полос: сетка 5x5, рамка - океан, внутренний 3x3 - суша; левый

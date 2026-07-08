@@ -4,13 +4,14 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering.MapRaster
 {
     /// <summary>Печёт сглаженные контуры "семейство биома" и "полоса высоты" в целочисленные
-    /// label-буферы (−1 = нет метки), rect-scoped. Трассировка через CoastlineContour, категории —
-    /// RegionCategories. GPU-путь упаковывает буферы в RG8-текстуру (RegionLabelTexture).</summary>
+    /// label-буферы (−1 = нет метки) плюс сглаженную маску суша/вода (тем же контуром, водный
+    /// предикат), rect-scoped. Трассировка через CoastlineContour, категории — RegionCategories.
+    /// GPU-путь упаковывает буферы в RGBA32-текстуру (RegionLabelTexture): R/G/B.</summary>
     public static class RegionLabelBaker
     {
         public static void BakeRect(
             IReadOnlyDictionary<int, VoronoiCell> cellById, List<Corner> corners, int[] cellIdArray,
-            int[] familyLabel, int[] bandLabel,
+            int[] familyLabel, int[] bandLabel, bool[] isLandMask,
             int texW, int texH, float mapW, float mapH,
             int smoothing, float decimation, int bands,
             int rectX, int rectY, int rectW, int rectH)
@@ -19,6 +20,13 @@ namespace WorldGen.Rendering.MapRaster
                 c => RegionCategories.FamilyCategoryOf(c), RegionCategories.FamilyPriority, rectX, rectY, rectW, rectH);
             BakeCategory(cellById, corners, cellIdArray, bandLabel, texW, texH, mapW, mapH, smoothing, decimation,
                 c => RegionCategories.BandCategoryOf(c, bands), RegionCategories.BandPriorityAscending(bands), rectX, rectY, rectW, rectH);
+
+            // Сглаженная маска суша/вода (тем же контуром) — для гладкого берега в шейдере.
+            for (int y = rectY; y < rectY + rectH; y++)
+                for (int x = rectX; x < rectX + rectW; x++)
+                    isLandMask[y * texW + x] = false;
+            var waterLoops = CoastlineContour.TraceSmoothedLoops(corners, cellById, smoothing, decimation);
+            CoastlineContour.RasterizeIsLand(waterLoops, isLandMask, texW, texH, mapW, mapH, rectX, rectY, rectW, rectH);
         }
 
         static void BakeCategory(

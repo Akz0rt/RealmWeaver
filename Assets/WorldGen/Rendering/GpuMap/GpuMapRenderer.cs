@@ -25,6 +25,7 @@ namespace WorldGen.Rendering.GpuMap
 
         RegionLabelTexture labelTex;
         int[] familyLabel, bandLabel;
+        bool[] isLandMask;
         List<Corner> bakedCorners;
         IReadOnlyDictionary<int, VoronoiCell> bakedCellById;
         int bakedBands = 5;
@@ -77,16 +78,18 @@ namespace WorldGen.Rendering.GpuMap
             cellIdArray = new int[idPixels.Length];
             for (int i = 0; i < idPixels.Length; i++) cellIdArray[i] = Mathf.RoundToInt(idPixels[i].r);
 
-            // Сглаженные области (семейство+пояс) → RG8 label-текстура; шейдер заливает сушу из неё.
+            // Сглаженные области (семейство+пояс+берег) → label-текстура; шейдер заливает сушу и
+            // решает суша/вода из неё (B-канал - сглаженная маска берега).
             bakedCorners = new List<Corner>(corners);
             bakedCellById = BuildCellById(cells);
             int labelLen = texW * texH;
             familyLabel = new int[labelLen];
             bandLabel = new int[labelLen];
-            RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel,
+            isLandMask = new bool[labelLen];
+            RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel, isLandMask,
                 texW, texH, mapW, mapH, bakedSmoothing, bakedDecimation, bakedBands, 0, 0, texW, texH);
             if (labelTex == null) labelTex = new RegionLabelTexture();
-            labelTex.Build(familyLabel, bandLabel, texW, texH);
+            labelTex.Build(familyLabel, bandLabel, isLandMask, texW, texH);
             Material.SetTexture("_LabelTex", labelTex.Texture);
             Material.SetVector("_LabelTexel", labelTex.Texel);
 
