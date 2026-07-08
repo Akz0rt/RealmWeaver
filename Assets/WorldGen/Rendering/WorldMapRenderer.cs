@@ -139,9 +139,10 @@ namespace WorldGen.Rendering
 
         [Header("Пляж (песок у берега)")]
         [Range(0f, 60f)] public float beachWidth = 20f;
-        [Range(0f, 1f)] public float beachStrength = 0.95f;
+        [Range(0f, 1f)] public float beachStrength = 0f;
         [Tooltip("Жёсткость перехода песок→биом: больше = резче/уже кайма, меньше = мягче/шире растворение.")]
         [Range(0.3f, 4f)] public float beachHardness = 2f;
+        public Color beachColor = new Color(0.85f, 0.78f, 0.6f, 1f);
 
         [Header("GPU-рендер")]
         [Tooltip("Рисовать карту GPU-шейдером (MapTerrain) вместо CPU-запечки текстуры. Выкл = старый CPU-путь (фолбэк).")]
@@ -211,7 +212,7 @@ namespace WorldGen.Rendering
         void OnValidate()
         {
             if (gpuRenderer != null && gpuRenderer.Material != null)
-                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
         }
 
         void OnDestroy()
@@ -2508,7 +2509,7 @@ namespace WorldGen.Rendering
                 gpuRenderer.SetContourParams(coastlineSmoothness, borderRoundness * minPointDistance);
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners);
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
-                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
                 return;
             }
 
@@ -2669,7 +2670,7 @@ namespace WorldGen.Rendering
                 var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners, onProgress);
                 while (e.MoveNext()) yield return e.Current;
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
-                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
                 yield break;
             }
 
