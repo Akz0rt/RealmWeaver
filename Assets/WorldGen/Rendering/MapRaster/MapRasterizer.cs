@@ -175,9 +175,10 @@ namespace WorldGen.Rendering.MapRaster
             MapRasterConfig config,
             Texture2D texture,
             MapRasterBuffers buffers,
-            int rectX, int rectY, int rectW, int rectH)
+            int rectX, int rectY, int rectW, int rectH,
+            bool recomputeCellId = true)
         {
-            BakeFieldsRect(cells, cellById, lookup, corners, displayMode, config, buffers, rectX, rectY, rectW, rectH);
+            BakeFieldsRect(cells, cellById, lookup, corners, displayMode, config, buffers, rectX, rectY, rectW, rectH, recomputeCellId);
             ColorAndVignetteRect(cellById, displayMode, config, texture, buffers, rectX, rectY, rectW, rectH);
         }
 
@@ -197,18 +198,27 @@ namespace WorldGen.Rendering.MapRaster
             MapDisplayMode displayMode,
             MapRasterConfig config,
             MapRasterBuffers buffers,
-            int rectX, int rectY, int rectW, int rectH)
+            int rectX, int rectY, int rectW, int rectH,
+            bool recomputeCellId = true)
         {
             int w = config.TexWidth, h = config.TexHeight;
             bool painted = displayMode == MapDisplayMode.Combined && config.SmoothBorders;
 
-            for (int y = rectY; y < rectY + rectH; y++)
+            // Проход 1 (cellId): пиксель -> ближайшая клетка. Сайты Вороного НЕ меняются при правке
+            // кистью (меняются только свойства клеток - высота/биом), поэтому при частичном
+            // перезапекании кистью карта cellId в rect уже верна с прошлого полного запека и
+            // пересчитывать её незачем (recomputeCellId=false). Полный запек и self-тесты (свежие
+            // буферы) всегда передают true. См. WorldMapRenderer.RebakeRegion.
+            if (recomputeCellId)
             {
-                for (int x = rectX; x < rectX + rectW; x++)
+                for (int y = rectY; y < rectY + rectH; y++)
                 {
-                    var point = PixelToSite(x, y, w, h, config.MapWidth, config.MapHeight);
-                    var nearest = lookup.FindNearest(point);
-                    buffers.CellId[y * w + x] = nearest.Id;
+                    for (int x = rectX; x < rectX + rectW; x++)
+                    {
+                        var point = PixelToSite(x, y, w, h, config.MapWidth, config.MapHeight);
+                        var nearest = lookup.FindNearest(point);
+                        buffers.CellId[y * w + x] = nearest.Id;
+                    }
                 }
             }
 

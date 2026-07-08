@@ -100,6 +100,35 @@ namespace WorldGen.Rendering.MapRaster
             return kept;
         }
 
+        /// <summary>Ребро контура, распрямлённое из петли (без модуло (i+1)%n на каждой строке).</summary>
+        struct ScanEdge { public float Ax, Ay, Bx, By; }
+
+        /// <summary>Распрямляет все рёбра петель в плоский список, ОТФИЛЬТРОВАННЫЙ по Y-полосе rect:
+        /// ребро включается только если его [minY,maxY] пересекает [yLo,yHi] (иначе оно не пересечёт
+        /// ни одну строку rect и его перебор на каждой строке - чистая трата). Консервативный
+        /// надмножество-фильтр: любое ребро, реально дающее пересечение на какой-либо строке rect,
+        /// гарантированно проходит (min<=worldY<=max для worldY в [yLo,yHi]), поэтому результат
+        /// побитово совпадает с перебором всех рёбер. Раньше все рёбра всех петель перебирались на
+        /// КАЖДОЙ строке - O(rectH × всех рёбер); Y-полоса rect обычно малая доля высоты карты.</summary>
+        static List<ScanEdge> EdgesOverlappingY(IReadOnlyList<List<Vector2>> loops, float yLo, float yHi)
+        {
+            var edges = new List<ScanEdge>();
+            foreach (var loop in loops)
+            {
+                int n = loop.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    var a = loop[i];
+                    var b = loop[(i + 1) % n];
+                    float minY = a.Y < b.Y ? a.Y : b.Y;
+                    float maxY = a.Y < b.Y ? b.Y : a.Y;
+                    if (maxY < yLo || minY > yHi) continue;
+                    edges.Add(new ScanEdge { Ax = a.X, Ay = a.Y, Bx = b.X, By = b.Y });
+                }
+            }
+            return edges;
+        }
+
         /// <summary>Растеризует набор замкнутых петель (см. TraceSmoothedLoops) в булеву маску
         /// even-odd правилом (стандартный scanline polygon fill) - петли озёр внутри острова
         /// автоматически становятся "дырками", без явного различения типа петли. Пишет ТОЛЬКО
@@ -110,6 +139,9 @@ namespace WorldGen.Rendering.MapRaster
             int texWidth, int texHeight, float mapWidth, float mapHeight,
             int rectX, int rectY, int rectW, int rectH)
         {
+            float yLo = (rectY + 0.5f) / texHeight * mapHeight;
+            float yHi = (rectY + rectH - 1 + 0.5f) / texHeight * mapHeight;
+            var edges = EdgesOverlappingY(loops, yLo, yHi);
             var crossings = new List<float>();
 
             for (int y = rectY; y < rectY + rectH; y++)
@@ -117,17 +149,11 @@ namespace WorldGen.Rendering.MapRaster
                 float worldY = (y + 0.5f) / texHeight * mapHeight;
 
                 crossings.Clear();
-                foreach (var loop in loops)
+                foreach (var e in edges)
                 {
-                    int n = loop.Count;
-                    for (int i = 0; i < n; i++)
-                    {
-                        var a = loop[i];
-                        var b = loop[(i + 1) % n];
-                        if ((a.Y <= worldY) == (b.Y <= worldY)) continue; // ребро не пересекает эту строку
-                        float t = (worldY - a.Y) / (b.Y - a.Y);
-                        crossings.Add(a.X + t * (b.X - a.X));
-                    }
+                    if ((e.Ay <= worldY) == (e.By <= worldY)) continue; // ребро не пересекает эту строку
+                    float t = (worldY - e.Ay) / (e.By - e.Ay);
+                    crossings.Add(e.Ax + t * (e.Bx - e.Ax));
                 }
                 crossings.Sort();
 
@@ -156,6 +182,9 @@ namespace WorldGen.Rendering.MapRaster
             int texWidth, int texHeight, float mapWidth, float mapHeight,
             int rectX, int rectY, int rectW, int rectH)
         {
+            float yLo = (rectY + 0.5f) / texHeight * mapHeight;
+            float yHi = (rectY + rectH - 1 + 0.5f) / texHeight * mapHeight;
+            var edges = EdgesOverlappingY(loops, yLo, yHi);
             var crossings = new List<float>();
 
             for (int y = rectY; y < rectY + rectH; y++)
@@ -163,17 +192,11 @@ namespace WorldGen.Rendering.MapRaster
                 float worldY = (y + 0.5f) / texHeight * mapHeight;
 
                 crossings.Clear();
-                foreach (var loop in loops)
+                foreach (var e in edges)
                 {
-                    int n = loop.Count;
-                    for (int i = 0; i < n; i++)
-                    {
-                        var a = loop[i];
-                        var b = loop[(i + 1) % n];
-                        if ((a.Y <= worldY) == (b.Y <= worldY)) continue;
-                        float t = (worldY - a.Y) / (b.Y - a.Y);
-                        crossings.Add(a.X + t * (b.X - a.X));
-                    }
+                    if ((e.Ay <= worldY) == (e.By <= worldY)) continue;
+                    float t = (worldY - e.Ay) / (e.By - e.Ay);
+                    crossings.Add(e.Ax + t * (e.Bx - e.Ax));
                 }
                 crossings.Sort();
 

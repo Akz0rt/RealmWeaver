@@ -2173,7 +2173,9 @@ namespace WorldGen.Rendering
             if (rw <= 0 || rh <= 0) return;
 
             var config = BuildRasterConfig();
-            MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, corners, displayMode, config, rasterTexture, rasterBuffers, rx, ry, rw, rh);
+            // Кисть не двигает сайты Вороного - карта cellId в rect уже верна с прошлого полного
+            // запека, поэтому recomputeCellId: false (см. BakeFieldsRect, убирает попиксельный FindNearest).
+            MapRasterizer.RebakeRegion(cells, cellById, nearestLookup, corners, displayMode, config, rasterTexture, rasterBuffers, rx, ry, rw, rh, recomputeCellId: false);
         }
 
         /// <summary>Перезапекает текстуру только вокруг клеток, затронутых кистью в последнем
