@@ -20,7 +20,11 @@ namespace WorldGen.Rendering.GpuMap
         {
             texW = w; texH = h;
             if (Texture != null) Object.Destroy(Texture);
-            Texture = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            // linear:true — это ДАННЫЕ (индексы), не цвет. Без него RGBA32 трактуется как sRGB, и
+            // шейдер при сэмплинге применяет sRGB→linear, раздавливая целочисленные метки (7→~1) →
+            // вся суша схлопывается в семейство 0/1 (Coast). GetPixels32 читает сырые байты (в обход
+            // sRGB), поэтому round-trip self-тест этого не ловит — только сэмплинг в шейдере.
+            Texture = new Texture2D(w, h, TextureFormat.RGBA32, false, true)
             { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
             pixels = new Color32[w * h];
             for (int i = 0; i < pixels.Length; i++) pixels[i] = Encode(familyLabel[i], bandLabel[i]);
