@@ -427,7 +427,7 @@ namespace WorldGen.Rendering
             WorldGenerator.RegenerateTemperature(cells, genParams, epicenters);
             lastGenParams = genParams;
 
-            RebakeAll(); // только перекрашиваем - геометрия и биомы не менялись
+            RefreshAfterCellDataChange(); // только перекрашиваем - геометрия не менялась
             OnDisplayChanged?.Invoke();
         }
 
@@ -444,7 +444,7 @@ namespace WorldGen.Rendering
             }
 
             CellOverrideService.ApplyClimateOverride(targetCells, temperature, moisture, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -454,7 +454,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ClearClimateOverride(targetCells, clearTemperature, clearMoisture, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -464,7 +464,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyElevationOverride(targetCells, elevation, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -474,7 +474,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyWaterOverride(targetCells, waterType, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             BuildBorders();
             OnDisplayChanged?.Invoke();
         }
@@ -485,7 +485,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ApplyBiomeOverride(targetCells, biome, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -495,7 +495,7 @@ namespace WorldGen.Rendering
             if (cells == null) return;
 
             CellOverrideService.ClearAllOverrides(targetCells, beachElevationThreshold);
-            RebakeAll();
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -2400,13 +2400,12 @@ namespace WorldGen.Rendering
             if (cells == null) yield break;
             ComputeTexSize(out texWidth, out texHeight);
 
-            // GPU-путь: генерация тоже рисуется шейдером. Тяжёлый cell-id бэйк синхронный (как и старый
-            // BakeFieldsRect ниже) - Task 12 сделает его чанковым с реальным прогресс-баром.
+            // GPU-путь: генерация рисуется шейдером; тяжёлый cell-id бэйк идёт чанково с прогрессом.
             if (useGpuRenderer && gpuRenderer != null)
             {
-                gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, onProgress);
+                while (e.MoveNext()) yield return e.Current;
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
-                onProgress?.Invoke(1f);
                 yield break;
             }
 
@@ -2662,13 +2661,13 @@ namespace WorldGen.Rendering
         /// а не через индекс треугольника (квад больше не хранит per-cell геометрию, см. BuildQuadMesh).</summary>
         public VoronoiCell GetCellUnderRay(Ray ray, float maxDistance = 2000f)
         {
-            if (cells == null || rasterBuffers == null) return null;
+            if (cells == null || nearestLookup == null) return null;
             if (meshCollider.Raycast(ray, out RaycastHit hit, maxDistance))
             {
-                int px = Mathf.Clamp(Mathf.FloorToInt(hit.textureCoord.x * texWidth), 0, texWidth - 1);
-                int py = Mathf.Clamp(Mathf.FloorToInt(hit.textureCoord.y * texHeight), 0, texHeight - 1);
-                int cellId = rasterBuffers.CellId[py * texWidth + px];
-                return GetCellById(cellId);
+                // Точка попадания → ближайшая клетка (та же, что в cell-id текстуре - её пекут из
+                // того же FindNearest). Работает и в GPU-режиме, где CPU-буфера rasterBuffers нет.
+                Vector3 local = transform.InverseTransformPoint(hit.point);
+                return nearestLookup.FindNearest(new System.Numerics.Vector2(local.x, local.z));
             }
             return null;
         }

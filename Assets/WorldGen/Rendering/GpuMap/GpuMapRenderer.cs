@@ -37,6 +37,25 @@ namespace WorldGen.Rendering.GpuMap
             EnsureMaterial();
             if (cellIdTex != null) Destroy(cellIdTex);
             cellIdTex = CellIdTexture.Build(lookup, texW, texH, mapW, mapH);
+            FinishBuild(cells, texW, texH, mapW, mapH, theme);
+        }
+
+        /// <summary>Как BuildAll, но тяжёлый бейк cell-id идёт чанково с прогрессом - экран генерации
+        /// не подвисает. Остальное (атрибуты/берег/uniform'ы) быстрое и делается разом в конце.</summary>
+        public System.Collections.IEnumerator BuildAllStepped(IReadOnlyList<VoronoiCell> cells, NearestCellLookup lookup,
+            int texW, int texH, float mapW, float mapH, MapPaletteTheme theme, System.Action<float> onProgress)
+        {
+            EnsureMaterial();
+            if (cellIdTex != null) Destroy(cellIdTex);
+            Texture2D built = null;
+            var e = CellIdTexture.BuildStepped(lookup, texW, texH, mapW, mapH, t => built = t, onProgress);
+            while (e.MoveNext()) yield return e.Current;
+            cellIdTex = built;
+            FinishBuild(cells, texW, texH, mapW, mapH, theme);
+        }
+
+        void FinishBuild(IReadOnlyList<VoronoiCell> cells, int texW, int texH, float mapW, float mapH, MapPaletteTheme theme)
+        {
             attr = new CellAttributeTexture(cells);
 
             // Поле дистанции берега (для плавной глубины воды + свечения). Строится из cell-id.
