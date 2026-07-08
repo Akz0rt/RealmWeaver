@@ -1437,6 +1437,70 @@ namespace WorldGen.Rendering
                 : $"Self-Test Rasterize Region Label Writes Inside Only: FAIL (insideSet={insideSet}, outsideKept={outsideKept})");
         }
 
+        /// <summary>RegionLabelBaker.BakeRect на raw-массивах (не через MapRasterizer/CPU-путь): сетка
+        /// 5x5, рамка - океан, внутренний 3x3 - суша; левый столбец (c=1) - Snow (высота 0.9 → верхняя
+        /// полоса), правые два (c=2,3) - Grassland (высота 0.1 → нижняя полоса). cellIdArray строится
+        /// как в GpuMapRenderer.FinishBuild (CellIdTexture.Build → GetPixels → округление .r).
+        /// Глубинный пиксель каждого региона получает верную метку семейства/полосы; водный пиксель
+        /// остаётся -1 (сентинел, не затёрт).</summary>
+        [ContextMenu("Self-Test: Region Label Baker")]
+        public void SelfTestRegionLabelBaker()
+        {
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < 5; r++)
+                for (int c = 0; c < 5; c++)
+                {
+                    bool land = c >= 1 && c <= 3 && r >= 1 && r <= 3;
+                    bool snow = land && c == 1;
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                    {
+                        Biome = !land ? Biome.Ocean : (snow ? Biome.Snow : Biome.Grassland),
+                        IsOcean = !land,
+                        Height = snow ? 0.9f : 0.1f,
+                    };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var byId = cells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            const int texW = 50, texH = 50;
+            const float mapW = 5f, mapH = 5f;
+            var cellIdTex = WorldGen.Rendering.GpuMap.CellIdTexture.Build(lookup, texW, texH, mapW, mapH);
+            var idPixels = cellIdTex.GetPixels();
+            var cellIdArray = new int[idPixels.Length];
+            for (int i = 0; i < idPixels.Length; i++) cellIdArray[i] = Mathf.RoundToInt(idPixels[i].r);
+            Destroy(cellIdTex);
+
+            var familyLabel = new int[texW * texH];
+            var bandLabel = new int[texW * texH];
+            WorldGen.Rendering.MapRaster.RegionLabelBaker.BakeRect(
+                byId, corners, cellIdArray, familyLabel, bandLabel,
+                texW, texH, mapW, mapH, smoothing: 2, decimation: 0f, bands: 5,
+                rectX: 0, rectY: 0, rectW: texW, rectH: texH);
+
+            // Глубинные пиксели (центры клеток, 10 текс/ед): Grassland (c=3,r=2)→(30,20); Snow (c=1,r=2)→(10,20).
+            int grassIdx = 20 * texW + 30;
+            int snowIdx = 20 * texW + 10;
+            int waterIdx = 0 * texW + 0; // мир (0.5,0.5) - угол рамки, гарантированно вода
+            int plains = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Plains;
+            int snowFam = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Snow;
+
+            bool grassFamOk = familyLabel[grassIdx] == plains;
+            bool snowFamOk = familyLabel[snowIdx] == snowFam;
+            bool grassBandOk = bandLabel[grassIdx] == 0;  // 0.1*5=0
+            bool snowBandOk = bandLabel[snowIdx] == 4;    // 0.9*5=4
+            bool waterFamStaysUnset = familyLabel[waterIdx] == -1;
+            bool waterBandStaysUnset = bandLabel[waterIdx] == -1;
+
+            bool bakerOk = grassFamOk && snowFamOk && grassBandOk && snowBandOk && waterFamStaysUnset && waterBandStaysUnset;
+            Debug.Log(bakerOk
+                ? "Self-Test Region Label Baker: PASS"
+                : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{plains}, snowFam={familyLabel[snowIdx]}/{snowFam}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]})");
+        }
+
         [ContextMenu("Self-Test: GPU CellId Texture")]
         public void SelfTestGpuCellIdTexture()
         {
