@@ -840,6 +840,36 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Biome Family Coverage: PASS" : "Self-Test Biome Family Coverage: FAIL");
         }
 
+        [ContextMenu("Self-Test: Coastal Beach Classification")]
+        public void SelfTestCoastalBeachClassification()
+        {
+            // Фикстура: c0 суша у океана → Beach; c2 суша без океанских соседей → без изменений;
+            // c4 озёрная клетка у океана → не трогаем; c1 океан → не трогаем.
+            var c0 = new VoronoiCell(0, new System.Numerics.Vector2(0f, 0f)) { IsOcean = false, Biome = Biome.Grassland };
+            var c1 = new VoronoiCell(1, new System.Numerics.Vector2(1f, 0f)) { IsOcean = true,  Biome = Biome.Ocean };
+            var c2 = new VoronoiCell(2, new System.Numerics.Vector2(0f, 1f)) { IsOcean = false, Biome = Biome.Grassland };
+            var c3 = new VoronoiCell(3, new System.Numerics.Vector2(1f, 1f)) { IsOcean = false, Biome = Biome.Grassland };
+            var c4 = new VoronoiCell(4, new System.Numerics.Vector2(2f, 0f)) { IsOcean = false, Biome = Biome.Lake };
+
+            c0.NeighborIds.Add(1);          // сосед - океан
+            c1.NeighborIds.Add(0);
+            c2.NeighborIds.Add(3);          // сосед - суша
+            c3.NeighborIds.Add(2);
+            c4.NeighborIds.Add(1);          // озеро у океана
+
+            var cells = new List<VoronoiCell> { c0, c1, c2, c3, c4 };
+            WorldGen.Generation.BeachClassifier.AssignCoastalBeaches(cells);
+
+            bool ok = c0.Biome == Biome.Beach      // прибрежная суша → пляж
+                      && c2.Biome == Biome.Grassland // внутренняя суша → без изменений
+                      && c1.Biome == Biome.Ocean     // океан → без изменений
+                      && c4.Biome == Biome.Lake;      // озеро → без изменений
+
+            Debug.Log(ok
+                ? "Self-Test Coastal Beach Classification: PASS"
+                : $"Self-Test Coastal Beach Classification: FAIL (c0={c0.Biome}, c2={c2.Biome}, c1={c1.Biome}, c4={c4.Biome})");
+        }
+
         [ContextMenu("Self-Test: Island Shape Ocean Border")]
         public void SelfTestIslandShapeOceanBorder()
         {
@@ -2147,7 +2177,6 @@ namespace WorldGen.Rendering
                 NumberOfRivers = numberOfRivers,
                 EnableRivers = enableRivers,
                 RiverMinStartElevation = riverMinStartElevation,
-                BeachElevationThreshold = beachElevationThreshold,
                 NumberOfTemperatureEpicenters = numberOfTemperatureEpicenters,
                 EpicenterMinRadius = epicenterMinRadius,
                 EpicenterMaxRadius = epicenterMaxRadius,

@@ -81,9 +81,6 @@ namespace WorldGen.Generation
         /// </summary>
         public float MoistureFalloffDistance = 20f;
 
-        // --- Биом ---
-        public float BeachElevationThreshold = 0.1f;
-
         // --- Температура (отдельная point-based система эпицентров, не из Patel) ---
 
         public int NumberOfTemperatureEpicenters = 3;
@@ -176,7 +173,8 @@ namespace WorldGen.Generation
             MoistureField.ApplyMoisture(corners, p.MoistureFalloffDistance, moistureEpicenters, riverCornerIds);
 
             // --- Усреднение elevation/moisture с corners на клетки + классификация биома ---
-            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold, p.ElevationContrast);
+            CellClimateAverager.ApplyToCells(cells, corners, p.ElevationContrast);
+            BeachClassifier.AssignCoastalBeaches(cells);
 
             // --- Регионы (растим только по суше, как и раньше) ---
             var landCells = cells.Where(c => !c.IsOcean).ToList();
@@ -257,7 +255,8 @@ namespace WorldGen.Generation
 
             // --- Step 4/6: Расчёт биомов ---
             onProgress?.Invoke("Расчёт биомов", 3f / 6f);
-            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold, p.ElevationContrast);
+            CellClimateAverager.ApplyToCells(cells, corners, p.ElevationContrast);
+            BeachClassifier.AssignCoastalBeaches(cells);
             RegenerateTemperature(cells, p, temperatureEpicenters);
             yield return null;
 

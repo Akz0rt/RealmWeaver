@@ -21,7 +21,7 @@ namespace WorldGen.Generation
             return System.Math.Clamp(0.5f + (elevation - 0.5f) * contrast, 0f, 1f);
         }
 
-        public static void ApplyToCells(List<VoronoiCell> cells, List<Corner> corners, float beachElevationThreshold = 0.1f, float elevationContrast = 1f)
+        public static void ApplyToCells(List<VoronoiCell> cells, List<Corner> corners, float elevationContrast = 1f)
         {
             var cornersByCell = new Dictionary<int, List<Corner>>();
             foreach (var corner in corners)
@@ -53,7 +53,9 @@ namespace WorldGen.Generation
 
                 cell.Height = avgElevation;   // переиспользуем существующее поле Height для elevation
                 cell.Humidity = avgMoisture;  // переиспользуем существующее поле Humidity для moisture
-                cell.Biome = BiomeClassifier.Classify(avgElevation, avgMoisture, cell.IsOcean, isLake, beachElevationThreshold);
+                // Beach определяется отдельным шагом BeachClassifier (по смежности с океаном),
+                // поэтому высотное правило пляжа здесь подавляем порогом 0.
+                cell.Biome = BiomeClassifier.Classify(avgElevation, avgMoisture, cell.IsOcean, isLake, beachElevationThreshold: 0f);
             }
         }
     }
