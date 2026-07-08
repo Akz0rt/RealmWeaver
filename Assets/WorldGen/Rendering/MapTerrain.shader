@@ -26,6 +26,12 @@ Shader "WorldGen/MapTerrain"
             float2 _MapSize;
             float _Mode;
 
+            float _WarpAmount;
+            float _WarpScale;
+            float _Seed;
+            float4 _OutlineColor;
+            float2 _CellIdTexel;   // (1/texW, 1/texH) - шаг соседа для обводки, независим от зума
+
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
             v2f vert (appdata_base v)
@@ -45,13 +51,67 @@ Shader "WorldGen/MapTerrain"
                 return tex2Dlod(_AttrTex, float4(uv, 0, 0));
             }
 
+            float hash21(float2 p)
+            {
+                p = frac(p * float2(123.34, 345.45));
+                p += dot(p, p + 34.345);
+                return frac(p.x * p.y);
+            }
+            float vnoise(float2 p)
+            {
+                float2 i = floor(p), f = frac(p);
+                float2 u = f * f * (3.0 - 2.0 * f);
+                float a = hash21(i), b = hash21(i + float2(1,0));
+                float c = hash21(i + float2(0,1)), d = hash21(i + float2(1,1));
+                return lerp(lerp(a,b,u.x), lerp(c,d,u.x), u.y);
+            }
+            float fbm(float2 p)
+            {
+                float s = 0, amp = 0.5, freq = 1;
+                for (int k = 0; k < 4; k++) { s += amp * vnoise(p * freq); freq *= 2; amp *= 0.5; }
+                return s;
+            }
+            // Искажает координату fbm-шумом → органичные извилистые границы клеток/биомов/берега.
+            float2 warpUV(float2 uv)
+            {
+                float2 n = float2(fbm(uv * _WarpScale + _Seed), fbm(uv * _WarpScale + _Seed + 37.0));
+                return uv + (n - 0.5) * _WarpAmount;
+            }
+            int cellAt(float2 uv)
+            {
+                return (int)(tex2Dlod(_CellIdTex, float4(uv, 0, 0)).r + 0.5);
+            }
+
+            // тип воды соседней клетки по смещению duv (0=суша,1=океан,2=озеро)
+            int waterAt(float2 uv)
+            {
+                int cid = cellAt(uv);
+                if (cid < 0) return 1; // за картой считаем водой
+                return (int)(attr(cid, 0).a + 0.5);
+            }
+
             fixed4 frag (v2f i) : SV_Target
             {
-                int cid = (int)(tex2Dlod(_CellIdTex, float4(i.uv, 0, 0)).r + 0.5);
+                float2 wuv = warpUV(i.uv);
+                int cid = cellAt(wuv);
                 if (cid < 0) return fixed4(0, 0, 0, 1);
+
                 float4 a = attr(cid, 0);
                 int family = (int)(a.r + 0.5);
-                return fixed4(_Palette[family].rgb, 1);
+                int water = (int)(a.a + 0.5);   // 0=суша, 1=океан, 2=озеро
+                float3 col = _Palette[family].rgb;
+
+                // Тёмная обводка берега (сторона суши): пиксель-суша, у которого хоть один сосед - вода.
+                // НЕ на границах клеток одного семейства - только суша/вода.
+                if (water == 0)
+                {
+                    float2 t = _CellIdTexel * 2.0;
+                    int w = waterAt(wuv + float2(t.x, 0)) + waterAt(wuv - float2(t.x, 0))
+                          + waterAt(wuv + float2(0, t.y)) + waterAt(wuv - float2(0, t.y));
+                    if (w > 0) col = lerp(col, _OutlineColor.rgb, 0.7);
+                }
+
+                return fixed4(col, 1);
             }
             ENDCG
         }

@@ -38,6 +38,15 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetFloat("_CellRows", attr.CellRows);
             Material.SetVector("_MapSize", new Vector4(mapW, mapH, 0, 0));
             Material.SetFloat("_Mode", 3); // Combined
+
+            // Органичные границы (domain warp) + тёмная обводка. Стартовые значения - крутятся вживую.
+            Material.SetFloat("_WarpAmount", 0.012f);
+            Material.SetFloat("_WarpScale", 8f);
+            Material.SetFloat("_Seed", 0f);
+            Material.SetVector("_CellIdTexel", new Vector4(1f / texW, 1f / texH, 0, 0));
+            var outline = MapPalette.GetSlotColor(theme, PaletteSlot.Outline);
+            Material.SetColor("_OutlineColor", new Color(outline.r / 255f, outline.g / 255f, outline.b / 255f, 1f));
+
             UploadPalette(theme);
         }
 
