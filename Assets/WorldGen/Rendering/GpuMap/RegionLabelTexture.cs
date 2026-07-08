@@ -25,13 +25,21 @@ namespace WorldGen.Rendering.GpuMap
             Apply();
         }
 
-        /// <summary>Патч под-прямоугольника (кисть): пере-кодировать rect из label-буферов.</summary>
+        /// <summary>Патч под-прямоугольника (кисть): пере-кодировать rect из label-буферов и
+        /// загрузить на GPU только сам rect (без full-texture re-upload).</summary>
         public void PatchRect(int[] familyLabel, int[] bandLabel, int rectX, int rectY, int rectW, int rectH)
         {
-            for (int y = rectY; y < rectY + rectH; y++)
-                for (int x = rectX; x < rectX + rectW; x++)
-                { int i = y * texW + x; pixels[i] = Encode(familyLabel[i], bandLabel[i]); }
-            Apply();
+            Color32[] rectPixels = new Color32[rectW * rectH];
+            for (int y = 0; y < rectH; y++)
+                for (int x = 0; x < rectW; x++)
+                {
+                    int gi = (rectY + y) * texW + (rectX + x);
+                    Color32 c = Encode(familyLabel[gi], bandLabel[gi]);
+                    pixels[gi] = c;
+                    rectPixels[y * rectW + x] = c;
+                }
+            Texture.SetPixels32(rectX, rectY, rectW, rectH, rectPixels);
+            Texture.Apply(false);
         }
 
         static Color32 Encode(int family, int band)
