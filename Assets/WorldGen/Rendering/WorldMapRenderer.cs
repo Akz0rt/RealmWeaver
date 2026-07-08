@@ -2202,6 +2202,15 @@ namespace WorldGen.Rendering
 
             if (targetCamera.farClipPlane < maxSide * 3f)
                 targetCamera.farClipPlane = maxSide * 3f;
+
+            // Фон = цвет глубокого океана: вода на краю текстуры бесшовно перетекает в фон редактора,
+            // и изрезанный материк читается как "суша в бескрайнем море" (см. A1 borderWaterMargin).
+            if (targetCamera != null)
+            {
+                targetCamera.clearFlags = CameraClearFlags.SolidColor;
+                Color32 abyss = WorldGen.Rendering.MapRaster.MapPalette.GetSlotColor(paletteTheme, WorldGen.Rendering.MapRaster.PaletteSlot.Abyss);
+                targetCamera.backgroundColor = abyss;
+            }
         }
 
         public void BuildMesh(List<VoronoiCell> sourceCells)
