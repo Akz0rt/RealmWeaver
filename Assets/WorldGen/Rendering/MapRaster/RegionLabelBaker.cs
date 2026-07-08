@@ -43,7 +43,8 @@ namespace WorldGen.Rendering.MapRaster
             for (int y = rectY; y < rectY + rectH; y++)
                 for (int x = rectX; x < rectX + rectW; x++)
                 {
-                    int cat = categoryOf(cellById[cellIdArray[y * texW + x]]);
+                    if (!cellById.TryGetValue(cellIdArray[y * texW + x], out var cell)) continue; // -1 = нет ближайшей клетки (недостижимо на реальном масштабе, но не роняем генерацию)
+                    int cat = categoryOf(cell);
                     if (cat >= 0) present.Add(cat);
                 }
             if (present.Count == 0) return;
