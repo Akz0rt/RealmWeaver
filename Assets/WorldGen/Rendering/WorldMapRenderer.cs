@@ -127,6 +127,11 @@ namespace WorldGen.Rendering
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
+        [Header("GPU-рендер")]
+        [Tooltip("Рисовать карту GPU-шейдером (MapTerrain) вместо CPU-запечки текстуры. Выкл = старый CPU-путь (фолбэк).")]
+        public bool useGpuRenderer = true;
+        GpuMap.GpuMapRenderer gpuRenderer;
+
         [Header("Камера (опционально)")]
         [Tooltip("Если назначено - камера автоматически встанет над центром карты при каждой генерации.")]
         public Camera targetCamera;
@@ -179,6 +184,10 @@ namespace WorldGen.Rendering
             meshCollider = GetComponent<MeshCollider>();
 
             EnsureRasterMaterial();
+
+            if (useGpuRenderer)
+                gpuRenderer = gameObject.GetComponent<GpuMap.GpuMapRenderer>()
+                              ?? gameObject.AddComponent<GpuMap.GpuMapRenderer>();
         }
 
         void OnDestroy()
@@ -2198,6 +2207,14 @@ namespace WorldGen.Rendering
             if (cells == null) return;
             ComputeTexSize(out texWidth, out texHeight);
 
+            // GPU-путь: карта рисуется шейдером MapTerrain из cell-id + атрибутов (Task 4+).
+            // CPU-запечка ниже - фолбэк при useGpuRenderer=false.
+            if (useGpuRenderer && gpuRenderer != null)
+            {
+                gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                return;
+            }
+
             var config = BuildRasterConfig();
             var oldTexture = rasterTexture;
             rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, corners, displayMode, config, out rasterBuffers);
@@ -2332,6 +2349,15 @@ namespace WorldGen.Rendering
         {
             if (cells == null) yield break;
             ComputeTexSize(out texWidth, out texHeight);
+
+            // GPU-путь: генерация тоже рисуется шейдером. Тяжёлый cell-id бэйк синхронный (как и старый
+            // BakeFieldsRect ниже) - Task 12 сделает его чанковым с реальным прогресс-баром.
+            if (useGpuRenderer && gpuRenderer != null)
+            {
+                gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme);
+                onProgress?.Invoke(1f);
+                yield break;
+            }
 
             if (rasterTexture != null) Destroy(rasterTexture);
             rasterTexture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false)
