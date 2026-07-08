@@ -1289,6 +1289,48 @@ namespace WorldGen.Rendering
                 : $"Self-Test Rasterize Region Label Writes Inside Only: FAIL (insideSet={insideSet}, outsideKept={outsideKept})");
         }
 
+        [ContextMenu("Self-Test: GPU CellId Texture")]
+        public void SelfTestGpuCellIdTexture()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(2.5f, 2.5f));
+            a.Polygon = SquarePolygon(a.Site);   // NearestCellLookup исключает клетки с Polygon.Count<3
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(7.5f, 7.5f));
+            b.Polygon = SquarePolygon(b.Site);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(
+                new System.Collections.Generic.List<VoronoiCell> { a, b }, 5f);
+            var tex = WorldGen.Rendering.GpuMap.CellIdTexture.Build(lookup, 10, 10, 10f, 10f);
+
+            // Пиксель (2,2) → мир (2.5,2.5) → клетка a (Id 0); (7,7) → (7.5,7.5) → b (Id 1).
+            int id00 = Mathf.RoundToInt(tex.GetPixel(2, 2).r);
+            int id11 = Mathf.RoundToInt(tex.GetPixel(7, 7).r);
+            bool ok = id00 == 0 && id11 == 1;
+            Destroy(tex);
+            Debug.Log(ok ? "Self-Test GPU CellId Texture: PASS" : $"Self-Test GPU CellId Texture: FAIL (id00={id00}, id11={id11})");
+        }
+
+        [ContextMenu("Self-Test: GPU Attribute Texture")]
+        public void SelfTestGpuAttributeTexture()
+        {
+            var a = new VoronoiCell(0, new System.Numerics.Vector2(1, 1))
+                { Biome = Biome.Grassland, Height = 0.4f, Temperature = 0.6f, IsOcean = false, RegionId = 3 };
+            var b = new VoronoiCell(1, new System.Numerics.Vector2(2, 2))
+                { Biome = Biome.Ocean, Height = 0.0f, Temperature = 0.2f, IsOcean = true, RegionId = -1 };
+            var attr = new WorldGen.Rendering.GpuMap.CellAttributeTexture(
+                new System.Collections.Generic.List<VoronoiCell> { a, b });
+
+            int w = attr.Width;
+            Color a0 = attr.Texture.GetPixel(0 % w, 0 / w);                 // клетка 0, слот A
+            Color b0 = attr.Texture.GetPixel(1 % w, 1 / w);                 // клетка 1, слот A
+            Color a1 = attr.Texture.GetPixel(0 % w, attr.CellRows + 0 / w); // клетка 0, слот B (regionId)
+
+            bool ok = Mathf.Approximately(a0.g, 0.4f) && Mathf.Approximately(a0.b, 0.6f)
+                      && Mathf.Approximately(a0.a, 0f)   // суша
+                      && Mathf.Approximately(b0.a, 1f)   // океан
+                      && Mathf.RoundToInt(a1.r) == 3;
+            Object.Destroy(attr.Texture);
+            Debug.Log(ok ? "Self-Test GPU Attribute Texture: PASS" : $"Self-Test GPU Attribute Texture: FAIL (a0={a0}, b0={b0}, region={a1.r})");
+        }
+
         /// <summary>Метки семейств/полос: сетка 5x5, рамка - океан, внутренний 3x3 - суша; левый
         /// столбец внутреннего блока (c=1) - Snow (высота 0.9 → верхняя полоса), правые два (c=2,3) -
         /// Grassland (высота 0.1 → нижняя полоса). Оба региона окружены водой/друг другом → петли
