@@ -18,8 +18,10 @@ namespace WorldGen.Rendering.GpuMap
         MeshRenderer meshRenderer;
 
         HashSet<int> waterIds = new HashSet<int>(); // id клеток-воды на момент последнего пересчёта берега
+        int[] cellIdArray;  // кэш cell-id на пиксель (не меняется при правке) - для дешёвого пересчёта берега
         int bakedTexW, bakedTexH;
         bool coastDirty;   // во время мазка менялась топология суша/вода → берег пересчитать на отпускании
+        const int CoastDownscale = 4;  // поле дистанции считается в 1/4 разрешения (гладкое, билинейное)
 
         void EnsureMaterial()
         {
@@ -40,11 +42,15 @@ namespace WorldGen.Rendering.GpuMap
             // Поле дистанции берега (для плавной глубины воды + свечения). Строится из cell-id.
             if (coastDistTex != null) Destroy(coastDistTex);
             bakedTexW = texW; bakedTexH = texH;
+            // Кэшируем cell-id на пиксель (геометрия неизменна) - пересчёт берега при правке без GetPixels.
+            var idPixels = cellIdTex.GetPixels();
+            cellIdArray = new int[idPixels.Length];
+            for (int i = 0; i < idPixels.Length; i++) cellIdArray[i] = Mathf.RoundToInt(idPixels[i].r);
             waterIds.Clear();
             foreach (var c in cells)
                 if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
             coastDirty = false;
-            coastDistTex = CoastDistanceTexture.Build(cellIdTex, cid => waterIds.Contains(cid), texW, texH, 96f);
+            coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), texW, texH, CoastDownscale, 96f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
             Material.SetTexture("_AttrTex", attr.Texture);
@@ -137,9 +143,9 @@ namespace WorldGen.Rendering.GpuMap
         /// а свечение/градиент глубины подтягиваются на отпускании.</summary>
         public void FinalizeCoast()
         {
-            if (!coastDirty || cellIdTex == null) return;
+            if (!coastDirty || cellIdArray == null) return;
             if (coastDistTex != null) Destroy(coastDistTex);
-            coastDistTex = CoastDistanceTexture.Build(cellIdTex, cid => waterIds.Contains(cid), bakedTexW, bakedTexH, 96f);
+            coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), bakedTexW, bakedTexH, CoastDownscale, 96f);
             Material.SetTexture("_CoastTex", coastDistTex);
             coastDirty = false;
         }
