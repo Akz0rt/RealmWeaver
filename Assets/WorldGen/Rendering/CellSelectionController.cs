@@ -8,14 +8,16 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Позволяет выбирать клетки карты мышкой для последующего применения climate override:
-    /// - Обычный клик (без Shift) - сбрасывает выбор, выбирает только клетку под курсором.
-    /// - Клик с зажатым Shift - toggle клетки (добавляет, если не была выбрана; убирает, если была) - мультивыбор.
-    /// - Drag без Shift (зажата ЛКМ + движение мыши) - добавляет каждую новую клетку под курсором по пути,
-    ///   то есть "рисование" выбора по площади.
+    /// Кистевое выделение области карты для последующего применения override (climate/biome/water/...):
+    /// - Зажать ЛКМ и водить - "закрашивает" область в радиусе кисти (как кисть рельефа) в выделение.
+    /// - Новый мазок БЕЗ Shift - начинает выделение заново.
+    /// - Новый мазок С Shift - добавляет область к уже выделенным (аккумуляция нескольких областей
+    ///   последовательно, потом применяешь override ко всему набору разом).
+    /// Радиус выделения - СВОЙ (selectionRadius, отдельный слайдер в панели), не от кисти рельефа.
+    /// Под курсором рисуется кольцо-превью области, которая выделится.
     ///
-    /// Выбранные клетки подсвечиваются отдельным полупрозрачным overlay-mesh (не трогает vertex
-    /// colors основной карты) - см. RebuildOverlay.
+    /// Выбранные клетки подсвечиваются отдельным полупрозрачным overlay-mesh (не трогает основную
+    /// карту) - см. RebuildOverlay. Хит-тест - через TryGetSiteHitPoint (работает и в GPU-режиме).
     ///
     /// ИСПОЛЬЗУЕТ НОВЫЙ INPUT SYSTEM (UnityEngine.InputSystem), не legacy UnityEngine.Input.
     /// Если в проекте Active Input Handling (Project Settings -> Player -> Other Settings)
@@ -30,6 +32,13 @@ namespace WorldGen.Rendering
         public Camera raycastCamera;
         [Tooltip("If assigned, cell selection is suppressed when POI interaction controller has claimed the input.")]
         public PoiInteractionController poiController;
+        [Tooltip("Радиус кисти выделения (мировые единицы) - НЕЗАВИСИМ от кисти рельефа, свой слайдер в панели.")]
+        public float selectionRadius = 42f;
+        [Tooltip("Высота кольца-курсора выделения над картой (Y).")]
+        public float cursorHeight = 2f;
+        public float cursorLineWidth = 1.6f;
+
+        public float SelectionRadius { get => selectionRadius; set => selectionRadius = Mathf.Max(1f, value); }
 
         [Header("Внешний вид подсветки")]
         public Color selectionColor = new Color(1f, 1f, 0.2f, 0.45f);
@@ -40,6 +49,8 @@ namespace WorldGen.Rendering
 
         MeshFilter overlayMeshFilter;
         MeshRenderer overlayMeshRenderer;
+        LineRenderer cursorRing;
+        const int CircleSegments = 48;
 
         /// <summary>Срабатывает при любом изменении набора выбранных клеток - UI-панель override должна подписаться на это, чтобы знать текущий выбор.</summary>
         public event System.Action<IReadOnlyCollection<VoronoiCell>> OnSelectionChanged;
@@ -50,6 +61,7 @@ namespace WorldGen.Rendering
         {
             if (raycastCamera == null) raycastCamera = Camera.main;
             BuildOverlayObject();
+            BuildCursor();
         }
 
         void Update()
@@ -63,51 +75,89 @@ namespace WorldGen.Rendering
 
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
-                // Клик по UI (панель, тулбар, меню) не должен выделять клетку карты "сквозь" интерфейс.
+                // Клик по UI не должен выделять клетки карты "сквозь" интерфейс.
                 if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
                 isDragging = true;
-                var cell = RaycastCell();
-                if (cell == null) return;
-
-                if (shiftHeld)
-                    ToggleCell(cell);
-                else
-                {
-                    selectedCells.Clear();
-                    selectedCells.Add(cell);
-                    NotifyChanged();
-                }
+                // Новый мазок без Shift - выделяем заново; с Shift - добавляем к прошлым областям.
+                if (!shiftHeld) selectedCells.Clear();
+                AddAreaUnderCursor();
+                NotifyChanged();
             }
-            else if (Mouse.current.leftButton.isPressed && isDragging && !shiftHeld)
+            else if (Mouse.current.leftButton.isPressed && isDragging)
             {
-                // Drag-рисование - добавляет клетки по пути, не убирает уже выбранные (Shift здесь не участвует,
-                // т.к. зажатый Shift во время drag означал бы неоднозначное поведение - drag всегда добавляет).
-                var cell = RaycastCell();
-                if (cell != null && selectedCells.Add(cell))
-                    NotifyChanged();
+                // Тащим ЛКМ - продолжаем закрашивать область по пути (аккумулируем в текущий мазок).
+                if (AddAreaUnderCursor()) NotifyChanged();
             }
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
             {
                 isDragging = false;
             }
+
+            // Кольцо-курсор: показываем область, которая выделится под курсором.
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) HideCursor();
+            else UpdateCursor();
         }
 
-        VoronoiCell RaycastCell()
+        /// <summary>Добавляет в выделение все клетки в радиусе выделения под курсором. true - если что-то добавилось.</summary>
+        bool AddAreaUnderCursor()
         {
             Vector2 mousePos = Mouse.current.position.ReadValue();
             Ray ray = raycastCamera.ScreenPointToRay(mousePos);
-            return mapRenderer.GetCellUnderRay(ray);
+            if (!mapRenderer.TryGetSiteHitPoint(ray, out Vector2 site)) return false;
+
+            bool any = false;
+            foreach (var cell in BrushOps.CellsInRadius(mapRenderer.Cells, site.x, site.y, selectionRadius, square: false))
+                if (selectedCells.Add(cell)) any = true;
+            return any;
         }
 
-        void ToggleCell(VoronoiCell cell)
+        // ── Кольцо-курсор области выделения ──────────────────────────────────────
+        void BuildCursor()
         {
-            if (selectedCells.Contains(cell))
-                selectedCells.Remove(cell);
-            else
-                selectedCells.Add(cell);
-
-            NotifyChanged();
+            var go = new GameObject("SelectionCursor");
+            go.transform.SetParent(mapRenderer != null ? mapRenderer.transform : transform, false);
+            cursorRing = go.AddComponent<LineRenderer>();
+            cursorRing.useWorldSpace = false;
+            cursorRing.loop = true;
+            cursorRing.widthMultiplier = cursorLineWidth;
+            cursorRing.numCornerVertices = 0;
+            cursorRing.numCapVertices = 0;
+            cursorRing.material = new Material(Shader.Find("Sprites/Default"));
+            cursorRing.textureMode = LineTextureMode.Stretch;
+            cursorRing.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            cursorRing.receiveShadows = false;
+            var c = new Color(selectionColor.r, selectionColor.g, selectionColor.b, 1f);
+            cursorRing.startColor = c;
+            cursorRing.endColor = c;
+            cursorRing.enabled = false;
         }
+
+        void UpdateCursor()
+        {
+            if (cursorRing == null || mapRenderer == null || raycastCamera == null || Mouse.current == null) return;
+            Vector2 mousePos = Mouse.current.position.ReadValue();
+            Ray ray = raycastCamera.ScreenPointToRay(mousePos);
+            if (!mapRenderer.TryGetSiteHitPoint(ray, out Vector2 site)) { HideCursor(); return; }
+
+            cursorRing.widthMultiplier = cursorLineWidth;
+            cursorRing.positionCount = CircleSegments;
+            for (int i = 0; i < CircleSegments; i++)
+            {
+                float a = (i / (float)CircleSegments) * Mathf.PI * 2f;
+                cursorRing.SetPosition(i, new Vector3(
+                    site.x + Mathf.Cos(a) * selectionRadius,
+                    cursorHeight,
+                    site.y + Mathf.Sin(a) * selectionRadius));
+            }
+            cursorRing.enabled = true;
+        }
+
+        void HideCursor()
+        {
+            if (cursorRing != null) cursorRing.enabled = false;
+        }
+
+        void OnDisable() => HideCursor();
 
         /// <summary>Полностью очищает текущий выбор (не трогает climate override - только визуальное выделение).</summary>
         public void ClearSelection()

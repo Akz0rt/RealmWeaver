@@ -710,6 +710,12 @@ namespace WorldGen.Rendering
         {
             selectionCountLabel = AddLabel(t, "Выбрано клеток: 0");
 
+            // Свой радиус кисти выделения (независим от кисти рельефа).
+            BuildLabeledSlider(t, "Размер выделения", 8f, 120f, 42f, out _, out _, isPercent: false, v =>
+            {
+                if (selectionController != null) selectionController.SelectionRadius = v;
+            });
+
             AddLabel(t, "─── Климат ───", bold: false, role: ThemeRole.Mut);
             (temperatureSlider, _, temperatureToggle) = AddSliderRow(t, "Температура", 0.5f);
             (moistureSlider, _, moistureToggle) = AddSliderRow(t, "Влажность", 0.5f);
