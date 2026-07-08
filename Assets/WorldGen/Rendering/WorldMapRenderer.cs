@@ -137,6 +137,12 @@ namespace WorldGen.Rendering
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
+        [Header("Пляж (песок у берега)")]
+        [Range(0f, 60f)] public float beachWidth = 20f;
+        [Range(0f, 1f)] public float beachStrength = 0.95f;
+        [Tooltip("Жёсткость перехода песок→биом: больше = резче/уже кайма, меньше = мягче/шире растворение.")]
+        [Range(0.3f, 4f)] public float beachHardness = 2f;
+
         [Header("GPU-рендер")]
         [Tooltip("Рисовать карту GPU-шейдером (MapTerrain) вместо CPU-запечки текстуры. Выкл = старый CPU-путь (фолбэк).")]
         public bool useGpuRenderer = true;
@@ -198,6 +204,14 @@ namespace WorldGen.Rendering
             if (useGpuRenderer)
                 gpuRenderer = gameObject.GetComponent<GpuMap.GpuMapRenderer>()
                               ?? gameObject.AddComponent<GpuMap.GpuMapRenderer>();
+        }
+
+        /// <summary>Живая правка пляжа (ширина/сила/жёсткость) в Inspector применяется мгновенно
+        /// в play mode - без пере-бейка карты (см. GpuMapRenderer.SetBeachParams).</summary>
+        void OnValidate()
+        {
+            if (gpuRenderer != null && gpuRenderer.Material != null)
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
         }
 
         void OnDestroy()
@@ -2494,6 +2508,7 @@ namespace WorldGen.Rendering
                 gpuRenderer.SetContourParams(coastlineSmoothness, borderRoundness * minPointDistance);
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners);
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
                 return;
             }
 
@@ -2654,6 +2669,7 @@ namespace WorldGen.Rendering
                 var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners, onProgress);
                 while (e.MoveNext()) yield return e.Current;
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness);
                 yield break;
             }
 

@@ -105,7 +105,6 @@ namespace WorldGen.Rendering.GpuMap
             landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), texW, texH, CoastDownscale, 64f);
             Material.SetTexture("_LandDistTex", landDistTex);
             SetSlot("_BeachColor", theme, PaletteSlot.Coast);
-            Material.SetFloat("_BeachWidth", 35f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
             Material.SetTexture("_AttrTex", attr.Texture);
@@ -170,6 +169,17 @@ namespace WorldGen.Rendering.GpuMap
             if (Material == null) return;
             Material.SetFloat("_ShowBiome", showBiome ? 1f : 0f);
             Material.SetFloat("_ShowRelief", showRelief ? 1f : 0f);
+        }
+
+        /// <summary>Параметры пляжа (песок у берега) - мгновенно через uniform (без пере-бейка).
+        /// width - px глубины перехода вглубь суши, strength - 0..1 сила подмешивания цвета песка,
+        /// hardness - резкость перехода (степень в pow: больше = резче/уже кайма).</summary>
+        public void SetBeachParams(float width, float strength, float hardness)
+        {
+            if (Material == null) return;
+            Material.SetFloat("_BeachWidth", Mathf.Max(0.001f, width));
+            Material.SetFloat("_BeachStrength", Mathf.Clamp01(strength));
+            Material.SetFloat("_BeachHardness", Mathf.Max(0.05f, hardness));
         }
 
         void SetSlot(string uniform, MapPaletteTheme theme, PaletteSlot slot)

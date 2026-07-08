@@ -64,6 +64,8 @@ Shader "WorldGen/MapTerrain"
 
             sampler2D _LandDistTex; // RFloat: дистанция до ближайшей воды в пикселях (0 на воде, растёт вглубь суши)
             float _BeachWidth;      // px ширины мягкого песчаного перехода на суше
+            float _BeachHardness;   // резкость перехода песок→биом (степень в pow), больше = резче/уже
+            float _BeachStrength;   // 0..1 сила подмешивания цвета песка
             float4 _BeachColor;
 
             float _ShowBiome;   // 1 = цвет семейства, 0 = нейтральная база (слой "Биом/климат")
@@ -188,8 +190,8 @@ Shader "WorldGen/MapTerrain"
 
                     // мягкий песок у берега: сила спадает вглубь суши по дистанции до воды
                     float landDist = tex2Dlod(_LandDistTex, float4(i.uv, 0, 0)).r;
-                    float beach = pow(saturate(1.0 - landDist / max(1.0, _BeachWidth)), 0.5);
-                    col = lerp(col, _BeachColor.rgb, beach * 0.9);
+                    float beach = pow(saturate(1.0 - landDist / max(1.0, _BeachWidth)), _BeachHardness);
+                    col = lerp(col, _BeachColor.rgb, beach * _BeachStrength);
 
                     // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
                     if (_ShowRelief > 0.5)
