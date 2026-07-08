@@ -17,6 +17,10 @@ namespace WorldGen.Rendering.GpuMap
         CellAttributeTexture attr;
         MeshRenderer meshRenderer;
 
+        HashSet<int> waterIds = new HashSet<int>(); // id клеток-воды на момент последнего пересчёта берега
+        int bakedTexW, bakedTexH;
+        bool coastDirty;   // во время мазка менялась топология суша/вода → берег пересчитать на отпускании
+
         void EnsureMaterial()
         {
             if (Material != null) return;
@@ -35,9 +39,11 @@ namespace WorldGen.Rendering.GpuMap
 
             // Поле дистанции берега (для плавной глубины воды + свечения). Строится из cell-id.
             if (coastDistTex != null) Destroy(coastDistTex);
-            var waterIds = new HashSet<int>();
+            bakedTexW = texW; bakedTexH = texH;
+            waterIds.Clear();
             foreach (var c in cells)
                 if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
+            coastDirty = false;
             coastDistTex = CoastDistanceTexture.Build(cellIdTex, cid => waterIds.Contains(cid), texW, texH, 96f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
@@ -110,8 +116,32 @@ namespace WorldGen.Rendering.GpuMap
         public void UpdateCells(IEnumerable<VoronoiCell> cells)
         {
             if (attr == null) return;
-            attr.UpdateCells(cells);
+            foreach (var c in cells)
+            {
+                attr.UpdateCell(c);
+                // Смена статуса суша/вода → берег устарел (пересчёт отложен до FinalizeCoast).
+                bool nowWater = c.EffectiveIsOcean || c.EffectiveIsLake;
+                bool wasWater = waterIds.Contains(c.Id);
+                if (nowWater != wasWater)
+                {
+                    coastDirty = true;
+                    if (nowWater) waterIds.Add(c.Id); else waterIds.Remove(c.Id);
+                }
+            }
             attr.Apply();
+        }
+
+        /// <summary>Пересчитать поле дистанции берега, если за мазок менялась топология суша/вода.
+        /// Вызывать на отпускании ЛКМ (EndBrushStroke): дорогой пересчёт один раз на мазок, а не на
+        /// каждый штамп - во время протяжки суша/вода уже переключаются мгновенно (через атрибуты),
+        /// а свечение/градиент глубины подтягиваются на отпускании.</summary>
+        public void FinalizeCoast()
+        {
+            if (!coastDirty || cellIdTex == null) return;
+            if (coastDistTex != null) Destroy(coastDistTex);
+            coastDistTex = CoastDistanceTexture.Build(cellIdTex, cid => waterIds.Contains(cid), bakedTexW, bakedTexH, 96f);
+            Material.SetTexture("_CoastTex", coastDistTex);
+            coastDirty = false;
         }
 
         void OnDestroy()

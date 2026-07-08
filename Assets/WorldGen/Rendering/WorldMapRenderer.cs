@@ -512,6 +512,8 @@ namespace WorldGen.Rendering
         public void EndBrushStroke()
         {
             brushUndo.EndStroke();
+            // Если мазок менял топологию суша/вода - пересчитать поле дистанции берега один раз здесь.
+            if (useGpuRenderer && gpuRenderer != null) gpuRenderer.FinalizeCoast();
             OnDisplayChanged?.Invoke();
         }
 
@@ -587,6 +589,29 @@ namespace WorldGen.Rendering
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
             cell.BiomeOverride = biome;
+            CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+        }
+
+        /// <summary>Кисть суша↔вода: makeLand=false → ForceOcean (топим, elevation 0); makeLand=true →
+        /// ForceLand с ВАРЬИРОВАННОЙ высотой из шума (разной для каждой клетки), чтобы новая суша была
+        /// рельефной (холмы/склоны под hillshade), а не плоским плато одной высоты. Снимает biome-override
+        /// (биом пересчитается под новую высоту/климат) и пишет "досмазковый" undo-снимок.</summary>
+        public void BrushSetWater(VoronoiCell cell, bool makeLand)
+        {
+            if (cells == null) return;
+            brushUndo.RecordBeforeChange(cell);
+            cell.BiomeOverride = null;
+            if (makeLand)
+            {
+                cell.WaterOverride = WaterOverrideType.ForceLand;
+                float n = WorldGen.Rendering.MapRaster.Noise.Fbm(cell.Site.X * 0.045f, cell.Site.Y * 0.045f, seed, 4);
+                cell.ElevationOverride = Mathf.Clamp(beachElevationThreshold + 0.08f + n * 0.55f, 0f, 1f);
+            }
+            else
+            {
+                cell.WaterOverride = WaterOverrideType.ForceOcean;
+                cell.ElevationOverride = 0f;
+            }
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
         }
 
@@ -2253,7 +2278,7 @@ namespace WorldGen.Rendering
         /// перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
         void RefreshAfterCellDataChange()
         {
-            if (useGpuRenderer && gpuRenderer != null) gpuRenderer.UpdateCells(cells);
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); }
             else RebakeAll();
         }
 

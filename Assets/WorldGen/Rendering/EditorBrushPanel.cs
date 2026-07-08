@@ -126,11 +126,26 @@ namespace WorldGen.Rendering
             }
 
             // Режим (Поднять/Опустить/Сгладить) бессмыслен для категории — прячем на биоме.
+            // Для воды сегмент показывается, но переименован в Океан/Суша.
             bool isBiome = target == BrushTool.Biome;
+            bool isWater = target == BrushTool.Water;
             if (modeCaptionGO != null) modeCaptionGO.SetActive(!isBiome);
             if (modeSegmentGO != null) modeSegmentGO.SetActive(!isBiome);
+            RelabelModeSegment(isWater);
+            // Сгладить не применим к воде: если выбран - переключаем на Океан (Raise).
+            if (isWater && brushController != null && brushController.mode == BrushMode.Smooth)
+                OnModeChanged(BrushMode.Raise);
 
             UpdateBiomePaletteVisibility();
+        }
+
+        /// <summary>Инструмент Вода: сегмент режима показывает Океан(Raise)/Суша(Lower) и прячет
+        /// Сгладить. Остальные инструменты - обычные Поднять/Опустить/Сгладить.</summary>
+        void RelabelModeSegment(bool water)
+        {
+            if (modeSegTxt.TryGetValue(BrushMode.Raise, out var r)) r.text = water ? "Океан" : "Поднять";
+            if (modeSegTxt.TryGetValue(BrushMode.Lower, out var l)) l.text = water ? "Суша" : "Опустить";
+            if (modeSegBg.TryGetValue(BrushMode.Smooth, out var s)) s.gameObject.SetActive(!water);
         }
 
         void OnModeChanged(BrushMode mode)
@@ -359,6 +374,7 @@ namespace WorldGen.Rendering
             AddPill(gridGO.transform, BrushTool.Temperature, "Температура");
             AddPill(gridGO.transform, BrushTool.Moisture, "Влажность");
             AddPill(gridGO.transform, BrushTool.Biome, "Биом");
+            AddPill(gridGO.transform, BrushTool.Water, "Вода");
         }
 
         void AddPill(Transform parent, BrushTool target, string label)

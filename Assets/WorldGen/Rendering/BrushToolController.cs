@@ -9,7 +9,7 @@ namespace WorldGen.Rendering
 {
     /// <summary>Что редактирует кисть. Elevation/Temperature/Moisture — относительное изменение;
     /// Biome — прямая замена биома выбранным из палитры.</summary>
-    public enum BrushTool { Elevation, Temperature, Moisture, Biome }
+    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water }
 
     /// <summary>Режим для Elevation/Temperature/Moisture. Для Biome не применяется.</summary>
     public enum BrushMode { Raise, Lower, Smooth }
@@ -172,6 +172,16 @@ namespace WorldGen.Rendering
                 Biome biome = selectedBiome.Value;
                 foreach (var cell in affected)
                     mapRenderer.BrushSetBiome(cell, biome);
+                mapRenderer.RebakeAffectedCells(affected);
+                return;
+            }
+
+            if (activeTool == BrushTool.Water)
+            {
+                // Океан = Raise, Суша = Lower (сегмент режима переименован в EditorBrushPanel).
+                bool makeLand = mode == BrushMode.Lower;
+                foreach (var cell in affected)
+                    mapRenderer.BrushSetWater(cell, makeLand);
                 mapRenderer.RebakeAffectedCells(affected);
                 return;
             }
