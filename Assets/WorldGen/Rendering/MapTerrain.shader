@@ -5,6 +5,7 @@ Shader "WorldGen/MapTerrain"
         _CellIdTex ("Cell Id", 2D) = "black" {}
         _AttrTex ("Attributes", 2D) = "black" {}
         _LabelTex ("Region Labels", 2D) = "black" {}
+        _LandDistTex ("Land->Water Dist", 2D) = "black" {}
     }
     SubShader
     {
@@ -60,6 +61,10 @@ Shader "WorldGen/MapTerrain"
             float _WaterDepthRange; // px, за сколько от берега вода становится "глубокой"
             float _GlowWidth;       // px ширины ореола берега (сторона воды)
             float4 _GlowColor;
+
+            sampler2D _LandDistTex; // RFloat: дистанция до ближайшей воды в пикселях (0 на воде, растёт вглубь суши)
+            float _BeachWidth;      // px ширины мягкого песчаного перехода на суше
+            float4 _BeachColor;
 
             float _ShowBiome;   // 1 = цвет семейства, 0 = нейтральная база (слой "Биом/климат")
             float _ShowRelief;  // 1 = ступени высоты + hillshade, 0 = плоско (слой "Рельеф")
@@ -180,6 +185,11 @@ Shader "WorldGen/MapTerrain"
                     // региональная тонировка по температуре (слабая) - всегда
                     float wn = saturate((temp - 0.28) / 0.42);
                     col = lerp(col, lerp(_TintCool.rgb, _TintWarm.rgb, wn), _TintStrength);
+
+                    // мягкий песок у берега: сила спадает вглубь суши по дистанции до воды
+                    float landDist = tex2Dlod(_LandDistTex, float4(i.uv, 0, 0)).r;
+                    float beach = saturate(1.0 - landDist / max(1.0, _BeachWidth));
+                    col = lerp(col, _BeachColor.rgb, beach * 0.6);
 
                     // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
                     if (_ShowRelief > 0.5)

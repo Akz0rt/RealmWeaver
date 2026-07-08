@@ -14,6 +14,7 @@ namespace WorldGen.Rendering.GpuMap
         public Material Material { get; private set; }
         Texture2D cellIdTex;
         Texture2D coastDistTex;
+        Texture2D landDistTex;
         CellAttributeTexture attr;
         MeshRenderer meshRenderer;
 
@@ -98,6 +99,13 @@ namespace WorldGen.Rendering.GpuMap
                 if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
             coastDirty = false;
             coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), texW, texH, CoastDownscale, 96f);
+
+            // Поле дистанции суша→вода (для мягкого пляжа): 0 на воде, растёт вглубь суши.
+            if (landDistTex != null) Destroy(landDistTex);
+            landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), texW, texH, CoastDownscale, 64f);
+            Material.SetTexture("_LandDistTex", landDistTex);
+            SetSlot("_BeachColor", theme, PaletteSlot.Coast);
+            Material.SetFloat("_BeachWidth", 12f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
             Material.SetTexture("_AttrTex", attr.Texture);
@@ -213,6 +221,11 @@ namespace WorldGen.Rendering.GpuMap
             if (coastDistTex != null) Destroy(coastDistTex);
             coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), bakedTexW, bakedTexH, CoastDownscale, 96f);
             Material.SetTexture("_CoastTex", coastDistTex);
+
+            if (landDistTex != null) Destroy(landDistTex);
+            landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), bakedTexW, bakedTexH, CoastDownscale, 64f);
+            Material.SetTexture("_LandDistTex", landDistTex);
+
             coastDirty = false;
         }
 
@@ -227,6 +240,7 @@ namespace WorldGen.Rendering.GpuMap
         {
             if (cellIdTex != null) Destroy(cellIdTex);
             if (coastDistTex != null) Destroy(coastDistTex);
+            if (landDistTex != null) Destroy(landDistTex);
             if (attr != null && attr.Texture != null) Destroy(attr.Texture);
             if (Material != null) Destroy(Material);
             labelTex?.Destroy();
