@@ -466,6 +466,9 @@ MonoBehaviour:
   mapRenderer: {fileID: 1583692671}
   raycastCamera: {fileID: 519420031}
   poiController: {fileID: 1583692677}
+  selectionRadius: 42
+  cursorHeight: 2
+  cursorLineWidth: 1.6
   selectionColor: {r: 1, g: 1, b: 0.2, a: 0.45}
   overlayYOffset: 0.3
 --- !u!4 &652760800
@@ -655,8 +658,9 @@ MonoBehaviour:
   mapRenderer: {fileID: 1583692671}
   targetCamera: {fileID: 519420031}
   minSizeFraction: 0.15
+  maxSizeFraction: 3
   buttonZoomStep: 1.15
-  scrollZoomSensitivity: 0.001
+  scrollZoomStep: 0.12
   panSensitivity: 1
   panMargin: 50
 --- !u!4 &914212973
@@ -754,10 +758,15 @@ MonoBehaviour:
   raycastCamera: {fileID: 519420031}
   poiController: {fileID: 1583692677}
   activeTool: 0
+  mode: 0
+  shape: 0
+  brushRadius: 42
   brushStep: 0.02
-  increaseMode: 1
+  strength: 0.6
   repeatInterval: 0.05
   brushModeActive: 0
+  cursorLineWidth: 1.6
+  cursorHeight: 2
 --- !u!4 &1259932261
 Transform:
   m_ObjectHideFlags: 0
@@ -886,7 +895,7 @@ MonoBehaviour:
   displayMode: 3
   showBiomeLayer: 1
   showReliefLayer: 1
-  showRegionBordersLayer: 1
+  showRegionBordersLayer: 0
   showCoastlineLayer: 1
   reliefStrength: 3
   reliefLightAzimuth: 315
@@ -895,6 +904,20 @@ MonoBehaviour:
   regionBorderWidth: 1.5
   coastlineColor: {r: 0.05, g: 0.1, b: 0.2, a: 0.95}
   coastlineWidth: 2.5
+  paletteTheme: 0
+  coldLight: 58
+  regionVariation: 45
+  darkness: 72
+  smoothBorders: 1
+  coastlineSmoothness: 3
+  coastlineGlowWidth: 16
+  flatRegionFill: 1
+  elevationBands: 5
+  elevationBandContrast: 40
+  smoothRegionBorders: 0
+  borderRoundness: 1
+  rasterLongSide: 2048
+  useGpuRenderer: 1
   targetCamera: {fileID: 519420031}
 --- !u!64 &1583692672
 MeshCollider:
@@ -1098,7 +1121,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.MapLegendUI
   mapRenderer: {fileID: 1583692671}
-  panelAnchoredPosition: {x: -20, y: -20}
   swatchSize: {x: 20, y: 20}
   fontSize: 14
 --- !u!4 &1924083385
