@@ -56,6 +56,7 @@ namespace WorldGen.Rendering.GpuMap
 
         void FinishBuild(IReadOnlyList<VoronoiCell> cells, int texW, int texH, float mapW, float mapH, MapPaletteTheme theme)
         {
+            if (attr != null && attr.Texture != null) Destroy(attr.Texture); // не течём при перегенерации
             attr = new CellAttributeTexture(cells);
 
             // Поле дистанции берега (для плавной глубины воды + свечения). Строится из cell-id.
@@ -184,6 +185,7 @@ namespace WorldGen.Rendering.GpuMap
         {
             if (cellIdTex != null) Destroy(cellIdTex);
             if (coastDistTex != null) Destroy(coastDistTex);
+            if (attr != null && attr.Texture != null) Destroy(attr.Texture);
             if (Material != null) Destroy(Material);
         }
     }
