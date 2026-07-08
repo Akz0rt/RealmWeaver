@@ -32,6 +32,12 @@ namespace WorldGen.Rendering.GpuMap
         int bakedBands = 5;
         int bakedSmoothing = 2;
         float bakedDecimation = 0f;
+        float bakedMapW, bakedMapH;
+
+        // Угловатая заплатка label'ов во время мазка (UpdateCells) копит dirty-rect; сглаженный
+        // пере-бейк (FinalizeLabels) на отпускании ЛКМ пере-печёт этот rect (с запасом) и сбросит флаг.
+        bool labelDirty;
+        int lblMinX, lblMinY, lblMaxX, lblMaxY;
 
         void EnsureMaterial()
         {
@@ -83,6 +89,8 @@ namespace WorldGen.Rendering.GpuMap
             // решает суша/вода из неё (B-канал - сглаженная маска берега).
             bakedCorners = new List<Corner>(corners);
             bakedCellById = BuildCellById(cells);
+            bakedMapW = mapW; bakedMapH = mapH;
+            labelDirty = false;
             int labelLen = texW * texH;
             familyLabel = new int[labelLen];
             bandLabel = new int[labelLen];
@@ -209,6 +217,7 @@ namespace WorldGen.Rendering.GpuMap
             foreach (var c in cells)
             {
                 attr.UpdateCell(c);
+                PatchCellLabelFaceted(c);
                 // Смена статуса суша/вода → берег устарел (пересчёт отложен до FinalizeCoast).
                 bool nowWater = c.EffectiveIsOcean || c.EffectiveIsLake;
                 bool wasWater = waterIds.Contains(c.Id);
@@ -219,6 +228,48 @@ namespace WorldGen.Rendering.GpuMap
                 }
             }
             attr.Apply();
+
+            if (labelDirty)
+                labelTex.PatchRect(familyLabel, bandLabel, isLandMask, lblMinX, lblMinY, lblMaxX - lblMinX + 1, lblMaxY - lblMinY + 1);
+        }
+
+        // Угловатая (по клеткам) заплатка label'ов для одной изменённой клетки: ставит family/band/
+        // isLand её пикселям (без трассировки/сглаживания - мгновенно во время мазка). Копит dirty-rect.
+        void PatchCellLabelFaceted(VoronoiCell cell)
+        {
+            if (cellIdArray == null || familyLabel == null) return;
+            RectPixels(cell, out int x0, out int y0, out int x1, out int y1);
+            if (x1 < x0 || y1 < y0) return; // вырожденный полигон (пустая клетка-призрак) - без патча
+            int fam = MapRaster.RegionCategories.FamilyCategoryOf(cell);
+            int bnd = MapRaster.RegionCategories.BandCategoryOf(cell, bakedBands);
+            bool land = MapRaster.RegionCategories.IsLandCell(cell);
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    int i = y * bakedTexW + x;
+                    if (cellIdArray[i] != cell.Id) continue;
+                    familyLabel[i] = fam; bandLabel[i] = bnd; isLandMask[i] = land;
+                }
+            ExpandLabelDirty(x0, y0, x1, y1);
+        }
+
+        // Пиксельный bbox клетки из её полигона (мировые координаты → пиксели), клампнут в текстуру.
+        void RectPixels(VoronoiCell cell, out int x0, out int y0, out int x1, out int y1)
+        {
+            if (cell.Polygon == null || cell.Polygon.Count == 0) { x0 = y0 = 1; x1 = y1 = 0; return; }
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var p in cell.Polygon)
+            { if (p.X < minX) minX = p.X; if (p.X > maxX) maxX = p.X; if (p.Y < minY) minY = p.Y; if (p.Y > maxY) maxY = p.Y; }
+            x0 = Mathf.Clamp(Mathf.FloorToInt(minX / bakedMapW * bakedTexW), 0, bakedTexW - 1);
+            x1 = Mathf.Clamp(Mathf.CeilToInt (maxX / bakedMapW * bakedTexW), 0, bakedTexW - 1);
+            y0 = Mathf.Clamp(Mathf.FloorToInt(minY / bakedMapH * bakedTexH), 0, bakedTexH - 1);
+            y1 = Mathf.Clamp(Mathf.CeilToInt (maxY / bakedMapH * bakedTexH), 0, bakedTexH - 1);
+        }
+
+        void ExpandLabelDirty(int x0, int y0, int x1, int y1)
+        {
+            if (!labelDirty) { lblMinX = x0; lblMinY = y0; lblMaxX = x1; lblMaxY = y1; labelDirty = true; }
+            else { lblMinX = Mathf.Min(lblMinX, x0); lblMinY = Mathf.Min(lblMinY, y0); lblMaxX = Mathf.Max(lblMaxX, x1); lblMaxY = Mathf.Max(lblMaxY, y1); }
         }
 
         /// <summary>Пересчитать поле дистанции берега, если за мазок менялась топология суша/вода.
@@ -237,6 +288,24 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetTexture("_LandDistTex", landDistTex);
 
             coastDirty = false;
+        }
+
+        /// <summary>Пере-печь СГЛАЖЕННЫЕ label'ы (family/band/берег) в затронутой кистью области -
+        /// на отпускании ЛКМ. Во время мазка была угловатая заплатка (PatchCellLabelFaceted); здесь
+        /// контуры оседают в гладкие. rect расширяется на запас под сглаживание/децимацию.</summary>
+        public void FinalizeLabels()
+        {
+            if (!labelDirty || cellIdArray == null) return;
+            int pad = 48; // запас в пикселях под сглаживание/децимацию (контур может отойти от границы клетки)
+            int rx = Mathf.Clamp(lblMinX - pad, 0, bakedTexW - 1);
+            int ry = Mathf.Clamp(lblMinY - pad, 0, bakedTexH - 1);
+            int rx1 = Mathf.Clamp(lblMaxX + pad, 0, bakedTexW - 1);
+            int ry1 = Mathf.Clamp(lblMaxY + pad, 0, bakedTexH - 1);
+            int rw = rx1 - rx + 1, rh = ry1 - ry + 1;
+            RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel, isLandMask,
+                bakedTexW, bakedTexH, bakedMapW, bakedMapH, bakedSmoothing, bakedDecimation, bakedBands, rx, ry, rw, rh);
+            labelTex.PatchRect(familyLabel, bandLabel, isLandMask, rx, ry, rw, rh);
+            labelDirty = false;
         }
 
         static IReadOnlyDictionary<int, VoronoiCell> BuildCellById(IReadOnlyList<VoronoiCell> cells)

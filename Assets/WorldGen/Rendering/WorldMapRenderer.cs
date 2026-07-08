@@ -538,7 +538,9 @@ namespace WorldGen.Rendering
         {
             brushUndo.EndStroke();
             // Если мазок менял топологию суша/вода - пересчитать поле дистанции берега один раз здесь.
-            if (useGpuRenderer && gpuRenderer != null) gpuRenderer.FinalizeCoast();
+            // FinalizeLabels пере-печёт сглаженные family/band/берег label'ы в затронутой мазком
+            // области (во время мазка стояла угловатая по-клеточная заплатка - см. UpdateCells).
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
             OnDisplayChanged?.Invoke();
         }
 
@@ -1518,6 +1520,59 @@ namespace WorldGen.Rendering
             Debug.Log(bakerOk
                 ? "Self-Test Region Label Baker: PASS"
                 : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{plains}, snowFam={familyLabel[snowIdx]}/{snowFam}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]}, grassIsLand={isLandMask[grassIdx]}, snowIsLand={isLandMask[snowIdx]}, waterIsLand={isLandMask[waterIdx]})");
+        }
+
+        /// <summary>Кисть должна патчить label'ы МГНОВЕННО (угловато, по клеткам) во время мазка, без
+        /// ожидания FinalizeLabels - через GpuMapRenderer.UpdateCells → PatchCellLabelFaceted (Task 6).
+        /// Фикстура: сетка 5x5 (как в других само-тестах), рамка - океан, внутренний 3x3 - Grassland.
+        /// Строит настоящий GpuMapRenderer (BuildAll), затем переводит центральную клетку (c=2,r=2) в
+        /// ForceOcean (как реальная water-кисть - см. CellOverrideService.ApplyWaterOverride) и вызывает
+        /// UpdateCells БЕЗ FinalizeLabels - глубинный пиксель этой клетки в _LabelTex должен немедленно
+        /// показать isLand=false (B=0), что подтверждает реальный вызов PatchCellLabelFaceted и
+        /// rect-загрузку на GPU-текстуру (не просто то, что категория пересчитывается где-то в памяти).</summary>
+        [ContextMenu("Self-Test: Faceted Label Patch On Brush Edit")]
+        public void SelfTestFacetedLabelPatch()
+        {
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < 5; r++)
+                for (int c = 0; c < 5; c++)
+                {
+                    bool land = c >= 1 && c <= 3 && r >= 1 && r <= 3;
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c, r))
+                    { Biome = land ? Biome.Grassland : Biome.Ocean, IsOcean = !land, Height = 0.5f };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            const int texW = 50, texH = 50;
+            const float mapW = 5f, mapH = 5f;
+            int idx = 20 * texW + 20; // глубинный пиксель клетки (c=2,r=2), 10 текс/ед (см. другие само-тесты)
+
+            var go = new GameObject("SelfTest_GpuMapRenderer_FacetedPatch");
+            go.AddComponent<MeshRenderer>();
+            var gpu = go.AddComponent<WorldGen.Rendering.GpuMap.GpuMapRenderer>();
+            gpu.BuildAll(cells, lookup, texW, texH, mapW, mapH, WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, corners);
+
+            var labelTexBefore = gpu.Material.GetTexture("_LabelTex") as Texture2D;
+            bool wasLandBefore = labelTexBefore != null && labelTexBefore.GetPixels32()[idx].b == 255;
+
+            var midCell = cells.First(cc => cc.Site.X == 2 && cc.Site.Y == 2);
+            midCell.WaterOverride = WorldGen.Generation.WaterOverrideType.ForceOcean; // имитация water-кисти
+            gpu.UpdateCells(new List<VoronoiCell> { midCell }); // намеренно БЕЗ FinalizeLabels
+
+            var labelTexAfter = gpu.Material.GetTexture("_LabelTex") as Texture2D;
+            bool sameTextureRef = ReferenceEquals(labelTexBefore, labelTexAfter); // PatchRect не должен пересоздавать текстуру
+            bool isWaterAfterPatch = labelTexAfter != null && labelTexAfter.GetPixels32()[idx].b == 0;
+
+            bool ok = wasLandBefore && sameTextureRef && isWaterAfterPatch;
+            Debug.Log(ok
+                ? "Self-Test Faceted Label Patch On Brush Edit: PASS"
+                : $"Self-Test Faceted Label Patch On Brush Edit: FAIL (wasLandBefore={wasLandBefore}, sameTextureRef={sameTextureRef}, isWaterAfterPatch={isWaterAfterPatch})");
+
+            Destroy(go);
         }
 
         [ContextMenu("Self-Test: GPU CellId Texture")]
@@ -2551,7 +2606,7 @@ namespace WorldGen.Rendering
         /// перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
         void RefreshAfterCellDataChange()
         {
-            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); }
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
             else RebakeAll();
         }
 
