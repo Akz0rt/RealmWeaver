@@ -866,14 +866,19 @@ MonoBehaviour:
   minPointDistance: 8
   lloydIterations: 2
   numberOfRegions: 4
+  continentWidth: 750
+  continentHeight: 750
+  oceanPadding: 0.1
   falloffPower: 1.8
   innerRadius: 0.2
   seaLevel: 0.27
   minLakeSize: 20
+  continentCenterJitter: 0.01
   elevationCoastWeight: 0.6
   elevationNoiseWeight: 0.4
   elevationNoiseFrequency: 0.015
   elevationNoiseOctaves: 4
+  elevationContrast: 1.5
   moistureFalloffDistance: 50
   numberOfMoistureEpicenters: 3
   moistureEpicenterMinRadius: 150
@@ -909,14 +914,18 @@ MonoBehaviour:
   regionVariation: 45
   darkness: 72
   smoothBorders: 1
-  coastlineSmoothness: 3
+  coastlineSmoothness: 5
   coastlineGlowWidth: 16
   flatRegionFill: 1
   elevationBands: 5
   elevationBandContrast: 40
-  smoothRegionBorders: 0
+  smoothRegionBorders: 1
   borderRoundness: 1
   rasterLongSide: 2048
+  beachWidth: 35
+  beachStrength: 0.365
+  beachHardness: 1
+  beachColor: {r: 0.85, g: 0.78, b: 0.6, a: 1}
   useGpuRenderer: 1
   targetCamera: {fileID: 519420031}
 --- !u!64 &1583692672
