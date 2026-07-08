@@ -159,6 +159,13 @@ namespace WorldGen.Rendering
 
         void OnDisable() => HideCursor();
 
+        void OnDestroy()
+        {
+            if (overlayMeshFilter != null && overlayMeshFilter.mesh != null) Destroy(overlayMeshFilter.mesh);
+            if (overlayMeshRenderer != null && overlayMeshRenderer.material != null) Destroy(overlayMeshRenderer.material);
+            if (cursorRing != null && cursorRing.material != null) Destroy(cursorRing.material);
+        }
+
         /// <summary>Полностью очищает текущий выбор (не трогает climate override - только визуальное выделение).</summary>
         public void ClearSelection()
         {
@@ -234,6 +241,9 @@ namespace WorldGen.Rendering
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
+            // Уничтожаем предыдущий overlay-mesh перед заменой - иначе течём нативными Mesh
+            // (RebuildOverlay вызывается на каждый кадр протяжки выделения).
+            if (overlayMeshFilter.mesh != null) Destroy(overlayMeshFilter.mesh);
             overlayMeshFilter.mesh = mesh;
         }
 
