@@ -296,7 +296,9 @@ namespace WorldGen.Rendering.GpuMap
         public void FinalizeLabels()
         {
             if (!labelDirty || cellIdArray == null) return;
-            int pad = 48; // запас в пикселях под сглаживание/децимацию (контур может отойти от границы клетки)
+            // Запас под отклонение сглаженного контура от границы клетки: децимация (мир) + база под
+            // Chaikin/размер клетки, в пиксели. borderRoundness растит bakedDecimation, поэтому пад тоже.
+            int pad = Mathf.Max(48, Mathf.CeilToInt((bakedDecimation * 2f + 40f) / Mathf.Max(1f, bakedMapW) * bakedTexW));
             int rx = Mathf.Clamp(lblMinX - pad, 0, bakedTexW - 1);
             int ry = Mathf.Clamp(lblMinY - pad, 0, bakedTexH - 1);
             int rx1 = Mathf.Clamp(lblMaxX + pad, 0, bakedTexW - 1);

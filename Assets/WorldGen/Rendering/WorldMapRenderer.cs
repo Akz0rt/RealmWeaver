@@ -532,8 +532,9 @@ namespace WorldGen.Rendering
         public void BeginBrushStroke() => brushUndo.BeginStroke();
 
         /// <summary>Завершает текущий мазок кистью, кладёт его в историю Undo - вызывать при отпускании ЛКМ.
-        /// Полный рибейк здесь больше не нужен: BrushToolController.ApplyStamp уже вызвал
-        /// RebakeAffectedCells для каждого стемпа мазка, текстура уже в актуальном состоянии.</summary>
+        /// Здесь мазок "финализируется": FinalizeCoast пересчитывает поле дистанции берега (если мазок
+        /// менял сушу/воду), FinalizeLabels пере-печёт сглаженные label'ы взамен угловатой по-клеточной
+        /// заплатки, что стояла во время мазка (см. UpdateCells).</summary>
         public void EndBrushStroke()
         {
             brushUndo.EndStroke();
@@ -2602,8 +2603,9 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Обновить отрисовку после изменения ДАННЫХ клеток без смены геометрии (undo,
-        /// climate/biome override многих клеток): GPU - дёшево через перезалив атрибутов, CPU - полный
-        /// перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
+        /// climate/biome override многих клеток): GPU - перезаливает атрибуты (UpdateCells) и пере-печёт
+        /// сглаженные label'ы затронутых клеток (FinalizeLabels), для массовых правок это НЕ дёшево;
+        /// CPU - полный перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
         void RefreshAfterCellDataChange()
         {
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
