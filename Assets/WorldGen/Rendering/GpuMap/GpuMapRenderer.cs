@@ -77,8 +77,7 @@ namespace WorldGen.Rendering.GpuMap
             cellIdArray = new int[idPixels.Length];
             for (int i = 0; i < idPixels.Length; i++) cellIdArray[i] = Mathf.RoundToInt(idPixels[i].r);
 
-            // Сглаженные области (семейство+пояс) → RG8 label-текстура. Шейдер её пока не читает
-            // (Task 4) - здесь только данные, чтобы Task 4 могла включить чтение без пере-бейка.
+            // Сглаженные области (семейство+пояс) → RG8 label-текстура; шейдер заливает сушу из неё.
             bakedCorners = new List<Corner>(corners);
             bakedCellById = BuildCellById(cells);
             int labelLen = texW * texH;
@@ -104,10 +103,7 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetVector("_MapSize", new Vector4(mapW, mapH, 0, 0));
             Material.SetFloat("_Mode", 3); // Combined
 
-            // Органичные границы (domain warp) + тёмная обводка. Стартовые значения - крутятся вживую.
-            Material.SetFloat("_WarpAmount", 0.012f);
-            Material.SetFloat("_WarpScale", 8f);
-            Material.SetFloat("_Seed", 0f);
+            // Тёмная обводка берега. Стартовые значения - крутятся вживую.
             Material.SetVector("_CellIdTexel", new Vector4(1f / texW, 1f / texH, 0, 0));
             var outline = MapPalette.GetSlotColor(theme, PaletteSlot.Outline);
             Material.SetColor("_OutlineColor", new Color(outline.r / 255f, outline.g / 255f, outline.b / 255f, 1f));

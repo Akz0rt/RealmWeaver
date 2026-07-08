@@ -4,6 +4,7 @@ Shader "WorldGen/MapTerrain"
     {
         _CellIdTex ("Cell Id", 2D) = "black" {}
         _AttrTex ("Attributes", 2D) = "black" {}
+        _LabelTex ("Region Labels", 2D) = "black" {}
     }
     SubShader
     {
@@ -26,11 +27,11 @@ Shader "WorldGen/MapTerrain"
             float2 _MapSize;
             float _Mode;
 
-            float _WarpAmount;
-            float _WarpScale;
-            float _Seed;
             float4 _OutlineColor;
             float2 _CellIdTexel;   // (1/texW, 1/texH) - шаг соседа для обводки, независим от зума
+
+            sampler2D _LabelTex;   // RG8: R=familyLabel, G=bandLabel (255 = нет метки)
+            float2 _LabelTexel;
 
             float _ElevBands;
             float _BandContrast;
@@ -79,6 +80,13 @@ Shader "WorldGen/MapTerrain"
                 return tex2Dlod(_AttrTex, float4(uv, 0, 0));
             }
 
+            // Метка области в пикселе: R=family, G=band; 255 = нет метки (откат к attribute).
+            int2 labelAt(float2 uv)
+            {
+                float2 l = tex2Dlod(_LabelTex, float4(uv, 0, 0)).rg * 255.0;
+                return int2((int)(l.x + 0.5), (int)(l.y + 0.5));
+            }
+
             float hash21(float2 p)
             {
                 p = frac(p * float2(123.34, 345.45));
@@ -99,12 +107,6 @@ Shader "WorldGen/MapTerrain"
                 for (int k = 0; k < 4; k++) { s += amp * vnoise(p * freq); freq *= 2; amp *= 0.5; }
                 return s;
             }
-            // Искажает координату fbm-шумом → органичные извилистые границы клеток/биомов/берега.
-            float2 warpUV(float2 uv)
-            {
-                float2 n = float2(fbm(uv * _WarpScale + _Seed), fbm(uv * _WarpScale + _Seed + 37.0));
-                return uv + (n - 0.5) * _WarpAmount;
-            }
             int cellAt(float2 uv)
             {
                 return (int)(tex2Dlod(_CellIdTex, float4(uv, 0, 0)).r + 0.5);
@@ -120,7 +122,7 @@ Shader "WorldGen/MapTerrain"
 
             fixed4 frag (v2f i) : SV_Target
             {
-                float2 wuv = warpUV(i.uv);
+                float2 wuv = i.uv;
                 int cid = cellAt(wuv);
                 if (cid < 0) return fixed4(0, 0, 0, 1);
 
@@ -147,14 +149,16 @@ Shader "WorldGen/MapTerrain"
                 }
                 else
                 {
-                    // слой "Биом": цвет семейства или нейтральная база (пергамент)
-                    col = (_ShowBiome > 0.5) ? _Palette[family].rgb : float3(0.82, 0.78, 0.65);
+                    // слой "Биом": цвет семейства (сглаженная метка области) или нейтральная база (пергамент)
+                    int2 lab = labelAt(i.uv);
+                    int famL = (lab.x == 255) ? family : lab.x;   // откат к attribute на клиньях
+                    col = (_ShowBiome > 0.5) ? _Palette[famL].rgb : float3(0.82, 0.78, 0.65);
 
                     // слой "Рельеф": ступень высоты (выше = светлее по дискретным полосам)
                     if (_ShowRelief > 0.5)
                     {
                         int bands = max(2, (int)_ElevBands);
-                        int band = clamp((int)(elev * bands), 0, bands - 1);
+                        int band = (lab.y == 255) ? clamp((int)(elev * bands), 0, bands - 1) : lab.y;
                         float bt = band / max(1.0, (float)(bands - 1));
                         col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
                     }
