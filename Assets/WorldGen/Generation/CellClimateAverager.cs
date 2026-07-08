@@ -14,7 +14,14 @@ namespace WorldGen.Generation
     /// </summary>
     public static class CellClimateAverager
     {
-        public static void ApplyToCells(List<VoronoiCell> cells, List<Corner> corners, float beachElevationThreshold = 0.1f)
+        /// <summary>Контраст высоты вокруг середины: низины ниже, вершины выше. contrast=1 - без изменений.
+        /// Вынесен отдельным методом, чтобы тестировать формулу напрямую (см. self-test).</summary>
+        public static float ApplyContrast(float elevation, float contrast)
+        {
+            return System.Math.Clamp(0.5f + (elevation - 0.5f) * contrast, 0f, 1f);
+        }
+
+        public static void ApplyToCells(List<VoronoiCell> cells, List<Corner> corners, float beachElevationThreshold = 0.1f, float elevationContrast = 1f)
         {
             var cornersByCell = new Dictionary<int, List<Corner>>();
             foreach (var corner in corners)
@@ -35,7 +42,7 @@ namespace WorldGen.Generation
                 if (!cornersByCell.TryGetValue(cell.Id, out var cellCorners) || cellCorners.Count == 0)
                     continue; // клетка без corners (например, вырожденный полигон) - оставляем как есть
 
-                float avgElevation = cellCorners.Average(c => c.Elevation);
+                float avgElevation = ApplyContrast(cellCorners.Average(c => c.Elevation), elevationContrast);
                 float avgMoisture = cellCorners.Average(c => c.Moisture);
 
                 // isLake/isOcean для клетки уже посчитаны ранее через CellWaterAssigner -

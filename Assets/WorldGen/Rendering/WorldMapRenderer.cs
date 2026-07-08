@@ -46,6 +46,8 @@ namespace WorldGen.Rendering
         public float elevationNoiseWeight = 0.4f;
         public float elevationNoiseFrequency = 0.015f;
         public int elevationNoiseOctaves = 4;
+        [Tooltip("Контраст высоты на клетке (вокруг середины). 1 = как есть; больше = выразительнее рельеф и больше высокогорья.")]
+        [Range(1f, 2.5f)] public float elevationContrast = 1.5f;
 
         [Header("Moisture (Patel-стиль: distance от свежей воды)")]
         [Tooltip("Дистанция в шагах corner-графа от свежей воды (озёр) для полного высыхания.")]
@@ -964,6 +966,34 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Raster Elevation Invariant: PASS"
                 : $"Self-Test Raster Elevation Invariant: FAIL (sampled={sampledElevation:F3}, expected={a.EffectiveElevation:F3})");
+        }
+
+        [ContextMenu("Self-Test: Elevation Contrast Widens Range")]
+        public void SelfTestElevationContrastWidensRange()
+        {
+            float[] vals = { 0.30f, 0.42f, 0.50f, 0.58f, 0.70f };
+
+            float Range(float contrast)
+            {
+                float mn = 1f, mx = 0f;
+                foreach (var v in vals)
+                {
+                    float c = WorldGen.Generation.CellClimateAverager.ApplyContrast(v, contrast);
+                    mn = Mathf.Min(mn, c);
+                    mx = Mathf.Max(mx, c);
+                }
+                return mx - mn;
+            }
+
+            float spreadNeutral = Range(1f);
+            float spreadBoosted = Range(1.5f);
+            // Середина неподвижна, а точки вокруг неё расходятся → диапазон растёт.
+            bool ok = spreadBoosted > spreadNeutral
+                      && WorldGen.Generation.CellClimateAverager.ApplyContrast(0.5f, 1.5f) == 0.5f;
+
+            Debug.Log(ok
+                ? "Self-Test Elevation Contrast Widens Range: PASS"
+                : $"Self-Test Elevation Contrast Widens Range: FAIL (neutral={spreadNeutral}, boosted={spreadBoosted})");
         }
 
         /// <summary>
@@ -2107,6 +2137,7 @@ namespace WorldGen.Rendering
                 ElevationNoiseWeight = elevationNoiseWeight,
                 ElevationNoiseFrequency = elevationNoiseFrequency,
                 ElevationNoiseOctaves = elevationNoiseOctaves,
+                ElevationContrast = elevationContrast,
                 MoistureFalloffDistance = moistureFalloffDistance,
                 NumberOfMoistureEpicenters = numberOfMoistureEpicenters,
                 MoistureEpicenterMinRadius = moistureEpicenterMinRadius,

@@ -64,6 +64,8 @@ namespace WorldGen.Generation
         public float ElevationNoiseWeight = 0.4f;
         public float ElevationNoiseFrequency = 0.015f;
         public int ElevationNoiseOctaves = 4;
+        /// <summary>Контраст высоты на клетке (вокруг середины). 1 = как есть; больше = выразительнее рельеф и больше высокогорья. Разумно 1.0-2.5.</summary>
+        public float ElevationContrast = 1.5f;
 
         // --- Moisture ---
 
@@ -174,7 +176,7 @@ namespace WorldGen.Generation
             MoistureField.ApplyMoisture(corners, p.MoistureFalloffDistance, moistureEpicenters, riverCornerIds);
 
             // --- Усреднение elevation/moisture с corners на клетки + классификация биома ---
-            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold);
+            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold, p.ElevationContrast);
 
             // --- Регионы (растим только по суше, как и раньше) ---
             var landCells = cells.Where(c => !c.IsOcean).ToList();
@@ -255,7 +257,7 @@ namespace WorldGen.Generation
 
             // --- Step 4/6: Расчёт биомов ---
             onProgress?.Invoke("Расчёт биомов", 3f / 6f);
-            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold);
+            CellClimateAverager.ApplyToCells(cells, corners, p.BeachElevationThreshold, p.ElevationContrast);
             RegenerateTemperature(cells, p, temperatureEpicenters);
             yield return null;
 

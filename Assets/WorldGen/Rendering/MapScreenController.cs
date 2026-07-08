@@ -97,6 +97,7 @@ namespace WorldGen.Rendering
                 ElevationNoiseWeight = mapRenderer.elevationNoiseWeight,
                 ElevationNoiseFrequency = mapRenderer.elevationNoiseFrequency,
                 ElevationNoiseOctaves = mapRenderer.elevationNoiseOctaves,
+                ElevationContrast = mapRenderer.elevationContrast,
                 MoistureFalloffDistance = mapRenderer.moistureFalloffDistance,
                 BeachElevationThreshold = mapRenderer.beachElevationThreshold,
                 NumberOfTemperatureEpicenters = mapRenderer.numberOfTemperatureEpicenters,
