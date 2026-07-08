@@ -96,7 +96,7 @@ namespace WorldGen.Rendering
                 NumberOfRegions = mapRenderer.numberOfRegions,
                 FalloffPower = mapRenderer.falloffPower,
                 InnerRadius = mapRenderer.innerRadius,
-                CoastRoughness = mapRenderer.coastRoughness,
+                CoastRoughness = (float)(new System.Random(mapRenderer.seed + 6000).NextDouble() * 0.5),
                 ContinentCenterJitter = mapRenderer.continentCenterJitter,
                 SeaLevel = mapRenderer.seaLevel,
                 MinLakeSize = mapRenderer.minLakeSize,

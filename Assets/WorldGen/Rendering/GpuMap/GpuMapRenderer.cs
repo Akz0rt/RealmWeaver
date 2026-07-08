@@ -105,7 +105,7 @@ namespace WorldGen.Rendering.GpuMap
             landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), texW, texH, CoastDownscale, 64f);
             Material.SetTexture("_LandDistTex", landDistTex);
             SetSlot("_BeachColor", theme, PaletteSlot.Coast);
-            Material.SetFloat("_BeachWidth", 12f);
+            Material.SetFloat("_BeachWidth", 35f);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
             Material.SetTexture("_AttrTex", attr.Texture);

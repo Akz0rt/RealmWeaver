@@ -188,8 +188,8 @@ Shader "WorldGen/MapTerrain"
 
                     // мягкий песок у берега: сила спадает вглубь суши по дистанции до воды
                     float landDist = tex2Dlod(_LandDistTex, float4(i.uv, 0, 0)).r;
-                    float beach = saturate(1.0 - landDist / max(1.0, _BeachWidth));
-                    col = lerp(col, _BeachColor.rgb, beach * 0.6);
+                    float beach = pow(saturate(1.0 - landDist / max(1.0, _BeachWidth)), 0.5);
+                    col = lerp(col, _BeachColor.rgb, beach * 0.9);
 
                     // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
                     if (_ShowRelief > 0.5)

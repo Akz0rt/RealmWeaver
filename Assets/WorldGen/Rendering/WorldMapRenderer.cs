@@ -41,7 +41,6 @@ namespace WorldGen.Rendering
         public int minLakeSize = 5;
 
         [Header("Форма материка")]
-        [Range(0f, 0.5f)] public float coastRoughness = 0.2f;
         [Range(0f, 0.2f)] public float continentCenterJitter = 0.01f;
 
         [Header("Elevation (Patel-стиль: distance-from-coast + шум)")]
@@ -2307,7 +2306,7 @@ namespace WorldGen.Rendering
                 NumberOfRegions = numberOfRegions,
                 FalloffPower = falloffPower,
                 InnerRadius = innerRadius,
-                CoastRoughness = coastRoughness,
+                CoastRoughness = (float)(new System.Random(seed + 6000).NextDouble() * 0.5),
                 ContinentCenterJitter = continentCenterJitter,
                 SeaLevel = seaLevel,
                 MinLakeSize = minLakeSize,
