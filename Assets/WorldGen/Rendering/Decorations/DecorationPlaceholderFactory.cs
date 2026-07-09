@@ -90,7 +90,9 @@ namespace WorldGen.Rendering.Decorations
             {
                 int topY = 2 + tier * (size / 4);
                 int botY = topY + size / 3;
-                float halfW = size * (0.36f - tier * 0.06f);
+                // tier 0 = верх спрайта (малый tile-y → верх после Y-флипа) → самый УЗКИЙ;
+                // нижние ярусы шире → силуэт ёлки: широкое основание, сужается кверху.
+                float halfW = size * (0.24f + tier * 0.06f);
                 for (int y = topY; y <= botY; y++)
                 {
                     float t = (y - topY) / (float)(botY - topY);
