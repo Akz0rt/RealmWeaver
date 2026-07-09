@@ -15,6 +15,7 @@ namespace WorldGen.Rendering
         Transform iconTransform;
         TextMesh label;
         Transform labelTransform;
+        MeshRenderer labelRenderer;
         float yOffset;
         float baseIconWorldSize;
         float baseLabelCharacterSize;
@@ -56,6 +57,7 @@ namespace WorldGen.Rendering
             label.color = Color.white;
             label.anchor = TextAnchor.LowerCenter;
             label.alignment = TextAlignment.Center;
+            labelRenderer = labelGO.GetComponent<MeshRenderer>();
             labelGO.SetActive(showLabel); // hide the on-map name label when disabled (name stays in PoiData / edit panel)
 
             Refresh();
@@ -89,6 +91,17 @@ namespace WorldGen.Rendering
 
             // Sync local position to data
             transform.localPosition = new Vector3(poiData.WorldPosition.X, 0f, poiData.WorldPosition.Y);
+            ApplySorting(poiData.WorldPosition.Y);
+        }
+
+        /// <summary>Depth-sorts markers south-over-north, matching the terrain decorations: the top-down
+        /// camera (Euler(90,0,0)) maps screen-up to world +Z, so a lower world Z is further south and
+        /// should draw on top. SpriteRenderer.sortingOrder is a short, so the value is clamped.</summary>
+        void ApplySorting(float worldZ)
+        {
+            int order = Mathf.Clamp(-Mathf.RoundToInt(worldZ), short.MinValue, short.MaxValue);
+            if (iconRenderer != null) iconRenderer.sortingOrder = order;
+            if (labelRenderer != null) labelRenderer.sortingOrder = order + 1; // label just above its own icon
         }
 
         /// <summary>Applies icon/label size from base × per-POI scale × current zoomScale.
@@ -127,6 +140,7 @@ namespace WorldGen.Rendering
         public void SetVisualPosition(System.Numerics.Vector2 pos)
         {
             transform.localPosition = new Vector3(pos.X, 0f, pos.Y);
+            ApplySorting(pos.Y);
         }
 
         static Sprite LoadSpriteFromBytes(byte[] bytes)
