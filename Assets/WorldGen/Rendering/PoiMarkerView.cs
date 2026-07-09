@@ -18,6 +18,7 @@ namespace WorldGen.Rendering
         float yOffset;
         float baseIconWorldSize;
         float baseLabelCharacterSize;
+        float zoomScale = 1f;
 
         public string PoiId => poiData?.Id;
         public System.Numerics.Vector2 WorldPos => poiData?.WorldPosition ?? default;
@@ -81,20 +82,35 @@ namespace WorldGen.Rendering
             if (iconRenderer != null) iconRenderer.sprite = sprite;
             if (label != null) label.text = poiData.Name;
 
-            // Icon/label sizes are the shared base multiplied by this POI's individual scale.
-            float iconWorldSize = baseIconWorldSize * poiData.IconScale;
+            ApplySizing();
+
+            // Sync local position to data
+            transform.localPosition = new Vector3(poiData.WorldPosition.X, 0f, poiData.WorldPosition.Y);
+        }
+
+        /// <summary>Applies icon/label size from base × per-POI scale × current zoomScale.
+        /// Split out of Refresh so the per-frame zoom update (ApplyZoomScale) can re-size without
+        /// re-reading the sprite/text.</summary>
+        void ApplySizing()
+        {
+            if (poiData == null) return;
+            float iconWorldSize = baseIconWorldSize * poiData.IconScale * zoomScale;
             if (iconTransform != null)
             {
                 iconTransform.localPosition = new Vector3(0f, yOffset, 0f);
                 iconTransform.localScale = new Vector3(iconWorldSize, iconWorldSize, 1f);
             }
             if (labelTransform != null)
-                labelTransform.localPosition = new Vector3(0f, yOffset, iconWorldSize * 0.5f + 1.5f);
+                labelTransform.localPosition = new Vector3(0f, yOffset, iconWorldSize * 0.5f + 1.5f * zoomScale);
             if (label != null)
-                label.characterSize = baseLabelCharacterSize * poiData.LabelScale;
+                label.characterSize = baseLabelCharacterSize * poiData.LabelScale * zoomScale;
+        }
 
-            // Sync local position to data
-            transform.localPosition = new Vector3(poiData.WorldPosition.X, 0f, poiData.WorldPosition.Y);
+        /// <summary>Sets the shared zoom-driven size multiplier (from PoiManager) and re-sizes.</summary>
+        public void ApplyZoomScale(float scale)
+        {
+            zoomScale = scale;
+            ApplySizing();
         }
 
         /// <summary>Highlights the marker (scale ×1.3) or returns to normal (scale ×1).</summary>

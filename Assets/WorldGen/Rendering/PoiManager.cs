@@ -24,6 +24,19 @@ namespace WorldGen.Rendering
         [Tooltip("Base label character size, before per-POI LabelScale is applied.")]
         public float labelCharacterSize = 1.5f;
 
+        [Header("Масштаб маркеров по зуму")]
+        [Tooltip("Контроллер камеры (для orthographicSize и NaturalFitSize). Если не задан — ищется в сцене.")]
+        public MapCameraController cameraController;
+        [Range(0f, 1f)]
+        [Tooltip("0 = мировой фикс (маркер мельчает/раздувается); 1 = постоянный экранный размер. 0.5 = частичная реакция.")]
+        public float zoomScaleExponent = 0.5f;
+        [Tooltip("Маркер базового масштаба не мельче этого размера на экране (px).")]
+        public float minMarkerScreenPx = 26f;
+        [Tooltip("Маркер базового масштаба не крупнее этого размера на экране (px).")]
+        public float maxMarkerScreenPx = 64f;
+
+        float lastAppliedOrtho = -1f;
+
         readonly List<PoiData> pois = new List<PoiData>();
         readonly Dictionary<string, PoiMarkerView> markers = new Dictionary<string, PoiMarkerView>();
         Transform poiContainer;
@@ -58,6 +71,28 @@ namespace WorldGen.Rendering
         {
             if (mapRenderer != null)
                 mapRenderer.OnWorldRegenerated -= ClearAll;
+        }
+
+        void LateUpdate()
+        {
+            if (cameraController == null) cameraController = FindObjectOfType<MapCameraController>();
+            var cam = cameraController != null ? cameraController.targetCamera : null;
+            if (cam == null || !cam.orthographic) return;
+
+            float refSize = cameraController.NaturalFitSize;
+            float ortho = cam.orthographicSize;
+            if (refSize <= 0f || ortho <= 0f) return;                 // before first generation → leave zoomScale=1
+            if (Mathf.Approximately(ortho, lastAppliedOrtho)) return; // zoom unchanged this frame
+            lastAppliedOrtho = ortho;
+
+            // Partial response (exponent) then clamp the base-scale marker's on-screen px into a readable band.
+            float factor = Mathf.Pow(ortho / refSize, zoomScaleExponent);
+            float basePx = iconWorldSize * factor * (Screen.height / (2f * ortho));
+            if (basePx > 0f)
+                factor *= Mathf.Clamp(basePx, minMarkerScreenPx, maxMarkerScreenPx) / basePx;
+
+            foreach (var m in markers.Values)
+                if (m != null) m.ApplyZoomScale(factor);
         }
 
         // ── Generation ─────────────────────────────────────────────────────────
