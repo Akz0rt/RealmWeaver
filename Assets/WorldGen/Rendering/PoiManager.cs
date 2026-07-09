@@ -323,6 +323,12 @@ namespace WorldGen.Rendering
                 case PoiType.Ruin:     return "Руины";
                 case PoiType.Dungeon:  return "Подземелье";
                 case PoiType.Fortress: return "Крепость";
+                case PoiType.Village:  return "Деревня";
+                case PoiType.Tower:    return "Башня";
+                case PoiType.Temple:   return "Храм";
+                case PoiType.Encounter: return "Встреча";
+                case PoiType.Camp:     return "Лагерь";
+                case PoiType.Port:     return "Порт";
                 default: return type.ToString();
             }
         }
@@ -382,12 +388,16 @@ namespace WorldGen.Rendering
         public void SelfTestPlaceholderFactory()
         {
             bool ok = true;
+            // Content hash → the PoiType that first produced it — catches a forgotten or
+            // duplicated icon routine (all 11 medallions share the same frame, so two types
+            // with identical pixels means their DrawIcon case is missing/copy-pasted).
+            var seenHashes = new Dictionary<int, PoiType>();
             foreach (PoiType type in System.Enum.GetValues(typeof(PoiType)))
             {
                 var sprite = PoiPlaceholderFactory.GetPlaceholder(type);
                 bool spriteOk = sprite != null
-                    && sprite.texture.width == 64
-                    && sprite.texture.height == 64;
+                    && sprite.texture.width == 128
+                    && sprite.texture.height == 128;
                 // Иконка должна быть ОДНИМ кэшированным экземпляром (её делят маркеры, список и
                 // панель редактирования) — проверяем идентичность ссылки при повторном запросе.
                 bool sameInstance = ReferenceEquals(sprite, PoiPlaceholderFactory.GetPlaceholder(type));
@@ -395,6 +405,25 @@ namespace WorldGen.Rendering
                 {
                     Debug.Log($"Self-Test POI Placeholder Factory: FAIL — {type} (valid={spriteOk}, cached={sameInstance})");
                     ok = false;
+                }
+
+                if (spriteOk)
+                {
+                    var px = sprite.texture.GetPixels32();
+                    int h = 17;
+                    unchecked
+                    {
+                        foreach (var c in px) h = h * 31 + (c.r | (c.g << 8) | (c.b << 16) | (c.a << 24));
+                    }
+                    if (seenHashes.TryGetValue(h, out var other))
+                    {
+                        Debug.Log($"Self-Test POI Placeholder Factory: FAIL — {type} duplicates {other}");
+                        ok = false;
+                    }
+                    else
+                    {
+                        seenHashes[h] = type;
+                    }
                 }
             }
             if (ok) Debug.Log("Self-Test POI Placeholder Factory: PASS");
