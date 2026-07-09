@@ -137,6 +137,13 @@ namespace WorldGen.Rendering
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
+        [Header("Декорации (iso-спрайты террейна)")]
+        public WorldGen.Rendering.Decorations.DecorationConfig decorationConfig = new WorldGen.Rendering.Decorations.DecorationConfig();
+
+        WorldGen.Rendering.Decorations.DecorationRenderer decorationRenderer;
+        WorldGen.Rendering.Decorations.DecorationCatalog decorationCatalog;
+        System.Collections.Generic.List<WorldGen.Rendering.Decorations.DecorationInstance> decorationInstances;
+
         [Header("Пляж (песок у берега)")]
         [Range(0f, 60f)] public float beachWidth = 20f;
         [Range(0f, 1f)] public float beachStrength = 0f;
@@ -213,6 +220,7 @@ namespace WorldGen.Rendering
         {
             if (gpuRenderer != null && gpuRenderer.Material != null)
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
+            if (Application.isPlaying && cells != null && nearestLookup != null) RebuildDecorations();
         }
 
         void OnDestroy()
@@ -267,6 +275,7 @@ namespace WorldGen.Rendering
                 PositionCameraOverMap();
 
             OnDisplayChanged?.Invoke();
+            RebuildDecorations();
             OnWorldRegenerated?.Invoke();
         }
 
@@ -308,6 +317,7 @@ namespace WorldGen.Rendering
         {
             BuildRivers();
             BuildBorders();
+            RebuildDecorations();
 
             if (targetCamera != null)
                 PositionCameraOverMap();
@@ -542,6 +552,8 @@ namespace WorldGen.Rendering
             // FinalizeLabels пере-печёт сглаженные family/band/берег label'ы в затронутой мазком
             // области (во время мазка стояла угловатая по-клеточная заплатка - см. UpdateCells).
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
+            // Декорации: пересчитать затронутую область (или всю карту, если rect не отслеживается).
+            RefreshDecorationsRect(new Rect(0, 0, mapWidth, mapHeight));
             OnDisplayChanged?.Invoke();
         }
 
@@ -2450,6 +2462,42 @@ namespace WorldGen.Rendering
             nearestLookup = new NearestCellLookup(cells, minPointDistance);
         }
 
+        void EnsureDecorationRenderer()
+        {
+            if (decorationCatalog == null)
+                decorationCatalog = WorldGen.Rendering.Decorations.DecorationCatalog.BuildPlaceholder();
+            if (decorationRenderer == null)
+            {
+                var go = new GameObject("Decorations");
+                go.transform.SetParent(transform, false); // локальные коорд. карты
+                decorationRenderer = go.AddComponent<WorldGen.Rendering.Decorations.DecorationRenderer>();
+                decorationRenderer.Init(decorationCatalog);
+            }
+        }
+
+        /// <summary>Полная перерасстановка декораций из текущих клеток/сида/темы.</summary>
+        public void RebuildDecorations()
+        {
+            EnsureDecorationRenderer();
+            if (cells == null || nearestLookup == null) return;
+            decorationInstances = WorldGen.Rendering.Decorations.DecorationPlacer.Place(
+                cells, nearestLookup, seed, mapWidth, mapHeight, decorationConfig, paletteTheme);
+            decorationRenderer.SetInstances(decorationInstances);
+            decorationRenderer.Visible = decorationConfig.enabled;
+        }
+
+        /// <summary>Rect-scoped обновление: выкинуть инстансы в rect, дорасставить, ре-сортировать.</summary>
+        public void RefreshDecorationsRect(Rect worldRect)
+        {
+            if (decorationInstances == null) { RebuildDecorations(); return; }
+            EnsureDecorationRenderer();
+            decorationInstances.RemoveAll(d => worldRect.Contains(d.worldPos));
+            WorldGen.Rendering.Decorations.DecorationPlacer.PlaceRect(
+                decorationInstances, nearestLookup, seed, mapWidth, mapHeight, decorationConfig, paletteTheme, worldRect);
+            decorationInstances.Sort((a, b) => a.sortZ.CompareTo(b.sortZ));
+            decorationRenderer.SetInstances(decorationInstances);
+        }
+
         /// <summary>Один плоский квад mapWidth×mapHeight в плоскости XZ - заменяет тысячи
         /// клеточных fan-мешей. Цвет приходит из текстуры (см. RebakeAll), не из vertex color.
         /// Sprites/Default не culлит грани, так что winding order (0,1,2 vs 0,2,1) здесь не важен -
@@ -2610,6 +2658,7 @@ namespace WorldGen.Rendering
         {
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
             else RebakeAll();
+            RebuildDecorations();
         }
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
