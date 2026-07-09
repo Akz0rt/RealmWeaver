@@ -18,12 +18,8 @@ namespace WorldGen.Rendering
         static readonly Color32 DiscE = new Color32(0x08, 0x0d, 0x14, 255); // disc edge
         static readonly Color32 Rim   = new Color32(0x0a, 0x0d, 0x12, 255);
         static readonly Color32 Acc   = new Color32(0xe6, 0xb2, 0x5c, 255);
-        static readonly Color32 Dark  = new Color32(0x2b, 0x32, 0x3d, 255);
-        static readonly Color32 Light = new Color32(0x41, 0x4c, 0x5b, 255);
-        static readonly Color32 Black = new Color32(0x0a, 0x0d, 0x12, 255);
-        static readonly Color32 Steel = new Color32(0xc9, 0xd2, 0xdc, 255);
-        static readonly Color32 Wood  = new Color32(0x4a, 0x3a, 0x28, 255);
-        static readonly Color32 Clear = new Color32(0, 0, 0, 0);
+        static readonly Color32 IcoLight = new Color32(0xc9, 0xd2, 0xdc, 255); // main silhouette (light — pops on dark disc)
+        static readonly Color32 IcoShade = new Color32(0x6a, 0x74, 0x80, 255); // internal shadow/void (still lighter than disc)
 
         public static Sprite GetPlaceholder(PoiType type)
         {
@@ -36,8 +32,10 @@ namespace WorldGen.Rendering
         static Sprite Build(PoiType type)
         {
             var buf = new Color32[S * S];
-            DrawFrame(buf);
-            DrawIcon(buf, type);
+            DrawFrame(buf);                       // unchanged medallion frame
+            var scratch = new Color32[S * S];     // transparent icon scratch (y-up, buf[y*S+x])
+            DrawIcon(scratch, type);              // bold light concept, drawn at any size/position
+            FitIcon(buf, scratch);                // measure bbox, scale to ~80% disc, center, blit opaque px
 
             var tex = new Texture2D(S, S, TextureFormat.RGBA32, false)
             { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = $"PoiMedallion_{type}" };
@@ -107,6 +105,63 @@ namespace WorldGen.Rendering
             }
         }
 
+        // Measure the scratch's opaque bbox, scale it to ~80% of the disc interior, center on the disc,
+        // and blit (nearest-neighbor, opaque pixels only) onto dst. Uniform large fill for every icon
+        // regardless of how big/where its routine drew.
+        static void FitIcon(Color32[] dst, Color32[] sc)
+        {
+            int minX = S, minY = S, maxX = -1, maxY = -1;
+            for (int y = 0; y < S; y++)
+                for (int x = 0; x < S; x++)
+                    if (sc[y * S + x].a != 0)
+                    { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+            if (maxX < minX) return; // nothing drawn
+
+            float bboxW = maxX - minX + 1, bboxH = maxY - minY + 1;
+            float bboxDiag = Mathf.Sqrt(bboxW * bboxW + bboxH * bboxH);
+            if (bboxDiag < 1f) return; // guard div-by-zero
+
+            float R = S * 0.5f;
+            float rAccIn = R - 10f;                 // disc interior radius (matches DrawFrame: rDisc-2 → -rimW5 -accW3)
+            float targetDiag = (2f * rAccIn) * 0.80f;
+            float s = targetDiag / bboxDiag;
+
+            float bcx = (minX + maxX) * 0.5f, bcy = (minY + maxY) * 0.5f;
+            float dcx = (S - 1) * 0.5f, dcy = (S - 1) * 0.5f;   // disc center (matches DrawFrame)
+
+            int y0 = Mathf.FloorToInt(dcy - rAccIn), y1 = Mathf.CeilToInt(dcy + rAccIn);
+            int x0 = Mathf.FloorToInt(dcx - rAccIn), x1 = Mathf.CeilToInt(dcx + rAccIn);
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    if ((uint)x >= S || (uint)y >= S) continue;
+                    int srcX = Mathf.RoundToInt(bcx + (x - dcx) / s);
+                    int srcY = Mathf.RoundToInt(bcy + (y - dcy) / s);
+                    if ((uint)srcX >= S || (uint)srcY >= S) continue;
+                    var c = sc[srcY * S + srcX];
+                    if (c.a != 0) dst[y * S + x] = c;
+                }
+        }
+
+        static void HBar(Color32[] b, int x0, int x1, int yc, int t, Color32 c)
+        { FillRect(b, x0, yc - t / 2, x1, yc - t / 2 + t - 1, c); }
+        static void VBar(Color32[] b, int xc, int y0, int y1, int t, Color32 c)
+        { FillRect(b, xc - t / 2, y0, xc - t / 2 + t - 1, y1, c); }
+        // Thick rounded stroke between two points (disc-stamped) — for swords, poles, anchor.
+        static void Stroke(Color32[] b, float x0, float y0, float x1, float y1, float t, Color32 c)
+        {
+            float dx = x1 - x0, dy = y1 - y0;
+            int steps = Mathf.CeilToInt(Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dy))) + 1;
+            for (int i = 0; i <= steps; i++) { float u = i / (float)steps; Disc(b, x0 + dx * u, y0 + dy * u, t * 0.5f, c); }
+        }
+        // A few crenellation teeth of height h atop [x0..x1] at yBase.
+        static void Merlons(Color32[] b, int x0, int x1, int yBase, int h, Color32 c)
+        {
+            int w = x1 - x0 + 1, tooth = Mathf.Max(3, w / 5);
+            for (int mx = x0; mx <= x1 - tooth + 1; mx += tooth * 2)
+                FillRect(b, mx, yBase, Mathf.Min(mx + tooth - 1, x1), yBase + h, c);
+        }
+
         static void DrawIcon(Color32[] b, PoiType type)
         {
             switch (type)
@@ -125,90 +180,107 @@ namespace WorldGen.Rendering
             }
         }
 
-        const int C = S / 2; // center
+        const int M = S / 2; // scratch center (64)
 
-        // Crenellated block with `teeth` merlons across the top. Returns nothing; fills [x0..x1]x[y0..topWithTeeth].
-        static void Keep(Color32[] b, int x0, int x1, int y0, int bodyTop, int teeth, Color32 body, Color32 top)
+        static void City(Color32[] b) // walled keep + banner
         {
-            FillRect(b, x0, y0, x1, bodyTop, body);
-            int w = x1 - x0 + 1, step = Mathf.Max(2, w / (teeth * 2 - 1));
-            for (int i = 0; i < teeth; i++)
-            { int mx = x0 + i * step * 2; FillRect(b, mx, bodyTop + 1, Mathf.Min(mx + step - 1, x1), bodyTop + step, top); }
+            FillRect(b, M - 28, M - 28, M + 24, M + 20, IcoLight);
+            Merlons(b, M - 28, M + 24, M + 20, 12, IcoLight);
+            FillRect(b, M - 7, M - 28, M + 7, M - 4, IcoShade);                 // gate
+            FillRect(b, M - 20, M, M - 11, M + 9, IcoShade);                    // window
+            FillRect(b, M + 11, M, M + 20, M + 9, IcoShade);                    // window
+            VBar(b, M + 20, M + 32, M + 58, 4, IcoLight);                       // flagpole
+            FillRect(b, M + 22, M + 47, M + 45, M + 58, Acc);                   // pennant
         }
 
-        static void Flag(Color32[] b, int poleX, int topY, int h) // pole + accent pennant
-        { VLine(b, poleX, topY - h, topY, Steel); FillRect(b, poleX + 1, topY - h, poleX + 8, topY - h + 5, Acc); }
-
-        static void Unknown(Color32[] b) // accent "?"
+        static void Fortress(Color32[] b) // three towers, center tall + banner
         {
-            HLine(b, C - 8, C + 6, C + 18, Acc); VLine(b, C + 6, C + 8, C + 18, Acc);
-            VLine(b, C - 8, C + 4, C + 8, Acc); VLine(b, C, C - 6, C + 4, Acc); HLine(b, C - 8, C, C + 4, Acc);
-            FillRect(b, C - 2, C - 16, C + 1, C - 13, Acc); // dot
-        }
-
-        static void City(Color32[] b) // crenellated keep + flag
-        { Keep(b, C - 20, C + 16, C - 22, C + 10, 4, Dark, Light); FillRect(b, C - 6, C - 22, C + 2, C - 8, Black); Flag(b, C + 14, C + 12, 22); }
-
-        static void Fortress(Color32[] b) // three towers, center tall, + flag
-        {
-            Keep(b, C - 24, C - 10, C - 16, C + 6, 2, Dark, Light);
-            Keep(b, C + 8, C + 22, C - 16, C + 6, 2, Dark, Light);
-            Keep(b, C - 8, C + 6, C - 22, C + 14, 2, Dark, Light);
-            Flag(b, C - 1, C + 16, 20);
+            FillRect(b, M - 34, M - 28, M - 14, M + 10, IcoLight); Merlons(b, M - 34, M - 14, M + 10, 10, IcoLight);
+            FillRect(b, M + 14, M - 28, M + 34, M + 10, IcoLight); Merlons(b, M + 14, M + 34, M + 10, 10, IcoLight);
+            FillRect(b, M - 11, M - 28, M + 11, M + 28, IcoLight); Merlons(b, M - 11, M + 11, M + 28, 12, IcoLight);
+            FillRect(b, M - 6, M - 28, M + 6, M - 6, IcoShade);                 // center gate
+            VBar(b, M, M + 40, M + 62, 4, IcoLight); FillRect(b, M + 2, M + 51, M + 24, M + 62, Acc);
         }
 
         static void Village(Color32[] b) // two gabled houses
         {
-            FillRect(b, C - 22, C - 16, C - 4, C + 2, Dark); TriUp(b, C - 13, C + 2, C + 12, 11, Light);
-            FillRect(b, C + 2, C - 16, C + 20, C - 2, Dark);  TriUp(b, C + 11, C - 2, C + 8, 11, Light);
+            FillRect(b, M - 34, M - 24, M - 6, M + 2, IcoLight); TriUp(b, M - 20, M + 2, M + 22, 15, IcoLight);
+            FillRect(b, M - 23, M - 24, M - 15, M - 6, IcoShade);               // door
+            FillRect(b, M - 2, M - 24, M + 30, M - 2, IcoLight); TriUp(b, M + 14, M - 2, M + 14, 17, IcoLight);
+            FillRect(b, M + 8, M - 24, M + 16, M - 8, IcoShade);                // door
         }
 
-        static void Tower(Color32[] b) // single battlemented tower + flag
-        { Keep(b, C - 9, C + 9, C - 22, C + 10, 3, Dark, Light); FillRect(b, C - 3, C - 6, C + 3, C + 4, Black); Flag(b, C + 7, C + 14, 22); }
+        static void Tower(Color32[] b) // single battlemented tower + banner
+        {
+            FillRect(b, M - 13, M - 30, M + 13, M + 26, IcoLight); Merlons(b, M - 13, M + 13, M + 26, 12, IcoLight);
+            FillRect(b, M - 5, M - 30, M + 5, M - 10, IcoShade);                // door
+            FillRect(b, M - 4, M + 4, M + 4, M + 14, IcoShade);                 // window
+            VBar(b, M + 12, M + 38, M + 62, 4, IcoLight); FillRect(b, M + 14, M + 51, M + 34, M + 62, Acc);
+        }
 
         static void Temple(Color32[] b) // colonnade + pediment
         {
-            TriUp(b, C, C + 6, C + 20, 22, Light);            // pediment
-            FillRect(b, C - 22, C + 4, C + 22, C + 6, Light); // architrave
-            for (int i = -2; i <= 2; i++) VLine(b, C + i * 9, C - 20, C + 3, Steel); // columns
-            FillRect(b, C - 24, C - 22, C + 24, C - 20, Dark); // base
+            FillRect(b, M - 34, M - 26, M + 34, M - 16, IcoLight);              // base/steps
+            for (int i = -2; i <= 2; i++) VBar(b, M + i * 15, M - 16, M + 14, 8, IcoLight); // 5 columns
+            FillRect(b, M - 36, M + 14, M + 36, M + 22, IcoLight);              // architrave
+            TriUp(b, M, M + 22, M + 44, 40, IcoLight);                          // pediment
         }
 
-        static void Ruin(Color32[] b) // two broken columns + fallen lintel
+        static void Ruin(Color32[] b) // broken columns + fallen lintel
         {
-            VLine(b, C - 12, C - 14, C + 8, Steel); VLine(b, C - 11, C - 14, C + 4, Steel);
-            VLine(b, C + 10, C - 14, C + 14, Steel); VLine(b, C + 11, C - 14, C + 10, Steel);
-            FillRect(b, C - 20, C - 20, C - 2, C - 16, Dark); // fallen lintel on the ground
+            FillRect(b, M - 34, M - 26, M + 34, M - 18, IcoShade);              // rubble ground
+            VBar(b, M - 20, M - 18, M + 24, 9, IcoLight);                       // tall column
+            VBar(b, M + 2, M - 18, M + 4, 9, IcoLight);                         // stub
+            VBar(b, M + 22, M - 18, M + 14, 9, IcoLight);                       // mid column
+            FillRect(b, M + 6, M + 26, M + 34, M + 34, IcoLight);               // fallen lintel
         }
 
         static void Dungeon(Color32[] b) // stone gate + dark arch + portcullis
         {
-            FillRect(b, C - 18, C - 20, C + 18, C + 16, Dark); Disc(b, C, C + 16, 18, Dark);
-            FillRect(b, C - 12, C - 20, C + 12, C + 12, Black); Disc(b, C, C + 12, 12, Black); // arch void
-            for (int i = -2; i <= 2; i++) VLine(b, C + i * 5, C - 20, C + 10, Steel); // portcullis bars
-            HLine(b, C - 12, C + 12, C - 4, Steel); HLine(b, C - 12, C + 12, C + 4, Steel);
+            FillRect(b, M - 30, M - 26, M + 30, M + 24, IcoLight);              // gate block
+            Merlons(b, M - 30, M + 30, M + 24, 10, IcoLight);
+            FillRect(b, M - 16, M - 26, M + 16, M + 14, IcoShade);              // arch void
+            Disc(b, M, M + 14, 16, IcoShade);
+            for (int i = -2; i <= 2; i++) VBar(b, M + i * 8, M - 26, M + 12, 4, IcoLight); // portcullis bars
+            HBar(b, M - 16, M + 16, M - 6, 4, IcoLight); HBar(b, M - 16, M + 16, M + 6, 4, IcoLight);
         }
 
-        static void Encounter(Color32[] b) // crossed swords
+        static void Encounter(Color32[] b) // crossed swords, gold guards
         {
-            for (int i = -16; i <= 16; i++)
-            { Px(b, C + i, C + i, Steel); Px(b, C + i + 1, C + i, Steel); Px(b, C + i, C - i, Steel); Px(b, C + i + 1, C - i, Steel); }
-            FillRect(b, C - 6, C - 20, C + 6, C - 16, Acc); // crossguards hint
+            Stroke(b, M - 26, M - 26, M + 26, M + 26, 7, IcoLight);
+            Stroke(b, M + 26, M - 26, M - 26, M + 26, 7, IcoLight);
+            Stroke(b, M - 30, M - 18, M - 18, M - 30, 6, Acc);                  // guard
+            Stroke(b, M + 18, M - 30, M + 30, M - 18, 6, Acc);                  // guard
+            Disc(b, M - 28, M - 28, 5, Acc); Disc(b, M + 28, M - 28, 5, Acc);   // pommels
         }
 
         static void Camp(Color32[] b) // tent + crossed apex poles
         {
-            TriUp(b, C, C - 18, C + 16, 22, Dark);
-            VLine(b, C, C - 18, C + 20, Black); // center seam
-            Px(b, C - 6, C + 20, Steel); for (int i = 0; i < 8; i++) { Px(b, C - 6 + i, C + 20 - i, Steel); Px(b, C + 6 - i, C + 20 - i, Steel); } // crossed poles
+            TriUp(b, M, M - 26, M + 26, 34, IcoLight);
+            VBar(b, M, M - 26, M + 30, 4, IcoShade);                            // seam
+            FillRect(b, M - 10, M - 26, M + 10, M - 18, IcoShade);              // entrance
+            Stroke(b, M - 10, M + 22, M + 10, M + 34, 4, IcoLight);
+            Stroke(b, M + 10, M + 22, M - 10, M + 34, 4, IcoLight);
         }
 
         static void Port(Color32[] b) // anchor
         {
-            VLine(b, C, C - 18, C + 16, Steel);              // shank
-            HLine(b, C - 10, C + 10, C - 12, Steel);         // stock
-            Disc(b, C, C + 16, 4, Steel); Disc(b, C, C + 16, 2, Black); // ring
-            for (int i = 0; i <= 12; i++) { Px(b, C - 16 + i, C - 18 + i, Steel); Px(b, C + 16 - i, C - 18 + i, Steel); } // flukes
+            VBar(b, M, M - 26, M + 22, 6, IcoLight);                            // shank
+            Disc(b, M, M + 22, 8, IcoLight); Disc(b, M, M + 22, 3, IcoShade);   // ring
+            HBar(b, M - 14, M + 14, M + 12, 6, IcoLight);                       // stock
+            Stroke(b, M, M - 20, M - 22, M - 4, 6, IcoLight);                   // left arm
+            Stroke(b, M, M - 20, M + 22, M - 4, 6, IcoLight);                   // right arm
+            Stroke(b, M - 22, M - 4, M - 16, M + 3, 6, IcoLight);               // left fluke
+            Stroke(b, M + 22, M - 4, M + 16, M + 3, 6, IcoLight);               // right fluke
+        }
+
+        static void Unknown(Color32[] b) // bold accent "?"
+        {
+            Stroke(b, M - 14, M + 16, M + 2, M + 26, 8, Acc);
+            Stroke(b, M + 2, M + 26, M + 14, M + 14, 8, Acc);
+            Stroke(b, M + 14, M + 14, M - 2, M + 2, 8, Acc);
+            VBar(b, M - 2, M - 12, M + 2, 8, Acc);                              // stem
+            Disc(b, M - 2, M - 26, 6, Acc);                                     // dot
         }
     }
 }
