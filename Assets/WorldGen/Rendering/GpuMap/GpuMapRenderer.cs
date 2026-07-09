@@ -157,6 +157,7 @@ namespace WorldGen.Rendering.GpuMap
 
             Material.SetFloat("_ShowBiome", 1f);
             Material.SetFloat("_ShowRelief", 1f);
+            Material.SetFloat("_ShowCoast", 1f); // фактическое состояние выставит SetLayers сразу после бейка
 
             UploadPalette(theme);
         }
@@ -170,12 +171,13 @@ namespace WorldGen.Rendering.GpuMap
             bakedDecimation = Mathf.Max(0f, decimation);
         }
 
-        /// <summary>Слои Биом/Рельеф - мгновенно через uniform (без пере-бейка). См. шейдер _ShowBiome/_ShowRelief.</summary>
-        public void SetLayers(bool showBiome, bool showRelief)
+        /// <summary>Слои Биом/Рельеф/Берег - мгновенно через uniform (без пере-бейка). См. шейдер _ShowBiome/_ShowRelief/_ShowCoast.</summary>
+        public void SetLayers(bool showBiome, bool showRelief, bool showCoast)
         {
             if (Material == null) return;
             Material.SetFloat("_ShowBiome", showBiome ? 1f : 0f);
             Material.SetFloat("_ShowRelief", showRelief ? 1f : 0f);
+            Material.SetFloat("_ShowCoast", showCoast ? 1f : 0f);
         }
 
         /// <summary>Параметры пляжа (песок у берега) - мгновенно через uniform (без пере-бейка).

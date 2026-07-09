@@ -61,7 +61,7 @@ namespace WorldGen.Rendering
             AddLayerToggleRow(t, "Рельеф",           true, on => mapRenderer?.SetShowReliefLayer(on));
             AddLayerToggleRow(t, "Биом / климат",    true, on => mapRenderer?.SetShowBiomeLayer(on));
             AddLayerToggleRow(t, "Границы регионов", false, on => mapRenderer?.SetShowRegionBordersLayer(on));
-            AddLayerToggleRow(t, "Береговая линия",  true, on => mapRenderer?.SetShowCoastlineLayer(on));
+            AddLayerToggleRow(t, "Береговая линия",  false, on => mapRenderer?.SetShowCoastlineLayer(on));
             AddLayerToggleRow(t, "Декорации", mapRenderer != null && mapRenderer.decorationConfig.enabled,
                 on => mapRenderer?.SetShowDecorations(on));
         }

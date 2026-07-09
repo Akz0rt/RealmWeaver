@@ -70,6 +70,7 @@ Shader "WorldGen/MapTerrain"
 
             float _ShowBiome;   // 1 = цвет семейства, 0 = нейтральная база (слой "Биом/климат")
             float _ShowRelief;  // 1 = ступени высоты + hillshade, 0 = плоско (слой "Рельеф")
+            float _ShowCoast;   // 1 = береговая линия (тёмная обводка суши + ореол воды), 0 = скрыта
 
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
@@ -164,9 +165,12 @@ Shader "WorldGen/MapTerrain"
                     col = lerp(shallow, deep, depth);
                     col += (fbm(wuv * 60.0) - 0.5) * 0.04;
 
-                    // широкий светлый ореол у берега (сторона воды)
-                    float glow = saturate(1.0 - cd / max(1.0, _GlowWidth));
-                    col = lerp(col, _GlowColor.rgb, glow * 0.5);
+                    // широкий светлый ореол у берега (сторона воды) - слой "Береговая линия"
+                    if (_ShowCoast > 0.5)
+                    {
+                        float glow = saturate(1.0 - cd / max(1.0, _GlowWidth));
+                        col = lerp(col, _GlowColor.rgb, glow * 0.5);
+                    }
                 }
                 else
                 {
@@ -229,7 +233,7 @@ Shader "WorldGen/MapTerrain"
                     float2 t = _CellIdTexel * 2.0;
                     int w = (!landAt(i.uv + float2(t.x, 0)) ? 1 : 0) + (!landAt(i.uv - float2(t.x, 0)) ? 1 : 0)
                           + (!landAt(i.uv + float2(0, t.y)) ? 1 : 0) + (!landAt(i.uv - float2(0, t.y)) ? 1 : 0);
-                    if (w > 0) col = lerp(col, _OutlineColor.rgb, 0.7);
+                    if (_ShowCoast > 0.5 && w > 0) col = lerp(col, _OutlineColor.rgb, 0.7);
                 }
 
                 // зерно (суша и вода)

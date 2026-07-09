@@ -100,7 +100,7 @@ namespace WorldGen.Rendering
         public bool showBiomeLayer = true;
         public bool showReliefLayer = true;
         public bool showRegionBordersLayer = false; // оверлей границ регионов - пока выключен по просьбе пользователя, вернёмся позже
-        public bool showCoastlineLayer = true;
+        public bool showCoastlineLayer = false;
 
         [Header("Combined: рельеф (hillshade)")]
         public float reliefStrength = 3f;
@@ -2559,7 +2559,7 @@ namespace WorldGen.Rendering
             if (cells != null)
             {
                 // GPU: мгновенно через uniform; CPU: полный перезапек (фолбэк).
-                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
                 else RebakeAll();
             }
             OnDisplayChanged?.Invoke();
@@ -2570,7 +2570,7 @@ namespace WorldGen.Rendering
             showReliefLayer = on;
             if (cells != null)
             {
-                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                if (useGpuRenderer && gpuRenderer != null) gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
                 else RebakeAll();
             }
             OnDisplayChanged?.Invoke();
@@ -2589,6 +2589,9 @@ namespace WorldGen.Rendering
             showCoastlineLayer = on;
             if (coastlineObject != null)
                 coastlineObject.SetActive(ShouldShowCoastlineRibbon());
+            // GPU: мгновенно гейтим береговую линию в шейдере (_ShowCoast), как биом/рельеф.
+            if (cells != null && useGpuRenderer && gpuRenderer != null)
+                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
             OnDisplayChanged?.Invoke();
         }
 
@@ -2621,7 +2624,7 @@ namespace WorldGen.Rendering
             {
                 gpuRenderer.SetContourParams(coastlineSmoothness, borderRoundness * minPointDistance);
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners);
-                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
                 return;
             }
@@ -2784,7 +2787,7 @@ namespace WorldGen.Rendering
                 gpuRenderer.SetContourParams(coastlineSmoothness, borderRoundness * minPointDistance);
                 var e = gpuRenderer.BuildAllStepped(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners, onProgress);
                 while (e.MoveNext()) yield return e.Current;
-                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer);
+                gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
                 yield break;
             }

@@ -901,7 +901,7 @@ MonoBehaviour:
   showBiomeLayer: 1
   showReliefLayer: 1
   showRegionBordersLayer: 0
-  showCoastlineLayer: 1
+  showCoastlineLayer: 0
   reliefStrength: 3
   reliefLightAzimuth: 315
   reliefAmbient: 0.5
