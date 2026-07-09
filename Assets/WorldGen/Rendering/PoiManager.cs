@@ -23,6 +23,8 @@ namespace WorldGen.Rendering
         public float iconWorldSize = 36f;
         [Tooltip("Base label character size, before per-POI LabelScale is applied.")]
         public float labelCharacterSize = 1.5f;
+        [Tooltip("Показывать текстовую подпись названия над маркером на карте. Имя всегда хранится в данных точки и доступно в панели редактирования — это только отображение на карте.")]
+        public bool showPoiLabels = false;
 
         [Header("Масштаб маркеров по зуму")]
         [Tooltip("Контроллер камеры (для orthographicSize и NaturalFitSize). Если не задан — ищется в сцене.")]
@@ -338,7 +340,7 @@ namespace WorldGen.Rendering
             var go = new GameObject($"POI_{poi.Id}");
             go.transform.SetParent(poiContainer, false);
             var view = go.AddComponent<PoiMarkerView>();
-            view.Initialize(poi, poiYOffset, iconWorldSize, labelCharacterSize);
+            view.Initialize(poi, poiYOffset, iconWorldSize, labelCharacterSize, showPoiLabels);
             markers[poi.Id] = view;
             // Force LateUpdate to recompute + re-push the zoom factor next frame, so a marker spawned
             // while already zoomed gets the current scale instead of staying at zoomScale=1 until the

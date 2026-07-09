@@ -19,6 +19,7 @@ namespace WorldGen.Rendering
         float baseIconWorldSize;
         float baseLabelCharacterSize;
         float zoomScale = 1f;
+        bool showLabel = true;   // from PoiManager.showPoiLabels; when false the on-map name label is hidden (name still lives in PoiData / edit panel)
 
         public string PoiId => poiData?.Id;
         public System.Numerics.Vector2 WorldPos => poiData?.WorldPosition ?? default;
@@ -28,12 +29,13 @@ namespace WorldGen.Rendering
         /// yOffset: Y above map surface. baseIconWorldSize/baseLabelCharacterSize: shared defaults,
         /// further multiplied per-instance by poiData.IconScale / poiData.LabelScale in Refresh().
         /// </summary>
-        public void Initialize(PoiData data, float yOffset, float baseIconWorldSize, float baseLabelCharacterSize)
+        public void Initialize(PoiData data, float yOffset, float baseIconWorldSize, float baseLabelCharacterSize, bool showLabel)
         {
             poiData = data;
             this.yOffset = yOffset;
             this.baseIconWorldSize = baseIconWorldSize;
             this.baseLabelCharacterSize = baseLabelCharacterSize;
+            this.showLabel = showLabel;
 
             // Icon — lies flat in XZ plane (rotate 90° around X so sprite faces up, matching
             // the label's rotation below — the icon previously used -90°, which produced a
@@ -54,6 +56,7 @@ namespace WorldGen.Rendering
             label.color = Color.white;
             label.anchor = TextAnchor.LowerCenter;
             label.alignment = TextAlignment.Center;
+            labelGO.SetActive(showLabel); // hide the on-map name label when disabled (name stays in PoiData / edit panel)
 
             Refresh();
         }
