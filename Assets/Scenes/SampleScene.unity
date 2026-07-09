@@ -922,6 +922,28 @@ MonoBehaviour:
   smoothRegionBorders: 1
   borderRoundness: 1
   rasterLongSide: 2048
+  decorationConfig:
+    enabled: 1
+    mountainMinElevation: 0.72
+    hillMinElevation: 0.55
+    coldTemperature: 0.32
+    mountainGridStep: 26
+    hillGridStep: 30
+    pineGridStep: 12
+    autumnGridStep: 12
+    mesaGridStep: 34
+    mountainProbability: 0.55
+    hillProbability: 0.35
+    pineProbability: 0.66
+    autumnProbability: 0.62
+    mesaProbability: 0.18
+    mountainSize: 34
+    hillSize: 16
+    treeSize: 13
+    mesaSize: 14
+    globalScale: 1
+    sizeJitter: 0.25
+    maxInstances: 6000
   beachWidth: 35
   beachStrength: 0.365
   beachHardness: 1
