@@ -28,9 +28,13 @@ namespace WorldGen.Rendering.Decorations
             if (quad == null) quad = BuildQuad();
             if (material == null)
             {
-                material = new Material(Shader.Find("WorldGen/Decorations"));
-                if (material.shader == null)
-                    Debug.LogError("[Decorations] Shader 'WorldGen/Decorations' not found — add it to Graphics → Always Included Shaders (else stripped from build).");
+                var sh = Shader.Find("WorldGen/Decorations");
+                if (sh == null)
+                {
+                    Debug.LogError("[Decorations] Shader 'WorldGen/Decorations' not found — add it to Project Settings → Graphics → Always Included Shaders (else it is stripped from the build).");
+                    return;
+                }
+                material = new Material(sh);
                 material.enableInstancing = true;
             }
             if (mpb == null) mpb = new MaterialPropertyBlock();

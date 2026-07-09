@@ -2591,6 +2591,14 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
+        public void SetShowDecorations(bool on)
+        {
+            decorationConfig.enabled = on;
+            if (decorationRenderer != null) decorationRenderer.Visible = on;
+            EnsureDecorationRenderer();
+            if (on && (decorationInstances == null || decorationInstances.Count == 0)) RebuildDecorations();
+        }
+
         /// <summary>Текущее количество РЕАЛЬНО используемых регионов на карте (может быть меньше numberOfRegions, если генерация прошла нестандартно) - нужно легенде, чтобы не показывать несуществующие записи.</summary>
         public int GetActualRegionCount()
         {
