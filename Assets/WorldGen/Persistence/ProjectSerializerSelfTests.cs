@@ -119,6 +119,53 @@ namespace WorldGen.Persistence
                 : "Self-Test Project Round-Trip: FAIL — see field checks in SelfTestRoundTrip");
         }
 
+        [ContextMenu("Self-Test: POI Type Backward Compat")]
+        public void SelfTestPoiTypeBackwardCompat()
+        {
+            var genParams = new GenerationParams { Seed = 1, Width = 10f, Height = 10f };
+            var cells = new List<VoronoiCell>();
+            var notes = new NotesDocument();
+
+            // --- Part 1: a pre-existing type (Fortress, int 4) and a newly-appended type
+            // (Port, int 10) round-trip together, each preserving its own value. ---
+            var poiFortress = new PoiData { Type = PoiType.Fortress, Name = "Крепость", OwnerCellId = 1 };
+            var poiPort = new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 };
+            var pois = new List<PoiData> { poiFortress, poiPort };
+
+            string path = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_selftest.json");
+            ProjectSerializer.Save(path, genParams, cells, pois, notes);
+            var result = ProjectSerializer.Load(path);
+            File.Delete(path);
+
+            bool ok = result.Success && result.Pois.Count == 2;
+            var loadedFortress = result.Pois.FirstOrDefault(p => p.Name == "Крепость");
+            var loadedPort = result.Pois.FirstOrDefault(p => p.Name == "Гавань");
+            ok &= loadedFortress != null && loadedFortress.Type == PoiType.Fortress;
+            ok &= loadedPort != null && loadedPort.Type == PoiType.Port;
+
+            // --- Part 2: simulate an "old" save file that predates this enum expansion — its
+            // on-disk int (4) must still deserialize to Fortress (guards against a future
+            // accidental reorder shifting existing values). ---
+            var oldStylePois = new List<PoiData> { new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 } };
+            string newPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_new_selftest.json");
+            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes);
+
+            string json = File.ReadAllText(newPath);
+            string oldJson = json.Replace("\"Type\": 10", "\"Type\": 4");
+            string oldPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_old_selftest.json");
+            File.WriteAllText(oldPath, oldJson);
+
+            var oldResult = ProjectSerializer.Load(oldPath);
+            File.Delete(newPath);
+            File.Delete(oldPath);
+
+            ok &= oldResult.Success && oldResult.Pois.Count == 1 && oldResult.Pois[0].Type == PoiType.Fortress;
+
+            Debug.Log(ok
+                ? "Self-Test POI Type Backward Compat: PASS"
+                : "Self-Test POI Type Backward Compat: FAIL — see field checks in SelfTestPoiTypeBackwardCompat");
+        }
+
         [ContextMenu("Self-Test: Project Corrupt File Handling")]
         public void SelfTestCorruptFile()
         {
