@@ -168,7 +168,7 @@ namespace WorldGen.Rendering.Decorations
                 Debug.LogWarning($"[Decorations] placed {list.Count} > cap {cfg.maxInstances}; truncated. Increase maxInstances or grid steps.");
                 list.RemoveRange(cfg.maxInstances, list.Count - cfg.maxInstances);
             }
-            list.Sort((a, b) => a.sortZ.CompareTo(b.sortZ));
+            list.Sort((a, b) => b.sortZ.CompareTo(a.sortZ)); // descending: south/nearer (lower Z, drawn last) overlaps north/farther
             return list;
         }
 

@@ -227,6 +227,7 @@ namespace WorldGen.Rendering
         {
             if (rasterTexture != null) Destroy(rasterTexture);
             if (rasterMaterial != null) Destroy(rasterMaterial);
+            if (decorationCatalog != null && decorationCatalog.Atlas != null) Destroy(decorationCatalog.Atlas);
         }
 
         /// <summary>Sprites/Default: unlit, double-sided (Cull Off) - как у рек/границ в этом же файле
@@ -2494,7 +2495,7 @@ namespace WorldGen.Rendering
             decorationInstances.RemoveAll(d => worldRect.Contains(d.worldPos));
             WorldGen.Rendering.Decorations.DecorationPlacer.PlaceRect(
                 decorationInstances, nearestLookup, seed, mapWidth, mapHeight, decorationConfig, paletteTheme, worldRect);
-            decorationInstances.Sort((a, b) => a.sortZ.CompareTo(b.sortZ));
+            decorationInstances.Sort((a, b) => b.sortZ.CompareTo(a.sortZ)); // descending, see DecorationPlacer.Place
             decorationRenderer.SetInstances(decorationInstances);
         }
 
