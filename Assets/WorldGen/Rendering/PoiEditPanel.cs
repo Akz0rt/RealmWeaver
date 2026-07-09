@@ -180,18 +180,25 @@ namespace WorldGen.Rendering
         {
             var rowGO = new GameObject("TypeSelector");
             rowGO.transform.SetParent(t, false);
-            var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 4f;
-            hlg.childControlWidth = true;
-            hlg.childForceExpandWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandHeight = true;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 40f;
+            var grid = rowGO.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(58f, 46f);
+            grid.spacing = new Vector2(6f, 6f);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = 4;
+            grid.childAlignment = TextAnchor.UpperCenter;
+            // 10 buttons at 4 columns = 3 rows. The parent VLG allocates this row's height from the
+            // LayoutElement (layoutPriority 1) — which OVERRIDES GridLayoutGroup's computed height
+            // (priority 0) — so it MUST be tall enough for 3 rows or the grid clips to one row.
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 3 * 46f + 2 * 6f; // 150
 
-            AddTypeButton(rowGO.transform, PoiType.City, "Город");
-            AddTypeButton(rowGO.transform, PoiType.Ruin, "Руины");
-            AddTypeButton(rowGO.transform, PoiType.Dungeon, "Подзем.");
-            AddTypeButton(rowGO.transform, PoiType.Fortress, "Креп.");
+            var pickTypes = new (PoiType type, string label)[]
+            {
+                (PoiType.City, "Город"), (PoiType.Fortress, "Креп."), (PoiType.Village, "Дер."),
+                (PoiType.Tower, "Башня"), (PoiType.Temple, "Храм"), (PoiType.Ruin, "Руины"),
+                (PoiType.Dungeon, "Подзем."), (PoiType.Encounter, "Встр."), (PoiType.Camp, "Лагерь"),
+                (PoiType.Port, "Порт"),
+            };
+            foreach (var (type, label) in pickTypes) AddTypeButton(rowGO.transform, type, label);
         }
 
         void AddTypeButton(Transform parent, PoiType type, string label)

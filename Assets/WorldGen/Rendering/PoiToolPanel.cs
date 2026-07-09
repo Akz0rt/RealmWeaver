@@ -364,6 +364,16 @@ namespace WorldGen.Rendering
             var row2 = MakeChipRow(t);
             AddChip(row2, "Подземелья", PoiType.Dungeon);
             AddChip(row2, "Крепости", PoiType.Fortress);
+            AddChip(row2, "Деревни", PoiType.Village);
+
+            var row3 = MakeChipRow(t);
+            AddChip(row3, "Башни", PoiType.Tower);
+            AddChip(row3, "Храмы", PoiType.Temple);
+            AddChip(row3, "Встречи", PoiType.Encounter);
+
+            var row4 = MakeChipRow(t);
+            AddChip(row4, "Лагеря", PoiType.Camp);
+            AddChip(row4, "Порты", PoiType.Port);
 
             OnFilterChanged(null); // подсветить "Все"
         }
@@ -614,6 +624,12 @@ namespace WorldGen.Rendering
                 case PoiType.Ruin: return "Руины";
                 case PoiType.Dungeon: return "Подземелье";
                 case PoiType.Fortress: return "Крепость";
+                case PoiType.Village: return "Деревня";
+                case PoiType.Tower: return "Башня";
+                case PoiType.Temple: return "Храм";
+                case PoiType.Encounter: return "Встреча";
+                case PoiType.Camp: return "Лагерь";
+                case PoiType.Port: return "Порт";
                 default: return "Точка";
             }
         }
