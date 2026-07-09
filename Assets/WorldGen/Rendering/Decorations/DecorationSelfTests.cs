@@ -56,5 +56,75 @@ namespace WorldGen.Rendering.Decorations
 
             Debug.Log(ok ? "Self-Test Decoration Classify: PASS" : "Self-Test Decoration Classify: FAIL");
         }
+
+        // Строит крошечную карту-фикстуру: сетка клеток, левая половина суша-высокая, остальное низина.
+        static (System.Collections.Generic.List<VoronoiCell> cells, WorldGen.Rendering.MapRaster.NearestCellLookup lookup)
+            Fixture(float mapSize, float spacing)
+        {
+            var cells = new System.Collections.Generic.List<VoronoiCell>();
+            int id = 0;
+            for (float z = spacing * 0.5f; z < mapSize; z += spacing)
+            for (float x = spacing * 0.5f; x < mapSize; x += spacing)
+            {
+                float elev = x < mapSize * 0.5f ? 0.85f : 0.15f; // левая половина — горы
+                var c = new VoronoiCell(id++, new System.Numerics.Vector2(x, z))
+                { Biome = Biome.Bare, Height = elev, Temperature = 0.5f, IsOcean = false };
+                // NearestCellLookup исключает вырожденные клетки (Polygon.Count < 3) - без явного
+                // полигона вся фикстура была бы отброшена и FindNearest везде возвращал бы null
+                // (тот же guard/комментарий, что в WorldMapRenderer.SelfTestNearestCellLookup).
+                float half = spacing * 0.5f;
+                c.Polygon = new System.Collections.Generic.List<System.Numerics.Vector2>
+                {
+                    new System.Numerics.Vector2(x - half, z - half),
+                    new System.Numerics.Vector2(x + half, z - half),
+                    new System.Numerics.Vector2(x + half, z + half),
+                    new System.Numerics.Vector2(x - half, z + half),
+                };
+                cells.Add(c);
+            }
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, spacing);
+            return (cells, lookup);
+        }
+
+        [ContextMenu("Self-Test: Decoration Placement")]
+        public void SelfTestPlacement()
+        {
+            const float M = 400f;
+            var (cells, lookup) = Fixture(M, 40f);
+            var cfg = new DecorationConfig();
+            var theme = WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight;
+            bool ok = true;
+
+            var a = DecorationPlacer.Place(cells, lookup, 7, M, M, cfg, theme);
+            var b = DecorationPlacer.Place(cells, lookup, 7, M, M, cfg, theme);
+            ok &= a.Count == b.Count && a.Count > 0; // детерминизм: одинаковый размер
+            for (int i = 0; i < a.Count && ok; i++)
+                ok &= a[i].worldPos == b[i].worldPos && a[i].type == b[i].type && a[i].style == b[i].style;
+
+            // Горы только в левой половине (высокая суша).
+            foreach (var d in a)
+                if (d.type == DecorationType.Mountain) ok &= d.worldPos.x < M * 0.5f + 40f;
+
+            // sortZ неубывающий (отсортировано back-to-front).
+            for (int i = 1; i < a.Count; i++) ok &= a[i].sortZ >= a[i - 1].sortZ;
+
+            // rect == full: подвыборка правого-нижнего квадранта совпадает с фильтром полного прохода.
+            var rect = new Rect(M * 0.5f, M * 0.5f, M * 0.5f, M * 0.5f);
+            var rectList = new System.Collections.Generic.List<DecorationInstance>();
+            DecorationPlacer.PlaceRect(rectList, lookup, 7, M, M, cfg, theme, rect);
+            int fullInRect = 0;
+            foreach (var d in a) if (rect.Contains(d.worldPos)) fullInRect++;
+            ok &= rectList.Count == fullInRect;
+
+            // Плотность: удвоение вероятности не уменьшает число гор.
+            var dense = new DecorationConfig { mountainProbability = 1f };
+            var denseList = DecorationPlacer.Place(cells, lookup, 7, M, M, dense, theme);
+            int mtnA = 0, mtnD = 0;
+            foreach (var d in a) if (d.type == DecorationType.Mountain) mtnA++;
+            foreach (var d in denseList) if (d.type == DecorationType.Mountain) mtnD++;
+            ok &= mtnD >= mtnA;
+
+            Debug.Log(ok ? "Self-Test Decoration Placement: PASS" : "Self-Test Decoration Placement: FAIL");
+        }
     }
 }
