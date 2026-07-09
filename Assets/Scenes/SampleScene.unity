@@ -923,7 +923,7 @@ MonoBehaviour:
   borderRoundness: 1
   rasterLongSide: 2048
   decorationConfig:
-    enabled: 1
+    enabled: 0
     mountainMinElevation: 0.72
     hillMinElevation: 0.55
     coldTemperature: 0.32

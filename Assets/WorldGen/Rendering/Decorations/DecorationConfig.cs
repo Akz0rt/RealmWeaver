@@ -9,7 +9,7 @@ namespace WorldGen.Rendering.Decorations
     [Serializable]
     public class DecorationConfig
     {
-        public bool enabled = true;
+        public bool enabled = false;
 
         [Header("Пороги высоты (EffectiveElevation 0..1)")]
         [Range(0f, 1f)] public float mountainMinElevation = 0.72f; // >= => гора
