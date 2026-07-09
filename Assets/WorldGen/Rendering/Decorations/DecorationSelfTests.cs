@@ -126,5 +126,18 @@ namespace WorldGen.Rendering.Decorations
 
             Debug.Log(ok ? "Self-Test Decoration Placement: PASS" : "Self-Test Decoration Placement: FAIL");
         }
+
+        [ContextMenu("Self-Test: Decoration Catalog")]
+        public void SelfTestCatalog()
+        {
+            var cat = DecorationCatalog.BuildPlaceholder(48);
+            bool ok = cat.Atlas != null;
+            ok &= cat.VariantCount(DecorationType.Mountain, DecorationStyleCategory.Snowy) > 0;
+            ok &= cat.VariantCount(DecorationType.Pine, DecorationStyleCategory.Plain) > 0;
+            // UV-rect'ы в границах [0..1].
+            var uv = cat.UvRect(DecorationType.Mountain, DecorationStyleCategory.Bare, 0);
+            ok &= uv.x >= 0 && uv.y >= 0 && uv.x + uv.z <= 1.0001f && uv.y + uv.w <= 1.0001f;
+            Debug.Log(ok ? "Self-Test Decoration Catalog: PASS" : "Self-Test Decoration Catalog: FAIL");
+        }
     }
 }
