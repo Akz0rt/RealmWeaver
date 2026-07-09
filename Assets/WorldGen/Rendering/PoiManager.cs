@@ -340,6 +340,10 @@ namespace WorldGen.Rendering
             var view = go.AddComponent<PoiMarkerView>();
             view.Initialize(poi, poiYOffset, iconWorldSize, labelCharacterSize);
             markers[poi.Id] = view;
+            // Force LateUpdate to recompute + re-push the zoom factor next frame, so a marker spawned
+            // while already zoomed gets the current scale instead of staying at zoomScale=1 until the
+            // user next changes zoom (LateUpdate otherwise short-circuits on unchanged orthographicSize).
+            lastAppliedOrtho = -1f;
         }
 
         void DestroyMarker(string id)
