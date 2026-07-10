@@ -69,7 +69,7 @@ namespace WorldGen.Rendering.RegionLabels
 
         public string AddLabel(System.Numerics.Vector2 worldPos, string text)
         {
-            var d = new RegionLabelData { Text = string.IsNullOrEmpty(text) ? "NOVA REGIO" : text, WorldPosition = worldPos };
+            var d = new RegionLabelData { Text = string.IsNullOrEmpty(text) ? "Новый Край" : text, WorldPosition = worldPos };
             labels.Add(d);
             OnLabelsChanged?.Invoke();
             SelectLabel(d.Id);

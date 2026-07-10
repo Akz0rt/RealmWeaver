@@ -67,7 +67,7 @@ namespace WorldGen.Rendering.RegionLabels
             }
 
             // ---- Lone under-threshold cell: Snow, id 14, no neighbors, isolated at (50,50) - patch size
-            // 1 < minPatchCells 6, so it must not produce a label even though Snow has a Latin name entry.
+            // A lone 1-cell patch is below the density threshold, so it must not produce a label.
             var loneSite = new System.Numerics.Vector2(50f, 50f);
             var loneCell = new VoronoiCell(14, loneSite)
             {

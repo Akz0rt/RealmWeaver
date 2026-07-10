@@ -66,13 +66,16 @@ namespace WorldGen.Rendering.RegionLabels
             foreach (var (fam, comp, zoneKey) in components)
             {
                 var family = (BiomeFamily)fam;
+                // Defensive: a land cell manually painted to an Ocean/Lake biome resolves to family Sea/Lake
+                // while still being "land" — skip it so a landmass never gets a "… Море" name.
+                if (family == BiomeFamily.Sea || family == BiomeFamily.Lake) continue;
                 if (!usedByFamily.TryGetValue(family, out var used))
                 {
                     used = new HashSet<int>();
                     usedByFamily[family] = used;
                 }
                 string name = RegionLabelNames.NameFor(family, seed, zoneKey, used);
-                if (name == null) continue; // Coast/Lake families never land here (water skipped), defensive
+                if (name == null) continue; // Coast has no noun in the table -> unnamed
 
                 result.Add(new RegionLabelData
                 {
