@@ -185,7 +185,7 @@ namespace WorldGen.Rendering.RegionLabels
             float refSize = cameraController.NaturalFitSize;
             if (cam == null || refSize <= 0f) return;
 
-            HandleAddModeClick();   // may add + select a label (runs before the projection loop)
+            HandleMapClick();       // add-mode drop, or click-away-to-dismiss (runs before the projection loop)
 
             float alpha = LodAlpha(cam.orthographicSize / refSize);
 
@@ -241,18 +241,31 @@ namespace WorldGen.Rendering.RegionLabels
                 manager.MoveLabel(id, new System.Numerics.Vector2(w.x, w.z));
         }
 
-        // ── Add mode ────────────────────────────────────────────────────────────────
+        // ── Map-click handling (add-mode drop / click-away dismiss) ──────────────────
 
-        void HandleAddModeClick()
+        /// <summary>Single map-click dispatcher. A click on a label's transparent Image counts as
+        /// IsPointerOverGameObject() (and is handled by that label's pointer handler), so it never reaches
+        /// here — only genuine empty-map clicks do. In add-mode an empty click drops a new label; otherwise
+        /// an empty click dismisses an open rename box (click-away-to-finish). The rename box no longer
+        /// auto-closes on blur/Enter, so this is its explicit dismiss path.</summary>
+        void HandleMapClick()
         {
-            if (!addMode || manager == null) return;
+            if (manager == null) return;
             if (Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame) return;
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-            if (TryUnprojectMouseToGround(out var w))
+
+            if (addMode)
             {
-                manager.AddLabel(new System.Numerics.Vector2(w.x, w.z), null);   // auto-selects → rename box opens
-                addMode = false;
+                if (TryUnprojectMouseToGround(out var w))
+                {
+                    manager.AddLabel(new System.Numerics.Vector2(w.x, w.z), null);   // auto-selects → rename box opens
+                    addMode = false;
+                }
+                return;
             }
+
+            // Not in add-mode: an empty-map click finishes editing by deselecting the current label.
+            if (manager.GetSelected() != null) manager.DeselectAll();
         }
 
         /// <summary>Unproject the current mouse position onto the map plane (y = 0). Same ray math as the brush.</summary>
@@ -318,7 +331,10 @@ namespace WorldGen.Rendering.RegionLabels
             ThemeService.Tag(xImg, ThemeRole.Elev);
             var xBtn = xGO.AddComponent<Button>();
             xBtn.targetGraphic = xImg;
-            xBtn.onClick.AddListener(OnDeleteClicked);
+            // Capture the id in a closure — NOT editId, which the field's blur (fired on this button's
+            // pointer-DOWN) could otherwise have nulled before this onClick runs on pointer-UP.
+            string deleteId = d.Id;
+            xBtn.onClick.AddListener(() => { if (manager != null) manager.DeleteLabel(deleteId); });
             var xRT = xGO.GetComponent<RectTransform>();
             xRT.anchorMin = new Vector2(1f, 0.5f);
             xRT.anchorMax = new Vector2(1f, 0.5f);
@@ -346,19 +362,12 @@ namespace WorldGen.Rendering.RegionLabels
 
         void OnRenameCommitted(string value)
         {
-            if (manager == null) return;
-            string id = editId;
-            if (id == null) return;                                  // guards re-entrant onEndEdit during teardown
-            if (!string.IsNullOrWhiteSpace(value)) manager.RenameLabel(id, value);
-            manager.DeselectAll();                                   // → OnSelectionChanged(null) → DestroyEditUI
-        }
-
-        void OnDeleteClicked()
-        {
-            if (manager == null) return;
-            string id = editId;
-            // DeleteLabel clears selection but fires only OnLabelsChanged → Rebuild → EnsureEditUI tears the box down.
-            if (id != null) manager.DeleteLabel(id);
+            if (manager == null || editId == null) return;           // editId==null guards a stray onEndEdit after teardown
+            if (!string.IsNullOrWhiteSpace(value)) manager.RenameLabel(editId, value);
+            // Commit ONLY — deliberately no DeselectAll / teardown here. The legacy InputField blurs (and so
+            // fires this onEndEdit) on the "×" button's pointer-DOWN; tearing the box down here would destroy
+            // the "×" before its pointer-UP onClick, so DeleteLabel would never fire. The box is dismissed
+            // instead by an empty-map click (HandleMapClick), by selecting another label, or by delete.
         }
 
         void UpdateEditUIPosition()
