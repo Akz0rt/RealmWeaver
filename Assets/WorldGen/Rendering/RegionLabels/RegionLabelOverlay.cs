@@ -23,8 +23,10 @@ namespace WorldGen.Rendering.RegionLabels
         public TMP_FontAsset labelFont;
 
         [Header("LOD (доли от NaturalFitSize)")]
-        [Range(0f,1f)] public float farFrac = 0.8f;   // >= этого (отдалено) -> полностью видно
-        [Range(0f,1f)] public float nearFrac = 0.35f; // <= этого (приближено) -> скрыто
+        [Range(0f,1f)]   public float nearFrac = 0.35f;    // ниже -> приближено, всё скрыто
+        [Range(0f,1.5f)] public float farFrac = 0.6f;      // биомы полностью видны от этого
+        [Range(0.5f,3f)] public float macroLoFrac = 1.3f;  // отсюда биомы гаснут, материк/моря появляются
+        [Range(0.5f,3f)] public float macroHiFrac = 1.8f;  // выше -> только материк/моря
         public float baseFontSize = 34f;
         public float labelYOffsetWorld = 0.5f;         // приподнять точку привязки над картой
 
@@ -43,6 +45,10 @@ namespace WorldGen.Rendering.RegionLabels
 
         // Per-label view: a clickable/draggable container holding the TMP text as a stretched child.
         readonly Dictionary<string, LabelView> views = new Dictionary<string, LabelView>();
+
+        Material labelMat;   // shared outline + underlay (soft-shadow) material for all label TMPs
+        readonly List<(LabelView lv, Vector2 pos, float a)> cullBuffer = new List<(LabelView, Vector2, float)>();
+        readonly List<Rect> placedRects = new List<Rect>();
 
         // Active inline-edit UI (rename field + "×" delete), tracking the selected label. Null when none.
         RectTransform editRoot;
@@ -68,6 +74,7 @@ namespace WorldGen.Rendering.RegionLabels
                 manager.OnLabelsChanged -= Rebuild;
                 manager.OnSelectionChanged -= HandleSelectionChanged;
             }
+            if (labelMat != null) Destroy(labelMat);   // free the shared outline+underlay material instance
         }
 
         public void SetVisible(bool on) { visible = on; if (canvasRect != null) canvasRect.gameObject.SetActive(on); }
@@ -187,6 +194,8 @@ namespace WorldGen.Rendering.RegionLabels
             tmpGO.transform.SetParent(container, false);
             var tmp = tmpGO.AddComponent<TextMeshProUGUI>();
             if (labelFont != null) tmp.font = labelFont;
+            var lm = EnsureLabelMaterial();
+            if (lm != null) tmp.fontSharedMaterial = lm;   // shared outline+underlay material (no per-label instances)
             tmp.text = d.Text;
             tmp.fontSize = baseFontSize;
             tmp.fontStyle = FontStyles.Normal;         // upright (Forum reads far better than faux-italic on a busy map)
@@ -195,15 +204,14 @@ namespace WorldGen.Rendering.RegionLabels
             tmp.color = new Color(0.97f, 0.96f, 0.92f, 1f); // near-white for contrast
             tmp.enableWordWrapping = false;
             tmp.raycastTarget = false;                 // clicks handled by the container's Image
-            tmp.outlineWidth = 0.3f;                   // thicker dark halo so text separates from terrain
-            tmp.outlineColor = new Color32(6, 9, 14, 255);
+            // Outline + soft-shadow (underlay) live on the shared material (EnsureLabelMaterial), not per-tmp.
             var trt = tmp.rectTransform;
             trt.anchorMin = new Vector2(0f, 0f);
             trt.anchorMax = new Vector2(1f, 1f);
             trt.offsetMin = Vector2.zero;
             trt.offsetMax = Vector2.zero;
 
-            return new LabelView { Container = container, Tmp = tmp, ClickTarget = hit };
+            return new LabelView { Container = container, Tmp = tmp, ClickTarget = hit, Priority = d.Priority };
         }
 
         // ── Per-frame projection / LOD (Task 4 math, retargeted to the container) ────
@@ -217,32 +225,70 @@ namespace WorldGen.Rendering.RegionLabels
 
             HandleMapClick();       // add-mode drop, or click-away-to-dismiss (runs before the projection loop)
 
-            float alpha = LodAlpha(cam.orthographicSize / refSize);
+            float r = cam.orthographicSize / refSize;
+            float biomeA = BiomeAlpha(r);
+            float macroA = MacroAlpha(r);
 
+            // Project each label; buffer the on-screen, non-faded ones for priority overlap culling.
+            cullBuffer.Clear();
             foreach (var d in manager.GetAll())
             {
                 if (!views.TryGetValue(d.Id, out var lv) || lv == null || lv.Container == null || lv.Tmp == null) continue;
+                float a = d.Kind == RegionLabelData.LabelKind.Biome ? biomeA : macroA;
                 Vector3 world = new Vector3(d.WorldPosition.X, labelYOffsetWorld, d.WorldPosition.Y);
                 Vector3 sp = cam.WorldToScreenPoint(world);
                 bool onScreen = sp.z > 0f && sp.x >= 0 && sp.x <= Screen.width && sp.y >= 0 && sp.y <= Screen.height;
-                var c = lv.Tmp.color; c.a = onScreen ? alpha : 0f; lv.Tmp.color = c;
-                if (!onScreen || alpha <= 0.01f) { lv.Container.anchoredPosition = new Vector2(-9999, -9999); continue; }
+                if (!onScreen || a <= 0.01f) { Park(lv); continue; }
+                cullBuffer.Add((lv, new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f), a));
+            }
 
-                // Pin the label to its projected world anchor. (The old downward collision-nudge
-                // drifted labels far off their biome when zoomed out and crowded — labels must stay
-                // on their region; minor overlap at extreme zoom-out is preferable to wrong placement.)
-                lv.Container.anchoredPosition = new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f);
+            // Overlap cull: higher Priority wins (continents/seas > bigger biome zones > smaller); overlapping
+            // lower-priority labels are HIDDEN, not moved — every shown label stays pinned to its anchor.
+            cullBuffer.Sort((x, y) => y.lv.Priority.CompareTo(x.lv.Priority));
+            placedRects.Clear();
+            foreach (var e in cullBuffer)
+            {
+                var rect = new Rect(e.pos.x - 110f, e.pos.y - 17f, 220f, 34f);
+                bool blocked = false;
+                for (int i = 0; i < placedRects.Count; i++) if (placedRects[i].Overlaps(rect)) { blocked = true; break; }
+                if (blocked) { Park(e.lv); continue; }
+                placedRects.Add(rect);
+                SetAlpha(e.lv, e.a);
+                e.lv.Container.anchoredPosition = e.pos;
             }
 
             UpdateEditUIPosition();   // keep the inline-edit UI riding the selected label
         }
 
-        float LodAlpha(float zoomRatio) // orthoSize/NaturalFitSize; large = zoomed out
+        static void SetAlpha(LabelView lv, float a) { var c = lv.Tmp.color; c.a = a; lv.Tmp.color = c; }
+        static void Park(LabelView lv) { SetAlpha(lv, 0f); lv.Container.anchoredPosition = new Vector2(-9999f, -9999f); }
+
+        // Biome labels: visible in the MID band (fade in from nearFrac, fade out into the macro band).
+        float BiomeAlpha(float r)
         {
-            if (zoomRatio >= farFrac) return 1f;
-            if (zoomRatio <= nearFrac) return 0f;
-            float t = (zoomRatio - nearFrac) / Mathf.Max(1e-4f, (farFrac - nearFrac));
-            return Mathf.SmoothStep(0f, 1f, t);
+            float up = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(nearFrac, farFrac, r));
+            float down = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r));
+            return up * (1f - down);
+        }
+        // Continents + seas: visible when zoomed OUT past the mid band.
+        float MacroAlpha(float r) => Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r));
+
+        // Shared TMP material: crisp dark outline + soft dark underlay (drop shadow) so text lifts off terrain.
+        Material EnsureLabelMaterial()
+        {
+            if (labelMat == null && labelFont != null)
+            {
+                labelMat = new Material(labelFont.material);
+                labelMat.SetFloat("_OutlineWidth", 0.3f);
+                labelMat.SetColor("_OutlineColor", new Color32(6, 9, 14, 255));
+                labelMat.EnableKeyword("UNDERLAY_ON");
+                labelMat.SetColor("_UnderlayColor", new Color(0f, 0f, 0f, 0.7f));
+                labelMat.SetFloat("_UnderlayOffsetX", 1f);
+                labelMat.SetFloat("_UnderlayOffsetY", -1f);
+                labelMat.SetFloat("_UnderlaySoftness", 0.35f);
+                labelMat.SetFloat("_UnderlayDilate", 0.1f);
+            }
+            return labelMat;
         }
 
         // ── Pointer callbacks (driven by RegionLabelPointerHandler) ─────────────────
@@ -468,6 +514,7 @@ namespace WorldGen.Rendering.RegionLabels
             /// <summary>The container's transparent click Image. Task 4: its raycastTarget is toggled by
             /// SetEditMode/ApplyEditModeToViews so labels are non-blocking in display mode (edit mode off).</summary>
             public Image ClickTarget;
+            public float Priority;   // mirrors RegionLabelData.Priority for overlap-cull ordering
         }
     }
 
