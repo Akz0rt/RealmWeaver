@@ -113,6 +113,11 @@ namespace WorldGen.Rendering
         public Color coastlineColor = new Color(0.05f, 0.10f, 0.20f, 0.95f);
         public float coastlineWidth = 2.5f;
 
+        [Header("Region labels")]
+        [Range(0f, 1f)]
+        [Tooltip("Плотность названий зон: меньше = только крупные зоны получают имя, больше = включать средние.")]
+        public float labelDensity = 0.4f;
+
         [Header("Combined: тёмный рендер (MapRaster)")]
         public MapPaletteTheme paletteTheme = MapPaletteTheme.ColdTwilight;
         [Range(0f, 100f)] public float coldLight = 58f;

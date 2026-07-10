@@ -37,7 +37,7 @@ namespace WorldGen.Rendering.RegionLabels
         {
             if (mapRenderer == null || mapRenderer.Cells == null) return;
             var seeded = RegionLabelPlacer.Place(mapRenderer.Cells, mapRenderer.NearestLookup,
-                mapRenderer.mapWidth, mapRenderer.mapHeight);
+                mapRenderer.mapWidth, mapRenderer.mapHeight, mapRenderer.seed, mapRenderer.labelDensity);
             labels.Clear();
             labels.AddRange(seeded);
             selectedId = null;
