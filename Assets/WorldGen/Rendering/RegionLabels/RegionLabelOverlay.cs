@@ -47,6 +47,7 @@ namespace WorldGen.Rendering.RegionLabels
         readonly Dictionary<string, LabelView> views = new Dictionary<string, LabelView>();
 
         Material labelMat;   // shared outline + underlay (soft-shadow) material for all label TMPs
+        Color labelColor = new Color(0.97f, 0.96f, 0.92f, 1f);   // text color (near-white); DM-changeable via SetLabelColor
         readonly List<(LabelView lv, Vector2 pos, float a)> cullBuffer = new List<(LabelView, Vector2, float)>();
         readonly List<Rect> placedRects = new List<Rect>();
 
@@ -78,6 +79,19 @@ namespace WorldGen.Rendering.RegionLabels
         }
 
         public void SetVisible(bool on) { visible = on; if (canvasRect != null) canvasRect.gameObject.SetActive(on); }
+
+        /// <summary>Sets the shared text color for all region labels (DM color picker in the layers panel).
+        /// Alpha is driven per-frame by the LOD, so only RGB is applied here.</summary>
+        public void SetLabelColor(Color c)
+        {
+            labelColor = new Color(c.r, c.g, c.b, 1f);
+            foreach (var lv in views.Values)
+                if (lv != null && lv.Tmp != null)
+                {
+                    float a = lv.Tmp.color.a;                         // keep the current LOD-driven alpha
+                    lv.Tmp.color = new Color(labelColor.r, labelColor.g, labelColor.b, a);
+                }
+        }
 
         /// <summary>Public API for MapLayersPanel (Task 5). Flips every existing label's click raycastTarget
         /// on/off; leaving edit mode also cancels a pending add-mode and tears down any open rename box
@@ -111,6 +125,7 @@ namespace WorldGen.Rendering.RegionLabels
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = -10;   // below ALL app chrome (notes/legend=0, panels 40-100) so labels never cover UI
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
             canvasRect = canvasGO.GetComponent<RectTransform>();   // Canvas auto-adds a RectTransform
@@ -201,7 +216,7 @@ namespace WorldGen.Rendering.RegionLabels
             tmp.fontStyle = FontStyles.Normal;         // upright (Forum reads far better than faux-italic on a busy map)
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.characterSpacing = 4f;                 // letter-spacing (tighter than before for legibility)
-            tmp.color = new Color(0.97f, 0.96f, 0.92f, 1f); // near-white for contrast
+            tmp.color = labelColor;                    // shared label text color (DM-changeable)
             tmp.enableWordWrapping = false;
             tmp.raycastTarget = false;                 // clicks handled by the container's Image
             // Outline + soft-shadow (underlay) live on the shared material (EnsureLabelMaterial), not per-tmp.

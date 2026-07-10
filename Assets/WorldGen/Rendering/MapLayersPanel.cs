@@ -20,6 +20,17 @@ namespace WorldGen.Rendering
         Font builtinFont;
         readonly List<Toggle> toggles = new List<Toggle>();
 
+        GameObject labelColorRow;   // "Цвет названий" swatches; shown only when edit mode is on
+        static readonly Color[] LabelColorSwatches =
+        {
+            new Color(0.97f, 0.96f, 0.92f), // near-white
+            new Color(0.92f, 0.84f, 0.58f), // warm gold
+            new Color(0.85f, 0.80f, 0.68f), // parchment
+            new Color(0.78f, 0.87f, 0.96f), // pale blue
+            new Color(0.66f, 0.20f, 0.16f), // deep red
+            new Color(0.10f, 0.11f, 0.13f), // dark ink
+        };
+
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -68,12 +79,17 @@ namespace WorldGen.Rendering
             AddLayerToggleRow(t, "Декорации", mapRenderer != null && mapRenderer.decorationConfig.enabled,
                 on => mapRenderer?.SetShowDecorations(on));
             AddLayerToggleRow(t, "Названия регионов", true, on => regionLabelOverlay?.SetVisible(on));
-            AddLayerToggleRow(t, "Редактировать названия", false, on => regionLabelOverlay?.SetEditMode(on));
+            AddLayerToggleRow(t, "Редактировать названия", false, on =>
+            {
+                regionLabelOverlay?.SetEditMode(on);
+                if (labelColorRow != null) labelColorRow.SetActive(on);   // color picker appears only in edit mode
+            });
             AddSliderRow(t, "Плотность названий", 0f, 1f,
                 mapRenderer != null ? mapRenderer.labelDensity : 0.4f,
                 v => { if (mapRenderer != null) mapRenderer.labelDensity = v; });
             AddActionButtonRow(t, "Пересоздать названия", () => regionLabelManager?.RerollNames(),
                 "+ Название", () => regionLabelOverlay?.ToggleAddMode());
+            AddColorSwatchRow(t);   // "Цвет названий" — hidden until edit mode is on
         }
 
         void BuildHeaderRow(Transform parent)
@@ -181,6 +197,54 @@ namespace WorldGen.Rendering
             btn.targetGraphic = text;
             btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => onClick?.Invoke());
+        }
+
+        /// <summary>"Цвет названий" label + a strip of color-swatch buttons; each sets the shared label
+        /// text color via RegionLabelOverlay.SetLabelColor. Built hidden; shown only in edit mode.</summary>
+        void AddColorSwatchRow(Transform parent)
+        {
+            var groupGO = new GameObject("LabelColorGroup");
+            groupGO.transform.SetParent(parent, false);
+            var gvlg = groupGO.AddComponent<VerticalLayoutGroup>();
+            gvlg.spacing = 3f;
+            gvlg.childControlWidth = true;  gvlg.childForceExpandWidth = true;
+            gvlg.childControlHeight = true; gvlg.childForceExpandHeight = false;
+            groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(groupGO.transform, false);
+            var labelText = labelGO.AddComponent<Text>();
+            labelText.text = "Цвет названий";
+            labelText.font = builtinFont;
+            labelText.fontSize = 12;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
+            labelText.alignment = TextAnchor.MiddleLeft;
+            labelGO.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            var swGO = new GameObject("Swatches");
+            swGO.transform.SetParent(groupGO.transform, false);
+            swGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+            var h = swGO.AddComponent<HorizontalLayoutGroup>();
+            h.spacing = 4f;
+            h.childControlWidth = true;  h.childForceExpandWidth = true;
+            h.childControlHeight = true; h.childForceExpandHeight = true;
+            foreach (var col in LabelColorSwatches) AddColorSwatch(swGO.transform, col);
+
+            labelColorRow = groupGO;
+            labelColorRow.SetActive(false);   // shown only when "Редактировать названия" is on
+        }
+
+        void AddColorSwatch(Transform parent, Color color)
+        {
+            var go = new GameObject("Swatch");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            img.color = color;
+            AddBorder(go, ThemeRole.Border);   // border so light swatches read against the panel
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.transition = Selectable.Transition.None;   // keep the true swatch color (no hover tint)
+            btn.onClick.AddListener(() => regionLabelOverlay?.SetLabelColor(color));
         }
 
         // ── Widget helpers ──
