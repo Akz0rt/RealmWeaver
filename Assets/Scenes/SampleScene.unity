@@ -710,6 +710,7 @@ MonoBehaviour:
   mapRenderer: {fileID: 1583692671}
   poiManager: {fileID: 1583692676}
   notesRoot: {fileID: 900000003}
+  regionLabelManager: {fileID: 1481348583}
 --- !u!4 &1044192761
 Transform:
   m_ObjectHideFlags: 0
@@ -777,6 +778,75 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 514.97675, y: -177.88779, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1481348581
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1481348584}
+  - component: {fileID: 1481348583}
+  - component: {fileID: 1481348582}
+  m_Layer: 0
+  m_Name: RegionLabelManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1481348582
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1481348581}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d08f8ed896f460d479d02e1f9aece781, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.RegionLabels.RegionLabelOverlay
+  manager: {fileID: 1481348583}
+  cameraController: {fileID: 914212972}
+  labelFont: {fileID: 11400000, guid: ff1c4b51b877d09449a602bf6a2ae554, type: 2}
+  nearFrac: 0.1
+  farFrac: 0.25
+  macroLoFrac: 1
+  macroHiFrac: 1.504
+  transitionSharpness: 1
+  baseFontSize: 26
+  labelYOffsetWorld: 0.5
+  addMode: 0
+--- !u!114 &1481348583
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1481348581}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8a711e453d14c2f4ba0dfb6d8b31b1fc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.RegionLabels.RegionLabelManager
+  mapRenderer: {fileID: 1583692671}
+--- !u!4 &1481348584
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1481348581}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 1354.0424, y: 205.95764, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -909,6 +979,7 @@ MonoBehaviour:
   regionBorderWidth: 1.5
   coastlineColor: {r: 0.05, g: 0.1, b: 0.2, a: 0.95}
   coastlineWidth: 2.5
+  labelDensity: 0.4
   paletteTheme: 0
   coldLight: 58
   regionVariation: 45
@@ -1060,6 +1131,11 @@ MonoBehaviour:
   poiYOffset: 0.5
   iconWorldSize: 8
   labelCharacterSize: 1.5
+  showPoiLabels: 0
+  cameraController: {fileID: 914212972}
+  zoomScaleExponent: 0.5
+  minMarkerScreenPx: 26
+  maxMarkerScreenPx: 64
 --- !u!114 &1583692677
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1107,6 +1183,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.MapLayersPanel
   mapRenderer: {fileID: 1583692671}
+  regionLabelOverlay: {fileID: 1481348582}
+  regionLabelManager: {fileID: 1481348583}
 --- !u!4 &1904317181
 Transform:
   m_ObjectHideFlags: 0
@@ -1332,3 +1410,4 @@ SceneRoots:
   - {fileID: 2100068682}
   - {fileID: 587299943}
   - {fileID: 914212973}
+  - {fileID: 1481348584}
