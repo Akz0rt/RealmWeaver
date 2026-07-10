@@ -58,13 +58,28 @@ namespace WorldGen.Generation
                     cell.IsOcean = false;
                 }
 
-                // cell.Height пока не трогаем - не-океанские water клетки (озёра) будут
-                // обработаны на следующем шаге (elevation), где IsLake выводится явно.
             }
 
             // Озеро, связанное с океаном через цепочку водных клеток, - это на самом деле часть моря,
             // а не отдельный внутренний водоём. Промоутим такую воду в океан на уровне клеток.
             PromoteOceanConnectedWater(cells, waterCellIds);
+
+            // Оставшаяся вода (в waterCellIds, но не ставшая океаном) - настоящие внутренние озёра.
+            // Помечаем их Biome.Lake ЗДЕСЬ, у источника water-статуса. Идентичность озера
+            // (VoronoiCell.EffectiveIsLake читает Biome==Lake) должна быть задана ДО классификации
+            // биома, которая теперь идёт отдельным поздним проходом (CellOverrideService.ClassifyAll,
+            // после температуры). Без этого озёра классифицировались бы как суша.
+            MarkLakes(cells, waterCellIds);
+        }
+
+        /// <summary>Помечает внутренние озёра: водную клетку, оставшуюся не-океаном после
+        /// PromoteOceanConnectedWater. Устанавливает cell.Biome = Biome.Lake, задавая lake-идентичность
+        /// до классификации биома. Public для изолированного self-test.</summary>
+        public static void MarkLakes(List<VoronoiCell> cells, HashSet<int> waterCellIds)
+        {
+            foreach (var cell in cells)
+                if (!cell.IsOcean && waterCellIds.Contains(cell.Id))
+                    cell.Biome = Biome.Lake;
         }
 
         /// <summary>

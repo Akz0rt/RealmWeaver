@@ -47,5 +47,34 @@ namespace WorldGen.Generation
             ok &= BiomeClassifier.Classify(0.9f, 0.5f, 1.0f, 0.4f, false, false, 0f) == Biome.Forest;
             Debug.Log(ok ? "Self-Test Biome Classifier: PASS" : "Self-Test Biome Classifier: FAIL");
         }
+
+        // Regression guard for the lake-loss bug: after the pipeline reorder, lake identity
+        // (Biome==Lake) must be set by CellWaterAssigner.MarkLakes BEFORE classification, and the
+        // later ClassifyAll pass must PRESERVE it (EffectiveIsLake reads Biome==Lake) rather than
+        // reclassifying the cell as land.
+        [ContextMenu("Self-Test: Lake Preserved")]
+        public void SelfTestLakePreserved()
+        {
+            // Inland lake (water, not ocean), ocean, and land cells.
+            var lake  = new VoronoiCell(1, new System.Numerics.Vector2(0, 0)) { IsOcean = false, Height = 0.05f, Humidity = 0.9f, Temperature = 0.6f };
+            var ocean = new VoronoiCell(2, new System.Numerics.Vector2(0, 0)) { IsOcean = true };
+            var land  = new VoronoiCell(3, new System.Numerics.Vector2(0, 0)) { IsOcean = false, Height = 0.5f, Humidity = 0.5f, Temperature = 0.6f };
+            var cells = new System.Collections.Generic.List<VoronoiCell> { lake, ocean, land };
+            var waterCellIds = new System.Collections.Generic.HashSet<int> { lake.Id, ocean.Id };
+
+            CellWaterAssigner.MarkLakes(cells, waterCellIds);
+            bool ok = lake.Biome == Biome.Lake         // inland water → Lake
+                   && ocean.Biome != Biome.Lake         // ocean is not marked a lake
+                   && land.Biome != Biome.Lake;         // land not in waterCellIds → untouched
+
+            // Classification must PRESERVE the lake (the regression reclassified it to land).
+            CellOverrideService.ElevationTempDrop = 0.4f;
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            ok &= lake.Biome == Biome.Lake;              // still a lake after classification
+            ok &= ocean.Biome == Biome.Ocean;           // ocean stays ocean
+            ok &= land.Biome != Biome.Lake && land.Biome != Biome.Ocean; // land got a real land biome
+
+            Debug.Log(ok ? "Self-Test Lake Preserved: PASS" : "Self-Test Lake Preserved: FAIL");
+        }
     }
 }
