@@ -48,3 +48,9 @@ sysinfo.txt
 
 # Crashlytics
 crashlytics-build.properties
+
+# Dev tooling / process scratch (not needed for the app)
+/.superpowers/
+/.claude/
+/docs/superpowers/
+/.vsconfig
