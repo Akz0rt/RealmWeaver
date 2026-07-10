@@ -228,6 +228,7 @@ namespace WorldGen.Rendering
         {
             if (gpuRenderer != null && gpuRenderer.Material != null)
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
+            WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
             if (Application.isPlaying && cells != null && nearestLookup != null) RebuildDecorations();
         }
 
@@ -308,6 +309,13 @@ namespace WorldGen.Rendering
         {
             cells = loadedCells;
             corners = CornerGraphBuilder.Build(cells);
+
+            // Биомы пересчитываем из климата (spec §Backward compatibility): загруженный cell.Biome
+            // может быть из старого набора. Температура/влажность/высота сохранены, поэтому
+            // классификация даёт корректный новый биом; ручной BiomeOverride сохраняется.
+            WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
+            WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            BeachClassifier.AssignCoastalBeaches(cells);
             rivers = new List<River>();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
@@ -454,7 +462,7 @@ namespace WorldGen.Rendering
 
         /// <summary>
         /// Перегенерирует ТОЛЬКО температуру (новые случайные эпицентры), не трогая
-        /// elevation/moisture/biome/регионы. Требует, чтобы карта уже была сгенерирована
+        /// elevation/moisture/регионы (биом пересчитывается под новую температуру). Требует, чтобы карта уже была сгенерирована
         /// хотя бы раз (GenerateAndRender).
         /// </summary>
         [ContextMenu("Regenerate Temperature Only")]
@@ -469,6 +477,10 @@ namespace WorldGen.Rendering
             var genParams = BuildGenerationParams();
             epicenters = WorldGenerator.GenerateRandomEpicenters(genParams);
             WorldGenerator.RegenerateTemperature(cells, genParams, epicenters);
+            // Температура влияет на биом → переклассифицируем (было "не трогая biome").
+            CellOverrideService.ElevationTempDrop = genParams.ElevationTempDrop;
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            BeachClassifier.AssignCoastalBeaches(cells);
             lastGenParams = genParams;
 
             RefreshAfterCellDataChange(); // только перекрашиваем - геометрия не менялась

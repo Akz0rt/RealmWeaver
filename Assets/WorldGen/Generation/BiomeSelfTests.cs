@@ -76,5 +76,24 @@ namespace WorldGen.Generation
 
             Debug.Log(ok ? "Self-Test Lake Preserved: PASS" : "Self-Test Lake Preserved: FAIL");
         }
+
+        [ContextMenu("Self-Test: ClassifyAll + Override")]
+        public void SelfTestClassifyAll()
+        {
+            WorldGen.Generation.CellOverrideService.ElevationTempDrop = 0.4f;
+
+            // Hot, medium-moist lowland → Savanna.
+            var hot = new VoronoiCell(1, new System.Numerics.Vector2(0, 0)) { Height = 0.2f, Humidity = 0.5f, Temperature = 0.9f };
+            // Same but a peak → cooled to Forest.
+            var peak = new VoronoiCell(2, new System.Numerics.Vector2(0, 0)) { Height = 1.0f, Humidity = 0.5f, Temperature = 0.9f };
+            // Manual biome override survives reclassification.
+            var forced = new VoronoiCell(3, new System.Numerics.Vector2(0, 0)) { Height = 0.2f, Humidity = 0.5f, Temperature = 0.9f, BiomeOverride = Biome.Snow };
+
+            var cells = new System.Collections.Generic.List<VoronoiCell> { hot, peak, forced };
+            WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+
+            bool ok = hot.Biome == Biome.Savanna && peak.Biome == Biome.Forest && forced.Biome == Biome.Snow;
+            Debug.Log(ok ? "Self-Test ClassifyAll: PASS" : "Self-Test ClassifyAll: FAIL");
+        }
     }
 }
