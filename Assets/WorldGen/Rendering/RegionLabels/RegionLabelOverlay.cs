@@ -31,6 +31,12 @@ namespace WorldGen.Rendering.RegionLabels
         /// <summary>When true, the next map click (not over UI) drops a new label there. Task 6 wires a button.</summary>
         public bool addMode;
 
+        /// <summary>Task 4 (edit-mode gate): when false (default) labels are display-only — their click
+        /// Image.raycastTarget is off so they never intercept the cursor (fixes scroll-zoom being blocked
+        /// while hovering a label), and all click/drag/add/deselect entry points no-op. Toggled via
+        /// SetEditMode, the public API MapLayersPanel (Task 5) calls from its edit-mode button.</summary>
+        bool editMode = false;
+
         bool visible = true;
         RectTransform canvasRect;
         Font builtinFont;
@@ -66,7 +72,31 @@ namespace WorldGen.Rendering.RegionLabels
 
         public void SetVisible(bool on) { visible = on; if (canvasRect != null) canvasRect.gameObject.SetActive(on); }
 
-        public void ToggleAddMode() { addMode = !addMode; }
+        /// <summary>Public API for MapLayersPanel (Task 5). Flips every existing label's click raycastTarget
+        /// on/off; leaving edit mode also cancels a pending add-mode and tears down any open rename box
+        /// (via manager.DeselectAll() -> OnSelectionChanged -> EnsureEditUI).</summary>
+        public void SetEditMode(bool on)
+        {
+            if (editMode == on) return;
+            editMode = on;
+            ApplyEditModeToViews();
+            if (!on)
+            {
+                addMode = false;
+                if (manager != null) manager.DeselectAll();
+            }
+        }
+
+        void ApplyEditModeToViews()
+        {
+            foreach (var kv in views)
+            {
+                var lv = kv.Value;
+                if (lv != null && lv.ClickTarget != null) lv.ClickTarget.raycastTarget = editMode;
+            }
+        }
+
+        public void ToggleAddMode() { if (!editMode) return; addMode = !addMode; }
 
         void BuildCanvas()
         {
@@ -141,7 +171,7 @@ namespace WorldGen.Rendering.RegionLabels
             // brush/camera tools correctly skip them.
             var hit = go.AddComponent<Image>();
             hit.color = new Color(0f, 0f, 0f, 0f);
-            hit.raycastTarget = true;
+            hit.raycastTarget = editMode;   // Task 4: display-only by default (non-blocking); ApplyEditModeToViews flips this live
             var container = go.GetComponent<RectTransform>();
             container.anchorMin = new Vector2(0.5f, 0.5f);
             container.anchorMax = new Vector2(0.5f, 0.5f);
@@ -173,7 +203,7 @@ namespace WorldGen.Rendering.RegionLabels
             trt.offsetMin = Vector2.zero;
             trt.offsetMax = Vector2.zero;
 
-            return new LabelView { Container = container, Tmp = tmp };
+            return new LabelView { Container = container, Tmp = tmp, ClickTarget = hit };
         }
 
         // ── Per-frame projection / LOD (Task 4 math, retargeted to the container) ────
@@ -224,11 +254,13 @@ namespace WorldGen.Rendering.RegionLabels
 
         public void HandleLabelClicked(string id)
         {
+            if (!editMode) return;
             if (manager != null) manager.SelectLabel(id);
         }
 
         public void HandleLabelDragBegin(string id)
         {
+            if (!editMode) return;
             if (manager == null) return;
             var sel = manager.GetSelected();
             if (sel == null || sel.Id != id) manager.SelectLabel(id);
@@ -236,6 +268,7 @@ namespace WorldGen.Rendering.RegionLabels
 
         public void HandleLabelDrag(string id, PointerEventData eventData)
         {
+            if (!editMode) return;
             if (manager == null) return;
             if (TryUnprojectMouseToGround(out var w))
                 manager.MoveLabel(id, new System.Numerics.Vector2(w.x, w.z));
@@ -250,6 +283,7 @@ namespace WorldGen.Rendering.RegionLabels
         /// auto-closes on blur/Enter, so this is its explicit dismiss path.</summary>
         void HandleMapClick()
         {
+            if (!editMode) return;
             if (manager == null) return;
             if (Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame) return;
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
@@ -436,6 +470,9 @@ namespace WorldGen.Rendering.RegionLabels
         {
             public RectTransform Container;
             public TextMeshProUGUI Tmp;
+            /// <summary>The container's transparent click Image. Task 4: its raycastTarget is toggled by
+            /// SetEditMode/ApplyEditModeToViews so labels are non-blocking in display mode (edit mode off).</summary>
+            public Image ClickTarget;
         }
     }
 
