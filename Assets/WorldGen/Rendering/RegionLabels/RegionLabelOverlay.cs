@@ -2,14 +2,19 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
+using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering.RegionLabels
 {
-    /// <summary>Screen-space overlay for region labels: one TMP text per label, projected from its world
-    /// centroid each frame, alpha driven by camera zoom (visible zoomed-out, fades in when zoomed in).
-    /// Render + LOD only — no editing/dragging (see Task 5's click/drag layer).</summary>
+    /// <summary>Screen-space overlay for region labels. Task 4: one TMP text per label, projected from its
+    /// world centroid each frame, alpha driven by camera zoom (visible zoomed-out, fades in when zoomed in).
+    /// Task 5 adds EDITING: each label view is now a transparent clickable/draggable container (invisible
+    /// Image raycast target + pointer handler) with the TMP as a stretched child. Click selects → inline
+    /// rename box + "×" delete; drag moves the label on the y=0 map plane; add-mode drops a new label where
+    /// you click. Render/LOD math is unchanged — it is just retargeted from the TMP to its container.</summary>
     public class RegionLabelOverlay : MonoBehaviour
     {
         [Header("Источники")]
@@ -23,19 +28,45 @@ namespace WorldGen.Rendering.RegionLabels
         public float baseFontSize = 26f;
         public float labelYOffsetWorld = 0.5f;         // приподнять точку привязки над картой
 
+        /// <summary>When true, the next map click (not over UI) drops a new label there. Task 6 wires a button.</summary>
+        public bool addMode;
+
         bool visible = true;
         RectTransform canvasRect;
-        readonly Dictionary<string, TextMeshProUGUI> views = new Dictionary<string, TextMeshProUGUI>();
+        Font builtinFont;
+
+        // Per-label view: a clickable/draggable container holding the TMP text as a stretched child.
+        readonly Dictionary<string, LabelView> views = new Dictionary<string, LabelView>();
+
+        // Active inline-edit UI (rename field + "×" delete), tracking the selected label. Null when none.
+        RectTransform editRoot;
+        InputField editField;
+        string editId;
 
         void Awake()
         {
-            BuildCanvas();          // mirror PoiEditPanel's canvas setup; store canvasRect
-            if (manager != null) manager.OnLabelsChanged += Rebuild;
+            builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            BuildCanvas();          // ScreenSpaceOverlay canvas + EventSystem; store canvasRect
+            if (manager != null)
+            {
+                manager.OnLabelsChanged += Rebuild;
+                manager.OnSelectionChanged += HandleSelectionChanged;
+            }
             Rebuild();
         }
-        void OnDestroy() { if (manager != null) manager.OnLabelsChanged -= Rebuild; }
+
+        void OnDestroy()
+        {
+            if (manager != null)
+            {
+                manager.OnLabelsChanged -= Rebuild;
+                manager.OnSelectionChanged -= HandleSelectionChanged;
+            }
+        }
 
         public void SetVisible(bool on) { visible = on; if (canvasRect != null) canvasRect.gameObject.SetActive(on); }
+
+        public void ToggleAddMode() { addMode = !addMode; }
 
         void BuildCanvas()
         {
@@ -57,19 +88,74 @@ namespace WorldGen.Rendering.RegionLabels
             go.AddComponent<InputSystemUIInputModule>();
         }
 
+        // ── View lifecycle ────────────────────────────────────────────────────────
+
+        /// <summary>Reconciles the label views to the manager's current list. Unlike a naive
+        /// destroy-all-and-rebuild, this KEEPS surviving containers alive — destroying a container mid-drag
+        /// would break the EventSystem's drag (its pointerDrag points at that GameObject), and MoveLabel fires
+        /// OnLabelsChanged every drag frame. It also refreshes text for renames without recreating anything.
+        /// Finally it reconciles the inline-edit UI to the surviving selection (SeedFromCells / LoadLabels /
+        /// ClearAll / DeleteLabel clear selection but fire ONLY OnLabelsChanged — see EnsureEditUI).</summary>
         void Rebuild()
         {
-            foreach (var v in views.Values) if (v != null) Destroy(v.gameObject);
-            views.Clear();
-            if (manager == null) return;
-            foreach (var d in manager.GetAll()) views[d.Id] = CreateLabelView(d);
+            if (manager == null) { DestroyEditUI(); return; }
+
+            var all = manager.GetAll();
+            var live = new HashSet<string>();
+            foreach (var d in all)
+            {
+                live.Add(d.Id);
+                if (views.TryGetValue(d.Id, out var lv) && lv != null && lv.Container != null)
+                {
+                    if (lv.Tmp != null) lv.Tmp.text = d.Text;   // reflect renames without recreating the view
+                }
+                else
+                {
+                    views[d.Id] = CreateLabelView(d);
+                }
+            }
+
+            // Drop views whose label was deleted.
+            List<string> stale = null;
+            foreach (var kv in views)
+                if (!live.Contains(kv.Key)) (stale ??= new List<string>()).Add(kv.Key);
+            if (stale != null)
+                foreach (var id in stale)
+                {
+                    var lv = views[id];
+                    if (lv != null && lv.Container != null) Destroy(lv.Container.gameObject);
+                    views.Remove(id);
+                }
+
+            EnsureEditUI();
         }
 
-        TextMeshProUGUI CreateLabelView(RegionLabelData d)
+        LabelView CreateLabelView(RegionLabelData d)
         {
             var go = new GameObject($"RegionLabel_{d.Id}");
             go.transform.SetParent(canvasRect, false);
-            var tmp = go.AddComponent<TextMeshProUGUI>();
+
+            // Transparent, raycast-enabled click/drag target. Alpha 0 still receives raycasts
+            // (GraphicRaycaster ignores color alpha unless alphaHitTestMinimumThreshold is set), and its
+            // presence makes label clicks register as EventSystem.IsPointerOverGameObject() so the
+            // brush/camera tools correctly skip them.
+            var hit = go.AddComponent<Image>();
+            hit.color = new Color(0f, 0f, 0f, 0f);
+            hit.raycastTarget = true;
+            var container = go.GetComponent<RectTransform>();
+            container.anchorMin = new Vector2(0.5f, 0.5f);
+            container.anchorMax = new Vector2(0.5f, 0.5f);
+            container.pivot = new Vector2(0.5f, 0.5f);
+            container.sizeDelta = new Vector2(220f, 34f);
+
+            var handler = go.AddComponent<RegionLabelPointerHandler>();
+            handler.LabelId = d.Id;
+            handler.Overlay = this;
+
+            // TMP text as a stretched child (one Graphic per GameObject: Image here, TMP there).
+            var tmpGO = new GameObject("Text");
+            tmpGO.transform.SetParent(container, false);
+            var tmp = tmpGO.AddComponent<TextMeshProUGUI>();
             if (labelFont != null) tmp.font = labelFont;
             tmp.text = d.Text;
             tmp.fontSize = baseFontSize;
@@ -78,16 +164,19 @@ namespace WorldGen.Rendering.RegionLabels
             tmp.characterSpacing = 8f;                 // letter-spacing
             tmp.color = new Color(0.86f, 0.84f, 0.78f, 1f);
             tmp.enableWordWrapping = false;
-            tmp.raycastTarget = false;                 // click handled by an overlaid button in Task 5
+            tmp.raycastTarget = false;                 // clicks handled by the container's Image
             tmp.outlineWidth = 0.18f;                  // dark halo (needs an outline-capable material preset)
             tmp.outlineColor = new Color32(6, 10, 16, 220);
-            var rt = tmp.rectTransform;
-            rt.anchorMin = new Vector2(0.5f, 0.5f);
-            rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(220f, 34f);
-            return tmp;
+            var trt = tmp.rectTransform;
+            trt.anchorMin = new Vector2(0f, 0f);
+            trt.anchorMax = new Vector2(1f, 1f);
+            trt.offsetMin = Vector2.zero;
+            trt.offsetMax = Vector2.zero;
+
+            return new LabelView { Container = container, Tmp = tmp };
         }
+
+        // ── Per-frame projection / LOD (Task 4 math, retargeted to the container) ────
 
         void LateUpdate()
         {
@@ -96,18 +185,20 @@ namespace WorldGen.Rendering.RegionLabels
             float refSize = cameraController.NaturalFitSize;
             if (cam == null || refSize <= 0f) return;
 
+            HandleAddModeClick();   // may add + select a label (runs before the projection loop)
+
             float alpha = LodAlpha(cam.orthographicSize / refSize);
 
             // basic collision: keep placed screen rects, nudge overlapping labels down.
             var placed = new List<Rect>();
             foreach (var d in manager.GetAll())
             {
-                if (!views.TryGetValue(d.Id, out var tmp) || tmp == null) continue;
+                if (!views.TryGetValue(d.Id, out var lv) || lv == null || lv.Container == null || lv.Tmp == null) continue;
                 Vector3 world = new Vector3(d.WorldPosition.X, labelYOffsetWorld, d.WorldPosition.Y);
                 Vector3 sp = cam.WorldToScreenPoint(world);
                 bool onScreen = sp.z > 0f && sp.x >= 0 && sp.x <= Screen.width && sp.y >= 0 && sp.y <= Screen.height;
-                var c = tmp.color; c.a = onScreen ? alpha : 0f; tmp.color = c;
-                if (!onScreen || alpha <= 0.01f) { tmp.rectTransform.anchoredPosition = new Vector2(-9999, -9999); continue; }
+                var c = lv.Tmp.color; c.a = onScreen ? alpha : 0f; lv.Tmp.color = c;
+                if (!onScreen || alpha <= 0.01f) { lv.Container.anchoredPosition = new Vector2(-9999, -9999); continue; }
 
                 // screen -> canvas anchoredPosition (canvas is ScreenSpaceOverlay so 1:1 with screen px, pivot .5)
                 Vector2 pos = new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f);
@@ -115,9 +206,10 @@ namespace WorldGen.Rendering.RegionLabels
                 int guard = 0;
                 while (guard++ < 8 && placed.Exists(r => r.Overlaps(rect))) { pos.y -= 30f; rect.y -= 30f; }
                 placed.Add(rect);
-                tmp.rectTransform.anchoredPosition = pos;
-                // also fade the outline alpha with the text (optional): tmp.fontMaterial... keep simple for v1.
+                lv.Container.anchoredPosition = pos;
             }
+
+            UpdateEditUIPosition();   // keep the inline-edit UI riding the selected label
         }
 
         float LodAlpha(float zoomRatio) // orthoSize/NaturalFitSize; large = zoomed out
@@ -126,6 +218,239 @@ namespace WorldGen.Rendering.RegionLabels
             if (zoomRatio <= nearFrac) return 0f;
             float t = (zoomRatio - nearFrac) / Mathf.Max(1e-4f, (farFrac - nearFrac));
             return Mathf.SmoothStep(0f, 1f, t);
+        }
+
+        // ── Pointer callbacks (driven by RegionLabelPointerHandler) ─────────────────
+
+        public void HandleLabelClicked(string id)
+        {
+            if (manager != null) manager.SelectLabel(id);
+        }
+
+        public void HandleLabelDragBegin(string id)
+        {
+            if (manager == null) return;
+            var sel = manager.GetSelected();
+            if (sel == null || sel.Id != id) manager.SelectLabel(id);
+        }
+
+        public void HandleLabelDrag(string id, PointerEventData eventData)
+        {
+            if (manager == null) return;
+            if (TryUnprojectMouseToGround(out var w))
+                manager.MoveLabel(id, new System.Numerics.Vector2(w.x, w.z));
+        }
+
+        // ── Add mode ────────────────────────────────────────────────────────────────
+
+        void HandleAddModeClick()
+        {
+            if (!addMode || manager == null) return;
+            if (Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame) return;
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+            if (TryUnprojectMouseToGround(out var w))
+            {
+                manager.AddLabel(new System.Numerics.Vector2(w.x, w.z), null);   // auto-selects → rename box opens
+                addMode = false;
+            }
+        }
+
+        /// <summary>Unproject the current mouse position onto the map plane (y = 0). Same ray math as the brush.</summary>
+        bool TryUnprojectMouseToGround(out Vector3 world)
+        {
+            world = Vector3.zero;
+            var cam = cameraController != null ? cameraController.targetCamera : null;
+            if (cam == null || Mouse.current == null) return false;
+            Vector2 mp = Mouse.current.position.ReadValue();
+            Ray r = cam.ScreenPointToRay(mp);
+            if (Mathf.Abs(r.direction.y) < 1e-6f) return false;   // ray parallel to plane
+            float t = -r.origin.y / r.direction.y;
+            if (t < 0f) return false;                              // plane is behind the camera
+            world = r.origin + r.direction * t;
+            return true;
+        }
+
+        // ── Inline edit UI (rename + delete) ──────────────────────────────────────────
+
+        void HandleSelectionChanged(RegionLabelData sel) => EnsureEditUI();
+
+        /// <summary>Reconciles the edit UI to the manager's CURRENT selection. Idempotent: if the box is already
+        /// open for the selected label it does nothing (so a benign OnLabelsChanged during a drag, or a
+        /// click-after-drag re-select, does not tear down an in-progress edit). This is the single guard that
+        /// keeps a reseed/reload/clear/delete — which clear selection but fire only OnLabelsChanged — from
+        /// leaving a stale rename box pointing at a deleted label.</summary>
+        void EnsureEditUI()
+        {
+            var sel = manager != null ? manager.GetSelected() : null;
+            if (sel == null) { DestroyEditUI(); return; }
+            if (editId == sel.Id && editRoot != null) return;   // already open for this label
+            DestroyEditUI();
+            OpenEditUI(sel);
+        }
+
+        void OpenEditUI(RegionLabelData d)
+        {
+            var go = new GameObject("RegionLabelEdit");
+            go.transform.SetParent(canvasRect, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);      // themed backing so the box reads over the map
+            editRoot = go.GetComponent<RectTransform>();
+            editRoot.anchorMin = new Vector2(0.5f, 0.5f);
+            editRoot.anchorMax = new Vector2(0.5f, 0.5f);
+            editRoot.pivot = new Vector2(0.5f, 0.5f);
+            editRoot.sizeDelta = new Vector2(220f, 30f);
+            if (views.TryGetValue(d.Id, out var lv) && lv != null && lv.Container != null)
+                editRoot.anchoredPosition = lv.Container.anchoredPosition;   // start over the label
+
+            editField = BuildRenameField(editRoot);
+            var fieldRT = editField.GetComponent<RectTransform>();
+            fieldRT.anchorMin = new Vector2(0f, 0f);
+            fieldRT.anchorMax = new Vector2(1f, 1f);
+            fieldRT.offsetMin = new Vector2(4f, 3f);
+            fieldRT.offsetMax = new Vector2(-30f, -3f);        // leave room on the right for "×"
+            editField.text = d.Text;
+            editField.onEndEdit.AddListener(OnRenameCommitted);
+
+            // "×" delete button.
+            var xGO = new GameObject("Delete");
+            xGO.transform.SetParent(editRoot, false);
+            var xImg = xGO.AddComponent<Image>();
+            ThemeService.Tag(xImg, ThemeRole.Elev);
+            var xBtn = xGO.AddComponent<Button>();
+            xBtn.targetGraphic = xImg;
+            xBtn.onClick.AddListener(OnDeleteClicked);
+            var xRT = xGO.GetComponent<RectTransform>();
+            xRT.anchorMin = new Vector2(1f, 0.5f);
+            xRT.anchorMax = new Vector2(1f, 0.5f);
+            xRT.pivot = new Vector2(1f, 0.5f);
+            xRT.anchoredPosition = new Vector2(-4f, 0f);
+            xRT.sizeDelta = new Vector2(22f, 22f);
+            var xtGO = new GameObject("X");
+            xtGO.transform.SetParent(xGO.transform, false);
+            var xText = xtGO.AddComponent<Text>();
+            xText.text = "✕";
+            xText.font = builtinFont;
+            xText.fontSize = 14;
+            ThemeService.Tag(xText, ThemeRole.Danger);
+            xText.alignment = TextAnchor.MiddleCenter;
+            var xtRT = xtGO.GetComponent<RectTransform>();
+            xtRT.anchorMin = Vector2.zero;
+            xtRT.anchorMax = Vector2.one;
+            xtRT.sizeDelta = Vector2.zero;
+
+            editId = d.Id;
+            editRoot.SetAsLastSibling();     // draw above the label containers
+            editField.Select();
+            editField.ActivateInputField();  // focus for immediate typing
+        }
+
+        void OnRenameCommitted(string value)
+        {
+            if (manager == null) return;
+            string id = editId;
+            if (id == null) return;                                  // guards re-entrant onEndEdit during teardown
+            if (!string.IsNullOrWhiteSpace(value)) manager.RenameLabel(id, value);
+            manager.DeselectAll();                                   // → OnSelectionChanged(null) → DestroyEditUI
+        }
+
+        void OnDeleteClicked()
+        {
+            if (manager == null) return;
+            string id = editId;
+            // DeleteLabel clears selection but fires only OnLabelsChanged → Rebuild → EnsureEditUI tears the box down.
+            if (id != null) manager.DeleteLabel(id);
+        }
+
+        void UpdateEditUIPosition()
+        {
+            if (editRoot == null || editId == null) return;
+            if (views.TryGetValue(editId, out var lv) && lv != null && lv.Container != null)
+                editRoot.anchoredPosition = lv.Container.anchoredPosition;   // track the label (incl. drag / park)
+        }
+
+        void DestroyEditUI()
+        {
+            if (editRoot != null) Destroy(editRoot.gameObject);
+            editRoot = null;
+            editField = null;
+            editId = null;
+        }
+
+        /// <summary>Single-line rename field, mirroring PoiEditPanel.BuildInputField (Image bg as targetGraphic,
+        /// legacy Text child + Placeholder, builtin font). Legacy UnityEngine.UI.InputField is the shipped,
+        /// low-risk path in this project; a legacy box over TMP labels is cosmetically fine.</summary>
+        InputField BuildRenameField(Transform parent)
+        {
+            var go = new GameObject("InputField");
+            go.transform.SetParent(parent, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
+            var field = go.AddComponent<InputField>();
+            field.targetGraphic = bg;
+            field.lineType = InputField.LineType.SingleLine;
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.font = builtinFont;
+            text.fontSize = 14;
+            ThemeService.Tag(text, ThemeRole.Txt);
+            text.supportRichText = false;
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = new Vector2(0.02f, 0f);
+            textRect.anchorMax = new Vector2(1f, 1f);
+            textRect.sizeDelta = Vector2.zero;
+            field.textComponent = text;
+
+            var phGO = new GameObject("Placeholder");
+            phGO.transform.SetParent(go.transform, false);
+            var phText = phGO.AddComponent<Text>();
+            phText.font = builtinFont;
+            phText.fontSize = 14;
+            ThemeService.Tag(phText, ThemeRole.Mut);
+            phText.fontStyle = FontStyle.Italic;
+            phText.text = "Название региона";
+            var phRect = phGO.GetComponent<RectTransform>();
+            phRect.anchorMin = new Vector2(0.02f, 0f);
+            phRect.anchorMax = new Vector2(1f, 1f);
+            phRect.sizeDelta = Vector2.zero;
+            field.placeholder = phText;
+
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = 22f;
+            le.flexibleWidth = 1f;
+            return field;
+        }
+
+        /// <summary>Holder for one label's runtime view: the clickable/draggable container + its TMP child.</summary>
+        class LabelView
+        {
+            public RectTransform Container;
+            public TextMeshProUGUI Tmp;
+        }
+    }
+
+    /// <summary>Rides the EventSystem + GraphicRaycaster built by RegionLabelOverlay. One per label container;
+    /// forwards click/drag to the overlay, which drives RegionLabelManager CRUD.</summary>
+    public class RegionLabelPointerHandler : MonoBehaviour,
+        IPointerClickHandler, IBeginDragHandler, IDragHandler
+    {
+        public string LabelId;
+        public RegionLabelOverlay Overlay;
+
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            if (Overlay != null) Overlay.HandleLabelClicked(LabelId);
+        }
+
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            if (Overlay != null) Overlay.HandleLabelDragBegin(LabelId);
+        }
+
+        public void OnDrag(PointerEventData eventData)
+        {
+            if (Overlay != null) Overlay.HandleLabelDrag(LabelId, eventData);
         }
     }
 }
