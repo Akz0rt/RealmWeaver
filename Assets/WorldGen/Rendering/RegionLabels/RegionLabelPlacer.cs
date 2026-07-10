@@ -14,6 +14,8 @@ namespace WorldGen.Rendering.RegionLabels
         public const float DefaultLabelDensity = 0.4f;
         const int MaxZoneCells = 40; // density 0 -> only giants
         const int MinZoneCells = 6;  // density 1 -> include medium (matches the old minPatchCells floor)
+        const int ContinentMinCells = 40;               // a landmass must be at least this big to be named
+        const float ContinentPriorityBias = 1_000_000f; // continents/seas outrank biomes in overlap culling
 
         public static List<RegionLabelData> Place(IReadOnlyList<VoronoiCell> cells,
             NearestCellLookup nearest, float mapWidth, float mapHeight,
@@ -77,11 +79,55 @@ namespace WorldGen.Rendering.RegionLabels
                     Text = name,
                     WorldPosition = OnLandAnchor(comp),
                     SeedFamily = family,
+                    Kind = RegionLabelData.LabelKind.Biome,
+                    Priority = comp.Count,
                 });
             }
 
+            AddContinentLabels(result, cells, byId, seed);
             AddSeaLabels(result, nearest, mapWidth, mapHeight, seed);
             return result;
+        }
+
+        // Continents = connected LAND (biome-agnostic, unlike the biome-family BFS above). One invented
+        // name per landmass >= ContinentMinCells, shown only at the far (zoomed-out) LOD tier.
+        static void AddContinentLabels(List<RegionLabelData> result, IReadOnlyList<VoronoiCell> cells,
+            Dictionary<int, VoronoiCell> byId, int seed)
+        {
+            var visited = new HashSet<int>();
+            foreach (var start in cells)
+            {
+                if (visited.Contains(start.Id)) continue;
+                if (!RegionCategories.IsLandCell(start)) { visited.Add(start.Id); continue; }
+
+                var comp = new List<VoronoiCell>();
+                var queue = new Queue<VoronoiCell>();
+                queue.Enqueue(start); visited.Add(start.Id);
+                int landKey = start.Id;
+                while (queue.Count > 0)
+                {
+                    var c = queue.Dequeue();
+                    comp.Add(c);
+                    if (c.Id < landKey) landKey = c.Id;
+                    foreach (var nid in c.NeighborIds)
+                    {
+                        if (visited.Contains(nid)) continue;
+                        if (!byId.TryGetValue(nid, out var nc)) continue;
+                        if (!RegionCategories.IsLandCell(nc)) continue;
+                        visited.Add(nid);
+                        queue.Enqueue(nc);
+                    }
+                }
+                if (comp.Count < ContinentMinCells) continue;
+                result.Add(new RegionLabelData
+                {
+                    Text = RegionLabelNames.ContinentName(seed, landKey),
+                    WorldPosition = OnLandAnchor(comp),
+                    SeedFamily = BiomeFamily.Coast,   // "not a biome zone" sentinel; unused for continents
+                    Kind = RegionLabelData.LabelKind.Continent,
+                    Priority = ContinentPriorityBias + comp.Count,
+                });
+            }
         }
 
         static System.Numerics.Vector2 OnLandAnchor(List<VoronoiCell> comp)
@@ -137,7 +183,11 @@ namespace WorldGen.Rendering.RegionLabels
                 if (cell != null && cell.EffectiveIsOcean)
                 {
                     string name = RegionLabelNames.NameFor(BiomeFamily.Sea, seed, 1000 + i, usedSea);
-                    result.Add(new RegionLabelData { Text = name, WorldPosition = pos, SeedFamily = BiomeFamily.Sea });
+                    result.Add(new RegionLabelData
+                    {
+                        Text = name, WorldPosition = pos, SeedFamily = BiomeFamily.Sea,
+                        Kind = RegionLabelData.LabelKind.Sea, Priority = ContinentPriorityBias,
+                    });
                 }
             }
         }

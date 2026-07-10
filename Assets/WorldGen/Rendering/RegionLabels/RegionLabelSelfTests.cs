@@ -94,7 +94,25 @@ namespace WorldGen.Rendering.RegionLabels
             var sparse = RegionLabelPlacer.Place(cells, null, 100f, 100f, seed: 1, labelDensity: 0f);
             ok &= sparse.Count == 0;
 
+            // Kind/Priority tagging: biome labels are Kind=Biome with Priority>0.
+            ok &= forest != null && forest.Kind == RegionLabelData.LabelKind.Biome && forest.Priority > 0f;
+            // Fixture patches are ~7 cells each (< ContinentMinCells=40) → no continent label is emitted.
+            ok &= labels.TrueForAll(l => l.Kind != RegionLabelData.LabelKind.Continent);
+
             Debug.Log(ok ? "Self-Test Region Label Placer: PASS" : "Self-Test Region Label Placer: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Continent Names")]
+        public void SelfTestContinentNames()
+        {
+            string a1 = RegionLabelNames.ContinentName(1, 5);
+            string a2 = RegionLabelNames.ContinentName(1, 5);
+            bool ok = !string.IsNullOrEmpty(a1) && a1 == a2;                 // deterministic
+            ok &= !string.IsNullOrEmpty(RegionLabelNames.ContinentName(2, 5)); // other seed still names
+            // Reroll (seed varies via salt) generally yields a different name for the same landmass:
+            ok &= a1 != RegionLabelNames.ContinentName(9, 5)
+               || a1 != RegionLabelNames.ContinentName(17, 5);              // at least one of two other seeds differs
+            Debug.Log(ok ? "Self-Test Continent Names: PASS" : "Self-Test Continent Names: FAIL");
         }
 
         [ContextMenu("Self-Test: Region Label Names")]

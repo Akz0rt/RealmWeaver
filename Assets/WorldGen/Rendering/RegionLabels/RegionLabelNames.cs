@@ -85,6 +85,23 @@ namespace WorldGen.Rendering.RegionLabels
             }
         }
 
+        // Isolated continent syllable pools (invented fantasy names; unrelated to the biome noun table
+        // and to the planned biome-type rework — edit freely).
+        static readonly string[] ContinentOnsets =
+        { "Вэл","Каэр","Тарн","Морн","Драг","Эль","Вор","Нар","Ске","Тир","Улл","Фэн","Гэл","Хад","Рун","Аск" };
+        static readonly string[] ContinentCodas =
+        { "дрим","вейл","морн","гард","холд","рун","тар","нор","вен","дал","мир","рат","гейт","ланд" };
+
+        /// <summary>Deterministic invented (fantasy proper-noun) landmass name, e.g. "Вэлдрим", "Каэрхолд".
+        /// Two decorrelated draws from the FNV hash so onset and coda vary independently. Shares the
+        /// caller's seed, so the reroll salt (baked into seed) varies continent names too.</summary>
+        public static string ContinentName(int seed, int key)
+        {
+            int a = (int)((uint)Hash(seed, key) % (uint)ContinentOnsets.Length);
+            int b = (int)((uint)Hash(seed, unchecked(key * 31 + 0x2545F491)) % (uint)ContinentCodas.Length);
+            return ContinentOnsets[a] + ContinentCodas[b];
+        }
+
         /// <summary>Composed name for a zone, or null if the family is unnamed (Coast/Lake).
         /// Picks the hashed adjective index, linear-probing forward for one not yet used by THIS
         /// family on THIS map (mutates usedAdjIndices). If all are used (>pool zones of one family),
