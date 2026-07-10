@@ -90,5 +90,35 @@ namespace WorldGen.Rendering.RegionLabels
 
             Debug.Log(ok ? "Self-Test Region Label Placer: PASS" : "Self-Test Region Label Placer: FAIL");
         }
+
+        [ContextMenu("Self-Test: Region Label Names")]
+        public void SelfTestNames()
+        {
+            // Determinism: same (family, seed, zoneKey) + fresh used-set -> identical name.
+            string a1 = RegionLabelNames.NameFor(BiomeFamily.Forest, 1, 5, new System.Collections.Generic.HashSet<int>());
+            string a2 = RegionLabelNames.NameFor(BiomeFamily.Forest, 1, 5, new System.Collections.Generic.HashSet<int>());
+            bool ok = a1 != null && a1 == a2 && a1.EndsWith(" Лес");
+
+            // Gender agreement: same seed+zoneKey+fresh set -> same adjective index, different gender forms.
+            // Forest is Masculine, Badlands is Feminine, so the adjective token must differ in ending.
+            string f = RegionLabelNames.NameFor(BiomeFamily.Forest,   7, 3, new System.Collections.Generic.HashSet<int>());
+            string b = RegionLabelNames.NameFor(BiomeFamily.Badlands, 7, 3, new System.Collections.Generic.HashSet<int>());
+            ok &= f.EndsWith(" Лес") && b.EndsWith(" Пустошь");
+            string fAdj = f.Substring(0, f.Length - " Лес".Length);
+            string bAdj = b.Substring(0, b.Length - " Пустошь".Length);
+            ok &= fAdj != bAdj;                          // masculine vs feminine form differ
+
+            // Uniqueness within a family: shared set -> two zones get different adjectives.
+            var shared = new System.Collections.Generic.HashSet<int>();
+            string z1 = RegionLabelNames.NameFor(BiomeFamily.Plains, 2, 10, shared);
+            string z2 = RegionLabelNames.NameFor(BiomeFamily.Plains, 2, 11, shared);
+            ok &= z1 != z2 && z1.EndsWith(" Луга") && z2.EndsWith(" Луга");
+
+            // Unnamed families -> null.
+            ok &= RegionLabelNames.NameFor(BiomeFamily.Coast, 1, 1, new System.Collections.Generic.HashSet<int>()) == null;
+            ok &= RegionLabelNames.NameFor(BiomeFamily.Lake,  1, 1, new System.Collections.Generic.HashSet<int>()) == null;
+
+            Debug.Log(ok ? "Self-Test Region Label Names: PASS" : "Self-Test Region Label Names: FAIL");
+        }
     }
 }
