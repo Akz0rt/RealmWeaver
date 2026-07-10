@@ -27,6 +27,7 @@ namespace WorldGen.Rendering.RegionLabels
         [Range(0f,1.5f)] public float farFrac = 0.6f;      // биомы полностью видны от этого
         [Range(0.5f,3f)] public float macroLoFrac = 1.3f;  // отсюда биомы гаснут, материк/моря появляются
         [Range(0.5f,3f)] public float macroHiFrac = 1.8f;  // выше -> только материк/моря
+        [Range(0f,1f)]   public float transitionSharpness = 1f; // 0 = плавно (fade), 1 = резко (порог)
         public float baseFontSize = 34f;
         public float labelYOffsetWorld = 0.5f;         // приподнять точку привязки над картой
 
@@ -278,15 +279,24 @@ namespace WorldGen.Rendering.RegionLabels
         static void SetAlpha(LabelView lv, float a) { var c = lv.Tmp.color; c.a = a; lv.Tmp.color = c; }
         static void Park(LabelView lv) { SetAlpha(lv, 0f); lv.Container.anchoredPosition = new Vector2(-9999f, -9999f); }
 
-        // Biome labels: visible in the MID band (fade in from nearFrac, fade out into the macro band).
+        // Biome labels: visible in the MID band (appear from nearFrac, disappear into the macro band).
         float BiomeAlpha(float r)
         {
-            float up = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(nearFrac, farFrac, r));
-            float down = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r));
+            float up = Sharpen(Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(nearFrac, farFrac, r)));
+            float down = Sharpen(Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r)));
             return up * (1f - down);
         }
         // Continents + seas: visible when zoomed OUT past the mid band.
-        float MacroAlpha(float r) => Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r));
+        float MacroAlpha(float r) => Sharpen(Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(macroLoFrac, macroHiFrac, r)));
+
+        // Steepen a 0..1 ramp: transitionSharpness 0 -> unchanged (fade); 1 -> hard cut at 0.5 (abrupt pop).
+        float Sharpen(float a)
+        {
+            if (transitionSharpness <= 0f) return a;
+            if (transitionSharpness >= 1f) return a >= 0.5f ? 1f : 0f;
+            float k = Mathf.Lerp(1f, 40f, transitionSharpness);
+            return Mathf.Clamp01((a - 0.5f) * k + 0.5f);
+        }
 
         // Shared TMP material: crisp dark outline + soft dark underlay (drop shadow) so text lifts off terrain.
         Material EnsureLabelMaterial()
