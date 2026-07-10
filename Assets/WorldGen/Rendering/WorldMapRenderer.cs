@@ -191,6 +191,9 @@ namespace WorldGen.Rendering
         /// <summary>Read-only access to current cells for POI placement.</summary>
         public IReadOnlyList<VoronoiCell> Cells => cells;
 
+        /// <summary>Read-only access to the nearest-cell lookup for region-label seeding (sea anchors).</summary>
+        public NearestCellLookup NearestLookup => nearestLookup;
+
         /// <summary>Клетка по Id через готовую карту cellById (O(1)). null — если нет карты или Id неизвестен. Используется radius-кистью в режиме "Сгладить" для чтения соседей.</summary>
         public VoronoiCell GetCellById(int id)
         {
