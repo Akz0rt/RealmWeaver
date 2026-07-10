@@ -32,7 +32,9 @@ persistence/LOD/save-load machinery.
 - **Labels never intercept the cursor in normal use** (zoom/pan work everywhere). Editing lives
   behind an **"Редактировать названия" (edit-mode) toggle**; only in edit mode are labels
   clickable.
-- Cyrillic-capable font (**EB Garamond**, OFL) replaces IM Fell English (Latin-only).
+- Cyrillic-capable font (**Forum**, OFL) replaces IM Fell English (Latin-only). MedievalSharp and
+  Uncial Antiqua were considered but ruled out — both are Latin-only on Google Fonts and would
+  render the Russian names as missing-glyph boxes.
 
 ## Non-goals / unchanged
 
@@ -134,13 +136,16 @@ discarding manual edits — same as today).
 - With fewer labels, overlap is rarer; keep the overlay's existing collision-nudge.
 - The on-land anchor guarantee (§2) keeps names off water.
 
-### 5. Font — EB Garamond (Cyrillic)
+### 5. Font — Forum (Cyrillic)
 
-- Replace IM Fell English with **EB Garamond** (OFL, Google Fonts, full Cyrillic, same
-  historical-serif "old book" mood). This is a DM Editor step: import the `.ttf`, run TMP Font
-  Asset Creator with a **Unicode Range** covering Latin + Cyrillic (`20-7E,A0-FF,400-4FF`) at
-  1024×1024, and assign the resulting SDF asset to `RegionLabelOverlay.labelFont`.
-- No code depends on the specific font; `labelFont` is already a serialized `TMP_FontAsset` ref.
+- Replace IM Fell English with **Forum** (OFL, Google Fonts, antique Roman inscriptional caps with
+  a `cyrillic` + `cyrillic-ext` subset — an elegant "carved in stone" cartographic look). This is a
+  DM Editor step: import the `.ttf`, run TMP Font Asset Creator with a **Unicode Range** covering
+  Latin + Cyrillic (`20-7E,A0-FF,400-4FF`) at 1024×1024, and assign the resulting SDF asset to
+  `RegionLabelOverlay.labelFont`.
+- No code depends on the specific font; `labelFont` is already a serialized `TMP_FontAsset` ref, so
+  swapping fonts later (e.g. after the planned biome rework, or to another Cyrillic face) needs no
+  code change.
 
 ## Affected components
 
@@ -154,7 +159,7 @@ discarding manual edits — same as today).
 - **Modified:** `WorldMapRenderer.cs` (serialized `labelDensity` field ~0.4).
 - **Modified:** `MapLayersPanel.cs` ("Редактировать названия" toggle + "Плотность названий" slider;
   wire the existing add/regenerate buttons to edit mode).
-- **DM Editor step:** EB Garamond SDF font asset → `labelFont`.
+- **DM Editor step:** Forum SDF font asset (Latin+Cyrillic) → `labelFont`.
 
 ## Testing
 
