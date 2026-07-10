@@ -68,6 +68,10 @@ namespace WorldGen.Rendering
             AddLayerToggleRow(t, "Декорации", mapRenderer != null && mapRenderer.decorationConfig.enabled,
                 on => mapRenderer?.SetShowDecorations(on));
             AddLayerToggleRow(t, "Названия регионов", true, on => regionLabelOverlay?.SetVisible(on));
+            AddLayerToggleRow(t, "Редактировать названия", false, on => regionLabelOverlay?.SetEditMode(on));
+            AddSliderRow(t, "Плотность названий", 0f, 1f,
+                mapRenderer != null ? mapRenderer.labelDensity : 0.4f,
+                v => { if (mapRenderer != null) mapRenderer.labelDensity = v; });
             AddActionButtonRow(t, "Пересоздать названия", () => regionLabelManager?.SeedFromCells(),
                 "+ Название", () => regionLabelOverlay?.ToggleAddMode());
         }
@@ -180,6 +184,108 @@ namespace WorldGen.Rendering
         }
 
         // ── Widget helpers ──
+
+        /// <summary>Labeled 0..1 slider row (label + %-value above, slider below), mirroring
+        /// EditorBrushPanel's BuildLabeledSlider/BuildSlider (same Slider/fill/handle setup + theming).</summary>
+        void AddSliderRow(Transform parent, string label, float min, float max, float def, System.Action<float> onChanged)
+        {
+            var groupGO = new GameObject($"{label}Group");
+            groupGO.transform.SetParent(parent, false);
+            var gvlg = groupGO.AddComponent<VerticalLayoutGroup>();
+            gvlg.spacing = 3f;
+            gvlg.childControlWidth = true;
+            gvlg.childForceExpandWidth = true;
+            gvlg.childControlHeight = true;
+            gvlg.childForceExpandHeight = false;
+            groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var headGO = new GameObject($"{label}Head");
+            headGO.transform.SetParent(groupGO.transform, false);
+            headGO.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(headGO.transform, false);
+            var labelText = labelGO.AddComponent<Text>();
+            labelText.text = label;
+            labelText.font = builtinFont;
+            labelText.fontSize = 12;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
+            labelText.alignment = TextAnchor.MiddleLeft;
+            var labelRect = labelGO.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0.6f, 1f);
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+
+            var valGO = new GameObject("Value");
+            valGO.transform.SetParent(headGO.transform, false);
+            var valueLabel = valGO.AddComponent<Text>();
+            valueLabel.font = builtinFont;
+            valueLabel.fontSize = 11;
+            ThemeService.Tag(valueLabel, ThemeRole.Accent);
+            valueLabel.alignment = TextAnchor.MiddleRight;
+            var valRect = valGO.GetComponent<RectTransform>();
+            valRect.anchorMin = new Vector2(0.4f, 0f);
+            valRect.anchorMax = new Vector2(1f, 1f);
+            valRect.offsetMin = Vector2.zero;
+            valRect.offsetMax = Vector2.zero;
+
+            var sliderGO = new GameObject($"{label}Slider");
+            sliderGO.transform.SetParent(groupGO.transform, false);
+            var slider = BuildSlider(sliderGO, def, min, max);
+            sliderGO.AddComponent<LayoutElement>().preferredHeight = 14f;
+
+            void Refresh(float v) => valueLabel.text = $"{Mathf.RoundToInt(v * 100f)}%";
+            Refresh(def);
+            slider.onValueChanged.AddListener(v => { Refresh(v); onChanged?.Invoke(v); });
+        }
+
+        /// <summary>Ported from EditorBrushPanel.BuildSlider: standard Background/Fill/HandleArea/Handle
+        /// slider construction with the same theming so it matches the rest of the app.</summary>
+        Slider BuildSlider(GameObject sliderGO, float defaultValue, float min, float max)
+        {
+            var slider = sliderGO.AddComponent<Slider>();
+            slider.minValue = min;
+            slider.maxValue = max;
+            slider.value = defaultValue;
+
+            var bg = new GameObject("Bg");
+            bg.transform.SetParent(sliderGO.transform, false);
+            var bgImg = bg.AddComponent<Image>();
+            ThemeService.Tag(bgImg, ThemeRole.Elev);
+            var bgRect = bg.GetComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0f, 0.25f);
+            bgRect.anchorMax = new Vector2(1f, 0.75f);
+            bgRect.sizeDelta = Vector2.zero;
+
+            var fill = new GameObject("Fill");
+            fill.transform.SetParent(sliderGO.transform, false);
+            var fillImg = fill.AddComponent<Image>();
+            ThemeService.Tag(fillImg, ThemeRole.Accent);
+            var fillRect = fill.GetComponent<RectTransform>();
+            fillRect.anchorMin = new Vector2(0f, 0.2f);
+            fillRect.anchorMax = new Vector2(0f, 0.8f);
+            fillRect.sizeDelta = Vector2.zero;
+            slider.fillRect = fillRect;
+
+            var handleArea = new GameObject("HandleArea");
+            handleArea.transform.SetParent(sliderGO.transform, false);
+            var haRect = handleArea.AddComponent<RectTransform>();
+            haRect.anchorMin = Vector2.zero;
+            haRect.anchorMax = Vector2.one;
+            haRect.sizeDelta = Vector2.zero;
+
+            var handle = new GameObject("Handle");
+            handle.transform.SetParent(handleArea.transform, false);
+            var handleImg = handle.AddComponent<Image>();
+            ThemeService.Tag(handleImg, ThemeRole.Accent);
+            var handleRect = handle.GetComponent<RectTransform>();
+            handleRect.sizeDelta = new Vector2(12f, 18f);
+            slider.handleRect = handleRect;
+            slider.targetGraphic = handleImg;
+            slider.direction = Slider.Direction.LeftToRight;
+            return slider;
+        }
 
         Text AddLabel(Transform parent, string text)
         {
