@@ -23,7 +23,7 @@ namespace WorldGen.Rendering
         public int fontSize = 12;
 
         const float PanelWidth = 232f;
-        const int CompactCount = 12;     // rows shown before "Показать все N →" (generalized biomes fit; only long Region lists collapse)
+        const int CompactCount = 14;     // rows shown before "Показать все N →" (all 13 biome families fit; only long Region lists collapse)
 
         Canvas canvas;
         RectTransform panelRect;
@@ -108,13 +108,13 @@ namespace WorldGen.Rendering
                     break;
 
                 case MapDisplayMode.Biome:
-                    entries.AddRange(GeneralizedBiomeEntries());
+                    entries.AddRange(GeneralizedBiomeEntries(mapRenderer.paletteTheme));
                     break;
 
                 case MapDisplayMode.Combined:
                     if (mapRenderer.showBiomeLayer)
                     {
-                        entries.AddRange(GeneralizedBiomeEntries());
+                        entries.AddRange(GeneralizedBiomeEntries(mapRenderer.paletteTheme));
                     }
                     else
                     {
@@ -140,24 +140,27 @@ namespace WorldGen.Rendering
             return entries;
         }
 
-        /// <summary>Generalized biome categories for the legend — one entry per broad landscape
-        /// type with a representative colour, instead of all 16 fine-grained biomes ("Лес" rather
-        /// than five kinds of forest). The per-cell map colouring still uses the full biome set.</summary>
-        static List<LegendEntry> GeneralizedBiomeEntries()
+        /// <summary>Generalized biome families for the legend — one entry per visual family, colored
+        /// from the SAME dark-fantasy MapPalette the map renders with (not the bright reference
+        /// colours), so legend swatches match the map. Themed by mapRenderer.paletteTheme.</summary>
+        static List<LegendEntry> GeneralizedBiomeEntries(MapRaster.MapPaletteTheme theme)
         {
+            Color Slot(MapRaster.PaletteSlot s) => MapRaster.MapPalette.GetSlotColor(theme, s);
             return new List<LegendEntry>
             {
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Ocean),   "Океан"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Lake),    "Озеро"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Beach),   "Побережье"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Tundra),  "Тундра"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Taiga),   "Тайга"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Forest),  "Лес"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Grassland),"Луга"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Steppe),  "Степь"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Savanna), "Саванна"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Desert),  "Пустыня"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Snow),    "Снег"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Sea),        "Океан"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.LakeS),      "Озеро"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Coast),      "Побережье"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Snow),       "Снег"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Tundra),     "Тундра"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Forest),     "Лес / тайга"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.ForestWarm), "Тёплый лес"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Moor),       "Кустарники"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Badlands),   "Пустошь / полупустыня"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Plains),     "Луга"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Steppe),     "Степь"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Savanna),    "Саванна"),
+                new LegendEntry(Slot(MapRaster.PaletteSlot.Desert),     "Пустыня"),
             };
         }
 
