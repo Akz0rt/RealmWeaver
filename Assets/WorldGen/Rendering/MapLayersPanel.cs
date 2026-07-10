@@ -72,7 +72,7 @@ namespace WorldGen.Rendering
             AddSliderRow(t, "Плотность названий", 0f, 1f,
                 mapRenderer != null ? mapRenderer.labelDensity : 0.4f,
                 v => { if (mapRenderer != null) mapRenderer.labelDensity = v; });
-            AddActionButtonRow(t, "Пересоздать названия", () => regionLabelManager?.SeedFromCells(),
+            AddActionButtonRow(t, "Пересоздать названия", () => regionLabelManager?.RerollNames(),
                 "+ Название", () => regionLabelOverlay?.ToggleAddMode());
         }
 

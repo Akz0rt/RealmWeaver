@@ -25,7 +25,7 @@ namespace WorldGen.Rendering.RegionLabels
         [Header("LOD (доли от NaturalFitSize)")]
         [Range(0f,1f)] public float farFrac = 0.8f;   // >= этого (отдалено) -> полностью видно
         [Range(0f,1f)] public float nearFrac = 0.35f; // <= этого (приближено) -> скрыто
-        public float baseFontSize = 26f;
+        public float baseFontSize = 34f;
         public float labelYOffsetWorld = 0.5f;         // приподнять точку привязки над картой
 
         /// <summary>When true, the next map click (not over UI) drops a new label there. Task 6 wires a button.</summary>
@@ -189,14 +189,14 @@ namespace WorldGen.Rendering.RegionLabels
             if (labelFont != null) tmp.font = labelFont;
             tmp.text = d.Text;
             tmp.fontSize = baseFontSize;
-            tmp.fontStyle = FontStyles.Italic;
+            tmp.fontStyle = FontStyles.Normal;         // upright (Forum reads far better than faux-italic on a busy map)
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.characterSpacing = 8f;                 // letter-spacing
-            tmp.color = new Color(0.86f, 0.84f, 0.78f, 1f);
+            tmp.characterSpacing = 4f;                 // letter-spacing (tighter than before for legibility)
+            tmp.color = new Color(0.97f, 0.96f, 0.92f, 1f); // near-white for contrast
             tmp.enableWordWrapping = false;
             tmp.raycastTarget = false;                 // clicks handled by the container's Image
-            tmp.outlineWidth = 0.18f;                  // dark halo (needs an outline-capable material preset)
-            tmp.outlineColor = new Color32(6, 10, 16, 220);
+            tmp.outlineWidth = 0.3f;                   // thicker dark halo so text separates from terrain
+            tmp.outlineColor = new Color32(6, 9, 14, 255);
             var trt = tmp.rectTransform;
             trt.anchorMin = new Vector2(0f, 0f);
             trt.anchorMax = new Vector2(1f, 1f);
@@ -219,8 +219,6 @@ namespace WorldGen.Rendering.RegionLabels
 
             float alpha = LodAlpha(cam.orthographicSize / refSize);
 
-            // basic collision: keep placed screen rects, nudge overlapping labels down.
-            var placed = new List<Rect>();
             foreach (var d in manager.GetAll())
             {
                 if (!views.TryGetValue(d.Id, out var lv) || lv == null || lv.Container == null || lv.Tmp == null) continue;
@@ -230,13 +228,10 @@ namespace WorldGen.Rendering.RegionLabels
                 var c = lv.Tmp.color; c.a = onScreen ? alpha : 0f; lv.Tmp.color = c;
                 if (!onScreen || alpha <= 0.01f) { lv.Container.anchoredPosition = new Vector2(-9999, -9999); continue; }
 
-                // screen -> canvas anchoredPosition (canvas is ScreenSpaceOverlay so 1:1 with screen px, pivot .5)
-                Vector2 pos = new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f);
-                var rect = new Rect(pos.x - 110, pos.y - 17, 220, 34);
-                int guard = 0;
-                while (guard++ < 8 && placed.Exists(r => r.Overlaps(rect))) { pos.y -= 30f; rect.y -= 30f; }
-                placed.Add(rect);
-                lv.Container.anchoredPosition = pos;
+                // Pin the label to its projected world anchor. (The old downward collision-nudge
+                // drifted labels far off their biome when zoomed out and crowded — labels must stay
+                // on their region; minor overlap at extreme zoom-out is preferable to wrong placement.)
+                lv.Container.anchoredPosition = new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f);
             }
 
             UpdateEditUIPosition();   // keep the inline-edit UI riding the selected label

@@ -14,19 +14,28 @@ namespace WorldGen.Rendering.RegionLabels
 
         readonly List<RegionLabelData> labels = new List<RegionLabelData>();
         string selectedId;
+        int nameSalt;   // bumped by RerollNames() so "Пересоздать названия" yields fresh names; reset per world gen
 
         public event Action OnLabelsChanged;
         public event Action<RegionLabelData> OnSelectionChanged;
 
         void Awake()
         {
-            if (mapRenderer != null) mapRenderer.OnWorldRegenerated += SeedFromCells;
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated += HandleWorldRegenerated;
         }
 
         void OnDestroy()
         {
-            if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= SeedFromCells;
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= HandleWorldRegenerated;
         }
+
+        // Auto-seed on world (re)generation: reset the reroll salt so a freshly generated map gets
+        // its stable base names (deterministic per seed).
+        void HandleWorldRegenerated() { nameSalt = 0; SeedFromCells(); }
+
+        /// <summary>"Пересоздать названия": bump the salt so the names come out DIFFERENT, then reseed at
+        /// the current density (which also discards manual edits — the list is fully replaced).</summary>
+        public void RerollNames() { nameSalt++; SeedFromCells(); }
 
         public IReadOnlyList<RegionLabelData> GetAll() => labels;
         public RegionLabelData GetSelected() =>
@@ -37,7 +46,8 @@ namespace WorldGen.Rendering.RegionLabels
         {
             if (mapRenderer == null || mapRenderer.Cells == null) return;
             var seeded = RegionLabelPlacer.Place(mapRenderer.Cells, mapRenderer.NearestLookup,
-                mapRenderer.mapWidth, mapRenderer.mapHeight, mapRenderer.seed, mapRenderer.labelDensity);
+                mapRenderer.mapWidth, mapRenderer.mapHeight,
+                unchecked(mapRenderer.seed + nameSalt), mapRenderer.labelDensity);
             labels.Clear();
             labels.AddRange(seeded);
             selectedId = null;
