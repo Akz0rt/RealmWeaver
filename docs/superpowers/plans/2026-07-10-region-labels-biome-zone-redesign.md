@@ -17,7 +17,7 @@
 - **Biome→noun table is the ONLY place biome names live** (DM plans a future biome-type rework — keep it a single isolated table; no biome name hardcoded elsewhere).
 - **Grouping stays by biome FAMILY** (`RegionCategories.FamilyCategoryOf`, connected components over `NeighborIds`) — NOT by `RegionId`.
 - **Font is a DM Editor step, not a code task:** Forum (OFL, Cyrillic) SDF asset → `RegionLabelOverlay.labelFont`. No code depends on the specific font.
-- **Density defaults:** `labelDensity` float `[0,1]`, serialized default `0.4f`. Maps to a minimum zone size in cells: `minZoneCells = round(Lerp(40, 8, labelDensity))` (density 0 → 40 = only giants; 1 → 8 = include medium; 0.4 → ~27).
+- **Density defaults:** `labelDensity` float `[0,1]`, serialized default `0.4f`. Maps to a minimum zone size in cells: `minZoneCells = round(Lerp(40, 6, labelDensity))` (density 0 → 40 = only giants; 1 → 6 = include medium; 0.4 → ~26).
 
 ---
 
@@ -202,7 +202,7 @@ git commit -m "feat(region-labels): Russian noun+adjective name generator (isola
 
 **Interfaces:**
 - Consumes: `RegionLabelNames.NameFor(...)` (Task 1).
-- Produces: `RegionLabelPlacer.Place(IReadOnlyList<VoronoiCell> cells, NearestCellLookup nearest, float mapWidth, float mapHeight, int seed, float labelDensity = 0.4f) : List<RegionLabelData>` — REPLACES the old `minPatchCells` param with `seed` + `labelDensity`.
+- Produces: `RegionLabelPlacer.Place(IReadOnlyList<VoronoiCell> cells, NearestCellLookup nearest, float mapWidth, float mapHeight, int seed = 0, float labelDensity = 0.4f) : List<RegionLabelData>` — REPLACES the old `minPatchCells` param with `seed` + `labelDensity`. **Both new params have defaults** so the not-yet-updated `RegionLabelManager` 4-arg call still compiles between this task and Task 3 (avoids a mid-plan non-compiling build); Task 3 then passes the real seed+density.
 
 - [ ] **Step 1: Replace the naming/threshold internals of `Place`**
 
@@ -212,13 +212,13 @@ In `RegionLabelPlacer.cs`:
 ```csharp
 public const float DefaultLabelDensity = 0.4f;
 const int MaxZoneCells = 40; // density 0 -> only giants
-const int MinZoneCells = 8;  // density 1 -> include medium
+const int MinZoneCells = 6;  // density 1 -> include medium (matches the old minPatchCells floor)
 ```
 3. Change the signature and body. New `Place` (keep the existing BFS component discovery — only the gate, naming, anchor, and sea labels change):
 ```csharp
 public static List<RegionLabelData> Place(IReadOnlyList<VoronoiCell> cells,
     NearestCellLookup nearest, float mapWidth, float mapHeight,
-    int seed, float labelDensity = DefaultLabelDensity)
+    int seed = 0, float labelDensity = DefaultLabelDensity)
 {
     var result = new List<RegionLabelData>();
     if (cells == null || cells.Count == 0) return result;
@@ -518,4 +518,4 @@ Download **Forum** (OFL) from Google Fonts → `.ttf` into `Assets/Fonts/` → T
 
 **Placeholder scan:** all code shown in full (the full `RegionLabelNames` incl. the 24-adjective pool + noun table; the full `Place` rewrite; the self-tests). The only "grep an existing pattern" pointers are the slider builder (T5, points at `EditorBrushPanel.cs`) and the container click-`Image` reference (T4, points at the current CRUD overlay) — both concrete existing code, per "follow established patterns."
 
-**Type consistency:** `NameFor(BiomeFamily, int seed, int zoneKey, HashSet<int>) : string` identical at def (T1) and calls (T2). `Place(cells, nearest, mapW, mapH, int seed, float labelDensity)` identical at def (T2) and calls (T3 manager, T2 self-test). `SetEditMode(bool)` identical at def (T4) and call (T5). `labelDensity` (float, serialized, default 0.4) consistent across T3 (def), T2 (consumer via manager), T5 (slider). `RegionLabelNames.Gender`/`Noun`/`Adjective` used only inside T1. World coords are `System.Numerics.Vector2` throughout the pure-C# files; no `UnityEngine.Vector2` collision.
+**Type consistency:** `NameFor(BiomeFamily, int seed, int zoneKey, HashSet<int>) : string` identical at def (T1) and calls (T2). `Place(cells, nearest, mapW, mapH, int seed = 0, float labelDensity = 0.4f)` identical at def (T2) and calls (T3 manager, T2 self-test); both new params defaulted so the T2→T3 window compiles. `SetEditMode(bool)` identical at def (T4) and call (T5). `labelDensity` (float, serialized, default 0.4) consistent across T3 (def), T2 (consumer via manager), T5 (slider). `RegionLabelNames.Gender`/`Noun`/`Adjective` used only inside T1. World coords are `System.Numerics.Vector2` throughout the pure-C# files; no `UnityEngine.Vector2` collision.
