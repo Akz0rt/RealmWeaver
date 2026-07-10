@@ -86,19 +86,24 @@ namespace WorldGen.Rendering
                 case Biome.Ocean: return new Color(0.10f, 0.25f, 0.50f);
                 case Biome.Lake: return new Color(0.30f, 0.55f, 0.65f);
                 case Biome.Beach: return new Color(0.90f, 0.85f, 0.60f);
-                case Biome.Snow: return Color.white;
+                case Biome.IceWaste: return new Color(0.80f, 0.82f, 0.85f);
                 case Biome.Tundra: return new Color(0.75f, 0.78f, 0.75f);
-                case Biome.Bare: return new Color(0.60f, 0.58f, 0.55f);
-                case Biome.Scorched: return new Color(0.55f, 0.50f, 0.45f);
-                case Biome.Taiga: return new Color(0.35f, 0.50f, 0.40f);
-                case Biome.Shrubland: return new Color(0.60f, 0.60f, 0.40f);
-                case Biome.TemperateDesert: return new Color(0.85f, 0.80f, 0.55f);
-                case Biome.TemperateRainForest: return new Color(0.15f, 0.50f, 0.25f);
-                case Biome.TemperateDeciduousForest: return new Color(0.25f, 0.55f, 0.25f);
+                case Biome.Snow: return Color.white;
+                case Biome.Glacier: return new Color(0.88f, 0.93f, 0.96f);
+                case Biome.ColdSteppe: return new Color(0.62f, 0.64f, 0.50f);
+                case Biome.ForestTundra: return new Color(0.50f, 0.60f, 0.52f);
+                case Biome.Taiga: return new Color(0.30f, 0.46f, 0.38f);
+                case Biome.ConiferForest: return new Color(0.22f, 0.42f, 0.34f);
+                case Biome.Steppe: return new Color(0.66f, 0.64f, 0.42f);
                 case Biome.Grassland: return new Color(0.50f, 0.70f, 0.35f);
-                case Biome.TropicalRainForest: return new Color(0.10f, 0.45f, 0.15f);
-                case Biome.TropicalSeasonalForest: return new Color(0.30f, 0.55f, 0.20f);
-                case Biome.SubtropicalDesert: return new Color(0.90f, 0.80f, 0.45f);
+                case Biome.Forest: return new Color(0.25f, 0.53f, 0.28f);
+                case Biome.RainForest: return new Color(0.15f, 0.48f, 0.24f);
+                case Biome.SemiDesert: return new Color(0.78f, 0.70f, 0.48f);
+                case Biome.Shrubland: return new Color(0.58f, 0.60f, 0.40f);
+                case Biome.Savanna: return new Color(0.74f, 0.66f, 0.36f);
+                case Biome.WarmForest: return new Color(0.42f, 0.56f, 0.24f);
+                case Biome.Desert: return new Color(0.88f, 0.78f, 0.52f);
+                case Biome.TropicalForest: return new Color(0.12f, 0.46f, 0.18f);
                 default: return Color.magenta; // сигнал об ошибке - неучтённый биом
             }
         }

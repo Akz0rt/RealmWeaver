@@ -94,8 +94,10 @@ namespace WorldGen.Generation
         public float EpicenterMinRadius = 150f;
         public float EpicenterMaxRadius = 300f;
         public float BaseTemperature = 0.5f;
-        /// <summary>Насколько сильно elevation (после Patel-расчёта) охлаждает клетку.</summary>
-        public float HeightCoolingFactor = 0.6f;
+        /// <summary>Высотное охлаждение эффективной температуры при классификации биома (spec §2).
+        /// 0.4 ≈ до 2 температурных уровней холоднее на пике (elevation=1). Заменяет прежний
+        /// HeightCoolingFactor (который охлаждал саму температуру в TemperatureField).</summary>
+        public float ElevationTempDrop = 0.4f;
 
         // --- Влажность: point-based эпицентры (аддитивная поправка к distance-based moisture) ---
 
@@ -182,8 +184,16 @@ namespace WorldGen.Generation
             moistureEpicenters = GenerateRandomMoistureEpicenters(p);
             MoistureField.ApplyMoisture(corners, p.MoistureFalloffDistance, moistureEpicenters, riverCornerIds);
 
-            // --- Усреднение elevation/moisture с corners на клетки + классификация биома ---
+            // --- Усреднение elevation/moisture с corners на клетки (без классификации) ---
             CellClimateAverager.ApplyToCells(cells, corners, p.ElevationContrast);
+
+            // --- Температура ДО классификации (эффективная температура нужна для матрицы биомов) ---
+            temperatureEpicenters = GenerateRandomEpicenters(p);
+            RegenerateTemperature(cells, p, temperatureEpicenters);
+
+            // --- Классификация биома из температура×влажность, затем пляжи (последними) ---
+            CellOverrideService.ElevationTempDrop = p.ElevationTempDrop;
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
 
             // --- Регионы (растим только по суше, как и раньше) ---
@@ -191,12 +201,8 @@ namespace WorldGen.Generation
             if (landCells.Count >= p.NumberOfRegions)
                 RegionGrowing.GroupCells(cells, landCells, p.NumberOfRegions, p.Seed);
 
-            // --- Унификация озёр: весь связный водоём → один регион (голосование по соседним сушным клеткам) ---
+            // --- Унификация озёр: весь связный водоём → один регион ---
             LakeRegionUnifier.UnifyLakes(cells);
-
-            // --- Температура: отдельная point-based система эпицентров ---
-            temperatureEpicenters = GenerateRandomEpicenters(p);
-            RegenerateTemperature(cells, p, temperatureEpicenters);
 
             return cells;
         }
@@ -204,12 +210,10 @@ namespace WorldGen.Generation
         /// <summary>
         /// Same pipeline as GenerateWorld, split into 5 of 6 progress-reportable stages for the
         /// Generation Progress screen (the 6th, "Отрисовка карты", is owned by MapScreenController
-        /// after this coroutine completes - see WorldMapRenderer.RebakeAllStepped). Temperature is
-        /// computed right after moisture here
-        /// (rather than at the very end, as in GenerateWorld) so the reported step order
-        /// matches the UI checklist -- safe because BiomeClassifier only reads elevation and
-        /// moisture (see CellClimateAverager.cs:49), and region growing never used temperature
-        /// either. GenerateWorld itself is untouched, kept for self-tests/back-compat.
+        /// after this coroutine completes - see WorldMapRenderer.RebakeAllStepped).
+        /// Temperature is computed right after moisture-averaging and BEFORE biome classification
+        /// (the matrix reads effective temperature — see BiomeClassifier). BeachClassifier runs last.
+        /// GenerateWorld itself is untouched, kept for self-tests/back-compat.
         /// </summary>
         public static IEnumerator GenerateWorldStepped(
             GenerationParams p,
@@ -269,8 +273,10 @@ namespace WorldGen.Generation
             // --- Step 4/6: Расчёт биомов ---
             onProgress?.Invoke("Расчёт биомов", 3f / 6f);
             CellClimateAverager.ApplyToCells(cells, corners, p.ElevationContrast);
-            BeachClassifier.AssignCoastalBeaches(cells);
-            RegenerateTemperature(cells, p, temperatureEpicenters);
+            RegenerateTemperature(cells, p, temperatureEpicenters);            // температура ДО классификации
+            CellOverrideService.ElevationTempDrop = p.ElevationTempDrop;
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            BeachClassifier.AssignCoastalBeaches(cells);                       // пляжи последними
             yield return null;
 
             // --- Step 5/6: Границы регионов ---
@@ -291,10 +297,8 @@ namespace WorldGen.Generation
         /// </summary>
         public static void RegenerateTemperature(List<VoronoiCell> cells, GenerationParams p, List<TemperatureEpicenter> epicenters)
         {
-            // cell.Height теперь хранит Patel-style elevation (0=побережье, 1=горы) -
-            // TemperatureField использует его для охлаждения с высотой, что концептуально
-            // совпадает с прежним смыслом (выше = холоднее), просто шкала elevation теперь иная.
-            TemperatureField.ApplyTemperature(cells, epicenters, p.BaseTemperature, p.HeightCoolingFactor, seaLevel: 0f);
+            // Региональная температура (эпицентры). Охлаждение с высотой теперь в BiomeClassifier.
+            TemperatureField.ApplyTemperature(cells, epicenters, p.BaseTemperature);
         }
 
         /// <summary>Генерирует N эпицентров со случайной позицией/радиусом/поправкой влажности в заданных пользователем границах.</summary>

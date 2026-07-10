@@ -147,14 +147,17 @@ namespace WorldGen.Rendering
         {
             return new List<LegendEntry>
             {
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Ocean),                    "Океан"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Lake),                     "Озеро"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Beach),                    "Побережье"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.TemperateDeciduousForest), "Лес"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Grassland),                "Луга"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.SubtropicalDesert),        "Пустыня"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Bare),                     "Горы"),
-                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Snow),                     "Снег"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Ocean),   "Океан"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Lake),    "Озеро"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Beach),   "Побережье"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Tundra),  "Тундра"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Taiga),   "Тайга"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Forest),  "Лес"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Grassland),"Луга"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Steppe),  "Степь"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Savanna), "Саванна"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Desert),  "Пустыня"),
+                new LegendEntry(RegionColorPalette.GetBiomeColor(Biome.Snow),    "Снег"),
             };
         }
 

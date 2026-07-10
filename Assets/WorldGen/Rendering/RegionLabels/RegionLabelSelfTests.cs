@@ -28,7 +28,7 @@ namespace WorldGen.Rendering.RegionLabels
         {
             // Build fixture: patch A (Forest) cells 0-6 chained, patch B (Plains) cells 7-13 chained, all land,
             // plus a lone under-threshold Snow cell (id 14) that must NOT produce a label.
-            // (Biome.TemperateRainForest -> BiomeFamily.Forest, Biome.Grassland -> BiomeFamily.Plains,
+            // (Biome.Forest -> BiomeFamily.Forest, Biome.Grassland -> BiomeFamily.Plains,
             //  Biome.Snow -> BiomeFamily.Snow, per MapPalette.GetFamily.)
             var cells = new List<VoronoiCell>();
 
@@ -41,7 +41,7 @@ namespace WorldGen.Rendering.RegionLabels
                 var cell = new VoronoiCell(i, site)
                 {
                     Polygon = SquarePolygon(site),
-                    Biome = Biome.TemperateRainForest,
+                    Biome = Biome.Forest,
                     IsOcean = false,
                 };
                 if (i > 0) cell.NeighborIds.Add(i - 1);

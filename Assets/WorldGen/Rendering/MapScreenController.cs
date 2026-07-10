@@ -110,7 +110,7 @@ namespace WorldGen.Rendering
                 EpicenterMinRadius = mapRenderer.epicenterMinRadius,
                 EpicenterMaxRadius = mapRenderer.epicenterMaxRadius,
                 BaseTemperature = mapRenderer.baseTemperature,
-                HeightCoolingFactor = mapRenderer.heightCoolingFactor,
+                ElevationTempDrop = mapRenderer.elevationTempDrop,
                 NumberOfMoistureEpicenters = mapRenderer.numberOfMoistureEpicenters,
                 MoistureEpicenterMinRadius = mapRenderer.moistureEpicenterMinRadius,
                 MoistureEpicenterMaxRadius = mapRenderer.moistureEpicenterMaxRadius,

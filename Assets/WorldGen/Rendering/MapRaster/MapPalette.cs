@@ -86,19 +86,24 @@ namespace WorldGen.Rendering.MapRaster
             Biome.Ocean => BiomeFamily.Sea,
             Biome.Lake => BiomeFamily.Lake,
             Biome.Beach => BiomeFamily.Coast,
+            Biome.IceWaste => BiomeFamily.Snow,
             Biome.Snow => BiomeFamily.Snow,
+            Biome.Glacier => BiomeFamily.Snow,
             Biome.Tundra => BiomeFamily.Tundra,
-            Biome.Bare => BiomeFamily.Highland,
-            Biome.Scorched => BiomeFamily.Badlands,
+            Biome.ForestTundra => BiomeFamily.Tundra,
             Biome.Taiga => BiomeFamily.Forest,
-            Biome.Shrubland => BiomeFamily.Moor,
-            Biome.TemperateDesert => BiomeFamily.Badlands,
-            Biome.TemperateRainForest => BiomeFamily.Forest,
-            Biome.TemperateDeciduousForest => BiomeFamily.Forest,
+            Biome.ConiferForest => BiomeFamily.Forest,
+            Biome.Forest => BiomeFamily.Forest,
+            Biome.RainForest => BiomeFamily.Forest,
+            Biome.WarmForest => BiomeFamily.ForestWarm,
+            Biome.TropicalForest => BiomeFamily.ForestWarm,
             Biome.Grassland => BiomeFamily.Plains,
-            Biome.TropicalRainForest => BiomeFamily.ForestWarm,
-            Biome.TropicalSeasonalForest => BiomeFamily.ForestWarm,
-            Biome.SubtropicalDesert => BiomeFamily.Badlands,
+            Biome.Shrubland => BiomeFamily.Moor,
+            Biome.SemiDesert => BiomeFamily.Badlands,
+            Biome.ColdSteppe => BiomeFamily.Plains,   // Task 4 → BiomeFamily.Steppe
+            Biome.Steppe => BiomeFamily.Plains,       // Task 4 → BiomeFamily.Steppe
+            Biome.Savanna => BiomeFamily.Plains,      // Task 4 → BiomeFamily.Savanna
+            Biome.Desert => BiomeFamily.Badlands,     // Task 4 → BiomeFamily.Desert
             _ => throw new ArgumentOutOfRangeException(nameof(biome), biome, "Новый Biome без записи в таблице BiomeFamily"),
         };
 

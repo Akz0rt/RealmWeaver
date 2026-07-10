@@ -28,26 +28,26 @@ namespace WorldGen.Rendering.Decorations
             bool ok = true;
 
             // Гора только на высокой клетке.
-            var high = LandCell(1, Biome.Bare, 0.80f, 0.5f);
+            var high = LandCell(1, Biome.SemiDesert, 0.80f, 0.5f);
             ok &= DecorationPlacer.TryClassify(high, cfg, DecorationType.Mountain, out var ms) && ms == DecorationStyleCategory.Bare;
             var low = LandCell(2, Biome.Grassland, 0.20f, 0.5f);
             ok &= !DecorationPlacer.TryClassify(low, cfg, DecorationType.Mountain, out _);
 
             // Снежная гора при холоде.
-            var coldHigh = LandCell(3, Biome.Bare, 0.85f, 0.1f);
+            var coldHigh = LandCell(3, Biome.SemiDesert, 0.85f, 0.1f);
             ok &= DecorationPlacer.TryClassify(coldHigh, cfg, DecorationType.Mountain, out var cs) && cs == DecorationStyleCategory.Snowy;
 
             // Лесистая гора над Forest-семейством (тёплой).
-            var forestHigh = LandCell(4, Biome.TemperateDeciduousForest, 0.80f, 0.7f);
+            var forestHigh = LandCell(4, Biome.Forest, 0.80f, 0.7f);
             ok &= DecorationPlacer.TryClassify(forestHigh, cfg, DecorationType.Mountain, out var fs) && fs == DecorationStyleCategory.Forested;
 
             // Хвоя только на Forest-семействе; осень — на ForestWarm.
             ok &= DecorationPlacer.TryClassify(LandCell(5, Biome.Taiga, 0.3f, 0.6f), cfg, DecorationType.Pine, out _);
             ok &= !DecorationPlacer.TryClassify(LandCell(6, Biome.Grassland, 0.3f, 0.6f), cfg, DecorationType.Pine, out _);
-            ok &= DecorationPlacer.TryClassify(LandCell(7, Biome.TropicalRainForest, 0.3f, 0.8f), cfg, DecorationType.AutumnTree, out _);
+            ok &= DecorationPlacer.TryClassify(LandCell(7, Biome.TropicalForest, 0.3f, 0.8f), cfg, DecorationType.AutumnTree, out _);
 
             // Меса только на Badlands.
-            ok &= DecorationPlacer.TryClassify(LandCell(8, Biome.SubtropicalDesert, 0.3f, 0.8f), cfg, DecorationType.Mesa, out _);
+            ok &= DecorationPlacer.TryClassify(LandCell(8, Biome.SemiDesert, 0.3f, 0.8f), cfg, DecorationType.Mesa, out _);
 
             // Вода — всегда пусто.
             var ocean = new VoronoiCell(9, new System.Numerics.Vector2(0, 0)) { Biome = Biome.Ocean, IsOcean = true };
@@ -68,7 +68,7 @@ namespace WorldGen.Rendering.Decorations
             {
                 float elev = x < mapSize * 0.5f ? 0.85f : 0.15f; // левая половина — горы
                 var c = new VoronoiCell(id++, new System.Numerics.Vector2(x, z))
-                { Biome = Biome.Bare, Height = elev, Temperature = 0.5f, IsOcean = false };
+                { Biome = Biome.SemiDesert, Height = elev, Temperature = 0.5f, IsOcean = false };
                 // NearestCellLookup исключает вырожденные клетки (Polygon.Count < 3) - без явного
                 // полигона вся фикстура была бы отброшена и FindNearest везде возвращал бы null
                 // (тот же guard/комментарий, что в WorldMapRenderer.SelfTestNearestCellLookup).

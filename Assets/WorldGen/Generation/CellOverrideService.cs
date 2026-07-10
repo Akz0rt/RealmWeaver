@@ -18,6 +18,12 @@ namespace WorldGen.Generation
     /// </summary>
     public static class CellOverrideService
     {
+        /// <summary>Карта-широкая константа высотного охлаждения биома (spec §2). Задаётся один раз
+        /// при генерации (из GenerationParams.ElevationTempDrop) и при загрузке (из
+        /// WorldMapRenderer.elevationTempDrop); читается RecomputeBiome. Ambient, чтобы не тащить
+        /// параметр через все override-методы (у каждого биом всё равно один и тот же drop).</summary>
+        public static float ElevationTempDrop = 0.4f;
+
         // --- Climate override ---
 
         /// <summary>
@@ -185,12 +191,23 @@ namespace WorldGen.Generation
             }
 
             cell.Biome = BiomeClassifier.Classify(
-                cell.EffectiveElevation,
+                cell.EffectiveTemperature,
                 cell.EffectiveMoisture,
+                cell.EffectiveElevation,
+                ElevationTempDrop,
                 cell.EffectiveIsOcean,
                 cell.EffectiveIsLake,
                 beachElevationThreshold
             );
+        }
+
+        /// <summary>Классифицирует биом для каждой клетки (учитывает BiomeOverride). Используется
+        /// генерацией/загрузкой/перегенерацией температуры ПОСЛЕ того, как температура посчитана.
+        /// beachElevationThreshold=0 при генерации/загрузке - пляжи назначает BeachClassifier далее.</summary>
+        public static void ClassifyAll(System.Collections.Generic.IEnumerable<VoronoiCell> cells, float beachElevationThreshold)
+        {
+            foreach (var cell in cells)
+                RecomputeBiome(cell, beachElevationThreshold);
         }
     }
 }

@@ -687,19 +687,24 @@ namespace WorldGen.Rendering
                 case Biome.Ocean: return "Океан";
                 case Biome.Lake: return "Озеро";
                 case Biome.Beach: return "Побережье";
-                case Biome.Snow: return "Снег";
+                case Biome.IceWaste: return "Ледяная пустошь";
                 case Biome.Tundra: return "Тундра";
-                case Biome.Bare: return "Скалы";
-                case Biome.Scorched: return "Выжженная земля";
+                case Biome.Snow: return "Снега";
+                case Biome.Glacier: return "Ледники";
+                case Biome.ColdSteppe: return "Холодная степь";
+                case Biome.ForestTundra: return "Лесотундра";
                 case Biome.Taiga: return "Тайга";
-                case Biome.Shrubland: return "Кустарник";
-                case Biome.TemperateDesert: return "Умеренная пустыня";
-                case Biome.TemperateRainForest: return "Умеренный дождевой лес";
-                case Biome.TemperateDeciduousForest: return "Листопадный лес";
+                case Biome.ConiferForest: return "Хвойный лес";
+                case Biome.Steppe: return "Степь";
                 case Biome.Grassland: return "Луга";
-                case Biome.TropicalRainForest: return "Тропический лес";
-                case Biome.TropicalSeasonalForest: return "Тропический сезонный лес";
-                case Biome.SubtropicalDesert: return "Субтропическая пустыня";
+                case Biome.Forest: return "Лес";
+                case Biome.RainForest: return "Дождевой лес";
+                case Biome.SemiDesert: return "Полупустыня";
+                case Biome.Shrubland: return "Кустарники";
+                case Biome.Savanna: return "Саванна";
+                case Biome.WarmForest: return "Тёплый лес";
+                case Biome.Desert: return "Пустыня";
+                case Biome.TropicalForest: return "Тропический лес";
                 default: return b.ToString();
             }
         }

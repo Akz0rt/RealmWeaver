@@ -82,6 +82,8 @@ namespace WorldGen.Rendering
         [Header("Биом")]
         [Tooltip("Порог elevation, ниже которого клетка считается пляжем.")]
         public float beachElevationThreshold = 0.1f;
+        [Tooltip("Высотное охлаждение эффективной температуры при классификации биома. 0.4 ≈ до 2 уровней холоднее на пике.")]
+        public float elevationTempDrop = 0.4f;
 
         [Header("Температура (point-based эпицентры)")]
         [Tooltip("Количество случайных эпицентров температуры на карте.")]
@@ -90,8 +92,6 @@ namespace WorldGen.Rendering
         public float epicenterMaxRadius = 300f;
         [Tooltip("Температура для клеток, не попавших в радиус ни одного эпицентра.")]
         public float baseTemperature = 0.5f;
-        [Tooltip("Насколько сильно elevation охлаждает клетку.")]
-        public float heightCoolingFactor = 0.6f;
 
         [Header("Отображение")]
         public MapDisplayMode displayMode = MapDisplayMode.Combined;
@@ -2420,7 +2420,7 @@ namespace WorldGen.Rendering
                 EpicenterMinRadius = epicenterMinRadius,
                 EpicenterMaxRadius = epicenterMaxRadius,
                 BaseTemperature = baseTemperature,
-                HeightCoolingFactor = heightCoolingFactor
+                ElevationTempDrop = elevationTempDrop
             };
         }
 

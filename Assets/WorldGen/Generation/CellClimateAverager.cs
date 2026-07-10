@@ -45,17 +45,11 @@ namespace WorldGen.Generation
                 float avgElevation = ApplyContrast(cellCorners.Average(c => c.Elevation), elevationContrast);
                 float avgMoisture = cellCorners.Average(c => c.Moisture);
 
-                // isLake/isOcean для клетки уже посчитаны ранее через CellWaterAssigner -
-                // используем cell.IsOcean напрямую. isLake выводим как "большинство water corners не океан".
-                int waterCorners = cellCorners.Count(c => c.IsWater);
-                int oceanCorners = cellCorners.Count(c => c.IsOcean);
-                bool isLake = !cell.IsOcean && waterCorners > 0 && oceanCorners < waterCorners;
-
-                cell.Height = avgElevation;   // переиспользуем существующее поле Height для elevation
-                cell.Humidity = avgMoisture;  // переиспользуем существующее поле Humidity для moisture
-                // Beach определяется отдельным шагом BeachClassifier (по смежности с океаном),
-                // поэтому высотное правило пляжа здесь подавляем порогом 0.
-                cell.Biome = BiomeClassifier.Classify(avgElevation, avgMoisture, cell.IsOcean, isLake, beachElevationThreshold: 0f);
+                cell.Height = avgElevation;   // переиспользуем поле Height для elevation
+                cell.Humidity = avgMoisture;  // переиспользуем поле Humidity для moisture
+                // Биом больше НЕ классифицируется здесь - температура ещё не готова.
+                // Классификация выполняется отдельным проходом (CellOverrideService.ClassifyAll)
+                // ПОСЛЕ TemperatureField, затем BeachClassifier (см. WorldGenerator).
             }
         }
     }
