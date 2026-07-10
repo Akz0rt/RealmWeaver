@@ -10,6 +10,7 @@ using WorldGen.Generation;
 using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
 using WorldGen.Persistence;
+using WorldGen.Rendering.RegionLabels;
 using WorldGen.Rendering.Theme;
 using ThemeMode = WorldGen.Rendering.Theme.Theme; // "Theme" alone is ambiguous here: it names both the enum and its containing namespace, and namespace wins over the using-directive-imported type when referenced from the parent WorldGen.Rendering namespace.
 
@@ -97,7 +98,7 @@ namespace WorldGen.Rendering
 
             try
             {
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes);
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, new List<RegionLabelData>());
             }
             catch (System.Exception ex)
             {

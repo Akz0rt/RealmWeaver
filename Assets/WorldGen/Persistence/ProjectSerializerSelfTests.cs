@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.RegionLabels;
 
 namespace WorldGen.Persistence
 {
@@ -72,7 +73,7 @@ namespace WorldGen.Persistence
             var notes = new NotesDocument { Groups = new List<PageGroup> { group } };
 
             string path = Path.Combine(Application.temporaryCachePath, "project_roundtrip_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes);
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -133,7 +134,7 @@ namespace WorldGen.Persistence
             var pois = new List<PoiData> { poiFortress, poiPort };
 
             string path = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes);
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -148,7 +149,7 @@ namespace WorldGen.Persistence
             // accidental reorder shifting existing values). ---
             var oldStylePois = new List<PoiData> { new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 } };
             string newPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_new_selftest.json");
-            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes);
+            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>());
 
             string json = File.ReadAllText(newPath);
             string oldJson = json.Replace("\"Type\": 10", "\"Type\": 4");
@@ -179,6 +180,35 @@ namespace WorldGen.Persistence
             Debug.Log(ok
                 ? "Self-Test Project Corrupt File Handling: PASS"
                 : $"Self-Test Project Corrupt File Handling: FAIL (Success={result.Success}, ErrorMessage='{result.ErrorMessage}')");
+        }
+
+        [ContextMenu("Self-Test: Region Labels Round-Trip")]
+        public void SelfTestRegionLabelsRoundTrip()
+        {
+            var regionLabels = new System.Collections.Generic.List<WorldGen.Rendering.RegionLabels.RegionLabelData>
+            {
+                new WorldGen.Rendering.RegionLabels.RegionLabelData
+                { Text = "Мои Земли", WorldPosition = new System.Numerics.Vector2(12.5f, 34.5f),
+                  SeedFamily = WorldGen.Rendering.MapRaster.BiomeFamily.Forest },
+            };
+            string path = System.IO.Path.Combine(Application.temporaryCachePath, "region_labels_selftest.json");
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10f, Height = 10f },
+                new System.Collections.Generic.List<VoronoiCell>(),
+                new System.Collections.Generic.List<PoiData>(),
+                new NotesDocument(), regionLabels);
+            var result = ProjectSerializer.Load(path);
+            // old-save compat: a JSON with no RegionLabels field -> empty list (not null).
+            string legacy = System.IO.File.ReadAllText(path).Replace("\"RegionLabels\"", "\"RegionLabelsRenamed\"");
+            System.IO.File.WriteAllText(path, legacy);
+            var legacyResult = ProjectSerializer.Load(path);
+            System.IO.File.Delete(path);
+
+            bool ok = result.Success
+                && result.RegionLabels.Count == 1
+                && result.RegionLabels[0].Text == "Мои Земли"
+                && result.RegionLabels[0].WorldPosition == new System.Numerics.Vector2(12.5f, 34.5f)
+                && legacyResult.Success && legacyResult.RegionLabels != null && legacyResult.RegionLabels.Count == 0;
+            Debug.Log(ok ? "Self-Test Region Labels Round-Trip: PASS" : "Self-Test Region Labels Round-Trip: FAIL");
         }
     }
 }

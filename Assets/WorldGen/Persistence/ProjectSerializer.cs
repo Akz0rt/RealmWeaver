@@ -4,6 +4,7 @@ using System.IO;
 using Newtonsoft.Json;
 using WorldGen.Generation;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.RegionLabels;
 
 namespace WorldGen.Persistence
 {
@@ -16,6 +17,7 @@ namespace WorldGen.Persistence
         public List<VoronoiCell> Cells;
         public List<PoiData> Pois;
         public NotesDocument Notes;
+        public List<RegionLabelData> RegionLabels;
     }
 
     /// <summary>
@@ -34,7 +36,8 @@ namespace WorldGen.Persistence
         };
 
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
-                                 IReadOnlyList<PoiData> pois, NotesDocument notes)
+                                 IReadOnlyList<PoiData> pois, NotesDocument notes,
+                                 IReadOnlyList<RegionLabelData> regionLabels)
         {
             var data = new ProjectSaveData
             {
@@ -43,7 +46,8 @@ namespace WorldGen.Persistence
                 GenerationParams = genParams,
                 Cells = new List<VoronoiCell>(cells),
                 Pois = new List<PoiData>(pois),
-                Notes = notes
+                Notes = notes,
+                RegionLabels = new List<RegionLabelData>(regionLabels)
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -81,7 +85,8 @@ namespace WorldGen.Persistence
                 GenerationParams = data.GenerationParams,
                 Cells = data.Cells ?? new List<VoronoiCell>(),
                 Pois = data.Pois ?? new List<PoiData>(),
-                Notes = data.Notes ?? new NotesDocument()
+                Notes = data.Notes ?? new NotesDocument(),
+                RegionLabels = data.RegionLabels ?? new List<RegionLabelData>()
             };
 
             if (data.FormatVersion > CurrentFormatVersion)

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using WorldGen.Generation;
 using WorldGen.Notes.Data;
+using WorldGen.Rendering.RegionLabels;
 
 namespace WorldGen.Persistence
 {
@@ -15,5 +16,6 @@ namespace WorldGen.Persistence
         public List<VoronoiCell> Cells = new List<VoronoiCell>();
         public List<PoiData> Pois = new List<PoiData>();
         public NotesDocument Notes;
+        public List<RegionLabelData> RegionLabels = new List<RegionLabelData>();
     }
 }
