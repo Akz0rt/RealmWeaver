@@ -87,6 +87,10 @@ namespace WorldGen.Generation
         /// <summary>Эффективный elevation с учётом override - используется для биом-классификации и рендера Height-mode.</summary>
         public float EffectiveElevation => ElevationOverride ?? Height;
 
+        /// <summary>Форма рельефа (равнина/холмы/горы/вершины), производная от EffectiveElevation.
+        /// Не сериализуется — вычисляется на лету. См. spec §5 (пока «только хранить»).</summary>
+        public Landform Landform => LandformClassifier.Of(EffectiveElevation);
+
         /// <summary>Эффективный IsOcean с учётом WaterOverride.</summary>
         public bool EffectiveIsOcean =>
             WaterOverride == WaterOverrideType.ForceOcean ||
