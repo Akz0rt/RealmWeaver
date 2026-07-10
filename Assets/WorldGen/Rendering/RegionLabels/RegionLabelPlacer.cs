@@ -6,49 +6,45 @@ using WorldGen.Rendering.MapRaster; // BiomeFamily, RegionCategories, NearestCel
 namespace WorldGen.Rendering.RegionLabels
 {
     /// <summary>Pure, deterministic. Groups adjacent land cells of the same BiomeFamily into connected
-    /// patches (BFS over NeighborIds) and emits one Latin-named label per patch >= minPatchCells, at the
-    /// area-weighted centroid. Adds 1-2 sea labels at open-ocean anchor points. No Random.</summary>
+    /// zones (BFS over NeighborIds) and emits one Russian-named label per zone above a density
+    /// threshold, anchored on land. Adds 1-2 Russian-named sea labels at open-ocean anchor points.
+    /// No Random.</summary>
     public static class RegionLabelPlacer
     {
-        public const int DefaultMinPatchCells = 6;
-
-        static readonly Dictionary<BiomeFamily, string> LandNames = new Dictionary<BiomeFamily, string>
-        {
-            { BiomeFamily.Forest,     "SILVA UMBRARUM" },
-            { BiomeFamily.ForestWarm, "SILVA IGNEA" },
-            { BiomeFamily.Badlands,   "VASTA CINERIS" },
-            { BiomeFamily.Plains,     "CAMPI CANI" },
-            { BiomeFamily.Highland,   "DORSUM CORVI" },
-            { BiomeFamily.Snow,       "NIX AETERNA" },
-            { BiomeFamily.Moor,       "PALUS NIGRA" },
-            { BiomeFamily.Tundra,     "GLACIES" },
-            // Coast, Lake, Sea intentionally absent -> unnamed (skipped / sea handled separately).
-        };
+        public const float DefaultLabelDensity = 0.4f;
+        const int MaxZoneCells = 40; // density 0 -> only giants
+        const int MinZoneCells = 6;  // density 1 -> include medium (matches the old minPatchCells floor)
 
         public static List<RegionLabelData> Place(IReadOnlyList<VoronoiCell> cells,
-            NearestCellLookup nearest, float mapWidth, float mapHeight, int minPatchCells = DefaultMinPatchCells)
+            NearestCellLookup nearest, float mapWidth, float mapHeight,
+            int seed = 0, float labelDensity = DefaultLabelDensity)
         {
             var result = new List<RegionLabelData>();
             if (cells == null || cells.Count == 0) return result;
 
+            int minZoneCells = Mathf_RoundLerp(MaxZoneCells, MinZoneCells, Clamp01(labelDensity));
+
             var byId = new Dictionary<int, VoronoiCell>();
             foreach (var c in cells) byId[c.Id] = c;
 
+            // Discover connected same-family land components (unchanged BFS), keep those >= threshold.
+            var components = new List<(int family, List<VoronoiCell> cellsInZone, int zoneKey)>();
             var visited = new HashSet<int>();
             foreach (var start in cells)
             {
                 if (visited.Contains(start.Id)) continue;
                 int fam = RegionCategories.FamilyCategoryOf(start);
-                if (fam < 0) { visited.Add(start.Id); continue; } // water: skip (marked visited so we don't re-scan)
+                if (fam < 0) { visited.Add(start.Id); continue; } // water
 
-                // BFS connected component of the same family.
                 var comp = new List<VoronoiCell>();
                 var queue = new Queue<VoronoiCell>();
                 queue.Enqueue(start); visited.Add(start.Id);
+                int zoneKey = start.Id;
                 while (queue.Count > 0)
                 {
                     var c = queue.Dequeue();
                     comp.Add(c);
+                    if (c.Id < zoneKey) zoneKey = c.Id;      // min cell Id = stable zone key
                     foreach (var nid in c.NeighborIds)
                     {
                         if (visited.Contains(nid)) continue;
@@ -58,20 +54,48 @@ namespace WorldGen.Rendering.RegionLabels
                         queue.Enqueue(nc);
                     }
                 }
+                if (comp.Count >= minZoneCells) components.Add((fam, comp, zoneKey));
+            }
 
-                if (comp.Count < minPatchCells) continue;
-                if (!LandNames.TryGetValue((BiomeFamily)fam, out var name)) continue; // Coast etc. unnamed
+            // Deterministic naming order: ascending zoneKey so the used-adjective sets evolve stably.
+            components.Sort((x, y) => x.zoneKey.CompareTo(y.zoneKey));
+
+            var usedByFamily = new Dictionary<BiomeFamily, HashSet<int>>();
+            foreach (var (fam, comp, zoneKey) in components)
+            {
+                var family = (BiomeFamily)fam;
+                if (!usedByFamily.TryGetValue(family, out var used))
+                {
+                    used = new HashSet<int>();
+                    usedByFamily[family] = used;
+                }
+                string name = RegionLabelNames.NameFor(family, seed, zoneKey, used);
+                if (name == null) continue; // Coast/Lake families never land here (water skipped), defensive
 
                 result.Add(new RegionLabelData
                 {
                     Text = name,
-                    WorldPosition = AreaWeightedCentroid(comp),
-                    SeedFamily = (BiomeFamily)fam,
+                    WorldPosition = OnLandAnchor(comp),
+                    SeedFamily = family,
                 });
             }
 
-            AddSeaLabels(result, nearest, mapWidth, mapHeight);
+            AddSeaLabels(result, nearest, mapWidth, mapHeight, seed);
             return result;
+        }
+
+        static System.Numerics.Vector2 OnLandAnchor(List<VoronoiCell> comp)
+        {
+            var centroid = AreaWeightedCentroid(comp); // keep the existing method
+            var best = comp[0];
+            double bestD = double.MaxValue;
+            foreach (var c in comp)
+            {
+                double dx = c.Site.X - centroid.X, dy = c.Site.Y - centroid.Y;
+                double d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            return best.Site; // a cell Site in the component -> always land
         }
 
         static System.Numerics.Vector2 AreaWeightedCentroid(List<VoronoiCell> comp)
@@ -101,21 +125,24 @@ namespace WorldGen.Rendering.RegionLabels
 
         // Two candidate open-ocean anchors (handoff normalized positions). Emit a label only if the
         // nearest cell there is actually water -> avoids labels on the continent for oddly-shaped maps.
-        static void AddSeaLabels(List<RegionLabelData> result, NearestCellLookup nearest, float mapW, float mapH)
+        static void AddSeaLabels(List<RegionLabelData> result, NearestCellLookup nearest, float mapW, float mapH, int seed)
         {
             if (nearest == null) return;
-            (float nx, float ny, string name)[] cands =
+            (float nx, float ny)[] cands = { (0.135f, 0.43f), (0.835f, 0.90f) };
+            var usedSea = new HashSet<int>();
+            for (int i = 0; i < cands.Length; i++)
             {
-                (0.135f, 0.43f, "MARE GELIDUM"),
-                (0.835f, 0.90f, "OCEANUS UMBRAE"),
-            };
-            foreach (var (nx, ny, name) in cands)
-            {
-                var pos = new System.Numerics.Vector2(nx * mapW, ny * mapH);
+                var pos = new System.Numerics.Vector2(cands[i].nx * mapW, cands[i].ny * mapH);
                 var cell = nearest.FindNearest(pos);
                 if (cell != null && cell.EffectiveIsOcean)
+                {
+                    string name = RegionLabelNames.NameFor(BiomeFamily.Sea, seed, 1000 + i, usedSea);
                     result.Add(new RegionLabelData { Text = name, WorldPosition = pos, SeedFamily = BiomeFamily.Sea });
+                }
             }
         }
+
+        static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
+        static int Mathf_RoundLerp(int a, int b, float t) => (int)System.Math.Round(a + (b - a) * t);
     }
 }

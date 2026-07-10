@@ -77,16 +77,22 @@ namespace WorldGen.Rendering.RegionLabels
             };
             cells.Add(loneCell);
 
-            var labels = RegionLabelPlacer.Place(cells, /*nearest*/ null, 100f, 100f, minPatchCells: 6);
+            // Old call used minPatchCells: 6. New call passes seed + a high density so the ~7-cell patches qualify.
+            var labels = RegionLabelPlacer.Place(cells, /*nearest*/ null, 100f, 100f, seed: 1, labelDensity: 1f);
 
-            bool ok = labels.Count == 2;                                   // two patches labeled; sea skipped (nearest == null)
-            ok &= labels.Exists(l => l.Text == "SILVA UMBRARUM");
-            ok &= labels.Exists(l => l.Text == "CAMPI CANI");
-            // centroid of patch A lies within its cells' bbox / the map bounds:
-            var a = labels.Find(l => l.Text == "SILVA UMBRARUM");
-            ok &= a != null && a.WorldPosition.X >= 0 && a.WorldPosition.X <= 100;
-            // below-threshold patch (lone Snow cell) is dropped:
-            ok &= !labels.Exists(l => l.SeedFamily == BiomeFamily.Snow);
+            bool ok = labels.Count == 2;                                          // two big patches named, lone cell dropped
+            ok &= labels.Exists(l => l.Text != null && l.Text.EndsWith(" Лес"));   // Forest zone -> "... Лес"
+            ok &= labels.Exists(l => l.Text != null && l.Text.EndsWith(" Луга"));  // Plains zone -> "... Луга"
+            // On-land anchor: each label sits at one of its component cells' Sites (bbox 0..100).
+            var forest = labels.Find(l => l.Text.EndsWith(" Лес"));
+            ok &= forest != null && forest.WorldPosition.X >= 0 && forest.WorldPosition.X <= 100;
+            // Determinism: a second identical Place gives identical names.
+            var labels2 = RegionLabelPlacer.Place(cells, null, 100f, 100f, seed: 1, labelDensity: 1f);
+            ok &= labels2.Count == labels.Count
+               && labels2.Find(l => l.Text.EndsWith(" Лес"))?.Text == forest.Text;
+            // Density threshold drops small patches: at low density the ~7-cell patches fall below MaxZoneCells=40.
+            var sparse = RegionLabelPlacer.Place(cells, null, 100f, 100f, seed: 1, labelDensity: 0f);
+            ok &= sparse.Count == 0;
 
             Debug.Log(ok ? "Self-Test Region Label Placer: PASS" : "Self-Test Region Label Placer: FAIL");
         }
