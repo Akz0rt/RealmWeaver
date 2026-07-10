@@ -95,5 +95,21 @@ namespace WorldGen.Generation
             bool ok = hot.Biome == Biome.Savanna && peak.Biome == Biome.Forest && forced.Biome == Biome.Snow;
             Debug.Log(ok ? "Self-Test ClassifyAll: PASS" : "Self-Test ClassifyAll: FAIL");
         }
+
+        [ContextMenu("Self-Test: New Families")]
+        public void SelfTestNewFamilies()
+        {
+            var P = WorldGen.Rendering.MapRaster.MapPalette.GetFamily(Biome.Steppe);
+            var Sv = WorldGen.Rendering.MapRaster.MapPalette.GetFamily(Biome.Savanna);
+            var D = WorldGen.Rendering.MapRaster.MapPalette.GetFamily(Biome.Desert);
+            bool ok = P == WorldGen.Rendering.MapRaster.BiomeFamily.Steppe
+                   && Sv == WorldGen.Rendering.MapRaster.BiomeFamily.Savanna
+                   && D == WorldGen.Rendering.MapRaster.BiomeFamily.Desert;
+            // Nouns exist for the new families (used=empty → returns a composed name, not null).
+            var noun = WorldGen.Rendering.RegionLabels.RegionLabelNames.NameFor(
+                WorldGen.Rendering.MapRaster.BiomeFamily.Savanna, seed: 1, zoneKey: 1, new System.Collections.Generic.HashSet<int>());
+            ok &= !string.IsNullOrEmpty(noun) && noun.Contains("Саванна");
+            Debug.Log(ok ? "Self-Test New Families: PASS" : "Self-Test New Families: FAIL");
+        }
     }
 }

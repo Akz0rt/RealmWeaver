@@ -20,8 +20,9 @@ namespace WorldGen.Rendering.MapRaster
         /// <summary>Порядок приоритета семейств (младший→старший, старший выигрывает перекрытия).</summary>
         public static readonly int[] FamilyPriority =
         {
-            (int)BiomeFamily.Plains, (int)BiomeFamily.Moor, (int)BiomeFamily.Forest, (int)BiomeFamily.ForestWarm,
-            (int)BiomeFamily.Coast, (int)BiomeFamily.Tundra, (int)BiomeFamily.Highland, (int)BiomeFamily.Badlands, (int)BiomeFamily.Snow,
+            (int)BiomeFamily.Plains, (int)BiomeFamily.Steppe, (int)BiomeFamily.Savanna, (int)BiomeFamily.Moor,
+            (int)BiomeFamily.Forest, (int)BiomeFamily.ForestWarm, (int)BiomeFamily.Coast, (int)BiomeFamily.Tundra,
+            (int)BiomeFamily.Highland, (int)BiomeFamily.Badlands, (int)BiomeFamily.Desert, (int)BiomeFamily.Snow,
         };
 
         /// <summary>Полосы высоты по возрастанию индекса (выше = сверху).</summary>

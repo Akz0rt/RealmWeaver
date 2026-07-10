@@ -9,13 +9,14 @@ namespace WorldGen.Rendering.MapRaster
 
     /// <summary>Визуальное семейство биома - слот палитры. Богатая 16-значная Whittaker-таблица
     /// (BiomeClassifier) не переклассифицируется, а мапится на одно из этих семейств для окраски.</summary>
-    public enum BiomeFamily { Sea, Lake, Coast, Snow, Tundra, Highland, Badlands, Forest, ForestWarm, Moor, Plains }
+    public enum BiomeFamily { Sea, Lake, Coast, Snow, Tundra, Highland, Badlands, Forest, ForestWarm, Moor, Plains, Steppe, Savanna, Desert }
 
     public enum PaletteSlot
     {
         Abyss, Sea, Shallow, Glow, Coast, Marsh, Plains, Moor, Forest, ForestWarm,
         Badlands, Tundra, Highland, Peak, Snow, LakeD, LakeS, Outline, MtnL, MtnS,
-        Light, Road, Accent, AccentCold, FogA, FogB, TintCool, TintWarm
+        Light, Road, Accent, AccentCold, FogA, FogB, TintCool, TintWarm,
+        Steppe, Savanna, Desert
     }
 
     /// <summary>
@@ -55,6 +56,9 @@ namespace WorldGen.Rendering.MapRaster
             [PaletteSlot.FogB] = new[] { new Color32(34, 52, 66, 255), new Color32(44, 60, 90, 255), new Color32(26, 60, 58, 255), new Color32(50, 44, 80, 255) },
             [PaletteSlot.TintCool] = new[] { new Color32(32, 86, 116, 255), new Color32(58, 96, 162, 255), new Color32(26, 116, 104, 255), new Color32(74, 70, 152, 255) },
             [PaletteSlot.TintWarm] = new[] { new Color32(150, 102, 46, 255), new Color32(110, 96, 78, 255), new Color32(108, 104, 54, 255), new Color32(126, 88, 96, 255) },
+            [PaletteSlot.Steppe] = new[] { new Color32(108, 106, 72, 255), new Color32(104, 110, 108, 255), new Color32(110, 118, 74, 255), new Color32(116, 106, 102, 255) },
+            [PaletteSlot.Savanna] = new[] { new Color32(140, 118, 64, 255), new Color32(150, 128, 84, 255), new Color32(150, 128, 60, 255), new Color32(150, 120, 96, 255) },
+            [PaletteSlot.Desert] = new[] { new Color32(166, 140, 92, 255), new Color32(172, 150, 110, 255), new Color32(176, 150, 90, 255), new Color32(176, 142, 120, 255) },
         };
 
         public static Color32 GetSlotColor(MapPaletteTheme theme, PaletteSlot slot) => table[slot][(int)theme];
@@ -74,6 +78,9 @@ namespace WorldGen.Rendering.MapRaster
             BiomeFamily.ForestWarm => PaletteSlot.ForestWarm,
             BiomeFamily.Moor => PaletteSlot.Moor,
             BiomeFamily.Plains => PaletteSlot.Plains,
+            BiomeFamily.Steppe => PaletteSlot.Steppe,
+            BiomeFamily.Savanna => PaletteSlot.Savanna,
+            BiomeFamily.Desert => PaletteSlot.Desert,
             _ => throw new ArgumentOutOfRangeException(nameof(family), family,
                 "Sea/Lake не имеют плоского слота - глубина воды сэмплируется отдельно."),
         };
@@ -100,10 +107,10 @@ namespace WorldGen.Rendering.MapRaster
             Biome.Grassland => BiomeFamily.Plains,
             Biome.Shrubland => BiomeFamily.Moor,
             Biome.SemiDesert => BiomeFamily.Badlands,
-            Biome.ColdSteppe => BiomeFamily.Plains,   // Task 4 → BiomeFamily.Steppe
-            Biome.Steppe => BiomeFamily.Plains,       // Task 4 → BiomeFamily.Steppe
-            Biome.Savanna => BiomeFamily.Plains,      // Task 4 → BiomeFamily.Savanna
-            Biome.Desert => BiomeFamily.Badlands,     // Task 4 → BiomeFamily.Desert
+            Biome.ColdSteppe => BiomeFamily.Steppe,
+            Biome.Steppe => BiomeFamily.Steppe,
+            Biome.Savanna => BiomeFamily.Savanna,
+            Biome.Desert => BiomeFamily.Desert,
             _ => throw new ArgumentOutOfRangeException(nameof(biome), biome, "Новый Biome без записи в таблице BiomeFamily"),
         };
 

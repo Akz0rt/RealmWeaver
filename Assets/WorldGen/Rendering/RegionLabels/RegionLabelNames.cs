@@ -42,6 +42,9 @@ namespace WorldGen.Rendering.RegionLabels
             { BiomeFamily.Moor,       new Noun("Топь",    Gender.Feminine)  },
             { BiomeFamily.Tundra,     new Noun("Тундра",  Gender.Feminine)  },
             { BiomeFamily.Sea,        new Noun("Море",    Gender.Neuter)    },
+            { BiomeFamily.Steppe,  new Noun("Степь",   Gender.Feminine)  },
+            { BiomeFamily.Savanna, new Noun("Саванна", Gender.Feminine)  },
+            { BiomeFamily.Desert,  new Noun("Пустыня", Gender.Feminine)  },
             // Coast, Lake intentionally absent -> NameFor returns null (unnamed).
         };
 
