@@ -90,7 +90,7 @@ namespace WorldGen.Rendering
         public int numberOfTemperatureEpicenters = 5;
         public float epicenterMinRadius = 150f;
         public float epicenterMaxRadius = 300f;
-        [Tooltip("Температура для клеток, не попавших в радиус ни одного эпицентра.")]
+        [Tooltip("Базовая температура, только если эпицентров нет вовсе. Иначе температура всегда берётся из эпицентров (мягкий глобальный спад).")]
         public float baseTemperature = 0.5f;
 
         [Header("Отображение")]
@@ -3007,7 +3007,8 @@ namespace WorldGen.Rendering
             }
 
             // Визуализация эпицентров температуры - цвет от синего (холодно) к красному (жарко),
-            // прозрачная сфера показывает зону действия (Radius) с hard cutoff.
+            // прозрачная сфера показывает Radius (силу/ширину влияния); влияние теперь простирается
+            // и за сферу, просто слабее (мягкий глобальный спад, без hard cutoff).
             if (epicenters != null)
             {
                 foreach (var e in epicenters)
