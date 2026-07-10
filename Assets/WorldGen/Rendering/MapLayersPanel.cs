@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using WorldGen.Rendering.RegionLabels;
 using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
@@ -13,6 +14,8 @@ namespace WorldGen.Rendering
     public class MapLayersPanel : MonoBehaviour
     {
         public WorldMapRenderer mapRenderer;
+        public RegionLabelOverlay regionLabelOverlay;
+        public RegionLabelManager regionLabelManager;
 
         Font builtinFont;
         readonly List<Toggle> toggles = new List<Toggle>();
@@ -64,6 +67,9 @@ namespace WorldGen.Rendering
             AddLayerToggleRow(t, "Береговая линия",  false, on => mapRenderer?.SetShowCoastlineLayer(on));
             AddLayerToggleRow(t, "Декорации", mapRenderer != null && mapRenderer.decorationConfig.enabled,
                 on => mapRenderer?.SetShowDecorations(on));
+            AddLayerToggleRow(t, "Названия регионов", true, on => regionLabelOverlay?.SetVisible(on));
+            AddActionButtonRow(t, "Пересоздать названия", () => regionLabelManager?.SeedFromCells(),
+                "+ Название", () => regionLabelOverlay?.ToggleAddMode());
         }
 
         void BuildHeaderRow(Transform parent)
@@ -136,6 +142,41 @@ namespace WorldGen.Rendering
             }
             toggle.onValueChanged.AddListener(v => ApplyRow(v));
             ApplyRow(defaultOn);
+        }
+
+        /// <summary>Two small text-buttons side by side (mirrors the "Сбросить" link-button in
+        /// BuildHeaderRow: a Text component doubling as its own Button.targetGraphic).</summary>
+        void AddActionButtonRow(Transform parent, string label1, System.Action onClick1, string label2, System.Action onClick2)
+        {
+            var rowGO = new GameObject("RegionLabelActionsRow");
+            rowGO.transform.SetParent(parent, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 22f;
+            var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hLayout.spacing = 6f;
+            hLayout.childControlWidth = true;
+            hLayout.childForceExpandWidth = true;
+            hLayout.childControlHeight = true;
+            hLayout.childForceExpandHeight = true;
+            hLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            AddActionButton(rowGO.transform, label1, onClick1);
+            AddActionButton(rowGO.transform, label2, onClick2);
+        }
+
+        void AddActionButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"Btn_{label}");
+            go.transform.SetParent(parent, false);
+            var text = go.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 10;
+            text.alignment = TextAnchor.MiddleCenter;
+            ThemeService.Tag(text, ThemeRole.Accent);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = text;
+            btn.transition = Selectable.Transition.None;
+            btn.onClick.AddListener(() => onClick?.Invoke());
         }
 
         // ── Widget helpers ──

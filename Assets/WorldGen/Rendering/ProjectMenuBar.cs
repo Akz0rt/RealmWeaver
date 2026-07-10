@@ -32,6 +32,7 @@ namespace WorldGen.Rendering
         public WorldMapRenderer mapRenderer;
         public PoiManager poiManager;
         public NotesRootBuilder notesRoot;
+        public RegionLabelManager regionLabelManager;
 
         static readonly ExtensionFilter[] ProjectFilters =
         {
@@ -98,7 +99,8 @@ namespace WorldGen.Rendering
 
             try
             {
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, new List<RegionLabelData>());
+                var regionLabels = regionLabelManager != null ? new List<RegionLabelData>(regionLabelManager.GetAll()) : new List<RegionLabelData>();
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels);
             }
             catch (System.Exception ex)
             {
@@ -140,6 +142,7 @@ namespace WorldGen.Rendering
 
             mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
             poiManager?.LoadPois(result.Pois);
+            regionLabelManager?.LoadLabels(result.RegionLabels);
             notesRoot?.DocumentController.LoadDocument(result.Notes);
 
             currentPath = path;

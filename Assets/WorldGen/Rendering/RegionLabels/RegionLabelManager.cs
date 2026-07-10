@@ -18,6 +18,16 @@ namespace WorldGen.Rendering.RegionLabels
         public event Action OnLabelsChanged;
         public event Action<RegionLabelData> OnSelectionChanged;
 
+        void Awake()
+        {
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated += SeedFromCells;
+        }
+
+        void OnDestroy()
+        {
+            if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= SeedFromCells;
+        }
+
         public IReadOnlyList<RegionLabelData> GetAll() => labels;
         public RegionLabelData GetSelected() =>
             selectedId != null ? labels.FirstOrDefault(l => l.Id == selectedId) : null;
