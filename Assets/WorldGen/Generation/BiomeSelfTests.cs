@@ -111,5 +111,28 @@ namespace WorldGen.Generation
             ok &= !string.IsNullOrEmpty(noun) && noun.Contains("Саванна");
             Debug.Log(ok ? "Self-Test New Families: PASS" : "Self-Test New Families: FAIL");
         }
+
+        // Guards the soft global temperature field: a cell FAR beyond every epicenter's radius must
+        // still get a real distance-weighted blend (biased to the nearest epicenter), NOT the old
+        // flat 0.5 fallback. Would fail under the previous hard-cutoff+fallback implementation.
+        [ContextMenu("Self-Test: Temperature Field (global)")]
+        public void SelfTestTemperatureField()
+        {
+            var epiHot  = new TemperatureEpicenter(new System.Numerics.Vector2(0f, 0f),   1.0f, 50f);
+            var epiCold = new TemperatureEpicenter(new System.Numerics.Vector2(200f, 0f), 0.0f, 50f);
+            var eps = new System.Collections.Generic.List<TemperatureEpicenter> { epiHot, epiCold };
+
+            var nearHot  = new VoronoiCell(1, new System.Numerics.Vector2(0f, 0f));
+            var nearCold = new VoronoiCell(2, new System.Numerics.Vector2(200f, 0f));
+            var far      = new VoronoiCell(3, new System.Numerics.Vector2(1000f, 0f)); // beyond both radii
+
+            var cells = new System.Collections.Generic.List<VoronoiCell> { nearHot, nearCold, far };
+            TemperatureField.ApplyTemperature(cells, eps, baseTemperature: 0.5f);
+
+            bool ok = nearHot.Temperature > 0.9f              // hot epicenter dominates
+                   && nearCold.Temperature < 0.1f             // cold epicenter dominates
+                   && far.Temperature > 0.0f && far.Temperature < 0.5f; // global blend, biased to nearer (cold) — not the 0.5 fallback
+            Debug.Log(ok ? "Self-Test Temperature Field: PASS" : "Self-Test Temperature Field: FAIL");
+        }
     }
 }

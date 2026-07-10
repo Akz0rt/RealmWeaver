@@ -90,7 +90,7 @@ namespace WorldGen.Generation
 
         // --- Температура (отдельная point-based система эпицентров, не из Patel) ---
 
-        public int NumberOfTemperatureEpicenters = 3;
+        public int NumberOfTemperatureEpicenters = 5;
         public float EpicenterMinRadius = 150f;
         public float EpicenterMaxRadius = 300f;
         public float BaseTemperature = 0.5f;

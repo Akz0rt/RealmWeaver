@@ -6,8 +6,9 @@ namespace WorldGen.Generation
 {
     /// <summary>
     /// Вычисляет температуру клетки через inverse distance weighting (IDW) от набора
-    /// температурных эпицентров, с hard cutoff по радиусу каждого эпицентра (за пределами
-    /// своего Radius эпицентр не вносит вклад в клетку вообще).
+    /// температурных эпицентров. Radius каждого эпицентра теперь задаёт СИЛУ/ширину его влияния
+    /// (мягкий глобальный спад, без hard cutoff), так что каждый эпицентр влияет на всю карту и
+    /// не остаётся однородных fallback-областей.
     /// </summary>
     public static class TemperatureField
     {
@@ -35,17 +36,18 @@ namespace WorldGen.Generation
 
             foreach (var epicenter in epicenters)
             {
+                // Мягкое глобальное влияние (без hard cutoff): каждый эпицентр влияет на КАЖДУЮ
+                // клетку, а Radius задаёт СИЛУ/ширину влияния (больше радиус — шире тёплая/холодная
+                // зона). Так на карте не остаётся однородных "fallback 0.5" областей — климат реально
+                // меняется по карте, ближайший эпицентр доминирует, между ними — плавный переход.
                 float distance = Vector2.Distance(cellPosition, epicenter.Position);
-                if (distance > epicenter.Radius) continue; // hard cutoff - эпицентр не влияет за пределами своего радиуса
-
-                float weight = 1f / (distance * distance + Epsilon);
+                float weight = epicenter.Radius / (distance * distance + Epsilon);
                 weightedSum += epicenter.Temperature * weight;
                 totalWeight += weight;
             }
 
             if (totalWeight <= 0f)
-                return fallbackTemperature; // клетка не попала в радиус ни одного эпицентра
-
+                return fallbackTemperature; // недостижимо при >=1 эпицентре с Radius>0 — на всякий случай
             return weightedSum / totalWeight;
         }
     }

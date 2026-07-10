@@ -87,7 +87,7 @@ namespace WorldGen.Rendering
 
         [Header("Температура (point-based эпицентры)")]
         [Tooltip("Количество случайных эпицентров температуры на карте.")]
-        public int numberOfTemperatureEpicenters = 3;
+        public int numberOfTemperatureEpicenters = 5;
         public float epicenterMinRadius = 150f;
         public float epicenterMaxRadius = 300f;
         [Tooltip("Температура для клеток, не попавших в радиус ни одного эпицентра.")]
