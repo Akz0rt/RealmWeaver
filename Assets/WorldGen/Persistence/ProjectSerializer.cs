@@ -34,7 +34,7 @@ namespace WorldGen.Persistence
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
             Formatting = Formatting.Indented,
-            Converters = { new CanvasObjectDataConverter() }
+            Converters = { new CanvasObjectDataConverter(), new ColorJsonConverter() }
         };
 
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
