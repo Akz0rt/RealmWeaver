@@ -104,6 +104,7 @@ namespace WorldGen.Rendering
             var r = regionManager.Add(GenerateUniqueRegionName(), regionManager.NextColor());
             mapRenderer?.RebuildBorders();
             mapRenderer?.UploadRegionColors(); // GPU "Регионы" fill (Task 6) - new region's color is in the table before it's ever painted
+            mapRenderer?.RefreshRegionLabels(); // Task 7 - metadata list changed (no centroid yet until painted)
             SelectRegion(r.Id);
             RebuildList();
         }
@@ -432,7 +433,11 @@ namespace WorldGen.Rendering
             nameField.text = r.Name;
             nameField.onEndEdit.AddListener(v =>
             {
-                if (!string.IsNullOrWhiteSpace(v)) regionManager?.SetName(id, v);
+                if (!string.IsNullOrWhiteSpace(v))
+                {
+                    regionManager?.SetName(id, v);
+                    mapRenderer?.RefreshRegionLabels(); // Task 7 - map label text follows the rename
+                }
             });
 
             // «✕» удаление.

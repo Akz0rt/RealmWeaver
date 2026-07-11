@@ -121,6 +121,7 @@ namespace WorldGen.Rendering
         [Header("Регионы (политическая карта)")]
         [Tooltip("Хранилище метаданных регионов (имя/цвет) - заполняется GenerateRegionsOnly.")]
         public RegionManager regionManager;
+        PoliticalRegionLabelOverlay politicalLabelOverlay;   // self-created (Ensure...); region-name labels, Регионы mode only
 
         [Header("Combined: тёмный рендер (MapRaster)")]
         public MapPaletteTheme paletteTheme = MapPaletteTheme.ColdTwilight;
@@ -527,6 +528,7 @@ namespace WorldGen.Rendering
             BuildBorders();
             UploadRegionColors();                          // GPU (Task 6 defines it; a no-op stub is fine until then)
             RefreshAfterCellDataChange();
+            RefreshRegionLabels();                          // Task 7: region-name labels follow the new membership/metadata
             OnDisplayChanged?.Invoke();
         }
 
@@ -542,7 +544,52 @@ namespace WorldGen.Rendering
             RebuildBorders();
             UploadRegionColors();
             RefreshAfterCellDataChange();
+            RefreshRegionLabels();                          // Task 7: dropped region's label must disappear too
             OnDisplayChanged?.Invoke();
+        }
+
+        /// <summary>Each region's centroid = un-weighted average Site of its member LAND cells (ocean/lake
+        /// cells are skipped) - used to place one region-name label per region in "Регионы" display mode
+        /// (see PoliticalRegionLabelOverlay). A region with no land cells yet (just added via RegionsPanel,
+        /// not yet painted by the brush) is simply absent from the result - no centroid to anchor on.</summary>
+        public Dictionary<int, System.Numerics.Vector2> RegionCentroids()
+        {
+            var result = new Dictionary<int, System.Numerics.Vector2>();
+            if (cells == null) return result;
+
+            var sums = new Dictionary<int, System.Numerics.Vector2>();
+            var counts = new Dictionary<int, int>();
+            foreach (var c in cells)
+            {
+                if (c.RegionId < 0) continue;
+                if (!RegionCategories.IsLandCell(c)) continue;   // skip ocean/lake cells
+                sums[c.RegionId] = sums.TryGetValue(c.RegionId, out var s) ? s + c.Site : c.Site;
+                counts[c.RegionId] = counts.TryGetValue(c.RegionId, out var n) ? n + 1 : 1;
+            }
+            foreach (var kv in sums)
+                result[kv.Key] = kv.Value / counts[kv.Key];
+            return result;
+        }
+
+        /// <summary>Self-creates the political region-name label overlay (Task 7) the first time it's
+        /// needed - same "new child GameObject + AddComponent" idiom as EnsureDecorationRenderer, so this
+        /// needs NO scene wiring (no Inspector references to assign in the Editor).</summary>
+        void EnsurePoliticalLabelOverlay()
+        {
+            if (politicalLabelOverlay != null) return;
+            var go = new GameObject("PoliticalRegionLabels");
+            go.transform.SetParent(transform, false);
+            politicalLabelOverlay = go.AddComponent<PoliticalRegionLabelOverlay>();
+            politicalLabelOverlay.Init(this);
+        }
+
+        /// <summary>Rebuilds the political region-name label overlay from the current regionManager.Regions
+        /// + RegionCentroids(). GenerateRegionsOnly/DeleteRegion/SetDisplayMode call this already;
+        /// RegionsPanel also calls it after add/rename so a fresh name/region shows up immediately.</summary>
+        public void RefreshRegionLabels()
+        {
+            EnsurePoliticalLabelOverlay();
+            politicalLabelOverlay.Rebuild();
         }
 
         /// <summary>
@@ -2679,6 +2726,7 @@ namespace WorldGen.Rendering
             bool combined = mode == MapDisplayMode.Combined;
             if (regionBorderObject != null) regionBorderObject.SetActive(combined && showRegionBordersLayer);
             if (coastlineObject != null) coastlineObject.SetActive(ShouldShowCoastlineRibbon());
+            RefreshRegionLabels();   // Task 7: catch up on any membership/name changes made while off Регионы mode
             OnDisplayChanged?.Invoke();
         }
 

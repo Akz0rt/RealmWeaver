@@ -235,6 +235,17 @@ namespace WorldGen.Rendering.RegionLabels
         void LateUpdate()
         {
             if (!visible || manager == null || cameraController == null) return;
+
+            // Task 7: biome-zone labels and political region-name labels (PoliticalRegionLabelOverlay)
+            // are mutually exclusive by MapDisplayMode - hide this whole canvas (and skip add/edit-click
+            // handling below) while "Регионы" mode is active; SetVisible's own on/off state is preserved
+            // underneath and simply re-applies once the mode switches back off Region.
+            bool hiddenByRegionMode = manager.mapRenderer != null && manager.mapRenderer.displayMode == MapDisplayMode.Region;
+            bool wantActive = !hiddenByRegionMode;
+            if (canvasRect != null && canvasRect.gameObject.activeSelf != wantActive)
+                canvasRect.gameObject.SetActive(wantActive);
+            if (hiddenByRegionMode) return;
+
             var cam = cameraController.targetCamera;
             float refSize = cameraController.NaturalFitSize;
             if (cam == null || refSize <= 0f) return;
