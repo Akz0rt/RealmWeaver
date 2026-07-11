@@ -183,7 +183,7 @@ Shader "WorldGen/MapTerrain"
                     if (_RegionFill > 0.5)
                     {
                         // слой "Регионы": плоская заливка цветом региона (slot B), без биома/рельефа/тонировки
-                        int rid = (int)(attr(cid, 1).r + 0.5);
+                        int rid = (int)round(attr(cid, 1).r);
                         col = (rid >= 0) ? _RegionColor[clamp(rid, 0, 127)].rgb : float3(0.82, 0.78, 0.65);
                     }
                     else
