@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
 using WorldGen.Generation;
-using WorldGen.Rendering.MapRaster;
 
 namespace WorldGen.Rendering.GpuMap
 {

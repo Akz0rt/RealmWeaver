@@ -200,13 +200,14 @@ namespace WorldGen.Rendering.GpuMap
 
         void UploadPalette(MapPaletteTheme theme)
         {
-            // Indexed by (int)Biome (0..20). Water (Ocean/Lake) is colored separately in the shader, so those
-            // indices are left default; Beach + the 18 land biomes get colors. Array sized past the max ordinal.
+            // Indexed by (int)Biome (0..20), sized past the max ordinal. Land + Beach get per-biome colors;
+            // Ocean/Lake have no flat slot (GetBiomeColor throws) → fall back to the Coast color so no index
+            // is left black for the rare sentinel-pixel where a per-cell water biome reaches the land branch.
             var arr = new Vector4[24];
+            Color32 coast = MapPalette.GetSlotColor(theme, PaletteSlot.Coast);
             foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
             {
-                if (b == Biome.Ocean || b == Biome.Lake) continue; // GetBiomeColor would throw (no flat slot)
-                Color32 c = MapPalette.GetBiomeColor(theme, b);     // Beach → Coast via family fallback
+                Color32 c = (b == Biome.Ocean || b == Biome.Lake) ? coast : MapPalette.GetBiomeColor(theme, b);
                 arr[(int)b] = new Vector4(c.r / 255f, c.g / 255f, c.b / 255f, 1f);
             }
             Material.SetVectorArray("_Palette", arr);
@@ -241,7 +242,7 @@ namespace WorldGen.Rendering.GpuMap
             if (cellIdArray == null || familyLabel == null) return;
             RectPixels(cell, out int x0, out int y0, out int x1, out int y1);
             if (x1 < x0 || y1 < y0) return; // вырожденный полигон (пустая клетка-призрак) - без патча
-            int fam = MapRaster.RegionCategories.FamilyCategoryOf(cell);
+            int fam = MapRaster.RegionCategories.BiomeCategoryOf(cell);
             int bnd = MapRaster.RegionCategories.BandCategoryOf(cell, bakedBands);
             bool land = MapRaster.RegionCategories.IsLandCell(cell);
             for (int y = y0; y <= y1; y++)
