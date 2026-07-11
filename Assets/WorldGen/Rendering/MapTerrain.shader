@@ -24,7 +24,7 @@ Shader "WorldGen/MapTerrain"
             sampler2D _AttrTex;
             float _AttrWidth;
             float _CellRows;
-            float4 _Palette[16];   // индекс = BiomeFamily (0..10), плоский цвет семейства
+            float4 _Palette[24];   // индекс = Biome (0..20); вода красится отдельно, Beach+суша имеют цвет
             float2 _MapSize;
             float _Mode;
 
@@ -34,7 +34,7 @@ Shader "WorldGen/MapTerrain"
             float4 _BiomeLineColor;
             float _BiomeLineStrength;
 
-            sampler2D _LabelTex;   // R=familyLabel, G=bandLabel (255 = нет метки), B=сглаженная маска суша/вода
+            sampler2D _LabelTex;   // R=biomeLabel, G=bandLabel (255 = нет метки), B=сглаженная маска суша/вода
             float2 _LabelTexel;
 
             float _ElevBands;
@@ -82,7 +82,7 @@ Shader "WorldGen/MapTerrain"
                 return o;
             }
 
-            // тексел атрибутов клетки cid: slot 0 = A (family,elev,temp,water), slot 1 = B (region)
+            // тексел атрибутов клетки cid: slot 0 = A (biome,elev,temp,water), slot 1 = B (region)
             float4 attr(int cid, int slot)
             {
                 int x = cid % (int)_AttrWidth;
@@ -91,7 +91,7 @@ Shader "WorldGen/MapTerrain"
                 return tex2Dlod(_AttrTex, float4(uv, 0, 0));
             }
 
-            // Метка области в пикселе: R=family, G=band; 255 = нет метки (откат к attribute).
+            // Метка области в пикселе: R=biome, G=band; 255 = нет метки (откат к attribute).
             int2 labelAt(float2 uv)
             {
                 float2 l = tex2Dlod(_LabelTex, float4(uv, 0, 0)).rg * 255.0;
@@ -214,8 +214,8 @@ Shader "WorldGen/MapTerrain"
                         col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
                     }
 
-                    // тонкая тёмная линия между разными СЕМЕЙСТВАМИ биомов (не на берегу:
-                    // Coast=2 исключён, там будет мягкий пляж; 255 = клин, тоже пропускаем)
+                    // тонкая тёмная линия между разными БИОМАМИ (не на берегу:
+                    // Beach=2 исключён, там будет мягкий пляж; 255 = клин, тоже пропускаем)
                     float2 flt = _LabelTexel * 1.5;
                     int fa = labelAt(i.uv + float2(flt.x, 0)).x;
                     int fb = labelAt(i.uv - float2(flt.x, 0)).x;

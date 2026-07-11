@@ -3,7 +3,7 @@ using WorldGen.Generation;
 
 namespace WorldGen.Rendering.MapRaster
 {
-    /// <summary>Печёт сглаженные контуры "семейство биома" и "полоса высоты" в целочисленные
+    /// <summary>Печёт сглаженные контуры "биом" и "полоса высоты" в целочисленные
     /// label-буферы (−1 = нет метки) плюс сглаженную маску суша/вода (тем же контуром, водный
     /// предикат), rect-scoped. Трассировка через CoastlineContour, категории — RegionCategories.
     /// GPU-путь упаковывает буферы в RGBA32-текстуру (RegionLabelTexture): R/G/B.</summary>
@@ -17,7 +17,7 @@ namespace WorldGen.Rendering.MapRaster
             int rectX, int rectY, int rectW, int rectH)
         {
             BakeCategory(cellById, corners, cellIdArray, familyLabel, texW, texH, mapW, mapH, smoothing, decimation,
-                c => RegionCategories.FamilyCategoryOf(c), RegionCategories.FamilyPriority, rectX, rectY, rectW, rectH);
+                c => RegionCategories.BiomeCategoryOf(c), RegionCategories.BiomePriority, rectX, rectY, rectW, rectH);
             BakeCategory(cellById, corners, cellIdArray, bandLabel, texW, texH, mapW, mapH, smoothing, decimation,
                 c => RegionCategories.BandCategoryOf(c, bands), RegionCategories.BandPriorityAscending(bands), rectX, rectY, rectW, rectH);
 

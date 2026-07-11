@@ -6,7 +6,7 @@ using WorldGen.Rendering.MapRaster;
 namespace WorldGen.Rendering.GpuMap
 {
     /// <summary>RGBAFloat текстура атрибутов клеток, индекс = cellId. Крошечная (~2 тексела/клетку),
-    /// перезаливается целиком при правке (&lt;0.1мс). 2 тексела на клетку: слот A (family, elevation,
+    /// перезаливается целиком при правке (&lt;0.1мс). 2 тексела на клетку: слот A (biome index, elevation,
     /// temperature, waterType) в строке cellId; слот B (regionId,...) в строке cellId+cellRows.
     /// Point-фильтр. Соответствие раскладки — с MapTerrain.shader (см. attr() в шейдере).</summary>
     public class CellAttributeTexture
@@ -44,7 +44,7 @@ namespace WorldGen.Rendering.GpuMap
             int x = id % Width, y = id / Width;
             float waterType = cell.EffectiveIsLake ? 2f : (cell.EffectiveIsOcean ? 1f : 0f);
             pixels[y * Width + x] = new Color(
-                (float)MapPalette.GetFamily(cell.Biome),
+                (float)cell.Biome,
                 cell.EffectiveElevation,
                 cell.EffectiveTemperature,
                 waterType);

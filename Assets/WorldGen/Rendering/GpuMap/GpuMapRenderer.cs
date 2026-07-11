@@ -200,15 +200,14 @@ namespace WorldGen.Rendering.GpuMap
 
         void UploadPalette(MapPaletteTheme theme)
         {
-            var arr = new Vector4[16];
-            for (int f = 0; f < 11; f++)
+            // Indexed by (int)Biome (0..20). Water (Ocean/Lake) is colored separately in the shader, so those
+            // indices are left default; Beach + the 18 land biomes get colors. Array sized past the max ordinal.
+            var arr = new Vector4[24];
+            foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
             {
-                // У Sea/Lake нет плоского слота - берём Coast как заглушку (вода красится отдельно позже).
-                var family = (BiomeFamily)f;
-                Color32 c = (family == BiomeFamily.Sea || family == BiomeFamily.Lake)
-                    ? MapPalette.GetSlotColor(theme, PaletteSlot.Coast)
-                    : MapPalette.GetSlotColor(theme, family);
-                arr[f] = new Vector4(c.r / 255f, c.g / 255f, c.b / 255f, 1f);
+                if (b == Biome.Ocean || b == Biome.Lake) continue; // GetBiomeColor would throw (no flat slot)
+                Color32 c = MapPalette.GetBiomeColor(theme, b);     // Beach → Coast via family fallback
+                arr[(int)b] = new Vector4(c.r / 255f, c.g / 255f, c.b / 255f, 1f);
             }
             Material.SetVectorArray("_Palette", arr);
         }

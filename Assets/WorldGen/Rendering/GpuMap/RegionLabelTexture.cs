@@ -2,11 +2,11 @@ using UnityEngine;
 
 namespace WorldGen.Rendering.GpuMap
 {
-    /// <summary>RGBA32-текстура сглаженных областей: R = familyLabel, G = bandLabel (индексы 0..254),
-    /// B = сглаженная маска суша/вода (255 = суша, 0 = вода), A не используется. RGBA32 обязателен:
+    /// <summary>RGBA32-текстура сглаженных областей: R = biomeLabel (индекс Biome, 0..20), G = bandLabel
+    /// (индексы 0..254), B = сглаженная маска суша/вода (255 = суша, 0 = вода), A не используется. RGBA32 обязателен:
     /// SetPixels32/GetPixels32 поддерживают только RGBA32/ARGB32/RGB24/Alpha8 и молча игнорируются
     /// на прочих форматах (напр. RG16). Значение 255 в R/G = sentinel "нет метки" (клин тройного
-    /// стыка) → шейдер откатывается к family/band из attribute-текстуры. Point-фильтр, разрешение =
+    /// стыка) → шейдер откатывается к biome/band из attribute-текстуры. Point-фильтр, разрешение =
     /// cell-id.</summary>
     public class RegionLabelTexture
     {
