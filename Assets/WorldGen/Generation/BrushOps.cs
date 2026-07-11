@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 namespace WorldGen.Generation
 {
@@ -67,8 +66,9 @@ namespace WorldGen.Generation
             foreach (int l in neighborLevels) { sum += l; n++; }
             if (n == 0) return current;
             float avg = (float)sum / n;
-            int target = Mathf.RoundToInt(Mathf.Lerp(current, avg, Mathf.Clamp01(strength)));
-            return Mathf.Clamp(target, 0, 4);
+            float t = System.Math.Clamp(strength, 0f, 1f);
+            int target = (int)System.Math.Round(current + (avg - current) * t);
+            return System.Math.Clamp(target, 0, 4);
         }
     }
 }
