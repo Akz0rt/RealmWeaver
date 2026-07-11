@@ -55,9 +55,13 @@ namespace WorldGen.Rendering
 
         // Selection & Override widgets (unchanged behaviour)
         Text selectionCountLabel;
-        Slider temperatureSlider, moistureSlider, elevationSlider;
+        Slider elevationSlider;
         Toggle temperatureToggle, moistureToggle, elevationToggle, waterToggle, biomeToggle;
         Dropdown waterDropdown, biomeDropdown;
+        int selectedTempLevel = 2, selectedMoistLevel = 2;
+        readonly Dictionary<int, Image> tempSegBg = new Dictionary<int, Image>();
+        readonly Dictionary<int, Image> moistSegBg = new Dictionary<int, Image>();
+        List<Biome> selectionLandBiomes;
 
         Font builtinFont;
 
@@ -190,25 +194,15 @@ namespace WorldGen.Rendering
             var selected = selectionController.GetSelectedCells().ToList();
             if (selected.Count == 0) return;
 
-            if (temperatureToggle.isOn)
-                mapRenderer.ApplyClimateOverride(selected, temperatureSlider.value, null);
-            if (moistureToggle.isOn)
-                mapRenderer.ApplyClimateOverride(selected, null, moistureSlider.value);
-            if (elevationToggle.isOn)
-                mapRenderer.ApplyElevationOverride(selected, elevationSlider.value);
-            if (waterToggle.isOn)
-                mapRenderer.ApplyWaterOverride(selected, (WaterOverrideType)waterDropdown.value);
+            if (temperatureToggle.isOn) mapRenderer.SetClimateLevels(selected, selectedTempLevel, null);
+            if (moistureToggle.isOn)    mapRenderer.SetClimateLevels(selected, null, selectedMoistLevel);
+            if (elevationToggle.isOn)   mapRenderer.ApplyElevationOverride(selected, elevationSlider.value);
+            if (waterToggle.isOn)       mapRenderer.ApplyWaterOverride(selected, (WaterOverrideType)waterDropdown.value);
             if (biomeToggle.isOn)
             {
-                int biomeIdx = biomeDropdown.value;
-                if (biomeIdx == 0)
-                    mapRenderer.ApplyBiomeOverride(selected, null);
-                else
-                {
-                    var biomeValues = (Biome[])System.Enum.GetValues(typeof(Biome));
-                    if (biomeIdx - 1 < biomeValues.Length)
-                        mapRenderer.ApplyBiomeOverride(selected, biomeValues[biomeIdx - 1]);
-                }
+                var biome = selectionLandBiomes[biomeDropdown.value];
+                var rep = BiomeMatrix.RepresentativeClimate(biome);          // always has value (land-only list)
+                if (rep.HasValue) mapRenderer.SetClimateLevels(selected, rep.Value.t, rep.Value.m);
             }
         }
 
@@ -738,8 +732,12 @@ namespace WorldGen.Rendering
             });
 
             AddLabel(t, "─── Климат ───", bold: false, role: ThemeRole.Mut);
-            (temperatureSlider, _, temperatureToggle) = AddSliderRow(t, "Температура", 0.5f);
-            (moistureSlider, _, moistureToggle) = AddSliderRow(t, "Влажность", 0.5f);
+            BuildLevelPickerRow(t, "Температура", TempShort, true, tempSegBg,
+                lvl => { selectedTempLevel = lvl; HighlightSeg(tempSegBg, lvl); }, out temperatureToggle);
+            BuildLevelPickerRow(t, "Влажность", MoistShort, true, moistSegBg,
+                lvl => { selectedMoistLevel = lvl; HighlightSeg(moistSegBg, lvl); }, out moistureToggle);
+            HighlightSeg(tempSegBg, selectedTempLevel);
+            HighlightSeg(moistSegBg, selectedMoistLevel);
 
             AddLabel(t, "─── Ландшафт ───", bold: false, role: ThemeRole.Mut);
             (elevationSlider, _, elevationToggle) = AddSliderRow(t, "Высота", 0.5f);
@@ -748,14 +746,62 @@ namespace WorldGen.Rendering
                 { "Не менять", "Суша (ForceLand)", "Озеро (ForceLake)", "Океан (ForceOcean)" };
             (waterDropdown, waterToggle) = AddDropdownRow(t, "Water-статус", waterOptions);
 
-            var biomeNames = new List<string> { "Авто (computed)" };
+            var landBiomes = new List<Biome>();
             foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
-                biomeNames.Add(b.ToString());
-            (biomeDropdown, biomeToggle) = AddDropdownRow(t, "Биом напрямую", biomeNames);
+                if (BiomeMatrix.RepresentativeClimate(b).HasValue) landBiomes.Add(b);   // land biomes only
+            selectionLandBiomes = landBiomes;
+            var biomeNames = new List<string>();
+            foreach (var b in landBiomes) biomeNames.Add(BiomeDisplayName(b));
+            (biomeDropdown, biomeToggle) = AddDropdownRow(t, "Задать климат биома", biomeNames);
 
             AddWideButton(t, "Применить к выбору", ApplyOverride, ThemeRole.Accent);
             AddWideButton(t, "Очистить все override", ClearAllOverridesOnSelection, ThemeRole.Danger);
             AddWideButton(t, "Сбросить выбор", () => selectionController?.ClearSelection());
+        }
+
+        void BuildLevelPickerRow(Transform parent, string label, string[] names, bool defaultOn,
+                                 Dictionary<int, Image> segBg, System.Action<int> onPick, out Toggle toggle)
+        {
+            var rowGO = new GameObject($"{label}Row"); rowGO.transform.SetParent(parent, false);
+            var vlg = rowGO.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 3f; vlg.childControlWidth = true; vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true; vlg.childForceExpandHeight = false;
+            rowGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var head = new GameObject("Head"); head.transform.SetParent(rowGO.transform, false);
+            var hh = head.AddComponent<HorizontalLayoutGroup>();
+            hh.spacing = 6f; hh.childControlWidth = false; hh.childControlHeight = false; hh.childForceExpandWidth = false;
+            head.AddComponent<LayoutElement>().preferredHeight = 18f;
+            toggle = AddToggle(head.transform, defaultOn);
+            var lbl = new GameObject("Label"); lbl.transform.SetParent(head.transform, false);
+            var lt = lbl.AddComponent<Text>(); lt.text = label; lt.font = builtinFont; lt.fontSize = 12;
+            ThemeService.Tag(lt, ThemeRole.Txt); lt.alignment = TextAnchor.MiddleLeft;
+            lbl.GetComponent<RectTransform>().sizeDelta = new Vector2(120f, 18f);
+
+            var seg = new GameObject("Seg"); seg.transform.SetParent(rowGO.transform, false);
+            var sh = seg.AddComponent<HorizontalLayoutGroup>();
+            sh.spacing = 2f; sh.childControlWidth = true; sh.childForceExpandWidth = true;
+            sh.childControlHeight = true; sh.childForceExpandHeight = true;
+            seg.AddComponent<LayoutElement>().preferredHeight = 24f;
+            for (int i = 0; i < 5; i++)
+            {
+                int level = i;
+                var b = new GameObject($"L{i}"); b.transform.SetParent(seg.transform, false);
+                var img = b.AddComponent<Image>(); ThemeService.Tag(img, ThemeRole.Elev);
+                var btn = b.AddComponent<Button>(); btn.targetGraphic = img;
+                btn.onClick.AddListener(() => onPick(level));
+                var tg = new GameObject("T"); tg.transform.SetParent(b.transform, false);
+                var tx = tg.AddComponent<Text>(); tx.text = names[i]; tx.font = builtinFont; tx.fontSize = 9;
+                ThemeService.Tag(tx, ThemeRole.Txt); tx.alignment = TextAnchor.MiddleCenter;
+                var tr = tg.GetComponent<RectTransform>(); tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.sizeDelta = Vector2.zero;
+                segBg[i] = img;
+            }
+        }
+
+        void HighlightSeg(Dictionary<int, Image> segBg, int level)
+        {
+            foreach (var kvp in segBg)
+                ThemeService.Tag(kvp.Value, kvp.Key == level ? ThemeRole.Accent : ThemeRole.Elev);
         }
 
         // ── Shared widget helpers ────────────────────────────────────────────────

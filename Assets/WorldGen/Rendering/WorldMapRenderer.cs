@@ -504,6 +504,16 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
+        /// <summary>Precise-selection: sets temperature and/or moisture to a level (null = leave axis) for a
+        /// selection, then refreshes. No brush-undo (selection edits are not brush strokes).</summary>
+        public void SetClimateLevels(IEnumerable<VoronoiCell> targetCells, int? tempLevel, int? moistLevel)
+        {
+            if (cells == null) return;
+            CellOverrideService.SetClimateLevels(targetCells, tempLevel, moistLevel, beachElevationThreshold);
+            RefreshAfterCellDataChange();
+            OnDisplayChanged?.Invoke();
+        }
+
         /// <summary>Снимает climate override с указанных клеток и пересчитывает биом обратно на computed-значения.</summary>
         public void ClearClimateOverride(IEnumerable<VoronoiCell> targetCells, bool clearTemperature = true, bool clearMoisture = true)
         {
