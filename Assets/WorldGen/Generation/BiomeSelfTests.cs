@@ -161,5 +161,36 @@ namespace WorldGen.Generation
             ok &= c.Biome == Biome.Desert;
             Debug.Log(ok ? "Self-Test Climate Step: PASS" : "Self-Test Climate Step: FAIL");
         }
+
+        [ContextMenu("Self-Test: Biome Colors")]
+        public void SelfTestBiomeColors()
+        {
+            var P = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, Biome.Grassland);
+            bool ok = P.r == 78 && P.g == 106 && P.b == 60;                       // exact ColdTwilight value
+            var forest = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, Biome.Forest);
+            ok &= forest.r == 24 && forest.g == 58 && forest.b == 46;
+            // Beach → Coast slot (family fallback), does not throw.
+            var beach = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, Biome.Beach);
+            var coast = WorldGen.Rendering.MapRaster.MapPalette.GetSlotColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, WorldGen.Rendering.MapRaster.PaletteSlot.Coast);
+            ok &= beach.r == coast.r && beach.g == coast.g && beach.b == coast.b;
+            // Non-ColdTwilight theme → family color (not the ColdTwilight table).
+            var mForest = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.MoonlitSteel, Biome.Forest);
+            var mFamily = WorldGen.Rendering.MapRaster.MapPalette.GetSlotColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.MoonlitSteel, WorldGen.Rendering.MapRaster.PaletteSlot.Forest);
+            ok &= mForest.r == mFamily.r && mForest.g == mFamily.g && mForest.b == mFamily.b;
+            // All 18 land biomes return without throwing (dictionary covers them).
+            Biome[] land = { Biome.IceWaste, Biome.Tundra, Biome.Snow, Biome.Glacier, Biome.ColdSteppe,
+                Biome.ForestTundra, Biome.Taiga, Biome.ConiferForest, Biome.Steppe, Biome.Grassland, Biome.Forest,
+                Biome.RainForest, Biome.SemiDesert, Biome.Shrubland, Biome.Savanna, Biome.WarmForest, Biome.Desert,
+                Biome.TropicalForest };
+            foreach (var b in land) { var _ = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(
+                WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight, b); }
+            Debug.Log(ok ? "Self-Test Biome Colors: PASS" : "Self-Test Biome Colors: FAIL");
+        }
     }
 }

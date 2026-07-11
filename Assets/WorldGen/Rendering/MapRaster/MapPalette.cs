@@ -63,6 +63,40 @@ namespace WorldGen.Rendering.MapRaster
 
         public static Color32 GetSlotColor(MapPaletteTheme theme, PaletteSlot slot) => table[slot][(int)theme];
 
+        // ColdTwilight per-biome LAND colors (user palette). Other themes fall back to the biome's family color.
+        // Beach is intentionally absent → falls back to the Coast slot; Ocean/Lake must NOT be passed here.
+        static readonly Dictionary<Biome, Color32> biomeColdTwilight = new Dictionary<Biome, Color32>
+        {
+            [Biome.IceWaste]      = new Color32(150, 164, 172, 255),
+            [Biome.Tundra]        = new Color32(120, 132, 140, 255),
+            [Biome.Snow]          = new Color32(214, 224, 232, 255),
+            [Biome.Glacier]       = new Color32(150, 176, 190, 255),
+            [Biome.ColdSteppe]    = new Color32(104, 110,  84, 255),
+            [Biome.ForestTundra]  = new Color32( 80, 100,  88, 255),
+            [Biome.Taiga]         = new Color32( 30,  62,  58, 255),
+            [Biome.ConiferForest] = new Color32( 22,  50,  46, 255),
+            [Biome.Steppe]        = new Color32(104,  98,  58, 255),
+            [Biome.Grassland]     = new Color32( 78, 106,  60, 255),
+            [Biome.Forest]        = new Color32( 24,  58,  46, 255),
+            [Biome.RainForest]    = new Color32( 20,  66,  52, 255),
+            [Biome.SemiDesert]    = new Color32(150, 128,  84, 255),
+            [Biome.Shrubland]     = new Color32(104, 112,  70, 255),
+            [Biome.Savanna]       = new Color32(150, 140,  78, 255),
+            [Biome.WarmForest]    = new Color32(150,  96,  44, 255),
+            [Biome.Desert]        = new Color32(150, 128,  78, 255),
+            [Biome.TropicalForest]= new Color32( 26,  88,  66, 255),
+        };
+
+        /// <summary>Per-biome land color. ColdTwilight uses the explicit table; other themes fall back to the
+        /// biome's family color. Beach → Coast slot (family fallback). MUST NOT be called for Ocean/Lake
+        /// (FamilyToSlot(Sea/Lake) throws — water is colored by depth, not here).</summary>
+        public static Color32 GetBiomeColor(MapPaletteTheme theme, Biome biome)
+        {
+            if (theme == MapPaletteTheme.ColdTwilight && biomeColdTwilight.TryGetValue(biome, out var c))
+                return c;
+            return GetSlotColor(theme, FamilyToSlot(GetFamily(biome)));
+        }
+
         /// <summary>Плоский базовый цвет для ЛЕНДовых семейств (Sea/Lake не имеют единого слота -
         /// их цвет зависит от глубины воды, см. MapRasterizer.ColorForWaterPixel).</summary>
         public static Color32 GetSlotColor(MapPaletteTheme theme, BiomeFamily family) => GetSlotColor(theme, FamilyToSlot(family));
