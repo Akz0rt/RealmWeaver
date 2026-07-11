@@ -39,10 +39,10 @@ namespace WorldGen.Rendering
 
         public static void ClassifyBorderEdges(
             IReadOnlyList<VoronoiCell> cells,
-            out List<Edge> regionEdges,
+            out List<(Edge edge, int regionId)> regionEdges,
             out List<Edge> coastEdges)
         {
-            regionEdges = new List<Edge>();
+            regionEdges = new List<(Edge edge, int regionId)>();
             coastEdges = new List<Edge>();
             if (cells == null) return;
 
@@ -92,7 +92,9 @@ namespace WorldGen.Rendering
                     // Граница региона: обе клетки не-океан (суша или озеро) и принадлежат
                     // разным регионам. Озёра входят в регион через RegionGrowing,
                     // поэтому граница рисуется вокруг озера как части его региона.
-                    regionEdges.Add(edge);
+                    // regionId - детерминированный "владелец" ребра для раскраски (min из двух id).
+                    int regionId = System.Math.Min(ca.RegionId, cb.RegionId);
+                    regionEdges.Add((edge, regionId));
                 }
             }
         }
@@ -134,6 +136,51 @@ namespace WorldGen.Rendering
                 : UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.SetVertices(verts);
             mesh.SetTriangles(tris, 0);
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>Тот же quad-лента меш, что и BuildRibbonMesh(Edge), но с per-vertex цветом:
+        /// все 4 вершины ребра получают его цвет (regionId клетки -> цвет региона, см. WorldMapRenderer.BuildBorders).
+        /// Материал должен быть белым (Color.white), чтобы vertex color не модулировался.</summary>
+        public static UnityEngine.Mesh BuildRibbonMesh(IReadOnlyList<(Edge edge, UnityEngine.Color color)> edges, float width, float yHeight)
+        {
+            var verts = new List<UnityEngine.Vector3>();
+            var tris = new List<int>();
+            var colors = new List<UnityEngine.Color>();
+            float half = width * 0.5f;
+
+            if (edges != null)
+            {
+                foreach (var (e, color) in edges)
+                {
+                    var p0 = new UnityEngine.Vector3(e.A.X, yHeight, e.A.Y);
+                    var p1 = new UnityEngine.Vector3(e.B.X, yHeight, e.B.Y);
+                    var dir = p1 - p0;
+                    dir.y = 0f;
+                    if (dir.sqrMagnitude < 1e-8f) continue;
+                    dir.Normalize();
+                    var side = new UnityEngine.Vector3(-dir.z, 0f, dir.x) * half;
+
+                    int bi = verts.Count;
+                    verts.Add(p0 - side);
+                    verts.Add(p0 + side);
+                    verts.Add(p1 + side);
+                    verts.Add(p1 - side);
+                    colors.Add(color); colors.Add(color); colors.Add(color); colors.Add(color);
+
+                    tris.Add(bi + 0); tris.Add(bi + 2); tris.Add(bi + 1);
+                    tris.Add(bi + 0); tris.Add(bi + 3); tris.Add(bi + 2);
+                }
+            }
+
+            var mesh = new UnityEngine.Mesh();
+            mesh.indexFormat = verts.Count > 65000
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
+            mesh.SetColors(colors);
             mesh.RecalculateBounds();
             return mesh;
         }

@@ -434,9 +434,19 @@ namespace WorldGen.Rendering
 
             MapBorderBuilder.ClassifyBorderEdges(cells, out var regionEdges, out var coastEdges);
 
+            // Каждое ребро региона красится цветом его "владельца" (min RegionId с обеих сторон);
+            // regionManager может отсутствовать в сцене (напр. в старых тестовых сценах) или ещё не
+            // содержать эту запись - тогда используется старый однотонный regionBorderColor.
+            var coloredRegionEdges = new List<(MapBorderBuilder.Edge edge, Color color)>(regionEdges.Count);
+            foreach (var (edge, regionId) in regionEdges)
+            {
+                Color color = regionManager?.Get(regionId)?.Color ?? regionBorderColor;
+                coloredRegionEdges.Add((edge, color));
+            }
+
             // Y чуть выше карты (Y=0) и ниже рек (Y=0.5), чтобы избежать z-fighting.
             regionBorderObject = CreateBorderObject(
-                "RegionBorders", MapBorderBuilder.BuildRibbonMesh(regionEdges, regionBorderWidth, 0.4f), regionBorderColor);
+                "RegionBorders", MapBorderBuilder.BuildRibbonMesh(coloredRegionEdges, regionBorderWidth, 0.4f), Color.white);
             coastlineObject = CreateBorderObject(
                 "Coastline", MapBorderBuilder.BuildRibbonMesh(coastEdges, coastlineWidth, 0.3f), coastlineColor);
 
