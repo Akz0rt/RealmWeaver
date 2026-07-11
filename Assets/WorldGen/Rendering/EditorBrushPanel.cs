@@ -44,6 +44,7 @@ namespace WorldGen.Rendering
         Outline circleIconOutline, squareIconOutline;
         Slider sizeSlider, strengthSlider;
         Text sizeValue, strengthValue;
+        GameObject strengthGroupGO;
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
@@ -143,6 +144,7 @@ namespace WorldGen.Rendering
                 OnModeChanged(BrushMode.Raise);
 
             UpdateBiomePaletteVisibility();
+            UpdateStrengthVisibility();
         }
 
         /// <summary>Инструмент Вода: сегмент режима показывает Океан(Raise)/Суша(Lower) и прячет
@@ -163,6 +165,16 @@ namespace WorldGen.Rendering
                 ThemeService.Tag(kvp.Value, on ? ThemeRole.Accent : ThemeRole.Elev);
                 ThemeService.Tag(modeSegTxt[kvp.Key], on ? ThemeRole.AccentInk : ThemeRole.Txt);
             }
+            UpdateStrengthVisibility();
+        }
+
+        void UpdateStrengthVisibility()
+        {
+            if (strengthGroupGO == null || brushController == null) return;
+            bool applies = brushController.activeTool == BrushTool.Elevation
+                || ((brushController.activeTool == BrushTool.Temperature || brushController.activeTool == BrushTool.Moisture)
+                    && brushController.mode == BrushMode.Smooth);
+            strengthGroupGO.SetActive(applies);
         }
 
         void OnShapeChanged(BrushShape shape)
@@ -329,12 +341,12 @@ namespace WorldGen.Rendering
 
             BuildShapeRow(t);
 
-            BuildLabeledSlider(t, "Размер", 8f, 120f, 42f, out sizeSlider, out sizeValue, isPercent: false, v =>
+            BuildLabeledSlider(t, "Размер", 8f, 120f, 42f, out sizeSlider, out sizeValue, out _, isPercent: false, v =>
             {
                 if (brushController != null) brushController.brushRadius = v;
             });
 
-            BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, isPercent: true, v =>
+            BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
             {
                 if (brushController != null) brushController.strength = v;
             });
@@ -496,12 +508,12 @@ namespace WorldGen.Rendering
         }
 
         void BuildLabeledSlider(Transform t, string label, float min, float max, float def,
-                                out Slider slider, out Text valueLabel, bool isPercent,
+                                out Slider slider, out Text valueLabel, out GameObject groupGO, bool isPercent,
                                 System.Action<float> onChanged)
         {
             // Контейнер группирует "подпись+значение" и слайдер вплотную (иначе межэлементный
             // отступ VLG разносит их так же, как соседние блоки, и группа теряется).
-            var groupGO = new GameObject($"{label}Group");
+            groupGO = new GameObject($"{label}Group");
             groupGO.transform.SetParent(t, false);
             var gvlg = groupGO.AddComponent<VerticalLayoutGroup>();
             gvlg.spacing = 3f;
@@ -727,7 +739,7 @@ namespace WorldGen.Rendering
             selectionCountLabel = AddLabel(t, "Выбрано клеток: 0");
 
             // Свой радиус кисти выделения (независим от кисти рельефа).
-            BuildLabeledSlider(t, "Размер выделения", 8f, 120f, 42f, out _, out _, isPercent: false, v =>
+            BuildLabeledSlider(t, "Размер выделения", 8f, 120f, 42f, out _, out _, out _, isPercent: false, v =>
             {
                 if (selectionController != null) selectionController.SelectionRadius = v;
             });
