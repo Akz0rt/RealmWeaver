@@ -9,7 +9,7 @@ namespace WorldGen.Rendering
 {
     /// <summary>Что редактирует кисть. Elevation/Temperature/Moisture — относительное изменение;
     /// Biome — прямая замена биома выбранным из палитры.</summary>
-    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water }
+    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water, Region }
 
     /// <summary>Режим для Elevation/Temperature/Moisture. Для Biome не применяется.</summary>
     public enum BrushMode { Raise, Lower, Smooth }
@@ -55,6 +55,8 @@ namespace WorldGen.Rendering
         public float strength = 0.6f;
         [Tooltip("Выбранная клетка матрицы (темп-уровень, влажн-уровень) для режима 'Биом'. null — красить нечем.")]
         public (int t, int m)? selectedClimateCell = null;
+        [Tooltip("Id региона для режима 'Регион' (устанавливается панелью регионов). -1 = стереть (снять клетку с региона).")]
+        public int selectedRegionId = -1;
         [Tooltip("Интервал в секундах между повторными применениями, пока ЛКМ зажата на месте. Не зависит от FPS.")]
         public float repeatInterval = 0.05f;
 
@@ -74,6 +76,7 @@ namespace WorldGen.Rendering
         float repeatTimer;
         readonly HashSet<int> steppedThisStroke = new HashSet<int>();
         readonly HashSet<VoronoiCell> biomeStrokeCells = new HashSet<VoronoiCell>();
+        bool regionStrokeTouched;
 
         LineRenderer cursorRing;
         const int CircleSegments = 48;
@@ -123,6 +126,7 @@ namespace WorldGen.Rendering
                 mapRenderer.BeginBrushStroke();
                 steppedThisStroke.Clear();
                 biomeStrokeCells.Clear();
+                regionStrokeTouched = false;
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -136,6 +140,11 @@ namespace WorldGen.Rendering
                 {
                     mapRenderer.FinalizeBiomeStroke(biomeStrokeCells);
                     biomeStrokeCells.Clear();
+                }
+                if (regionStrokeTouched)
+                {
+                    mapRenderer.RebuildBorders();
+                    regionStrokeTouched = false;
                 }
                 mapRenderer.EndBrushStroke();
             }
@@ -196,6 +205,15 @@ namespace WorldGen.Rendering
                 foreach (var cell in affected)
                     mapRenderer.BrushSetWater(cell, makeLand);
                 mapRenderer.RebakeAffectedCells(affected);
+                return;
+            }
+
+            if (activeTool == BrushTool.Region)
+            {
+                foreach (var cell in affected)
+                    mapRenderer.BrushSetRegion(cell, selectedRegionId);
+                mapRenderer.RebakeAffectedCells(affected);   // updates GPU regionId slot-B (Regions-mode fill)
+                regionStrokeTouched = true;                   // flag → RebuildBorders on release
                 return;
             }
 

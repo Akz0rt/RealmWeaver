@@ -409,6 +409,11 @@ namespace WorldGen.Rendering
         bool ShouldShowCoastlineRibbon() =>
             displayMode == MapDisplayMode.Combined && showCoastlineLayer && !smoothBorders;
 
+        /// <summary>Public wrapper for BuildBorders — lets BrushToolController rebuild region/coast
+        /// borders once at the end of a Region-brush stroke (border classification depends on
+        /// neighbour RegionIds, which BrushSetRegion changes mid-stroke without rebuilding).</summary>
+        public void RebuildBorders() => BuildBorders();
+
         /// <summary>Классифицирует граничные рёбра и строит два меш-объекта (границы регионов
         /// и берег). Видимость каждого зависит от Combined-режима и соответствующего тоггла.</summary>
         void BuildBorders()
@@ -718,6 +723,16 @@ namespace WorldGen.Rendering
                 cell.ElevationOverride = 0f; // топим клетку под уровень моря в обоих случаях
             }
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+        }
+
+        /// <summary>Region brush: assigns a LAND cell to regionId (-1 = erase). Ocean/lake are skipped (regions are
+        /// land). Records pre-change undo state. Borders are rebuilt once on stroke end (BrushToolController).</summary>
+        public void BrushSetRegion(VoronoiCell cell, int regionId)
+        {
+            if (cells == null) return;
+            if (cell.EffectiveIsOcean || cell.EffectiveIsLake) return; // regions are land only
+            brushUndo.RecordBeforeChange(cell);
+            cell.RegionId = regionId;
         }
 
         /// <summary>Biome brush DURING-stroke: paints the selected matrix cell and previews it as that biome
