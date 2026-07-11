@@ -17,5 +17,9 @@ namespace WorldGen.Persistence
         public List<PoiData> Pois = new List<PoiData>();
         public NotesDocument Notes;
         public List<RegionLabelData> RegionLabels = new List<RegionLabelData>();
+        /// <summary>Political-region metadata (id/name/colour) — membership itself lives on
+        /// VoronoiCell.RegionId (see Cells above). Added in FormatVersion 3; older saves have
+        /// this empty and get default RegionData synthesized on load (see ProjectSerializer.Load).</summary>
+        public List<RegionData> Regions = new List<RegionData>();
     }
 }

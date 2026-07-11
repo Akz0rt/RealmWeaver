@@ -19,6 +19,7 @@ namespace WorldGen.Persistence
         public List<PoiData> Pois;
         public NotesDocument Notes;
         public List<RegionLabelData> RegionLabels;
+        public List<RegionData> Regions;
     }
 
     /// <summary>
@@ -28,7 +29,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 2;
+        public const int CurrentFormatVersion = 3;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -38,7 +39,8 @@ namespace WorldGen.Persistence
 
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
                                  IReadOnlyList<PoiData> pois, NotesDocument notes,
-                                 IReadOnlyList<RegionLabelData> regionLabels)
+                                 IReadOnlyList<RegionLabelData> regionLabels,
+                                 IReadOnlyList<RegionData> regions)
         {
             var data = new ProjectSaveData
             {
@@ -48,7 +50,8 @@ namespace WorldGen.Persistence
                 Cells = new List<VoronoiCell>(cells),
                 Pois = new List<PoiData>(pois),
                 Notes = notes,
-                RegionLabels = new List<RegionLabelData>(regionLabels)
+                RegionLabels = new List<RegionLabelData>(regionLabels),
+                Regions = new List<RegionData>(regions ?? new List<RegionData>())
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -87,7 +90,8 @@ namespace WorldGen.Persistence
                 Cells = data.Cells ?? new List<VoronoiCell>(),
                 Pois = data.Pois ?? new List<PoiData>(),
                 Notes = data.Notes ?? new NotesDocument(),
-                RegionLabels = data.RegionLabels ?? new List<RegionLabelData>()
+                RegionLabels = data.RegionLabels ?? new List<RegionLabelData>(),
+                Regions = data.Regions ?? new List<RegionData>()
             };
 
             if (data.FormatVersion > CurrentFormatVersion)
@@ -113,6 +117,34 @@ namespace WorldGen.Persistence
                                 result.Cells[i].TemperatureOverride = BiomeMatrix.LevelCenter(rep.Value.t);
                                 result.Cells[i].MoistureOverride    = BiomeMatrix.LevelCenter(rep.Value.m);
                             }
+                        }
+                    }
+                }
+                catch { /* migration is best-effort */ }
+            }
+
+            // Legacy migration (pre-v3): regions used to be pure cell membership (VoronoiCell.RegionId)
+            // with no RegionData metadata (name/colour) at all - RegionData/RegionManager didn't exist
+            // yet. If the file carries no region metadata but its cells still reference region ids,
+            // synthesize a default RegionData per distinct id so borders/fill/names work after loading
+            // (same fantasy-name + palette-colour scheme GenerateRegionsOnly uses for freshly-generated
+            // regions). Keyed off the data itself (empty Regions + assigned cells), not FormatVersion,
+            // so it also recovers a would-be-inconsistent v3 file. Best-effort - never fail the load.
+            if (result.Regions.Count == 0)
+            {
+                try
+                {
+                    var distinctIds = new SortedSet<int>();
+                    foreach (var c in result.Cells)
+                        if (c.RegionId >= 0) distinctIds.Add(c.RegionId);
+
+                    if (distinctIds.Count > 0)
+                    {
+                        int seed = data.GenerationParams?.Seed ?? 0;
+                        foreach (int id in distinctIds)
+                        {
+                            string name = RegionLabelNames.ContinentName(seed, id);
+                            result.Regions.Add(new RegionData(id, name, WorldGen.Rendering.RegionColorPalette.GetRegionColor(id)));
                         }
                     }
                 }

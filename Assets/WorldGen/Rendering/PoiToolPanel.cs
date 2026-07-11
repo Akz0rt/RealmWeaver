@@ -640,13 +640,28 @@ namespace WorldGen.Rendering
             "Западный", "Юго-западный", "Южный", "Юго-восточный",
         };
 
-        /// <summary>Флейворное имя региона по положению точки относительно центра карты
-        /// (реального именования регионов в проекте пока нет — это читаемая замена).</summary>
+        /// <summary>Real region name via the cell under the POI (RegionManager metadata). Falls back to
+        /// the flavourful cardinal-by-position label (below) when the POI's cell has no region assigned
+        /// yet, or the map has no nearest-cell lookup / region manager available.</summary>
         string RegionLabel(PoiData poi)
         {
             var mr = poiManager != null ? poiManager.mapRenderer : null;
             if (mr == null) return "Регион";
 
+            var cell = mr.NearestLookup?.FindNearest(new System.Numerics.Vector2(poi.WorldPosition.X, poi.WorldPosition.Y));
+            if (cell != null && cell.RegionId >= 0)
+            {
+                var region = mr.regionManager?.Get(cell.RegionId);
+                if (region != null && !string.IsNullOrEmpty(region.Name)) return region.Name;
+            }
+
+            return CompassLabel(mr, poi);
+        }
+
+        /// <summary>Флейворное имя региона по положению точки относительно центра карты — фолбэк,
+        /// когда клетка под точкой ещё не принадлежит ни одному реальному региону.</summary>
+        string CompassLabel(WorldMapRenderer mr, PoiData poi)
+        {
             float cx = mr.mapWidth * 0.5f, cy = mr.mapHeight * 0.5f;
             float dx = poi.WorldPosition.X - cx;
             float dy = poi.WorldPosition.Y - cy;

@@ -100,7 +100,8 @@ namespace WorldGen.Rendering
             try
             {
                 var regionLabels = regionLabelManager != null ? new List<RegionLabelData>(regionLabelManager.GetAll()) : new List<RegionLabelData>();
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels);
+                var regions = mapRenderer.regionManager != null ? new List<RegionData>(mapRenderer.regionManager.Regions) : new List<RegionData>();
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions);
             }
             catch (System.Exception ex)
             {
@@ -140,10 +141,23 @@ namespace WorldGen.Rendering
             if (!string.IsNullOrEmpty(result.WarningMessage))
                 ConfirmDialog.ShowInfo(builtinFont, "Предупреждение", result.WarningMessage);
 
+            // Region metadata restored BEFORE LoadFromCells: LoadFromCells's own bake/BuildBorders
+            // (called internally) reads regionManager for per-region colours, so populating it first
+            // means that single pass already paints correctly - no second border/rebake pass needed,
+            // and the OnDisplayChanged it fires already carries the right data for listeners (e.g.
+            // MapLegendUI's region swatches).
+            mapRenderer.regionManager?.SetAll(result.Regions ?? new List<RegionData>());
+
             mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
             poiManager?.LoadPois(result.Pois);
             regionLabelManager?.LoadLabels(result.RegionLabels);
             notesRoot?.DocumentController.LoadDocument(result.Notes);
+
+            if (mapRenderer.regionManager != null)
+            {
+                mapRenderer.UploadRegionColors();   // GPU "Регионы" fill uniform table - not baked by LoadFromCells
+                mapRenderer.RefreshRegionLabels();  // political region-name label overlay - never rebuilt by LoadFromCells itself
+            }
 
             currentPath = path;
             UpdateProjectNameText();

@@ -72,7 +72,7 @@ namespace WorldGen.Persistence
             var notes = new NotesDocument { Groups = new List<PageGroup> { group } };
 
             string path = Path.Combine(Application.temporaryCachePath, "project_roundtrip_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -132,7 +132,7 @@ namespace WorldGen.Persistence
             var pois = new List<PoiData> { poiFortress, poiPort };
 
             string path = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -147,7 +147,7 @@ namespace WorldGen.Persistence
             // accidental reorder shifting existing values). ---
             var oldStylePois = new List<PoiData> { new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 } };
             string newPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_new_selftest.json");
-            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>());
+            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>(), new List<RegionData>());
 
             string json = File.ReadAllText(newPath);
             string oldJson = json.Replace("\"Type\": 10", "\"Type\": 4");
@@ -193,7 +193,7 @@ namespace WorldGen.Persistence
             ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10f, Height = 10f },
                 new System.Collections.Generic.List<VoronoiCell>(),
                 new System.Collections.Generic.List<PoiData>(),
-                new NotesDocument(), regionLabels);
+                new NotesDocument(), regionLabels, new System.Collections.Generic.List<RegionData>());
             var result = ProjectSerializer.Load(path);
             // old-save compat: a JSON with no RegionLabels field -> empty list (not null).
             string legacy = System.IO.File.ReadAllText(path).Replace("\"RegionLabels\"", "\"RegionLabelsRenamed\"");
@@ -232,6 +232,74 @@ namespace WorldGen.Persistence
             CellOverrideService.ClassifyAll(res.Cells, 0f);
             ok &= c.Biome == Biome.Savanna;
             Debug.Log(ok ? "Self-Test Legacy Migration: PASS" : "Self-Test Legacy Migration: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Regions Round-Trip")]
+        public void SelfTestRegionsRoundTrip()
+        {
+            var genParams = new GenerationParams { Seed = 7, Width = 10f, Height = 10f };
+            var cellA = new VoronoiCell(0, new System.Numerics.Vector2(1f, 1f)) { RegionId = 0 };
+            var cellB = new VoronoiCell(1, new System.Numerics.Vector2(2f, 2f)) { RegionId = 1 };
+            var cells = new List<VoronoiCell> { cellA, cellB };
+            var regions = new List<RegionData>
+            {
+                new RegionData(0, "Вэлдрим", new Color(0.2f, 0.4f, 0.6f, 1f)),
+                new RegionData(1, "Каэрхолд", new Color(0.8f, 0.1f, 0.3f, 1f)),
+            };
+
+            string path = Path.Combine(Application.temporaryCachePath, "regions_roundtrip_selftest.json");
+            ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), regions);
+            var result = ProjectSerializer.Load(path);
+            File.Delete(path);
+
+            bool ok = result.Success && result.Regions != null && result.Regions.Count == 2;
+            var r0 = result.Regions?.FirstOrDefault(r => r.Id == 0);
+            var r1 = result.Regions?.FirstOrDefault(r => r.Id == 1);
+            ok &= r0 != null && r0.Name == "Вэлдрим" && r0.Color == new Color(0.2f, 0.4f, 0.6f, 1f);
+            ok &= r1 != null && r1.Name == "Каэрхолд" && r1.Color == new Color(0.8f, 0.1f, 0.3f, 1f);
+
+            Debug.Log(ok
+                ? "Self-Test Regions Round-Trip: PASS"
+                : "Self-Test Regions Round-Trip: FAIL — see field checks in SelfTestRegionsRoundTrip");
+        }
+
+        [ContextMenu("Self-Test: Legacy Region Migration")]
+        public void SelfTestLegacyRegionMigration()
+        {
+            var genParams = new GenerationParams { Seed = 13, Width = 10f, Height = 10f };
+            // v2-style save: cells carry RegionId membership, but no RegionData metadata (regions
+            // existed as pure cell membership before RegionData/RegionManager - see T1 of this arc).
+            // The unassigned cell (RegionId == -1) must NOT get a synthesized region.
+            var cellA = new VoronoiCell(0, new System.Numerics.Vector2(1f, 1f)) { RegionId = 0 };
+            var cellB = new VoronoiCell(1, new System.Numerics.Vector2(2f, 2f)) { RegionId = 2 };
+            var cellC = new VoronoiCell(2, new System.Numerics.Vector2(3f, 3f)) { RegionId = -1 };
+            var cells = new List<VoronoiCell> { cellA, cellB, cellC };
+
+            string path = Path.Combine(Application.temporaryCachePath, "legacy_region_migration_selftest.json");
+            ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>());
+
+            // Also simulate a genuinely old file that predates the "Regions" property entirely (not
+            // just an empty array) - same idiom as SelfTestRegionLabelsRoundTrip's legacy check above.
+            string missingPropertyJson = File.ReadAllText(path).Replace("\"Regions\"", "\"RegionsRenamed\"");
+            File.WriteAllText(path, missingPropertyJson);
+
+            var result = ProjectSerializer.Load(path);
+            File.Delete(path);
+
+            bool ok = result.Success && result.Regions != null && result.Regions.Count == 2; // ids 0 and 2 only, not -1
+            var r0 = result.Regions?.FirstOrDefault(r => r.Id == 0);
+            var r2 = result.Regions?.FirstOrDefault(r => r.Id == 2);
+            ok &= r0 != null && r0.Name == RegionLabelNames.ContinentName(genParams.Seed, 0)
+                              && r0.Color == WorldGen.Rendering.RegionColorPalette.GetRegionColor(0);
+            ok &= r2 != null && r2.Name == RegionLabelNames.ContinentName(genParams.Seed, 2)
+                              && r2.Color == WorldGen.Rendering.RegionColorPalette.GetRegionColor(2);
+            ok &= result.Regions.All(r => r.Id != -1);
+
+            Debug.Log(ok
+                ? "Self-Test Legacy Region Migration: PASS"
+                : "Self-Test Legacy Region Migration: FAIL — see field checks in SelfTestLegacyRegionMigration");
         }
     }
 }
