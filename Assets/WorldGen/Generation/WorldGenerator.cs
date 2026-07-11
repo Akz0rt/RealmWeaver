@@ -131,7 +131,9 @@ namespace WorldGen.Generation
     /// flood fill (ocean/lake) -> фильтр мелких озёр -> перенос water-статуса на клетки ->
     /// elevation (distance+noise гибрид) -> redistribution elevation -> moisture (distance от
     /// свежей воды + аддитивные point-based эпицентры, БЕЗ redistribution) -> усреднение на
-    /// клетки -> биом (Whittaker 4x6) -> регионы -> температура (point-based эпицентры).
+    /// клетки -> биом (Whittaker 4x6) -> температура (point-based эпицентры).
+    /// Регионы больше не генерируются автоматически - политические границы теперь целиком
+    /// на усмотрение пользователя (см. RegionManager); свежий мир оставляет cell.RegionId == -1.
     /// </summary>
     public static class WorldGenerator
     {
@@ -195,14 +197,6 @@ namespace WorldGen.Generation
             CellOverrideService.ElevationTempDrop = p.ElevationTempDrop;
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
-
-            // --- Регионы (растим только по суше, как и раньше) ---
-            var landCells = cells.Where(c => !c.IsOcean).ToList();
-            if (landCells.Count >= p.NumberOfRegions)
-                RegionGrowing.GroupCells(cells, landCells, p.NumberOfRegions, p.Seed);
-
-            // --- Унификация озёр: весь связный водоём → один регион ---
-            LakeRegionUnifier.UnifyLakes(cells);
 
             return cells;
         }
@@ -279,12 +273,8 @@ namespace WorldGen.Generation
             BeachClassifier.AssignCoastalBeaches(cells);                       // пляжи последними
             yield return null;
 
-            // --- Step 5/6: Границы регионов ---
+            // --- Step 5/6: Границы регионов --- (no-op: regions are user-created, not auto-generated - see RegionManager)
             onProgress?.Invoke("Границы регионов", 4f / 6f);
-            var landCells = cells.Where(c => !c.IsOcean).ToList();
-            if (landCells.Count >= p.NumberOfRegions)
-                RegionGrowing.GroupCells(cells, landCells, p.NumberOfRegions, p.Seed);
-            LakeRegionUnifier.UnifyLakes(cells);
             yield return null;
 
             onComplete?.Invoke(cells, temperatureEpicenters, moistureEpicenters, rivers);

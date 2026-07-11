@@ -12,7 +12,9 @@ namespace WorldGen.Rendering
 
     /// <summary>
     /// Empty-state screen shown when WorldMapRenderer.Cells == null. Collects seed/size/
-    /// land-shape/region-detail, then hands off to MapScreenController.StartGeneration.
+    /// land-shape, then hands off to MapScreenController.StartGeneration. (Region detail is
+    /// no longer collected here - regions are user-created post-generation, see RegionManager;
+    /// GenerationRequest.RegionCount stays wired but dormant at its default value.)
     /// Laid out to match design_handoff_realmweaver_ui screens/*/02-generate.png (560px card,
     /// icon-plate header, description, tight field sections). Self-contained -- add to the scene,
     /// assign `controller` and `projectMenuBar` in the Inspector.
@@ -22,8 +24,6 @@ namespace WorldGen.Rendering
         public MapScreenController controller;
         public ProjectMenuBar projectMenuBar;
 
-        const int MinRegions = 4;
-        const int MaxRegions = 40;
         const int DefaultRegions = 24;
 
         Font builtinFont;
@@ -34,7 +34,6 @@ namespace WorldGen.Rendering
 
         Button[] sizeButtons = new Button[3];
         Button[] shapeButtons = new Button[3];
-        Text regionsValueLabel;
 
         RectTransform cardRect;
         RectTransform contentRect;
@@ -150,7 +149,6 @@ namespace WorldGen.Rendering
             BuildSeedRow(BuildField(t, "СИД"));
             BuildSizeSegment(BuildField(t, "РАЗМЕР КАРТЫ"));
             BuildShapeSegment(BuildField(t, "ФОРМА СУШИ"));
-            BuildRegionsField(t);
 
             BuildGenerateButton(t);
             AddOrSeparator(t);
@@ -429,108 +427,6 @@ namespace WorldGen.Rendering
                     outline.effectColor = ThemeService.Get(ThemeRole.Border);
                 }
             }
-        }
-
-        // ── Region-detail slider (label + value on one row, slider below) ────────────
-
-        void BuildRegionsField(Transform parent)
-        {
-            var fieldGO = new GameObject("RegionsField");
-            fieldGO.transform.SetParent(parent, false);
-            var vl = fieldGO.AddComponent<VerticalLayoutGroup>();
-            vl.spacing = 6f;
-            vl.childControlWidth = true;
-            vl.childForceExpandWidth = true;
-            vl.childControlHeight = true;
-            vl.childForceExpandHeight = false;
-
-            // Label row: "ДЕТАЛИЗАЦИЯ · РЕГИОНОВ" left, value right
-            var labelRowGO = new GameObject("LabelRow");
-            labelRowGO.transform.SetParent(fieldGO.transform, false);
-            labelRowGO.AddComponent<LayoutElement>().preferredHeight = 14f;
-            var lrl = labelRowGO.AddComponent<HorizontalLayoutGroup>();
-            lrl.childControlWidth = true;
-            lrl.childForceExpandWidth = true;
-            lrl.childControlHeight = true;
-            lrl.childForceExpandHeight = true;
-
-            var labelGO = new GameObject("Label");
-            labelGO.transform.SetParent(labelRowGO.transform, false);
-            var label = labelGO.AddComponent<Text>();
-            label.text = "ДЕТАЛИЗАЦИЯ · РЕГИОНОВ";
-            label.font = builtinFont;
-            label.fontSize = 11;
-            label.fontStyle = FontStyle.Bold;
-            label.alignment = TextAnchor.MiddleLeft;
-            ThemeService.Tag(label, ThemeRole.Mut);
-            labelGO.AddComponent<LayoutElement>().flexibleWidth = 1f;
-
-            var valueGO = new GameObject("Value");
-            valueGO.transform.SetParent(labelRowGO.transform, false);
-            regionsValueLabel = valueGO.AddComponent<Text>();
-            regionsValueLabel.text = DefaultRegions.ToString();
-            regionsValueLabel.font = builtinFont;
-            regionsValueLabel.fontSize = 12;
-            regionsValueLabel.fontStyle = FontStyle.Bold;
-            regionsValueLabel.alignment = TextAnchor.MiddleRight;
-            ThemeService.Tag(regionsValueLabel, ThemeRole.Accent);
-            valueGO.AddComponent<LayoutElement>().preferredWidth = 36f;
-
-            // Slider
-            var sliderGO = new GameObject("Slider");
-            sliderGO.transform.SetParent(fieldGO.transform, false);
-            sliderGO.AddComponent<LayoutElement>().preferredHeight = 20f;
-            var slider = sliderGO.AddComponent<Slider>();
-            slider.minValue = MinRegions;
-            slider.maxValue = MaxRegions;
-            slider.wholeNumbers = true;
-            slider.value = DefaultRegions;
-
-            var bgGO = new GameObject("Background");
-            bgGO.transform.SetParent(sliderGO.transform, false);
-            var bgImg = bgGO.AddComponent<Image>();
-            ThemeService.Tag(bgImg, ThemeRole.Elev);
-            var bgRect = bgGO.GetComponent<RectTransform>();
-            bgRect.anchorMin = new Vector2(0f, 0.35f);
-            bgRect.anchorMax = new Vector2(1f, 0.65f);
-            bgRect.sizeDelta = Vector2.zero;
-            slider.targetGraphic = bgImg;
-
-            var fillAreaGO = new GameObject("Fill Area");
-            fillAreaGO.transform.SetParent(sliderGO.transform, false);
-            var fillAreaRect = fillAreaGO.AddComponent<RectTransform>();
-            fillAreaRect.anchorMin = new Vector2(0f, 0.35f);
-            fillAreaRect.anchorMax = new Vector2(1f, 0.65f);
-            fillAreaRect.sizeDelta = Vector2.zero;
-            var fillGO = new GameObject("Fill");
-            fillGO.transform.SetParent(fillAreaGO.transform, false);
-            var fillImg = fillGO.AddComponent<Image>();
-            ThemeService.Tag(fillImg, ThemeRole.Accent);
-            var fillRect = fillGO.GetComponent<RectTransform>();
-            fillRect.anchorMin = Vector2.zero;
-            fillRect.anchorMax = Vector2.one;
-            fillRect.sizeDelta = Vector2.zero;
-            slider.fillRect = fillRect;
-
-            var handleAreaGO = new GameObject("Handle Slide Area");
-            handleAreaGO.transform.SetParent(sliderGO.transform, false);
-            var handleAreaRect = handleAreaGO.AddComponent<RectTransform>();
-            handleAreaRect.anchorMin = Vector2.zero;
-            handleAreaRect.anchorMax = Vector2.one;
-            handleAreaRect.sizeDelta = Vector2.zero;
-            var handleGO = new GameObject("Handle");
-            handleGO.transform.SetParent(handleAreaGO.transform, false);
-            var handleImg = handleGO.AddComponent<Image>();
-            ThemeService.Tag(handleImg, ThemeRole.Accent);
-            var handleRect = handleGO.GetComponent<RectTransform>();
-            handleRect.sizeDelta = new Vector2(14f, 14f);
-            slider.handleRect = handleRect;
-
-            slider.onValueChanged.AddListener(v =>
-            {
-                selectedRegions = Mathf.RoundToInt(v);
-                regionsValueLabel.text = selectedRegions.ToString();
-            });
         }
 
         // ── Action buttons ──────────────────────────────────────────────────────────
