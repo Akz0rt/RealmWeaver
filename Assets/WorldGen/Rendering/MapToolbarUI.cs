@@ -5,8 +5,8 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// 46px toolbar strip below the (40px) menu bar: tab segment (Карта/Редактор/Точки) on the
-    /// left, zoom controls on the right. Owns which of the three docked panels is active.
+    /// 46px toolbar strip below the (40px) menu bar: tab segment (Карта/Редактор/Точки/Регионы) on the
+    /// left, zoom controls on the right. Owns which of the four docked panels is active.
     /// </summary>
     public class MapToolbarUI : MonoBehaviour
     {
@@ -14,13 +14,14 @@ namespace WorldGen.Rendering
 
         [Header("Источники")]
         public MapCameraController cameraController;
-        [Tooltip("Панели, докающиеся под тулбар - в порядке Карта/Редактор/Точки.")]
+        [Tooltip("Панели, докающиеся под тулбар - в порядке Карта/Редактор/Точки/Регионы.")]
         public GameObject mapLayersPanel;
         public GameObject editorBrushPanel;
         public GameObject poiToolPanel;
+        public GameObject regionsPanel;
 
         Font builtinFont;
-        Button[] tabButtons = new Button[3];
+        Button[] tabButtons = new Button[4];
         Text zoomPercentLabel;
         int activeTab;
 
@@ -74,7 +75,7 @@ namespace WorldGen.Rendering
             containerRect.anchorMax = new Vector2(0f, 0.5f);
             containerRect.pivot = new Vector2(0f, 0.5f);
             containerRect.anchoredPosition = new Vector2(12f, 0f);
-            containerRect.sizeDelta = new Vector2(240f, 34f);
+            containerRect.sizeDelta = new Vector2(320f, 34f); // widened from 240f (3 tabs) to keep per-tab width when Регионы was added
 
             var layout = containerGO.AddComponent<HorizontalLayoutGroup>();
             layout.padding = new RectOffset(3, 3, 3, 3);
@@ -82,8 +83,8 @@ namespace WorldGen.Rendering
             layout.childControlWidth = true;
             layout.childForceExpandWidth = true;
 
-            string[] labels = { "Карта", "Редактор", "Точки" };
-            for (int i = 0; i < 3; i++)
+            string[] labels = { "Карта", "Редактор", "Точки", "Регионы" };
+            for (int i = 0; i < labels.Length; i++)
             {
                 int captured = i;
                 var btnGO = new GameObject($"Tab_{labels[i]}");
@@ -224,6 +225,7 @@ namespace WorldGen.Rendering
             if (mapLayersPanel != null) mapLayersPanel.SetActive(index == 0);
             if (editorBrushPanel != null) editorBrushPanel.SetActive(index == 1);
             if (poiToolPanel != null) poiToolPanel.SetActive(index == 2);
+            if (regionsPanel != null) regionsPanel.SetActive(index == 3);
 
             for (int i = 0; i < tabButtons.Length; i++)
             {

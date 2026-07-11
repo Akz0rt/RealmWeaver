@@ -524,6 +524,21 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
+        /// <summary>User-triggered deletion of a single region (RegionsPanel's «✕» row button). Strips
+        /// membership from its cells (RegionId = -1, i.e. unassigned/eraser) rather than reassigning them
+        /// elsewhere, removes the metadata entry, and refreshes borders/colors/display.</summary>
+        public void DeleteRegion(int id)
+        {
+            if (cells == null) return;
+            foreach (var cell in cells)
+                if (cell.RegionId == id) cell.RegionId = -1;
+            regionManager?.Remove(id);
+            RebuildBorders();
+            UploadRegionColors();
+            RefreshAfterCellDataChange();
+            OnDisplayChanged?.Invoke();
+        }
+
         /// <summary>
         /// Применяет ручной override температуры/влажности к указанному набору клеток.
         /// null для temperature/moisture = не трогать это поле.
@@ -2765,16 +2780,19 @@ namespace WorldGen.Rendering
         /// <summary>Обновить отрисовку после изменения ДАННЫХ клеток без смены геометрии (undo,
         /// climate/biome override многих клеток): GPU - перезаливает атрибуты (UpdateCells) и пере-печёт
         /// сглаженные label'ы затронутых клеток (FinalizeLabels), для массовых правок это НЕ дёшево;
-        /// CPU - полный перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.</summary>
-        void RefreshAfterCellDataChange()
+        /// CPU - полный перезапек. Геометрия (cell-id) не трогается - сайты Вороного неподвижны.
+        /// Public - RegionsPanel calls it directly after a recolor/delete (no cell-topology change,
+        /// just a repaint), mirroring the other public Refresh/Rebuild entry points on this class.</summary>
+        public void RefreshAfterCellDataChange()
         {
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
             else RebakeAll();
             RebuildDecorations();
         }
 
-        // TODO(Task 6): upload region colors to GPU
-        void UploadRegionColors() { }
+        // TODO(Task 6): upload region colors to GPU. Public for the same reason as
+        // RefreshAfterCellDataChange above (RegionsPanel calls it after recolor/delete).
+        public void UploadRegionColors() { }
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
         /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,
