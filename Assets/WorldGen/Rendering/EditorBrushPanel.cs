@@ -186,7 +186,7 @@ namespace WorldGen.Rendering
             biomePaletteRoot.SetActive(show);
         }
 
-        // ── Selection & Override apply (unchanged) ───────────────────────────────
+        // ── Selection apply — climate levels + biome→canonical ──────────────────
 
         void ApplyOverride()
         {

@@ -96,25 +96,28 @@ namespace WorldGen.Persistence
             // Legacy migration (v1): cells stored a per-cell BiomeOverride (now removed). Convert any land-biome
             // override to the canonical climate levels that produce it; water/invalid values are ignored (the cell
             // reclassifies from its stored climate). Best-effort — never fail the load over migration.
-            try
+            if (data.FormatVersion < CurrentFormatVersion)
             {
-                var cellsToken = JObject.Parse(json)["Cells"] as JArray;
-                if (cellsToken != null)
+                try
                 {
-                    for (int i = 0; i < cellsToken.Count && i < result.Cells.Count; i++)
+                    var cellsToken = JObject.Parse(json)["Cells"] as JArray;
+                    if (cellsToken != null)
                     {
-                        var bo = cellsToken[i]?["BiomeOverride"];
-                        if (bo == null || bo.Type == JTokenType.Null) continue;
-                        var rep = BiomeMatrix.RepresentativeClimate((Biome)bo.Value<int>());
-                        if (rep.HasValue)
+                        for (int i = 0; i < cellsToken.Count && i < result.Cells.Count; i++)
                         {
-                            result.Cells[i].TemperatureOverride = BiomeMatrix.LevelCenter(rep.Value.t);
-                            result.Cells[i].MoistureOverride    = BiomeMatrix.LevelCenter(rep.Value.m);
+                            var bo = cellsToken[i]?["BiomeOverride"];
+                            if (bo == null || bo.Type == JTokenType.Null) continue;
+                            var rep = BiomeMatrix.RepresentativeClimate((Biome)bo.Value<int>());
+                            if (rep.HasValue)
+                            {
+                                result.Cells[i].TemperatureOverride = BiomeMatrix.LevelCenter(rep.Value.t);
+                                result.Cells[i].MoistureOverride    = BiomeMatrix.LevelCenter(rep.Value.m);
+                            }
                         }
                     }
                 }
+                catch { /* migration is best-effort */ }
             }
-            catch { /* migration is best-effort */ }
 
             return result;
         }
