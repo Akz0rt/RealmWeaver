@@ -737,6 +737,7 @@ namespace WorldGen.Rendering
             if (didUndo)
             {
                 RefreshAfterCellDataChange();
+                BuildBorders();
                 OnDisplayChanged?.Invoke();
             }
             return didUndo;
@@ -757,6 +758,7 @@ namespace WorldGen.Rendering
             if (any)
             {
                 RefreshAfterCellDataChange();
+                BuildBorders();
                 OnDisplayChanged?.Invoke();
             }
         }
@@ -2860,6 +2862,10 @@ namespace WorldGen.Rendering
         {
             if (useGpuRenderer && gpuRenderer != null) gpuRenderer.UploadRegionColors(regionManager);
         }
+
+        /// <summary>Fires OnDisplayChanged - lets RegionsPanel notify listeners (e.g. the legend) after
+        /// a region add/rename/recolor that doesn't otherwise go through a method which raises this event.</summary>
+        public void NotifyDisplayChanged() => OnDisplayChanged?.Invoke();
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
         /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,

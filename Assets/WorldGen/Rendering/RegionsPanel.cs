@@ -90,6 +90,9 @@ namespace WorldGen.Rendering
         void DoGenerate()
         {
             mapRenderer?.GenerateRegionsOnly(genCount, genMinSize);
+            // Region ids restart at 0 after a regenerate - stale cycle indices from the previous
+            // generation's ids would otherwise desync swatch recolor cycling from the new regions.
+            colorCycleIndex.Clear();
             // Старый выбор кисти мог указывать на id, который перегенерация уже не воспроизводит
             // (ids пересобираются с нуля) — безопасный сброс на «Стереть».
             SelectRegion(-1);
@@ -105,6 +108,7 @@ namespace WorldGen.Rendering
             mapRenderer?.RebuildBorders();
             mapRenderer?.UploadRegionColors(); // GPU "Регионы" fill (Task 6) - new region's color is in the table before it's ever painted
             mapRenderer?.RefreshRegionLabels(); // Task 7 - metadata list changed (no centroid yet until painted)
+            mapRenderer?.NotifyDisplayChanged(); // Region-mode legend follows the newly added region
             SelectRegion(r.Id);
             RebuildList();
         }
@@ -147,6 +151,7 @@ namespace WorldGen.Rendering
             mapRenderer?.RebuildBorders();
             mapRenderer?.RefreshAfterCellDataChange();
             mapRenderer?.UploadRegionColors(); // GPU "Регионы" fill (Task 6) - keep _RegionColor in sync with the recolor
+            mapRenderer?.NotifyDisplayChanged(); // Region-mode legend follows the recolor
         }
 
         void DeleteRegionClicked(int id)
@@ -437,6 +442,7 @@ namespace WorldGen.Rendering
                 {
                     regionManager?.SetName(id, v);
                     mapRenderer?.RefreshRegionLabels(); // Task 7 - map label text follows the rename
+                    mapRenderer?.NotifyDisplayChanged(); // Region-mode legend follows the rename
                 }
             });
 

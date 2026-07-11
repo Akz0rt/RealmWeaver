@@ -147,6 +147,7 @@ namespace WorldGen.Rendering
             // and the OnDisplayChanged it fires already carries the right data for listeners (e.g.
             // MapLegendUI's region swatches).
             mapRenderer.regionManager?.SetAll(result.Regions ?? new List<RegionData>());
+            if (result.Regions != null && result.Regions.Count > 0) mapRenderer.showRegionBordersLayer = true;
 
             mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
             poiManager?.LoadPois(result.Pois);
