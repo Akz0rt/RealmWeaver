@@ -628,6 +628,67 @@ MonoBehaviour:
   mapLayersPanel: {fileID: 1904317179}
   editorBrushPanel: {fileID: 703015228}
   poiToolPanel: {fileID: 71450242}
+  regionsPanel: {fileID: 889721665}
+--- !u!1 &889721665
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 889721668}
+  - component: {fileID: 889721667}
+  - component: {fileID: 889721666}
+  m_Layer: 0
+  m_Name: RegionManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &889721666
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 889721665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe1bf7c3cfca50e4293001ae9a8a1142, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.RegionsPanel
+  mapRenderer: {fileID: 1583692671}
+  brushController: {fileID: 1259932260}
+  regionManager: {fileID: 889721667}
+--- !u!114 &889721667
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 889721665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4b9c38285d63faa41ba278e9d6ee0e9b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.RegionManager
+--- !u!4 &889721668
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 889721665}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 1006.8392, y: 140.79066, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &900000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -811,7 +872,9 @@ MonoBehaviour:
   brushRadius: 42
   brushStep: 0.02
   strength: 0.6
+  selectedRegionId: -1
   repeatInterval: 0.05
+  regionLakeClaimPercent: 30
   brushModeActive: 0
   cursorLineWidth: 1.6
   cursorHeight: 2
@@ -842,7 +905,7 @@ GameObject:
   - component: {fileID: 1481348583}
   - component: {fileID: 1481348582}
   m_Layer: 0
-  m_Name: RegionLabelManager
+  m_Name: BiomLabelManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1017,7 +1080,7 @@ MonoBehaviour:
   displayMode: 3
   showBiomeLayer: 1
   showReliefLayer: 1
-  showRegionBordersLayer: 0
+  showRegionBordersLayer: 1
   showCoastlineLayer: 0
   reliefStrength: 3
   reliefLightAzimuth: 315
@@ -1027,6 +1090,7 @@ MonoBehaviour:
   coastlineColor: {r: 0.05, g: 0.1, b: 0.2, a: 0.95}
   coastlineWidth: 2.5
   labelDensity: 0.4
+  regionManager: {fileID: 889721667}
   paletteTheme: 0
   coldLight: 58
   regionVariation: 45
@@ -1459,3 +1523,4 @@ SceneRoots:
   - {fileID: 914212973}
   - {fileID: 1481348584}
   - {fileID: 43947988}
+  - {fileID: 889721668}
