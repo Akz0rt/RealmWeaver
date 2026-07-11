@@ -99,7 +99,7 @@ namespace WorldGen.Rendering
         [Header("Combined: слои")]
         public bool showBiomeLayer = true;
         public bool showReliefLayer = true;
-        public bool showRegionBordersLayer = false; // оверлей границ регионов - пока выключен по просьбе пользователя, вернёмся позже
+        public bool showRegionBordersLayer = true; // оверлей границ регионов - показывается по умолчанию (в Combined; пустой меш, пока регионов нет)
         public bool showCoastlineLayer = false;
 
         [Header("Combined: рельеф (hillshade)")]
