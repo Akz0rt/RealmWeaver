@@ -73,6 +73,7 @@ namespace WorldGen.Rendering
         bool hasLastPaintSite;
         float repeatTimer;
         readonly HashSet<int> steppedThisStroke = new HashSet<int>();
+        readonly HashSet<VoronoiCell> biomeStrokeCells = new HashSet<VoronoiCell>();
 
         LineRenderer cursorRing;
         const int CircleSegments = 48;
@@ -121,6 +122,7 @@ namespace WorldGen.Rendering
                 hasLastPaintSite = false;
                 mapRenderer.BeginBrushStroke();
                 steppedThisStroke.Clear();
+                biomeStrokeCells.Clear();
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -130,6 +132,11 @@ namespace WorldGen.Rendering
             else if (Mouse.current.leftButton.wasReleasedThisFrame && isPainting)
             {
                 isPainting = false;
+                if (biomeStrokeCells.Count > 0)
+                {
+                    mapRenderer.FinalizeBiomeStroke(biomeStrokeCells);
+                    biomeStrokeCells.Clear();
+                }
                 mapRenderer.EndBrushStroke();
             }
         }
@@ -174,7 +181,10 @@ namespace WorldGen.Rendering
             {
                 var (t, m) = selectedClimateCell.Value;
                 foreach (var cell in affected)
-                    mapRenderer.BrushSetClimateLevels(cell, t, m);
+                {
+                    mapRenderer.BrushSetClimateLevelsPreview(cell, t, m);
+                    biomeStrokeCells.Add(cell);
+                }
                 mapRenderer.RebakeAffectedCells(affected);
                 return;
             }

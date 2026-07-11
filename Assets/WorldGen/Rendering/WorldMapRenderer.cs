@@ -679,13 +679,25 @@ namespace WorldGen.Rendering
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
         }
 
-        /// <summary>Biome brush: paints a matrix cell's canonical base climate (temp level t, moisture level m).
-        /// Cooling still applies at classify time (honest, no compensation). Records pre-change undo state.</summary>
-        public void BrushSetClimateLevels(VoronoiCell cell, int t, int m)
+        /// <summary>Biome brush DURING-stroke: paints the selected matrix cell and previews it as that biome
+        /// (drop=0, no elevation cooling) for WYSIWYG feedback. Cooling is applied on stroke end via
+        /// FinalizeBiomeStroke. Records pre-change undo state.</summary>
+        public void BrushSetClimateLevelsPreview(VoronoiCell cell, int t, int m)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
-            CellOverrideService.SetClimateLevels(cell, t, m, beachElevationThreshold);
+            CellOverrideService.SetClimateLevelsPreview(cell, t, m, beachElevationThreshold);
+        }
+
+        /// <summary>Biome-brush stroke end: reclassifies the painted cells with the REAL elevation cooling
+        /// (honest final biome), then rebakes. No new undo snapshot — the stroke's pre-change state was already
+        /// captured on first touch, so Ctrl+Z still reverts to before the stroke.</summary>
+        public void FinalizeBiomeStroke(System.Collections.Generic.IEnumerable<VoronoiCell> strokeCells)
+        {
+            if (cells == null) return;
+            foreach (var cell in strokeCells)
+                CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+            RebakeAffectedCells(strokeCells);
         }
 
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя
