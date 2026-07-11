@@ -159,22 +159,39 @@ namespace WorldGen.Generation
             RecomputeBiome(cell, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к текущей эффективной температуре клетки (clamped [0,1]); снимает biome-override.</summary>
-        public static void AdjustTemperature(VoronoiCell cell, float delta, float beachElevationThreshold)
+        /// <summary>Steps the cell's temperature by ±1 level (dir = +1/−1), snapping to the level band-center.
+        /// Clears any stale BiomeOverride so the stepped climate shows through (field removed in a later task).</summary>
+        public static void StepTemperatureLevel(VoronoiCell cell, int dir, float beachElevationThreshold)
         {
-            float current = cell.EffectiveTemperature;
-            cell.TemperatureOverride = System.Math.Clamp(current + delta, 0f, 1f);
+            int lvl = System.Math.Clamp(BiomeMatrix.Level5(cell.EffectiveTemperature) + dir, 0, 4);
+            cell.TemperatureOverride = BiomeMatrix.LevelCenter(lvl);
             cell.BiomeOverride = null;
             RecomputeBiome(cell, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к текущей эффективной влажности клетки (clamped [0,1]); снимает biome-override.</summary>
-        public static void AdjustMoisture(VoronoiCell cell, float delta, float beachElevationThreshold)
+        /// <summary>Steps the cell's moisture by ±1 level (dir = +1/−1), snapping to the level band-center.</summary>
+        public static void StepMoistureLevel(VoronoiCell cell, int dir, float beachElevationThreshold)
         {
-            float current = cell.EffectiveMoisture;
-            cell.MoistureOverride = System.Math.Clamp(current + delta, 0f, 1f);
+            int lvl = System.Math.Clamp(BiomeMatrix.Level5(cell.EffectiveMoisture) + dir, 0, 4);
+            cell.MoistureOverride = BiomeMatrix.LevelCenter(lvl);
             cell.BiomeOverride = null;
             RecomputeBiome(cell, beachElevationThreshold);
+        }
+
+        /// <summary>Absolutely sets temperature and/or moisture to a level's band-center (null = leave axis
+        /// untouched). Used by the biome brush, the 5×5 palette, and the precise-selection panel.</summary>
+        public static void SetClimateLevels(VoronoiCell cell, int? tempLevel, int? moistLevel, float beachElevationThreshold)
+        {
+            if (tempLevel.HasValue)  cell.TemperatureOverride = BiomeMatrix.LevelCenter(tempLevel.Value);
+            if (moistLevel.HasValue) cell.MoistureOverride    = BiomeMatrix.LevelCenter(moistLevel.Value);
+            cell.BiomeOverride = null;
+            RecomputeBiome(cell, beachElevationThreshold);
+        }
+
+        /// <summary>Enumerable overload for precise-selection edits over a whole selection.</summary>
+        public static void SetClimateLevels(IEnumerable<VoronoiCell> cells, int? tempLevel, int? moistLevel, float beachElevationThreshold)
+        {
+            foreach (var cell in cells) SetClimateLevels(cell, tempLevel, moistLevel, beachElevationThreshold);
         }
 
         /// <summary>

@@ -150,5 +150,20 @@ namespace WorldGen.Generation
             }
             Debug.Log(ok ? "Self-Test Level Helpers: PASS" : "Self-Test Level Helpers: FAIL");
         }
+
+        [ContextMenu("Self-Test: Climate Step")]
+        public void SelfTestClimateStep()
+        {
+            CellOverrideService.ElevationTempDrop = 0.4f;
+            var c = new VoronoiCell(1, new System.Numerics.Vector2(0, 0)) { Height = 0.2f, Humidity = 0.5f, Temperature = 0.5f };
+            bool ok = true;
+            for (int i = 0; i < 10; i++) CellOverrideService.StepTemperatureLevel(c, +1, 0f);
+            ok &= BiomeMatrix.Level5(c.EffectiveTemperature) == 4;          // clamps at hottest
+            for (int i = 0; i < 10; i++) CellOverrideService.StepTemperatureLevel(c, -1, 0f);
+            ok &= BiomeMatrix.Level5(c.EffectiveTemperature) == 0;          // clamps at coldest
+            CellOverrideService.SetClimateLevels(c, 4, 0, 0f);              // hot + dry, lowland → Desert
+            ok &= c.Biome == Biome.Desert;
+            Debug.Log(ok ? "Self-Test Climate Step: PASS" : "Self-Test Climate Step: FAIL");
+        }
     }
 }

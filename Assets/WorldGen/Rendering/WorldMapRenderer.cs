@@ -589,20 +589,36 @@ namespace WorldGen.Rendering
             CellOverrideService.AdjustElevation(cell, delta, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к температуре клетки (относительное изменение, кисть).</summary>
-        public void BrushAdjustTemperature(VoronoiCell cell, float delta)
+        /// <summary>Steps this cell's temperature by ±1 level (brush), recording pre-change undo state.</summary>
+        public void BrushStepTemperature(VoronoiCell cell, int dir)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
-            CellOverrideService.AdjustTemperature(cell, delta, beachElevationThreshold);
+            CellOverrideService.StepTemperatureLevel(cell, dir, beachElevationThreshold);
         }
 
-        /// <summary>Прибавляет delta к влажности клетки (относительное изменение, кисть).</summary>
-        public void BrushAdjustMoisture(VoronoiCell cell, float delta)
+        /// <summary>Steps this cell's moisture by ±1 level (brush), recording pre-change undo state.</summary>
+        public void BrushStepMoisture(VoronoiCell cell, int dir)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
-            CellOverrideService.AdjustMoisture(cell, delta, beachElevationThreshold);
+            CellOverrideService.StepMoistureLevel(cell, dir, beachElevationThreshold);
+        }
+
+        /// <summary>Sets this cell's temperature to an absolute level (brush smooth), recording undo.</summary>
+        public void SetTemperatureLevel(VoronoiCell cell, int level)
+        {
+            if (cells == null) return;
+            brushUndo.RecordBeforeChange(cell);
+            CellOverrideService.SetClimateLevels(cell, level, null, beachElevationThreshold);
+        }
+
+        /// <summary>Sets this cell's moisture to an absolute level (brush smooth), recording undo.</summary>
+        public void SetMoistureLevel(VoronoiCell cell, int level)
+        {
+            if (cells == null) return;
+            brushUndo.RecordBeforeChange(cell);
+            CellOverrideService.SetClimateLevels(cell, null, level, beachElevationThreshold);
         }
 
         /// <summary>

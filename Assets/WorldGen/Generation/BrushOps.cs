@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace WorldGen.Generation
 {
@@ -56,6 +57,18 @@ namespace WorldGen.Generation
             }
             float avg = sum / count;
             return current + (avg - current) * strength;
+        }
+
+        /// <summary>Level-space smoothing: move `current` toward the rounded average of neighbour levels by
+        /// `strength` (0..1), returning the new integer level. No neighbours → unchanged.</summary>
+        public static int SmoothedLevel(int current, System.Collections.Generic.IEnumerable<int> neighborLevels, float strength)
+        {
+            int sum = 0, n = 0;
+            foreach (int l in neighborLevels) { sum += l; n++; }
+            if (n == 0) return current;
+            float avg = (float)sum / n;
+            int target = Mathf.RoundToInt(Mathf.Lerp(current, avg, Mathf.Clamp01(strength)));
+            return Mathf.Clamp(target, 0, 4);
         }
     }
 }

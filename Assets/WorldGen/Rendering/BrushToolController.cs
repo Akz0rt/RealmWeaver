@@ -71,6 +71,7 @@ namespace WorldGen.Rendering
         Vector2 lastPaintSite;   // точка последнего применения в Site-координатах — для мгновенного отклика при движении
         bool hasLastPaintSite;
         float repeatTimer;
+        readonly HashSet<int> steppedThisStroke = new HashSet<int>();
 
         LineRenderer cursorRing;
         const int CircleSegments = 48;
@@ -118,6 +119,7 @@ namespace WorldGen.Rendering
                 isPainting = true;
                 hasLastPaintSite = false;
                 mapRenderer.BeginBrushStroke();
+                steppedThisStroke.Clear();
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -193,56 +195,68 @@ namespace WorldGen.Rendering
                 return;
             }
 
-            float signedDelta = (mode == BrushMode.Raise ? +1f : -1f) * brushStep * strength;
-            if (signedDelta == 0f) return;
-            foreach (var cell in affected)
-                ApplyDelta(cell, signedDelta);
-            mapRenderer.RebakeAffectedCells(affected);
-        }
-
-        void ApplyDelta(VoronoiCell cell, float signedDelta)
-        {
-            switch (activeTool)
+            int dir = mode == BrushMode.Raise ? +1 : -1;
+            if (activeTool == BrushTool.Elevation)
             {
-                case BrushTool.Elevation: mapRenderer.BrushAdjustElevation(cell, signedDelta); break;
-                case BrushTool.Temperature: mapRenderer.BrushAdjustTemperature(cell, signedDelta); break;
-                case BrushTool.Moisture: mapRenderer.BrushAdjustMoisture(cell, signedDelta); break;
+                float signedDelta = dir * brushStep * strength;
+                if (signedDelta != 0f)
+                    foreach (var cell in affected) mapRenderer.BrushAdjustElevation(cell, signedDelta);
             }
+            else // Temperature / Moisture — one level step per cell per stroke
+            {
+                foreach (var cell in affected)
+                {
+                    if (!steppedThisStroke.Add(cell.Id)) continue; // already stepped this stroke
+                    if (activeTool == BrushTool.Temperature) mapRenderer.BrushStepTemperature(cell, dir);
+                    else if (activeTool == BrushTool.Moisture) mapRenderer.BrushStepMoisture(cell, dir);
+                }
+            }
+            mapRenderer.RebakeAffectedCells(affected);
         }
 
         void ApplySmooth(List<VoronoiCell> affected)
         {
-            // Считаем целевые дельты по ТЕКУЩИМ значениям всех клеток заранее, и лишь потом применяем,
-            // чтобы изменение одной клетки в цикле не искажало чтение соседей у следующих в том же отпечатке.
+            if (activeTool == BrushTool.Temperature || activeTool == BrushTool.Moisture)
+            {
+                foreach (var cell in affected)
+                {
+                    if (!steppedThisStroke.Add(cell.Id)) continue;
+                    bool temp = activeTool == BrushTool.Temperature;
+                    int cur = BiomeMatrix.Level5(temp ? cell.EffectiveTemperature : cell.EffectiveMoisture);
+                    int target = BrushOps.SmoothedLevel(cur, NeighborLevels(cell, temp), strength);
+                    if (temp) mapRenderer.SetTemperatureLevel(cell, target);
+                    else      mapRenderer.SetMoistureLevel(cell, target);
+                }
+                return;
+            }
+
+            // Elevation: continuous smoothing (unchanged logic).
             var deltas = new List<(VoronoiCell cell, float delta)>(affected.Count);
             foreach (var cell in affected)
             {
-                float current = ReadValue(cell);
-                float target = BrushOps.SmoothedValue(current, NeighborValues(cell), strength);
+                float current = cell.EffectiveElevation;
+                float target = BrushOps.SmoothedValue(current, ElevationNeighborValues(cell), strength);
                 deltas.Add((cell, target - current));
             }
             foreach (var (cell, delta) in deltas)
-            {
-                if (delta != 0f) ApplyDelta(cell, delta);
-            }
+                if (delta != 0f) mapRenderer.BrushAdjustElevation(cell, delta);
         }
 
-        float ReadValue(VoronoiCell cell)
-        {
-            switch (activeTool)
-            {
-                case BrushTool.Temperature: return cell.EffectiveTemperature;
-                case BrushTool.Moisture: return cell.EffectiveMoisture;
-                default: return cell.EffectiveElevation; // Elevation
-            }
-        }
-
-        IEnumerable<float> NeighborValues(VoronoiCell cell)
+        IEnumerable<int> NeighborLevels(VoronoiCell cell, bool temp)
         {
             foreach (int nid in cell.NeighborIds)
             {
                 var n = mapRenderer.GetCellById(nid);
-                if (n != null) yield return ReadValue(n);
+                if (n != null) yield return BiomeMatrix.Level5(temp ? n.EffectiveTemperature : n.EffectiveMoisture);
+            }
+        }
+
+        IEnumerable<float> ElevationNeighborValues(VoronoiCell cell)
+        {
+            foreach (int nid in cell.NeighborIds)
+            {
+                var n = mapRenderer.GetCellById(nid);
+                if (n != null) yield return n.EffectiveElevation;
             }
         }
 
@@ -352,6 +366,17 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Smooth Averaging: PASS"
                 : $"Self-Test Smooth Averaging: FAIL (full={full}, half={half}, none={none}, noNeighbors={noNeighbors})");
+        }
+
+        [ContextMenu("Self-Test: Level Smooth")]
+        public void SelfTestLevelSmooth()
+        {
+            bool ok = true;
+            ok &= BrushOps.SmoothedLevel(4, new[] { 0, 0 }, 1f) == 0;   // full pull to average (0)
+            ok &= BrushOps.SmoothedLevel(4, new[] { 2, 2 }, 1f) == 2;   // to neighbour level
+            ok &= BrushOps.SmoothedLevel(4, new[] { 0, 0 }, 0f) == 4;   // strength 0 → unchanged
+            ok &= BrushOps.SmoothedLevel(2, new int[0], 1f) == 2;       // no neighbours → unchanged
+            Debug.Log(ok ? "Self-Test Level Smooth: PASS" : "Self-Test Level Smooth: FAIL");
         }
     }
 }
