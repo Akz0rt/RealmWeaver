@@ -657,10 +657,12 @@ namespace WorldGen.Rendering
             }
         }
 
-        /// <summary>Кисть суша↔вода: makeLand=false → ForceOcean (топим, elevation 0); makeLand=true →
-        /// ForceLand с ВАРЬИРОВАННОЙ высотой из шума (разной для каждой клетки), чтобы новая суша была
-        /// рельефной (холмы/склоны под hillshade), а не плоским плато одной высоты. Биом пересчитается
-        /// под новую высоту/климат; пишет "досмазковый" undo-снимок.</summary>
+        /// <summary>Кисть суша↔вода: makeLand=false → топим клетку (elevation 0) и делает её ForceOcean,
+        /// если она граничит с внешним океаном, иначе ForceLake (изолированный внутренний водоём остаётся
+        /// озером, а не становится океаном); makeLand=true → ForceLand с ВАРЬИРОВАННОЙ высотой из шума
+        /// (разной для каждой клетки), чтобы новая суша была рельефной (холмы/склоны под hillshade), а не
+        /// плоским плато одной высоты. Биом пересчитается под новую высоту/климат; пишет "досмазковый"
+        /// undo-снимок.</summary>
         public void BrushSetWater(VoronoiCell cell, bool makeLand)
         {
             if (cells == null) return;
@@ -673,8 +675,16 @@ namespace WorldGen.Rendering
             }
             else
             {
-                cell.WaterOverride = WaterOverrideType.ForceOcean;
-                cell.ElevationOverride = 0f;
+                // Вода: если клетка НЕ граничит с внешним океаном — это внутренний водоём (озеро), а не океан.
+                // Прибрежная/океан-смежная вода становится океаном (продолжает его); изолированная — озером.
+                bool touchesOcean = false;
+                foreach (int nid in cell.NeighborIds)
+                {
+                    var n = GetCellById(nid);
+                    if (n != null && n.EffectiveIsOcean) { touchesOcean = true; break; }
+                }
+                cell.WaterOverride = touchesOcean ? WaterOverrideType.ForceOcean : WaterOverrideType.ForceLake;
+                cell.ElevationOverride = 0f; // топим клетку под уровень моря в обоих случаях
             }
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
         }
