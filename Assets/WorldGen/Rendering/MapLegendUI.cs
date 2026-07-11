@@ -140,28 +140,53 @@ namespace WorldGen.Rendering
             return entries;
         }
 
-        /// <summary>Generalized biome families for the legend — one entry per visual family, colored
-        /// from the SAME dark-fantasy MapPalette the map renders with (not the bright reference
-        /// colours), so legend swatches match the map. Themed by mapRenderer.paletteTheme.</summary>
-        static List<LegendEntry> GeneralizedBiomeEntries(MapRaster.MapPaletteTheme theme)
+        /// <summary>Russian display name for a biome (18 land biomes + water). Isolated from the
+        /// rendering/family logic — only used to label legend rows.</summary>
+        static string BiomeName(Biome b)
         {
-            Color Slot(MapRaster.PaletteSlot s) => MapRaster.MapPalette.GetSlotColor(theme, s);
-            return new List<LegendEntry>
+            switch (b)
             {
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Sea),        "Океан"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.LakeS),      "Озеро"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Coast),      "Побережье"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Snow),       "Снег"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Tundra),     "Тундра"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Forest),     "Лес / тайга"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.ForestWarm), "Тёплый лес"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Moor),       "Кустарники"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Badlands),   "Пустошь / полупустыня"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Plains),     "Луга"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Steppe),     "Степь"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Savanna),    "Саванна"),
-                new LegendEntry(Slot(MapRaster.PaletteSlot.Desert),     "Пустыня"),
-            };
+                case Biome.Ocean: return "Океан";           case Biome.Lake: return "Озеро";
+                case Biome.Beach: return "Побережье";        case Biome.IceWaste: return "Ледяная пустошь";
+                case Biome.Tundra: return "Тундра";          case Biome.Snow: return "Снега";
+                case Biome.Glacier: return "Ледники";        case Biome.ColdSteppe: return "Холодная степь";
+                case Biome.ForestTundra: return "Лесотундра";case Biome.Taiga: return "Тайга";
+                case Biome.ConiferForest: return "Хвойный лес"; case Biome.Steppe: return "Степь";
+                case Biome.Grassland: return "Луга";         case Biome.Forest: return "Лес";
+                case Biome.RainForest: return "Дождевой лес";case Biome.SemiDesert: return "Полупустыня";
+                case Biome.Shrubland: return "Кустарники";   case Biome.Savanna: return "Саванна";
+                case Biome.WarmForest: return "Тёплый лес";  case Biome.Desert: return "Пустыня";
+                case Biome.TropicalForest: return "Тропический лес"; default: return b.ToString();
+            }
+        }
+
+        /// <summary>Legend for Biome/Combined modes: Ocean (always) + Lake (if any) + the top-5 land biomes by
+        /// cell count on the current map, colored per-biome from the dark-fantasy palette.</summary>
+        List<LegendEntry> GeneralizedBiomeEntries(MapRaster.MapPaletteTheme theme)
+        {
+            var entries = new List<LegendEntry>();
+            Color Water(MapRaster.PaletteSlot s) => MapRaster.MapPalette.GetSlotColor(theme, s);
+            entries.Add(new LegendEntry(Water(MapRaster.PaletteSlot.Sea), "Океан"));
+
+            var cells = mapRenderer.Cells;
+            bool anyLake = false;
+            var counts = new Dictionary<Biome, int>();
+            if (cells != null)
+                foreach (var c in cells)
+                {
+                    if (c.EffectiveIsOcean) continue;
+                    if (c.EffectiveIsLake) { anyLake = true; continue; }
+                    if (c.Biome == Biome.Beach) continue;                 // coast handled as water/edge, not a land row
+                    counts.TryGetValue(c.Biome, out int n);
+                    counts[c.Biome] = n + 1;
+                }
+
+            if (anyLake) entries.Add(new LegendEntry(Water(MapRaster.PaletteSlot.LakeS), "Озеро"));
+
+            foreach (var kv in counts.OrderByDescending(k => k.Value).Take(5))
+                entries.Add(new LegendEntry(MapRaster.MapPalette.GetBiomeColor(theme, kv.Key), BiomeName(kv.Key)));
+
+            return entries;
         }
 
         // ── UI construction ──────────────────────────────────────────────────────
