@@ -805,6 +805,72 @@ namespace WorldGen.Rendering
             cell.RegionId = regionId;
         }
 
+        Dictionary<int, VoronoiCell> BuildCellById()
+        {
+            var d = new Dictionary<int, VoronoiCell>(cells.Count);
+            foreach (var c in cells) d[c.Id] = c;
+            return d;
+        }
+
+        /// <summary>Water-brush release: re-unifies every lake the stroke touched to its majority
+        /// adjacent-land region (atomic lakes). Records undo for reassigned cells and rebakes them.
+        /// Call DURING the open stroke (before EndBrushStroke). Caller rebuilds borders.</summary>
+        public void UnifyTouchedLakes(IEnumerable<int> touchedCellIds)
+        {
+            if (cells == null) return;
+            var cellById = BuildCellById();
+            var doneLakes = new HashSet<int>();
+            var reassigned = new List<VoronoiCell>();
+            foreach (var id in touchedCellIds)
+            {
+                if (doneLakes.Contains(id)) continue;
+                if (!cellById.TryGetValue(id, out var c) || !c.EffectiveIsLake) continue;
+                var comp = WorldGen.Generation.LakeRegionUnifier.FindLakeComponent(id, cellById);
+                foreach (var lc in comp) doneLakes.Add(lc.Id);
+                int region = WorldGen.Generation.LakeRegionUnifier.MajorityLandRegion(comp, cellById);
+                if (region < 0) continue; // no land-region neighbours — leave unassigned
+                foreach (var lc in comp)
+                {
+                    if (lc.RegionId == region) continue;
+                    brushUndo.RecordBeforeChange(lc);
+                    lc.RegionId = region;
+                    reassigned.Add(lc);
+                }
+            }
+            if (reassigned.Count > 0) RebakeAffectedCells(reassigned);
+        }
+
+        /// <summary>Region-brush release: for each lake the stroke covered by >= thresholdPercent of its
+        /// cells, reassigns the WHOLE lake to targetRegion (atomic). Records undo and rebakes.
+        /// Call DURING the open stroke (before EndBrushStroke). Caller rebuilds borders.</summary>
+        public void ClaimLakesByCoverage(IEnumerable<int> touchedLakeCellIds, int targetRegion, int thresholdPercent)
+        {
+            if (cells == null) return;
+            var cellById = BuildCellById();
+            var touched = new HashSet<int>();
+            foreach (var id in touchedLakeCellIds) touched.Add(id);
+            var doneLakes = new HashSet<int>();
+            var reassigned = new List<VoronoiCell>();
+            foreach (var id in touched)
+            {
+                if (doneLakes.Contains(id)) continue;
+                if (!cellById.TryGetValue(id, out var c) || !c.EffectiveIsLake) continue;
+                var comp = WorldGen.Generation.LakeRegionUnifier.FindLakeComponent(id, cellById);
+                foreach (var lc in comp) doneLakes.Add(lc.Id);
+                int covered = 0;
+                foreach (var lc in comp) if (touched.Contains(lc.Id)) covered++;
+                if (!WorldGen.Generation.LakeRegionUnifier.CoversLakeEnough(covered, comp.Count, thresholdPercent)) continue;
+                foreach (var lc in comp)
+                {
+                    if (lc.RegionId == targetRegion) continue;
+                    brushUndo.RecordBeforeChange(lc);
+                    lc.RegionId = targetRegion;
+                    reassigned.Add(lc);
+                }
+            }
+            if (reassigned.Count > 0) RebakeAffectedCells(reassigned);
+        }
+
         /// <summary>Biome brush DURING-stroke: paints the selected matrix cell and previews it as that biome
         /// (drop=0, no elevation cooling) for WYSIWYG feedback. Cooling is applied on stroke end via
         /// FinalizeBiomeStroke. Records pre-change undo state.</summary>

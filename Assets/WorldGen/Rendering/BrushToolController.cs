@@ -59,6 +59,8 @@ namespace WorldGen.Rendering
         public int selectedRegionId = -1;
         [Tooltip("Интервал в секундах между повторными применениями, пока ЛКМ зажата на месте. Не зависит от FPS.")]
         public float repeatInterval = 0.05f;
+        [Tooltip("Регион-кисть: если мазок покрыл >= этого % клеток озера, всё озеро отходит региону кисти.")]
+        public int regionLakeClaimPercent = 30;
 
         [Header("Включение режима")]
         [Tooltip("Если выключено — компонент не реагирует на ввод. Включается при переключении в режим кисти.")]
@@ -77,6 +79,8 @@ namespace WorldGen.Rendering
         readonly HashSet<int> steppedThisStroke = new HashSet<int>();
         readonly HashSet<VoronoiCell> biomeStrokeCells = new HashSet<VoronoiCell>();
         bool regionStrokeTouched;
+        readonly HashSet<int> regionStrokeLakeCells = new HashSet<int>();   // lake cells a Region stamp passed over (for the 30% rule)
+        readonly HashSet<int> waterStrokeCells = new HashSet<int>();        // cells a Water stamp touched (unify their lakes on release)
 
         LineRenderer cursorRing;
         const int CircleSegments = 48;
@@ -127,6 +131,8 @@ namespace WorldGen.Rendering
                 steppedThisStroke.Clear();
                 biomeStrokeCells.Clear();
                 regionStrokeTouched = false;
+                regionStrokeLakeCells.Clear();
+                waterStrokeCells.Clear();
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -143,9 +149,19 @@ namespace WorldGen.Rendering
                 }
                 if (regionStrokeTouched)
                 {
+                    // 30% rule: a lake the region stroke covered enough of joins the painted region wholesale.
+                    mapRenderer.ClaimLakesByCoverage(regionStrokeLakeCells, selectedRegionId, regionLakeClaimPercent);
                     mapRenderer.RebuildBorders();
                     regionStrokeTouched = false;
                 }
+                if (waterStrokeCells.Count > 0)
+                {
+                    // Water edits changed lake topology: re-unify touched lakes to their majority land region.
+                    mapRenderer.UnifyTouchedLakes(waterStrokeCells);
+                    mapRenderer.RebuildBorders();
+                }
+                regionStrokeLakeCells.Clear();
+                waterStrokeCells.Clear();
                 mapRenderer.EndBrushStroke();
             }
         }
@@ -205,13 +221,17 @@ namespace WorldGen.Rendering
                 foreach (var cell in affected)
                     mapRenderer.BrushSetWater(cell, makeLand);
                 mapRenderer.RebakeAffectedCells(affected);
+                foreach (var cell in affected) waterStrokeCells.Add(cell.Id);
                 return;
             }
 
             if (activeTool == BrushTool.Region)
             {
                 foreach (var cell in affected)
-                    mapRenderer.BrushSetRegion(cell, selectedRegionId);
+                {
+                    mapRenderer.BrushSetRegion(cell, selectedRegionId);  // skips water internally
+                    if (cell.EffectiveIsLake) regionStrokeLakeCells.Add(cell.Id);
+                }
                 mapRenderer.RebakeAffectedCells(affected);   // updates GPU regionId slot-B (Regions-mode fill)
                 regionStrokeTouched = true;                   // flag → RebuildBorders on release
                 return;
