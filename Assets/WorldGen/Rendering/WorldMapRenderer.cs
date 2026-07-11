@@ -1525,7 +1525,7 @@ namespace WorldGen.Rendering
         /// 5x5, рамка - океан, внутренний 3x3 - суша; левый столбец (c=1) - Snow (высота 0.9 → верхняя
         /// полоса), правые два (c=2,3) - Grassland (высота 0.1 → нижняя полоса). cellIdArray строится
         /// как в GpuMapRenderer.FinishBuild (CellIdTexture.Build → GetPixels → округление .r).
-        /// Глубинный пиксель каждого региона получает верную метку семейства/полосы; водный пиксель
+        /// Глубинный пиксель каждого региона получает верную метку биома/полосы; водный пиксель
         /// остаётся -1 (сентинел, не затёрт).</summary>
         [ContextMenu("Self-Test: Region Label Baker")]
         public void SelfTestRegionLabelBaker()
@@ -1570,11 +1570,11 @@ namespace WorldGen.Rendering
             int grassIdx = 20 * texW + 30;
             int snowIdx = 20 * texW + 10;
             int waterIdx = 0 * texW + 0; // мир (0.5,0.5) - угол рамки, гарантированно вода
-            int plains = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Plains;
-            int snowFam = (int)WorldGen.Rendering.MapRaster.BiomeFamily.Snow;
+            int grass = (int)Biome.Grassland;
+            int snowBiome = (int)Biome.Snow;
 
-            bool grassFamOk = familyLabel[grassIdx] == plains;
-            bool snowFamOk = familyLabel[snowIdx] == snowFam;
+            bool grassFamOk = familyLabel[grassIdx] == grass;
+            bool snowFamOk = familyLabel[snowIdx] == snowBiome;
             bool grassBandOk = bandLabel[grassIdx] == 0;  // 0.1*5=0
             bool snowBandOk = bandLabel[snowIdx] == 4;    // 0.9*5=4
             bool waterFamStaysUnset = familyLabel[waterIdx] == -1;
@@ -1587,7 +1587,7 @@ namespace WorldGen.Rendering
                            && grassIsLandOk && snowIsLandOk && waterIsLandOk;
             Debug.Log(bakerOk
                 ? "Self-Test Region Label Baker: PASS"
-                : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{plains}, snowFam={familyLabel[snowIdx]}/{snowFam}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]}, grassIsLand={isLandMask[grassIdx]}, snowIsLand={isLandMask[snowIdx]}, waterIsLand={isLandMask[waterIdx]})");
+                : $"Self-Test Region Label Baker: FAIL (grassFam={familyLabel[grassIdx]}/{grass}, snowFam={familyLabel[snowIdx]}/{snowBiome}, grassBand={bandLabel[grassIdx]}/0, snowBand={bandLabel[snowIdx]}/4, waterFam={familyLabel[waterIdx]}, waterBand={bandLabel[waterIdx]}, grassIsLand={isLandMask[grassIdx]}, snowIsLand={isLandMask[snowIdx]}, waterIsLand={isLandMask[waterIdx]})");
         }
 
         /// <summary>Кисть должна патчить label'ы МГНОВЕННО (угловато, по клеткам) во время мазка, без
