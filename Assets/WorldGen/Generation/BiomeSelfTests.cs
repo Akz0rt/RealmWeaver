@@ -134,5 +134,21 @@ namespace WorldGen.Generation
                    && far.Temperature > 0.0f && far.Temperature < 0.5f; // global blend, biased to nearer (cold) — not the 0.5 fallback
             Debug.Log(ok ? "Self-Test Temperature Field: PASS" : "Self-Test Temperature Field: FAIL");
         }
+
+        [ContextMenu("Self-Test: Level Helpers")]
+        public void SelfTestLevelHelpers()
+        {
+            bool ok = true;
+            for (int k = 0; k < 5; k++) ok &= BiomeMatrix.Level5(BiomeMatrix.LevelCenter(k)) == k; // round-trip
+            // RepresentativeClimate covers all 18 land biomes and maps back to the same biome.
+            foreach (Biome b in System.Enum.GetValues(typeof(Biome)))
+            {
+                var rep = BiomeMatrix.RepresentativeClimate(b);
+                bool isWater = b == Biome.Ocean || b == Biome.Lake || b == Biome.Beach;
+                if (isWater) { ok &= rep == null; continue; }
+                ok &= rep.HasValue && BiomeMatrix.Get(rep.Value.t, rep.Value.m) == b;
+            }
+            Debug.Log(ok ? "Self-Test Level Helpers: PASS" : "Self-Test Level Helpers: FAIL");
+        }
     }
 }
