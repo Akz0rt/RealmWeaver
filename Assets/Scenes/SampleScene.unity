@@ -1010,10 +1010,10 @@ MonoBehaviour:
   riverColor: {r: 0.2, g: 0.4, b: 0.8, a: 1}
   beachElevationThreshold: 0.1
   elevationTempDrop: 0.4
-  numberOfTemperatureEpicenters: 5
-  epicenterMinRadius: 50
+  numberOfTemperatureEpicenters: 3
+  epicenterMinRadius: 25
   epicenterMaxRadius: 75
-  baseTemperature: 0.5
+  baseTemperature: 0
   displayMode: 3
   showBiomeLayer: 1
   showReliefLayer: 1
