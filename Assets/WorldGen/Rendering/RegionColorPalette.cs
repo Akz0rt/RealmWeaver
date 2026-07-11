@@ -11,16 +11,23 @@ namespace WorldGen.Rendering
     /// </summary>
     public static class RegionColorPalette
     {
+        // Приглушённая дарк-фэнтези палитра политических регионов: desaturated jewel-тона средней
+        // яркости с холодным уклоном, чтобы границы/заливка регионов ГАРМОНИРОВАЛИ с тёмной картой
+        // (ColdTwilight), а не «кричали» как старые насыщенные цвета. DM-tunable.
         static readonly Color[] palette = new Color[]
         {
-            new Color(0.80f, 0.30f, 0.30f),
-            new Color(0.30f, 0.60f, 0.80f),
-            new Color(0.40f, 0.70f, 0.30f),
-            new Color(0.80f, 0.70f, 0.20f),
-            new Color(0.60f, 0.40f, 0.80f),
-            new Color(0.85f, 0.50f, 0.20f),
-            new Color(0.30f, 0.75f, 0.70f),
-            new Color(0.75f, 0.35f, 0.60f),
+            new Color(0.243f, 0.431f, 0.416f), // тёмная бирюза
+            new Color(0.290f, 0.361f, 0.510f), // сланцевый синий
+            new Color(0.420f, 0.353f, 0.510f), // муаровый фиолет
+            new Color(0.541f, 0.353f, 0.400f), // пыльная роза
+            new Color(0.592f, 0.475f, 0.290f), // охра
+            new Color(0.369f, 0.431f, 0.267f), // мох
+            new Color(0.541f, 0.353f, 0.235f), // ржавчина
+            new Color(0.337f, 0.408f, 0.471f), // сталь
+            new Color(0.431f, 0.290f, 0.369f), // слива
+            new Color(0.627f, 0.541f, 0.306f), // приглушённое золото
+            new Color(0.227f, 0.376f, 0.463f), // глубокий циан
+            new Color(0.306f, 0.478f, 0.369f), // блёклый зелёный
         };
 
         public static Color GetRegionColor(int regionId)
@@ -28,10 +35,10 @@ namespace WorldGen.Rendering
             if (regionId < 0) return Color.gray; // не назначено - сигнал об ошибке в данных
             if (regionId < palette.Length) return palette[regionId];
 
-            // Fallback для N больше размера палитры - золотой угол в HSV даёт хорошо
-            // различимые соседние цвета без необходимости вручную добавлять записи в массив.
+            // Fallback для N больше размера палитры - золотой угол в HSV. Приглушённые
+            // saturation/value, чтобы вписываться в дарк-фэнтези палитру карты (не яркие).
             float hue = (regionId * 0.618033f) % 1f;
-            return Color.HSVToRGB(hue, 0.6f, 0.85f);
+            return Color.HSVToRGB(hue, 0.35f, 0.55f);
         }
 
         /// <summary>
