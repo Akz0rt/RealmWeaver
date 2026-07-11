@@ -118,6 +118,10 @@ namespace WorldGen.Rendering
         [Tooltip("Плотность названий зон: меньше = только крупные зоны получают имя, больше = включать средние.")]
         public float labelDensity = 0.4f;
 
+        [Header("Регионы (политическая карта)")]
+        [Tooltip("Хранилище метаданных регионов (имя/цвет) - заполняется GenerateRegionsOnly.")]
+        public RegionManager regionManager;
+
         [Header("Combined: тёмный рендер (MapRaster)")]
         public MapPaletteTheme paletteTheme = MapPaletteTheme.ColdTwilight;
         [Range(0f, 100f)] public float coldLight = 58f;
@@ -485,6 +489,31 @@ namespace WorldGen.Rendering
             lastGenParams = genParams;
 
             RefreshAfterCellDataChange(); // только перекрашиваем - геометрия не менялась
+            OnDisplayChanged?.Invoke();
+        }
+
+        /// <summary>User-triggered region (re)generation on the current map. Replaces any existing regions.</summary>
+        public void GenerateRegionsOnly(int count, int minSize)
+        {
+            if (cells == null) { Debug.LogWarning("WorldMapRenderer: карта ещё не сгенерирована."); return; }
+            int k = WorldGenerator.GenerateRegions(cells, count, minSize, seed);
+            // Build region metadata: unique fantasy names + palette colours.
+            if (regionManager != null)
+            {
+                var list = new System.Collections.Generic.List<WorldGen.Generation.RegionData>();
+                var usedNames = new System.Collections.Generic.HashSet<string>();
+                for (int id = 0; id < k; id++)
+                {
+                    string name = WorldGen.Rendering.RegionLabels.RegionLabelNames.ContinentName(seed, id);
+                    int salt = 1; while (!usedNames.Add(name)) name = WorldGen.Rendering.RegionLabels.RegionLabelNames.ContinentName(seed, id + 1000 * salt++);
+                    list.Add(new WorldGen.Generation.RegionData(id, name, RegionColorPalette.GetRegionColor(id)));
+                }
+                regionManager.SetAll(list);
+            }
+            showRegionBordersLayer = true;                 // regions now exist → show borders in Combined
+            BuildBorders();
+            UploadRegionColors();                          // GPU (Task 6 defines it; a no-op stub is fine until then)
+            RefreshAfterCellDataChange();
             OnDisplayChanged?.Invoke();
         }
 
@@ -2726,6 +2755,9 @@ namespace WorldGen.Rendering
             else RebakeAll();
             RebuildDecorations();
         }
+
+        // TODO(Task 6): upload region colors to GPU
+        void UploadRegionColors() { }
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
         /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,

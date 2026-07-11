@@ -324,5 +324,57 @@ namespace WorldGen.Generation
 
             return epicenters;
         }
+
+        /// <summary>User-triggered region build on existing cells: height-cost BFS from well-spaced seeds,
+        /// lakes folded in, then regions with fewer than minSize land cells are merged into their most-shared
+        /// neighbour; finally region ids are compacted to 0..K-1. Returns the resulting region count.</summary>
+        public static int GenerateRegions(List<VoronoiCell> cells, int count, int minSize, int seed)
+        {
+            var land = cells.Where(c => !c.IsOcean).ToList();
+            foreach (var c in cells) c.RegionId = -1;
+            if (land.Count == 0 || count <= 0) return 0;
+            int n = Math.Min(count, land.Count);
+            RegionGrowing.GroupCells(cells, land, n, seed);
+            LakeRegionUnifier.UnifyLakes(cells);
+            MergeUndersizedRegions(cells, land, minSize);
+            return CompactRegionIds(cells);
+        }
+
+        static void MergeUndersizedRegions(List<VoronoiCell> cells, List<VoronoiCell> land, int minSize)
+        {
+            var byId = cells.ToDictionary(c => c.Id);
+            while (true)
+            {
+                var counts = new Dictionary<int, int>();
+                foreach (var c in land) if (c.RegionId >= 0) { counts.TryGetValue(c.RegionId, out int k); counts[c.RegionId] = k + 1; }
+                if (counts.Count <= 1) return;                                   // never merge the last region away
+                int small = -1, smallCount = int.MaxValue;
+                foreach (var kv in counts) if (kv.Value < smallCount) { smallCount = kv.Value; small = kv.Key; }
+                if (smallCount >= minSize) return;                               // all regions big enough
+                // Neighbour region with the most shared border cells with `small`.
+                var shared = new Dictionary<int, int>();
+                foreach (var c in land)
+                {
+                    if (c.RegionId != small) continue;
+                    foreach (int nid in c.NeighborIds)
+                        if (byId.TryGetValue(nid, out var nb) && !nb.IsOcean && nb.RegionId >= 0 && nb.RegionId != small)
+                        { shared.TryGetValue(nb.RegionId, out int k); shared[nb.RegionId] = k + 1; }
+                }
+                if (shared.Count == 0) return;                                   // isolated island region — leave it
+                int into = -1, best = -1;
+                foreach (var kv in shared) if (kv.Value > best) { best = kv.Value; into = kv.Key; }
+                foreach (var c in land) if (c.RegionId == small) c.RegionId = into;
+            }
+        }
+
+        /// <summary>Remap the surviving region ids to a dense 0..K-1 range. Returns K.</summary>
+        static int CompactRegionIds(List<VoronoiCell> cells)
+        {
+            var map = new Dictionary<int, int>();
+            foreach (var c in cells)
+                if (c.RegionId >= 0 && !map.ContainsKey(c.RegionId)) map[c.RegionId] = map.Count;
+            foreach (var c in cells) if (c.RegionId >= 0) c.RegionId = map[c.RegionId];
+            return map.Count;
+        }
     }
 }
