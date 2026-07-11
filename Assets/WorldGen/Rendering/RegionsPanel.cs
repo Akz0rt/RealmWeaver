@@ -232,6 +232,8 @@ namespace WorldGen.Rendering
             BuildHeader(panelGO.transform);
             BuildGenerationSegment(panelGO.transform);
             AddSeparator(panelGO.transform);
+            BuildBrushSegment(panelGO.transform);
+            AddSeparator(panelGO.transform);
             BuildListSegment(panelGO.transform);
         }
 
@@ -281,6 +283,18 @@ namespace WorldGen.Rendering
             AddIntSliderRow(t, "Мин. размер", 1, 200, genMinSize, v => genMinSize = v);
 
             AddWideButton(t, "Генерировать регионы", ThemeRole.Accent, OnGenerateClicked);
+        }
+
+        // ── Segment: brush (region-paint brush radius, shared BrushToolController) ─
+
+        void BuildBrushSegment(Transform t)
+        {
+            AddCaption(t, "КИСТЬ");
+            float initialRadius = brushController != null ? brushController.brushRadius : 42f;
+            AddFloatSliderRow(t, "Размер кисти", 8f, 120f, initialRadius, v =>
+            {
+                if (brushController != null) brushController.brushRadius = v;
+            });
         }
 
         // ── Segment 2: list ──────────────────────────────────────────────────────
@@ -583,6 +597,62 @@ namespace WorldGen.Rendering
             void Refresh(float v) => valueLabel.text = Mathf.RoundToInt(v).ToString();
             Refresh(def);
             slider.onValueChanged.AddListener(v => { Refresh(v); onChanged?.Invoke(Mathf.RoundToInt(v)); });
+        }
+
+        /// <summary>Labeled float slider row — same shape/construction as AddIntSliderRow above, but for
+        /// a continuous px value (brush radius) instead of a whole-number count. Value label formatting
+        /// mirrors EditorBrushPanel.BuildLabeledSlider's non-percent case ("NN px").</summary>
+        void AddFloatSliderRow(Transform parent, string label, float min, float max, float def, System.Action<float> onChanged)
+        {
+            var groupGO = new GameObject($"{label}Group");
+            groupGO.transform.SetParent(parent, false);
+            var gvlg = groupGO.AddComponent<VerticalLayoutGroup>();
+            gvlg.spacing = 3f;
+            gvlg.childControlWidth = true;
+            gvlg.childForceExpandWidth = true;
+            gvlg.childControlHeight = true;
+            gvlg.childForceExpandHeight = false;
+            groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var headGO = new GameObject($"{label}Head");
+            headGO.transform.SetParent(groupGO.transform, false);
+            headGO.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            var labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(headGO.transform, false);
+            var labelText = labelGO.AddComponent<Text>();
+            labelText.text = label;
+            labelText.font = builtinFont;
+            labelText.fontSize = 12;
+            ThemeService.Tag(labelText, ThemeRole.Txt);
+            labelText.alignment = TextAnchor.MiddleLeft;
+            var labelRect = labelGO.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0.6f, 1f);
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+
+            var valGO = new GameObject("Value");
+            valGO.transform.SetParent(headGO.transform, false);
+            var valueLabel = valGO.AddComponent<Text>();
+            valueLabel.font = builtinFont;
+            valueLabel.fontSize = 11;
+            ThemeService.Tag(valueLabel, ThemeRole.Accent);
+            valueLabel.alignment = TextAnchor.MiddleRight;
+            var valRect = valGO.GetComponent<RectTransform>();
+            valRect.anchorMin = new Vector2(0.4f, 0f);
+            valRect.anchorMax = new Vector2(1f, 1f);
+            valRect.offsetMin = Vector2.zero;
+            valRect.offsetMax = Vector2.zero;
+
+            var sliderGO = new GameObject($"{label}Slider");
+            sliderGO.transform.SetParent(groupGO.transform, false);
+            var slider = BuildSlider(sliderGO, def, min, max);
+            sliderGO.AddComponent<LayoutElement>().preferredHeight = 14f;
+
+            void Refresh(float v) => valueLabel.text = $"{Mathf.RoundToInt(v)} px";
+            Refresh(def);
+            slider.onValueChanged.AddListener(v => { Refresh(v); onChanged?.Invoke(v); });
         }
 
         /// <summary>Ported from EditorBrushPanel/MapLayersPanel.BuildSlider: standard Background/Fill/
