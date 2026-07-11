@@ -47,7 +47,9 @@ namespace WorldGen.Rendering
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
-        readonly Dictionary<Biome, Outline> swatchOutline = new Dictionary<Biome, Outline>();
+        readonly Dictionary<(int t, int m), Outline> cellOutline = new Dictionary<(int, int), Outline>();
+        static readonly string[] TempShort  = { "Лед", "Хол", "Умер", "Тёпл", "Жар" };
+        static readonly string[] MoistShort = { "Сух", "Плсх", "Умер", "Влаж", "Мокр" };
         GameObject biomeTooltipGO;
         Text biomeTooltipText;
 
@@ -169,17 +171,6 @@ namespace WorldGen.Rendering
             squareIconOutline.effectColor = ThemeService.Get(ThemeRole.Accent);
             circleIconOutline.enabled = circle;
             squareIconOutline.enabled = !circle;
-        }
-
-        void OnBiomeSelected(Biome biome)
-        {
-            if (brushController != null) brushController.selectedBiome = biome;
-            foreach (var kvp in swatchOutline)
-            {
-                bool on = kvp.Key == biome;
-                kvp.Value.effectColor = ThemeService.Get(ThemeRole.Accent);
-                kvp.Value.enabled = on;
-            }
         }
 
         void UpdateBiomePaletteVisibility()
@@ -579,57 +570,82 @@ namespace WorldGen.Rendering
             var sectionGO = new GameObject("BiomePalette");
             sectionGO.transform.SetParent(t, false);
             var vlg = sectionGO.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = 6f;
-            vlg.childControlWidth = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandHeight = false;
+            vlg.spacing = 4f; vlg.childControlWidth = true; vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true; vlg.childForceExpandHeight = false;
             sectionGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            AddCaption(sectionGO.transform, "ПАЛИТРА БИОМА");
+            AddCaption(sectionGO.transform, "БИОМ = ТЕМПЕРАТУРА × ВЛАЖНОСТЬ");
 
-            var gridGO = new GameObject("SwatchGrid");
+            // 6×6 grid: top-left corner blank, top row = moisture captions, left column = temperature captions.
+            var gridGO = new GameObject("MatrixGrid");
             gridGO.transform.SetParent(sectionGO.transform, false);
             var grid = gridGO.AddComponent<GridLayoutGroup>();
-            grid.cellSize = new Vector2(26f, 26f);
-            grid.spacing = new Vector2(3f, 3f);
+            grid.cellSize = new Vector2(38f, 24f);
+            grid.spacing = new Vector2(2f, 2f);
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            grid.constraintCount = 8;
+            grid.constraintCount = 6;
+            gridGO.AddComponent<LayoutElement>().preferredHeight = 6 * 24f + 5 * 2f;
 
-            var biomes = (Biome[])System.Enum.GetValues(typeof(Biome));
-            int rows = Mathf.CeilToInt(biomes.Length / 8f);
-            gridGO.AddComponent<LayoutElement>().preferredHeight = rows * 26f + (rows - 1) * 3f;
-
-            foreach (var biome in biomes)
-                AddSwatch(gridGO.transform, biome);
+            AddMatrixCorner(gridGO.transform);                              // (0,0) blank
+            for (int m = 0; m < 5; m++) AddMatrixCaption(gridGO.transform, MoistShort[m]); // moisture header
+            for (int tl = 0; tl < 5; tl++)
+            {
+                AddMatrixCaption(gridGO.transform, TempShort[tl]);          // temp row label
+                for (int ml = 0; ml < 5; ml++) AddMatrixSwatch(gridGO.transform, tl, ml);
+            }
 
             biomePaletteRoot = sectionGO;
             sectionGO.SetActive(false);
         }
 
-        void AddSwatch(Transform parent, Biome biome)
+        void AddMatrixCorner(Transform parent)
         {
-            var go = new GameObject($"Swatch_{biome}");
+            var go = new GameObject("Corner"); go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>();
+        }
+
+        void AddMatrixCaption(Transform parent, string label)
+        {
+            var go = new GameObject("Cap"); go.transform.SetParent(parent, false);
+            var txt = go.AddComponent<Text>();
+            txt.text = label; txt.font = builtinFont; txt.fontSize = 9;
+            ThemeService.Tag(txt, ThemeRole.Mut); txt.alignment = TextAnchor.MiddleCenter;
+        }
+
+        void AddMatrixSwatch(Transform parent, int tLevel, int mLevel)
+        {
+            var biome = BiomeMatrix.Get(tLevel, mLevel);
+            var go = new GameObject($"Swatch_{tLevel}_{mLevel}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = RegionColorPalette.GetBiomeColor(biome); // фиксированный цвет биома, не тема
+            img.color = RegionColorPalette.GetBiomeColor(biome);           // fixed biome colour, not theme
             var outline = go.AddComponent<Outline>();
             outline.effectColor = ThemeService.Get(ThemeRole.Accent);
             outline.effectDistance = new Vector2(2f, -2f);
             outline.enabled = false;
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
-            btn.onClick.AddListener(() => OnBiomeSelected(biome));
-            swatchOutline[biome] = outline;
+            btn.onClick.AddListener(() => OnClimateCellSelected(tLevel, mLevel));
+            cellOutline[(tLevel, mLevel)] = outline;
 
-            // Подсказка с названием биома при наведении.
             var trigger = go.AddComponent<EventTrigger>();
             var enter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
-            enter.callback.AddListener(_ => ShowBiomeTooltip(biome, go));
+            enter.callback.AddListener(_ => ShowBiomeTooltip(biome, go));   // reuse existing tooltip
             trigger.triggers.Add(enter);
             var exit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
             exit.callback.AddListener(_ => HideBiomeTooltip());
             trigger.triggers.Add(exit);
+        }
+
+        void OnClimateCellSelected(int tLevel, int mLevel)
+        {
+            if (brushController != null) brushController.selectedClimateCell = (tLevel, mLevel);
+            foreach (var kvp in cellOutline)
+            {
+                bool on = kvp.Key == (tLevel, mLevel);
+                kvp.Value.effectColor = ThemeService.Get(ThemeRole.Accent);
+                kvp.Value.enabled = on;
+            }
         }
 
         // ── Biome tooltip (hover a swatch → show its biome name) ──────────────────

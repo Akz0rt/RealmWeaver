@@ -692,6 +692,15 @@ namespace WorldGen.Rendering
             CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
         }
 
+        /// <summary>Biome brush: paints a matrix cell's canonical base climate (temp level t, moisture level m).
+        /// Cooling still applies at classify time (honest, no compensation). Records pre-change undo state.</summary>
+        public void BrushSetClimateLevels(VoronoiCell cell, int t, int m)
+        {
+            if (cells == null) return;
+            brushUndo.RecordBeforeChange(cell);
+            CellOverrideService.SetClimateLevels(cell, t, m, beachElevationThreshold);
+        }
+
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя
         /// влажность) к случайно выбранному региону на карте - демонстрация API ApplyClimateOverride
         /// для области целиком. Вызвать через контекстное меню после генерации карты.

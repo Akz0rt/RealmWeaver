@@ -52,8 +52,8 @@ namespace WorldGen.Rendering
         [Range(0f, 1f)]
         [Tooltip("Сила кисти 0..1 — множитель дельты для Поднять/Опустить и доля усреднения для Сгладить. Для биома не используется.")]
         public float strength = 0.6f;
-        [Tooltip("Выбранный биом для режима 'Биом'. null — красить нечем (клик игнорируется).")]
-        public Biome? selectedBiome = null;
+        [Tooltip("Выбранная клетка матрицы (темп-уровень, влажн-уровень) для режима 'Биом'. null — красить нечем.")]
+        public (int t, int m)? selectedClimateCell = null;
         [Tooltip("Интервал в секундах между повторными применениями, пока ЛКМ зажата на месте. Не зависит от FPS.")]
         public float repeatInterval = 0.05f;
 
@@ -140,7 +140,7 @@ namespace WorldGen.Rendering
             if (!mapRenderer.TryGetSiteHitPoint(ray, out Vector2 site)) return;
 
             // В режиме биома без выбранного биома красить нечем — no-op (не ошибка).
-            if (activeTool == BrushTool.Biome && selectedBiome == null) return;
+            if (activeTool == BrushTool.Biome && selectedClimateCell == null) return;
 
             // Перешли на заметно новую точку — применяем сразу (мгновенный отклик), сбрасываем таймер.
             const float moveEpsilonSqr = 0.0001f;
@@ -171,9 +171,9 @@ namespace WorldGen.Rendering
 
             if (activeTool == BrushTool.Biome)
             {
-                Biome biome = selectedBiome.Value;
+                var (t, m) = selectedClimateCell.Value;
                 foreach (var cell in affected)
-                    mapRenderer.BrushSetBiome(cell, biome);
+                    mapRenderer.BrushSetClimateLevels(cell, t, m);
                 mapRenderer.RebakeAffectedCells(affected);
                 return;
             }
