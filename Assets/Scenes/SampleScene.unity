@@ -1011,9 +1011,9 @@ MonoBehaviour:
   beachElevationThreshold: 0.1
   elevationTempDrop: 0.4
   numberOfTemperatureEpicenters: 3
-  epicenterMinRadius: 25
-  epicenterMaxRadius: 75
-  baseTemperature: 0
+  epicenterMinRadius: 200
+  epicenterMaxRadius: 450
+  baseTemperature: 0.5
   displayMode: 3
   showBiomeLayer: 1
   showReliefLayer: 1
