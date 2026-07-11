@@ -17,7 +17,6 @@ namespace WorldGen.Generation
         public float? TemperatureOverride;
         public float? MoistureOverride;
         public WaterOverrideType WaterOverride;
-        public Biome? BiomeOverride;
         public Biome Biome;
 
         public static CellSnapshot Capture(VoronoiCell cell)
@@ -31,7 +30,6 @@ namespace WorldGen.Generation
                 TemperatureOverride = cell.TemperatureOverride,
                 MoistureOverride = cell.MoistureOverride,
                 WaterOverride = cell.WaterOverride,
-                BiomeOverride = cell.BiomeOverride,
                 Biome = cell.Biome
             };
         }
@@ -48,7 +46,6 @@ namespace WorldGen.Generation
             cell.TemperatureOverride = TemperatureOverride;
             cell.MoistureOverride = MoistureOverride;
             cell.WaterOverride = WaterOverride;
-            cell.BiomeOverride = BiomeOverride;
             cell.Biome = Biome;
         }
     }

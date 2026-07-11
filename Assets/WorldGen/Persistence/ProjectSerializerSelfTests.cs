@@ -34,7 +34,6 @@ namespace WorldGen.Persistence
                 MoistureOverride = 0.15f,
                 ElevationOverride = 0.8f,
                 WaterOverride = WaterOverrideType.ForceLake,
-                BiomeOverride = Biome.Tundra,
                 Biome = Biome.Tundra
             };
             var cellB = new VoronoiCell(1, new System.Numerics.Vector2(3f, 4f))
@@ -86,7 +85,6 @@ namespace WorldGen.Persistence
                 && loadedA.MoistureOverride == 0.15f
                 && loadedA.ElevationOverride == 0.8f
                 && loadedA.WaterOverride == WaterOverrideType.ForceLake
-                && loadedA.BiomeOverride == Biome.Tundra
                 && loadedA.NeighborIds.Count == 1 && loadedA.NeighborIds[0] == 1
                 && loadedA.Polygon.Count == 3;
 

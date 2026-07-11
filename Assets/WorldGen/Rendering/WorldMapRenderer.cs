@@ -312,7 +312,7 @@ namespace WorldGen.Rendering
 
             // Биомы пересчитываем из климата (spec §Backward compatibility): загруженный cell.Biome
             // может быть из старого набора. Температура/влажность/высота сохранены, поэтому
-            // классификация даёт корректный новый биом; ручной BiomeOverride сохраняется.
+            // классификация даёт корректный новый биом.
             WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
             WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
@@ -545,16 +545,6 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
-        /// <summary>Применяет прямой override биома к указанным клеткам. null - снять override.</summary>
-        public void ApplyBiomeOverride(IEnumerable<VoronoiCell> targetCells, Biome? biome)
-        {
-            if (cells == null) return;
-
-            CellOverrideService.ApplyBiomeOverride(targetCells, biome, beachElevationThreshold);
-            RefreshAfterCellDataChange();
-            OnDisplayChanged?.Invoke();
-        }
-
         /// <summary>Снимает ВСЕ override (climate + landscape) с указанных клеток - полный сброс к computed.</summary>
         public void ClearAllOverrides(IEnumerable<VoronoiCell> targetCells)
         {
@@ -666,28 +656,14 @@ namespace WorldGen.Rendering
             }
         }
 
-        /// <summary>
-        /// Прямая установка биома клетки кистью (hard set BiomeOverride — высший приоритет) с записью
-        /// "досмазкового" состояния в текущий Undo-мазок. В отличие от Adjust* это не относительное
-        /// изменение, а замена категории; Сила кисти для биома не применяется.
-        /// </summary>
-        public void BrushSetBiome(VoronoiCell cell, Biome biome)
-        {
-            if (cells == null) return;
-            brushUndo.RecordBeforeChange(cell);
-            cell.BiomeOverride = biome;
-            CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
-        }
-
         /// <summary>Кисть суша↔вода: makeLand=false → ForceOcean (топим, elevation 0); makeLand=true →
         /// ForceLand с ВАРЬИРОВАННОЙ высотой из шума (разной для каждой клетки), чтобы новая суша была
-        /// рельефной (холмы/склоны под hillshade), а не плоским плато одной высоты. Снимает biome-override
-        /// (биом пересчитается под новую высоту/климат) и пишет "досмазковый" undo-снимок.</summary>
+        /// рельефной (холмы/склоны под hillshade), а не плоским плато одной высоты. Биом пересчитается
+        /// под новую высоту/климат; пишет "досмазковый" undo-снимок.</summary>
         public void BrushSetWater(VoronoiCell cell, bool makeLand)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
-            cell.BiomeOverride = null;
             if (makeLand)
             {
                 cell.WaterOverride = WaterOverrideType.ForceLand;
@@ -1949,7 +1925,7 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Симулирует мазок кисти, меняющий WaterOverride соседней клетки (как
-        /// BrushSetBiome/"Сила: вода" в редакторе), и перезапекает ТОЛЬКО маленький прямоугольник
+        /// BrushSetWater/"Сила: вода" в редакторе), и перезапекает ТОЛЬКО маленький прямоугольник
         /// вокруг нее - как реальный RebakeAffectedCells. Проверяет, что IsLand-маска внутри этого
         /// прямоугольника отражает новое состояние без пересборки графа Corner (топология графа не
         /// меняется от WaterOverride - меняется только то, какие клетки считаются водой при

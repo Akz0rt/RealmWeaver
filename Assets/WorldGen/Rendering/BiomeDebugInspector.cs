@@ -80,11 +80,10 @@ namespace WorldGen.Rendering
             sb.AppendLine($"Влажность: {c.EffectiveMoisture:F2}  →  ур. {mL + 1}/5 ({MoistNames[mL]})");
             sb.AppendLine($"Высота: {c.EffectiveElevation:F2}  →  {LandformNames[(int)landform]}");
             bool anyOverride = c.TemperatureOverride.HasValue || c.MoistureOverride.HasValue
-                            || c.ElevationOverride.HasValue || c.BiomeOverride.HasValue
-                            || c.WaterOverride != WaterOverrideType.None;
+                            || c.ElevationOverride.HasValue || c.WaterOverride != WaterOverrideType.None;
             if (anyOverride)
                 sb.Append($"Override: T={Fmt(c.TemperatureOverride)} M={Fmt(c.MoistureOverride)} " +
-                          $"E={Fmt(c.ElevationOverride)} биом={(c.BiomeOverride?.ToString() ?? "-")} вода={c.WaterOverride}");
+                          $"E={Fmt(c.ElevationOverride)} вода={c.WaterOverride}");
             return sb.ToString();
         }
 

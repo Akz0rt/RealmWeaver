@@ -78,12 +78,6 @@ namespace WorldGen.Generation
         /// </summary>
         public WaterOverrideType WaterOverride = WaterOverrideType.None;
 
-        /// <summary>
-        /// Прямой override биома - конечный приоритет, перекрывает всё.
-        /// null = биом вычисляется по Whittaker с учётом ElevationOverride/WaterOverride/EffectiveMoisture.
-        /// </summary>
-        public Biome? BiomeOverride;
-
         /// <summary>Эффективный elevation с учётом override - используется для биом-классификации и рендера Height-mode.</summary>
         public float EffectiveElevation => ElevationOverride ?? Height;
 
@@ -101,7 +95,7 @@ namespace WorldGen.Generation
             WaterOverride == WaterOverrideType.ForceLake ||
             (WaterOverride == WaterOverrideType.None && !IsOcean && Biome == Biome.Lake);
 
-        /// <summary>Итоговый биом, вычисленный из computed-значений. Финальный эффективный биом (с учётом BiomeOverride) хранится в cell.Biome после вызова ClimateOverrideService.RecomputeBiome.</summary>
+        /// <summary>Итоговый биом, всегда производный от EffectiveTemperature/EffectiveMoisture/EffectiveElevation. Пересчитывается в cell.Biome вызовом CellOverrideService.RecomputeBiome.</summary>
         public Biome Biome;
 
         /// <summary>Parameterless constructor for Newtonsoft.Json deserialization (ProjectSerializer) — fields are populated by the serializer afterward.</summary>
