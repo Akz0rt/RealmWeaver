@@ -119,6 +119,53 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &43947986
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 43947988}
+  - component: {fileID: 43947987}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &43947987
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 43947986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 46c9aee243860124f865a7b1f5618907, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.BiomeDebugInspector
+  mapRenderer: {fileID: 1583692671}
+  raycastCamera: {fileID: 519420031}
+  enableInspector: 1
+--- !u!4 &43947988
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 43947986}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 1354.0424, y: 205.95764, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &71450242
 GameObject:
   m_ObjectHideFlags: 0
@@ -954,7 +1001,7 @@ MonoBehaviour:
   moistureEpicenterMinRadius: 150
   moistureEpicenterMaxRadius: 300
   moistureEpicenterMinDelta: -0.5
-  moistureEpicenterMaxDelta: 0.5
+  moistureEpicenterMaxDelta: 0.6
   enableRivers: 0
   numberOfRivers: 25
   riverMinStartElevation: 0.6
@@ -962,11 +1009,11 @@ MonoBehaviour:
   riverWidthMultiplier: 1.5
   riverColor: {r: 0.2, g: 0.4, b: 0.8, a: 1}
   beachElevationThreshold: 0.1
-  numberOfTemperatureEpicenters: 3
-  epicenterMinRadius: 150
-  epicenterMaxRadius: 300
+  elevationTempDrop: 0.4
+  numberOfTemperatureEpicenters: 5
+  epicenterMinRadius: 50
+  epicenterMaxRadius: 75
   baseTemperature: 0.5
-  heightCoolingFactor: 0.6
   displayMode: 3
   showBiomeLayer: 1
   showReliefLayer: 1
@@ -1411,3 +1458,4 @@ SceneRoots:
   - {fileID: 587299943}
   - {fileID: 914212973}
   - {fileID: 1481348584}
+  - {fileID: 43947988}
