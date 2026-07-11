@@ -128,5 +128,65 @@ namespace WorldGen.Generation
                       "MergeUndersizedRegions is private and GroupCells is RNG-driven, so this scenario is " +
                       "traced by hand against the algorithm as written, not executed. PASS (documentation).");
         }
+
+        /// <summary>Lake fixture cell: forced to lake via WaterOverride regardless of Biome/IsOcean.</summary>
+        static VoronoiCell MakeLakeCell(int id, int[] neighborIds)
+        {
+            return new VoronoiCell(id, new System.Numerics.Vector2(id, 0f))
+            {
+                WaterOverride = WaterOverrideType.ForceLake,
+                NeighborIds = new List<int>(neighborIds)
+            };
+        }
+
+        /// <summary>Land fixture cell: default WaterOverride (None), not ocean, non-Lake biome, with the
+        /// given RegionId — so both EffectiveIsLake and EffectiveIsOcean are false.</summary>
+        static VoronoiCell MakeLandCell(int id, int regionId, int[] neighborIds)
+        {
+            return new VoronoiCell(id, new System.Numerics.Vector2(id, 0f))
+            {
+                IsOcean = false,
+                Biome = Biome.Grassland,
+                RegionId = regionId,
+                NeighborIds = new List<int>(neighborIds)
+            };
+        }
+
+        [ContextMenu("Self-Test: Lake Majority Land Region")]
+        public void SelfTestLakeMajorityLandRegion()
+        {
+            // Lake cell 0 (ForceLake). Land neighbours: 1,2 in region 5; 3 in region 2. Winner = 5.
+            var lake = MakeLakeCell(0, new[] { 1, 2, 3 });
+            var l1 = MakeLandCell(1, 5, new[] { 0 });
+            var l2 = MakeLandCell(2, 5, new[] { 0 });
+            var l3 = MakeLandCell(3, 2, new[] { 0 });
+            var byId = new Dictionary<int, VoronoiCell> { { 0, lake }, { 1, l1 }, { 2, l2 }, { 3, l3 } };
+
+            var comp = LakeRegionUnifier.FindLakeComponent(0, byId);
+            int winner = LakeRegionUnifier.MajorityLandRegion(comp, byId);
+            bool pass = comp.Count == 1 && winner == 5;
+
+            // Isolated lake (no land neighbours) → -1.
+            var isoLake = MakeLakeCell(10, new int[0]);
+            var isoById = new Dictionary<int, VoronoiCell> { { 10, isoLake } };
+            var isoComp = LakeRegionUnifier.FindLakeComponent(10, isoById);
+            bool isoPass = LakeRegionUnifier.MajorityLandRegion(isoComp, isoById) == -1;
+
+            Debug.Log(pass && isoPass
+                ? "Self-Test Lake Majority Land Region: PASS"
+                : $"Self-Test Lake Majority Land Region: FAIL (winner={winner}, comp={comp.Count}, isoPass={isoPass})");
+        }
+
+        [ContextMenu("Self-Test: Lake Coverage Threshold")]
+        public void SelfTestLakeCoverageThreshold()
+        {
+            bool a = LakeRegionUnifier.CoversLakeEnough(3, 10, 30) == true;   // exactly 30% → include
+            bool b = LakeRegionUnifier.CoversLakeEnough(2, 10, 30) == false;  // 20% → exclude
+            bool c = LakeRegionUnifier.CoversLakeEnough(4, 10, 30) == true;   // 40% → include
+            bool d = LakeRegionUnifier.CoversLakeEnough(0, 0, 30) == false;   // empty lake → false, no divide
+            Debug.Log(a && b && c && d
+                ? "Self-Test Lake Coverage Threshold: PASS"
+                : $"Self-Test Lake Coverage Threshold: FAIL (a={a}, b={b}, c={c}, d={d})");
+        }
     }
 }
