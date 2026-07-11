@@ -131,9 +131,11 @@ namespace WorldGen.Rendering
                 case MapDisplayMode.Region:
                 default:
                     entries.Add(new LegendEntry(new Color(0.15f, 0.35f, 0.60f), "Океан"));
-                    int regionCount = mapRenderer.GetActualRegionCount();
-                    for (int i = 0; i < regionCount; i++)
-                        entries.Add(new LegendEntry(RegionColorPalette.GetRegionColor(i), $"Область {i + 1}"));
+                    // Пользовательские регионы (имя + цвет из RegionsPanel); без regionManager (старые
+                    // тестовые сцены) или без регионов на карте - список пуст, остаётся только "Океан".
+                    if (mapRenderer.regionManager != null)
+                        foreach (var r in mapRenderer.regionManager.Regions)
+                            entries.Add(new LegendEntry(r.Color, r.Name));
                     break;
             }
 

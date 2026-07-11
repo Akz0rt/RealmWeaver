@@ -25,6 +25,8 @@ Shader "WorldGen/MapTerrain"
             float _AttrWidth;
             float _CellRows;
             float4 _Palette[24];   // индекс = Biome (0..20); вода красится отдельно, Beach+суша имеют цвет
+            float4 _RegionColor[128]; // индекс = RegionData.Id; плоская заливка режима "Регионы"
+            float _RegionFill;        // 1 = режим "Регионы" (плоская заливка вместо биома/рельефа), 0 = обычный
             float2 _MapSize;
             float _Mode;
 
@@ -177,59 +179,70 @@ Shader "WorldGen/MapTerrain"
                     // слой "Биом": цвет семейства (сглаженная метка области) или нейтральная база (пергамент)
                     int2 lab = labelAt(i.uv);
                     int famL = (lab.x == 255) ? family : lab.x;   // откат к attribute на клиньях
-                    col = (_ShowBiome > 0.5) ? _Palette[famL].rgb : float3(0.82, 0.78, 0.65);
 
-                    // слой "Рельеф": ступень высоты (выше = светлее по дискретным полосам)
-                    if (_ShowRelief > 0.5)
+                    if (_RegionFill > 0.5)
                     {
-                        int bands = max(2, (int)_ElevBands);
-                        int band = (lab.y == 255) ? clamp((int)(elev * bands), 0, bands - 1) : lab.y;
-                        float bt = band / max(1.0, (float)(bands - 1));
-                        col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+                        // слой "Регионы": плоская заливка цветом региона (slot B), без биома/рельефа/тонировки
+                        int rid = (int)(attr(cid, 1).r + 0.5);
+                        col = (rid >= 0) ? _RegionColor[clamp(rid, 0, 127)].rgb : float3(0.82, 0.78, 0.65);
                     }
-
-                    // региональная тонировка по температуре (слабая) - всегда
-                    float wn = saturate((temp - 0.28) / 0.42);
-                    col = lerp(col, lerp(_TintCool.rgb, _TintWarm.rgb, wn), _TintStrength);
-
-                    // мягкий песок у берега: сила спадает вглубь суши по дистанции до воды
-                    float landDist = tex2Dlod(_LandDistTex, float4(i.uv, 0, 0)).r;
-                    float beach = pow(saturate(1.0 - landDist / max(1.0, _BeachWidth)), _BeachHardness);
-                    col = lerp(col, _BeachColor.rgb, beach * _BeachStrength);
-
-                    // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
-                    if (_ShowRelief > 0.5)
+                    else
                     {
-                        float s = _ReliefStep;
-                        float eL = attr(cellAt(wuv - float2(s, 0)), 0).g;
-                        float eR = attr(cellAt(wuv + float2(s, 0)), 0).g;
-                        float eD = attr(cellAt(wuv - float2(0, s)), 0).g;
-                        float eU = attr(cellAt(wuv + float2(0, s)), 0).g;
-                        float gx = (eL - eR) * 0.5, gy = (eD - eU) * 0.5;
-                        float3 nrm = normalize(float3(-gx * _ReliefStrength, 1, -gy * _ReliefStrength));
-                        float az = radians(_LightAzimuth);
-                        float3 L = normalize(float3(sin(az), 1, cos(az)));
-                        float ndotl = saturate(dot(nrm, L));
-                        float bright = lerp(_ReliefAmbient, 1.0, ndotl);
-                        col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
-                    }
+                        col = (_ShowBiome > 0.5) ? _Palette[famL].rgb : float3(0.82, 0.78, 0.65);
 
-                    // тонкая тёмная линия между разными БИОМАМИ (не на берегу:
-                    // Beach=2 исключён, там будет мягкий пляж; 255 = клин, тоже пропускаем)
-                    float2 flt = _LabelTexel * 1.5;
-                    int fa = labelAt(i.uv + float2(flt.x, 0)).x;
-                    int fb = labelAt(i.uv - float2(flt.x, 0)).x;
-                    int fc = labelAt(i.uv + float2(0, flt.y)).x;
-                    int fd = labelAt(i.uv - float2(0, flt.y)).x;
-                    bool famEdge =
-                        (fa != famL && fa != 255 && fa != 2) ||
-                        (fb != famL && fb != 255 && fb != 2) ||
-                        (fc != famL && fc != 255 && fc != 2) ||
-                        (fd != famL && fd != 255 && fd != 2);
-                    if (famEdge && famL != 2) col = lerp(col, _BiomeLineColor.rgb, _BiomeLineStrength);
+                        // слой "Рельеф": ступень высоты (выше = светлее по дискретным полосам)
+                        if (_ShowRelief > 0.5)
+                        {
+                            int bands = max(2, (int)_ElevBands);
+                            int band = (lab.y == 255) ? clamp((int)(elev * bands), 0, bands - 1) : lab.y;
+                            float bt = band / max(1.0, (float)(bands - 1));
+                            col *= 1.0 + (bt - 0.5) * (_BandContrast / 100.0);
+                        }
+
+                        // региональная тонировка по температуре (слабая) - всегда
+                        float wn = saturate((temp - 0.28) / 0.42);
+                        col = lerp(col, lerp(_TintCool.rgb, _TintWarm.rgb, wn), _TintStrength);
+
+                        // мягкий песок у берега: сила спадает вглубь суши по дистанции до воды
+                        float landDist = tex2Dlod(_LandDistTex, float4(i.uv, 0, 0)).r;
+                        float beach = pow(saturate(1.0 - landDist / max(1.0, _BeachWidth)), _BeachHardness);
+                        col = lerp(col, _BeachColor.rgb, beach * _BeachStrength);
+
+                        // слой "Рельеф": затенение из градиента высоты + холодный лунный подсвет
+                        if (_ShowRelief > 0.5)
+                        {
+                            float s = _ReliefStep;
+                            float eL = attr(cellAt(wuv - float2(s, 0)), 0).g;
+                            float eR = attr(cellAt(wuv + float2(s, 0)), 0).g;
+                            float eD = attr(cellAt(wuv - float2(0, s)), 0).g;
+                            float eU = attr(cellAt(wuv + float2(0, s)), 0).g;
+                            float gx = (eL - eR) * 0.5, gy = (eD - eU) * 0.5;
+                            float3 nrm = normalize(float3(-gx * _ReliefStrength, 1, -gy * _ReliefStrength));
+                            float az = radians(_LightAzimuth);
+                            float3 L = normalize(float3(sin(az), 1, cos(az)));
+                            float ndotl = saturate(dot(nrm, L));
+                            float bright = lerp(_ReliefAmbient, 1.0, ndotl);
+                            col = col * bright + _LightColor.rgb * ndotl * _ColdLight;
+                        }
+
+                        // тонкая тёмная линия между разными БИОМАМИ (не на берегу:
+                        // Beach=2 исключён, там будет мягкий пляж; 255 = клин, тоже пропускаем)
+                        float2 flt = _LabelTexel * 1.5;
+                        int fa = labelAt(i.uv + float2(flt.x, 0)).x;
+                        int fb = labelAt(i.uv - float2(flt.x, 0)).x;
+                        int fc = labelAt(i.uv + float2(0, flt.y)).x;
+                        int fd = labelAt(i.uv - float2(0, flt.y)).x;
+                        bool famEdge =
+                            (fa != famL && fa != 255 && fa != 2) ||
+                            (fb != famL && fb != 255 && fb != 2) ||
+                            (fc != famL && fc != 255 && fc != 2) ||
+                            (fd != famL && fd != 255 && fd != 2);
+                        if (famEdge && famL != 2) col = lerp(col, _BiomeLineColor.rgb, _BiomeLineStrength);
+                    }
 
                     // тёмная обводка берега (сторона суши) - всегда; по сглаженной маске суша/вода,
-                    // чтобы обводка следовала гладкому берегу, а не гранёным клеткам.
+                    // чтобы обводка следовала гладкому берегу, а не гранёным клеткам. Остаётся и в
+                    // режиме "Регионы" (_RegionFill) - береговая линия читается поверх плоской заливки.
                     float2 t = _CellIdTexel * 2.0;
                     int w = (!landAt(i.uv + float2(t.x, 0)) ? 1 : 0) + (!landAt(i.uv - float2(t.x, 0)) ? 1 : 0)
                           + (!landAt(i.uv + float2(0, t.y)) ? 1 : 0) + (!landAt(i.uv - float2(0, t.y)) ? 1 : 0);

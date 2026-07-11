@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using WorldGen.Generation;
+using WorldGen.Rendering;
 using WorldGen.Rendering.MapRaster;
 
 namespace WorldGen.Rendering.GpuMap
@@ -178,6 +179,28 @@ namespace WorldGen.Rendering.GpuMap
             Material.SetFloat("_ShowBiome", showBiome ? 1f : 0f);
             Material.SetFloat("_ShowRelief", showRelief ? 1f : 0f);
             Material.SetFloat("_ShowCoast", showCoast ? 1f : 0f);
+        }
+
+        /// <summary>Заливает массив цветов регионов (индекс = RegionData.Id) в _RegionColor -
+        /// режим "Регионы" (см. SetRegionFill). Пробелы (id без записи в rm.Regions) остаются
+        /// чёрными - не видны, т.к. только клетки с валидным RegionId читают этот индекс.</summary>
+        public void UploadRegionColors(RegionManager rm)
+        {
+            if (Material == null) return;
+            var arr = new Vector4[128];
+            if (rm != null)
+                foreach (var r in rm.Regions)
+                    if (r.Id >= 0 && r.Id < 128)
+                        arr[r.Id] = new Vector4(r.Color.r, r.Color.g, r.Color.b, 1f);
+            Material.SetVectorArray("_RegionColor", arr);
+        }
+
+        /// <summary>Режим "Регионы": плоская заливка цветом региона вместо биома/рельефа - мгновенно
+        /// через uniform, развязано от _Mode (не завязано на порядковый номер enum'а режима).</summary>
+        public void SetRegionFill(bool on)
+        {
+            if (Material == null) return;
+            Material.SetFloat("_RegionFill", on ? 1f : 0f);
         }
 
         /// <summary>Параметры пляжа (песок у берега) - мгновенно через uniform (без пере-бейка).

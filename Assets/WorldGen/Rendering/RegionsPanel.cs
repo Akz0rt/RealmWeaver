@@ -103,6 +103,7 @@ namespace WorldGen.Rendering
             if (regionManager == null) return;
             var r = regionManager.Add(GenerateUniqueRegionName(), regionManager.NextColor());
             mapRenderer?.RebuildBorders();
+            mapRenderer?.UploadRegionColors(); // GPU "Регионы" fill (Task 6) - new region's color is in the table before it's ever painted
             SelectRegion(r.Id);
             RebuildList();
         }
@@ -144,6 +145,7 @@ namespace WorldGen.Rendering
             if (swatchImg != null) swatchImg.color = c;
             mapRenderer?.RebuildBorders();
             mapRenderer?.RefreshAfterCellDataChange();
+            mapRenderer?.UploadRegionColors(); // GPU "Регионы" fill (Task 6) - keep _RegionColor in sync with the recolor
         }
 
         void DeleteRegionClicked(int id)

@@ -2672,6 +2672,14 @@ namespace WorldGen.Rendering
         {
             displayMode = mode;
             if (cells != null) RebakeAll();
+            // GPU: режим "Регионы" - плоская заливка, развязана от _Mode (см. GpuMapRenderer.SetRegionFill).
+            // RebakeAll (когда GPU-путь и bake полный) не трогает _RegionFill/_RegionColor, но выставляем
+            // их явно на каждую смену режима, а не только на бейке - дёшево и не зависит от порядка вызовов.
+            if (useGpuRenderer && gpuRenderer != null)
+            {
+                gpuRenderer.SetRegionFill(mode == MapDisplayMode.Region);
+                UploadRegionColors();
+            }
             bool combined = mode == MapDisplayMode.Combined;
             if (regionBorderObject != null) regionBorderObject.SetActive(combined && showRegionBordersLayer);
             if (coastlineObject != null) coastlineObject.SetActive(ShouldShowCoastlineRibbon());
@@ -2800,9 +2808,14 @@ namespace WorldGen.Rendering
             RebuildDecorations();
         }
 
-        // TODO(Task 6): upload region colors to GPU. Public for the same reason as
-        // RefreshAfterCellDataChange above (RegionsPanel calls it after recolor/delete).
-        public void UploadRegionColors() { }
+        /// <summary>Заливает цвета регионов в GPU-материал (_RegionColor) - режим "Регионы".
+        /// Public for the same reason as RefreshAfterCellDataChange above (RegionsPanel calls it
+        /// after recolor/delete). No-op on the CPU path (RebakeAll/GetColorForCell read
+        /// regionManager directly, no upload needed there).</summary>
+        public void UploadRegionColors()
+        {
+            if (useGpuRenderer && gpuRenderer != null) gpuRenderer.UploadRegionColors(regionManager);
+        }
 
         /// <summary>Самый дешёвый путь при смене только darkness (подпроект 6 добавит слайдер) -
         /// заново применяет только финальный проход виньетки поверх уже готовых PreVignette-пикселей,
@@ -3091,7 +3104,12 @@ namespace WorldGen.Rendering
                     // Используем EffectiveIsOcean - учитывает WaterOverride.
                     if (cell.EffectiveIsOcean)
                         return RegionColorPalette.GetWaterColor(GetOceanDepth01(cell), isOcean: true);
-                    return RegionColorPalette.GetRegionColor(cell.RegionId);
+                    // Пользовательские цвета регионов (RegionsPanel); RegionColorPalette - только
+                    // фолбэк, если regionManager отсутствует в сцене (см. Get(cell.RegionId) может
+                    // вернуть null и для несуществующего id, и для RegionId == -1/unassigned).
+                    return regionManager != null
+                        ? (regionManager.Get(cell.RegionId)?.Color ?? new Color(0.82f, 0.78f, 0.65f))
+                        : RegionColorPalette.GetRegionColor(cell.RegionId);
             }
         }
 

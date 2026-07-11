@@ -19,6 +19,8 @@ namespace WorldGen.Rendering
 
         Font builtinFont;
         readonly List<Toggle> toggles = new List<Toggle>();
+        readonly Dictionary<MapDisplayMode, Image> modeSegBg = new Dictionary<MapDisplayMode, Image>();
+        readonly Dictionary<MapDisplayMode, Text> modeSegTxt = new Dictionary<MapDisplayMode, Text>();
 
         GameObject labelColorRow;   // "Цвет названий" swatches; shown only when edit mode is on
         static readonly Color[] LabelColorSwatches =
@@ -72,6 +74,7 @@ namespace WorldGen.Rendering
 
             var t = panelGO.transform;
             BuildHeaderRow(t);
+            BuildModeSegment(t);
             AddLayerToggleRow(t, "Рельеф",           true, on => mapRenderer?.SetShowReliefLayer(on));
             AddLayerToggleRow(t, "Биом / климат",    true, on => mapRenderer?.SetShowBiomeLayer(on));
             AddLayerToggleRow(t, "Границы регионов", false, on => mapRenderer?.SetShowRegionBordersLayer(on));
@@ -128,6 +131,65 @@ namespace WorldGen.Rendering
             resetBtn.targetGraphic = reset;
             resetBtn.transition = Selectable.Transition.None;
             resetBtn.onClick.AddListener(ResetLayers);
+        }
+
+        /// <summary>«Обычная / Регионы» - переключатель MapDisplayMode (Combined/Region), тот же
+        /// сегмент-идиом, что BrushMode в EditorBrushPanel.BuildModeSegment (2 варианта вместо 3,
+        /// без общего ToggleGroup - подсветка руками через словари bg/txt).</summary>
+        void BuildModeSegment(Transform t)
+        {
+            var rowGO = new GameObject("DisplayModeSegment");
+            rowGO.transform.SetParent(t, false);
+            var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 2f;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+            rowGO.AddComponent<LayoutElement>().preferredHeight = 26f;
+
+            AddModeSegment(rowGO.transform, MapDisplayMode.Combined, "Обычная");
+            AddModeSegment(rowGO.transform, MapDisplayMode.Region, "Регионы");
+
+            OnDisplayModeChanged(mapRenderer != null ? mapRenderer.displayMode : MapDisplayMode.Combined);
+        }
+
+        void AddModeSegment(Transform parent, MapDisplayMode mode, string label)
+        {
+            var go = new GameObject($"Mode_{mode}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Elev);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => OnDisplayModeChanged(mode));
+
+            var textGO = new GameObject("Text");
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = 11;
+            ThemeService.Tag(text, ThemeRole.Txt);
+            text.alignment = TextAnchor.MiddleCenter;
+            var tr = textGO.GetComponent<RectTransform>();
+            tr.anchorMin = Vector2.zero;
+            tr.anchorMax = Vector2.one;
+            tr.sizeDelta = Vector2.zero;
+
+            modeSegBg[mode] = img;
+            modeSegTxt[mode] = text;
+        }
+
+        void OnDisplayModeChanged(MapDisplayMode mode)
+        {
+            mapRenderer?.SetDisplayMode(mode);
+            foreach (var kvp in modeSegBg)
+            {
+                bool on = kvp.Key == mode;
+                ThemeService.Tag(kvp.Value, on ? ThemeRole.Accent : ThemeRole.Elev);
+                ThemeService.Tag(modeSegTxt[kvp.Key], on ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
         }
 
         void ResetLayers()
