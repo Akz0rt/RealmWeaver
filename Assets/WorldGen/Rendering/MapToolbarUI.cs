@@ -222,10 +222,18 @@ namespace WorldGen.Rendering
         public void SetActiveTab(int index)
         {
             activeTab = index;
-            if (mapLayersPanel != null) mapLayersPanel.SetActive(index == 0);
-            if (editorBrushPanel != null) editorBrushPanel.SetActive(index == 1);
-            if (poiToolPanel != null) poiToolPanel.SetActive(index == 2);
-            if (regionsPanel != null) regionsPanel.SetActive(index == 3);
+
+            // Deactivate ALL panels first, then activate only the target, so the target panel's
+            // OnEnable always runs last. Several panels (EditorBrushPanel, RegionsPanel) share
+            // mutable state on BrushToolController via OnEnable/OnDisable; fixed source-order
+            // activation could run the new tab's OnEnable before the old tab's OnDisable, letting
+            // the old tab's teardown clobber the state the new tab just set. Deactivate-all-then-
+            // activate-target makes "the newly-activated panel wins" true regardless of tab order.
+            GameObject[] panels = { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
+            foreach (var panel in panels)
+                if (panel != null) panel.SetActive(false);
+            GameObject target = index >= 0 && index < panels.Length ? panels[index] : null;
+            if (target != null) target.SetActive(true);
 
             for (int i = 0; i < tabButtons.Length; i++)
             {

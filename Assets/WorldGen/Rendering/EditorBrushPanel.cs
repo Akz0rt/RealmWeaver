@@ -24,6 +24,7 @@ namespace WorldGen.Rendering
         public BrushToolController brushController;
 
         EditorMode currentMode = EditorMode.Brush;
+        BrushTool currentTarget = BrushTool.Elevation;
 
         // Header
         Text headerTitle;
@@ -82,7 +83,15 @@ namespace WorldGen.Rendering
                 selectionController.OnSelectionChanged += HandleSelectionChanged;
             // Вкладка "Редактор" стала активной — восстановить liveness кисти/выделения по текущему режиму.
             // (headerTitle != null — значит Awake уже построил UI; на самом первом включении Awake идёт раньше OnEnable.)
-            if (headerTitle != null) SetMode(currentMode);
+            // Re-assert our own selected brush target first: another tab (e.g. RegionsPanel, which
+            // owns the shared BrushToolController while active) may have left brushController.activeTool
+            // pointing at its own tool (BrushTool.Region). Without this, painting on "Редактор" could
+            // silently keep applying the Regions tab's tool instead of this panel's selected pill.
+            if (headerTitle != null)
+            {
+                OnTargetChanged(currentTarget);
+                SetMode(currentMode);
+            }
         }
 
         void OnDisable()
@@ -123,6 +132,7 @@ namespace WorldGen.Rendering
 
         void OnTargetChanged(BrushTool target)
         {
+            currentTarget = target;
             if (brushController != null) brushController.activeTool = target;
 
             foreach (var kvp in targetPillBg)
