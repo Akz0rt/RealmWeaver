@@ -505,7 +505,9 @@ namespace WorldGen.Rendering
                 for (int id = 0; id < k; id++)
                 {
                     string name = WorldGen.Rendering.RegionLabels.RegionLabelNames.ContinentName(seed, id);
-                    int salt = 1; while (!usedNames.Add(name)) name = WorldGen.Rendering.RegionLabels.RegionLabelNames.ContinentName(seed, id + 1000 * salt++);
+                    string baseName = name;
+                    int suffix = 2;
+                    while (!usedNames.Add(name)) name = baseName + " " + suffix++;
                     list.Add(new WorldGen.Generation.RegionData(id, name, RegionColorPalette.GetRegionColor(id)));
                 }
                 regionManager.SetAll(list);
