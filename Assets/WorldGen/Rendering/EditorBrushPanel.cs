@@ -612,7 +612,8 @@ namespace WorldGen.Rendering
             var go = new GameObject($"Swatch_{tLevel}_{mLevel}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
-            img.color = RegionColorPalette.GetBiomeColor(biome);           // fixed biome colour, not theme
+            var swatchTheme = mapRenderer != null ? mapRenderer.paletteTheme : WorldGen.Rendering.MapRaster.MapPaletteTheme.ColdTwilight;
+            img.color = WorldGen.Rendering.MapRaster.MapPalette.GetBiomeColor(swatchTheme, biome); // per-biome colour from the active map palette (matches map)
             var outline = go.AddComponent<Outline>();
             outline.effectColor = ThemeService.Get(ThemeRole.Accent);
             outline.effectDistance = new Vector2(2f, -2f);
