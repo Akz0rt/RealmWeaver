@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using WorldGen.Generation;
 using WorldGen.Notes.Data;
 using WorldGen.Rendering.RegionLabels;
@@ -27,7 +28,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 1;
+        public const int CurrentFormatVersion = 2;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -91,6 +92,29 @@ namespace WorldGen.Persistence
 
             if (data.FormatVersion > CurrentFormatVersion)
                 result.WarningMessage = "Файл сохранён более новой версией инструмента — часть данных может не загрузиться.";
+
+            // Legacy migration (v1): cells stored a per-cell BiomeOverride (now removed). Convert any land-biome
+            // override to the canonical climate levels that produce it; water/invalid values are ignored (the cell
+            // reclassifies from its stored climate). Best-effort — never fail the load over migration.
+            try
+            {
+                var cellsToken = JObject.Parse(json)["Cells"] as JArray;
+                if (cellsToken != null)
+                {
+                    for (int i = 0; i < cellsToken.Count && i < result.Cells.Count; i++)
+                    {
+                        var bo = cellsToken[i]?["BiomeOverride"];
+                        if (bo == null || bo.Type == JTokenType.Null) continue;
+                        var rep = BiomeMatrix.RepresentativeClimate((Biome)bo.Value<int>());
+                        if (rep.HasValue)
+                        {
+                            result.Cells[i].TemperatureOverride = BiomeMatrix.LevelCenter(rep.Value.t);
+                            result.Cells[i].MoistureOverride    = BiomeMatrix.LevelCenter(rep.Value.m);
+                        }
+                    }
+                }
+            }
+            catch { /* migration is best-effort */ }
 
             return result;
         }

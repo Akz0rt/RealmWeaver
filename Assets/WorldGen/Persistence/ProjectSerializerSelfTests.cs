@@ -208,5 +208,30 @@ namespace WorldGen.Persistence
                 && legacyResult.Success && legacyResult.RegionLabels != null && legacyResult.RegionLabels.Count == 0;
             Debug.Log(ok ? "Self-Test Region Labels Round-Trip: PASS" : "Self-Test Region Labels Round-Trip: FAIL");
         }
+
+        [ContextMenu("Self-Test: Legacy BiomeOverride Migration")]
+        public void SelfTestLegacyBiomeOverrideMigration()
+        {
+            // Savanna == BiomeMatrix.Get(3,2). Its enum ordinal (int) is what v1 saved.
+            int savannaOrdinal = (int)Biome.Savanna;
+            string json =
+                "{ \"FormatVersion\": 1, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [ { \"Id\": 0, \"Height\": 0.2, \"Temperature\": 0.1, \"Humidity\": 0.1, " +
+                $"\"BiomeOverride\": {savannaOrdinal} }} ], \"Pois\": [], \"RegionLabels\": [] }}";
+            string path = Path.Combine(Application.temporaryCachePath, "migration_test.dndproj");
+            File.WriteAllText(path, json);
+
+            var res = ProjectSerializer.Load(path);
+            var rep = BiomeMatrix.RepresentativeClimate(Biome.Savanna).Value;
+            var c = res.Cells[0];
+            bool ok = res.Success
+                   && Mathf.Approximately(c.TemperatureOverride ?? -1f, BiomeMatrix.LevelCenter(rep.t))
+                   && Mathf.Approximately(c.MoistureOverride ?? -1f, BiomeMatrix.LevelCenter(rep.m));
+            // After a classify pass the derived biome is Savanna on flat land.
+            CellOverrideService.ElevationTempDrop = 0.4f;
+            CellOverrideService.ClassifyAll(res.Cells, 0f);
+            ok &= c.Biome == Biome.Savanna;
+            Debug.Log(ok ? "Self-Test Legacy Migration: PASS" : "Self-Test Legacy Migration: FAIL");
+        }
     }
 }

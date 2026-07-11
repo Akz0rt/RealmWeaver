@@ -310,9 +310,10 @@ namespace WorldGen.Rendering
             cells = loadedCells;
             corners = CornerGraphBuilder.Build(cells);
 
-            // Биомы пересчитываем из климата (spec §Backward compatibility): загруженный cell.Biome
-            // может быть из старого набора. Температура/влажность/высота сохранены, поэтому
-            // классификация даёт корректный новый биом.
+            // Биомы всегда пересчитываются из сохранённого климата (temperature/moisture + их
+            // override'ы), а не берутся из загруженного cell.Biome напрямую. Старый per-cell
+            // BiomeOverride (снят в Task 5) уже сконвертирован ProjectSerializer'ом в
+            // TemperatureOverride/MoistureOverride на этапе Load — здесь он не нужен.
             WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
             WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
