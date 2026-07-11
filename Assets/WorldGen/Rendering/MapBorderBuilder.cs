@@ -39,10 +39,10 @@ namespace WorldGen.Rendering
 
         public static void ClassifyBorderEdges(
             IReadOnlyList<VoronoiCell> cells,
-            out List<(Edge edge, int regionId)> regionEdges,
+            out List<(Edge edge, int rA, Vector2 siteA, int rB, Vector2 siteB)> regionEdges,
             out List<Edge> coastEdges)
         {
-            regionEdges = new List<(Edge edge, int regionId)>();
+            regionEdges = new List<(Edge edge, int rA, Vector2 siteA, int rB, Vector2 siteB)>();
             coastEdges = new List<Edge>();
             if (cells == null) return;
 
@@ -92,9 +92,9 @@ namespace WorldGen.Rendering
                     // Граница региона: обе клетки не-океан (суша или озеро) и принадлежат
                     // разным регионам. Озёра входят в регион через RegionGrowing,
                     // поэтому граница рисуется вокруг озера как части его региона.
-                    // regionId - детерминированный "владелец" ребра для раскраски (min из двух id).
-                    int regionId = System.Math.Min(ca.RegionId, cb.RegionId);
-                    regionEdges.Add((edge, regionId));
+                    // Обе стороны сохраняются (id + Site) - каждый регион красит свою половину
+                    // границы собственным цветом (см. BuildRegionBorderMesh).
+                    regionEdges.Add((edge, ca.RegionId, ca.Site, cb.RegionId, cb.Site));
                 }
             }
         }
@@ -140,49 +140,47 @@ namespace WorldGen.Rendering
             return mesh;
         }
 
-        /// <summary>Тот же quad-лента меш, что и BuildRibbonMesh(Edge), но с per-vertex цветом:
-        /// все 4 вершины ребра получают его цвет (regionId клетки -> цвет региона, см. WorldMapRenderer.BuildBorders).
+        /// <summary>Строит меш границ регионов, где на каждом общем ребре двух регионов рисуются
+        /// ДВА однонаправленных quad'а, прижатых к ребру и уходящих каждый в сторону "своего"
+        /// региона (по знаку проекции направления к Site клетки на перпендикуляр ребра) -
+        /// так видны оба цвета, и они соприкасаются вдоль общего ребра, а не перекрывают друг друга.
         /// Материал должен быть белым (Color.white), чтобы vertex color не модулировался.</summary>
-        public static UnityEngine.Mesh BuildRibbonMesh(IReadOnlyList<(Edge edge, UnityEngine.Color color)> edges, float width, float yHeight)
+        public static UnityEngine.Mesh BuildRegionBorderMesh(
+            IReadOnlyList<(Edge edge, int rA, Vector2 siteA, int rB, Vector2 siteB)> edges,
+            System.Func<int, UnityEngine.Color> colorOf, float width, float yHeight)
         {
             var verts = new List<UnityEngine.Vector3>();
+            var cols = new List<UnityEngine.Color>();
             var tris = new List<int>();
-            var colors = new List<UnityEngine.Color>();
-            float half = width * 0.5f;
-
             if (edges != null)
-            {
-                foreach (var (e, color) in edges)
+                foreach (var e in edges)
                 {
-                    var p0 = new UnityEngine.Vector3(e.A.X, yHeight, e.A.Y);
-                    var p1 = new UnityEngine.Vector3(e.B.X, yHeight, e.B.Y);
-                    var dir = p1 - p0;
-                    dir.y = 0f;
+                    var p0 = new UnityEngine.Vector3(e.edge.A.X, yHeight, e.edge.A.Y);
+                    var p1 = new UnityEngine.Vector3(e.edge.B.X, yHeight, e.edge.B.Y);
+                    var dir = p1 - p0; dir.y = 0f;
                     if (dir.sqrMagnitude < 1e-8f) continue;
                     dir.Normalize();
-                    var side = new UnityEngine.Vector3(-dir.z, 0f, dir.x) * half;
-
-                    int bi = verts.Count;
-                    verts.Add(p0 - side);
-                    verts.Add(p0 + side);
-                    verts.Add(p1 + side);
-                    verts.Add(p1 - side);
-                    colors.Add(color); colors.Add(color); colors.Add(color); colors.Add(color);
-
-                    tris.Add(bi + 0); tris.Add(bi + 2); tris.Add(bi + 1);
-                    tris.Add(bi + 0); tris.Add(bi + 3); tris.Add(bi + 2);
+                    var perp = new UnityEngine.Vector3(-dir.z, 0f, dir.x);      // unit perpendicular in XZ
+                    var mid = (p0 + p1) * 0.5f;
+                    var toA = new UnityEngine.Vector3(e.siteA.X, yHeight, e.siteA.Y) - mid;
+                    float sA = UnityEngine.Vector3.Dot(toA, perp) >= 0f ? 1f : -1f;
+                    AddSideQuad(verts, cols, tris, p0, p1, perp * (sA * width), colorOf(e.rA));   // A's side
+                    AddSideQuad(verts, cols, tris, p0, p1, perp * (-sA * width), colorOf(e.rB));  // B's side
                 }
-            }
-
             var mesh = new UnityEngine.Mesh();
-            mesh.indexFormat = verts.Count > 65000
-                ? UnityEngine.Rendering.IndexFormat.UInt32
-                : UnityEngine.Rendering.IndexFormat.UInt16;
-            mesh.SetVertices(verts);
-            mesh.SetTriangles(tris, 0);
-            mesh.SetColors(colors);
-            mesh.RecalculateBounds();
+            mesh.indexFormat = verts.Count > 65000 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts); mesh.SetColors(cols); mesh.SetTriangles(tris, 0); mesh.RecalculateBounds();
             return mesh;
+        }
+
+        static void AddSideQuad(List<UnityEngine.Vector3> verts, List<UnityEngine.Color> cols, List<int> tris,
+                                UnityEngine.Vector3 p0, UnityEngine.Vector3 p1, UnityEngine.Vector3 offset, UnityEngine.Color c)
+        {
+            int bi = verts.Count;
+            verts.Add(p0); verts.Add(p1); verts.Add(p1 + offset); verts.Add(p0 + offset);
+            cols.Add(c); cols.Add(c); cols.Add(c); cols.Add(c);
+            tris.Add(bi + 0); tris.Add(bi + 2); tris.Add(bi + 1);
+            tris.Add(bi + 0); tris.Add(bi + 3); tris.Add(bi + 2);
         }
     }
 }
