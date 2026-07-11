@@ -101,9 +101,10 @@ namespace WorldGen.Rendering.MapRaster
         /// подсветку берега в ColorForWaterPixel.</summary>
         public float[] CoastDistance;
 
-        /// <summary>Семейство биома на пиксель для сглаженной плоской заливки (индекс BiomeFamily; -1 =
-        /// нет метки → откат к ближайшей клетке). Только Combined+SmoothBorders+FlatRegionFill+
-        /// SmoothRegionBorders. Водные семейства (Sea/Lake) сюда не попадают. См. RasterizeSmoothedCategoryRect.</summary>
+        /// <summary>Биом на пиксель для сглаженной плоской заливки (индекс Biome; -1 = нет метки → откат
+        /// к ближайшей клетке). Только Combined+SmoothBorders+FlatRegionFill+SmoothRegionBorders. Водные
+        /// биомы (Ocean/Lake) сюда не попадают. Имя поля осталось прежним (FamilyLabel), домен изменился
+        /// с BiomeFamily на Biome (per-biome раскраска). См. RasterizeSmoothedCategoryRect.</summary>
         public int[] FamilyLabel;
 
         /// <summary>Полоса высоты на пиксель для сглаженной плоской заливки (индекс полосы; -1 = нет
@@ -256,7 +257,7 @@ namespace WorldGen.Rendering.MapRaster
                         // при выключенном слое трассировать незачем (метка не читается).
                         if (config.ShowBiomeLayer)
                             RasterizeSmoothedCategoryRect(cellById, corners, config, buffers,
-                                buffers.FamilyLabel, RegionCategories.FamilyCategoryOf, RegionCategories.FamilyPriority, rectX, rectY, rectW, rectH);
+                                buffers.FamilyLabel, RegionCategories.BiomeCategoryOf, RegionCategories.BiomePriority, rectX, rectY, rectW, rectH);
                         if (config.ShowReliefLayer && config.ElevationBands > 1)
                         {
                             int bands = config.ElevationBands;
@@ -432,18 +433,18 @@ namespace WorldGen.Rendering.MapRaster
                         sumW += weight;
                         elev += weight * neighbor.EffectiveElevation;
                         temp += weight * neighbor.EffectiveTemperature;
-                        Color32 fc = MapPalette.GetSlotColor(config.Theme, MapPalette.GetFamily(neighbor.Biome));
+                        Color32 fc = MapPalette.GetBiomeColor(config.Theme, neighbor.Biome);
                         cr += weight * fc.r; cg += weight * fc.g; cb += weight * fc.b;
                     }
 
                     if (sumW <= 0f)
                     {
                         // Ни одной land-клетки в радиусе (каёмочный пиксель, чья ближайшая клетка водная):
-                        // FlatFamilyColor подменяет водное семейство на Coast, иначе GetSlotColor(Sea/Lake)
+                        // FlatBiomeColor подменяет водный биом на Coast, иначе GetBiomeColor(Ocean/Lake)
                         // бросил бы (тот же корень, что чинит плоский путь - defense-in-depth).
                         buffers.Elevation[idx] = cell.EffectiveElevation;
                         buffers.Temperature[idx] = cell.EffectiveTemperature;
-                        buffers.FamilyColor[idx] = FlatFamilyColor(config.Theme, cell.Biome);
+                        buffers.FamilyColor[idx] = FlatBiomeColor(config.Theme, cell.Biome);
                     }
                     else
                     {
@@ -636,23 +637,14 @@ namespace WorldGen.Rendering.MapRaster
             }
         }
 
-        /// <summary>Плоский цвет семейства биома клетки: как GetSlotColor(theme, GetFamily(biome)), но
-        /// водные семейства (Sea/Lake - у них нет плоского слота, глубина воды сэмплируется отдельно)
-        /// подменяются на Coast. Нужно, т.к. сглаженный контур берега (Чайкин) может отнести к суше
-        /// пиксель, чья ближайшая клетка водная (тонкая каёмка на вогнутых участках берега) - у такой
-        /// каёмки берём береговой тон вместо краша MapPalette.FamilyToSlot на Sea/Lake.</summary>
-        static Color32 FlatFamilyColor(MapPaletteTheme theme, Biome biome)
-            => FlatFamilyColor(theme, MapPalette.GetFamily(biome));
-
-        /// <summary>Плоский цвет семейства с той же защитой Sea/Lake→Coast. Отдельная перегрузка по
-        /// BiomeFamily - чтобы сглаженная метка семейства (ColorForLandPixelFlat) тоже проходила через
-        /// guard, а не кастилась прямо в GetSlotColor (defense-in-depth: сейчас метки не содержат Sea/Lake,
-        /// т.к. FamilyPriority их не включает, но правка приоритетов/enum не должна ронять рендер).</summary>
-        static Color32 FlatFamilyColor(MapPaletteTheme theme, BiomeFamily family)
+        /// <summary>Плоский цвет биома клетки. Land + Beach → per-biome (Beach падает на Coast через
+        /// family-fallback в GetBiomeColor). Ocean/Lake не имеют плоского слота (красятся по глубине) -
+        /// guard на Coast (defense-in-depth: метка суши их не содержит).</summary>
+        static Color32 FlatBiomeColor(MapPaletteTheme theme, Biome biome)
         {
-            if (family == BiomeFamily.Sea || family == BiomeFamily.Lake)
-                family = BiomeFamily.Coast;
-            return MapPalette.GetSlotColor(theme, family);
+            if (biome == Biome.Ocean || biome == Biome.Lake)
+                return MapPalette.GetSlotColor(theme, PaletteSlot.Coast);
+            return MapPalette.GetBiomeColor(theme, biome);
         }
 
         /// <summary>Плоская заливка суши (только Combined+SmoothBorders+FlatRegionFill): базовый цвет =
@@ -673,8 +665,8 @@ namespace WorldGen.Rendering.MapRaster
             {
                 int fLabel = config.SmoothRegionBorders ? buffers.FamilyLabel[idx] : -1;
                 fam = fLabel >= 0
-                    ? FlatFamilyColor(config.Theme, (BiomeFamily)fLabel)   // guard Sea/Lake→Coast
-                    : FlatFamilyColor(config.Theme, cell.Biome);
+                    ? FlatBiomeColor(config.Theme, (Biome)fLabel)   // guard Ocean/Lake→Coast
+                    : FlatBiomeColor(config.Theme, cell.Biome);
             }
             else
             {
