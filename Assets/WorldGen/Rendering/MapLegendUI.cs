@@ -23,7 +23,7 @@ namespace WorldGen.Rendering
         public int fontSize = 12;
 
         const float PanelWidth = 232f;
-        const int CompactCount = 14;     // rows shown before "Показать все N →" (all 13 biome families fit; only long Region lists collapse)
+        const int CompactCount = 14;     // rows shown before "Показать все N →" (biome legend is ≤7 rows now: Ocean+Lake+top-5; only long Region lists collapse)
 
         Canvas canvas;
         RectTransform panelRect;
