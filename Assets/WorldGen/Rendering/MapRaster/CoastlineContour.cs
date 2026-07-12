@@ -23,7 +23,8 @@ namespace WorldGen.Rendering.MapRaster
         /// MapRasterizer.RasterizeSmoothedCategoryRect). Разомкнутые/вырожденные цепочки пропускаются.</summary>
         public static List<List<Vector2>> TraceSmoothedLoops(
             IReadOnlyList<Corner> corners, IReadOnlyDictionary<int, VoronoiCell> cellById,
-            Func<VoronoiCell, bool> inRegion, int smoothingIterations, float decimationDistance)
+            Func<VoronoiCell, bool> inRegion, int smoothingIterations, float decimationDistance,
+            bool offMapInRegion = false)
         {
             var cornerById = new Dictionary<int, Corner>(corners.Count);
             foreach (var c in corners) cornerById[c.Id] = c;
@@ -38,12 +39,28 @@ namespace WorldGen.Rendering.MapRaster
                     if (!cornerById.TryGetValue(neighborId, out var neighbor)) continue;
 
                     var shared = SharedCellIds(corner, neighbor);
-                    if (shared.Count != 2) continue; // ребро по краю карты (1 клетка) - не граница
 
-                    bool in0 = cellById.TryGetValue(shared[0], out var c0) && inRegion(c0);
-                    bool in1 = cellById.TryGetValue(shared[1], out var c1) && inRegion(c1);
-                    if (in0 == in1) continue; // обе клетки одной категории - не граница
+                    bool isBoundary;
+                    if (shared.Count == 2)
+                    {
+                        bool in0 = cellById.TryGetValue(shared[0], out var c0) && inRegion(c0);
+                        bool in1 = cellById.TryGetValue(shared[1], out var c1) && inRegion(c1);
+                        isBoundary = in0 != in1; // разные категории по сторонам ребра
+                    }
+                    else if (shared.Count == 1)
+                    {
+                        // Ребро на КРАЮ карты: с одной стороны клетка shared[0], с другой - "вне карты".
+                        // Вне карты трактуем как offMapInRegion (для берега = вода, см. water-обёртку).
+                        // Граница возникает, когда клетка у края отличается от внешнего мира - т.е.
+                        // СУША, упирающаяся в край карты (иначе океан вдоль всего края дал бы ложную
+                        // петлю вокруг всей карты). Раньше такие рёбра просто отбрасывались, из-за чего
+                        // петля берега для суши у края НЕ ЗАМЫКАЛАСЬ и суша пропадала (красилась водой).
+                        bool inside = cellById.TryGetValue(shared[0], out var c) && inRegion(c);
+                        isBoundary = inside != offMapInRegion;
+                    }
+                    else continue; // вырожденный узел (0 общих клеток) - не ребро
 
+                    if (!isBoundary) continue;
                     AddBoundaryNeighbor(boundaryNeighbors, corner.Id, neighbor.Id);
                     AddBoundaryNeighbor(boundaryNeighbors, neighbor.Id, corner.Id);
                 }
@@ -52,26 +69,78 @@ namespace WorldGen.Rendering.MapRaster
             var loops = new List<List<Vector2>>();
             var visited = new HashSet<int>();
 
+            void AddLoopFrom(List<int> ids)
+            {
+                if (ids == null || ids.Count < 3) return; // 2-точечная "петля" не даёт площади - пропускаем
+                var points = ids.Select(id => cornerById[id].Position).ToList();
+                points = DecimateClosedLoop(points, decimationDistance, MinDecimateVertices);
+                loops.Add(ChaikinSmoothClosed(points, smoothingIterations));
+            }
+
+            // 1) РАЗОМКНУТЫЕ цепи (концы = узлы степени 1). У чистой геометрии их не бывает - степень
+            //    узла границы всегда ЧЁТНАЯ (число переходов суша↔вода вокруг вершины чётно; обычно
+            //    0 или 2, у 4-клеточной вершины возможна 4), поэтому deg1 быть не может - но вырожденный
+            //    клиппинг Вороного у угла карты рвёт петлю берега, и весь кусок суши выпадал (красился
+            //    водой). Проходим цепь от конца до конца и ЗАМЫКАЕМ её: RasterizeIsLand по even-odd
+            //    соединит последнюю точку с первой прямым отрезком - для узкого разрыва у кромки корректно.
             foreach (var startId in boundaryNeighbors.Keys)
             {
                 if (visited.Contains(startId)) continue;
-                var loopIds = WalkClosedLoop(startId, boundaryNeighbors, visited);
-                if (loopIds == null) continue; // разомкнутая/вырожденная цепочка - пропускаем
+                if (boundaryNeighbors[startId].Count != 1) continue; // старт только с концов цепей
+                AddLoopFrom(WalkOpenChain(startId, boundaryNeighbors, visited));
+            }
 
-                var points = loopIds.Select(id => cornerById[id].Position).ToList();
-                points = DecimateClosedLoop(points, decimationDistance, MinDecimateVertices);
-                loops.Add(ChaikinSmoothClosed(points, smoothingIterations));
+            // 2) ЗАМКНУТЫЕ петли (оставшиеся узлы, все степени 2) - прежнее поведение без изменений.
+            foreach (var startId in boundaryNeighbors.Keys)
+            {
+                if (visited.Contains(startId)) continue;
+                AddLoopFrom(WalkClosedLoop(startId, boundaryNeighbors, visited));
             }
 
             return loops;
         }
 
+        /// <summary>Идёт от конца разомкнутой цепи (узел степени 1) по boundary-соседям до другого
+        /// конца, выбирая на каждом шаге ещё не посещённого соседа (кроме предыдущего). Возвращает
+        /// упорядоченный путь; вызывающий замыкает его. Помечает пройденные узлы visited.</summary>
+        static List<int> WalkOpenChain(int startId, Dictionary<int, List<int>> boundaryNeighbors, HashSet<int> visited)
+        {
+            var chain = new List<int> { startId };
+            visited.Add(startId);
+
+            int previousId = -1;
+            int currentId = startId;
+            int maxSteps = boundaryNeighbors.Count + 1;
+
+            for (int step = 0; step < maxSteps; step++)
+            {
+                int nextId = -1;
+                foreach (var n in boundaryNeighbors[currentId])
+                {
+                    if (n == previousId) continue;
+                    if (visited.Contains(n)) continue;
+                    nextId = n;
+                    break;
+                }
+                if (nextId == -1) return chain; // дошли до другого конца (степень 1) - цепь завершена
+
+                chain.Add(nextId);
+                visited.Add(nextId);
+                previousId = currentId;
+                currentId = nextId;
+            }
+
+            return chain;
+        }
+
         /// <summary>Водная обёртка (контур берега): inRegion = IsWaterCell. Сохраняет старую 3-арг
-        /// сигнатуру (decimationDistance по умолчанию 0 = без прореживания).</summary>
+        /// сигнатуру (decimationDistance по умолчанию 0 = без прореживания). offMapInRegion=true: всё,
+        /// что ЗА краем карты, считается водой - поэтому суша, упирающаяся в край, даёт замкнутую петлю
+        /// берега (а океан вдоль края - нет, что и нужно).</summary>
         public static List<List<Vector2>> TraceSmoothedLoops(
             IReadOnlyList<Corner> corners, IReadOnlyDictionary<int, VoronoiCell> cellById,
             int smoothingIterations, float decimationDistance = 0f)
-            => TraceSmoothedLoops(corners, cellById, IsWaterCell, smoothingIterations, decimationDistance);
+            => TraceSmoothedLoops(corners, cellById, IsWaterCell, smoothingIterations, decimationDistance, offMapInRegion: true);
 
         /// <summary>Петли с ≤ этого числа вершин не прорежаются (мелкие острова/полоски биома -
         /// защита от схлопывания).</summary>

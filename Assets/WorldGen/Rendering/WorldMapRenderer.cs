@@ -548,27 +548,19 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
-        /// <summary>Each region's centroid = un-weighted average Site of its member LAND cells (ocean/lake
-        /// cells are skipped) - used to place one region-name label per region in "Регионы" display mode
-        /// (see PoliticalRegionLabelOverlay). A region with no land cells yet (just added via RegionsPanel,
-        /// not yet painted by the brush) is simply absent from the result - no centroid to anchor on.</summary>
+        /// <summary>One anchor per region for its name label in "Регионы" mode (see
+        /// PoliticalRegionLabelOverlay). Anchor = largest connected LAND component of the region →
+        /// area-weighted centroid → snapped to a real member cell (PoliticalRegionAnchors), so it always
+        /// lands ON the region near its visual centre - never in the ocean like the old un-weighted mean.
+        /// A region with no land cells yet (just added via RegionsPanel, not yet painted) is absent from
+        /// the result - nothing to anchor on. (Method name kept for its callers.)</summary>
         public Dictionary<int, System.Numerics.Vector2> RegionCentroids()
         {
-            var result = new Dictionary<int, System.Numerics.Vector2>();
-            if (cells == null) return result;
-
-            var sums = new Dictionary<int, System.Numerics.Vector2>();
-            var counts = new Dictionary<int, int>();
-            foreach (var c in cells)
-            {
-                if (c.RegionId < 0) continue;
-                if (!RegionCategories.IsLandCell(c)) continue;   // skip ocean/lake cells
-                sums[c.RegionId] = sums.TryGetValue(c.RegionId, out var s) ? s + c.Site : c.Site;
-                counts[c.RegionId] = counts.TryGetValue(c.RegionId, out var n) ? n + 1 : 1;
-            }
-            foreach (var kv in sums)
-                result[kv.Key] = kv.Value / counts[kv.Key];
-            return result;
+            if (cells == null) return new Dictionary<int, System.Numerics.Vector2>();
+            // Якорь = крупнейший связный кусок региона → взвешенный центроид → snap к реальной клетке
+            // (см. PoliticalRegionAnchors). Прежний наивный центроид (среднее координат) у вытянутых/
+            // разорванных областей улетал в океан - отсюда «подписи в рандомных местах».
+            return WorldGen.Rendering.RegionLabels.PoliticalRegionAnchors.Compute(cells);
         }
 
         /// <summary>Self-creates the political region-name label overlay (Task 7) the first time it's
@@ -1587,6 +1579,83 @@ namespace WorldGen.Rendering
                 : $"Self-Test Coastline Contour Tracing: FAIL (oneLoop={oneLoop}, fourPoints={fourPoints}, cornersMatch={cornersMatch}, smoothedPointCountOk={smoothedPointCountOk})");
         }
 
+        /// <summary>Регрессия к багу (уточнён пользователем 2026-07-12): суша, КАСАЮЩАЯСЯ края карты,
+        /// пропадала и красилась водой. Причина — CoastlineContour отбрасывал рёбра на границе карты
+        /// (shared.Count==1), поэтому петля берега для суши у края не замыкалась. Фикс: «вне карты =
+        /// вода» (offMapInRegion). Фикстура: клетка (1,0) — суша у НИЖНЕГО края (сайты сдвинуты на +0.5,
+        /// так что нижнее ребро клетки лежит на y=0 = граница карты), остальное океан. После трассировки
+        /// + растеризации центр клетки-суши ОБЯЗАН быть сушей; океан у края ложной петли давать не должен.</summary>
+        [ContextMenu("Self-Test: Edge-Touching Land Survives Coast Bake")]
+        public void SelfTestEdgeTouchingLandSurvivesCoastBake()
+        {
+            const int G = 3;
+            var cells = new List<VoronoiCell>();
+            int id = 0;
+            for (int r = 0; r < G; r++)
+                for (int c = 0; c < G; c++)
+                {
+                    bool land = (c == 1 && r == 0);   // нижний-центр: нижнее ребро на y=0 (край карты)
+                    // Сайты сдвинуты на +0.5 → полигон клетки = [c..c+1]x[r..r+1], карта ровно [0..3]x[0..3].
+                    var cell = new VoronoiCell(id++, new System.Numerics.Vector2(c + 0.5f, r + 0.5f))
+                    { Biome = land ? Biome.Grassland : Biome.Ocean, IsOcean = !land };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                }
+            var byId = cells.ToDictionary(cc => cc.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+
+            var loops = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(corners, byId, smoothingIterations: 0);
+
+            const int texW = 30, texH = 30; const float mapW = 3f, mapH = 3f;
+            var isLand = new bool[texW * texH];
+            WorldGen.Rendering.MapRaster.CoastlineContour.RasterizeIsLand(loops, isLand, texW, texH, mapW, mapH, 0, 0, texW, texH);
+
+            // Центр клетки-суши (1,0): мир (1.5, 0.5) → px (15, 5).
+            int cx = Mathf.RoundToInt(1.5f / mapW * texW), cy = Mathf.RoundToInt(0.5f / mapH * texH);
+            bool landFilled = isLand[cy * texW + cx];
+            // Океан у края (клетка (0,2), мир (0.5, 2.5) → px (5, 25)) должен остаться водой.
+            bool oceanStaysWater = !isLand[Mathf.RoundToInt(2.5f / mapH * texH) * texW + Mathf.RoundToInt(0.5f / mapW * texW)];
+
+            bool okTest = landFilled && oceanStaysWater && loops.Count == 1;
+            Debug.Log(okTest
+                ? $"Self-Test Edge-Touching Land Survives Coast Bake: PASS (loops={loops.Count})"
+                : $"Self-Test Edge-Touching Land Survives Coast Bake: FAIL — landFilled={landFilled}, oceanStaysWater={oceanStaysWater}, loops={loops.Count} " +
+                  $"(0 петель = ребро края не замкнулось; суша у края красится водой)");
+        }
+
+        /// <summary>Регрессия к угловому багу (DIAG показал deg1=2): суша, чью петлю берега вырожденный
+        /// клиппинг Вороного оставлял РАЗОМКНУТОЙ, пропадала целиком. Синтетическая вырожденная цепь
+        /// c0-c1-c2 (концы степени 1, суша L / вода W вдоль неё) должна теперь ЗАМКНУТЬСЯ в ровно 1 петлю
+        /// (раньше цепь выбрасывалась → 0 петель → суша пропадала).</summary>
+        [ContextMenu("Self-Test: Open Coastline Chain Closes Into Loop")]
+        public void SelfTestOpenCoastlineChainClosesIntoLoop()
+        {
+            var L = new VoronoiCell(0, new System.Numerics.Vector2(1, 1)) { IsOcean = false, Biome = Biome.Grassland };
+            var W = new VoronoiCell(1, new System.Numerics.Vector2(1, -1)) { IsOcean = true, Biome = Biome.Ocean };
+            var byId = new Dictionary<int, VoronoiCell> { { 0, L }, { 1, W } };
+
+            WorldGen.Generation.Corner MkCorner(int id, float x, float y, int[] nbrs)
+            {
+                var c = new WorldGen.Generation.Corner(id, new System.Numerics.Vector2(x, y));
+                c.NeighborCornerIds.AddRange(nbrs);
+                c.TouchingCellIds.AddRange(new[] { 0, 1 }); // обе клетки касаются каждого угла цепи
+                return c;
+            }
+            var corners = new List<WorldGen.Generation.Corner>
+            {
+                MkCorner(0, 0f, 0f, new[] { 1 }),      // конец (степень 1)
+                MkCorner(1, 1f, 2f, new[] { 0, 2 }),   // середина (степень 2)
+                MkCorner(2, 2f, 0f, new[] { 1 }),      // конец (степень 1)
+            };
+
+            var loops = WorldGen.Rendering.MapRaster.CoastlineContour.TraceSmoothedLoops(corners, byId, smoothingIterations: 0);
+
+            bool ok = loops.Count == 1;   // без фикса разомкнутая цепь давала 0 петель
+            Debug.Log(ok
+                ? $"Self-Test Open Coastline Chain Closes Into Loop: PASS (loops={loops.Count})"
+                : $"Self-Test Open Coastline Chain Closes Into Loop: FAIL (loops={loops.Count}, ожидалась 1 замкнутая петля из разомкнутой цепи)");
+        }
+
         /// <summary>Синтетический контур "остров с озером внутри" (без реальных VoronoiCell/Corner -
         /// RasterizeIsLand работает напрямую с петлями точек). Карта 14x14, текстура 14x14 (1
         /// тексель на мировую единицу) - внешняя петля 0..10, внутренняя (озеро) 3..7. Пиксель
@@ -2191,6 +2260,67 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Coastline Mask Updates Within Brush Dirty Rect: PASS"
                 : $"Self-Test Coastline Mask Updates Within Brush Dirty Rect: FAIL (wasLandBefore={wasLandBefore}, isLandAfter={isLandAfter})");
+        }
+
+        /// <summary>Репро багрепорта (скриншот 2026-07-12): кистью «Суша» ставят ОДИНОЧНЫЙ остров
+        /// (ForceLand) в открытом океане. Во время мазка faceted-заплатка красит клетку сушей; на
+        /// отпускании FinalizeLabels перезапекает СГЛАЖЕННУЮ маску суша/вода (RegionLabelBaker.BakeRect)
+        /// в padded-rect вокруг клетки. Остров ОБЯЗАН остаться сушей. Тест воспроизводит именно этот
+        /// двухфазный путь: полный запек (всё океан) → ForceLand → перезапек padded-rect → проверка
+        /// центрального пикселя. FAIL = сглаженная петля вокруг изолированной клетки не заливается,
+        /// клетка рендерится водой (шейдер: renderWater = !landAt(uv)).</summary>
+        [ContextMenu("Self-Test: Isolated Island Survives Release Re-Bake")]
+        public void SelfTestIsolatedIslandSurvivesReleaseReBake()
+        {
+            const int G = 7;
+            var cells = new List<VoronoiCell>();
+            int nextId = 0; VoronoiCell island = null;
+            for (int r = 0; r < G; r++)
+                for (int c = 0; c < G; c++)
+                {
+                    var cell = new VoronoiCell(nextId++, new System.Numerics.Vector2(c, r))
+                    { Biome = Biome.Ocean, IsOcean = true };
+                    cell.Polygon = SquarePolygon(cell.Site, 0.5f);
+                    cells.Add(cell);
+                    if (c == 3 && r == 3) island = cell;
+                }
+            var byId = cells.ToDictionary(c => c.Id);
+            var corners = WorldGen.Generation.CornerGraphBuilder.Build(cells);
+            var lookup = new WorldGen.Rendering.MapRaster.NearestCellLookup(cells, 1f);
+
+            const int texW = 70, texH = 70; const float mapW = 7f, mapH = 7f;
+            var cellIdArray = new int[texW * texH];
+            for (int y = 0; y < texH; y++)
+                for (int x = 0; x < texW; x++)
+                {
+                    float wx = (x + 0.5f) / texW * mapW, wy = (y + 0.5f) / texH * mapH;
+                    cellIdArray[y * texW + x] = lookup.FindNearest(new System.Numerics.Vector2(wx, wy)).Id;
+                }
+            var fam = new int[texW * texH]; var band = new int[texW * texH]; var isLand = new bool[texW * texH];
+
+            // Фаза 1 — полный запек всего океана (базовое состояние карты).
+            WorldGen.Rendering.MapRaster.RegionLabelBaker.BakeRect(byId, corners, cellIdArray, fam, band, isLand,
+                texW, texH, mapW, mapH, smoothing: 2, decimation: 2f, bands: 5, 0, 0, texW, texH);
+
+            // Мазок кисти «Суша»: клетка стала сушей (ровно как BrushSetWater → ForceLand).
+            island.WaterOverride = WaterOverrideType.ForceLand;
+
+            // Фаза 2 — отпускание ЛКМ: перезапек СГЛАЖЕННОЙ маски в padded-rect вокруг клетки-острова.
+            // Пиксельный bbox клетки (site (3,3), half 0.5 → world 2.5..3.5 → px 25..35), пад как в FinalizeLabels.
+            const int pad = 14;
+            int rx = Mathf.Clamp(25 - pad, 0, texW - 1), ry = Mathf.Clamp(25 - pad, 0, texH - 1);
+            int rx1 = Mathf.Clamp(35 + pad, 0, texW - 1), ry1 = Mathf.Clamp(35 + pad, 0, texH - 1);
+            WorldGen.Rendering.MapRaster.RegionLabelBaker.BakeRect(byId, corners, cellIdArray, fam, band, isLand,
+                texW, texH, mapW, mapH, smoothing: 2, decimation: 2f, bands: 5, rx, ry, rx1 - rx + 1, ry1 - ry + 1);
+
+            int cx = Mathf.RoundToInt(3f / mapW * texW), cy = Mathf.RoundToInt(3f / mapH * texH); // ~ центр клетки (3,3)
+            bool islandIsLand = isLand[cy * texW + cx];
+            int landPixels = 0; foreach (var b in isLand) if (b) landPixels++;
+
+            Debug.Log(islandIsLand
+                ? $"Self-Test Isolated Island Survives Release Re-Bake: PASS (landPixels={landPixels})"
+                : $"Self-Test Isolated Island Survives Release Re-Bake: FAIL — центр острова = вода " +
+                  $"(landPixels={landPixels}, cx={cx}, cy={cy}); сглаженная петля вокруг одиночной клетки не залилась");
         }
 
         /// <summary>Distance transform: единственный пиксель суши в центре 11x11, проверка что
@@ -2852,7 +2982,7 @@ namespace WorldGen.Rendering
         public int GetActualRegionCount()
         {
             if (cells == null) return 0;
-            return cells.Where(c => !c.IsOcean && c.RegionId >= 0)
+            return cells.Where(c => !c.EffectiveIsOcean && c.RegionId >= 0)
                          .Select(c => c.RegionId)
                          .Distinct()
                          .Count();
