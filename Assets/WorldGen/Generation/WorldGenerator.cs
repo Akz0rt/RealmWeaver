@@ -330,7 +330,7 @@ namespace WorldGen.Generation
         /// neighbour; finally region ids are compacted to 0..K-1. Returns the resulting region count.</summary>
         public static int GenerateRegions(List<VoronoiCell> cells, int count, int minSize, int seed)
         {
-            var land = cells.Where(c => !c.IsOcean).ToList();
+            var land = cells.Where(c => !c.EffectiveIsOcean).ToList();
             foreach (var c in cells) c.RegionId = -1;
             if (land.Count == 0 || count <= 0) return 0;
             int n = Math.Min(count, land.Count);
@@ -357,7 +357,7 @@ namespace WorldGen.Generation
                 {
                     if (c.RegionId != small) continue;
                     foreach (int nid in c.NeighborIds)
-                        if (byId.TryGetValue(nid, out var nb) && !nb.IsOcean && nb.RegionId >= 0 && nb.RegionId != small)
+                        if (byId.TryGetValue(nid, out var nb) && !nb.EffectiveIsOcean && nb.RegionId >= 0 && nb.RegionId != small)
                         { shared.TryGetValue(nb.RegionId, out int k); shared[nb.RegionId] = k + 1; }
                 }
                 if (shared.Count == 0) return;                                   // isolated island region — leave it

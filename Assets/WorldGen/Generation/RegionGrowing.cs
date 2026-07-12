@@ -44,7 +44,7 @@ namespace WorldGen.Generation
                 var cell = cellById[cellId];
 
                 if (cell.RegionId != -1) continue; // уже занята другим регионом, который добрался раньше
-                if (cell.IsOcean) continue;          // защита - в очередь океанские клетки не попадают, но проверка не лишняя
+                if (cell.EffectiveIsOcean) continue; // защита - в очередь океанские клетки не попадают, но проверка не лишняя
 
                 cell.RegionId = regionId;
                 foreach (var neighborId in cell.NeighborIds)
@@ -60,7 +60,7 @@ namespace WorldGen.Generation
                                           int neighborId, int regionId, VoronoiCell from, float heightPenaltyWeight)
         {
             var neighbor = cellById[neighborId];
-            if (neighbor.IsOcean) return;       // регион никогда не растёт через океан
+            if (neighbor.EffectiveIsOcean) return; // регион никогда не растёт через океан (учитывая правки кистью)
             if (neighbor.RegionId != -1) return;
             float cost = MathF.Abs(neighbor.Height - from.Height) * heightPenaltyWeight;
             pq.Enqueue((neighborId, regionId), cost);

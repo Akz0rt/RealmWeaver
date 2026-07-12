@@ -129,6 +129,37 @@ namespace WorldGen.Generation
                       "traced by hand against the algorithm as written, not executed. PASS (documentation).");
         }
 
+        [ContextMenu("Self-Test: Regions Respect WaterOverride")]
+        public void SelfTestRegionsRespectWaterOverride()
+        {
+            // 6x6 connected land grid. Two independent brush edits are simulated via WaterOverride:
+            //   • a 2x2 block in the middle is ForceOcean (raw IsOcean stays false) — this mimics
+            //     "painted the sea over former land". Regions must NOT be built on these cells.
+            //   • one corner cell is raw-ocean but ForceLand — this mimics "painted an island in the
+            //     open sea". Regions MUST include it (a brush island is land).
+            var cells = BuildGrid(6, 6);
+            int[] paintedOcean = { 2 * 6 + 2, 2 * 6 + 3, 3 * 6 + 2, 3 * 6 + 3 }; // (2,2)(3,2)(2,3)(3,3)
+            foreach (var id in paintedOcean) cells[id].WaterOverride = WaterOverrideType.ForceOcean;
+
+            var island = cells[0];                                   // corner (0,0)
+            island.IsOcean = true;                                   // raw generator said "ocean"...
+            island.WaterOverride = WaterOverrideType.ForceLand;      // ...but the brush made it land
+
+            int k = WorldGenerator.GenerateRegions(cells, count: 3, minSize: 2, seed: 1);
+
+            bool ok = k >= 1;
+            // Painted-ocean cells stay unassigned: regions are not built on brush water.
+            foreach (var id in paintedOcean) ok &= cells[id].RegionId == -1;
+            // The brush island joins a region even though its raw IsOcean is true.
+            ok &= island.RegionId >= 0;
+
+            Debug.Log(ok
+                ? "Self-Test Regions Respect WaterOverride: PASS"
+                : $"Self-Test Regions Respect WaterOverride: FAIL (k={k}, island.RegionId={island.RegionId}, " +
+                  $"paintedOcean=[{cells[paintedOcean[0]].RegionId},{cells[paintedOcean[1]].RegionId}," +
+                  $"{cells[paintedOcean[2]].RegionId},{cells[paintedOcean[3]].RegionId}])");
+        }
+
         /// <summary>Lake fixture cell: forced to lake via WaterOverride regardless of Biome/IsOcean.</summary>
         static VoronoiCell MakeLakeCell(int id, int[] neighborIds)
         {
