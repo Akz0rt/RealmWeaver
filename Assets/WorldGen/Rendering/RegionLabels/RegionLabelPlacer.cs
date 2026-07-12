@@ -133,7 +133,10 @@ namespace WorldGen.Rendering.RegionLabels
             }
         }
 
-        static System.Numerics.Vector2 OnLandAnchor(List<VoronoiCell> comp)
+        /// <summary>Якорь подписи на суше: взвешенный по площади центроид куска, притянутый к
+        /// ближайшей РЕАЛЬНОЙ клетке куска (значит всегда на суше). Public — переиспользуется
+        /// PoliticalRegionAnchors для подписей политических регионов (та же логика).</summary>
+        public static System.Numerics.Vector2 OnLandAnchor(List<VoronoiCell> comp)
         {
             var centroid = AreaWeightedCentroid(comp); // keep the existing method
             var best = comp[0];

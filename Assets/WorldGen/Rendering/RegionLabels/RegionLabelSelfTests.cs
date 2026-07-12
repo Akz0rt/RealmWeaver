@@ -102,6 +102,45 @@ namespace WorldGen.Rendering.RegionLabels
             Debug.Log(ok ? "Self-Test Region Label Placer: PASS" : "Self-Test Region Label Placer: FAIL");
         }
 
+        [ContextMenu("Self-Test: Political Region Anchor On Region")]
+        public void SelfTestPoliticalRegionAnchorOnRegion()
+        {
+            // Регион 0 РАЗОРВАН на два несвязанных куска: крупный A (клетки 0-1-2 у x=0..2) и мелкий
+            // B (клетки 3-4 у x=10..11). Наивный центроид = среднее = x≈4.8 → в пустоте МЕЖДУ кусками,
+            // ВНЕ региона (так подпись «Каэрморн» и улетала в океан). Правильный якорь обязан сесть на
+            // клетку КРУПНОГО куска A и совпасть с реальной клеткой региона.
+            var cells = new List<VoronoiCell>();
+            void Add(int id, float x, params int[] nbrs)
+            {
+                var site = new System.Numerics.Vector2(x, 0f);
+                var cell = new VoronoiCell(id, site)
+                { Polygon = SquarePolygon(site, 0.5f), Biome = Biome.Grassland, IsOcean = false, RegionId = 0 };
+                foreach (var n in nbrs) cell.NeighborIds.Add(n);
+                cells.Add(cell);
+            }
+            Add(0, 0f, 1);      // кусок A: 0-1-2 связаны
+            Add(1, 1f, 0, 2);
+            Add(2, 2f, 1);
+            Add(3, 10f, 4);     // кусок B: 3-4 связаны, но НЕ связаны с A
+            Add(4, 11f, 3);
+
+            var anchors = WorldGen.Rendering.RegionLabels.PoliticalRegionAnchors.Compute(cells);
+            bool has = anchors.TryGetValue(0, out var anchor);
+
+            // Якорь совпадает с Site реальной клетки региона 0 → гарантированно НА суше региона.
+            bool onRegion = has && cells.Exists(c => c.Site == anchor);
+            // ...и именно в КРУПНОМ куске A (x<=2), а не в мелком B (x>=10).
+            bool inLargest = has && anchor.X <= 2f;
+            // Документируем баг: наивный центроид (x≈4.8) НЕ совпадает ни с одной клеткой региона.
+            var naive = new System.Numerics.Vector2((0f + 1f + 2f + 10f + 11f) / 5f, 0f); // (4.8, 0)
+            bool naiveOffRegion = !cells.Exists(c => c.Site == naive);
+
+            bool ok = onRegion && inLargest && naiveOffRegion;
+            Debug.Log(ok
+                ? $"Self-Test Political Region Anchor On Region: PASS (anchor=({anchor.X},{anchor.Y}))"
+                : $"Self-Test Political Region Anchor On Region: FAIL (has={has}, onRegion={onRegion}, inLargest={inLargest}, naiveOffRegion={naiveOffRegion})");
+        }
+
         [ContextMenu("Self-Test: Continent Names")]
         public void SelfTestContinentNames()
         {
