@@ -339,6 +339,10 @@ namespace WorldGen.Rendering
             contentRect.anchorMin = new Vector2(0f, 1f);
             contentRect.anchorMax = new Vector2(1f, 1f);
             contentRect.pivot = new Vector2(0.5f, 1f);
+            // Canonical ScrollRect content: fill the viewport width exactly (no inherited horizontal
+            // offset that would push content left of the viewport and get it clipped by the mask).
+            contentRect.sizeDelta = Vector2.zero;         // width = viewport; height set by ContentSizeFitter
+            contentRect.anchoredPosition = Vector2.zero;  // top-centered on the anchor line
             scrollRect.content = contentRect;
 
             var t = content.transform;
