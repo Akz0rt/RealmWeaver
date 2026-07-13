@@ -182,5 +182,37 @@ namespace WorldGen.Rendering
             var cell = mapRenderer.GetCellUnderRay(ray);
             return cell?.Id ?? -1;
         }
+
+        // ── Self-tests (project convention: [ContextMenu] + Debug.Log PASS/FAIL) ──────
+
+        [ContextMenu("Self-Test: Poi Click Tracker")]
+        public void SelfTestPoiClickTracker()
+        {
+            var t = new PoiClickTracker { DoubleClickSeconds = 0.3f };
+            bool a = t.RegisterClick("p1", 0.0f);   // first → false
+            bool b = t.RegisterClick("p1", 0.2f);   // same, in window → true (double)
+            bool c = t.RegisterClick("p1", 0.4f);   // after reset, first of new pair → false
+            bool d = t.RegisterClick("p2", 0.5f);   // different id → false
+            bool e = t.RegisterClick("p2", 1.5f);   // same id but out of window → false
+
+            bool ok = !a && b && !c && !d && !e;
+            Debug.Log(ok ? "Self-Test Poi Click Tracker: PASS"
+                         : $"Self-Test Poi Click Tracker: FAIL (a={a},b={b},c={c},d={d},e={e})");
+        }
+
+        [ContextMenu("Self-Test: Poi Region Label")]
+        public void SelfTestPoiRegionLabel()
+        {
+            System.Func<int, int> regionIdByCell = cell => cell == 5 ? 2 : -1;
+            System.Func<int, string> regionNameById = rid => rid == 2 ? "Терра Умбра" : null;
+
+            string named  = PoiRegionLabel.Resolve(5,  regionIdByCell, regionNameById); // "Терра Умбра"
+            string noCell = PoiRegionLabel.Resolve(-1, regionIdByCell, regionNameById); // ""
+            string noReg  = PoiRegionLabel.Resolve(9,  regionIdByCell, regionNameById); // "" (region -1)
+
+            bool ok = named == "Терра Умбра" && noCell == "" && noReg == "";
+            Debug.Log(ok ? "Self-Test Poi Region Label: PASS"
+                         : $"Self-Test Poi Region Label: FAIL (named='{named}', noCell='{noCell}', noReg='{noReg}')");
+        }
     }
 }
