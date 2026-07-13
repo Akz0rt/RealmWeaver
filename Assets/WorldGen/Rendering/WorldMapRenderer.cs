@@ -669,7 +669,9 @@ namespace WorldGen.Rendering
             // Если мазок менял топологию суша/вода - пересчитать поле дистанции берега один раз здесь.
             // FinalizeLabels пере-печёт сглаженные family/band/берег label'ы в затронутой мазком
             // области (во время мазка стояла угловатая по-клеточная заплатка - см. UpdateCells).
-            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
+            // FinalizeLabels ДО FinalizeCoast: поле дистанции берега сеется из сглаженной маски
+            // (isLandMask), поэтому маску надо сначала пере-печь из угловатой заплатки в гладкую.
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.FinalizeLabels(); gpuRenderer.FinalizeCoast(); }
             // Декорации: пересчитать затронутую область (или всю карту, если rect не отслеживается).
             RefreshDecorationsRect(new Rect(0, 0, mapWidth, mapHeight));
             OnDisplayChanged?.Invoke();
@@ -1245,6 +1247,32 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Water Reconcile By Map Edge: PASS"
                 : $"Self-Test Water Reconcile By Map Edge: FAIL (toOcean={toOcean.Count}, toLake={toLake.Count})");
+        }
+
+        [ContextMenu("Self-Test: Coast Distance From Mask")]
+        public void SelfTestCoastDistanceFromMask()
+        {
+            // 8x1 mask: cols 0-3 land, cols 4-7 water. Coast dist (farIsLand=false): 0 on land, grows into
+            // water away from the col3|col4 shore. Land dist (farIsLand=true): 0 on water, grows into land.
+            int w = 8, h = 1;
+            var mask = new bool[w * h];
+            for (int x = 0; x < w; x++) mask[x] = x <= 3;   // true = land
+
+            var coast = WorldGen.Rendering.GpuMap.CoastDistanceTexture.BuildFromMask(mask, farIsLand: false, w, h, 1, 64f);
+            var land  = WorldGen.Rendering.GpuMap.CoastDistanceTexture.BuildFromMask(mask, farIsLand: true,  w, h, 1, 64f);
+            var cp = coast.GetPixels(); var lp = land.GetPixels();
+
+            bool ok = cp[3].r == 0f            // land pixel → coast dist 0
+                      && cp[4].r > 0f          // first water pixel → >0
+                      && cp[7].r > cp[4].r     // farther water → larger
+                      && lp[4].r == 0f         // water pixel → land dist 0
+                      && lp[0].r > lp[3].r;    // deeper land → larger land dist
+
+            Debug.Log(ok
+                ? "Self-Test Coast Distance From Mask: PASS"
+                : $"Self-Test Coast Distance From Mask: FAIL (cp3={cp[3].r}, cp4={cp[4].r}, cp7={cp[7].r}, lp0={lp[0].r}, lp3={lp[3].r}, lp4={lp[4].r})");
+
+            Object.DestroyImmediate(coast); Object.DestroyImmediate(land);
         }
 
         [ContextMenu("Self-Test: Island Shape Ocean Border")]

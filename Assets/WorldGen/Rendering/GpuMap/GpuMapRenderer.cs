@@ -107,11 +107,11 @@ namespace WorldGen.Rendering.GpuMap
             foreach (var c in cells)
                 if (c.EffectiveIsOcean || c.EffectiveIsLake) waterIds.Add(c.Id);
             coastDirty = false;
-            coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), texW, texH, CoastDownscale, 96f);
+            coastDistTex = CoastDistanceTexture.BuildFromMask(isLandMask, false, texW, texH, CoastDownscale, 96f);
 
             // Поле дистанции суша→вода (для мягкого пляжа): 0 на воде, растёт вглубь суши.
             if (landDistTex != null) Destroy(landDistTex);
-            landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), texW, texH, CoastDownscale, 64f);
+            landDistTex = CoastDistanceTexture.BuildFromMask(isLandMask, true, texW, texH, CoastDownscale, 64f);
             Material.SetTexture("_LandDistTex", landDistTex);
 
             Material.SetTexture("_CellIdTex", cellIdTex);
@@ -305,11 +305,11 @@ namespace WorldGen.Rendering.GpuMap
         {
             if (!coastDirty || cellIdArray == null) return;
             if (coastDistTex != null) Destroy(coastDistTex);
-            coastDistTex = CoastDistanceTexture.Build(cellIdArray, cid => waterIds.Contains(cid), bakedTexW, bakedTexH, CoastDownscale, 96f);
+            coastDistTex = CoastDistanceTexture.BuildFromMask(isLandMask, false, bakedTexW, bakedTexH, CoastDownscale, 96f);
             Material.SetTexture("_CoastTex", coastDistTex);
 
             if (landDistTex != null) Destroy(landDistTex);
-            landDistTex = CoastDistanceTexture.Build(cellIdArray, cid => !waterIds.Contains(cid), bakedTexW, bakedTexH, CoastDownscale, 64f);
+            landDistTex = CoastDistanceTexture.BuildFromMask(isLandMask, true, bakedTexW, bakedTexH, CoastDownscale, 64f);
             Material.SetTexture("_LandDistTex", landDistTex);
 
             coastDirty = false;

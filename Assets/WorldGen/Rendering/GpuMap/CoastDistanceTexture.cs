@@ -10,10 +10,10 @@ namespace WorldGen.Rendering.GpuMap
     /// так что низкое разрешение визуально неотличимо, но пересчёт (при правке берега кистью) в
     /// downscale² раз дешевле. Значения дистанции остаются в полноразмерных пикселях (шаги chamfer
     /// умножены на downscale), поэтому шейдерные _WaterDepthRange/_GlowWidth не зависят от downscale.
-    /// Строится из уже готового массива cell-id (без повторного FindNearest/GetPixels).</summary>
+    /// Строится из сглаженной маски суша/вода (isLandMask).</summary>
     public static class CoastDistanceTexture
     {
-        public static Texture2D Build(int[] cellIds, System.Func<int, bool> isWaterCell,
+        public static Texture2D BuildFromMask(bool[] isLandMask, bool farIsLand,
             int fullW, int fullH, int downscale, float maxDist)
         {
             int f = Mathf.Max(1, downscale);
@@ -26,9 +26,9 @@ namespace WorldGen.Rendering.GpuMap
                 {
                     int fx = Mathf.Min(x * f + f / 2, fullW - 1);
                     int fy = Mathf.Min(y * f + f / 2, fullH - 1);
-                    int cid = cellIds[fy * fullW + fx];
-                    bool water = cid < 0 || isWaterCell(cid);
-                    d[y * w + x] = water ? maxDist : 0f;   // суша = 0, вода = +∞(=maxDist)
+                    bool land = isLandMask[fy * fullW + fx];
+                    bool far = farIsLand ? land : !land;   // far = maxDist-сторона; ближняя сторона = seed 0
+                    d[y * w + x] = far ? maxDist : 0f;
                 }
 
             // Шаги в полноразмерных пикселях: соседний low-res пиксель = f full-res пикселей.
