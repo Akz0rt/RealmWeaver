@@ -28,9 +28,9 @@ namespace WorldGen.Rendering.MapRaster
         // Порядок в каждом массиве: ColdTwilight, MoonlitSteel, EmeraldAbyss, AmethystNight.
         static readonly Dictionary<PaletteSlot, Color32[]> table = new Dictionary<PaletteSlot, Color32[]>
         {
-            [PaletteSlot.Abyss] = new[] { new Color32(6, 15, 24, 255), new Color32(8, 14, 30, 255), new Color32(4, 20, 20, 255), new Color32(14, 10, 30, 255) },
-            [PaletteSlot.Sea] = new[] { new Color32(11, 30, 44, 255), new Color32(16, 32, 62, 255), new Color32(8, 40, 44, 255), new Color32(26, 22, 54, 255) },
-            [PaletteSlot.Shallow] = new[] { new Color32(30, 84, 100, 255), new Color32(46, 96, 150, 255), new Color32(30, 102, 98, 255), new Color32(74, 66, 132, 255) },
+            [PaletteSlot.Abyss] = new[] { new Color32(13, 24, 34, 255), new Color32(8, 14, 30, 255), new Color32(4, 20, 20, 255), new Color32(14, 10, 30, 255) },
+            [PaletteSlot.Sea] = new[] { new Color32(19, 41, 58, 255), new Color32(16, 32, 62, 255), new Color32(8, 40, 44, 255), new Color32(26, 22, 54, 255) },
+            [PaletteSlot.Shallow] = new[] { new Color32(41, 105, 124, 255), new Color32(46, 96, 150, 255), new Color32(30, 102, 98, 255), new Color32(74, 66, 132, 255) },
             [PaletteSlot.Glow] = new[] { new Color32(120, 200, 214, 255), new Color32(140, 196, 244, 255), new Color32(120, 224, 204, 255), new Color32(168, 150, 244, 255) },
             [PaletteSlot.Coast] = new[] { new Color32(92, 86, 64, 255), new Color32(84, 88, 96, 255), new Color32(86, 92, 58, 255), new Color32(92, 80, 86, 255) },
             [PaletteSlot.Marsh] = new[] { new Color32(36, 58, 50, 255), new Color32(38, 54, 64, 255), new Color32(26, 62, 50, 255), new Color32(48, 44, 72, 255) },
@@ -43,8 +43,8 @@ namespace WorldGen.Rendering.MapRaster
             [PaletteSlot.Highland] = new[] { new Color32(74, 80, 88, 255), new Color32(70, 84, 104, 255), new Color32(56, 86, 80, 255), new Color32(76, 70, 98, 255) },
             [PaletteSlot.Peak] = new[] { new Color32(110, 116, 128, 255), new Color32(112, 126, 150, 255), new Color32(92, 120, 116, 255), new Color32(116, 108, 142, 255) },
             [PaletteSlot.Snow] = new[] { new Color32(214, 224, 232, 255), new Color32(224, 234, 248, 255), new Color32(210, 230, 220, 255), new Color32(228, 222, 244, 255) },
-            [PaletteSlot.LakeD] = new[] { new Color32(16, 44, 58, 255), new Color32(20, 42, 74, 255), new Color32(12, 50, 52, 255), new Color32(30, 26, 66, 255) },
-            [PaletteSlot.LakeS] = new[] { new Color32(46, 110, 126, 255), new Color32(60, 116, 164, 255), new Color32(40, 116, 110, 255), new Color32(80, 72, 148, 255) },
+            [PaletteSlot.LakeD] = new[] { new Color32(25, 58, 74, 255), new Color32(20, 42, 74, 255), new Color32(12, 50, 52, 255), new Color32(30, 26, 66, 255) },
+            [PaletteSlot.LakeS] = new[] { new Color32(60, 136, 155, 255), new Color32(60, 116, 164, 255), new Color32(40, 116, 110, 255), new Color32(80, 72, 148, 255) },
             [PaletteSlot.Outline] = new[] { new Color32(6, 10, 16, 255), new Color32(8, 12, 22, 255), new Color32(4, 14, 14, 255), new Color32(12, 10, 22, 255) },
             [PaletteSlot.MtnL] = new[] { new Color32(140, 150, 164, 255), new Color32(152, 168, 198, 255), new Color32(122, 158, 150, 255), new Color32(146, 138, 172, 255) },
             [PaletteSlot.MtnS] = new[] { new Color32(40, 46, 56, 255), new Color32(42, 50, 70, 255), new Color32(30, 48, 46, 255), new Color32(48, 44, 68, 255) },
