@@ -132,6 +132,12 @@ namespace WorldGen.Generation
                 if (reached.Add(cell.Id)) queue.Enqueue(cell.Id);
             }
 
+            // Нет воды у краёв карты (например, всю кромку закрасили сушей) → "открытого моря" нет.
+            // Безопасный no-op: НЕ демотим весь океан в озёра (пустой seed классифицировал бы всё море
+            // как "не дошло от края" → озеро). При нормальной генерации море всегда есть у краёв.
+            if (reached.Count == 0)
+                return (new List<VoronoiCell>(), new List<VoronoiCell>());
+
             // Flood по эффективной воде; суша — стена.
             while (queue.Count > 0)
             {
