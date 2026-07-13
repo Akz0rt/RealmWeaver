@@ -299,7 +299,7 @@ namespace WorldGen.Rendering
             PreviewContainer.offsetMax = new Vector2(-10f, -28f);
 
             // Right: scrollable edit panel.
-            var right = new GameObject("EditColumn");
+            var right = new GameObject("EditColumn", typeof(RectTransform));
             right.transform.SetParent(parent, false);
             var rr = right.GetComponent<RectTransform>();
             rr.anchorMin = new Vector2(0.42f, 0f);
