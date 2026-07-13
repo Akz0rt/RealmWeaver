@@ -18,7 +18,13 @@ namespace WorldGen.Rendering
         public GameObject mapEditorPanelGO;
         public GameObject mapLegendUiGO;
 
+        [Header("POI editor screen")]
+        public GameObject poiEditorScreenGO;
+        public PoiEditorScreen poiEditorScreen;
+        public PoiInfoPopup poiInfoPopup;
+
         Coroutine activeGeneration;
+        PoiData editingPoi;
 
         void Awake()
         {
@@ -27,7 +33,33 @@ namespace WorldGen.Rendering
 
         void Start()
         {
-            mapRenderer.OnWorldRegenerated += RefreshScreenState;
+            mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
+            if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
+            if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
+            RefreshScreenState();
+        }
+
+        void OnWorldRegenerated()
+        {
+            editingPoi = null; // a fresh world drops any open POI editor
+            RefreshScreenState();
+        }
+
+        /// <summary>Opens the full-screen POI editor for a point (single source of truth for both the
+        /// info-popup «Редактировать» button and double-click). Hides the popup + map view.</summary>
+        public void OpenPoiEditor(PoiData poi)
+        {
+            if (poi == null) return;
+            editingPoi = poi;
+            if (poiInfoPopup != null) poiInfoPopup.Hide();
+            if (poiEditorScreen != null) poiEditorScreen.Bind(poi);
+            RefreshScreenState();
+        }
+
+        /// <summary>Closes the POI editor and returns to the world map.</summary>
+        public void ClosePoiEditor()
+        {
+            editingPoi = null;
             RefreshScreenState();
         }
 
@@ -35,11 +67,14 @@ namespace WorldGen.Rendering
         {
             bool hasMap = mapRenderer.Cells != null;
             bool generating = activeGeneration != null;
+            bool editorOpen = editingPoi != null && hasMap && !generating;
 
             generationScreen.gameObject.SetActive(!hasMap && !generating);
             progressScreen.gameObject.SetActive(generating);
-            mapEditorPanelGO.SetActive(hasMap && !generating);
-            mapLegendUiGO.SetActive(hasMap && !generating);
+            // POI editor takes over the map view while open.
+            mapEditorPanelGO.SetActive(hasMap && !generating && !editorOpen);
+            mapLegendUiGO.SetActive(hasMap && !generating && !editorOpen);
+            if (poiEditorScreenGO != null) poiEditorScreenGO.SetActive(editorOpen);
         }
 
         public void StartGeneration(WorldGen.Rendering.GenerationRequest uiParams)
