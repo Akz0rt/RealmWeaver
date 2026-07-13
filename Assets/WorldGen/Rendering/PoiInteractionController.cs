@@ -25,6 +25,10 @@ namespace WorldGen.Rendering
         public PoiManager poiManager;
         public WorldMapRenderer mapRenderer;
         public Camera raycastCamera;
+        [Tooltip("Info popup shown on a single click of a POI.")]
+        public PoiInfoPopup infoPopup;
+        [Tooltip("Screen controller — a double-click opens the full POI editor.")]
+        public MapScreenController mapScreenController;
 
         [Header("Interaction settings")]
         [Tooltip("World-unit radius around a POI center that counts as a hit.")]
@@ -38,6 +42,7 @@ namespace WorldGen.Rendering
         bool isDragging;
         string trackedPoiId;
         Vector2 pressScreenPos;
+        readonly PoiClickTracker clickTracker = new PoiClickTracker();
 
         void Awake()
         {
@@ -101,6 +106,7 @@ namespace WorldGen.Rendering
             }
 
             poiManager.DeselectAll();
+            if (infoPopup != null) infoPopup.Hide();
         }
 
         void OnHeld()
@@ -128,6 +134,14 @@ namespace WorldGen.Rendering
             if (!isDragging)
             {
                 poiManager.SelectPoi(trackedPoiId);
+                bool isDouble = clickTracker.RegisterClick(trackedPoiId, Time.unscaledTime);
+                var poi = poiManager.GetPoiById(trackedPoiId);
+                if (poi != null)
+                {
+                    // Single click → info popup; double click → full editor screen.
+                    if (isDouble && mapScreenController != null) mapScreenController.OpenPoiEditor(poi);
+                    else if (infoPopup != null) infoPopup.Show(poi);
+                }
             }
             else
             {
