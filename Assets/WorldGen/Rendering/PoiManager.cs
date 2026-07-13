@@ -58,6 +58,10 @@ namespace WorldGen.Rendering
                 ? pois.First(p => p.Id == selectedPoiId)
                 : null;
 
+        /// <summary>POI by id, or null. Used by the info popup / interaction routing.</summary>
+        public PoiData GetPoiById(string id) =>
+            id != null ? pois.FirstOrDefault(p => p.Id == id) : null;
+
         void Awake()
         {
             var containerGO = new GameObject("PoiContainer");
