@@ -102,15 +102,18 @@ namespace WorldGen.Rendering
             bool has = current != null;
             previewIcon.enabled = has;
             previewLabel.enabled = has;
+            previewMapImage.enabled = has;
             if (!has) return;
 
-            // A centered square fragment (avoids stretching the square RenderTexture in a tall container).
-            float square = Mathf.Max(16f, Mathf.Min(PreviewContainer.rect.width, PreviewContainer.rect.height) - 16f);
-            previewMapImage.rectTransform.sizeDelta = new Vector2(square, square);
+            float h = PreviewContainer.rect.height;
+            float w = PreviewContainer.rect.width;
+            if (h < 1f || w < 1f) return; // not laid out yet (Bind runs before activation) — LateUpdate retries
 
-            // Move the top-down fragment camera over the POI's world position.
+            // Match the camera's aspect to the container so the fragment fills it without distortion,
+            // and place the top-down fragment camera over the POI's world position.
             if (previewCamera != null)
             {
+                previewCamera.aspect = w / h;
                 float y = poiManager != null ? poiManager.poiYOffset : 0.5f;
                 Vector3 world = mapRenderer != null
                     ? mapRenderer.transform.TransformPoint(new Vector3(current.WorldPosition.X, y, current.WorldPosition.Y))
@@ -118,14 +121,14 @@ namespace WorldGen.Rendering
                 previewCamera.transform.position = new Vector3(world.x, world.y + 1000f, world.z);
             }
 
-            // Icon at TRUE scale: world size → preview px via (square / fragmentWorldHeight).
-            float worldToPx = square / (2f * PreviewOrthoSize);
+            // Icon at TRUE scale: worldSize·IconScale → px via (containerHeight / fragmentWorldHeight),
+            // where fragmentWorldHeight = 2·orthoSize.
+            float worldToPx = h / (2f * PreviewOrthoSize);
             previewIcon.sprite = IconSpriteFor(current);
             float iconWorld = (poiManager != null ? poiManager.iconWorldSize : 36f) * Mathf.Max(0.01f, current.IconScale);
             float iconPx = iconWorld * worldToPx;
             previewIcon.rectTransform.sizeDelta = new Vector2(iconPx, iconPx);
 
-            // Label below the icon, scaled by LabelScale on the same world→px basis (kept visible with a floor).
             previewLabel.text = string.IsNullOrEmpty(current.Name) ? "Без названия" : current.Name;
             float labelWorld = (poiManager != null ? poiManager.labelCharacterSize : 1.5f) * Mathf.Max(0.01f, current.LabelScale) * 6f;
             previewLabel.fontSize = Mathf.Clamp(Mathf.RoundToInt(labelWorld * worldToPx), 8, 120);
@@ -160,9 +163,10 @@ namespace WorldGen.Rendering
             previewMapImage.texture = previewRT;
             previewMapImage.raycastTarget = false;
             var mrr = previewMapImage.rectTransform;
-            mrr.anchorMin = new Vector2(0.5f, 0.5f);
-            mrr.anchorMax = new Vector2(0.5f, 0.5f);
-            mrr.pivot = new Vector2(0.5f, 0.5f);
+            mrr.anchorMin = Vector2.zero;   // fill the whole preview container
+            mrr.anchorMax = Vector2.one;
+            mrr.offsetMin = Vector2.zero;
+            mrr.offsetMax = Vector2.zero;
 
             // Icon overlay (on top of the fragment, centered = camera centre = POI position).
             var iconGO = new GameObject("PreviewIcon");
@@ -189,6 +193,14 @@ namespace WorldGen.Rendering
             lr.anchorMax = new Vector2(0.5f, 0.5f);
             lr.pivot = new Vector2(0.5f, 1f);
             lr.sizeDelta = new Vector2(PreviewContainer.rect.width, 30f);
+        }
+
+        void LateUpdate()
+        {
+            // Bind() runs before the editor GameObject is activated (container rect = 0 then), so re-run
+            // the layout-dependent preview sizing each frame while open — this makes the fragment fill the
+            // section and the icon read at the right size once the layout is computed.
+            if (built && current != null) RefreshPreview();
         }
 
         void OnDestroy()
