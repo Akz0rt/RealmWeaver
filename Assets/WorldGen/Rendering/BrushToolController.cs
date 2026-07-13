@@ -156,9 +156,10 @@ namespace WorldGen.Rendering
                 }
                 if (waterStrokeCells.Count > 0)
                 {
-                    // A water channel that reached the sea promotes the whole connected lake to ocean
-                    // (+ rebuilds radius-1 land as beaches). Then re-unify the lakes that stayed lakes.
-                    mapRenderer.PromoteLakesConnectedToOcean();
+                    // Reconcile water with the map edge: a lake the stroke joined to the sea becomes
+                    // ocean; ocean the stroke cut off from the edge becomes a lake (+ radius-1 land
+                    // rebuilt as beaches). Then re-unify the lakes the stroke touched.
+                    mapRenderer.ReconcileWaterWithMapEdge();
                     mapRenderer.UnifyTouchedLakes(waterStrokeCells);
                     mapRenderer.RebuildBorders();
                 }

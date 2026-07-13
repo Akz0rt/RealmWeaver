@@ -111,36 +111,61 @@ namespace WorldGen.Generation
             }
         }
 
-        /// <summary>Effective-aware: BFS от океана по воде (EffectiveIsOcean/EffectiveIsLake).
-        /// Возвращает клетки-озёра (EffectiveIsLake), достижимые от океана через воду — на самом деле
-        /// часть моря. Суша — стена. НЕ мутирует: вызывающий пишет ForceOcean + снимок undo.
-        /// Та же семантика, что и генерационный PromoteOceanConnectedWater, но по эффективным статусам
-        /// и для промоушена уже существующих озёр (кисть воды соединила озеро с океаном).</summary>
-        public static List<VoronoiCell> FindOceanConnectedLakes(List<VoronoiCell> cells)
+        /// <summary>Effective-aware двунаправленная классификация воды по правилу генератора
+        /// (океан = вода, связанная с КРАЕМ карты; иначе озеро). BFS от водных клеток, чьи полигоны
+        /// касаются границы карты, по эффективной воде (суша — стена). НЕ мутирует — вызывающий пишет
+        /// override + снимок undo. Возвращает (toOcean, toLake): toOcean — озёрные клетки, дошедшие от
+        /// края (кисть соединила озеро с морем); toLake — океанские клетки, НЕ дошедшие (кисть отрезала
+        /// море сушей → озеро).</summary>
+        public static (List<VoronoiCell> toOcean, List<VoronoiCell> toLake) ClassifyWaterFromMapEdge(
+            List<VoronoiCell> cells, float mapWidth, float mapHeight, float edgeMargin = 2f)
         {
             var cellById = cells.ToDictionary(c => c.Id);
-            var visited = new HashSet<int>();
+            var reached = new HashSet<int>();
             var queue = new Queue<int>();
-            var result = new List<VoronoiCell>();
 
+            // Seed: водные клетки, чей полигон касается границы карты (открытое море всегда у краёв).
             foreach (var cell in cells)
-                if (cell.EffectiveIsOcean) { visited.Add(cell.Id); queue.Enqueue(cell.Id); }
+            {
+                if (!(cell.EffectiveIsOcean || cell.EffectiveIsLake)) continue;
+                if (!TouchesMapEdge(cell, mapWidth, mapHeight, edgeMargin)) continue;
+                if (reached.Add(cell.Id)) queue.Enqueue(cell.Id);
+            }
 
+            // Flood по эффективной воде; суша — стена.
             while (queue.Count > 0)
             {
                 var cell = cellById[queue.Dequeue()];
                 foreach (var neighborId in cell.NeighborIds)
                 {
-                    if (visited.Contains(neighborId)) continue;
+                    if (reached.Contains(neighborId)) continue;
                     if (!cellById.TryGetValue(neighborId, out var neighbor)) continue;
-                    bool isWater = neighbor.EffectiveIsOcean || neighbor.EffectiveIsLake;
-                    if (!isWater) continue;               // суша — стена
-                    visited.Add(neighborId);
+                    if (!(neighbor.EffectiveIsOcean || neighbor.EffectiveIsLake)) continue; // суша — стена
+                    reached.Add(neighborId);
                     queue.Enqueue(neighborId);
-                    if (neighbor.EffectiveIsLake) result.Add(neighbor); // озеро, связанное с морем
                 }
             }
-            return result;
+
+            var toOcean = new List<VoronoiCell>();
+            var toLake = new List<VoronoiCell>();
+            foreach (var cell in cells)
+            {
+                bool edgeConnected = reached.Contains(cell.Id);
+                if (cell.EffectiveIsLake && edgeConnected) toOcean.Add(cell);        // озеро дошло до края → море
+                else if (cell.EffectiveIsOcean && !edgeConnected) toLake.Add(cell);  // море отрезано → озеро
+            }
+            return (toOcean, toLake);
+        }
+
+        /// <summary>Полигон клетки касается границы карты (в пределах margin) — критерий «открытого моря»
+        /// (клетки на границе клампятся к прямоугольнику карты, вершины ровно на 0/mapWidth).</summary>
+        static bool TouchesMapEdge(VoronoiCell cell, float mapWidth, float mapHeight, float margin)
+        {
+            if (cell.Polygon == null) return false;
+            foreach (var p in cell.Polygon)
+                if (p.X <= margin || p.X >= mapWidth - margin || p.Y <= margin || p.Y >= mapHeight - margin)
+                    return true;
+            return false;
         }
     }
 }
