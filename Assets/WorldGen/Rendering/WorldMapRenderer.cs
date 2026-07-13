@@ -804,6 +804,46 @@ namespace WorldGen.Rendering
             return d;
         }
 
+        /// <summary>Water-brush release: любое озеро, которое кисть соединила с океаном через воду,
+        /// целиком повышается в океан (глобальный BFS от океана — самоисцеляет и старые рассогласования).
+        /// Для каждой повышенной клетки: снимок undo → WaterOverride=ForceOcean → пересчёт биома (Lake→Ocean)
+        /// → RegionId=-1 (у океана нет региона). Плюс перестройка суши в радиусе 1 клетки: соседи-суша
+        /// повышенных клеток пере-классифицируются по эффективному океану (вдоль нового берега появляются
+        /// пляжи, которых у озера не было). Всё в рамках открытого мазка → один Ctrl+Z откатывает разом.
+        /// Вызывать ДО UnifyTouchedLakes; вызывающий делает RebuildBorders один раз.</summary>
+        public void PromoteLakesConnectedToOcean()
+        {
+            if (cells == null) return;
+            var toPromote = WorldGen.Generation.CellWaterAssigner.FindOceanConnectedLakes(cells);
+            if (toPromote.Count == 0) return;
+
+            var byId = BuildCellById();
+
+            // 1. Повышаем найденные озёрные клетки в океан.
+            foreach (var cell in toPromote)
+            {
+                brushUndo.RecordBeforeChange(cell);
+                cell.WaterOverride = WorldGen.Generation.WaterOverrideType.ForceOcean;
+                CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+                cell.RegionId = -1;
+            }
+
+            // 2. Кольцо суши радиус-1: соседи-суша повышенных клеток (после шага 1 они видят новый океан).
+            var ring = new HashSet<VoronoiCell>();
+            foreach (var cell in toPromote)
+                foreach (int nid in cell.NeighborIds)
+                    if (byId.TryGetValue(nid, out var n) && !n.EffectiveIsOcean && !n.EffectiveIsLake)
+                        ring.Add(n);
+
+            foreach (var landCell in ring) brushUndo.RecordBeforeChange(landCell);
+            WorldGen.Generation.BeachClassifier.ReclassifyCoastalBeachesEffective(ring, byId, beachElevationThreshold);
+
+            // 3. Пере-бейк повышенных + кольца (GPU перечитает атрибуты; смена суша/вода взведёт coastDirty).
+            var affected = new List<VoronoiCell>(toPromote);
+            affected.AddRange(ring);
+            RebakeAffectedCells(affected);
+        }
+
         /// <summary>Water-brush release: re-unifies every lake the stroke touched to its majority
         /// adjacent-land region (atomic lakes). Records undo for reassigned cells and rebakes them.
         /// Call DURING the open stroke (before EndBrushStroke). Caller rebuilds borders.</summary>
@@ -1159,6 +1199,32 @@ namespace WorldGen.Rendering
             Debug.Log(ok
                 ? "Self-Test Effective Coastal Beach: PASS"
                 : $"Self-Test Effective Coastal Beach: FAIL (c0={c0.Biome}, c2={c2.Biome}, c1={c1.Biome})");
+        }
+
+        [ContextMenu("Self-Test: Ocean-Connected Lake Find")]
+        public void SelfTestOceanConnectedLakeFind()
+        {
+            // c0 ocean; c1 lake channel touching ocean; c2 lake behind the channel (connected via water);
+            // c3 isolated lake (no water path to ocean). Expect {c1, c2} promoted, c3 not.
+            var c0 = new VoronoiCell(0, new System.Numerics.Vector2(0f, 0f)) { IsOcean = true,  Biome = Biome.Ocean };
+            var c1 = new VoronoiCell(1, new System.Numerics.Vector2(1f, 0f)) { IsOcean = false, Biome = Biome.Lake };
+            var c2 = new VoronoiCell(2, new System.Numerics.Vector2(2f, 0f)) { IsOcean = false, Biome = Biome.Lake };
+            var c3 = new VoronoiCell(3, new System.Numerics.Vector2(9f, 9f)) { IsOcean = false, Biome = Biome.Lake };
+
+            c0.NeighborIds.Add(1); c1.NeighborIds.Add(0);
+            c1.NeighborIds.Add(2); c2.NeighborIds.Add(1);
+            // c3 has no neighbors — isolated.
+
+            var cells = new List<VoronoiCell> { c0, c1, c2, c3 };
+            var found = WorldGen.Generation.CellWaterAssigner.FindOceanConnectedLakes(cells);
+
+            bool ok = found.Count == 2
+                      && found.Contains(c1) && found.Contains(c2)
+                      && !found.Contains(c3) && !found.Contains(c0);
+
+            Debug.Log(ok
+                ? "Self-Test Ocean-Connected Lake Find: PASS"
+                : $"Self-Test Ocean-Connected Lake Find: FAIL (count={found.Count}, hasC3={found.Contains(c3)})");
         }
 
         [ContextMenu("Self-Test: Island Shape Ocean Border")]

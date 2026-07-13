@@ -110,5 +110,37 @@ namespace WorldGen.Generation
                 }
             }
         }
+
+        /// <summary>Effective-aware: BFS от океана по воде (EffectiveIsOcean/EffectiveIsLake).
+        /// Возвращает клетки-озёра (EffectiveIsLake), достижимые от океана через воду — на самом деле
+        /// часть моря. Суша — стена. НЕ мутирует: вызывающий пишет ForceOcean + снимок undo.
+        /// Та же семантика, что и генерационный PromoteOceanConnectedWater, но по эффективным статусам
+        /// и для промоушена уже существующих озёр (кисть воды соединила озеро с океаном).</summary>
+        public static List<VoronoiCell> FindOceanConnectedLakes(List<VoronoiCell> cells)
+        {
+            var cellById = cells.ToDictionary(c => c.Id);
+            var visited = new HashSet<int>();
+            var queue = new Queue<int>();
+            var result = new List<VoronoiCell>();
+
+            foreach (var cell in cells)
+                if (cell.EffectiveIsOcean) { visited.Add(cell.Id); queue.Enqueue(cell.Id); }
+
+            while (queue.Count > 0)
+            {
+                var cell = cellById[queue.Dequeue()];
+                foreach (var neighborId in cell.NeighborIds)
+                {
+                    if (visited.Contains(neighborId)) continue;
+                    if (!cellById.TryGetValue(neighborId, out var neighbor)) continue;
+                    bool isWater = neighbor.EffectiveIsOcean || neighbor.EffectiveIsLake;
+                    if (!isWater) continue;               // суша — стена
+                    visited.Add(neighborId);
+                    queue.Enqueue(neighborId);
+                    if (neighbor.EffectiveIsLake) result.Add(neighbor); // озеро, связанное с морем
+                }
+            }
+            return result;
+        }
     }
 }

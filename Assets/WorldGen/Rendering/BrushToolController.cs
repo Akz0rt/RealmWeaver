@@ -156,7 +156,9 @@ namespace WorldGen.Rendering
                 }
                 if (waterStrokeCells.Count > 0)
                 {
-                    // Water edits changed lake topology: re-unify touched lakes to their majority land region.
+                    // A water channel that reached the sea promotes the whole connected lake to ocean
+                    // (+ rebuilds radius-1 land as beaches). Then re-unify the lakes that stayed lakes.
+                    mapRenderer.PromoteLakesConnectedToOcean();
                     mapRenderer.UnifyTouchedLakes(waterStrokeCells);
                     mapRenderer.RebuildBorders();
                 }
