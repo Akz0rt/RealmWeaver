@@ -27,5 +27,25 @@ namespace WorldGen.Generation
                 if (coastal) cell.Biome = Biome.Beach;
             }
         }
+
+        /// <summary>Ре-классифицирует пляж для подмножества клеток по EFFECTIVE-статусам (учитывает
+        /// WaterOverride кисти). Клетка-суша у эффективного океана → Biome.Beach; иначе — обычный
+        /// RecomputeBiome (пляж мог отвалиться, если океан-сосед исчез). Клетки-вода пропускаются.
+        /// Используется при слиянии озера с океаном кистью: перестройка суши в радиусе 1 клетки.</summary>
+        public static void ReclassifyCoastalBeachesEffective(
+            IEnumerable<VoronoiCell> subset, Dictionary<int, VoronoiCell> byId, float beachElevationThreshold)
+        {
+            foreach (var cell in subset)
+            {
+                if (cell.EffectiveIsOcean || cell.EffectiveIsLake) continue; // только суша
+
+                bool coastal = false;
+                foreach (var id in cell.NeighborIds)
+                    if (byId.TryGetValue(id, out var n) && n.EffectiveIsOcean) { coastal = true; break; }
+
+                if (coastal) cell.Biome = Biome.Beach;
+                else CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
+            }
+        }
     }
 }

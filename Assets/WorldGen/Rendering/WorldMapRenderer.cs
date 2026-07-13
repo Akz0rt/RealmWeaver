@@ -1133,6 +1133,34 @@ namespace WorldGen.Rendering
                 : $"Self-Test Coastal Beach Classification: FAIL (c0={c0.Biome}, c2={c2.Biome}, c1={c1.Biome}, c4={c4.Biome})");
         }
 
+        [ContextMenu("Self-Test: Effective Coastal Beach")]
+        public void SelfTestEffectiveCoastalBeach()
+        {
+            // c0 land next to c1 (a lake FORCED to ocean) → Beach (Effective-aware).
+            // c2 land whose only water neighbor is a real lake c3 → NOT Beach.
+            var c0 = new VoronoiCell(0, new System.Numerics.Vector2(0f, 0f)) { IsOcean = false, Biome = Biome.Grassland, ElevationOverride = 0.5f };
+            var c1 = new VoronoiCell(1, new System.Numerics.Vector2(1f, 0f)) { IsOcean = false, Biome = Biome.Lake, WaterOverride = WorldGen.Generation.WaterOverrideType.ForceOcean };
+            var c2 = new VoronoiCell(2, new System.Numerics.Vector2(0f, 2f)) { IsOcean = false, Biome = Biome.Grassland, ElevationOverride = 0.5f };
+            var c3 = new VoronoiCell(3, new System.Numerics.Vector2(1f, 2f)) { IsOcean = false, Biome = Biome.Lake };
+
+            c0.NeighborIds.Add(1); c1.NeighborIds.Add(0);
+            c2.NeighborIds.Add(3); c3.NeighborIds.Add(2);
+
+            var cells = new List<VoronoiCell> { c0, c1, c2, c3 };
+            var byId = new Dictionary<int, VoronoiCell>();
+            foreach (var c in cells) byId[c.Id] = c;
+
+            WorldGen.Generation.BeachClassifier.ReclassifyCoastalBeachesEffective(cells, byId, 0f);
+
+            bool ok = c0.Biome == Biome.Beach       // land next to Effective-ocean → Beach
+                      && c2.Biome != Biome.Beach     // land next to a real lake → NOT Beach
+                      && c1.Biome == Biome.Lake;      // water cell is SKIPPED by this land-only pass → unchanged
+
+            Debug.Log(ok
+                ? "Self-Test Effective Coastal Beach: PASS"
+                : $"Self-Test Effective Coastal Beach: FAIL (c0={c0.Biome}, c2={c2.Biome}, c1={c1.Biome})");
+        }
+
         [ContextMenu("Self-Test: Island Shape Ocean Border")]
         public void SelfTestIslandShapeOceanBorder()
         {
