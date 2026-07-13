@@ -215,10 +215,12 @@ namespace WorldGen.Rendering
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 100; // topmost: fully covers the map UI (toolbar/panels/legend) beneath
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Full-screen background under the top chrome (menu 40 + toolbar).
+            // Opaque full-screen background — a dedicated editing screen that covers everything; the
+            // «← К миру» button is the only navigation out (no leftover map chrome peeking through).
             var root = new GameObject("Root");
             root.transform.SetParent(canvasGO.transform, false);
             var rootImg = root.AddComponent<Image>();
@@ -227,7 +229,7 @@ namespace WorldGen.Rendering
             rootRect.anchorMin = Vector2.zero;
             rootRect.anchorMax = Vector2.one;
             rootRect.offsetMin = Vector2.zero;
-            rootRect.offsetMax = new Vector2(0f, -(40f + MapToolbarUI.BarHeightPixels));
+            rootRect.offsetMax = Vector2.zero;
 
             BuildTopBar(root.transform);
             BuildColumns(root.transform);
