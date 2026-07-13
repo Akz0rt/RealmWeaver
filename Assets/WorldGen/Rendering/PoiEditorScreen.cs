@@ -42,8 +42,16 @@ namespace WorldGen.Rendering
         Slider iconScaleSlider;
         Slider labelScaleSlider;
         Text notesLabel;
+        Image previewIcon;
+        Text previewLabel;
         readonly Dictionary<PoiType, (Image bg, Outline outline)> typeButtons =
             new Dictionary<PoiType, (Image, Outline)>();
+
+        // Preview render bases (default-zoom reference). Icon/label each scale by their own slider so
+        // both respond visibly; a strict 36:1.5 world ratio would make the label ~invisible — refined
+        // by screenshot rather than matched literally. iconWorldSize is folded in relative to its 36 base.
+        const float PreviewBaseIconPx = 88f;
+        const float PreviewBaseLabelPx = 16f;
 
         static readonly ExtensionFilter[] IconFilters =
         {
@@ -79,10 +87,63 @@ namespace WorldGen.Rendering
             RefreshPreview();
         }
 
-        /// <summary>Rebuild the live map-scale preview from the current POI. Stub until Task 4.</summary>
+        /// <summary>Rebuild the live map-scale preview (icon + label) inside PreviewContainer from the
+        /// current POI. Icon size ∝ IconScale (and iconWorldSize/36), label font ∝ LabelScale — so both
+        /// sliders visibly change the preview. Clamped to the container so extreme scales don't overflow.</summary>
         public void RefreshPreview()
         {
-            // Task 4 implements the map-scale icon+label preview inside PreviewContainer.
+            if (PreviewContainer == null) return;
+            EnsurePreviewWidgets();
+            if (current == null)
+            {
+                previewIcon.enabled = false;
+                previewLabel.enabled = false;
+                return;
+            }
+            previewIcon.enabled = true;
+            previewLabel.enabled = true;
+
+            previewIcon.sprite = IconSpriteFor(current);
+            float iconWorldFactor = (poiManager != null ? poiManager.iconWorldSize : 36f) / 36f;
+            float iconPx = PreviewBaseIconPx * iconWorldFactor * Mathf.Max(0.01f, current.IconScale);
+            float maxIcon = Mathf.Min(PreviewContainer.rect.width, PreviewContainer.rect.height) * 0.7f;
+            if (maxIcon > 1f) iconPx = Mathf.Min(iconPx, maxIcon);
+            previewIcon.rectTransform.sizeDelta = new Vector2(iconPx, iconPx);
+
+            previewLabel.text = string.IsNullOrEmpty(current.Name) ? "Без названия" : current.Name;
+            int labelPx = Mathf.Clamp(Mathf.RoundToInt(PreviewBaseLabelPx * Mathf.Max(0.01f, current.LabelScale)), 6, 120);
+            previewLabel.fontSize = labelPx;
+            previewLabel.rectTransform.anchoredPosition = new Vector2(0f, -(iconPx * 0.5f) - 8f);
+        }
+
+        void EnsurePreviewWidgets()
+        {
+            if (previewIcon != null) return;
+
+            var iconGO = new GameObject("PreviewIcon");
+            iconGO.transform.SetParent(PreviewContainer, false);
+            previewIcon = iconGO.AddComponent<Image>();
+            previewIcon.preserveAspect = true;
+            previewIcon.raycastTarget = false;
+            var ir = previewIcon.rectTransform;
+            ir.anchorMin = new Vector2(0.5f, 0.5f);
+            ir.anchorMax = new Vector2(0.5f, 0.5f);
+            ir.pivot = new Vector2(0.5f, 0.5f);
+
+            var lblGO = new GameObject("PreviewLabel");
+            lblGO.transform.SetParent(PreviewContainer, false);
+            previewLabel = lblGO.AddComponent<Text>();
+            previewLabel.font = font;
+            previewLabel.alignment = TextAnchor.UpperCenter;
+            previewLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            previewLabel.verticalOverflow = VerticalWrapMode.Overflow;
+            ThemeService.Tag(previewLabel, ThemeRole.Txt);
+            previewLabel.raycastTarget = false;
+            var lr = previewLabel.rectTransform;
+            lr.anchorMin = new Vector2(0.5f, 0.5f);
+            lr.anchorMax = new Vector2(0.5f, 0.5f);
+            lr.pivot = new Vector2(0.5f, 1f);
+            lr.sizeDelta = new Vector2(PreviewContainer.rect.width, 30f);
         }
 
         // ── Data helpers ─────────────────────────────────────────────────────────
