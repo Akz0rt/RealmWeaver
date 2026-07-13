@@ -3187,7 +3187,10 @@ namespace WorldGen.Rendering
         /// just a repaint), mirroring the other public Refresh/Rebuild entry points on this class.</summary>
         public void RefreshAfterCellDataChange()
         {
-            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeCoast(); gpuRenderer.FinalizeLabels(); }
+            // FinalizeLabels ДО FinalizeCoast: поле дистанции берега сеётся из сглаженной маски
+            // (isLandMask), поэтому её надо сначала пере-печь из угловатой заплатки UpdateCells в гладкую
+            // (иначе после Undo/recolor берег засеется гранёным). То же, что в EndBrushStroke.
+            if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeLabels(); gpuRenderer.FinalizeCoast(); }
             else RebakeAll();
             RebuildDecorations();
         }
