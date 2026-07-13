@@ -373,16 +373,6 @@ namespace WorldGen.Rendering
 
         void BuildTypeSelector(Transform t)
         {
-            var rowGO = new GameObject("TypeSelector");
-            rowGO.transform.SetParent(t, false);
-            var grid = rowGO.AddComponent<GridLayoutGroup>();
-            grid.cellSize = new Vector2(58f, 46f);
-            grid.spacing = new Vector2(6f, 6f);
-            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            grid.constraintCount = 4;
-            grid.childAlignment = TextAnchor.UpperLeft;
-            rowGO.AddComponent<LayoutElement>().preferredHeight = 3 * 46f + 2 * 6f;
-
             var pickTypes = new (PoiType type, string label)[]
             {
                 (PoiType.City, "Город"), (PoiType.Fortress, "Креп."), (PoiType.Village, "Дер."),
@@ -390,7 +380,41 @@ namespace WorldGen.Rendering
                 (PoiType.Dungeon, "Подзем."), (PoiType.Encounter, "Встр."), (PoiType.Camp, "Лагерь"),
                 (PoiType.Port, "Порт"),
             };
-            foreach (var (type, label) in pickTypes) AddTypeButton(rowGO.transform, type, label);
+            const int perRow = 5;
+            const float rowHeight = 68f;
+            const float rowSpacing = 6f;
+
+            // Rows of HorizontalLayoutGroup with childForceExpandWidth → buttons stretch to fill the
+            // full section width equally (GridLayoutGroup can't auto-fit its fixed cellSize to width).
+            var container = new GameObject("TypeSelector");
+            container.transform.SetParent(t, false);
+            var vlg = container.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = rowSpacing;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            int rows = (pickTypes.Length + perRow - 1) / perRow;
+            container.AddComponent<LayoutElement>().preferredHeight = rows * rowHeight + (rows - 1) * rowSpacing;
+
+            Transform currentRow = null;
+            for (int i = 0; i < pickTypes.Length; i++)
+            {
+                if (i % perRow == 0)
+                {
+                    var rowGO = new GameObject($"Row{i / perRow}");
+                    rowGO.transform.SetParent(container.transform, false);
+                    var hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
+                    hlg.spacing = 6f;
+                    hlg.childControlWidth = true;
+                    hlg.childForceExpandWidth = true;
+                    hlg.childControlHeight = true;
+                    hlg.childForceExpandHeight = true;
+                    rowGO.AddComponent<LayoutElement>().preferredHeight = rowHeight;
+                    currentRow = rowGO.transform;
+                }
+                AddTypeButton(currentRow, pickTypes[i].type, pickTypes[i].label);
+            }
         }
 
         void AddTypeButton(Transform parent, PoiType type, string label)
@@ -422,16 +446,16 @@ namespace WorldGen.Rendering
             iconRect.anchorMin = new Vector2(0.5f, 1f);
             iconRect.anchorMax = new Vector2(0.5f, 1f);
             iconRect.pivot = new Vector2(0.5f, 1f);
-            iconRect.anchoredPosition = new Vector2(0f, -4f);
-            iconRect.sizeDelta = new Vector2(22f, 22f);
+            iconRect.anchoredPosition = new Vector2(0f, -8f);
+            iconRect.sizeDelta = new Vector2(40f, 40f);
 
-            var lbl = MakeText(go.transform, label, 9, ThemeRole.Txt, FontStyle.Normal, TextAnchor.LowerCenter);
+            var lbl = MakeText(go.transform, label, 11, ThemeRole.Txt, FontStyle.Normal, TextAnchor.LowerCenter);
             var lblRect = lbl.rectTransform;
             lblRect.anchorMin = new Vector2(0f, 0f);
             lblRect.anchorMax = new Vector2(1f, 0f);
             lblRect.pivot = new Vector2(0.5f, 0f);
-            lblRect.anchoredPosition = new Vector2(0f, 3f);
-            lblRect.sizeDelta = new Vector2(0f, 12f);
+            lblRect.anchoredPosition = new Vector2(0f, 5f);
+            lblRect.sizeDelta = new Vector2(0f, 14f);
             lbl.raycastTarget = false;
 
             typeButtons[type] = (bg, outline);
