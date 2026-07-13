@@ -235,7 +235,7 @@ namespace WorldGen.Rendering
 
         void BuildTopBar(Transform parent)
         {
-            var bar = new GameObject("TopBar");
+            var bar = new GameObject("TopBar", typeof(RectTransform));
             bar.transform.SetParent(parent, false);
             var br = bar.GetComponent<RectTransform>();
             br.anchorMin = new Vector2(0f, 1f);
