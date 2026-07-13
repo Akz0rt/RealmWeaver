@@ -17,6 +17,8 @@ namespace WorldGen.Rendering
         public GenerationProgressUI progressScreen;
         public GameObject mapEditorPanelGO;
         public GameObject mapLegendUiGO;
+        [Tooltip("Тулбар вкладок — прячет свою шапку + докнутые панели вне экрана карты (они сиблинги, не дети mapEditorPanelGO).")]
+        public MapToolbarUI mapToolbar;
 
         [Header("POI editor screen")]
         public GameObject poiEditorScreenGO;
@@ -68,12 +70,16 @@ namespace WorldGen.Rendering
             bool hasMap = mapRenderer.Cells != null;
             bool generating = activeGeneration != null;
             bool editorOpen = editingPoi != null && hasMap && !generating;
+            bool mapReady = hasMap && !generating && !editorOpen;
 
             generationScreen.gameObject.SetActive(!hasMap && !generating);
             progressScreen.gameObject.SetActive(generating);
-            // POI editor takes over the map view while open.
-            mapEditorPanelGO.SetActive(hasMap && !generating && !editorOpen);
-            mapLegendUiGO.SetActive(hasMap && !generating && !editorOpen);
+            // The map-editor screen: MapEditorUI + legend + the toolbar's strip & docked tab panels
+            // (the latter are siblings, hidden via the toolbar). Hidden during generation and while
+            // the POI editor is open.
+            mapEditorPanelGO.SetActive(mapReady);
+            mapLegendUiGO.SetActive(mapReady);
+            if (mapToolbar != null) mapToolbar.SetChromeVisible(mapReady);
             if (poiEditorScreenGO != null) poiEditorScreenGO.SetActive(editorOpen);
         }
 

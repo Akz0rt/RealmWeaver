@@ -24,12 +24,31 @@ namespace WorldGen.Rendering
         Button[] tabButtons = new Button[4];
         Text zoomPercentLabel;
         int activeTab;
+        GameObject barCanvasGO;   // the toolbar strip's own canvas (hidden/shown by SetChromeVisible)
 
         void Awake()
         {
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             BuildUI();
             SetActiveTab(0);
+        }
+
+        /// <summary>Show/hide the whole map-editor chrome this toolbar owns — its strip AND the docked
+        /// tab panels (which are sibling GameObjects, so MapScreenController can't hide them directly).
+        /// Called by MapScreenController so the toolbar + panels don't leak onto the generation/POI-editor
+        /// screens. On show, the previously-active tab's panel is restored.</summary>
+        public void SetChromeVisible(bool visible)
+        {
+            if (barCanvasGO != null) barCanvasGO.SetActive(visible);
+            if (visible)
+            {
+                SetActiveTab(activeTab); // re-show the active panel, hide the rest
+            }
+            else
+            {
+                foreach (var p in new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel })
+                    if (p != null) p.SetActive(false);
+            }
         }
 
         void Update()
@@ -41,6 +60,7 @@ namespace WorldGen.Rendering
         void BuildUI()
         {
             var canvasGO = new GameObject("MapToolbarCanvas");
+            barCanvasGO = canvasGO;
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
