@@ -60,7 +60,18 @@ namespace WorldGen.Rendering
             labelRenderer = labelGO.GetComponent<MeshRenderer>();
             labelGO.SetActive(showLabel); // hide the on-map name label when disabled (name stays in PoiData / edit panel)
 
+            // Put the marker on the "POI" layer so the POI-editor's preview camera can render a clean
+            // map fragment without any markers (culls this layer). No-op if the layer isn't defined.
+            int poiLayer = LayerMask.NameToLayer("POI");
+            if (poiLayer >= 0) SetLayerRecursively(gameObject, poiLayer);
+
             Refresh();
+        }
+
+        static void SetLayerRecursively(GameObject go, int layer)
+        {
+            go.layer = layer;
+            foreach (Transform child in go.transform) SetLayerRecursively(child.gameObject, layer);
         }
 
         /// <summary>Re-reads poiData and updates icon sprite + label text + position.</summary>

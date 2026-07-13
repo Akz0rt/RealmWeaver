@@ -25,6 +25,8 @@ namespace WorldGen.Rendering
         public PoiManager poiManager;
         [Tooltip("Notes root — резолвит/создаёт привязанную к POI группу страниц при «Открыть →».")]
         public NotesRootBuilder notesRoot;
+        [Tooltip("Карта — превью показывает фрагмент реальной карты под точкой (для оценки масштаба иконки).")]
+        public WorldMapRenderer mapRenderer;
 
         /// <summary>Invoked by «← К миру» / «Готово» and after delete. Wired to MapScreenController.ClosePoiEditor.</summary>
         public System.Action OnCloseRequested;
@@ -44,14 +46,17 @@ namespace WorldGen.Rendering
         Text notesLabel;
         Image previewIcon;
         Text previewLabel;
+        RawImage previewMapImage;   // shows a fragment of the real map (RenderTexture) under the icon
+        Camera previewCamera;
+        RenderTexture previewRT;
         readonly Dictionary<PoiType, (Image bg, Outline outline)> typeButtons =
             new Dictionary<PoiType, (Image, Outline)>();
 
-        // Preview render bases (default-zoom reference). Icon/label each scale by their own slider so
-        // both respond visibly; a strict 36:1.5 world ratio would make the label ~invisible — refined
-        // by screenshot rather than matched literally. iconWorldSize is folded in relative to its 36 base.
-        const float PreviewBaseIconPx = 88f;
-        const float PreviewBaseLabelPx = 16f;
+        // Preview camera half-height in world units (fixed reference zoom). The icon is drawn at its
+        // TRUE world size relative to this fragment, so the DM can judge icon-vs-map scale. ~100 → the
+        // fragment spans 200 world units; a default 36-unit icon reads at ~18% of the preview height.
+        const float PreviewOrthoSize = 100f;
+        const int PreviewRTSize = 512;
 
         static readonly ExtensionFilter[] IconFilters =
         {
@@ -87,39 +92,79 @@ namespace WorldGen.Rendering
             RefreshPreview();
         }
 
-        /// <summary>Rebuild the live map-scale preview (icon + label) inside PreviewContainer from the
-        /// current POI. Icon size ∝ IconScale (and iconWorldSize/36), label font ∝ LabelScale — so both
-        /// sliders visibly change the preview. Clamped to the container so extreme scales don't overflow.</summary>
+        /// <summary>Refresh the preview: move the fragment camera over the POI's map location and draw the
+        /// icon (and label) at their TRUE world size relative to that fragment, so the DM can judge how big
+        /// the icon is on the map. Icon px = worldSize·IconScale × (previewSquare / fragmentWorldHeight).</summary>
         public void RefreshPreview()
         {
             if (PreviewContainer == null) return;
             EnsurePreviewWidgets();
-            if (current == null)
-            {
-                previewIcon.enabled = false;
-                previewLabel.enabled = false;
-                return;
-            }
-            previewIcon.enabled = true;
-            previewLabel.enabled = true;
+            bool has = current != null;
+            previewIcon.enabled = has;
+            previewLabel.enabled = has;
+            if (!has) return;
 
+            // A centered square fragment (avoids stretching the square RenderTexture in a tall container).
+            float square = Mathf.Max(16f, Mathf.Min(PreviewContainer.rect.width, PreviewContainer.rect.height) - 16f);
+            previewMapImage.rectTransform.sizeDelta = new Vector2(square, square);
+
+            // Move the top-down fragment camera over the POI's world position.
+            if (previewCamera != null)
+            {
+                float y = poiManager != null ? poiManager.poiYOffset : 0.5f;
+                Vector3 world = mapRenderer != null
+                    ? mapRenderer.transform.TransformPoint(new Vector3(current.WorldPosition.X, y, current.WorldPosition.Y))
+                    : new Vector3(current.WorldPosition.X, y, current.WorldPosition.Y);
+                previewCamera.transform.position = new Vector3(world.x, world.y + 1000f, world.z);
+            }
+
+            // Icon at TRUE scale: world size → preview px via (square / fragmentWorldHeight).
+            float worldToPx = square / (2f * PreviewOrthoSize);
             previewIcon.sprite = IconSpriteFor(current);
-            float iconWorldFactor = (poiManager != null ? poiManager.iconWorldSize : 36f) / 36f;
-            float iconPx = PreviewBaseIconPx * iconWorldFactor * Mathf.Max(0.01f, current.IconScale);
-            float maxIcon = Mathf.Min(PreviewContainer.rect.width, PreviewContainer.rect.height) * 0.7f;
-            if (maxIcon > 1f) iconPx = Mathf.Min(iconPx, maxIcon);
+            float iconWorld = (poiManager != null ? poiManager.iconWorldSize : 36f) * Mathf.Max(0.01f, current.IconScale);
+            float iconPx = iconWorld * worldToPx;
             previewIcon.rectTransform.sizeDelta = new Vector2(iconPx, iconPx);
 
+            // Label below the icon, scaled by LabelScale on the same world→px basis (kept visible with a floor).
             previewLabel.text = string.IsNullOrEmpty(current.Name) ? "Без названия" : current.Name;
-            int labelPx = Mathf.Clamp(Mathf.RoundToInt(PreviewBaseLabelPx * Mathf.Max(0.01f, current.LabelScale)), 6, 120);
-            previewLabel.fontSize = labelPx;
-            previewLabel.rectTransform.anchoredPosition = new Vector2(0f, -(iconPx * 0.5f) - 8f);
+            float labelWorld = (poiManager != null ? poiManager.labelCharacterSize : 1.5f) * Mathf.Max(0.01f, current.LabelScale) * 6f;
+            previewLabel.fontSize = Mathf.Clamp(Mathf.RoundToInt(labelWorld * worldToPx), 8, 120);
+            previewLabel.rectTransform.anchoredPosition = new Vector2(0f, -(iconPx * 0.5f) - 6f);
         }
 
         void EnsurePreviewWidgets()
         {
             if (previewIcon != null) return;
 
+            // Fragment camera → RenderTexture: renders the real map WITHOUT POI markers (culls the "POI"
+            // layer). Child of this screen, so it only renders while the editor is open.
+            previewRT = new RenderTexture(PreviewRTSize, PreviewRTSize, 16) { name = "PoiPreviewRT" };
+            var camGO = new GameObject("PoiPreviewCamera");
+            camGO.transform.SetParent(transform, false);
+            camGO.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // top-down, like the main map camera
+            previewCamera = camGO.AddComponent<Camera>();
+            previewCamera.orthographic = true;
+            previewCamera.orthographicSize = PreviewOrthoSize;
+            previewCamera.nearClipPlane = 0.3f;
+            previewCamera.farClipPlane = 5000f;
+            previewCamera.clearFlags = CameraClearFlags.SolidColor;
+            previewCamera.backgroundColor = new Color(0.04f, 0.05f, 0.07f, 1f);
+            previewCamera.targetTexture = previewRT;
+            int poiLayer = LayerMask.NameToLayer("POI");
+            previewCamera.cullingMask = poiLayer >= 0 ? ~(1 << poiLayer) : ~0; // everything except POI markers
+
+            // Map fragment (centered square RawImage).
+            var mapGO = new GameObject("PreviewMap");
+            mapGO.transform.SetParent(PreviewContainer, false);
+            previewMapImage = mapGO.AddComponent<RawImage>();
+            previewMapImage.texture = previewRT;
+            previewMapImage.raycastTarget = false;
+            var mrr = previewMapImage.rectTransform;
+            mrr.anchorMin = new Vector2(0.5f, 0.5f);
+            mrr.anchorMax = new Vector2(0.5f, 0.5f);
+            mrr.pivot = new Vector2(0.5f, 0.5f);
+
+            // Icon overlay (on top of the fragment, centered = camera centre = POI position).
             var iconGO = new GameObject("PreviewIcon");
             iconGO.transform.SetParent(PreviewContainer, false);
             previewIcon = iconGO.AddComponent<Image>();
@@ -144,6 +189,11 @@ namespace WorldGen.Rendering
             lr.anchorMax = new Vector2(0.5f, 0.5f);
             lr.pivot = new Vector2(0.5f, 1f);
             lr.sizeDelta = new Vector2(PreviewContainer.rect.width, 30f);
+        }
+
+        void OnDestroy()
+        {
+            if (previewRT != null) { previewRT.Release(); Destroy(previewRT); previewRT = null; }
         }
 
         // ── Data helpers ─────────────────────────────────────────────────────────
