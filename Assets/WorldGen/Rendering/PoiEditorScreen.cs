@@ -273,14 +273,15 @@ namespace WorldGen.Rendering
 
         void BuildColumns(Transform parent)
         {
-            // Left: preview area (~42% width). Right: edit panel.
+            // Left: preview area (~34% width). Right: edit panel (with a clear gap so it never sits under the preview).
             var left = new GameObject("PreviewColumn");
             left.transform.SetParent(parent, false);
             var leftBg = left.AddComponent<Image>();
             ThemeService.Tag(leftBg, ThemeRole.Panel2);
+            leftBg.raycastTarget = false;
             var lr = left.GetComponent<RectTransform>();
             lr.anchorMin = new Vector2(0f, 0f);
-            lr.anchorMax = new Vector2(0.42f, 1f);
+            lr.anchorMax = new Vector2(0.34f, 1f);
             lr.offsetMin = new Vector2(12f, 12f);
             lr.offsetMax = new Vector2(-6f, -52f);
 
@@ -300,13 +301,13 @@ namespace WorldGen.Rendering
             PreviewContainer.offsetMin = new Vector2(10f, 10f);
             PreviewContainer.offsetMax = new Vector2(-10f, -28f);
 
-            // Right: scrollable edit panel.
+            // Right: scrollable edit panel. Starts at 0.38 (preview ends at 0.34) → a clear ~4% gap.
             var right = new GameObject("EditColumn", typeof(RectTransform));
             right.transform.SetParent(parent, false);
             var rr = right.GetComponent<RectTransform>();
-            rr.anchorMin = new Vector2(0.42f, 0f);
+            rr.anchorMin = new Vector2(0.38f, 0f);
             rr.anchorMax = new Vector2(1f, 1f);
-            rr.offsetMin = new Vector2(6f, 12f);
+            rr.offsetMin = new Vector2(14f, 12f);
             rr.offsetMax = new Vector2(-12f, -52f);
 
             var scrollRect = right.AddComponent<ScrollRect>();
