@@ -6,7 +6,7 @@ namespace WorldGen.Rendering
     /// <summary>The mutually-exclusive top-level screens. Named AppScreen (NOT Screen) on purpose:
     /// UnityEngine.Screen (Screen.width/height) is used throughout this namespace, and a same-namespace
     /// type named Screen would shadow it and break every Screen.width reference.</summary>
-    public enum AppScreen { Generation, Progress, MapEditor, PoiEditor }
+    public enum AppScreen { Generation, Progress, MapEditor, PoiEditor, Dungeon }
 
     /// <summary>
     /// Single source of truth for which top-level screen is visible. Show(target) deactivates the

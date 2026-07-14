@@ -27,9 +27,13 @@ namespace WorldGen.Rendering
         public NotesRootBuilder notesRoot;
         [Tooltip("Карта — превью показывает фрагмент реальной карты под точкой (для оценки масштаба иконки).")]
         public WorldMapRenderer mapRenderer;
+        [Tooltip("Владелец подземелий — используется, чтобы показать статус «КАРТА ЛОКАЦИИ» и открыть редактор подземелья.")]
+        public DungeonManager dungeonManager;
 
         /// <summary>Invoked by «← К миру» / «Готово» and after delete. Wired to MapScreenController.ClosePoiEditor.</summary>
         public System.Action OnCloseRequested;
+        /// <summary>Invoked by the «КАРТА ЛОКАЦИИ» row. Wired to MapScreenController.OpenDungeonEditor.</summary>
+        public System.Action<PoiData> OnOpenDungeonRequested;
 
         /// <summary>Reserved container for the live map-scale preview (filled in Task 4).</summary>
         public RectTransform PreviewContainer { get; private set; }
@@ -44,6 +48,7 @@ namespace WorldGen.Rendering
         Slider iconScaleSlider;
         Slider labelScaleSlider;
         Text notesLabel;
+        Text mapSectionLabel;
         Image previewIcon;
         Text previewLabel;
         RawImage previewMapImage;   // shows a fragment of the real map (RenderTexture) under the icon
@@ -90,6 +95,7 @@ namespace WorldGen.Rendering
             UpdateIconThumb(poi);
             UpdateNotesLabel(poi);
             RefreshPreview();
+            RefreshMapSectionLabel();
         }
 
         /// <summary>Refresh the preview: move the fragment camera over the POI's map location and draw the
@@ -610,14 +616,25 @@ namespace WorldGen.Rendering
         void BuildMapStub(Transform t)
         {
             AddCaption(t, "КАРТА ЛОКАЦИИ");
-            var rowGO = new GameObject("MapStub");
+            var rowGO = new GameObject("MapDungeonRow");
             rowGO.transform.SetParent(t, false);
             var bg = rowGO.AddComponent<Image>();
-            ThemeService.Tag(bg, ThemeRole.Panel2, 0.6f);
+            ThemeService.Tag(bg, ThemeRole.Elev);
             rowGO.AddComponent<LayoutElement>().preferredHeight = 40f;
-            var lbl = MakeText(rowGO.transform, "Скоро — генерация и редактор подземелья", 11, ThemeRole.Mut, FontStyle.Italic, TextAnchor.MiddleCenter);
-            Stretch(lbl.rectTransform);
-            lbl.raycastTarget = false;
+            var btn = rowGO.AddComponent<Button>();
+            btn.targetGraphic = bg;
+            btn.onClick.AddListener(() => { if (current != null) OnOpenDungeonRequested?.Invoke(current); });
+            mapSectionLabel = MakeText(rowGO.transform, "Создать карту подземелья", 12, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleCenter);
+            Stretch(mapSectionLabel.rectTransform);
+            mapSectionLabel.raycastTarget = false;
+        }
+
+        void RefreshMapSectionLabel()
+        {
+            if (mapSectionLabel == null) return;
+            int levels = (dungeonManager != null && current != null && dungeonManager.HasDungeon(current.Id))
+                ? dungeonManager.GetByPoiId(current.Id).Levels.Count : 0;
+            mapSectionLabel.text = levels > 0 ? $"Открыть карту подземелья ({levels} ур.)" : "Создать карту подземелья";
         }
 
         void BuildDeleteRow(Transform t)

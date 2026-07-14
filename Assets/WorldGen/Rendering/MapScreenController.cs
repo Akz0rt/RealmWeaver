@@ -26,8 +26,14 @@ namespace WorldGen.Rendering
         public PoiEditorScreen poiEditorScreen;
         public PoiInfoPopup poiInfoPopup;
 
+        [Header("Dungeon editor screen")]
+        public GameObject dungeonEditorScreenGO;
+        public DungeonEditorScreen dungeonEditorScreen;
+        public DungeonManager dungeonManager;
+
         Coroutine activeGeneration;
         PoiData editingPoi;
+        DungeonData editingDungeon;
         ScreenSwitcher switcher;
 
         void Awake()
@@ -47,12 +53,15 @@ namespace WorldGen.Rendering
                     { AppScreen.Progress,   new[] { progressScreen.gameObject } },
                     { AppScreen.MapEditor,  new[] { mapEditorPanelGO, mapLegendUiGO } },
                     { AppScreen.PoiEditor,  new[] { poiEditorScreenGO } },
+                    { AppScreen.Dungeon,   new[] { dungeonEditorScreenGO } },
                 },
                 screen => { if (mapToolbar != null) mapToolbar.SetChromeVisible(screen == AppScreen.MapEditor); });
 
             mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
             if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
             if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
+            if (poiEditorScreen != null) poiEditorScreen.OnOpenDungeonRequested = OpenDungeonEditor;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.OnCloseRequested = CloseDungeonEditor;
 
             RefreshScreenState();
         }
@@ -60,6 +69,7 @@ namespace WorldGen.Rendering
         void OnWorldRegenerated()
         {
             editingPoi = null; // a fresh world drops any open POI editor
+            editingDungeon = null; // a fresh world drops any open dungeon editor
             RefreshScreenState();
         }
 
@@ -81,6 +91,22 @@ namespace WorldGen.Rendering
             RefreshScreenState();
         }
 
+        /// <summary>Opens the cave-dungeon editor for a POI (get-or-create its dungeon). Returns to the
+        /// POI editor on close (editingPoi stays set), not the world map.</summary>
+        public void OpenDungeonEditor(PoiData poi)
+        {
+            if (poi == null || dungeonManager == null) return;
+            editingDungeon = dungeonManager.GetOrCreateForPoi(poi.Id);
+            if (dungeonEditorScreen != null) dungeonEditorScreen.Bind(editingDungeon);
+            RefreshScreenState();
+        }
+
+        public void CloseDungeonEditor()
+        {
+            editingDungeon = null;   // editingPoi is still set → DesiredScreen returns PoiEditor
+            RefreshScreenState();
+        }
+
         void RefreshScreenState()
         {
             switcher.Show(DesiredScreen());
@@ -96,6 +122,7 @@ namespace WorldGen.Rendering
             bool generating = activeGeneration != null;
             if (generating) return AppScreen.Progress;
             if (!hasMap) return AppScreen.Generation;
+            if (editingDungeon != null) return AppScreen.Dungeon;
             if (editingPoi != null) return AppScreen.PoiEditor;
             return AppScreen.MapEditor;
         }
