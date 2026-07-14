@@ -31,17 +31,26 @@ namespace WorldGen.Rendering
         Transform levelTabsRow;
 
         Font font;
+        bool built;
 
         void Awake()
         {
-            if (transform.childCount > 0) return;    // hot-reload guard (see NotesRootBuilder)
-            font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            BuildUI();                               // builds canvas, top strip, MapArea, KeySidebar
+            if (isActiveAndEnabled) EnsureBuilt();
         }
 
-        /// <summary>Bind a dungeon; ensure it has at least one level; show level 0.</summary>
+        void EnsureBuilt()
+        {
+            if (built) return;
+            if (transform.childCount > 0) { built = true; return; }   // hot-reload guard (see NotesRootBuilder)
+            font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            BuildUI();                               // builds canvas, top strip, MapArea, KeySidebar
+            built = true;
+        }
+
+        /// <summary>Bind a dungeon; ensure it has at least one level; show level 0. Safe before first activation.</summary>
         public void Bind(DungeonData dungeon)
         {
+            EnsureBuilt();
             current = dungeon;
             if (current.Levels.Count == 0)
                 current.Levels.Add(CaveGenerator.Generate(FreshSeed(), 48, 48, 6, 0.5f));
@@ -154,7 +163,7 @@ namespace WorldGen.Rendering
             tabsGO.transform.SetParent(row1.transform, false);
             var hlg = tabsGO.AddComponent<HorizontalLayoutGroup>();
             hlg.spacing = 4f;
-            hlg.childControlWidth = false;
+            hlg.childControlWidth = true;
             hlg.childForceExpandWidth = false;
             hlg.childControlHeight = true;
             hlg.childForceExpandHeight = true;
