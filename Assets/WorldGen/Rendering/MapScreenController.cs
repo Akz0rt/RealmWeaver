@@ -37,10 +37,9 @@ namespace WorldGen.Rendering
 
         void Start()
         {
-            mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
-            if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
-            if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
-
+            // Build the switcher FIRST — before any event subscription — so the invariant
+            // "the switcher exists before any handler that could call RefreshScreenState runs"
+            // is structural, not merely incidental to statement order.
             switcher = new ScreenSwitcher(
                 new Dictionary<AppScreen, GameObject[]>
                 {
@@ -50,6 +49,10 @@ namespace WorldGen.Rendering
                     { AppScreen.PoiEditor,  new[] { poiEditorScreenGO } },
                 },
                 screen => { if (mapToolbar != null) mapToolbar.SetChromeVisible(screen == AppScreen.MapEditor); });
+
+            mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
+            if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
+            if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
 
             RefreshScreenState();
         }
