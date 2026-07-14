@@ -105,6 +105,10 @@ namespace WorldGen.Rendering
         {
             editingDungeon = null;   // editingPoi is still set → DesiredScreen returns PoiEditor
             RefreshScreenState();
+            // The POI editor is re-SHOWN (SetActive), not re-Bound, so its «Карта локации» label would
+            // keep its pre-dungeon "Создать" text. Refresh it here to reflect a dungeon just created —
+            // Bind is otherwise the only place that computes it.
+            if (editingPoi != null && poiEditorScreen != null) poiEditorScreen.RefreshMapSection();
         }
 
         void RefreshScreenState()

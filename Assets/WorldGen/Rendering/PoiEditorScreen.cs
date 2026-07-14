@@ -629,6 +629,10 @@ namespace WorldGen.Rendering
             mapSectionLabel.raycastTarget = false;
         }
 
+        /// <summary>Public hook so MapScreenController can refresh the «Карта локации» label when the POI
+        /// editor is re-shown after returning from the dungeon editor (no re-Bind happens on that path).</summary>
+        public void RefreshMapSection() => RefreshMapSectionLabel();
+
         void RefreshMapSectionLabel()
         {
             if (mapSectionLabel == null) return;
