@@ -6,9 +6,10 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Switches between three mutually-exclusive screens based on whether a map exists yet
-    /// and whether generation is in progress: GenerationScreenUI (no map) / GenerationProgressUI
-    /// (generating) / the existing MapEditorPanel+MapLegendUI pair (map ready).
+    /// Owns app-flow POLICY: computes which mutually-exclusive screen should be visible from app
+    /// state (map exists? generating? editing a POI?) and delegates the actual show/hide to a
+    /// ScreenSwitcher (the MECHANISM). Screens: Generation / Progress / MapEditor / PoiEditor.
+    /// Also runs the world-generation coroutine.
     /// </summary>
     public class MapScreenController : MonoBehaviour
     {
@@ -27,6 +28,7 @@ namespace WorldGen.Rendering
 
         Coroutine activeGeneration;
         PoiData editingPoi;
+        ScreenSwitcher switcher;
 
         void Awake()
         {
@@ -38,6 +40,17 @@ namespace WorldGen.Rendering
             mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
             if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
             if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
+
+            switcher = new ScreenSwitcher(
+                new Dictionary<AppScreen, GameObject[]>
+                {
+                    { AppScreen.Generation, new[] { generationScreen.gameObject } },
+                    { AppScreen.Progress,   new[] { progressScreen.gameObject } },
+                    { AppScreen.MapEditor,  new[] { mapEditorPanelGO, mapLegendUiGO } },
+                    { AppScreen.PoiEditor,  new[] { poiEditorScreenGO } },
+                },
+                screen => { if (mapToolbar != null) mapToolbar.SetChromeVisible(screen == AppScreen.MapEditor); });
+
             RefreshScreenState();
         }
 
@@ -67,20 +80,21 @@ namespace WorldGen.Rendering
 
         void RefreshScreenState()
         {
+            switcher.Show(DesiredScreen());
+        }
+
+        /// <summary>The single truth table mapping app state to the one visible screen. Reproduces
+        /// the old hasMap/generating/editorOpen/mapReady booleans exactly. The switcher then hides
+        /// every other screen's members (incl. the toolbar chrome via the after-show hook), so
+        /// nothing can leak by omission.</summary>
+        AppScreen DesiredScreen()
+        {
             bool hasMap = mapRenderer.Cells != null;
             bool generating = activeGeneration != null;
-            bool editorOpen = editingPoi != null && hasMap && !generating;
-            bool mapReady = hasMap && !generating && !editorOpen;
-
-            generationScreen.gameObject.SetActive(!hasMap && !generating);
-            progressScreen.gameObject.SetActive(generating);
-            // The map-editor screen: MapEditorUI + legend + the toolbar's strip & docked tab panels
-            // (the latter are siblings, hidden via the toolbar). Hidden during generation and while
-            // the POI editor is open.
-            mapEditorPanelGO.SetActive(mapReady);
-            mapLegendUiGO.SetActive(mapReady);
-            if (mapToolbar != null) mapToolbar.SetChromeVisible(mapReady);
-            if (poiEditorScreenGO != null) poiEditorScreenGO.SetActive(editorOpen);
+            if (generating) return AppScreen.Progress;
+            if (!hasMap) return AppScreen.Generation;
+            if (editingPoi != null) return AppScreen.PoiEditor;
+            return AppScreen.MapEditor;
         }
 
         public void StartGeneration(WorldGen.Rendering.GenerationRequest uiParams)
@@ -181,12 +195,14 @@ namespace WorldGen.Rendering
             RefreshScreenState();
         }
 
+        // During generation START, activeGeneration hasn't been assigned yet (StartCoroutine runs
+        // RunGeneration's first segment synchronously, before the handle is stored), so DesiredScreen()
+        // would not yet see "generating". Show Progress directly. Unlike the old hand-rolled version,
+        // the switcher also hides the toolbar chrome (via the hook), so it can't linger on Progress
+        // during a regenerate.
         void RefreshScreenStateForGenerating()
         {
-            generationScreen.gameObject.SetActive(false);
-            progressScreen.gameObject.SetActive(true);
-            mapEditorPanelGO.SetActive(false);
-            mapLegendUiGO.SetActive(false);
+            switcher.Show(AppScreen.Progress);
         }
 
         void CancelGeneration()
