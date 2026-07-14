@@ -21,6 +21,11 @@ namespace WorldGen.Generation
 
             // 1. Nodes via min-distance sampling, inset from the border.
             int inset = 3 + (int)((1f - sizeFactor) * 4);         // sprawl pushes nodes closer to edges
+            // Clamp the request to what the interior can actually hold; a too-small board or a
+            // non-positive count yields an empty (all-wall, no-chamber) level instead of throwing.
+            int interior = Math.Max(0, width - 2 * inset) * Math.Max(0, height - 2 * inset);
+            if (chamberCount > interior) chamberCount = interior;
+            if (chamberCount <= 0) return level;   // level is already all-wall; Chambers stays empty
             float minDist = Lerp(6f, 3.5f, sizeFactor) * ScaleForCount(width, height, chamberCount);
             var nodes = SampleNodes(rng, width, height, chamberCount, inset, minDist);
 
@@ -73,9 +78,24 @@ namespace WorldGen.Generation
                 }
                 if (ok) nodes.Add(new Node(x, y));
             }
-            // If min-distance was too strict to reach count, relax and top up (rare on 48x48).
-            while (nodes.Count < count)
-                nodes.Add(new Node(inset + rng.Next(w - 2 * inset), inset + rng.Next(h - 2 * inset)));
+            // If min-distance was too strict to reach count, relax and top up WITHOUT duplicating a
+            // cell (a duplicate MarkerCell would put two chambers on the same tile).
+            int topupGuard = 0, topupMax = count * 200;
+            while (nodes.Count < count && topupGuard++ < topupMax)
+            {
+                int x = inset + rng.Next(w - 2 * inset), y = inset + rng.Next(h - 2 * inset);
+                bool dup = false;
+                foreach (var n in nodes) if (n.x == x && n.y == y) { dup = true; break; }
+                if (!dup) nodes.Add(new Node(x, y));
+            }
+            // Deterministic fallback: if random top-up couldn't find enough distinct cells, scan the interior.
+            for (int yy = inset; yy < h - inset && nodes.Count < count; yy++)
+                for (int xx = inset; xx < w - inset && nodes.Count < count; xx++)
+                {
+                    bool dup = false;
+                    foreach (var n in nodes) if (n.x == xx && n.y == yy) { dup = true; break; }
+                    if (!dup) nodes.Add(new Node(xx, yy));
+                }
             return nodes;
         }
 

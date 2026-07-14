@@ -14,7 +14,8 @@ namespace WorldGen.Rendering
             for (int seed = 1; seed <= 20 && ok; seed++)
             {
                 int want = 4 + seed % 7;                       // 4..10 chambers
-                var lvl = CaveGenerator.Generate(seed, 48, 48, want, 0.5f);
+                float sz = (seed % 3) * 0.5f;                  // 0.0 / 0.5 / 1.0 — cover sizeFactor extremes
+                var lvl = CaveGenerator.Generate(seed, 48, 48, want, sz);
 
                 bool countOk = lvl.Chambers.Count == want;
                 bool chambersOnFloor = true, chambersDistinct = true;
@@ -36,6 +37,23 @@ namespace WorldGen.Rendering
                 }
             }
             if (ok) Debug.Log("Self-Test Cave Generator Guarantees: PASS (seeds 1..20)");
+        }
+
+        [ContextMenu("Self-Test: Cave Generator Degenerate Inputs")]
+        public void SelfTestDegenerate()
+        {
+            bool ok = true;
+            try
+            {
+                var zero = CaveGenerator.Generate(1, 48, 48, 0, 0.5f);       // non-positive count
+                if (zero.Chambers.Count != 0) ok = false;
+                var tiny = CaveGenerator.Generate(2, 6, 6, 4, 0.5f);          // board smaller than 2*inset
+                if (tiny.Chambers.Count != 0) ok = false;
+                var neg = CaveGenerator.Generate(3, 48, 48, -5, 0.5f);        // negative count
+                if (neg.Chambers.Count != 0) ok = false;
+            }
+            catch (System.Exception e) { ok = false; Debug.Log($"Self-Test Cave Generator Degenerate Inputs: FAIL (threw {e.GetType().Name})"); }
+            Debug.Log(ok ? "Self-Test Cave Generator Degenerate Inputs: PASS" : "Self-Test Cave Generator Degenerate Inputs: FAIL");
         }
 
         static bool FloodReachesAllFloor(DungeonLevel lvl)
