@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Rendering.Theme;
@@ -29,6 +30,17 @@ namespace WorldGen.Rendering
         public RectTransform MapArea { get; private set; }
         public RectTransform KeySidebar { get; private set; }
         Transform levelTabsRow;
+
+        // Level render (Task 4): a square RawImage inside MapArea, baked from CurrentLevel.
+        RawImage mapImage;
+        Texture2D mapTex;
+        const int PxPerTile = 10;
+
+        // Wall/Floor brush (Task 4).
+        DungeonTile brushTile = DungeonTile.Floor;
+        int brushSize = 1;   // 1..3 (radius 0..2; clamp)
+        readonly Image[] brushTileButtons = new Image[2];   // [0]=Wall,[1]=Floor — highlight tracking
+        readonly Image[] brushSizeButtons = new Image[3];   // sizes 1..3 — highlight tracking
 
         Font font;
         bool built;
@@ -63,7 +75,7 @@ namespace WorldGen.Rendering
             if (current == null || current.Levels.Count == 0) return;
             CurrentLevelIndex = Mathf.Clamp(index, 0, current.Levels.Count - 1);
             RebuildLevelTabs();
-            RefreshMap();        // no-op until Task 4
+            RefreshMap();        // bakes CurrentLevel into mapTex
             RefreshKey();        // no-op until Task 5
         }
 
@@ -81,9 +93,57 @@ namespace WorldGen.Rendering
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
         }
 
-        // RefreshMap()/RefreshKey() are defined here as empty seams and IMPLEMENTED in Tasks 4/5.
-        void RefreshMap() { /* Task 4 */ }
+        /// <summary>Set the active brush tile (Wall/Floor); updates the top-strip toggle highlight.</summary>
+        public void SetBrush(DungeonTile t)
+        {
+            brushTile = t;
+            UpdateBrushHighlights();
+        }
+
+        /// <summary>Set the brush radius (clamped 1..3); updates the top-strip size-button highlight.</summary>
+        public void SetBrushSize(int s)
+        {
+            brushSize = Mathf.Clamp(s, 1, 3);
+            UpdateBrushHighlights();
+        }
+
+        // RefreshMap() bakes CurrentLevel into mapTex and shows it on mapImage. RefreshKey() is
+        // IMPLEMENTED in Task 5 (still an empty seam here).
+        void RefreshMap()
+        {
+            var lvl = CurrentLevel;
+            if (mapImage == null || lvl == null || lvl.Tiles == null) return;
+            if (mapTex != null) Destroy(mapTex);
+            mapTex = DungeonLevelRenderer.Bake(lvl, PxPerTile);
+            mapImage.texture = mapTex;
+        }
         void RefreshKey() { /* Task 5 */ }
+
+        /// <summary>Pointer down/drag handler wired via EventTrigger on mapImage. Converts the screen
+        /// point to a normalized position within the RawImage rect, resolves the grid cell, and paints
+        /// brushTile in the brush radius (skipping the outer border frame), then rebakes.</summary>
+        void PaintAt(Vector2 screenPos)
+        {
+            var lvl = CurrentLevel; if (lvl == null) return;
+            var rt = mapImage.rectTransform;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, screenPos, null, out var local)) return;
+            var rect = rt.rect;
+            float nx = (local.x - rect.xMin) / rect.width;
+            float ny = (local.y - rect.yMin) / rect.height;
+            if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+            if (!DungeonLevelRenderer.NormalizedToCell(lvl, nx, ny, out int gx, out int gy)) return;
+            int r = brushSize - 1;
+            for (int y = gy - r; y <= gy + r; y++)
+                for (int x = gx - r; x <= gx + r; x++)
+                    if (lvl.InBounds(x, y) && !(x == 0 || y == 0 || x == lvl.Width - 1 || y == lvl.Height - 1))
+                        lvl.Set(x, y, brushTile);
+            RefreshMap();   // rebake (48x48x10px is cheap; no dirty-rect needed in v1)
+        }
+
+        void OnDestroy()
+        {
+            if (mapTex != null) { Destroy(mapTex); mapTex = null; }
+        }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
 
@@ -194,8 +254,76 @@ namespace WorldGen.Rendering
             hlg2.childForceExpandHeight = true;
 
             AddPlaceholderSlot(row2.transform, "Генерация…", 160f);
-            AddPlaceholderSlot(row2.transform, "Кисть: —", 120f);
-            AddPlaceholderSlot(row2.transform, "Размер: —", 120f);
+            BuildBrushTileSelector(row2.transform);
+            BuildBrushSizeSelector(row2.transform);
+        }
+
+        // ── Brush controls (Task 4) ─────────────────────────────────────────────
+
+        void BuildBrushTileSelector(Transform parent)
+        {
+            var go = new GameObject("BrushTile", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredWidth = 120f;
+            var hlg = go.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 4f;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+
+            brushTileButtons[0] = AddBrushButton(go.transform, "Стена", () => SetBrush(DungeonTile.Wall));
+            brushTileButtons[1] = AddBrushButton(go.transform, "Пол", () => SetBrush(DungeonTile.Floor));
+            UpdateBrushHighlights();
+        }
+
+        void BuildBrushSizeSelector(Transform parent)
+        {
+            var go = new GameObject("BrushSize", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredWidth = 120f;
+            var hlg = go.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 4f;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+
+            for (int i = 0; i < brushSizeButtons.Length; i++)
+            {
+                int size = i + 1; // capture for the closure
+                brushSizeButtons[i] = AddBrushButton(go.transform, size.ToString(), () => SetBrushSize(size));
+            }
+            UpdateBrushHighlights();
+        }
+
+        Image AddBrushButton(Transform parent, string label, System.Action onClick)
+        {
+            var go = new GameObject($"Brush_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Elev);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick());
+            var lbl = MakeText(go.transform, label, 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(lbl.rectTransform);
+            lbl.raycastTarget = false;
+            return img;
+        }
+
+        /// <summary>Re-tags the Wall/Floor and size button backgrounds so the active brushTile/brushSize
+        /// reads as highlighted (AccentSoft) and the rest as plain (Elev). Safe to call before the
+        /// buttons exist (skips — BuildBrushTileSelector/BuildBrushSizeSelector call it again once built).</summary>
+        void UpdateBrushHighlights()
+        {
+            if (brushTileButtons[0] != null)
+                ThemeService.Tag(brushTileButtons[0], brushTile == DungeonTile.Wall ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            if (brushTileButtons[1] != null)
+                ThemeService.Tag(brushTileButtons[1], brushTile == DungeonTile.Floor ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            for (int i = 0; i < brushSizeButtons.Length; i++)
+                if (brushSizeButtons[i] != null)
+                    ThemeService.Tag(brushSizeButtons[i], brushSize == i + 1 ? ThemeRole.AccentSoft : ThemeRole.Elev);
         }
 
         void AddPlaceholderSlot(Transform parent, string label, float width)
@@ -234,6 +362,23 @@ namespace WorldGen.Rendering
             ThemeService.Tag(mapBg, ThemeRole.Panel2);
             mapBg.raycastTarget = false;
 
+            // The level render — a centered SQUARE inside MapArea (a 48x48 grid must never be
+            // distorted, regardless of MapArea's own aspect). AspectRatioFitter.FitInParent keeps it
+            // square and centered while MapArea itself just stretches to fill the body.
+            var mapImgGO = new GameObject("MapImage", typeof(RectTransform));
+            mapImgGO.transform.SetParent(mapGO.transform, false);
+            mapImage = mapImgGO.AddComponent<RawImage>();
+            mapImage.raycastTarget = true;   // needed so the EventTrigger below receives pointer events
+            Stretch(mapImage.rectTransform);
+            var fitter = mapImgGO.AddComponent<AspectRatioFitter>();
+            fitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+            fitter.aspectRatio = 1f;
+
+            // Wall/Floor brush painting: PointerDown + Drag both paint at the current pointer position.
+            var trigger = mapImgGO.AddComponent<EventTrigger>();
+            AddEventTriggerEntry(trigger, EventTriggerType.PointerDown, PaintAt);
+            AddEventTriggerEntry(trigger, EventTriggerType.Drag, PaintAt);
+
             var sidebarGO = new GameObject("KeySidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);
             KeySidebar = sidebarGO.GetComponent<RectTransform>();
@@ -244,6 +389,15 @@ namespace WorldGen.Rendering
             var sidebarBg = sidebarGO.AddComponent<Image>();
             ThemeService.Tag(sidebarBg, ThemeRole.Elev);
             sidebarBg.raycastTarget = false;
+        }
+
+        /// <summary>Registers an EventTrigger entry whose callback forwards the pointer's screen
+        /// position to `handler` (used to wire PointerDown/Drag on mapImage to PaintAt).</summary>
+        static void AddEventTriggerEntry(EventTrigger trigger, EventTriggerType type, System.Action<Vector2> handler)
+        {
+            var entry = new EventTrigger.Entry { eventID = type };
+            entry.callback.AddListener(data => handler(((PointerEventData)data).position));
+            trigger.triggers.Add(entry);
         }
 
         /// <summary>Rebuilds the Ур.1|2|+ tabs row from `current.Levels`, highlighting CurrentLevelIndex.
