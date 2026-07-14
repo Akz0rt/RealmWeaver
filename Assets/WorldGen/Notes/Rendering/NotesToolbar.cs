@@ -14,7 +14,7 @@ namespace WorldGen.Notes.Rendering
     public class NotesToolbar : MonoBehaviour
     {
         public const float ButtonSize = 36f;
-        public Color activeColor = ThemedAlpha(ThemeRole.AccentSoft, 0.65f);
+        public Color activeColor;   // assigned in Initialize — ThemedAlpha reads PlayerPrefs, which is forbidden in a field initializer
         public Color hoverColor = new Color(1f, 1f, 1f, 0.15f);
 
         /// <summary>The floating row's own RectTransform — exposed so CanvasInteractionController
@@ -46,6 +46,7 @@ namespace WorldGen.Notes.Rendering
         public void Initialize(CanvasInteractionController interactionController, Transform parent)
         {
             controller = interactionController;
+            activeColor = ThemedAlpha(ThemeRole.AccentSoft, 0.65f); // theme read moved out of the field initializer (PlayerPrefs is forbidden there)
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             rootCanvas = parent.GetComponentInParent<Canvas>();
 
