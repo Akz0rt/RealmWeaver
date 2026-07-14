@@ -20,6 +20,7 @@ namespace WorldGen.Persistence
         public NotesDocument Notes;
         public List<RegionLabelData> RegionLabels;
         public List<RegionData> Regions;
+        public List<DungeonData> Dungeons;
     }
 
     /// <summary>
@@ -29,7 +30,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 3;
+        public const int CurrentFormatVersion = 4;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -40,7 +41,8 @@ namespace WorldGen.Persistence
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
                                  IReadOnlyList<PoiData> pois, NotesDocument notes,
                                  IReadOnlyList<RegionLabelData> regionLabels,
-                                 IReadOnlyList<RegionData> regions)
+                                 IReadOnlyList<RegionData> regions,
+                                 IReadOnlyList<DungeonData> dungeons)
         {
             var data = new ProjectSaveData
             {
@@ -51,7 +53,8 @@ namespace WorldGen.Persistence
                 Pois = new List<PoiData>(pois),
                 Notes = notes,
                 RegionLabels = new List<RegionLabelData>(regionLabels),
-                Regions = new List<RegionData>(regions ?? new List<RegionData>())
+                Regions = new List<RegionData>(regions ?? new List<RegionData>()),
+                Dungeons = new List<DungeonData>(dungeons ?? new List<DungeonData>())
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -91,7 +94,8 @@ namespace WorldGen.Persistence
                 Pois = data.Pois ?? new List<PoiData>(),
                 Notes = data.Notes ?? new NotesDocument(),
                 RegionLabels = data.RegionLabels ?? new List<RegionLabelData>(),
-                Regions = data.Regions ?? new List<RegionData>()
+                Regions = data.Regions ?? new List<RegionData>(),
+                Dungeons = data.Dungeons ?? new List<DungeonData>()
             };
 
             if (data.FormatVersion > CurrentFormatVersion)

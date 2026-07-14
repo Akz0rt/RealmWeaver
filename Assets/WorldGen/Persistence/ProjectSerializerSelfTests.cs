@@ -72,7 +72,7 @@ namespace WorldGen.Persistence
             var notes = new NotesDocument { Groups = new List<PageGroup> { group } };
 
             string path = Path.Combine(Application.temporaryCachePath, "project_roundtrip_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -132,7 +132,7 @@ namespace WorldGen.Persistence
             var pois = new List<PoiData> { poiFortress, poiPort };
 
             string path = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -147,7 +147,7 @@ namespace WorldGen.Persistence
             // accidental reorder shifting existing values). ---
             var oldStylePois = new List<PoiData> { new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 } };
             string newPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_new_selftest.json");
-            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>(), new List<RegionData>());
+            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
 
             string json = File.ReadAllText(newPath);
             string oldJson = json.Replace("\"Type\": 10", "\"Type\": 4");
@@ -193,7 +193,8 @@ namespace WorldGen.Persistence
             ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10f, Height = 10f },
                 new System.Collections.Generic.List<VoronoiCell>(),
                 new System.Collections.Generic.List<PoiData>(),
-                new NotesDocument(), regionLabels, new System.Collections.Generic.List<RegionData>());
+                new NotesDocument(), regionLabels, new System.Collections.Generic.List<RegionData>(),
+                new System.Collections.Generic.List<DungeonData>());
             var result = ProjectSerializer.Load(path);
             // old-save compat: a JSON with no RegionLabels field -> empty list (not null).
             string legacy = System.IO.File.ReadAllText(path).Replace("\"RegionLabels\"", "\"RegionLabelsRenamed\"");
@@ -249,7 +250,7 @@ namespace WorldGen.Persistence
 
             string path = Path.Combine(Application.temporaryCachePath, "regions_roundtrip_selftest.json");
             ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), regions);
+                new List<RegionLabelData>(), regions, new List<DungeonData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -278,7 +279,7 @@ namespace WorldGen.Persistence
 
             string path = Path.Combine(Application.temporaryCachePath, "legacy_region_migration_selftest.json");
             ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), new List<RegionData>());
+                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
 
             // Also simulate a genuinely old file that predates the "Regions" property entirely (not
             // just an empty array) - same idiom as SelfTestRegionLabelsRoundTrip's legacy check above.
@@ -300,6 +301,38 @@ namespace WorldGen.Persistence
             Debug.Log(ok
                 ? "Self-Test Legacy Region Migration: PASS"
                 : "Self-Test Legacy Region Migration: FAIL — see field checks in SelfTestLegacyRegionMigration");
+        }
+
+        [ContextMenu("Self-Test: Dungeon Round-Trip")]
+        public void SelfTestDungeonRoundTrip()
+        {
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dungeon_roundtrip_test.dndproj");
+
+            var lvl = new DungeonLevel { Width = 3, Height = 2, Tiles = new DungeonTile[6] };
+            lvl.Set(1, 1, DungeonTile.Floor);
+            lvl.Chambers.Add(new KeyChamber { Number = 1, Title = "Вход", Body = "лестница вниз", MarkerCellX = 1, MarkerCellY = 1 });
+            var dungeon = new DungeonData { OwnerPoiId = "poi-xyz", Levels = { lvl } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new System.Collections.Generic.List<VoronoiCell>(),
+                new System.Collections.Generic.List<PoiData>(),
+                new WorldGen.Notes.Data.NotesDocument(),
+                new System.Collections.Generic.List<RegionLabelData>(),
+                new System.Collections.Generic.List<RegionData>(),
+                new System.Collections.Generic.List<DungeonData> { dungeon });
+
+            var r = ProjectSerializer.Load(path);
+            bool ok = r.Success
+                && r.Dungeons != null && r.Dungeons.Count == 1
+                && r.Dungeons[0].OwnerPoiId == "poi-xyz"
+                && r.Dungeons[0].Levels.Count == 1
+                && r.Dungeons[0].Levels[0].Get(1, 1) == DungeonTile.Floor
+                && r.Dungeons[0].Levels[0].Chambers.Count == 1
+                && r.Dungeons[0].Levels[0].Chambers[0].Title == "Вход"
+                && r.Dungeons[0].Levels[0].Chambers[0].Number == 1;
+
+            try { System.IO.File.Delete(path); } catch { }
+            Debug.Log(ok ? "Self-Test Dungeon Round-Trip: PASS" : "Self-Test Dungeon Round-Trip: FAIL");
         }
     }
 }
