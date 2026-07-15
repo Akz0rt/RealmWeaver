@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -41,6 +42,17 @@ namespace WorldGen.Rendering
         int brushSize = 1;   // 1..3 (radius 0..2; clamp)
         readonly Image[] brushTileButtons = new Image[2];   // [0]=Wall,[1]=Floor — highlight tracking
         readonly Image[] brushSizeButtons = new Image[3];   // sizes 1..3 — highlight tracking
+
+        // Numbered key + markers (Task 5).
+        int selectedChamber = -1;                 // KeyChamber.Number, or -1 for none
+        RectTransform keyContent;                 // scroll content that holds the key rows
+        ScrollRect keyScroll;
+        readonly List<KeyRowUI> keyRows = new List<KeyRowUI>();       // one per chamber (re-highlight without rebuild)
+        readonly List<GameObject> markerGOs = new List<GameObject>(); // numbered markers overlaid on mapImage
+
+        /// <summary>Per-key-row UI refs kept so SelectChamber can re-highlight and toggle the inline
+        /// editor without rebuilding the whole list (a rebuild would drop an in-progress edit).</summary>
+        class KeyRowUI { public int number; public Image headerBg; public GameObject editor; public Text titleLabel; }
 
         Font font;
         bool built;
@@ -107,8 +119,7 @@ namespace WorldGen.Rendering
             UpdateBrushHighlights();
         }
 
-        // RefreshMap() bakes CurrentLevel into mapTex and shows it on mapImage. RefreshKey() is
-        // IMPLEMENTED in Task 5 (still an empty seam here).
+        // RefreshMap() bakes CurrentLevel into mapTex and shows it on mapImage.
         void RefreshMap()
         {
             var lvl = CurrentLevel;
@@ -117,7 +128,249 @@ namespace WorldGen.Rendering
             mapTex = DungeonLevelRenderer.Bake(lvl, PxPerTile);
             mapImage.texture = mapTex;
         }
-        void RefreshKey() { /* Task 5 */ }
+
+        // ── Numbered key sidebar + marker overlay (Task 5) ───────────────────────
+
+        /// <summary>Rebuilds the key list for CurrentLevel (one collapsible row per chamber) and the
+        /// numbered marker overlay. Selection resets on every rebuild (level switch / regenerate).</summary>
+        void RefreshKey()
+        {
+            selectedChamber = -1;
+            keyRows.Clear();
+            if (keyContent != null)
+                for (int i = keyContent.childCount - 1; i >= 0; i--)
+                    Destroy(keyContent.GetChild(i).gameObject);
+
+            var lvl = CurrentLevel;
+            if (keyContent != null && lvl != null)
+                foreach (var c in lvl.Chambers)
+                    BuildKeyRow(c);
+
+            RefreshMarkers();
+        }
+
+        /// <summary>Selects a chamber by Number (or -1). Re-highlights every key row + marker and opens
+        /// the selected row's inline Title/Body editor — a light update, no list rebuild.</summary>
+        public void SelectChamber(int number)
+        {
+            selectedChamber = number;
+            foreach (var r in keyRows)
+            {
+                bool sel = r.number == number;
+                if (r.headerBg != null) ThemeService.Tag(r.headerBg, sel ? ThemeRole.AccentSoft : ThemeRole.Panel2);
+                if (r.editor != null) r.editor.SetActive(sel);
+            }
+            RefreshMarkers();
+        }
+
+        void BuildKeyRow(KeyChamber c)
+        {
+            int num = c.Number;
+
+            var rowGO = new GameObject($"KeyRow_{num}", typeof(RectTransform));
+            rowGO.transform.SetParent(keyContent, false);
+            var rowVlg = rowGO.AddComponent<VerticalLayoutGroup>();
+            rowVlg.spacing = 2f;
+            rowVlg.childControlWidth = true;
+            rowVlg.childForceExpandWidth = true;
+            rowVlg.childControlHeight = true;
+            rowVlg.childForceExpandHeight = false;
+
+            // Header: [number badge] [title] — click to select/expand.
+            var headerGO = new GameObject("Header");
+            headerGO.transform.SetParent(rowGO.transform, false);
+            var headerBg = headerGO.AddComponent<Image>();
+            ThemeService.Tag(headerBg, ThemeRole.Panel2);
+            headerGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+            var headerBtn = headerGO.AddComponent<Button>();
+            headerBtn.targetGraphic = headerBg;
+            headerBtn.onClick.AddListener(() => SelectChamber(num));
+            var hlg = headerGO.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 6f;
+            hlg.padding = new RectOffset(6, 6, 0, 0);
+            hlg.childControlWidth = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandHeight = true;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+
+            var badge = new GameObject("Badge");
+            badge.transform.SetParent(headerGO.transform, false);
+            var badgeImg = badge.AddComponent<Image>();
+            ThemeService.Tag(badgeImg, ThemeRole.Accent);
+            badgeImg.raycastTarget = false;
+            badge.AddComponent<LayoutElement>().preferredWidth = 24f;
+            var badgeTxt = MakeText(badge.transform, num.ToString(), 12, ThemeRole.AccentInk, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(badgeTxt.rectTransform);
+            badgeTxt.raycastTarget = false;
+
+            var titleLabel = MakeText(headerGO.transform, KeyTitleLabel(c.Title), 12,
+                string.IsNullOrEmpty(c.Title) ? ThemeRole.Mut : ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleLeft);
+            titleLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            titleLabel.raycastTarget = false;
+
+            // Inline editor: Title + Body, hidden until the row is selected.
+            var editorGO = new GameObject("Editor", typeof(RectTransform));
+            editorGO.transform.SetParent(rowGO.transform, false);
+            var evlg = editorGO.AddComponent<VerticalLayoutGroup>();
+            evlg.spacing = 3f;
+            evlg.padding = new RectOffset(6, 6, 2, 6);
+            evlg.childControlWidth = true;
+            evlg.childForceExpandWidth = true;
+            evlg.childControlHeight = true;
+            evlg.childForceExpandHeight = false;
+
+            var titleField = BuildInputField(editorGO.transform, false, "Название комнаты");
+            titleField.text = c.Title;
+            titleField.onEndEdit.AddListener(v => { c.Title = v; UpdateKeyRowTitle(num, v); });
+
+            var bodyField = BuildInputField(editorGO.transform, true, "Описание: что здесь, ловушки, добыча…");
+            bodyField.text = c.Body;
+            bodyField.onEndEdit.AddListener(v => c.Body = v);
+
+            editorGO.SetActive(false);
+
+            keyRows.Add(new KeyRowUI { number = num, headerBg = headerBg, editor = editorGO, titleLabel = titleLabel });
+        }
+
+        void UpdateKeyRowTitle(int number, string title)
+        {
+            foreach (var r in keyRows)
+                if (r.number == number && r.titleLabel != null)
+                {
+                    r.titleLabel.text = KeyTitleLabel(title);
+                    ThemeService.Tag(r.titleLabel, string.IsNullOrEmpty(title) ? ThemeRole.Mut : ThemeRole.Txt);
+                }
+        }
+
+        static string KeyTitleLabel(string title) => string.IsNullOrEmpty(title) ? "(без названия)" : title;
+
+        /// <summary>Rebuilds the numbered marker overlay on top of mapImage. Markers are anchored by
+        /// NORMALIZED position (not rect reads) so they stay correct through window resizes and before
+        /// first layout — sidestepping the rect==0-before-activation gotcha.</summary>
+        void RefreshMarkers()
+        {
+            foreach (var go in markerGOs) if (go != null) Destroy(go);
+            markerGOs.Clear();
+
+            var lvl = CurrentLevel;
+            if (lvl == null || mapImage == null) return;
+            foreach (var c in lvl.Chambers)
+                markerGOs.Add(BuildMarker(c, lvl));
+        }
+
+        GameObject BuildMarker(KeyChamber c, DungeonLevel lvl)
+        {
+            int num = c.Number;
+            bool sel = num == selectedChamber;
+            float nx = (c.MarkerCellX + 0.5f) / lvl.Width;
+            float ny = 1f - (c.MarkerCellY + 0.5f) / lvl.Height;   // grid y0 = top → bottom-origin anchor
+
+            var go = new GameObject($"Marker_{num}", typeof(RectTransform));
+            go.transform.SetParent(mapImage.rectTransform, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(nx, ny);
+            rt.anchorMax = new Vector2(nx, ny);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = sel ? new Vector2(26f, 26f) : new Vector2(20f, 20f);
+            rt.anchoredPosition = Vector2.zero;
+
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, sel ? ThemeRole.Danger : ThemeRole.Accent);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => SelectChamber(num));
+
+            var lbl = MakeText(go.transform, num.ToString(), 11, ThemeRole.AccentInk, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(lbl.rectTransform);
+            lbl.raycastTarget = false;
+            return go;
+        }
+
+        // ── Key sidebar construction ─────────────────────────────────────────────
+
+        void BuildKeySidebar(RectTransform parent)
+        {
+            var caption = MakeText(parent, "КЛЮЧ КОМНАТ", 10, ThemeRole.Mut, FontStyle.Bold, TextAnchor.UpperLeft);
+            var cr = caption.rectTransform;
+            cr.anchorMin = new Vector2(0f, 1f);
+            cr.anchorMax = new Vector2(1f, 1f);
+            cr.pivot = new Vector2(0.5f, 1f);
+            cr.sizeDelta = new Vector2(0f, 16f);
+            cr.anchoredPosition = new Vector2(10f, -8f);
+            caption.raycastTarget = false;
+
+            var scrollGO = new GameObject("KeyScroll", typeof(RectTransform));
+            scrollGO.transform.SetParent(parent, false);
+            var scRect = scrollGO.GetComponent<RectTransform>();
+            scRect.anchorMin = Vector2.zero;
+            scRect.anchorMax = Vector2.one;
+            scRect.offsetMin = new Vector2(6f, 6f);
+            scRect.offsetMax = new Vector2(-6f, -28f);   // leave room for the caption
+            keyScroll = scrollGO.AddComponent<ScrollRect>();
+            keyScroll.horizontal = false;
+            keyScroll.vertical = true;
+            keyScroll.scrollSensitivity = 30f;
+            keyScroll.movementType = ScrollRect.MovementType.Clamped;
+
+            var viewportGO = new GameObject("Viewport", typeof(RectTransform));
+            viewportGO.transform.SetParent(scrollGO.transform, false);
+            viewportGO.AddComponent<RectMask2D>();
+            var vpImg = viewportGO.AddComponent<Image>();
+            vpImg.color = new Color(0f, 0f, 0f, 0f);
+            Stretch(viewportGO.GetComponent<RectTransform>());
+            keyScroll.viewport = viewportGO.GetComponent<RectTransform>();
+
+            var contentGO = new GameObject("Content", typeof(RectTransform));
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            var vlg = contentGO.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 4f;
+            vlg.padding = new RectOffset(4, 4, 4, 4);
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            contentGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            keyContent = contentGO.GetComponent<RectTransform>();
+            keyContent.anchorMin = new Vector2(0f, 1f);
+            keyContent.anchorMax = new Vector2(1f, 1f);
+            keyContent.pivot = new Vector2(0.5f, 1f);
+            keyContent.sizeDelta = Vector2.zero;
+            keyContent.anchoredPosition = Vector2.zero;
+            keyScroll.content = keyContent;
+        }
+
+        /// <summary>Self-contained InputField builder (mirrors PoiEditorScreen's, with a placeholder arg).</summary>
+        InputField BuildInputField(Transform parent, bool multiline, string placeholder)
+        {
+            var go = new GameObject("InputField");
+            go.transform.SetParent(parent, false);
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
+            var field = go.AddComponent<InputField>();
+            field.targetGraphic = bg;
+            field.lineType = multiline ? InputField.LineType.MultiLineNewline : InputField.LineType.SingleLine;
+
+            var text = MakeText(go.transform, "", 12, ThemeRole.Txt, FontStyle.Normal, TextAnchor.UpperLeft);
+            text.supportRichText = false;
+            var textRect = text.rectTransform;
+            textRect.anchorMin = new Vector2(0.03f, 0f);
+            textRect.anchorMax = new Vector2(0.98f, 1f);
+            textRect.sizeDelta = Vector2.zero;
+            field.textComponent = text;
+
+            var ph = MakeText(go.transform, placeholder, 12, ThemeRole.Mut, FontStyle.Italic, TextAnchor.UpperLeft);
+            var phRect = ph.rectTransform;
+            phRect.anchorMin = new Vector2(0.03f, 0f);
+            phRect.anchorMax = new Vector2(0.98f, 1f);
+            phRect.sizeDelta = Vector2.zero;
+            field.placeholder = ph;
+
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = multiline ? 54f : 22f;
+            le.flexibleWidth = 1f;
+            return field;
+        }
 
         /// <summary>Pointer down/drag handler wired via EventTrigger on mapImage. Converts the screen
         /// point to a normalized position within the RawImage rect, resolves the grid cell, and paints
@@ -389,6 +642,8 @@ namespace WorldGen.Rendering
             var sidebarBg = sidebarGO.AddComponent<Image>();
             ThemeService.Tag(sidebarBg, ThemeRole.Elev);
             sidebarBg.raycastTarget = false;
+
+            BuildKeySidebar(KeySidebar);
         }
 
         /// <summary>Registers an EventTrigger entry whose callback forwards the pointer's screen
