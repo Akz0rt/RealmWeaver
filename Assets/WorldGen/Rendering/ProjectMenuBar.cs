@@ -33,6 +33,7 @@ namespace WorldGen.Rendering
         public PoiManager poiManager;
         public NotesRootBuilder notesRoot;
         public RegionLabelManager regionLabelManager;
+        public DungeonManager dungeonManager;
 
         static readonly ExtensionFilter[] ProjectFilters =
         {
@@ -101,8 +102,8 @@ namespace WorldGen.Rendering
             {
                 var regionLabels = regionLabelManager != null ? new List<RegionLabelData>(regionLabelManager.GetAll()) : new List<RegionLabelData>();
                 var regions = mapRenderer.regionManager != null ? new List<RegionData>(mapRenderer.regionManager.Regions) : new List<RegionData>();
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions,
-                    new List<DungeonData>()); // TODO(task6): pass DungeonManager.GetAll()
+                var dungeons = dungeonManager != null ? new List<DungeonData>(dungeonManager.GetAll()) : new List<DungeonData>();
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons);
             }
             catch (System.Exception ex)
             {
@@ -152,6 +153,7 @@ namespace WorldGen.Rendering
 
             mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
             poiManager?.LoadPois(result.Pois);
+            dungeonManager?.LoadDungeons(result.Dungeons);
             regionLabelManager?.LoadLabels(result.RegionLabels);
             notesRoot?.DocumentController.LoadDocument(result.Notes);
 

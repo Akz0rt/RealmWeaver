@@ -54,6 +54,11 @@ namespace WorldGen.Rendering
         /// editor without rebuilding the whole list (a rebuild would drop an in-progress edit).</summary>
         class KeyRowUI { public int number; public Image headerBg; public GameObject editor; public Text titleLabel; }
 
+        // Generation controls (Task 6). The Сгенерировать button + Камеры/Размер sliders write these;
+        // they take effect on the NEXT Generate (no auto-regenerate on drag).
+        int genChambers = 6;
+        float genSize = 0.5f;
+
         Font font;
         bool built;
 
@@ -103,6 +108,20 @@ namespace WorldGen.Rendering
             if (current == null || current.Levels.Count <= 1) return;   // keep at least one level
             current.Levels.RemoveAt(CurrentLevelIndex);
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
+        }
+
+        /// <summary>Removes the current level, but if its key has any authored Title/Body, confirms first
+        /// (that text is lost). Wired to the «×» level tab (shown only when there's more than one level).</summary>
+        void RequestRemoveCurrentLevel()
+        {
+            var lvl = CurrentLevel;
+            if (current == null || current.Levels.Count <= 1 || lvl == null) return;
+            bool annotated = lvl.Chambers.Exists(c => !string.IsNullOrEmpty(c.Title) || !string.IsNullOrEmpty(c.Body));
+            if (annotated)
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить уровень?",
+                    "Ключ этого уровня будет потерян.", ok => { if (ok) RemoveCurrentLevel(); });
+            else
+                RemoveCurrentLevel();
         }
 
         /// <summary>Set the active brush tile (Wall/Floor); updates the top-strip toggle highlight.</summary>
@@ -506,7 +525,7 @@ namespace WorldGen.Rendering
             hlg2.childControlHeight = true;
             hlg2.childForceExpandHeight = true;
 
-            AddPlaceholderSlot(row2.transform, "Генерация…", 160f);
+            BuildGenControls(row2.transform);
             BuildBrushTileSelector(row2.transform);
             BuildBrushSizeSelector(row2.transform);
         }
@@ -579,16 +598,122 @@ namespace WorldGen.Rendering
                     ThemeService.Tag(brushSizeButtons[i], brushSize == i + 1 ? ThemeRole.AccentSoft : ThemeRole.Elev);
         }
 
-        void AddPlaceholderSlot(Transform parent, string label, float width)
+        // ── Generation controls (Task 6) ─────────────────────────────────────────
+
+        /// <summary>Top-strip generation cluster: Камеры (int 4..12) + Размер (0..1) sliders and the
+        /// Сгенерировать button. A flat HorizontalLayoutGroup with explicit child sizeDelta widths
+        /// (childControl*=false), matching PoiEditorScreen.AddScaleSliderRow's proven slider recipe.</summary>
+        void BuildGenControls(Transform parent)
         {
-            var go = new GameObject("Placeholder");
+            var go = new GameObject("GenControls", typeof(RectTransform));
             go.transform.SetParent(parent, false);
-            var bg = go.AddComponent<Image>();
-            ThemeService.Tag(bg, ThemeRole.Panel2, 0.6f);
-            go.AddComponent<LayoutElement>().preferredWidth = width;
-            var lbl = MakeText(go.transform, label, 11, ThemeRole.Mut, FontStyle.Italic, TextAnchor.MiddleCenter);
+            go.AddComponent<LayoutElement>().preferredWidth = 412f;
+            var hlg = go.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 6f;
+            hlg.childControlWidth = false;
+            hlg.childForceExpandWidth = false;
+            hlg.childControlHeight = false;
+            hlg.childForceExpandHeight = false;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+
+            AddStripText(go.transform, "Камеры", 48f);
+            BuildSliderTrack(go.transform, 4f, 12f, true, genChambers, 64f, 22f, v => genChambers = Mathf.RoundToInt(v));
+            AddStripText(go.transform, "Размер", 48f);
+            BuildSliderTrack(go.transform, 0f, 1f, false, genSize, 64f, 22f, v => genSize = v);
+            AddStripButton(go.transform, "Сгенерировать", 108f, ThemeRole.Accent, OnGenerateClicked);
+        }
+
+        void AddStripText(Transform parent, string text, float width)
+        {
+            var lbl = MakeText(parent, text, 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
+            lbl.rectTransform.sizeDelta = new Vector2(width, 20f);
+            lbl.raycastTarget = false;
+        }
+
+        void AddStripButton(Transform parent, string label, float width, ThemeRole bgRole, System.Action onClick)
+        {
+            var go = new GameObject($"Btn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, bgRole);
+            go.GetComponent<RectTransform>().sizeDelta = new Vector2(width, 26f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick());
+            var lbl = MakeText(go.transform, label, 12,
+                bgRole == ThemeRole.Accent ? ThemeRole.AccentInk : ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
             Stretch(lbl.rectTransform);
             lbl.raycastTarget = false;
+        }
+
+        /// <summary>Builds a compact [track][value] slider pair as two consecutive flat-row children.
+        /// Fill/handle wiring mirrors PoiEditorScreen.AddScaleSliderRow (the Slider drives their anchors).</summary>
+        void BuildSliderTrack(Transform parent, float min, float max, bool whole, float value,
+                              float trackWidth, float valueWidth, System.Action<float> onChanged)
+        {
+            var sliderGO = new GameObject("Slider");
+            sliderGO.transform.SetParent(parent, false);
+            var slider = sliderGO.AddComponent<Slider>();
+            slider.minValue = min;
+            slider.maxValue = max;
+            slider.wholeNumbers = whole;
+            slider.value = value;
+            sliderGO.GetComponent<RectTransform>().sizeDelta = new Vector2(trackWidth, 18f);
+
+            var bg = new GameObject("Bg");
+            bg.transform.SetParent(sliderGO.transform, false);
+            var bgImg = bg.AddComponent<Image>();
+            ThemeService.Tag(bgImg, ThemeRole.Panel2);
+            var bgRect = bg.GetComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0f, 0.35f);
+            bgRect.anchorMax = new Vector2(1f, 0.65f);
+            bgRect.sizeDelta = Vector2.zero;
+
+            var fill = new GameObject("Fill");
+            fill.transform.SetParent(sliderGO.transform, false);
+            var fillImg = fill.AddComponent<Image>();
+            ThemeService.Tag(fillImg, ThemeRole.Accent, 0.9f);
+            var fillRect = fill.GetComponent<RectTransform>();
+            fillRect.anchorMin = new Vector2(0f, 0.35f);
+            fillRect.anchorMax = new Vector2(0f, 0.65f);
+            fillRect.sizeDelta = Vector2.zero;
+            slider.fillRect = fillRect;
+
+            var handleArea = new GameObject("HandleArea");
+            handleArea.transform.SetParent(sliderGO.transform, false);
+            Stretch(handleArea.AddComponent<RectTransform>());
+
+            var handle = new GameObject("Handle");
+            handle.transform.SetParent(handleArea.transform, false);
+            var handleImg = handle.AddComponent<Image>();
+            ThemeService.Tag(handleImg, ThemeRole.Accent);
+            var handleRect = handle.GetComponent<RectTransform>();
+            handleRect.sizeDelta = new Vector2(8f, 0f);
+            slider.handleRect = handleRect;
+            slider.targetGraphic = handleImg;
+            slider.direction = Slider.Direction.LeftToRight;
+
+            var valTxt = MakeText(parent, FormatSliderValue(value, whole), 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleRight);
+            valTxt.rectTransform.sizeDelta = new Vector2(valueWidth, 20f);
+            valTxt.raycastTarget = false;
+
+            slider.onValueChanged.AddListener(v =>
+            {
+                valTxt.text = FormatSliderValue(v, whole);
+                onChanged(v);
+            });
+        }
+
+        static string FormatSliderValue(float v, bool whole) => whole ? Mathf.RoundToInt(v).ToString() : v.ToString("F1");
+
+        /// <summary>Regenerates ONLY the current level (tiles + chambers) from the Камеры/Размер values;
+        /// other levels are untouched. Selection/key rebuild via RefreshKey.</summary>
+        void OnGenerateClicked()
+        {
+            if (current == null) return;
+            current.Levels[CurrentLevelIndex] = CaveGenerator.Generate(FreshSeed(), 48, 48, Mathf.Clamp(genChambers, 4, 12), genSize);
+            RefreshMap();
+            RefreshKey();
         }
 
         void BuildBody(Transform parent)
@@ -670,6 +795,8 @@ namespace WorldGen.Rendering
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+", 28f, false, AddLevel);
+            if (current.Levels.Count > 1)
+                AddLevelTabButton("×", 28f, false, RequestRemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)

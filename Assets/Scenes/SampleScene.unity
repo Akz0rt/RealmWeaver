@@ -1017,6 +1017,7 @@ MonoBehaviour:
   poiManager: {fileID: 1583692676}
   notesRoot: {fileID: 900000003}
   regionLabelManager: {fileID: 1481348583}
+  dungeonManager: {fileID: 42026285}
 --- !u!4 &1044192761
 Transform:
   m_ObjectHideFlags: 0
