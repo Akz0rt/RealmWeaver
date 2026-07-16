@@ -108,11 +108,11 @@ namespace WorldGen.Rendering
                 var (w, h) = EffectiveSize(r);
                 FootprintCorners(cx, cy, w, h, out var n, out var e, out var s, out var wCorner);
 
-                shapes.Add(new IsoShape(IsoProjection.DepthKey(cx, cy, FloorHeight), n, e, s, wCorner, FloorColor(r.Type)));
+                AddFloorDiamond(shapes, cx, cy, w, h, FloorColor(r.Type));
 
                 var wallColor = WallColor(r.Type);
-                AddWall(shapes, e, s, cx, cy, wallColor);       // +X-facing (east) edge
-                AddWall(shapes, s, wCorner, cx, cy, wallColor); // +Y-facing (south) edge
+                AddWall(shapes, n, e, cx, cy, wallColor);       // −Y-facing (north/back) far edge
+                AddWall(shapes, wCorner, n, cx, cy, wallColor); // −X-facing (west/back) far edge
             }
 
             var rg = DungeonLayout.BuildRenderGraph(lvl);
