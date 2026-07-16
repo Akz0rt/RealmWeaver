@@ -120,6 +120,23 @@ namespace WorldGen.Rendering
             AddChoiceButton(typeRow.transform, "Обычная", room.Type == RoomType.Normal, () => SetType(lvl, room, RoomType.Normal));
             AddChoiceButton(typeRow.transform, "Босс", room.Type == RoomType.Boss, () => SetType(lvl, room, RoomType.Boss));
 
+            // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
+            // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
+            // stepper clamps into RoomSizing's 1..8 range and fires OnChanged, which runs
+            // RevalidateAndRefresh → DungeonLayout.Separate + graphView.Refresh(), so the card resizes
+            // and the cascade re-settles the whole floor.
+            var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
+            var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
+            sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
+            sizeCap.raycastTarget = false;
+            BuildStepper(sizeRow.transform, "W", room.SizeW.ToString(),
+                () => ResizeRoom(room, -1, 0), () => ResizeRoom(room, 1, 0), true);
+            var sizeX = MakeText(sizeRow.transform, "×", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleCenter);
+            sizeX.gameObject.AddComponent<LayoutElement>().preferredWidth = 12f;
+            sizeX.raycastTarget = false;
+            BuildStepper(sizeRow.transform, "H", room.SizeH.ToString(),
+                () => ResizeRoom(room, 0, -1), () => ResizeRoom(room, 0, 1), true);
+
             var titleField = BuildInputField(sec.transform, false, "Название комнаты");
             titleField.text = room.Title;
             titleField.onEndEdit.AddListener(v => { room.Title = v; OnChanged?.Invoke(); });
@@ -133,6 +150,16 @@ namespace WorldGen.Rendering
         void SetType(DungeonLevel lvl, Room room, RoomType type)
         {
             DungeonOps.SetRoomType(lvl, room.Id, type);
+            Rebuild();
+            OnChanged?.Invoke();
+        }
+
+        // dw/dh are ±1 (or 0) nudges to SizeW/SizeH; RoomSizing.Clamp keeps the result in 1..8 even at
+        // the range edges (no explicit bounds check needed — mirrors StepFloor/StepRoom's own style).
+        void ResizeRoom(Room room, int dw, int dh)
+        {
+            if (dw != 0) room.SizeW = RoomSizing.Clamp(room.SizeW + dw);
+            if (dh != 0) room.SizeH = RoomSizing.Clamp(room.SizeH + dh);
             Rebuild();
             OnChanged?.Invoke();
         }

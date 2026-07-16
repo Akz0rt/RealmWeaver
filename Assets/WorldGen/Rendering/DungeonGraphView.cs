@@ -10,17 +10,23 @@ namespace WorldGen.Rendering
 {
     /// <summary>
     /// Draggable node-graph canvas for one dungeon floor (Task 4 of the room-graph rework). Hosted as
-    /// a child of DungeonEditorScreen.MapArea; owns three stretched child layers built in draw order —
-    /// BackgroundHit, LinesLayer, NodesLayer (later siblings render on top, so corridor lines sit
-    /// behind node cards).
+    /// a child of DungeonEditorScreen.MapArea; owns four stretched child layers built in draw order —
+    /// BackgroundHit, LinesLayer, JunctionsLayer, NodesLayer (later siblings render on top, so corridor
+    /// segments sit behind junction diamonds, which sit behind node cards).
     ///
     /// Node cards are anchored by NORMALIZED position (anchorMin=anchorMax=(room.X, 1-room.Y)) and
-    /// NEVER read this transform's rect at Bind/Refresh time — the host screen can Bind before the
-    /// screen is activated, when rect=={0,0} (see DungeonEditorScreen's own doc comment for the same
-    /// gotcha). Corridor lines DO need pixel geometry (PlaceLine/NodeCenter), which only produces
-    /// correct numbers once the rect has actually laid out; RelayoutLines() is therefore re-run on the
-    /// first valid LateUpdate after any rebuild (Refresh sets needsInitialRelayout=true), in addition
-    /// to running live on every drag sample.
+    /// sized from the room's tile footprint (Room.SizeW/H × the FIXED PxPerTile constant — never a
+    /// rect read). NEVER read this transform's rect at Bind/Refresh time — the host screen can Bind
+    /// before the screen is activated, when rect=={0,0} (see DungeonEditorScreen's own doc comment for
+    /// the same gotcha). Corridor lines and junction diamonds DO need pixel geometry (PlaceLine/
+    /// PointCenter), which only produces correct numbers once the rect has actually laid out;
+    /// RelayoutLines() is therefore re-run on the first valid LateUpdate after any rebuild (Refresh
+    /// sets needsInitialRelayout=true), in addition to running live on every drag sample.
+    ///
+    /// Lines and junction diamonds are drawn from DungeonLayout.BuildRenderGraph(BoundLevel) — a
+    /// DERIVED view over lvl.Corridors (splits each corridor at every point it crosses another
+    /// corridor, emitting a junction point there) — not lvl.Corridors directly. Junction diamonds are
+    /// draw-only: never added to nodeCards, raycastTarget=false, never touch selection/ops/validator.
     /// </summary>
     public class DungeonGraphView : MonoBehaviour
     {
@@ -37,10 +43,18 @@ namespace WorldGen.Rendering
         Font font;
         bool built;
 
+        // Fixed px/tile for node-card footprint sizing — deliberately NOT derived from this view's rect
+        // (rect=={0,0} before the host screen activates; see class doc gotcha). MinCardPx keeps a
+        // 1-tile room's card at a usable click target even though 1×PxPerTile alone would be tiny.
+        const float PxPerTile = 14f;
+        const float MinCardPx = 20f;
+
         RectTransform linesLayer;
+        RectTransform junctionsLayer;
         RectTransform nodesLayer;
         readonly Dictionary<int, NodeCardUI> nodeCards = new Dictionary<int, NodeCardUI>();
         readonly List<RectTransform> lineRects = new List<RectTransform>();
+        readonly List<RectTransform> junctionRects = new List<RectTransform>();
         int pendingLinkId;
         bool needsInitialRelayout;
 
@@ -91,13 +105,17 @@ namespace WorldGen.Rendering
             EnsureBuilt();
             ClearLayer(nodesLayer);
             ClearLayer(linesLayer);
+            ClearLayer(junctionsLayer);
             nodeCards.Clear();
             lineRects.Clear();
+            junctionRects.Clear();
 
             var lvl = BoundLevel;
             if (lvl == null) { RefreshHighlights(); return; }
 
-            foreach (var c in lvl.Corridors) lineRects.Add(BuildLineRect());
+            var rg = DungeonLayout.BuildRenderGraph(lvl);
+            foreach (var seg in rg.Segments) lineRects.Add(BuildLineRect());
+            foreach (var j in rg.Junctions) junctionRects.Add(BuildJunctionRect());
             foreach (var r in lvl.Rooms) nodeCards[r.Id] = BuildNodeCard(r);
 
             if (SelectedRoomId != 0 && !nodeCards.ContainsKey(SelectedRoomId)) SelectedRoomId = 0;
@@ -214,9 +232,14 @@ namespace WorldGen.Rendering
             RelayoutLines();
         }
 
-        /// <summary>Repositions every corridor line from the current room X/Y. No-ops until this view's
-        /// own rect has actually laid out (rect is {0,0} before first activation) — Refresh() arranges a
-        /// retry via LateUpdate for the first frame the rect becomes valid.</summary>
+        /// <summary>Repositions every corridor-segment line and junction diamond from a freshly-computed
+        /// DungeonLayout.BuildRenderGraph (recomputed each call since dragging moves room endpoints
+        /// continuously). No-ops until this view's own rect has actually laid out (rect is {0,0} before
+        /// first activation) — Refresh() arranges a retry via LateUpdate for the first frame the rect
+        /// becomes valid. Only repositions up to however many line/junction rects Refresh() last built
+        /// (same defensive min-count guard the old corridor-count loop used) — if a drag changes the
+        /// crossing TOPOLOGY mid-drag (a junction appears/disappears), the rect count only catches up on
+        /// the next full Refresh (drag-end fires OnGraphMutated → RevalidateAndRefresh → Refresh).</summary>
         void RelayoutLines()
         {
             var lvl = BoundLevel;
@@ -224,13 +247,16 @@ namespace WorldGen.Rendering
             var area = (RectTransform)transform;
             if (area.rect.width <= 0f) return;
 
-            for (int i = 0; i < lineRects.Count && i < lvl.Corridors.Count; i++)
+            var rg = DungeonLayout.BuildRenderGraph(lvl);
+            for (int i = 0; i < lineRects.Count && i < rg.Segments.Count; i++)
             {
-                var c = lvl.Corridors[i];
-                var ra = lvl.GetRoom(c.RoomA);
-                var rb = lvl.GetRoom(c.RoomB);
-                if (ra == null || rb == null) continue;
-                PlaceLine(lineRects[i], NodeCenter(area, ra), NodeCenter(area, rb), 3f);
+                var seg = rg.Segments[i];
+                PlaceLine(lineRects[i], PointCenter(area, seg.A.X, seg.A.Y), PointCenter(area, seg.B.X, seg.B.Y), 3f);
+            }
+            for (int i = 0; i < junctionRects.Count && i < rg.Junctions.Count; i++)
+            {
+                var j = rg.Junctions[i];
+                junctionRects[i].anchoredPosition = PointCenter(area, j.X, j.Y);
             }
         }
 
@@ -243,17 +269,18 @@ namespace WorldGen.Rendering
             lineRect.anchorMin = lineRect.anchorMax = new Vector2(0.5f, 0.5f);
             lineRect.pivot = new Vector2(0.5f, 0.5f);
             lineRect.sizeDelta = new Vector2(len, thickness);
-            lineRect.anchoredPosition = mid;                 // mid is relative to area center (see NodeCenter below)
+            lineRect.anchoredPosition = mid;                 // mid is relative to area center (see PointCenter below)
             lineRect.localEulerAngles = new Vector3(0, 0, Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg);
         }
 
-        // Pixel center of a room within `area`, relative to the area's CENTER (matches anchoredPosition space
-        // when the line/nodes layer is stretched to the area and pivoted at 0.5).
-        static Vector2 NodeCenter(RectTransform area, Room r)
+        // Pixel center of a normalized (x,y) point within `area`, relative to the area's CENTER (matches
+        // anchoredPosition space when the lines/junctions/nodes layer is stretched to the area and
+        // pivoted at 0.5). Used for both room centers and derived junction points.
+        static Vector2 PointCenter(RectTransform area, float x, float y)
         {
             var rect = area.rect;
-            float px = (r.X - 0.5f) * rect.width;
-            float py = ((1f - r.Y) - 0.5f) * rect.height;    // invert grid-Y for bottom-origin space
+            float px = (x - 0.5f) * rect.width;
+            float py = ((1f - y) - 0.5f) * rect.height;    // invert grid-Y for bottom-origin space
             return new Vector2(px, py);
         }
 
@@ -276,7 +303,12 @@ namespace WorldGen.Rendering
             linesLayer = (RectTransform)linesGO.transform;
             Stretch(linesLayer);
 
-            var nodesGO = new GameObject("NodesLayer", typeof(RectTransform));   // added AFTER LinesLayer → renders on top
+            var junctionsGO = new GameObject("JunctionsLayer", typeof(RectTransform));   // added AFTER LinesLayer → renders on top of segments
+            junctionsGO.transform.SetParent(transform, false);
+            junctionsLayer = (RectTransform)junctionsGO.transform;
+            Stretch(junctionsLayer);
+
+            var nodesGO = new GameObject("NodesLayer", typeof(RectTransform));   // added AFTER JunctionsLayer → renders on top
             nodesGO.transform.SetParent(transform, false);
             nodesLayer = (RectTransform)nodesGO.transform;
             Stretch(nodesLayer);
@@ -284,12 +316,32 @@ namespace WorldGen.Rendering
 
         RectTransform BuildLineRect()
         {
-            var go = new GameObject("Corridor", typeof(RectTransform));
+            var go = new GameObject("Segment", typeof(RectTransform));
             go.transform.SetParent(linesLayer, false);
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, ThemeRole.Mut);
             img.raycastTarget = false;
             return go.GetComponent<RectTransform>();
+        }
+
+        // Draw-only crossing marker: fixed small diamond (square rotated 45°), size/rotation set once
+        // here at build time — only its anchoredPosition updates per RelayoutLines call. Never added to
+        // nodeCards, no Button/EventTrigger, raycastTarget off — not selectable, not in the ops/validator
+        // paths (see class doc).
+        RectTransform BuildJunctionRect()
+        {
+            var go = new GameObject("Junction", typeof(RectTransform));
+            go.transform.SetParent(junctionsLayer, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(9f, 9f);
+            rt.localEulerAngles = new Vector3(0f, 0f, 45f);
+
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Txt);
+            img.raycastTarget = false;
+            return rt;
         }
 
         NodeCardUI BuildNodeCard(Room r)
@@ -299,7 +351,7 @@ namespace WorldGen.Rendering
             var rt = go.GetComponent<RectTransform>();
             rt.anchorMin = rt.anchorMax = new Vector2(r.X, 1f - r.Y);   // NORMALIZED anchor — never rect math (gotcha #1)
             rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(96f, 40f);
+            rt.sizeDelta = FootprintPx(r);
             rt.anchoredPosition = Vector2.zero;
 
             var img = go.AddComponent<Image>();
@@ -396,6 +448,24 @@ namespace WorldGen.Rendering
         {
             if (layer == null) return;
             for (int i = layer.childCount - 1; i >= 0; i--) Destroy(layer.GetChild(i).gameObject);
+        }
+
+        // Card pixel size from the room's tile footprint × the fixed PxPerTile constant (never a rect
+        // read — gotcha #1). Falls back to the type default for an unmigrated/fresh SizeW/H<=0 (mirrors
+        // RoomSizing.ApplyDefaults' own <=0 guard), then clamps to RoomSizing's 1..8 range in case
+        // serialized data drifted out of bounds. MinCardPx floors a 1-tile room to a still-clickable size.
+        static Vector2 FootprintPx(Room r)
+        {
+            int w = r.SizeW, h = r.SizeH;
+            if (w <= 0 || h <= 0)
+            {
+                var (dw, dh) = RoomSizing.Default(r.Type);
+                if (w <= 0) w = dw;
+                if (h <= 0) h = dh;
+            }
+            w = RoomSizing.Clamp(w);
+            h = RoomSizing.Clamp(h);
+            return new Vector2(Mathf.Max(MinCardPx, w * PxPerTile), Mathf.Max(MinCardPx, h * PxPerTile));
         }
 
         static ThemeRole TypeRole(RoomType t) => t switch

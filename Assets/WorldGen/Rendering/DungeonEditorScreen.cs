@@ -111,10 +111,17 @@ namespace WorldGen.Rendering
 
         // Re-runs validation and re-renders the graph + inspector in place (no rebind — the bound
         // DungeonLevel object is unchanged, only its Rooms/Corridors/Secrets contents mutated via
-        // DungeonOps). Wired as DungeonGraphView.OnGraphMutated and DungeonInspectorPanel.OnChanged, and
-        // called once at the end of SetLevel so a level switch also gets a fresh validation pass.
+        // DungeonOps). Wired as DungeonGraphView.OnGraphMutated (fires on add/delete/link AND card
+        // drag-end) and DungeonInspectorPanel.OnChanged (fires on any inspector edit, including the size
+        // steppers), and called once at the end of SetLevel so a level switch also gets a fresh
+        // validation pass. This is the SINGLE path that runs the cascade: Separate() only mutates
+        // Room.X/Y (no callbacks of its own), so calling it here — before graphView.Refresh() re-renders
+        // — cannot loop back into RevalidateAndRefresh, and both drag-release and a size-stepper edit
+        // converge on the same settle-then-redraw sequence.
         void RevalidateAndRefresh()
         {
+            var lvl = CurrentLevel;
+            if (lvl != null) DungeonLayout.Separate(lvl);
             if (graphView != null) graphView.Refresh();
             if (inspectorPanel != null)
             {
