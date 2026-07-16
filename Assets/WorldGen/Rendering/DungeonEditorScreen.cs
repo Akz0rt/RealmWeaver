@@ -30,6 +30,16 @@ namespace WorldGen.Rendering
         Image linkToggleImg;
         int selectedRoomId;   // mirrors DungeonGraphView.SelectedRoomId; drives inspectorPanel.ShowRoom
 
+        // Граф/Изо toggle (Task 5). IsoArea mirrors MapArea's bounds exactly; only one of
+        // MapArea/IsoArea is active at a time. toolbarGO/bodyRect are stored so Изо can hide the
+        // edit toolbar (view-only) and reclaim its vertical space.
+        public RectTransform IsoArea { get; private set; }
+        DungeonIsoView isoView;
+        GameObject toolbarGO;
+        RectTransform bodyRect;
+        Image graphModeImg, isoModeImg;
+        bool showIso;   // false = Граф (default, editable graph); true = Изо (view-only iso render)
+
         Font font;
         bool built;
 
@@ -107,6 +117,9 @@ namespace WorldGen.Rendering
             if (current == null) return;
             if (graphView != null) graphView.Bind(current, CurrentLevelIndex, font);
             if (inspectorPanel != null) inspectorPanel.Bind(current, () => CurrentLevelIndex, font);
+            // Only touch isoView while it's actually the visible mode — SetIsoMode(true) Binds it fresh
+            // the moment Изо is shown, so there's no staleness risk in skipping this while hidden.
+            if (isoView != null && showIso) isoView.Bind(current, CurrentLevelIndex, font);
         }
 
         // Re-runs validation and re-renders the graph + inspector in place (no rebind — the bound
@@ -127,6 +140,9 @@ namespace WorldGen.Rendering
                 inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
                 inspectorPanel.ShowRoom(selectedRoomId);
             }
+            // The sidebar inspector stays visible (and editable) while Изо is showing, so an edit made
+            // there must repaint the iso mesh immediately too — not just the (hidden) graph canvas.
+            if (isoView != null && showIso) isoView.Refresh();
         }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
@@ -193,6 +209,51 @@ namespace WorldGen.Rendering
             tabsRect.anchorMin = new Vector2(0f, 0.5f); tabsRect.anchorMax = new Vector2(0f, 0.5f);
             tabsRect.pivot = new Vector2(0f, 0.5f); tabsRect.anchoredPosition = new Vector2(344f, 0f); tabsRect.sizeDelta = new Vector2(300f, 28f);
             levelTabsRow = tabsGO.transform;
+
+            BuildModeToggle(strip.transform);
+        }
+
+        /// <summary>Граф/Изо toggle, anchored to the top strip's right edge (mirrors «← Назад» anchored to
+        /// the left) so it never collides with the level-tabs row regardless of how many tabs it holds.
+        /// Граф (editable room graph) is the default; Изо (view-only iso render) hides the edit toolbar
+        /// and reclaims its vertical space — see SetIsoMode.</summary>
+        void BuildModeToggle(Transform parent)
+        {
+            var group = new GameObject("ModeToggle", typeof(RectTransform));
+            group.transform.SetParent(parent, false);
+            var gr = group.GetComponent<RectTransform>();
+            gr.anchorMin = new Vector2(1f, 0.5f); gr.anchorMax = new Vector2(1f, 0.5f);
+            gr.pivot = new Vector2(1f, 0.5f); gr.anchoredPosition = new Vector2(-12f, 0f); gr.sizeDelta = new Vector2(140f, 28f);
+
+            var hlg = group.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 4f; hlg.childControlWidth = false; hlg.childForceExpandWidth = false;
+            hlg.childControlHeight = true; hlg.childForceExpandHeight = true; hlg.childAlignment = TextAnchor.MiddleRight;
+
+            graphModeImg = AddToolbarButton(group.transform, "Граф", 64f, ThemeRole.Elev, () => SetIsoMode(false));
+            isoModeImg = AddToolbarButton(group.transform, "Изо", 64f, ThemeRole.Elev, () => SetIsoMode(true));
+            RefreshModeToggleHighlight();
+        }
+
+        /// <summary>Switches between the editable Граф canvas and the view-only Изо render. Hides/shows
+        /// MapArea+Toolbar vs IsoArea and resizes Body's top offset to reclaim the toolbar's strip when
+        /// it's hidden (Изо is meant to read as a full-bleed map, not leave a blank bar where the toolbar
+        /// was). Binds isoView fresh on every switch to Изо — cheap, and guarantees it reflects any edits
+        /// made while Граф was showing.</summary>
+        void SetIsoMode(bool iso)
+        {
+            showIso = iso;
+            if (MapArea != null) MapArea.gameObject.SetActive(!iso);
+            if (toolbarGO != null) toolbarGO.SetActive(!iso);
+            if (IsoArea != null) IsoArea.gameObject.SetActive(iso);
+            if (bodyRect != null) bodyRect.offsetMax = new Vector2(0f, -(StripHeight + (iso ? 0f : ToolbarHeight)));
+            if (iso && isoView != null) isoView.Bind(current, CurrentLevelIndex, font);
+            RefreshModeToggleHighlight();
+        }
+
+        void RefreshModeToggleHighlight()
+        {
+            if (graphModeImg != null) ThemeService.Tag(graphModeImg, !showIso ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            if (isoModeImg != null) ThemeService.Tag(isoModeImg, showIso ? ThemeRole.AccentSoft : ThemeRole.Elev);
         }
 
         /// <summary>Toolbar row below the top strip: add/link/delete controls for the graph canvas.
@@ -217,6 +278,8 @@ namespace WorldGen.Rendering
             AddToolbarButton(bar.transform, "+ Комната", 110f, ThemeRole.Elev, () => graphView?.AddRoomAtCenter());
             linkToggleImg = AddToolbarButton(bar.transform, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
             AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => graphView?.DeleteSelected());
+
+            toolbarGO = bar;   // hidden while Изо (view-only) is shown — see SetIsoMode
         }
 
         void ToggleLinkMode()
@@ -250,6 +313,7 @@ namespace WorldGen.Rendering
             var br = body.GetComponent<RectTransform>();
             br.anchorMin = Vector2.zero; br.anchorMax = Vector2.one;
             br.offsetMin = Vector2.zero; br.offsetMax = new Vector2(0f, -(StripHeight + ToolbarHeight));
+            bodyRect = br;   // mutated by SetIsoMode to reclaim the toolbar's strip when Изо hides it
 
             var mapGO = new GameObject("MapArea", typeof(RectTransform));
             mapGO.transform.SetParent(body.transform, false);
@@ -266,6 +330,23 @@ namespace WorldGen.Rendering
             graphView.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
             graphView.OnGraphMutated = RevalidateAndRefresh;
             graphView.OnJumpToLevel = SetLevel;
+
+            // Изо host — same bounds as MapArea, hidden by default (Граф is the default mode). Hosts
+            // DungeonIsoView, a custom Graphic that IS the mesh (see that class's doc comment).
+            var isoGO = new GameObject("IsoArea", typeof(RectTransform));
+            isoGO.transform.SetParent(body.transform, false);
+            IsoArea = isoGO.GetComponent<RectTransform>();
+            IsoArea.anchorMin = new Vector2(0f, 0f); IsoArea.anchorMax = new Vector2(1f, 1f);
+            IsoArea.offsetMin = new Vector2(12f, 12f); IsoArea.offsetMax = new Vector2(-(sidebarWidth + 18f), -12f);
+            var isoBg = isoGO.AddComponent<Image>();
+            ThemeService.Tag(isoBg, ThemeRole.Panel2); isoBg.raycastTarget = false;
+
+            var isoViewGO = new GameObject("IsoView", typeof(RectTransform));
+            isoViewGO.transform.SetParent(isoGO.transform, false);
+            Stretch(isoViewGO.GetComponent<RectTransform>());
+            isoView = isoViewGO.AddComponent<DungeonIsoView>();
+
+            isoGO.SetActive(false);   // Граф active by default — see SetIsoMode
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);
