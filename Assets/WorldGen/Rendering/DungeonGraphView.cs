@@ -33,6 +33,7 @@ namespace WorldGen.Rendering
 
         DungeonData dungeon;
         int levelIndex;
+        DungeonLevel boundLevel;   // last-bound level OBJECT (not just index) — see Bind's sameBinding check
         Font font;
         bool built;
 
@@ -62,14 +63,20 @@ namespace WorldGen.Rendering
         /// <summary>(Re)bind to a level and rebuild. Selection/link-pending state resets only when the
         /// dungeon or level index actually changes — a same-binding re-Bind (e.g. the round-trip from
         /// OnGraphMutated -> DungeonEditorScreen.RefreshBody -> Bind after an add/link) preserves the
-        /// current selection instead of stomping it back to none.</summary>
+        /// current selection instead of stomping it back to none. "Same binding" is keyed on the actual
+        /// bound DungeonLevel OBJECT, not just (dungeon, levelIndex) — RemoveCurrentLevel() re-binds to
+        /// the same numeric index but a DIFFERENT DungeonLevel, so keying on the index alone would let a
+        /// stale SelectedRoomId survive and spuriously match an unrelated room on the new level.</summary>
         public void Bind(DungeonData dungeon, int levelIndex, Font font)
         {
             EnsureBuilt();
-            bool sameBinding = this.dungeon == dungeon && this.levelIndex == levelIndex;
+            var newLevel = (dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Levels.Count)
+                ? dungeon.Levels[levelIndex] : null;
+            bool sameBinding = this.dungeon == dungeon && this.levelIndex == levelIndex && newLevel == boundLevel;
             this.dungeon = dungeon;
             this.levelIndex = levelIndex;
             this.font = font;
+            boundLevel = newLevel;
             if (!sameBinding)
             {
                 SelectedRoomId = 0;
@@ -122,7 +129,8 @@ namespace WorldGen.Rendering
         {
             if (SelectedRoomId == 0 || dungeon == null) return;
             DungeonOps.RemoveRoom(dungeon, levelIndex, SelectedRoomId);
-            SelectedRoomId = 0;
+            SelectRoom(0);   // clears through the same path as a background click — fires OnRoomSelected(0)
+                              // so the host (e.g. DungeonEditorScreen.selectedRoomId) drops the deleted id too
             Refresh();
             OnGraphMutated?.Invoke();
         }
@@ -164,7 +172,7 @@ namespace WorldGen.Rendering
             if (reason != null)
             {
                 RefreshHighlights();
-                ConfirmDialog.Show(font, "Нельзя связать", reason, _ => { });
+                ConfirmDialog.ShowInfo(font, "Нельзя связать", reason);
             }
             else
             {
