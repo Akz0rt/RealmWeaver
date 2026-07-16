@@ -26,7 +26,6 @@ namespace WorldGen.Generation
             lvl.NextRoomId = roomCount + 1;
             lvl.Rooms[0].Type = RoomType.Entrance;
 
-            // 2. Connected corridor graph. Spanning tree: each new room links to a random earlier one.
             var adj = new Dictionary<int, HashSet<int>>();
             foreach (var r in lvl.Rooms) adj[r.Id] = new HashSet<int>();
             void Link(int a, int b)
@@ -35,36 +34,52 @@ namespace WorldGen.Generation
                 adj[a].Add(b); adj[b].Add(a);
                 lvl.Corridors.Add(new Corridor { RoomA = a, RoomB = b });
             }
-            for (int i = 1; i < roomCount; i++)
+
+            // 2. Guaranteed SPINE 0-1-...-spineLen. A plain random-recursive-tree is too shallow on small
+            //    floors (a 6-room tree has NO room >= 3 hops from the entrance ~60% of the time), so the
+            //    spine is what makes a far-enough boss reliable. spineLen rooms sit in a line from the entrance.
+            int spineLen = Math.Min(minBossDistance, roomCount - 1);
+            for (int i = 1; i <= spineLen; i++)
+                Link(lvl.Rooms[i].Id, lvl.Rooms[i - 1].Id);
+
+            // 3. Remaining rooms attach to a random earlier room (random branches off the spine/tree).
+            for (int i = spineLen + 1; i < roomCount; i++)
             {
                 int parent = rng.Next(0, i);                // 0..i-1
                 Link(lvl.Rooms[i].Id, lvl.Rooms[parent].Id);
             }
-            // ~20% extra loop edges between random distinct rooms.
+
+            // 4. Loop edges ONLY among the non-spine rooms (indices > spineLen), so a loop can never shortcut
+            //    the spine path and the spine end stays at distance spineLen from the entrance.
+            int nonSpineStart = spineLen + 1;
+            int nonSpineCount = roomCount - nonSpineStart;
             int extra = roomCount / 5;
             int guard = 0;
-            while (extra > 0 && guard++ < roomCount * 8 && roomCount > 2)
+            while (extra > 0 && guard++ < roomCount * 8 && nonSpineCount >= 2)
             {
-                int a = rng.Next(roomCount), b = rng.Next(roomCount);
+                int a = nonSpineStart + rng.Next(nonSpineCount);
+                int b = nonSpineStart + rng.Next(nonSpineCount);
                 if (a == b || adj[lvl.Rooms[a].Id].Contains(lvl.Rooms[b].Id)) continue;
                 Link(lvl.Rooms[a].Id, lvl.Rooms[b].Id);
                 extra--;
             }
 
-            // 3. BFS distances + depth from the entrance (id 1).
+            // 5. BFS distances from the entrance (id 1).
             var dist = Bfs(lvl.Rooms[0].Id, adj);
 
-            // 4. Boss = of rooms with dist >= minBossDistance, the farthest (tie → smallest id, stable).
+            // 6. Boss = the farthest non-entrance room, ALWAYS placed when a non-entrance room exists. The
+            //    spine guarantees this distance is >= min(minBossDistance, roomCount-1); on tiny 2-3 room
+            //    floors it is closer and the validator warns, but a boss always exists for the DM to see.
             int bossId = 0, bestDist = -1;
             foreach (var r in lvl.Rooms)
             {
                 if (r.Id == lvl.Rooms[0].Id) continue;
                 int d = dist.TryGetValue(r.Id, out var dd) ? dd : -1;
-                if (d >= minBossDistance && d > bestDist) { bestDist = d; bossId = r.Id; }
+                if (d > bestDist) { bestDist = d; bossId = r.Id; }
             }
             if (bossId != 0) lvl.GetRoom(bossId).Type = RoomType.Boss;
 
-            // 5. Layout X/Y by BFS depth: layer = depth (unreached → last layer), spread within a layer.
+            // 7. Layout X/Y by BFS depth so the initial layout is readable, not a clump.
             LayoutByDepth(lvl, dist);
 
             return lvl;

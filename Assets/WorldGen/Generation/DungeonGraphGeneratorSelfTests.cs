@@ -27,14 +27,15 @@ namespace WorldGen.Rendering
                     if (r.Type == RoomType.Boss) { bosses++; bossId = r.Id; }
                 }
                 bool oneEntrance = entrances == 1;
-                bool atMostOneBoss = bosses <= 1;
+                bool oneBoss = bosses == 1;                              // roomCount >= 4 here → a boss is guaranteed
+                int expectedMinBoss = Mathf.Min(DungeonGraphGenerator.DefaultMinBossDistance, want - 1);
+                bool bossFar = bossId != 0 && Distance(lvl, entranceId, bossId) >= expectedMinBoss;
                 bool connected = ReachesAll(lvl, entranceId);
                 bool nextIdOk = lvl.NextRoomId == want + 1;
-                bool bossFar = bosses == 0 || Distance(lvl, entranceId, bossId) >= DungeonGraphGenerator.DefaultMinBossDistance;
 
-                if (!(countOk && oneEntrance && atMostOneBoss && connected && nextIdOk && bossFar))
+                if (!(countOk && oneEntrance && oneBoss && connected && nextIdOk && bossFar))
                 {
-                    Debug.Log($"Self-Test Dungeon Graph Generator: FAIL seed={seed} (count={countOk}, entrance={oneEntrance}, boss<=1={atMostOneBoss}, connected={connected}, nextId={nextIdOk}, bossFar={bossFar})");
+                    Debug.Log($"Self-Test Dungeon Graph Generator: FAIL seed={seed} (count={countOk}, entrance={oneEntrance}, oneBoss={oneBoss}, connected={connected}, nextId={nextIdOk}, bossFar={bossFar})");
                     ok = false;
                 }
             }
@@ -56,6 +57,11 @@ namespace WorldGen.Rendering
             ok &= one.Rooms.Count == 1 && one.Rooms[0].Type == RoomType.Entrance && one.Corridors.Count == 0;
             var zero = DungeonGraphGenerator.Generate(1, 0);
             ok &= zero.Rooms.Count == 0 && zero.Corridors.Count == 0;
+
+            var two = DungeonGraphGenerator.Generate(7, 2);
+            int twoEnt = 0, twoBoss = 0;
+            foreach (var r in two.Rooms) { if (r.Type == RoomType.Entrance) twoEnt++; if (r.Type == RoomType.Boss) twoBoss++; }
+            ok &= two.Rooms.Count == 2 && twoEnt == 1 && twoBoss == 1 && two.Corridors.Count == 1;
 
             Debug.Log(ok ? "Self-Test Dungeon Graph Generator Determinism + Degenerate: PASS"
                          : "Self-Test Dungeon Graph Generator Determinism + Degenerate: FAIL");
