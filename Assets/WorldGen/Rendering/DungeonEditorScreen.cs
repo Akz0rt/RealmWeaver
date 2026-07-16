@@ -42,7 +42,7 @@ namespace WorldGen.Rendering
         {
             EnsureBuilt();
             current = dungeon;
-            if (current.Levels.Count == 0) current.Levels.Add(new DungeonLevel());   // Task 2 → generator
+            if (current.Levels.Count == 0) current.Levels.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
             SetLevel(0);
             RebuildLevelTabs();
         }
@@ -58,7 +58,7 @@ namespace WorldGen.Rendering
         public void AddLevel()
         {
             if (current == null) return;
-            current.Levels.Add(new DungeonLevel());       // Task 2 → generator
+            current.Levels.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
             SetLevel(current.Levels.Count - 1);
         }
 
@@ -71,6 +71,8 @@ namespace WorldGen.Rendering
 
         // Body refresh — no-op shell; Tasks 4/5 render the graph + inspector here.
         void RefreshBody() { }
+
+        int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
 
         void BuildUI()
         {
