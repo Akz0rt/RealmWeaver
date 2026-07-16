@@ -30,7 +30,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 4;
+        public const int CurrentFormatVersion = 5;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -95,7 +95,12 @@ namespace WorldGen.Persistence
                 Notes = data.Notes ?? new NotesDocument(),
                 RegionLabels = data.RegionLabels ?? new List<RegionLabelData>(),
                 Regions = data.Regions ?? new List<RegionData>(),
-                Dungeons = data.Dungeons ?? new List<DungeonData>()
+                // FormatVersion 5 replaced the tile dungeon with a room-graph. Older tile dungeons cannot be
+                // migrated (a graph can't be recovered from the old floor "blob"), so they are dropped; the rest
+                // of the project loads normally.
+                Dungeons = data.FormatVersion >= 5
+                    ? (data.Dungeons ?? new List<DungeonData>())
+                    : new List<DungeonData>()
             };
 
             if (data.FormatVersion > CurrentFormatVersion)

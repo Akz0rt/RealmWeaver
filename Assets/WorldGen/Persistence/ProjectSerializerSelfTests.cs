@@ -303,36 +303,64 @@ namespace WorldGen.Persistence
                 : "Self-Test Legacy Region Migration: FAIL — see field checks in SelfTestLegacyRegionMigration");
         }
 
-        [ContextMenu("Self-Test: Dungeon Round-Trip")]
-        public void SelfTestDungeonRoundTrip()
+        [ContextMenu("Self-Test: Dungeon Graph Round-Trip")]
+        public void SelfTestDungeonGraphRoundTrip()
         {
-            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dungeon_roundtrip_test.dndproj");
+            string path = Path.Combine(Path.GetTempPath(), "dungeon_graph_roundtrip_test.dndproj");
 
-            var lvl = new DungeonLevel { Width = 3, Height = 2, Tiles = new DungeonTile[6] };
-            lvl.Set(1, 1, DungeonTile.Floor);
-            lvl.Chambers.Add(new KeyChamber { Number = 1, Title = "Вход", Body = "лестница вниз", MarkerCellX = 1, MarkerCellY = 1 });
+            var lvl = new DungeonLevel { NextRoomId = 4 };
+            var entrance = new Room { Id = 1, Type = RoomType.Entrance, Title = "Вход", X = 0.5f, Y = 0.1f };
+            var mid      = new Room { Id = 2, Type = RoomType.Normal, Title = "Зал", X = 0.5f, Y = 0.5f };
+            var boss     = new Room { Id = 3, Type = RoomType.Boss, Title = "Логово", Body = "дракон", X = 0.5f, Y = 0.9f };
+            boss.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.DungeonExit, Bidirectional = false, Label = "трещина" });
+            mid.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = 3, Bidirectional = true });
+            lvl.Rooms.Add(entrance); lvl.Rooms.Add(mid); lvl.Rooms.Add(boss);
+            lvl.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            lvl.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });
             var dungeon = new DungeonData { OwnerPoiId = "poi-xyz", Levels = { lvl } };
 
             ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
-                new System.Collections.Generic.List<VoronoiCell>(),
-                new System.Collections.Generic.List<PoiData>(),
-                new WorldGen.Notes.Data.NotesDocument(),
-                new System.Collections.Generic.List<RegionLabelData>(),
-                new System.Collections.Generic.List<RegionData>(),
-                new System.Collections.Generic.List<DungeonData> { dungeon });
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData> { dungeon });
+            var r = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            bool ok = r.Success && r.Dungeons != null && r.Dungeons.Count == 1;
+            var d = r.Dungeons != null && r.Dungeons.Count == 1 ? r.Dungeons[0] : null;
+            var l = d != null && d.Levels.Count == 1 ? d.Levels[0] : null;
+            ok &= d != null && d.OwnerPoiId == "poi-xyz";
+            ok &= l != null && l.Rooms.Count == 3 && l.Corridors.Count == 2 && l.NextRoomId == 4;
+            var b = l?.GetRoom(3);
+            ok &= b != null && b.Type == RoomType.Boss && b.Title == "Логово" && b.Body == "дракон"
+                  && b.Secrets.Count == 1 && b.Secrets[0].Kind == SecretTargetKind.DungeonExit && !b.Secrets[0].Bidirectional;
+            var m = l?.GetRoom(2);
+            ok &= m != null && m.Secrets.Count == 1 && m.Secrets[0].Kind == SecretTargetKind.Room
+                  && m.Secrets[0].TargetLevelIndex == 0 && m.Secrets[0].TargetRoomId == 3 && m.Secrets[0].Bidirectional;
+            var e = l?.GetRoom(1);
+            ok &= e != null && e.Type == RoomType.Entrance && Mathf.Approximately(e.Y, 0.1f);
+
+            Debug.Log(ok ? "Self-Test Dungeon Graph Round-Trip: PASS" : "Self-Test Dungeon Graph Round-Trip: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Old-Format Dungeons Dropped")]
+        public void SelfTestOldFormatDungeonsDropped()
+        {
+            // A minimal FormatVersion-4 file that carries a (tile-era) dungeon. On load it must be
+            // discarded, but the rest of the project (here: one POI) must still load.
+            string json =
+                "{ \"FormatVersion\": 4, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [ { \"Type\": 0, \"Name\": \"Город\", \"OwnerCellId\": 0 } ], " +
+                "\"Dungeons\": [ { \"OwnerPoiId\": \"poi-old\", \"Levels\": [ { \"Width\": 48, \"Height\": 48, \"Tiles\": [0,1,0], \"Chambers\": [ { \"Number\": 1, \"Title\": \"старое\" } ] } ] } ] }";
+            string path = Path.Combine(Path.GetTempPath(), "dungeon_old_format_test.dndproj");
+            File.WriteAllText(path, json);
 
             var r = ProjectSerializer.Load(path);
-            bool ok = r.Success
-                && r.Dungeons != null && r.Dungeons.Count == 1
-                && r.Dungeons[0].OwnerPoiId == "poi-xyz"
-                && r.Dungeons[0].Levels.Count == 1
-                && r.Dungeons[0].Levels[0].Get(1, 1) == DungeonTile.Floor
-                && r.Dungeons[0].Levels[0].Chambers.Count == 1
-                && r.Dungeons[0].Levels[0].Chambers[0].Title == "Вход"
-                && r.Dungeons[0].Levels[0].Chambers[0].Number == 1;
+            try { File.Delete(path); } catch { }
 
-            try { System.IO.File.Delete(path); } catch { }
-            Debug.Log(ok ? "Self-Test Dungeon Round-Trip: PASS" : "Self-Test Dungeon Round-Trip: FAIL");
+            bool ok = r.Success
+                && r.Dungeons != null && r.Dungeons.Count == 0     // dropped
+                && r.Pois != null && r.Pois.Count == 1 && r.Pois[0].Name == "Город";   // rest survived
+            Debug.Log(ok ? "Self-Test Old-Format Dungeons Dropped: PASS" : "Self-Test Old-Format Dungeons Dropped: FAIL");
         }
     }
 }
