@@ -94,7 +94,11 @@ namespace WorldGen.Rendering
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100;
+            // 101 (not 100) so this full-screen editor draws ABOVE the persistent ProjectMenuBar
+            // (sortingOrder 100). At an equal order the tie-break is hierarchy-dependent and the menu
+            // bar was winning, occluding this screen's own top strip (← Назад / title / level tabs).
+            // Dialogs/dropdowns live at 30000+, so ConfirmDialog still renders above this.
+            canvas.sortingOrder = 101;
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
 
@@ -238,8 +242,8 @@ namespace WorldGen.Rendering
                 int idx = i;
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
-            AddLevelTabButton("+", 28f, false, AddLevel);
-            if (current.Levels.Count > 1) AddLevelTabButton("×", 28f, false, RemoveCurrentLevel);
+            AddLevelTabButton("+ Этаж", 64f, false, AddLevel);
+            if (current.Levels.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)
