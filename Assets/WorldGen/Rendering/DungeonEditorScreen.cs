@@ -6,8 +6,9 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>Full-screen dungeon editor (mutually-exclusive AppScreen.Dungeon, opened from the POI
-    /// editor). Shell only in this task — the room-graph canvas + inspector are added in later tasks.
-    /// Built imperatively at Awake, own-canvas pattern (mirrors PoiEditorScreen).</summary>
+    /// editor). Hosts the draggable room-graph canvas (DungeonGraphView, Task 4) in MapArea, with a
+    /// toolbar (+ Комната / Связать / Удалить) below the top strip; the inspector (Task 5) is added
+    /// to Sidebar. Built imperatively at Awake, own-canvas pattern (mirrors PoiEditorScreen).</summary>
     public class DungeonEditorScreen : MonoBehaviour
     {
         public System.Action OnCloseRequested;      // wired to MapScreenController.CloseDungeonEditor
@@ -23,8 +24,15 @@ namespace WorldGen.Rendering
         Transform levelTabsRow;
         Text titleLabel;
 
+        DungeonGraphView graphView;
+        Image linkToggleImg;
+        int selectedRoomId;   // stored selection seam — Task 5's inspector will consume this
+
         Font font;
         bool built;
+
+        const float StripHeight = 44f;
+        const float ToolbarHeight = 36f;
 
         void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }
 
@@ -69,8 +77,14 @@ namespace WorldGen.Rendering
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
         }
 
-        // Body refresh — no-op shell; Tasks 4/5 render the graph + inspector here.
-        void RefreshBody() { }
+        // Body refresh — (re)binds the graph canvas to the current level. Also the target of
+        // DungeonGraphView.OnGraphMutated, so every add/delete/link round-trips through here; Task 5
+        // may later swap this for a lighter re-validate instead of a full rebind.
+        void RefreshBody()
+        {
+            if (graphView == null || current == null) return;
+            graphView.Bind(current, CurrentLevelIndex, font);
+        }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
 
@@ -91,17 +105,17 @@ namespace WorldGen.Rendering
             Stretch(root.GetComponent<RectTransform>());
 
             BuildTopStrip(root.transform);
+            BuildToolbar(root.transform);
             BuildBody(root.transform);
         }
 
         void BuildTopStrip(Transform parent)
         {
-            const float stripHeight = 44f;
             var strip = new GameObject("TopStrip", typeof(RectTransform));
             strip.transform.SetParent(parent, false);
             var sr = strip.GetComponent<RectTransform>();
             sr.anchorMin = new Vector2(0f, 1f); sr.anchorMax = new Vector2(1f, 1f);
-            sr.pivot = new Vector2(0.5f, 1f); sr.sizeDelta = new Vector2(0f, stripHeight); sr.anchoredPosition = Vector2.zero;
+            sr.pivot = new Vector2(0.5f, 1f); sr.sizeDelta = new Vector2(0f, StripHeight); sr.anchoredPosition = Vector2.zero;
             var stripBg = strip.AddComponent<Image>();
             ThemeService.Tag(stripBg, ThemeRole.Panel2);
 
@@ -134,16 +148,61 @@ namespace WorldGen.Rendering
             levelTabsRow = tabsGO.transform;
         }
 
+        /// <summary>Toolbar row below the top strip: add/link/delete controls for the graph canvas.
+        /// «Связать» toggles DungeonGraphView.LinkMode and highlights (AccentSoft) while active.</summary>
+        void BuildToolbar(Transform parent)
+        {
+            var bar = new GameObject("Toolbar", typeof(RectTransform));
+            bar.transform.SetParent(parent, false);
+            var br = bar.GetComponent<RectTransform>();
+            br.anchorMin = new Vector2(0f, 1f); br.anchorMax = new Vector2(1f, 1f);
+            br.pivot = new Vector2(0.5f, 1f); br.sizeDelta = new Vector2(0f, ToolbarHeight);
+            br.anchoredPosition = new Vector2(0f, -StripHeight);
+            var bg = bar.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel);
+
+            var hlg = bar.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 6f; hlg.padding = new RectOffset(12, 12, 4, 4);
+            hlg.childControlWidth = false; hlg.childForceExpandWidth = false;
+            hlg.childControlHeight = true; hlg.childForceExpandHeight = true;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+
+            AddToolbarButton(bar.transform, "+ Комната", 110f, ThemeRole.Elev, () => graphView?.AddRoomAtCenter());
+            linkToggleImg = AddToolbarButton(bar.transform, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
+            AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => graphView?.DeleteSelected());
+        }
+
+        void ToggleLinkMode()
+        {
+            if (graphView == null) return;
+            graphView.SetLinkMode(!graphView.LinkMode);
+            if (linkToggleImg != null) ThemeService.Tag(linkToggleImg, graphView.LinkMode ? ThemeRole.AccentSoft : ThemeRole.Elev);
+        }
+
+        Image AddToolbarButton(Transform parent, string label, float width, ThemeRole bgRole, System.Action onClick)
+        {
+            var go = new GameObject($"Tool_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, bgRole);
+            go.AddComponent<LayoutElement>().preferredWidth = width;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+            var lbl = MakeText(go.transform, label, 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(lbl.rectTransform); lbl.raycastTarget = false;
+            return img;
+        }
+
         void BuildBody(Transform parent)
         {
-            const float stripHeight = 44f;
             const float sidebarWidth = 300f;
 
             var body = new GameObject("Body", typeof(RectTransform));
             body.transform.SetParent(parent, false);
             var br = body.GetComponent<RectTransform>();
             br.anchorMin = Vector2.zero; br.anchorMax = Vector2.one;
-            br.offsetMin = Vector2.zero; br.offsetMax = new Vector2(0f, -stripHeight);
+            br.offsetMin = Vector2.zero; br.offsetMax = new Vector2(0f, -(StripHeight + ToolbarHeight));
 
             var mapGO = new GameObject("MapArea", typeof(RectTransform));
             mapGO.transform.SetParent(body.transform, false);
@@ -152,6 +211,14 @@ namespace WorldGen.Rendering
             MapArea.offsetMin = new Vector2(12f, 12f); MapArea.offsetMax = new Vector2(-(sidebarWidth + 18f), -12f);
             var mapBg = mapGO.AddComponent<Image>();
             ThemeService.Tag(mapBg, ThemeRole.Panel2); mapBg.raycastTarget = true;
+
+            var graphGO = new GameObject("GraphView", typeof(RectTransform));
+            graphGO.transform.SetParent(mapGO.transform, false);
+            Stretch(graphGO.GetComponent<RectTransform>());
+            graphView = graphGO.AddComponent<DungeonGraphView>();
+            graphView.OnRoomSelected = id => selectedRoomId = id;   // Task 5 will consume this seam
+            graphView.OnGraphMutated = () => RefreshBody();
+            graphView.OnJumpToLevel = SetLevel;
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);
