@@ -7,8 +7,9 @@ namespace WorldGen.Rendering
 {
     /// <summary>Full-screen dungeon editor (mutually-exclusive AppScreen.Dungeon, opened from the POI
     /// editor). Hosts the draggable room-graph canvas (DungeonGraphView, Task 4) in MapArea, with a
-    /// toolbar (+ Комната / Связать / Удалить) below the top strip; the inspector (Task 5) is added
-    /// to Sidebar. Built imperatively at Awake, own-canvas pattern (mirrors PoiEditorScreen).</summary>
+    /// toolbar (+ Комната / Связать / Удалить) below the top strip; the room inspector + validation
+    /// panel (DungeonInspectorPanel, Task 5) is hosted in Sidebar. Built imperatively at Awake,
+    /// own-canvas pattern (mirrors PoiEditorScreen).</summary>
     public class DungeonEditorScreen : MonoBehaviour
     {
         public System.Action OnCloseRequested;      // wired to MapScreenController.CloseDungeonEditor
@@ -25,8 +26,9 @@ namespace WorldGen.Rendering
         Text titleLabel;
 
         DungeonGraphView graphView;
+        DungeonInspectorPanel inspectorPanel;
         Image linkToggleImg;
-        int selectedRoomId;   // stored selection seam — Task 5's inspector will consume this
+        int selectedRoomId;   // mirrors DungeonGraphView.SelectedRoomId; drives inspectorPanel.ShowRoom
 
         Font font;
         bool built;
@@ -59,8 +61,14 @@ namespace WorldGen.Rendering
         {
             if (current == null || current.Levels.Count == 0) return;
             CurrentLevelIndex = Mathf.Clamp(index, 0, current.Levels.Count - 1);
+            // DungeonGraphView.Bind resets ITS OWN SelectedRoomId to 0 on a level switch (different
+            // bound DungeonLevel) but doesn't fire OnRoomSelected to say so — reset our mirror here too,
+            // otherwise a stale id could coincidentally match an unrelated room on the new level and the
+            // inspector would show the wrong room while the canvas shows no selection.
+            selectedRoomId = 0;
             RebuildLevelTabs();
             RefreshBody();
+            RevalidateAndRefresh();
         }
 
         public void AddLevel()
@@ -77,13 +85,28 @@ namespace WorldGen.Rendering
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
         }
 
-        // Body refresh — (re)binds the graph canvas to the current level. Also the target of
-        // DungeonGraphView.OnGraphMutated, so every add/delete/link round-trips through here; Task 5
-        // may later swap this for a lighter re-validate instead of a full rebind.
+        // Body refresh — (re)binds the graph canvas and inspector to the current level. Called from
+        // Bind/SetLevel (a real level switch); structural mutations after that go through the lighter
+        // RevalidateAndRefresh instead (same level object, just its contents changed).
         void RefreshBody()
         {
-            if (graphView == null || current == null) return;
-            graphView.Bind(current, CurrentLevelIndex, font);
+            if (current == null) return;
+            if (graphView != null) graphView.Bind(current, CurrentLevelIndex, font);
+            if (inspectorPanel != null) inspectorPanel.Bind(current, () => CurrentLevelIndex, font);
+        }
+
+        // Re-runs validation and re-renders the graph + inspector in place (no rebind — the bound
+        // DungeonLevel object is unchanged, only its Rooms/Corridors/Secrets contents mutated via
+        // DungeonOps). Wired as DungeonGraphView.OnGraphMutated and DungeonInspectorPanel.OnChanged, and
+        // called once at the end of SetLevel so a level switch also gets a fresh validation pass.
+        void RevalidateAndRefresh()
+        {
+            if (graphView != null) graphView.Refresh();
+            if (inspectorPanel != null)
+            {
+                inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
+                inspectorPanel.ShowRoom(selectedRoomId);
+            }
         }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
@@ -220,8 +243,8 @@ namespace WorldGen.Rendering
             graphGO.transform.SetParent(mapGO.transform, false);
             Stretch(graphGO.GetComponent<RectTransform>());
             graphView = graphGO.AddComponent<DungeonGraphView>();
-            graphView.OnRoomSelected = id => selectedRoomId = id;   // Task 5 will consume this seam
-            graphView.OnGraphMutated = () => RefreshBody();
+            graphView.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
+            graphView.OnGraphMutated = RevalidateAndRefresh;
             graphView.OnJumpToLevel = SetLevel;
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
@@ -231,6 +254,12 @@ namespace WorldGen.Rendering
             Sidebar.offsetMin = new Vector2(-(sidebarWidth + 12f), 12f); Sidebar.offsetMax = new Vector2(-12f, -12f);
             var sidebarBg = sidebarGO.AddComponent<Image>();
             ThemeService.Tag(sidebarBg, ThemeRole.Elev); sidebarBg.raycastTarget = false;
+
+            var inspGO = new GameObject("InspectorPanel", typeof(RectTransform));
+            inspGO.transform.SetParent(Sidebar, false);
+            Stretch(inspGO.GetComponent<RectTransform>());
+            inspectorPanel = inspGO.AddComponent<DungeonInspectorPanel>();
+            inspectorPanel.OnChanged = RevalidateAndRefresh;
         }
 
         void RebuildLevelTabs()
