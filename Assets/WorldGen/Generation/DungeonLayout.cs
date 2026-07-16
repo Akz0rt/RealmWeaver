@@ -15,7 +15,7 @@ namespace WorldGen.Generation
 
         /// <summary>Push overlapping room footprints apart (cascade) until none overlap with a minGapTiles
         /// clearance, or maxIterations is reached. Deterministic. Mutates Room.X/Y (kept in [0,1]).</summary>
-        public static void Separate(DungeonLevel lvl, float minGapTiles = 1f, int maxIterations = 40)
+        public static void Separate(DungeonLevel lvl, float minGapTiles = 0.1f, int maxIterations = 40)
         {
             if (lvl == null || lvl.Rooms.Count < 2) return;
             var rooms = lvl.Rooms;

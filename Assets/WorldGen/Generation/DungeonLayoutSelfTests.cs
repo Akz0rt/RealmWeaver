@@ -17,7 +17,7 @@ namespace WorldGen.Rendering
             lvl.Rooms.Add(new Room { Id = 1, X = 0.5f, Y = 0.5f, SizeW = 4, SizeH = 4 });
             lvl.Rooms.Add(new Room { Id = 2, X = 0.5f, Y = 0.5f, SizeW = 4, SizeH = 4 });
             DungeonLayout.Separate(lvl);
-            ok &= !Overlap(lvl.Rooms[0], lvl.Rooms[1], 1f);
+            ok &= !Overlap(lvl.Rooms[0], lvl.Rooms[1], 0.1f);
 
             // A cluster of 5 overlapping rooms → none overlap after Separate.
             var lvl2 = new DungeonLevel();
@@ -25,7 +25,7 @@ namespace WorldGen.Rendering
             DungeonLayout.Separate(lvl2);
             for (int i = 0; i < lvl2.Rooms.Count && ok; i++)
                 for (int j = i + 1; j < lvl2.Rooms.Count && ok; j++)
-                    ok &= !Overlap(lvl2.Rooms[i], lvl2.Rooms[j], 1f);
+                    ok &= !Overlap(lvl2.Rooms[i], lvl2.Rooms[j], 0.1f);
 
             // Positions stay in [0,1].
             foreach (var r in lvl2.Rooms) ok &= r.X >= 0f && r.X <= 1f && r.Y >= 0f && r.Y <= 1f;

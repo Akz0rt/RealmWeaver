@@ -28,7 +28,7 @@ namespace WorldGen.Rendering
     /// </summary>
     public class DungeonInspectorPanel : MonoBehaviour
     {
-        public System.Action OnChanged;   // fires after any edit; screen re-runs validation + view.Refresh()
+        public System.Action OnChanged;   // fires after any edit; screen re-runs validation + view.BeginCascade()
 
         DungeonData dungeon;
         System.Func<int> currentLevelIndex;
@@ -123,8 +123,8 @@ namespace WorldGen.Rendering
             // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
             // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
             // stepper clamps into RoomSizing's 1..8 range and fires OnChanged, which runs
-            // RevalidateAndRefresh → DungeonLayout.Separate + graphView.Refresh(), so the card resizes
-            // and the cascade re-settles the whole floor.
+            // RevalidateAndRefresh → graphView.BeginCascade(), so the card resizes and the cascade
+            // animates the whole floor to its re-settled positions.
             var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
             var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
             sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;

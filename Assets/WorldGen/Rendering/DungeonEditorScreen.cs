@@ -114,15 +114,14 @@ namespace WorldGen.Rendering
         // DungeonOps). Wired as DungeonGraphView.OnGraphMutated (fires on add/delete/link AND card
         // drag-end) and DungeonInspectorPanel.OnChanged (fires on any inspector edit, including the size
         // steppers), and called once at the end of SetLevel so a level switch also gets a fresh
-        // validation pass. This is the SINGLE path that runs the cascade: Separate() only mutates
-        // Room.X/Y (no callbacks of its own), so calling it here — before graphView.Refresh() re-renders
-        // — cannot loop back into RevalidateAndRefresh, and both drag-release and a size-stepper edit
-        // converge on the same settle-then-redraw sequence.
+        // validation pass. This is the SINGLE path that runs the cascade: graphView.BeginCascade() owns
+        // the DungeonLayout.Separate call AND the (animated-or-skipped) redraw — it mutates Room.X/Y and
+        // fires no callbacks of its own, so calling it here cannot loop back into RevalidateAndRefresh,
+        // and both drag-release and a size-stepper edit converge on the same settle-then-redraw sequence.
+        // Nothing else may call DungeonLayout.Separate directly — that would double-separate.
         void RevalidateAndRefresh()
         {
-            var lvl = CurrentLevel;
-            if (lvl != null) DungeonLayout.Separate(lvl);
-            if (graphView != null) graphView.Refresh();
+            if (graphView != null) graphView.BeginCascade();
             if (inspectorPanel != null)
             {
                 inspectorPanel.ShowValidation(DungeonValidator.Validate(current));

@@ -58,7 +58,16 @@ namespace WorldGen.Rendering
         int pendingLinkId;
         bool needsInitialRelayout;
 
-        class NodeCardUI { public Outline outline; }
+        // Animated cascade state (BeginCascade/Update, Checkpoint-B tuning). cascadeTargets holds the
+        // resolved end position per room id (computed once by DungeonLayout.Separate at cascade start);
+        // cascadeVel is SmoothDamp's per-room velocity accumulator. Both null when not cascading.
+        bool cascading;
+        Dictionary<int, (float x, float y)> cascadeTargets;
+        Dictionary<int, Vector2> cascadeVel;
+        const float CascadeSmoothTime = 0.18f;
+        const float CascadeDoneEpsilon = 5e-4f;
+
+        class NodeCardUI { public Outline outline; public RectTransform rect; }
 
         DungeonLevel BoundLevel =>
             dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Levels.Count
@@ -95,6 +104,11 @@ namespace WorldGen.Rendering
             {
                 SelectedRoomId = 0;
                 pendingLinkId = 0;
+                // A stale cascade animation from the PREVIOUS bound level must not keep running against
+                // the new one (wrong room ids, wrong targets) — cancel outright on a genuine level switch.
+                cascading = false;
+                cascadeTargets = null;
+                cascadeVel = null;
             }
             Refresh();
         }
@@ -132,6 +146,98 @@ namespace WorldGen.Rendering
             if (rt.rect.width <= 0f) return;   // still not laid out (e.g. screen not yet activated) — retry next frame
             RelayoutLines();
             needsInitialRelayout = false;
+        }
+
+        /// <summary>Entry point for the room-cascade separation (replaces a direct DungeonLayout.Separate
+        /// + Refresh call). Snapshots current positions, resolves the target layout via Separate (mutates
+        /// rooms to their resolved end positions), then either self-skips (no room actually moved — a
+        /// link/delete/level-switch edit that never overlapped) with a single static redraw, or restores
+        /// rooms to their start positions and animates them to the captured targets in Update() via
+        /// SmoothDamp. Safe to call with no bound level (no-op).</summary>
+        public void BeginCascade()
+        {
+            var lvl = BoundLevel;
+            if (lvl == null) return;
+
+            var start = new Dictionary<int, (float x, float y)>();
+            foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
+
+            DungeonLayout.Separate(lvl);   // mutates rooms to resolved target positions
+
+            const float eps = 1e-4f;
+            var targets = new Dictionary<int, (float x, float y)>();
+            bool anyMoved = false;
+            foreach (var r in lvl.Rooms)
+            {
+                targets[r.Id] = (r.X, r.Y);
+                if (start.TryGetValue(r.Id, out var s) &&
+                    (Mathf.Abs(s.x - r.X) > eps || Mathf.Abs(s.y - r.Y) > eps))
+                    anyMoved = true;
+            }
+
+            if (!anyMoved)
+            {
+                // Nothing overlapped — rooms are already at (== their start ==) target positions. No
+                // animation needed; a plain redraw covers link/delete/level-switch edits.
+                cascading = false;
+                cascadeTargets = null;
+                cascadeVel = null;
+                Refresh();
+                return;
+            }
+
+            // Roll rooms back to their pre-Separate start so Update() can animate start → target.
+            foreach (var r in lvl.Rooms)
+                if (start.TryGetValue(r.Id, out var s)) { r.X = s.x; r.Y = s.y; }
+
+            cascadeTargets = targets;
+            cascadeVel = new Dictionary<int, Vector2>();
+            foreach (var r in lvl.Rooms) cascadeVel[r.Id] = Vector2.zero;
+            cascading = true;
+
+            Refresh();   // draw the restored start state now; Update() takes over from here
+        }
+
+        void Update()
+        {
+            if (!cascading) return;
+            var lvl = BoundLevel;
+            if (lvl == null || cascadeTargets == null) { cascading = false; return; }
+
+            float maxRemaining = 0f;
+            foreach (var r in lvl.Rooms)
+            {
+                if (!cascadeTargets.TryGetValue(r.Id, out var target)) continue;
+                Vector2 cur = new Vector2(r.X, r.Y);
+                Vector2 tgt = new Vector2(target.x, target.y);
+                Vector2 vel = cascadeVel.TryGetValue(r.Id, out var v) ? v : Vector2.zero;
+                Vector2 next = Vector2.SmoothDamp(cur, tgt, ref vel, CascadeSmoothTime);
+                cascadeVel[r.Id] = vel;
+
+                r.X = Mathf.Clamp01(next.x);
+                r.Y = Mathf.Clamp01(next.y);
+                maxRemaining = Mathf.Max(maxRemaining, (tgt - next).magnitude);
+
+                if (nodeCards.TryGetValue(r.Id, out var card) && card.rect != null)
+                    card.rect.anchorMin = card.rect.anchorMax = new Vector2(r.X, 1f - r.Y);
+            }
+            RelayoutLines();   // lightweight reposition of existing line/junction rects — no rebuild (avoids per-frame GC/flicker)
+
+            if (maxRemaining < CascadeDoneEpsilon)
+            {
+                // Snap exactly to target (SmoothDamp asymptotically approaches but never exactly reaches it).
+                foreach (var r in lvl.Rooms)
+                {
+                    if (!cascadeTargets.TryGetValue(r.Id, out var target)) continue;
+                    r.X = target.x; r.Y = target.y;
+                    if (nodeCards.TryGetValue(r.Id, out var card) && card.rect != null)
+                        card.rect.anchorMin = card.rect.anchorMax = new Vector2(r.X, 1f - r.Y);
+                }
+                RelayoutLines();
+                cascading = false;
+                cascadeTargets = null;
+                cascadeVel = null;
+            }
         }
 
         public void SetLinkMode(bool on)
@@ -379,7 +485,7 @@ namespace WorldGen.Rendering
 
             BuildBadges(go.transform, r);
 
-            return new NodeCardUI { outline = outline };
+            return new NodeCardUI { outline = outline, rect = rt };
         }
 
         /// <summary>Inter-floor badges stacked below the card: a Boss room's descend badge (only if a
