@@ -53,5 +53,86 @@ namespace WorldGen.Generation
         }
 
         static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
+
+        /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
+        /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.
+        /// DERIVED — not stored. Only DM corridors are crossed (no recursion on the split sub-segments).</summary>
+        public static RenderGraph BuildRenderGraph(DungeonLevel lvl)
+        {
+            var g = new RenderGraph();
+            if (lvl == null) return g;
+            var rooms = lvl.Rooms;
+
+            LayoutPoint? Center(int id)
+            {
+                var r = lvl.GetRoom(id);
+                return r == null ? (LayoutPoint?)null : new LayoutPoint { X = r.X, Y = r.Y };
+            }
+
+            // Resolve each corridor to a segment between room centers.
+            var segs = new List<(LayoutPoint a, LayoutPoint b)>();
+            foreach (var c in lvl.Corridors)
+            {
+                var a = Center(c.RoomA); var b = Center(c.RoomB);
+                if (a.HasValue && b.HasValue) segs.Add((a.Value, b.Value));
+            }
+
+            // Dedup junction points within an epsilon (near-coincident crossings merge).
+            var junctions = new List<LayoutPoint>();
+            int JunctionIndex(LayoutPoint p)
+            {
+                for (int k = 0; k < junctions.Count; k++)
+                    if (Math.Abs(junctions[k].X - p.X) < 1e-4f && Math.Abs(junctions[k].Y - p.Y) < 1e-4f) return k;
+                junctions.Add(p); return junctions.Count - 1;
+            }
+
+            // For each corridor, collect the crossing points with every OTHER corridor, sorted along it, and
+            // split it into pieces. Crossings register junction points.
+            for (int i = 0; i < segs.Count; i++)
+            {
+                var s = segs[i];
+                var cuts = new List<(float t, LayoutPoint p)>();
+                for (int j = 0; j < segs.Count; j++)
+                {
+                    if (j == i) continue;
+                    if (SegmentIntersect(s.a, s.b, segs[j].a, segs[j].b, out var ip, out float t))
+                    {
+                        JunctionIndex(ip);
+                        cuts.Add((t, ip));
+                    }
+                }
+                cuts.Sort((u, v) => u.t.CompareTo(v.t));
+                var prev = s.a;
+                foreach (var cut in cuts) { g.Segments.Add(new RenderSegment { A = prev, B = cut.p }); prev = cut.p; }
+                g.Segments.Add(new RenderSegment { A = prev, B = s.b });
+            }
+            g.Junctions = junctions;
+            return g;
+        }
+
+        /// <summary>Proper crossing of open segments p1p2 × p3p4 (shared endpoints / collinear touches don't
+        /// count). Outputs the intersection point and its parameter t along p1p2 in (0,1).</summary>
+        static bool SegmentIntersect(LayoutPoint p1, LayoutPoint p2, LayoutPoint p3, LayoutPoint p4, out LayoutPoint ip, out float t)
+        {
+            ip = default; t = 0f;
+            float r1 = p2.X - p1.X, r2 = p2.Y - p1.Y;
+            float s1 = p4.X - p3.X, s2 = p4.Y - p3.Y;
+            float denom = r1 * s2 - r2 * s1;
+            if (Math.Abs(denom) < 1e-7f) return false;   // parallel/collinear
+            float tt = ((p3.X - p1.X) * s2 - (p3.Y - p1.Y) * s1) / denom;
+            float uu = ((p3.X - p1.X) * r2 - (p3.Y - p1.Y) * r1) / denom;
+            const float e = 1e-4f;
+            if (tt <= e || tt >= 1f - e || uu <= e || uu >= 1f - e) return false;   // exclude endpoints
+            ip = new LayoutPoint { X = p1.X + tt * r1, Y = p1.Y + tt * r2 };
+            t = tt; return true;
+        }
+    }
+
+    public struct LayoutPoint { public float X, Y; }
+    public class RenderSegment { public LayoutPoint A, B; }
+    public class RenderGraph
+    {
+        public System.Collections.Generic.List<LayoutPoint> Junctions = new System.Collections.Generic.List<LayoutPoint>();
+        public System.Collections.Generic.List<RenderSegment> Segments = new System.Collections.Generic.List<RenderSegment>();
     }
 }

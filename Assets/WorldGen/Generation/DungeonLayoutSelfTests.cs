@@ -54,5 +54,46 @@ namespace WorldGen.Rendering
             float minX = (a.SizeW + b.SizeW) * 0.5f + gap, minY = (a.SizeH + b.SizeH) * 0.5f + gap;
             return dx < minX - 0.05f && dy < minY - 0.05f;   // small epsilon for the 0.01 shove margin
         }
+
+        [ContextMenu("Self-Test: Dungeon Render Graph Junctions")]
+        public void SelfTestRenderGraph()
+        {
+            bool ok = true;
+
+            // Two corridors that cross (an X) → 1 junction, 4 segments.
+            var lvl = new DungeonLevel { NextRoomId = 5 };
+            lvl.Rooms.Add(new Room { Id = 1, X = 0.2f, Y = 0.2f });
+            lvl.Rooms.Add(new Room { Id = 2, X = 0.8f, Y = 0.8f });
+            lvl.Rooms.Add(new Room { Id = 3, X = 0.8f, Y = 0.2f });
+            lvl.Rooms.Add(new Room { Id = 4, X = 0.2f, Y = 0.8f });
+            lvl.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });   // ↘
+            lvl.Corridors.Add(new Corridor { RoomA = 3, RoomB = 4 });   // ↙  crosses at center
+            var g = DungeonLayout.BuildRenderGraph(lvl);
+            ok &= g.Junctions.Count == 1 && g.Segments.Count == 4;
+            ok &= Mathf.Abs(g.Junctions[0].X - 0.5f) < 0.02f && Mathf.Abs(g.Junctions[0].Y - 0.5f) < 0.02f;
+
+            // Two corridors that DON'T cross → 0 junctions, 2 segments.
+            var lvl2 = new DungeonLevel();
+            lvl2.Rooms.Add(new Room { Id = 1, X = 0.1f, Y = 0.1f });
+            lvl2.Rooms.Add(new Room { Id = 2, X = 0.3f, Y = 0.1f });
+            lvl2.Rooms.Add(new Room { Id = 3, X = 0.1f, Y = 0.9f });
+            lvl2.Rooms.Add(new Room { Id = 4, X = 0.3f, Y = 0.9f });
+            lvl2.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            lvl2.Corridors.Add(new Corridor { RoomA = 3, RoomB = 4 });
+            var g2 = DungeonLayout.BuildRenderGraph(lvl2);
+            ok &= g2.Junctions.Count == 0 && g2.Segments.Count == 2;
+
+            // Corridors that share a room endpoint must NOT count as a crossing.
+            var lvl3 = new DungeonLevel();
+            lvl3.Rooms.Add(new Room { Id = 1, X = 0.5f, Y = 0.2f });
+            lvl3.Rooms.Add(new Room { Id = 2, X = 0.2f, Y = 0.8f });
+            lvl3.Rooms.Add(new Room { Id = 3, X = 0.8f, Y = 0.8f });
+            lvl3.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            lvl3.Corridors.Add(new Corridor { RoomA = 1, RoomB = 3 });
+            var g3 = DungeonLayout.BuildRenderGraph(lvl3);
+            ok &= g3.Junctions.Count == 0 && g3.Segments.Count == 2;
+
+            Debug.Log(ok ? "Self-Test Dungeon Render Graph Junctions: PASS" : "Self-Test Dungeon Render Graph Junctions: FAIL");
+        }
     }
 }
