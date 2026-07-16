@@ -30,7 +30,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 5;
+        public const int CurrentFormatVersion = 6;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -102,6 +102,8 @@ namespace WorldGen.Persistence
                     ? (data.Dungeons ?? new List<DungeonData>())
                     : new List<DungeonData>()
             };
+
+            foreach (var d in result.Dungeons) RoomSizing.ApplyDefaults(d);
 
             if (data.FormatVersion > CurrentFormatVersion)
                 result.WarningMessage = "Файл сохранён более новой версией инструмента — часть данных может не загрузиться.";

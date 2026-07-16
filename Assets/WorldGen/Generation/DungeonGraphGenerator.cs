@@ -79,6 +79,8 @@ namespace WorldGen.Generation
             }
             if (bossId != 0) lvl.GetRoom(bossId).Type = RoomType.Boss;
 
+            foreach (var r in lvl.Rooms) { var (w, h) = RoomSizing.Default(r.Type); r.SizeW = w; r.SizeH = h; }
+
             // 7. Layout X/Y by BFS depth so the initial layout is readable, not a clump.
             LayoutByDepth(lvl, dist);
 

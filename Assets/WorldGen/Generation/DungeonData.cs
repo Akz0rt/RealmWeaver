@@ -30,6 +30,8 @@ namespace WorldGen.Generation
         public string Body = "";
         public float X = 0.5f;
         public float Y = 0.5f;
+        public int SizeW = 0;   // footprint width in tiles; 0 = "unset" → defaulted from type on gen/load
+        public int SizeH = 0;   // footprint height in tiles
         public List<SecretPassage> Secrets = new List<SecretPassage>();
     }
 

@@ -362,5 +362,45 @@ namespace WorldGen.Persistence
                 && r.Pois != null && r.Pois.Count == 1 && r.Pois[0].Name == "Город";   // rest survived
             Debug.Log(ok ? "Self-Test Old-Format Dungeons Dropped: PASS" : "Self-Test Old-Format Dungeons Dropped: FAIL");
         }
+
+        [ContextMenu("Self-Test: Dungeon Room Size Round-Trip")]
+        public void SelfTestDungeonRoomSizeRoundTrip()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "dungeon_size_roundtrip_test.dndproj");
+            var lvl = new DungeonLevel { NextRoomId = 3 };
+            lvl.Rooms.Add(new Room { Id = 1, Type = RoomType.Entrance, SizeW = 4, SizeH = 3 });
+            lvl.Rooms.Add(new Room { Id = 2, Type = RoomType.Boss, SizeW = 6, SizeH = 5 });
+            var dungeon = new DungeonData { OwnerPoiId = "poi-sz", Levels = { lvl } };
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData> { dungeon });
+            var r = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+            bool ok = r.Success && r.Dungeons.Count == 1;
+            var l = r.Dungeons.Count == 1 ? r.Dungeons[0].Levels[0] : null;
+            ok &= l != null && l.GetRoom(1).SizeW == 4 && l.GetRoom(1).SizeH == 3
+                  && l.GetRoom(2).SizeW == 6 && l.GetRoom(2).SizeH == 5;
+            Debug.Log(ok ? "Self-Test Dungeon Room Size Round-Trip: PASS" : "Self-Test Dungeon Room Size Round-Trip: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Dungeon v5 Size Migration")]
+        public void SelfTestDungeonV5SizeMigration()
+        {
+            // A FormatVersion-5 file whose rooms predate Size (no SizeW/SizeH). On load they must get
+            // the type default (Entrance 4x3, Boss 5x5, Normal 3x3), not stay 0x0.
+            string json =
+                "{ \"FormatVersion\": 5, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [], \"Dungeons\": [ { \"OwnerPoiId\": \"p\", \"Levels\": [ { \"NextRoomId\": 3, " +
+                "\"Rooms\": [ { \"Id\": 1, \"Type\": 0 }, { \"Id\": 2, \"Type\": 2 } ], \"Corridors\": [] } ] } ] }";
+            string path = Path.Combine(Path.GetTempPath(), "dungeon_v5_size_migration.dndproj");
+            File.WriteAllText(path, json);
+            var r = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+            var l = r.Success && r.Dungeons.Count == 1 ? r.Dungeons[0].Levels[0] : null;
+            bool ok = l != null
+                && l.GetRoom(1).SizeW == 4 && l.GetRoom(1).SizeH == 3    // Entrance default
+                && l.GetRoom(2).SizeW == 5 && l.GetRoom(2).SizeH == 5;   // Boss default
+            Debug.Log(ok ? "Self-Test Dungeon v5 Size Migration: PASS" : "Self-Test Dungeon v5 Size Migration: FAIL");
+        }
     }
 }

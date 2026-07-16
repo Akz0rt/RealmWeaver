@@ -10,6 +10,7 @@ namespace WorldGen.Generation
         public static Room AddRoom(DungeonLevel lvl, float x, float y)
         {
             var room = new Room { Id = lvl.NextRoomId++, Type = RoomType.Normal, X = x, Y = y };
+            var (w, h) = RoomSizing.Default(RoomType.Normal); room.SizeW = w; room.SizeH = h;
             lvl.Rooms.Add(room);
             return room;
         }
