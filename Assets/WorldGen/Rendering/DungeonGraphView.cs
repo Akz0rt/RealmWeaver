@@ -331,7 +331,8 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Inter-floor badges stacked below the card: a Boss room's descend badge (only if a
-        /// next level exists), then one badge per secret passage (room target or dungeon exit).</summary>
+        /// next level exists), an Entrance room's ascend badge (return to the previous floor, or «Выход»
+        /// on floor 1), then one badge per secret passage (room target or dungeon exit).</summary>
         void BuildBadges(Transform cardTransform, Room r)
         {
             int index = 0;
@@ -339,6 +340,19 @@ namespace WorldGen.Rendering
             {
                 int target = levelIndex + 1;
                 AddBadge(cardTransform, $"⬇ Этаж {levelIndex + 2}", index++, () => OnJumpToLevel?.Invoke(target));
+            }
+            // Entrance is the mirror of the boss descent: it returns UP to the previous floor (its boss),
+            // or on floor 1 it is the dungeon exit. Leaving the dungeon is a live-navigation action
+            // (sub-project 2), so the «Выход» badge is informational here (no in-editor jump).
+            if (r.Type == RoomType.Entrance)
+            {
+                if (levelIndex <= 0)
+                    AddBadge(cardTransform, "⬆ Выход", index++, null);
+                else
+                {
+                    int prev = levelIndex - 1;
+                    AddBadge(cardTransform, $"⬆ Этаж {levelIndex}", index++, () => OnJumpToLevel?.Invoke(prev));
+                }
             }
             foreach (var s in r.Secrets)
             {
