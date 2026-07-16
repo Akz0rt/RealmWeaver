@@ -67,6 +67,23 @@ namespace WorldGen.Generation
             room.Type = type;
         }
 
+        /// <summary>Remove a whole level with referential integrity: drop secret passages (on ANY level)
+        /// that targeted the removed level, and decrement TargetLevelIndex for secrets targeting any level
+        /// ABOVE the removed one (those floors shift down by one). Then remove the level itself.</summary>
+        public static void RemoveLevel(DungeonData dungeon, int levelIndex)
+        {
+            if (dungeon == null || levelIndex < 0 || levelIndex >= dungeon.Levels.Count) return;
+            foreach (var lvl in dungeon.Levels)
+                foreach (var r in lvl.Rooms)
+                {
+                    r.Secrets.RemoveAll(s => s.Kind == SecretTargetKind.Room && s.TargetLevelIndex == levelIndex);
+                    foreach (var s in r.Secrets)
+                        if (s.Kind == SecretTargetKind.Room && s.TargetLevelIndex > levelIndex)
+                            s.TargetLevelIndex--;
+                }
+            dungeon.Levels.RemoveAt(levelIndex);
+        }
+
         public static SecretPassage AddSecret(Room room)
         {
             var s = new SecretPassage();     // defaults: Kind=Room, target (0,0), bidirectional

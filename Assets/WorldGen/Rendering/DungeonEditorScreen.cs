@@ -54,7 +54,6 @@ namespace WorldGen.Rendering
             current = dungeon;
             if (current.Levels.Count == 0) current.Levels.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
             SetLevel(0);
-            RebuildLevelTabs();
         }
 
         public void SetLevel(int index)
@@ -81,8 +80,23 @@ namespace WorldGen.Rendering
         public void RemoveCurrentLevel()
         {
             if (current == null || current.Levels.Count <= 1) return;
-            current.Levels.RemoveAt(CurrentLevelIndex);
+            DungeonOps.RemoveLevel(current, CurrentLevelIndex);
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
+        }
+
+        /// <summary>«× Этаж» handler: if the level has authored room content, confirm before discarding
+        /// it (deleting a floor loses all its rooms/corridors/notes — irreversible once the project is
+        /// saved); otherwise remove directly. ConfirmDialog.Show's «Удалить» is the correct label here.</summary>
+        void RequestRemoveCurrentLevel()
+        {
+            var lvl = CurrentLevel;
+            if (current == null || current.Levels.Count <= 1 || lvl == null) return;
+            bool annotated = lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
+            if (annotated)
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?",
+                    "Все комнаты, связи и заметки этого этажа будут потеряны.", ok => { if (ok) RemoveCurrentLevel(); });
+            else
+                RemoveCurrentLevel();
         }
 
         // Body refresh — (re)binds the graph canvas and inspector to the current level. Called from
@@ -272,7 +286,7 @@ namespace WorldGen.Rendering
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+ Этаж", 64f, false, AddLevel);
-            if (current.Levels.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RemoveCurrentLevel);
+            if (current.Levels.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RequestRemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)

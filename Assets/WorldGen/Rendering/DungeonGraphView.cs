@@ -61,11 +61,11 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>(Re)bind to a level and rebuild. Selection/link-pending state resets only when the
-        /// dungeon or level index actually changes — a same-binding re-Bind (e.g. the round-trip from
-        /// OnGraphMutated -> DungeonEditorScreen.RefreshBody -> Bind after an add/link) preserves the
-        /// current selection instead of stomping it back to none. "Same binding" is keyed on the actual
-        /// bound DungeonLevel OBJECT, not just (dungeon, levelIndex) — RemoveCurrentLevel() re-binds to
-        /// the same numeric index but a DIFFERENT DungeonLevel, so keying on the index alone would let a
+        /// dungeon or level index actually changes — a genuine same-level re-Bind (RefreshBody calls
+        /// Bind on every Bind/SetLevel, even when the level itself didn't change) preserves the current
+        /// selection instead of stomping it back to none. "Same binding" is keyed on the actual bound
+        /// DungeonLevel OBJECT, not just (dungeon, levelIndex) — RemoveCurrentLevel() re-binds to the
+        /// same numeric index but a DIFFERENT DungeonLevel, so keying on the index alone would let a
         /// stale SelectedRoomId survive and spuriously match an unrelated room on the new level.</summary>
         public void Bind(DungeonData dungeon, int levelIndex, Font font)
         {

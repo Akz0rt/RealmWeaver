@@ -93,5 +93,30 @@ namespace WorldGen.Rendering
 
             Debug.Log(ok ? "Self-Test Dungeon Validator: PASS" : "Self-Test Dungeon Validator: FAIL");
         }
+
+        [ContextMenu("Self-Test: Dungeon Remove-Level Integrity")]
+        public void SelfTestRemoveLevel()
+        {
+            bool ok = true;
+            var d = new DungeonData();
+            for (int i = 0; i < 3; i++) d.Levels.Add(new DungeonLevel());
+            var r0 = DungeonOps.AddRoom(d.Levels[0], 0, 0);
+            var r2 = DungeonOps.AddRoom(d.Levels[2], 0, 0);
+            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = r0.Id });
+            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 1, TargetRoomId = 5 });   // targets the removed level
+            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 2, TargetRoomId = r2.Id }); // level above → shifts to 1
+            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.DungeonExit });
+
+            DungeonOps.RemoveLevel(d, 1);
+
+            ok &= d.Levels.Count == 2;
+            ok &= r0.Secrets.Count == 3;                                                                    // the level-1 target was removed
+            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.Room && s.TargetLevelIndex == 0 && s.TargetRoomId == r0.Id);   // unchanged
+            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.Room && s.TargetLevelIndex == 1 && s.TargetRoomId == r2.Id);   // was 2 → 1
+            ok &= !r0.Secrets.Exists(s => s.TargetRoomId == 5);                                             // removed
+            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.DungeonExit);                          // unchanged
+
+            Debug.Log(ok ? "Self-Test Dungeon Remove-Level Integrity: PASS" : "Self-Test Dungeon Remove-Level Integrity: FAIL");
+        }
     }
 }
