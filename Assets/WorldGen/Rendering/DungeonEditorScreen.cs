@@ -226,7 +226,12 @@ namespace WorldGen.Rendering
             gr.pivot = new Vector2(1f, 0.5f); gr.anchoredPosition = new Vector2(-12f, 0f); gr.sizeDelta = new Vector2(140f, 28f);
 
             var hlg = group.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 4f; hlg.childControlWidth = false; hlg.childForceExpandWidth = false;
+            // childControlWidth MUST be true here: AddToolbarButton declares its width via
+            // LayoutElement.preferredWidth, which an HLG only honors when it controls child width.
+            // With it false the buttons measure at the RectTransform default (100px each), so the pair
+            // overflows this 140px group — and an overflowing HLG silently ignores childAlignment and
+            // lays out from the LEFT edge, pushing «Изо» off the right of the screen.
+            hlg.spacing = 4f; hlg.childControlWidth = true; hlg.childForceExpandWidth = false;
             hlg.childControlHeight = true; hlg.childForceExpandHeight = true; hlg.childAlignment = TextAnchor.MiddleRight;
 
             graphModeImg = AddToolbarButton(group.transform, "Граф", 64f, ThemeRole.Elev, () => SetIsoMode(false));
