@@ -92,8 +92,8 @@ namespace WorldGen.Rendering
                 { Debug.LogError("FAIL setup: the two targets are equidistant — the distance and along-wall orders coincide, so this fixture tests nothing"); ok = false; }
 
                 // Non-crossing: the segment to the NORTH target must start at the NORTHER door.
-                var segToNorth = SegmentForEdge(g, 0);
-                var segToSouth = SegmentForEdge(g, 1);
+                var segToNorth = FirstLegForEdge(g, 0);
+                var segToSouth = FirstLegForEdge(g, 1);
                 if (segToNorth != null && segToSouth != null && segToNorth.A.Y > segToSouth.A.Y)
                 { Debug.LogError("FAIL two-on-a-wall: doors are swapped — the corridors cross at the wall"); ok = false; }
 
@@ -166,25 +166,29 @@ namespace WorldGen.Rendering
                 if (g.Forks.Count != 2)
                 { Debug.LogError($"FAIL four-on-a-wall: {g.Forks.Count} forks, want 2"); ok = false; }
 
-                var seg5 = SegmentForEdge(g, 3);
-                var seg4 = SegmentForEdge(g, 2);
-                if (seg5 == null || seg4 == null)
-                { Debug.LogError("FAIL four-on-a-wall: missing segments for edges 3/4"); ok = false; }
+                var seg5 = FirstLegForEdge(g, 3);
+                if (seg5 == null)
+                { Debug.LogError("FAIL four-on-a-wall: no segment for edge 5"); ok = false; }
                 else
                 {
-                    // With the recursion, edge 5 taps edge 4's OWN forked segment at (67,30). Without it,
-                    // the candidate set is only the two trunks and edge 5 taps trunk1 at (41,34) — which
-                    // is seg4's own START point, so an "is it on seg4?" check ALONE passes either way and
-                    // proves nothing. Assert BOTH: on seg4, and NOT on either trunk.
-                    if (DistanceToSegment(seg5.A, seg4.A, seg4.B) > 1e-2f)
-                    { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is NOT on edge 4's segment"); ok = false; }
+                    // With the recursion, edge 5 taps edge 4's OWN polyline. Without it, the candidate set
+                    // is only the two trunks and edge 5 taps trunk1 at its endpoint — which an
+                    // "is it on edge 4?" check ALONE would still satisfy. Assert BOTH: on edge 4, and NOT
+                    // on either trunk.
+                    var legs4 = SegmentsForEdge(g, 2);
+                    if (legs4.Count == 0)
+                    { Debug.LogError("FAIL four-on-a-wall: edge 4 emitted no legs — nothing for edge 5 to tap"); ok = false; }
+                    bool onEdge4 = false;
+                    foreach (var leg in legs4)
+                        if (DistanceToSegment(seg5.A, leg.A, leg.B) < 1e-2f) { onEdge4 = true; break; }
+                    if (!onEdge4)
+                    { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is on NO leg of edge 4"); ok = false; }
 
-                    var trunk0 = SegmentForEdge(g, 0);
-                    var trunk1 = SegmentForEdge(g, 1);
-                    if (trunk0 == null || trunk1 == null)
-                    { Debug.LogError("FAIL four-on-a-wall: missing trunk segments"); ok = false; }
-                    else if (DistanceToSegment(seg5.A, trunk0.A, trunk0.B) < 1e-2f ||
-                             DistanceToSegment(seg5.A, trunk1.A, trunk1.B) < 1e-2f)
+                    bool onTrunk = false;
+                    foreach (int trunkEdge in new[] { 0, 1 })
+                        foreach (var leg in SegmentsForEdge(g, trunkEdge))
+                            if (DistanceToSegment(seg5.A, leg.A, leg.B) < 1e-2f) { onTrunk = true; break; }
+                    if (onTrunk)
                     { Debug.LogError($"FAIL four-on-a-wall: edge 5 tapped a TRUNK at ({seg5.A.X:F1},{seg5.A.Y:F1}) — the fork search is NOT recursive"); ok = false; }
                 }
             }
@@ -261,6 +265,38 @@ namespace WorldGen.Rendering
                 foreach (var s in sg.Segments)
                     if (float.IsNaN(s.A.X) || float.IsNaN(s.A.Y) || float.IsNaN(s.B.X) || float.IsNaN(s.B.Y))
                     { Debug.LogError("FAIL: coincident nodes produced NaN"); ok = false; }
+            }
+
+            // ── A link must bend around a room sitting between its two ends ────────────────────────
+            // Node 2 sits squarely between 1 and 3. Assert the premise: if it stopped blocking the
+            // straight door-to-door line, this fixture would prove nothing.
+            {
+                var nodes = new List<LinkNode>
+                {
+                    new LinkNode { Id = 1, CX = 10f, CY = 30f, W = 6f, H = 6f },
+                    new LinkNode { Id = 2, CX = 40f, CY = 30f, W = 10f, H = 10f },   // the blocker
+                    new LinkNode { Id = 3, CX = 70f, CY = 30f, W = 6f, H = 6f },
+                };
+                var edges = new List<LinkEdge> { new LinkEdge { A = 1, B = 3 } };   // 1→3 only; 2 is unlinked
+                var g = RoomLinkGeometry.Build(nodes, edges);
+
+                var legs = SegmentsForEdge(g, 0);
+                if (legs.Count == 0)
+                { Debug.LogError("FAIL detour-in-build: link 1→3 emitted no legs at all"); ok = false; }
+                else
+                {
+                    // Assert the premise with Build's OWN doors: the straight door-to-door line must really
+                    // cross room 2. If room 2 ever stopped blocking it, every assertion below would pass
+                    // while proving nothing.
+                    if (!StraightLineHits(legs[0].A, legs[legs.Count - 1].B, nodes[1]))
+                    { Debug.LogError("FAIL detour-in-build setup: the straight door-to-door line misses room 2 — this fixture would prove nothing"); ok = false; }
+
+                    if (legs.Count < 2)
+                    { Debug.LogError($"FAIL detour-in-build: link 1→3 emitted {legs.Count} leg(s) — it still runs straight through room 2"); ok = false; }
+                    foreach (var leg in legs)
+                        if (SegmentEntersRect(leg.A, leg.B, nodes[1]))
+                        { Debug.LogError("FAIL detour-in-build: a leg still crosses room 2"); ok = false; break; }
+                }
             }
 
             Debug.Log(ok ? "Self-Test Room Link Geometry: PASS" : "Self-Test Room Link Geometry: FAIL");
@@ -464,6 +500,23 @@ namespace WorldGen.Rendering
 
         // ── detour fixture helpers ────────────────────────────────────────────────────────────────
 
+        /// <summary>Every leg of a link's polyline, in emission order. A link no longer owns exactly one
+        /// segment — the detour splits it wherever it bends around a box.</summary>
+        static List<LinkSegment> SegmentsForEdge(LinkGeometry g, int edgeIndex)
+        {
+            var list = new List<LinkSegment>();
+            foreach (var s in g.Segments) if (s.EdgeIndex == edgeIndex) list.Add(s);
+            return list;
+        }
+
+        /// <summary>A link's FIRST leg — the one that starts at its door or fork point. Fixtures asserting
+        /// where a link ATTACHES must use this, not "some segment of that edge".</summary>
+        static LinkSegment FirstLegForEdge(LinkGeometry g, int edgeIndex)
+        {
+            foreach (var s in g.Segments) if (s.EdgeIndex == edgeIndex) return s;
+            return null;
+        }
+
         static LinkPoint P(float x, float y) => new LinkPoint { X = x, Y = y };
         static LinkNode N(int id, float cx, float cy, float w, float h)
             => new LinkNode { Id = id, CX = cx, CY = cy, W = w, H = h };
@@ -525,12 +578,6 @@ namespace WorldGen.Rendering
                 if (p.X > n.CX - n.W * 0.5f + 1e-3f && p.X < n.CX + n.W * 0.5f - 1e-3f &&
                     p.Y > n.CY - n.H * 0.5f + 1e-3f && p.Y < n.CY + n.H * 0.5f - 1e-3f) return true;
             return false;
-        }
-
-        static LinkSegment SegmentForEdge(LinkGeometry g, int edgeIndex)
-        {
-            foreach (var s in g.Segments) if (s.EdgeIndex == edgeIndex) return s;
-            return null;
         }
 
         static float DistanceToSegment(LinkPoint p, LinkPoint a, LinkPoint b)

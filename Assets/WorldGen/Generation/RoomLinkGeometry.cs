@@ -95,6 +95,9 @@ namespace WorldGen.Generation
             // a tap point sitting INSIDE the other room, on a stretch that is never drawn.
             var endpoint = new Dictionary<(int edge, int node), LinkPoint>();
 
+            // Each end's resolved polyline (door/fork → far end), already bent around obstacles.
+            var polyOf = new Dictionary<(int edge, int node), List<LinkPoint>>();
+
             var nodeIds = new List<int>(perNode.Keys);
             nodeIds.Sort();                       // deterministic node order
 
@@ -156,35 +159,55 @@ namespace WorldGen.Generation
                     int doorCount = Math.Min(MaxDoorsPerWall, onWall.Count);
                     if (onWall.Count <= doorCount) continue;   // wall not full — nothing forks
 
-                    // Geometry built from THIS wall so far — the fork search's candidate set. It GROWS as
-                    // we go, which is exactly what makes the rule self-recursive: a later link may tap a
-                    // fork rather than a trunk, with no extra rule.
-                    var built = new List<(LinkPoint a, LinkPoint b, int edgeIndex)>();
+                    // `built` now holds BENT polylines, not straight segments — that is spec C2. A trunk
+                    // is detoured BEFORE it enters the fork search's candidate set, so a fork taps geometry
+                    // that will actually be drawn. Bending trunks afterwards would leave every fork hanging
+                    // beside its trunk instead of on it.
+                    var built = new List<(List<LinkPoint> poly, int edgeIndex)>();
                     for (int i = 0; i < doorCount; i++)
                     {
                         var at = onWall[i];
-                        built.Add((endpoint[(at.EdgeIndex, nodeId)], FarEnd(byId, endpoint, at), at.EdgeIndex));
+                        var poly = new List<LinkPoint> { endpoint[(at.EdgeIndex, nodeId)], FarEnd(byId, endpoint, at) };
+                        DetourAround(poly, ObstaclesFor(nodes, at.SelfId, at.OtherId));
+                        built.Add((poly, at.EdgeIndex));
                     }
 
                     for (int k = doorCount; k < onWall.Count; k++)
                     {
                         var at = onWall[k];
                         var target = FarEnd(byId, endpoint, at);
-                        var fork = NearestPointOn(built, target);
+                        var fork = NearestPointOnBuilt(built, target);
                         g.Forks.Add(fork);
                         endpoint[(at.EdgeIndex, nodeId)] = fork;
-                        built.Add((fork, target, at.EdgeIndex));
+                        var poly = new List<LinkPoint> { fork, target };
+                        DetourAround(poly, ObstaclesFor(nodes, at.SelfId, at.OtherId));
+                        built.Add((poly, at.EdgeIndex));
                     }
+
+                    // Stash each resolved polyline so the emission loop below can lay out its legs.
+                    foreach (var b in built) polyOf[(b.edgeIndex, nodeId)] = b.poly;
                 }
             }
 
-            // Emit one segment per edge, between the two resolved endpoints.
+            // Emit one segment per LEG of each edge's polyline. A link no longer owns exactly one segment:
+            // the detour splits it wherever it bends around a box.
+            //
+            // Take the A-end's polyline, but FORCE its last point to B's RESOLVED attachment. Pass B built
+            // that polyline toward FarEnd, which falls back to the far box's CENTRE when the far end is a
+            // fork it had not reached yet — emitting that verbatim would draw a link ending inside a box,
+            // the very defect the two-pass split exists to prevent. The bends stay as pass B computed them
+            // (they are what the forks tapped); only the terminus is corrected.
             for (int i = 0; i < edges.Count; i++)
             {
                 var e = edges[i];
-                if (!endpoint.TryGetValue((i, e.A), out var pa)) continue;
+                if (!endpoint.TryGetValue((i, e.A), out _)) continue;
                 if (!endpoint.TryGetValue((i, e.B), out var pb)) continue;
-                g.Segments.Add(new LinkSegment { A = pa, B = pb, EdgeIndex = i });
+                if (!polyOf.TryGetValue((i, e.A), out var poly) || poly.Count < 2) continue;
+
+                var final = new List<LinkPoint>(poly);
+                final[final.Count - 1] = pb;                 // the far end's real door or fork
+                for (int k = 0; k < final.Count - 1; k++)
+                    g.Segments.Add(new LinkSegment { A = final[k], B = final[k + 1], EdgeIndex = i });
             }
 
             return g;
@@ -450,21 +473,31 @@ namespace WorldGen.Generation
             return new LinkPoint { X = other.CX, Y = other.CY };
         }
 
-        /// <summary>Closest point to `target` on any already-built piece: perpendicular projection onto
-        /// each segment, clamped to its endpoints. WHOLE segments are candidates, not just their door
-        /// ends — a target near a trunk's far end should tap in there rather than walk back to the wall.
-        /// `built` is never empty here: a fork only happens once the wall's doors are all placed.</summary>
-        static LinkPoint NearestPointOn(List<(LinkPoint a, LinkPoint b, int edgeIndex)> built, LinkPoint target)
+        /// <summary>Closest point to `target` on any LEG of any already-built polyline: perpendicular
+        /// projection onto each leg, clamped to its endpoints. Whole legs are candidates, not just their
+        /// door ends — a target near a trunk's far end should tap in there rather than walk back to the
+        /// wall. `built` is never empty here: a fork only happens once the wall's doors are all placed.</summary>
+        static LinkPoint NearestPointOnBuilt(List<(List<LinkPoint> poly, int edgeIndex)> built, LinkPoint target)
         {
-            var best = built[0].a;
+            var best = built[0].poly[0];
             float bestD2 = float.MaxValue;
-            foreach (var s in built)
-            {
-                var p = ClosestOnSegment(s.a, s.b, target);
-                float d2 = (p.X - target.X) * (p.X - target.X) + (p.Y - target.Y) * (p.Y - target.Y);
-                if (d2 < bestD2) { bestD2 = d2; best = p; }
-            }
+            foreach (var b in built)
+                for (int i = 0; i < b.poly.Count - 1; i++)
+                {
+                    var p = ClosestOnSegment(b.poly[i], b.poly[i + 1], target);
+                    float d2 = (p.X - target.X) * (p.X - target.X) + (p.Y - target.Y) * (p.Y - target.Y);
+                    if (d2 < bestD2) { bestD2 = d2; best = p; }
+                }
             return best;
+        }
+
+        /// <summary>Every box except the link's own two ends (spec C3) — a link starts and ends at their
+        /// doors, which sit ON their boundaries, so they can never be things to route around.</summary>
+        static List<LinkNode> ObstaclesFor(IReadOnlyList<LinkNode> nodes, int selfId, int otherId)
+        {
+            var list = new List<LinkNode>(nodes.Count);
+            foreach (var n in nodes) if (n.Id != selfId && n.Id != otherId) list.Add(n);
+            return list;
         }
 
         static LinkPoint ClosestOnSegment(LinkPoint a, LinkPoint b, LinkPoint p)
