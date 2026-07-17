@@ -47,9 +47,12 @@ namespace WorldGen.Rendering
         }
 
         // Tile-space overlap check mirroring Separate's condition (independent reimplementation).
+        // The CONDITION is what this reimplements independently; the field scale is not — it reads
+        // DungeonLayout.TilesPerAxis. A local copy of it (this was `const int T = 48;`) silently went
+        // stale the moment the field grew to 128, leaving the check running at the wrong scale.
         static bool Overlap(Room a, Room b, float gap)
         {
-            const int T = 48;
+            int T = DungeonLayout.TilesPerAxis;
             float dx = Mathf.Abs((b.X - a.X) * T), dy = Mathf.Abs((b.Y - a.Y) * T);
             float minX = (a.SizeW + b.SizeW) * 0.5f + gap, minY = (a.SizeH + b.SizeH) * 0.5f + gap;
             return dx < minX - 0.05f && dy < minY - 0.05f;   // small epsilon for the 0.01 shove margin
