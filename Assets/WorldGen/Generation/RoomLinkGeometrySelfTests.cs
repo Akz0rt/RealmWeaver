@@ -410,8 +410,11 @@ namespace WorldGen.Rendering
                 foreach (var pt in poly)
                     if (float.IsNaN(pt.X) || float.IsNaN(pt.Y) || float.IsInfinity(pt.X) || float.IsInfinity(pt.Y))
                     { Debug.LogError("FAIL boxed-in: NaN/Inf in the polyline"); ok = false; break; }
-                if (poly.Count > 2 + 2 * RoomLinkGeometry.MaxDetourIterations)
-                { Debug.LogError($"FAIL boxed-in: {poly.Count} points — each pass may splice at most 2 corners, so the cap bounds this at {2 + 2 * RoomLinkGeometry.MaxDetourIterations}"); ok = false; }
+                // Both sides are non-empty (ChooseDetourChain gives up otherwise), so the 4 corners split
+                // 3/1 or 2/2 and a chain holds at most 3 — the real per-pass bound. A regression to the
+                // old all-four-corners chain would splice 4 a pass and blow straight through this.
+                if (poly.Count > 2 + 3 * RoomLinkGeometry.MaxDetourIterations)
+                { Debug.LogError($"FAIL boxed-in: {poly.Count} points — a pass may splice at most 3 corners, so the cap bounds this at {2 + 3 * RoomLinkGeometry.MaxDetourIterations}"); ok = false; }
             }
 
             // ── Determinism 1: the blocker LIST's order must not change the answer ─────────────────
