@@ -285,6 +285,9 @@ namespace WorldGen.Generation
                                    endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), nodes, occupancy));
             }
 
+            // Forks re-tap the NEAREST drawn geometry. Short-first order means a recursive fork (a 4th
+            // corridor tapping a 3rd's branch) is usually processed after the branch it wants — good enough;
+            // worst case it taps a different-but-real corridor, which still connects (never a void ray).
             foreach (int i in forkEdges)
             {
                 var e = edges[i];
@@ -847,7 +850,9 @@ namespace WorldGen.Generation
         /// <summary>Nearest point to `p` on any segment of the geometry drawn so far — used to RE-TAP a
         /// fork onto the A* trunk that was actually drawn (spec A8). A fork's pass-B point sat on the CHEAP
         /// OrthogonalRoute trunk; A* draws the trunk elsewhere, so without this the fork dangles in the
-        /// void. Returns `p` unchanged when nothing is built yet (first link on a wall never forks).</summary>
+        /// void. Returns `p` unchanged when `built` is empty — safe, though a fork then has nothing to
+        /// anchor to; in practice a fork's wall carries ≥2 door-trunks routed before it, so `built` is
+        /// non-empty by the time any fork snaps.</summary>
         static LinkPoint NearestOnOccupancy(LinkPoint p, List<(LinkPoint a, LinkPoint b)> built)
         {
             var best = p;
