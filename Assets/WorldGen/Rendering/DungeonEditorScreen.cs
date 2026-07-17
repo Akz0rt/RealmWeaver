@@ -32,9 +32,6 @@ namespace WorldGen.Rendering
         Image linkToggleImg;
         int selectedRoomId;   // mirrors DungeonViewController.SelectedRoomId; drives inspectorPanel.ShowRoom
 
-        Image graphModeImg, isoModeImg;
-        bool showIso;   // false = Граф (default, editable graph); true = Изо (view-only iso render)
-
         Font font;
         bool built;
 
@@ -198,51 +195,10 @@ namespace WorldGen.Rendering
             tabsRect.anchorMin = new Vector2(0f, 0.5f); tabsRect.anchorMax = new Vector2(0f, 0.5f);
             tabsRect.pivot = new Vector2(0f, 0.5f); tabsRect.anchoredPosition = new Vector2(344f, 0f); tabsRect.sizeDelta = new Vector2(300f, 28f);
             levelTabsRow = tabsGO.transform;
-
-            BuildModeToggle(strip.transform);
         }
 
-        /// <summary>Граф/Изо toggle, anchored to the top strip's right edge (mirrors «← Назад» anchored to
-        /// the left) so it never collides with the level-tabs row regardless of how many tabs it holds.
-        /// Граф (editable room graph) is the default; BOTH modes are editable (spec R4) — only the active
-        /// renderer swaps, see SetIsoMode.</summary>
-        void BuildModeToggle(Transform parent)
-        {
-            var group = new GameObject("ModeToggle", typeof(RectTransform));
-            group.transform.SetParent(parent, false);
-            var gr = group.GetComponent<RectTransform>();
-            gr.anchorMin = new Vector2(1f, 0.5f); gr.anchorMax = new Vector2(1f, 0.5f);
-            gr.pivot = new Vector2(1f, 0.5f); gr.anchoredPosition = new Vector2(-12f, 0f); gr.sizeDelta = new Vector2(140f, 28f);
 
-            var hlg = group.AddComponent<HorizontalLayoutGroup>();
-            // childControlWidth MUST be true here: AddToolbarButton declares its width via
-            // LayoutElement.preferredWidth, which an HLG only honors when it controls child width.
-            // With it false the buttons measure at the RectTransform default (100px each), so the pair
-            // overflows this 140px group — and an overflowing HLG silently ignores childAlignment and
-            // lays out from the LEFT edge, pushing «Изо» off the right of the screen.
-            hlg.spacing = 4f; hlg.childControlWidth = true; hlg.childForceExpandWidth = false;
-            hlg.childControlHeight = true; hlg.childForceExpandHeight = true; hlg.childAlignment = TextAnchor.MiddleRight;
 
-            graphModeImg = AddToolbarButton(group.transform, "Граф", 64f, ThemeRole.Elev, () => SetIsoMode(false));
-            isoModeImg = AddToolbarButton(group.transform, "Изо", 64f, ThemeRole.Elev, () => SetIsoMode(true));
-            RefreshModeToggleHighlight();
-        }
-
-        /// <summary>Switches between the editable Граф and Изо renderers. BOTH are editable (spec R4), so the
-        /// toolbar now stays visible in Изо — only the renderer swaps. Body's top offset no longer changes.</summary>
-        void SetIsoMode(bool iso)
-        {
-            showIso = iso;
-            // Task 4 replaces this with: viewController.SetRenderer(iso ? (IDungeonRenderer)isoRenderer : flatRenderer);
-            viewController?.SetRenderer(flatRenderer);
-            RefreshModeToggleHighlight();
-        }
-
-        void RefreshModeToggleHighlight()
-        {
-            if (graphModeImg != null) ThemeService.Tag(graphModeImg, !showIso ? ThemeRole.AccentSoft : ThemeRole.Elev);
-            if (isoModeImg != null) ThemeService.Tag(isoModeImg, showIso ? ThemeRole.AccentSoft : ThemeRole.Elev);
-        }
 
         /// <summary>Toolbar row below the top strip: add/link/delete controls for the graph canvas.
         /// «Связать» toggles DungeonViewController.LinkMode and highlights (AccentSoft) while active.</summary>
