@@ -123,10 +123,7 @@ namespace WorldGen.Generation
         /// bound — this method's job is to make that pass a near-no-op, not to prove the bound itself.</summary>
         static void LayoutByDepth(DungeonLevel lvl, Dictionary<int, int> dist)
         {
-            // Gap between siblings in a row AND between depth rows. Kept small so a fresh floor comes out
-            // compact (rooms clustered, like a hand-drawn map) rather than sprawled; the corridor leash and
-            // router then handle the tight spacing. TUNABLE.
-            const float DesiredGapTiles = 2f;
+            const float DesiredGapTiles = 3f;
             const float T = DungeonLayout.TilesPerAxis;
 
             int maxDepth = 0;
