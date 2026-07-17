@@ -157,10 +157,15 @@ namespace WorldGen.Generation
                 {
                     if (!wallsOf.TryGetValue((nodeId, wall), out var onWall)) continue;
                     int doorCount = Math.Min(MaxDoorsPerWall, onWall.Count);
-                    if (onWall.Count <= doorCount) continue;   // wall not full — nothing forks
 
-                    // `built` now holds BENT polylines, not straight segments — that is spec C2. A trunk
-                    // is detoured BEFORE it enters the fork search's candidate set, so a fork taps geometry
+                    // Runs for EVERY wall, not only overfull ones. This pass resolves each link's
+                    // polyline and the emission loop draws nothing without it, so gating it on "the wall
+                    // is full" silently deletes every corridor on a wall carrying one or two links — which
+                    // is nearly all of them. No guard is needed: when the wall is not full,
+                    // doorCount == onWall.Count and the fork loop below simply runs zero times.
+                    //
+                    // `built` holds BENT polylines, not straight segments — that is spec C2. A trunk is
+                    // detoured BEFORE it enters the fork search's candidate set, so a fork taps geometry
                     // that will actually be drawn. Bending trunks afterwards would leave every fork hanging
                     // beside its trunk instead of on it.
                     var built = new List<(List<LinkPoint> poly, int edgeIndex)>();
@@ -195,8 +200,8 @@ namespace WorldGen.Generation
             // Take the A-end's polyline, but FORCE its last point to B's RESOLVED attachment. Pass B built
             // that polyline toward FarEnd, which falls back to the far box's CENTRE when the far end is a
             // fork it had not reached yet — emitting that verbatim would draw a link ending inside a box,
-            // the very defect the two-pass split exists to prevent. The bends stay as pass B computed them
-            // (they are what the forks tapped); only the terminus is corrected.
+            // the very defect the two-pass split exists to prevent. Pass B's own bends are kept (they are
+            // what the forks tapped) and the corrected leg is re-checked below.
             for (int i = 0; i < edges.Count; i++)
             {
                 var e = edges[i];
@@ -206,6 +211,14 @@ namespace WorldGen.Generation
 
                 var final = new List<LinkPoint>(poly);
                 final[final.Count - 1] = pb;                 // the far end's real door or fork
+
+                // Moving the terminus can invalidate the last leg, so re-check it. Pass B bent this
+                // polyline toward FarEnd, which falls back to the far box's CENTRE when that end is a fork
+                // this pass had not reached yet; snapping the end to the real fork point can push that leg
+                // through a box the detour never saw. A no-op in the common case (the far end earned a
+                // door, so FarEnd == pb and the polyline is already clean).
+                DetourAround(final, ObstaclesFor(nodes, e.A, e.B));
+
                 for (int k = 0; k < final.Count - 1; k++)
                     g.Segments.Add(new LinkSegment { A = final[k], B = final[k + 1], EdgeIndex = i });
             }

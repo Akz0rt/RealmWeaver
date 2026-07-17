@@ -94,7 +94,9 @@ namespace WorldGen.Rendering
                 // Non-crossing: the segment to the NORTH target must start at the NORTHER door.
                 var segToNorth = FirstLegForEdge(g, 0);
                 var segToSouth = FirstLegForEdge(g, 1);
-                if (segToNorth != null && segToSouth != null && segToNorth.A.Y > segToSouth.A.Y)
+                if (segToNorth == null || segToSouth == null)
+                { Debug.LogError("FAIL two-on-a-wall: an edge emitted no legs at all — there is no door order to check"); ok = false; }
+                else if (segToNorth.A.Y > segToSouth.A.Y)
                 { Debug.LogError("FAIL two-on-a-wall: doors are swapped — the corridors cross at the wall"); ok = false; }
 
                 if (g.Forks.Count != 0)
@@ -178,16 +180,22 @@ namespace WorldGen.Rendering
                     var legs4 = SegmentsForEdge(g, 2);
                     if (legs4.Count == 0)
                     { Debug.LogError("FAIL four-on-a-wall: edge 4 emitted no legs — nothing for edge 5 to tap"); ok = false; }
-                    bool onEdge4 = false;
-                    foreach (var leg in legs4)
-                        if (DistanceToSegment(seg5.A, leg.A, leg.B) < 1e-2f) { onEdge4 = true; break; }
-                    if (!onEdge4)
-                    { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is on NO leg of edge 4"); ok = false; }
+                    else
+                    {
+                        bool onEdge4 = false;
+                        foreach (var leg in legs4)
+                            if (DistanceToSegment(seg5.A, leg.A, leg.B) < 1e-2f) { onEdge4 = true; break; }
+                        if (!onEdge4)
+                        { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is on NO leg of edge 4"); ok = false; }
+                    }
 
                     bool onTrunk = false;
                     foreach (int trunkEdge in new[] { 0, 1 })
+                    {
                         foreach (var leg in SegmentsForEdge(g, trunkEdge))
                             if (DistanceToSegment(seg5.A, leg.A, leg.B) < 1e-2f) { onTrunk = true; break; }
+                        if (onTrunk) break;
+                    }
                     if (onTrunk)
                     { Debug.LogError($"FAIL four-on-a-wall: edge 5 tapped a TRUNK at ({seg5.A.X:F1},{seg5.A.Y:F1}) — the fork search is NOT recursive"); ok = false; }
                 }
@@ -262,6 +270,8 @@ namespace WorldGen.Rendering
                     new LinkNode { Id = 2, CX = 10f, CY = 10f, W = 4f, H = 4f },
                 };
                 var sg = RoomLinkGeometry.Build(same, new List<LinkEdge> { new LinkEdge { A = 1, B = 2 } });
+                if (sg.Segments.Count == 0)
+                { Debug.LogError("FAIL: coincident nodes produced NO segments — this NaN check would scan an empty list and prove nothing"); ok = false; }
                 foreach (var s in sg.Segments)
                     if (float.IsNaN(s.A.X) || float.IsNaN(s.A.Y) || float.IsNaN(s.B.X) || float.IsNaN(s.B.Y))
                     { Debug.LogError("FAIL: coincident nodes produced NaN"); ok = false; }
