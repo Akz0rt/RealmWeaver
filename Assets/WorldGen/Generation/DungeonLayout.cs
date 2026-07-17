@@ -26,6 +26,9 @@ namespace WorldGen.Generation
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
 
+        // RoomLinkGeometry works in TILE space; LayoutPoint (and Room.X/Y) are normalized 0..1.
+        static LayoutPoint ToLayout(LinkPoint p) => new LayoutPoint { X = ToNorm(p.X), Y = ToNorm(p.Y) };
+
         /// <summary>Push overlapping room footprints apart (cascade) until none overlap with a minGapTiles
         /// clearance, or maxIterations is reached. Deterministic. Mutates Room.X/Y (kept in [0,1]).</summary>
         public static void Separate(DungeonLevel lvl, float minGapTiles = 0.1f, int maxIterations = 40)
@@ -195,22 +198,39 @@ namespace WorldGen.Generation
             if (lvl == null) return g;
             var rooms = lvl.Rooms;
 
-            LayoutPoint? Center(int id)
+            // Resolve each corridor to a segment through RoomLinkGeometry: corridors now leave rooms via
+            // DOOR points on the wall facing their target (max 2 per wall) and FORK off already-built
+            // geometry past that limit — they no longer run centre-to-centre through the rooms they join.
+            // The routing itself lives in RoomLinkGeometry, which knows nothing about dungeons so the same
+            // math can serve building/city maps later; this method is just the adapter.
+            var nodes = new List<LinkNode>(lvl.Rooms.Count);
+            foreach (var r in lvl.Rooms)
             {
-                var r = lvl.GetRoom(id);
-                return r == null ? (LayoutPoint?)null : new LayoutPoint { X = r.X, Y = r.Y };
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                nodes.Add(new LinkNode
+                {
+                    Id = r.Id,
+                    CX = ToTile(r.X), CY = ToTile(r.Y),   // RoomLinkGeometry works in TILE space
+                    W = w, H = h,
+                });
             }
+            var linkEdges = new List<LinkEdge>(lvl.Corridors.Count);
+            foreach (var c in lvl.Corridors) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
-            // Resolve each corridor to a segment between room centers.
+            var routed = RoomLinkGeometry.Build(nodes, linkEdges);
+
             var segs = new List<(LayoutPoint a, LayoutPoint b)>();
-            foreach (var c in lvl.Corridors)
-            {
-                var a = Center(c.RoomA); var b = Center(c.RoomB);
-                if (a.HasValue && b.HasValue) segs.Add((a.Value, b.Value));
-            }
+            foreach (var s in routed.Segments)
+                segs.Add((ToLayout(s.A), ToLayout(s.B)));
 
             // Dedup junction points within an epsilon (near-coincident crossings merge).
             var junctions = new List<LayoutPoint>();
+
+            // A fork IS a junction — where a corridor taps into another. Seeding them here means they
+            // render with the existing junction marker, and JunctionIndex's dedup keeps a fork that
+            // happens to coincide with a crossing from being drawn twice.
+            foreach (var f in routed.Forks) junctions.Add(ToLayout(f));
+
             int JunctionIndex(LayoutPoint p)
             {
                 for (int k = 0; k < junctions.Count; k++)
