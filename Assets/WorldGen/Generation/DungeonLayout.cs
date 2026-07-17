@@ -39,8 +39,14 @@ namespace WorldGen.Generation
                     {
                         var a = rooms[i]; var b = rooms[j];
                         float ax = ToTile(a.X), ay = ToTile(a.Y), bx = ToTile(b.X), by = ToTile(b.Y);
-                        float halfW = (a.SizeW + b.SizeW) * 0.5f + minGapTiles;   // min center distance on X
-                        float halfH = (a.SizeH + b.SizeH) * 0.5f + minGapTiles;   // …and Y for no overlap
+                        // EffectiveSize, not raw SizeW/H: it substitutes the type default for an unset
+                        // (<=0) footprint and clamps out-of-range serialized data. Reading the raw fields
+                        // made Separate disagree with the leash and every renderer about how big a legacy
+                        // room is.
+                        var (aw, ah) = DungeonProjection.EffectiveSize(a);
+                        var (bw, bh) = DungeonProjection.EffectiveSize(b);
+                        float halfW = (aw + bw) * 0.5f + minGapTiles;   // min center distance on X
+                        float halfH = (ah + bh) * 0.5f + minGapTiles;   // …and Y for no overlap
                         float dx = bx - ax, dy = by - ay;
                         float overlapX = halfW - Math.Abs(dx);
                         float overlapY = halfH - Math.Abs(dy);
@@ -85,7 +91,11 @@ namespace WorldGen.Generation
             // Graph distance from the anchor decides who yields: on each corridor the room FARTHER from
             // the anchor is the one that moves. Rooms unreachable from the anchor (orphans, or a separate
             // component) get int.MaxValue and are never pulled — nothing stitches them to the anchor.
-            var dist = BfsFromAnchor(lvl, anchorRoomId);
+            // A caller with no drag in progress (the cascade, or generation) passes an id that isn't a
+            // room. Fall back to the lowest room id so the pass still does something: with no reachable
+            // anchor every room would be at int.MaxValue and the leash would silently no-op.
+            int anchor = lvl.GetRoom(anchorRoomId) != null ? anchorRoomId : LowestRoomId(lvl);
+            var dist = BfsFromAnchor(lvl, anchor);
 
             for (int iter = 0; iter < maxIterations; iter++)
             {
@@ -105,18 +115,21 @@ namespace WorldGen.Generation
                     Room fixedRoom, movingRoom;
                     if (da < db || (da == db && a.Id < b.Id)) { fixedRoom = a; movingRoom = b; }
                     else { fixedRoom = b; movingRoom = a; }
-                    if (movingRoom.Id == anchorRoomId) continue;              // the anchor never yields
+                    if (movingRoom.Id == anchor) continue;                    // the anchor never yields
 
                     float gap = EdgeGapTiles(fixedRoom, movingRoom);
-                    if (gap <= maxTiles) continue;                            // slack — leave it alone
+                    // Epsilon matters: the steady state of a sustained drag parks corridors at exactly
+                    // gap == maxTiles, and the float round-trip through ToNorm/ToTile can leave it a hair
+                    // over. Without slack here anyPulled would stay true forever and the loop would burn
+                    // all maxIterations every frame instead of exiting after ~2.
+                    if (gap <= maxTiles + 1e-3f) continue;                    // slack — leave it alone
                     anyPulled = true;
 
                     float excess = gap - maxTiles;
                     float fx = ToTile(fixedRoom.X), fy = ToTile(fixedRoom.Y);
                     float mx = ToTile(movingRoom.X), my = ToTile(movingRoom.Y);
                     float dx = fx - mx, dy = fy - my;
-                    float len = (float)Math.Sqrt(dx * dx + dy * dy);
-                    if (len < 1e-4f) continue;                                // coincident — Separate's job
+                    float len = (float)Math.Sqrt(dx * dx + dy * dy);   // > maxTiles: gap > maxTiles implies it
 
                     // Step the moving room toward the fixed one by the excess, along the centre line.
                     // One step may not fully close a Chebyshev gap on a diagonal; the iteration converges.
@@ -127,6 +140,13 @@ namespace WorldGen.Generation
                 }
                 if (!anyPulled) break;
             }
+        }
+
+        static int LowestRoomId(DungeonLevel lvl)
+        {
+            int best = 0;
+            foreach (var r in lvl.Rooms) if (best == 0 || r.Id < best) best = r.Id;
+            return best;
         }
 
         static Dictionary<int, int> BfsFromAnchor(DungeonLevel lvl, int anchorRoomId)

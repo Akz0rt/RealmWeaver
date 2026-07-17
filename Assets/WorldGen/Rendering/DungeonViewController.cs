@@ -38,6 +38,9 @@ namespace WorldGen.Rendering
         int pendingLinkId;
         bool needsProjectionFit;
         int draggingRoomId;
+        // The last room the DM dragged. BeginCascade needs it as the leash's anchor, but OnEndDrag has
+        // already cleared draggingRoomId by the time OnGraphMutated → BeginCascade runs.
+        int lastAnchorRoomId;
 
         // Animated cascade state — moved verbatim from DungeonGraphView (Checkpoint-B tuning, user-approved
         // "мне нравится"). cascadeTargets holds the resolved end position per room id (computed once by
@@ -139,6 +142,16 @@ namespace WorldGen.Rendering
             var start = new Dictionary<int, (float x, float y)>();
             foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
 
+            // Separate → leash → Separate. Separate resolves overlap but knows nothing about corridors, so
+            // on its own it can leave a corridor stretched past the leash with nothing to pull it back
+            // (the leash otherwise only runs during a drag). The leash pass then re-pulls, and the second
+            // Separate cleans up any overlap that pull introduced.
+            //
+            // Best-effort, NOT a proven joint fixpoint: the final Separate could in principle re-stretch a
+            // corridor a little. Both passes are convergent and cheap, and any residual is small and
+            // cosmetic — the alternative is a combined solver, which this does not need.
+            DungeonLayout.Separate(lvl);
+            DungeonLayout.EnforceCorridorLeash(lvl, lastAnchorRoomId);
             DungeonLayout.Separate(lvl);   // mutates rooms to resolved target positions
 
             const float eps = 1e-4f;
@@ -342,6 +355,7 @@ namespace WorldGen.Rendering
             // Clear on EVERY drag path, here and nowhere else. If the release lands outside this
             // hit-plate (over the toolbar, or a badge Button), no click fires at all — leaving the clear
             // to OnPointerClick would strand draggingRoomId set and swallow the next click.
+            lastAnchorRoomId = draggingRoomId;
             draggingRoomId = 0;
             OnGraphMutated?.Invoke();
         }

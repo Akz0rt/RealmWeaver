@@ -206,18 +206,14 @@ namespace WorldGen.Rendering
             if (RoomSizing.Clamp(20) != 16 || RoomSizing.Clamp(0) != 1)
             { Debug.LogError("FAIL Clamp bounds"); ok = false; }
 
-            // Compaction: after generation AND the cascade the DM actually sees, every corridor's rooms must sit
-            // within MaxGap tiles of each other edge-to-edge — and must NOT overlap.
-            //
-            // MaxGap is 9, not the 3-tile DesiredGapTiles: rooms in one BFS layer share a row whose height is the
-            // row's TALLEST room, and each is centred on that row's centre line. A 4-tile room sharing a layer
-            // with a 14-tile boss therefore sits ~5 tiles inside its own row's edge before the gap even starts.
-            // That is inherent to row layout with mixed footprints, and corridor lengths SHOULD vary. The win is
-            // relative: before, ~13 tiles of void framed 3-tile rooms; now ≤9 frames 6-14-tile rooms.
+            // The generator now runs EnforceCorridorLeash itself (Generate step 8), so the corridor bound is
+            // guaranteed BY CONSTRUCTION — assert the real constant instead of a threshold derived by hand from
+            // the layout's geometry. The previous 9 was derived from the row-height slack alone and ignored the
+            // horizontal spread entirely, so it was wrong in a direction no one had measured.
             //
             // MinGap is the load-bearing assertion: a NEGATIVE gap means Separate did not converge and rooms are
             // still overlapping. An upper-bound-only check reads that stacked-rooms failure as PASS.
-            const float MaxGap = 9f;
+            float MaxGap = DungeonLayout.MaxCorridorTiles + 1f;   // +1 slack for the post-Separate shove margin
             const float MinGap = -0.5f;
             foreach (int roomCount in new[] { 6, 8 })   // 6 = what DungeonEditorScreen actually generates; 8 = deeper stress
                 foreach (int seed in new[] { 1, 7, 42, 1337, 90210 })

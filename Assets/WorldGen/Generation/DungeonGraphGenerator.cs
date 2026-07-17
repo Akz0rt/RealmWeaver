@@ -86,6 +86,13 @@ namespace WorldGen.Generation
             // 7. Layout X/Y by BFS depth so the initial layout is readable, not a clump.
             LayoutByDepth(lvl, dist);
 
+            // 8. Make the floor satisfy the corridor leash BY CONSTRUCTION, anchored at the entrance.
+            //    Without this, "the generator's worst case" is a number someone estimated from the layout's
+            //    geometry — and a fresh floor could be born already taut, so the DM's first drag would snap
+            //    it together with a visible jolt. Now the bound is guaranteed, and the compaction self-test
+            //    can assert MaxCorridorTiles directly instead of a hand-derived threshold.
+            DungeonLayout.EnforceCorridorLeash(lvl, lvl.Rooms[0].Id);
+
             return lvl;
         }
 
@@ -103,14 +110,21 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Lay rooms out by BFS depth: one row per layer, deepest last. Spacing is computed in
-        /// TILE units from the actual room footprints (+ DesiredGapTiles), NOT by normalizing layers across
-        /// the whole [0.08,0.92] range as before — that old spread put ~13 tiles of void between 3-tile
-        /// rooms regardless of their size, which is what made the rendered map read as specks on emptiness
-        /// (spec R7). The block is then centred on the field. DungeonLayout.Separate still resolves any
-        /// residual overlap afterwards.</summary>
+        /// TILE units from the actual footprints (+ DesiredGapTiles), not by normalizing layers across the
+        /// axis — the old spread put ~13 tiles of void between 3-tile rooms regardless of their size.
+        ///
+        /// Columns are PARENT-ALIGNED: each room starts centred under its BFS parent (siblings share the
+        /// parent's centre line), then a left-to-right sweep resolves overlaps within the row. Centring
+        /// each row independently — the previous approach — left the horizontal offset bounded only by the
+        /// row's own width, so a room at one row's edge could sit ~20 tiles from its parent even though
+        /// they are joined by a corridor. Corridors now run nearly vertical.
+        ///
+        /// Generate() runs EnforceCorridorLeash afterwards, which is what actually GUARANTEES the corridor
+        /// bound — this method's job is to make that pass a near-no-op, not to prove the bound itself.</summary>
         static void LayoutByDepth(DungeonLevel lvl, Dictionary<int, int> dist)
         {
-            const float DesiredGapTiles = 3f;   // edge-to-edge target; self-test asserts <= 4 post-cascade
+            const float DesiredGapTiles = 3f;
+            const float T = DungeonLayout.TilesPerAxis;
 
             int maxDepth = 0;
             foreach (var kv in dist) if (kv.Value > maxDepth) maxDepth = kv.Value;
@@ -123,7 +137,6 @@ namespace WorldGen.Generation
                 if (!layers.ContainsKey(layer)) layers[layer] = new List<Room>();
                 layers[layer].Add(r);
             }
-
             var keys = new List<int>(layers.Keys);
             keys.Sort();
 
@@ -139,25 +152,92 @@ namespace WorldGen.Generation
             }
             totalH -= DesiredGapTiles;   // no trailing gap after the last row
 
-            float cursorY = (DungeonLayout.TilesPerAxis - totalH) * 0.5f;   // centre the block vertically
+            float cursorY = (T - totalH) * 0.5f;   // centre the block vertically
+            var xOf = new Dictionary<int, float>();   // resolved tile-space X, by room id
+
             foreach (int k in keys)
             {
                 var rooms = layers[k];
                 float h = rowH[k];
 
-                float totalW = 0f;
-                foreach (var r in rooms) totalW += r.SizeW + DesiredGapTiles;
-                totalW -= DesiredGapTiles;
-
-                float cursorX = (DungeonLayout.TilesPerAxis - totalW) * 0.5f;   // centre the row horizontally
+                // 1. Group this layer's rooms by BFS parent, and centre each sibling group under it.
+                var groups = new Dictionary<int, List<Room>>();
                 foreach (var r in rooms)
                 {
-                    r.X = Clamp01((cursorX + r.SizeW * 0.5f) / DungeonLayout.TilesPerAxis);
-                    r.Y = Clamp01((cursorY + h * 0.5f) / DungeonLayout.TilesPerAxis);
-                    cursorX += r.SizeW + DesiredGapTiles;
+                    int p = ParentId(lvl, dist, r);
+                    if (!groups.ContainsKey(p)) groups[p] = new List<Room>();
+                    groups[p].Add(r);
+                }
+                var groupKeys = new List<int>(groups.Keys);
+                groupKeys.Sort();   // deterministic order
+
+                foreach (int p in groupKeys)
+                {
+                    var sibs = groups[p];
+                    sibs.Sort((u, v) => u.Id.CompareTo(v.Id));
+                    float groupW = 0f;
+                    foreach (var r in sibs) groupW += r.SizeW + DesiredGapTiles;
+                    groupW -= DesiredGapTiles;
+
+                    float parentX = xOf.TryGetValue(p, out var px) ? px : T * 0.5f;   // no parent → field centre
+                    float cursor = parentX - groupW * 0.5f;
+                    foreach (var r in sibs)
+                    {
+                        xOf[r.Id] = cursor + r.SizeW * 0.5f;
+                        cursor += r.SizeW + DesiredGapTiles;
+                    }
+                }
+
+                // 2. Sweep left-to-right so sibling groups that landed on top of each other separate,
+                //    while keeping every room as close to its parent's column as the row allows.
+                rooms.Sort((u, v) =>
+                {
+                    int c = xOf[u.Id].CompareTo(xOf[v.Id]);
+                    return c != 0 ? c : u.Id.CompareTo(v.Id);
+                });
+                for (int i = 1; i < rooms.Count; i++)
+                {
+                    float minX = xOf[rooms[i - 1].Id]
+                               + (rooms[i - 1].SizeW + rooms[i].SizeW) * 0.5f + DesiredGapTiles;
+                    if (xOf[rooms[i].Id] < minX) xOf[rooms[i].Id] = minX;
+                }
+
+                // 3. Slide the finished row back onto the field if the sweep pushed it off an edge.
+                //    Shifting the WHOLE row preserves the parent alignment established above.
+                float minEdge = float.MaxValue, maxEdge = float.MinValue;
+                foreach (var r in rooms)
+                {
+                    minEdge = Math.Min(minEdge, xOf[r.Id] - r.SizeW * 0.5f);
+                    maxEdge = Math.Max(maxEdge, xOf[r.Id] + r.SizeW * 0.5f);
+                }
+                float shift = 0f;
+                if (minEdge < 0f) shift = -minEdge;
+                else if (maxEdge > T) shift = T - maxEdge;
+
+                foreach (var r in rooms)
+                {
+                    xOf[r.Id] += shift;
+                    r.X = Clamp01(xOf[r.Id] / T);
+                    r.Y = Clamp01((cursorY + h * 0.5f) / T);
                 }
                 cursorY += h + DesiredGapTiles;
             }
+        }
+
+        /// <summary>This room's BFS parent = its neighbour one layer shallower. 0 when it has none (the
+        /// entrance, or a disconnected room).</summary>
+        static int ParentId(DungeonLevel lvl, Dictionary<int, int> dist, Room r)
+        {
+            if (!dist.TryGetValue(r.Id, out int myD)) return 0;
+            int best = 0;
+            foreach (var c in lvl.Corridors)
+            {
+                int other = c.RoomA == r.Id ? c.RoomB : (c.RoomB == r.Id ? c.RoomA : 0);
+                if (other == 0) continue;
+                if (!dist.TryGetValue(other, out int od) || od != myD - 1) continue;
+                if (best == 0 || other < best) best = other;   // lowest id wins → deterministic
+            }
+            return best;
         }
 
         static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);

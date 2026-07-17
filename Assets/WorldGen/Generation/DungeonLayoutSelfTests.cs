@@ -147,13 +147,44 @@ namespace WorldGen.Rendering
                 if (Mathf.Abs(a1.Rooms[i].X - a2.Rooms[i].X) > 1e-6f || Mathf.Abs(a1.Rooms[i].Y - a2.Rooms[i].Y) > 1e-6f)
                 { Debug.LogError("FAIL: leash is not deterministic"); ok = false; break; }
 
-            // An unlinked (orphan) room must never be dragged along — nothing stitches it.
-            var orphanLvl = MakeLeashCase();
-            orphanLvl.Rooms.Add(new Room { Id = 9, X = 0.9f, Y = 0.9f, SizeW = 6, SizeH = 6 });
-            DungeonLayout.EnforceCorridorLeash(orphanLvl, 1);
-            var orphan = orphanLvl.GetRoom(9);
-            if (Mathf.Abs(orphan.X - 0.9f) > 1e-5f || Mathf.Abs(orphan.Y - 0.9f) > 1e-5f)
-            { Debug.LogError($"FAIL: orphan room moved to ({orphan.X:F3},{orphan.Y:F3})"); ok = false; }
+            // DIAGONAL chain — the only case where one step cannot fully close a Chebyshev gap, so this is
+            // what proves the iteration converges rather than stalling.
+            var diag = new DungeonLevel { NextRoomId = 3 };
+            diag.Rooms.Add(new Room { Id = 1, X = 0.10f, Y = 0.10f, SizeW = 6, SizeH = 6 });
+            diag.Rooms.Add(new Room { Id = 2, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
+            diag.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            DungeonLayout.EnforceCorridorLeash(diag, 1);
+            float dgap = LeashGap(diag.GetRoom(1), diag.GetRoom(2));
+            if (dgap > DungeonLayout.MaxCorridorTiles + 0.1f)
+            { Debug.LogError($"FAIL diagonal: gap {dgap:F1} > {DungeonLayout.MaxCorridorTiles} — iteration stalled"); ok = false; }
+
+            // LOOP EDGE — two rooms at equal graph distance from the anchor. Exercises the id tie-break;
+            // if it were unstable these two would fight and the gap would never settle.
+            var loop = new DungeonLevel { NextRoomId = 4 };
+            loop.Rooms.Add(new Room { Id = 1, X = 0.50f, Y = 0.20f, SizeW = 6, SizeH = 6 });
+            loop.Rooms.Add(new Room { Id = 2, X = 0.05f, Y = 0.80f, SizeW = 6, SizeH = 6 });
+            loop.Rooms.Add(new Room { Id = 3, X = 0.95f, Y = 0.80f, SizeW = 6, SizeH = 6 });
+            loop.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            loop.Corridors.Add(new Corridor { RoomA = 1, RoomB = 3 });
+            loop.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });   // the loop edge: 2 and 3 are both 1 hop out
+            DungeonLayout.EnforceCorridorLeash(loop, 1);
+            foreach (var c in loop.Corridors)
+            {
+                float g = LeashGap(loop.GetRoom(c.RoomA), loop.GetRoom(c.RoomB));
+                if (g > DungeonLayout.MaxCorridorTiles + 0.1f)
+                { Debug.LogError($"FAIL loop edge {c.RoomA}-{c.RoomB}: gap {g:F1} never settled"); ok = false; }
+            }
+
+            // A DISCONNECTED COMPONENT must never be pulled — this is the int.MaxValue branch. (An orphan
+            // room in zero corridors cannot test it: the leash iterates corridors, so it is unreachable by
+            // construction rather than by the distance logic.)
+            var split = MakeLeashCase();
+            split.Rooms.Add(new Room { Id = 10, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
+            split.Rooms.Add(new Room { Id = 11, X = 0.95f, Y = 0.95f, SizeW = 6, SizeH = 6 });
+            split.Corridors.Add(new Corridor { RoomA = 10, RoomB = 11 });   // linked to each other, not to the anchor
+            DungeonLayout.EnforceCorridorLeash(split, 1);
+            if (Mathf.Abs(split.GetRoom(10).X - 0.90f) > 1e-5f || Mathf.Abs(split.GetRoom(11).X - 0.95f) > 1e-5f)
+            { Debug.LogError("FAIL: a disconnected component was pulled"); ok = false; }
 
             Debug.Log(ok ? "PASS: Corridor Leash" : "FAIL: Corridor Leash");
         }
