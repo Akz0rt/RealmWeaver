@@ -122,8 +122,8 @@ namespace WorldGen.Rendering
 
             // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
             // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
-            // stepper clamps into RoomSizing's 1..8 range and fires OnChanged, which runs
-            // RevalidateAndRefresh → viewController.BeginCascade(), so the card resizes and the cascade
+            // stepper clamps into RoomSizing's 1..MaxSide range and fires OnChanged, which runs
+            // RevalidateAndRefresh → viewController.BeginCascade(), so the room resizes and the cascade
             // animates the whole floor to its re-settled positions.
             var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
             var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
@@ -154,8 +154,8 @@ namespace WorldGen.Rendering
             OnChanged?.Invoke();
         }
 
-        // dw/dh are ±1 (or 0) nudges to SizeW/SizeH; RoomSizing.Clamp keeps the result in 1..8 even at
-        // the range edges (no explicit bounds check needed — mirrors StepFloor/StepRoom's own style).
+        // dw/dh are ±1 (or 0) nudges to SizeW/SizeH; RoomSizing.Clamp keeps the result in 1..MaxSide even
+        // at the range edges (no explicit bounds check needed — mirrors StepFloor/StepRoom's own style).
         void ResizeRoom(Room room, int dw, int dh)
         {
             if (dw != 0) room.SizeW = RoomSizing.Clamp(room.SizeW + dw);

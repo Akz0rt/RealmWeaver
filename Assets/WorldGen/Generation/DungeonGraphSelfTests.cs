@@ -185,5 +185,62 @@ namespace WorldGen.Rendering
 
             Debug.Log(ok ? "PASS: DungeonProjection round-trip" : "FAIL: DungeonProjection round-trip");
         }
+
+        [ContextMenu("Self-test: generator compaction + room sizes")]
+        public void SelfTestGeneratorCompaction()
+        {
+            bool ok = true;
+
+            // New defaults (spec R7).
+            var checks = new (RoomType t, int w, int h)[]
+            {
+                (RoomType.Entrance, 7, 5), (RoomType.Boss, 10, 10), (RoomType.Normal, 6, 6),
+            };
+            foreach (var c in checks)
+            {
+                var (w, h) = RoomSizing.Default(c.t);
+                if (w != c.w || h != c.h) { Debug.LogError($"FAIL default {c.t}: {w}x{h} want {c.w}x{c.h}"); ok = false; }
+            }
+            if (RoomSizing.MaxSide != 16) { Debug.LogError($"FAIL MaxSide={RoomSizing.MaxSide} want 16"); ok = false; }
+            if (RoomSizing.Clamp(20) != 16 || RoomSizing.Clamp(0) != 1)
+            { Debug.LogError("FAIL Clamp bounds"); ok = false; }
+
+            // Compaction: after generation AND the cascade the DM actually sees, no corridor may leave more than
+            // MaxGap tiles of EDGE-TO-EDGE emptiness between its two rooms. Today's LayoutByDepth spreads layers
+            // across [0.08,0.92] of a 48-tile axis → ~13 tiles between layers, which is what this pins down.
+            const float MaxGap = 4f;
+            foreach (int seed in new[] { 1, 7, 42, 1337, 90210 })
+            {
+                var lvl = DungeonGraphGenerator.Generate(seed, 8, 3);
+                DungeonLayout.Separate(lvl);
+                foreach (var c in lvl.Corridors)
+                {
+                    var a = lvl.GetRoom(c.RoomA); var b = lvl.GetRoom(c.RoomB);
+                    if (a == null || b == null) continue;
+                    float gap = EdgeGapTiles(a, b);
+                    if (gap > MaxGap)
+                    {
+                        Debug.LogError($"FAIL seed={seed} corridor {c.RoomA}-{c.RoomB}: edge gap {gap:F1} tiles > {MaxGap}");
+                        ok = false;
+                    }
+                }
+            }
+
+            Debug.Log(ok ? "PASS: generator compaction + room sizes" : "FAIL: generator compaction + room sizes");
+        }
+
+        /// <summary>Edge-to-edge emptiness between two room footprints, in tiles: centre distance minus both
+        /// half-extents, taken on the axis of greatest centre separation (the axis the corridor mostly runs
+        /// along). Negative means the footprints overlap.</summary>
+        static float EdgeGapTiles(Room a, Room b)
+        {
+            float ax = a.X * DungeonLayout.TilesPerAxis, ay = a.Y * DungeonLayout.TilesPerAxis;
+            float bx = b.X * DungeonLayout.TilesPerAxis, by = b.Y * DungeonLayout.TilesPerAxis;
+            var (aw, ah) = DungeonProjection.EffectiveSize(a);
+            var (bw, bh) = DungeonProjection.EffectiveSize(b);
+            float dx = Mathf.Abs(bx - ax) - (aw + bw) * 0.5f;
+            float dy = Mathf.Abs(by - ay) - (ah + bh) * 0.5f;
+            return Mathf.Max(dx, dy);
+        }
     }
 }

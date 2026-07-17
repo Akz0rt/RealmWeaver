@@ -100,8 +100,16 @@ namespace WorldGen.Generation
             return dist;
         }
 
+        /// <summary>Lay rooms out by BFS depth: one row per layer, deepest last. Spacing is computed in
+        /// TILE units from the actual room footprints (+ DesiredGapTiles), NOT by normalizing layers across
+        /// the whole [0.08,0.92] range as before — that old spread put ~13 tiles of void between 3-tile
+        /// rooms regardless of their size, which is what made the rendered map read as specks on emptiness
+        /// (spec R7). The block is then centred on the field. DungeonLayout.Separate still resolves any
+        /// residual overlap afterwards.</summary>
         static void LayoutByDepth(DungeonLevel lvl, Dictionary<int, int> dist)
         {
+            const float DesiredGapTiles = 3f;   // edge-to-edge target; self-test asserts <= 4 post-cascade
+
             int maxDepth = 0;
             foreach (var kv in dist) if (kv.Value > maxDepth) maxDepth = kv.Value;
             int unreachedLayer = maxDepth + 1;   // disconnected rooms (shouldn't happen) sink to the bottom
@@ -113,18 +121,43 @@ namespace WorldGen.Generation
                 if (!layers.ContainsKey(layer)) layers[layer] = new List<Room>();
                 layers[layer].Add(r);
             }
-            int layerCount = Math.Max(1, unreachedLayer + (layers.ContainsKey(unreachedLayer) ? 1 : 0));
-            // Normalize into [0.08, 0.92] on both axes; entrance layer at top (Y small), deeper = larger Y.
-            foreach (var kv in layers)
+
+            var keys = new List<int>(layers.Keys);
+            keys.Sort();
+
+            // Row heights: each layer is as tall as its tallest room; rows are gap-separated.
+            float totalH = 0f;
+            var rowH = new Dictionary<int, float>();
+            foreach (int k in keys)
             {
-                int layer = kv.Key; var rooms = kv.Value;
-                float y = layerCount <= 1 ? 0.5f : 0.08f + 0.84f * (layer / (float)(layerCount - 1));
-                for (int i = 0; i < rooms.Count; i++)
+                float h = 1f;
+                foreach (var r in layers[k]) h = Math.Max(h, r.SizeH);
+                rowH[k] = h;
+                totalH += h + DesiredGapTiles;
+            }
+            totalH -= DesiredGapTiles;   // no trailing gap after the last row
+
+            float cursorY = (DungeonLayout.TilesPerAxis - totalH) * 0.5f;   // centre the block vertically
+            foreach (int k in keys)
+            {
+                var rooms = layers[k];
+                float h = rowH[k];
+
+                float totalW = 0f;
+                foreach (var r in rooms) totalW += r.SizeW + DesiredGapTiles;
+                totalW -= DesiredGapTiles;
+
+                float cursorX = (DungeonLayout.TilesPerAxis - totalW) * 0.5f;   // centre the row horizontally
+                foreach (var r in rooms)
                 {
-                    float x = rooms.Count == 1 ? 0.5f : 0.08f + 0.84f * (i / (float)(rooms.Count - 1));
-                    rooms[i].X = x; rooms[i].Y = y;
+                    r.X = Clamp01((cursorX + r.SizeW * 0.5f) / DungeonLayout.TilesPerAxis);
+                    r.Y = Clamp01((cursorY + h * 0.5f) / DungeonLayout.TilesPerAxis);
+                    cursorX += r.SizeW + DesiredGapTiles;
                 }
+                cursorY += h + DesiredGapTiles;
             }
         }
+
+        static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
     }
 }

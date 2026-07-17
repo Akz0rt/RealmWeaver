@@ -5,15 +5,18 @@ namespace WorldGen.Generation
     public static class RoomSizing
     {
         public const int MinSide = 1;
-        public const int MaxSide = 8;
+        // Raised from 8 (spec R7): a 3×3 room on a 48×48 field read as a speck once the render stopped
+        // under-drawing footprints. Bigger rooms + a compacting generator are what make the map read as a
+        // dungeon (big chambers, short passages) rather than dots on a void.
+        public const int MaxSide = 16;
 
         public static (int w, int h) Default(RoomType type)
         {
             switch (type)
             {
-                case RoomType.Entrance: return (4, 3);
-                case RoomType.Boss:     return (5, 5);
-                default:                return (3, 3);   // Normal
+                case RoomType.Entrance: return (7, 5);
+                case RoomType.Boss:     return (10, 10);
+                default:                return (6, 6);   // Normal
             }
         }
 
