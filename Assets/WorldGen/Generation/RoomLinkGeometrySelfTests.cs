@@ -312,6 +312,189 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Room Link Geometry: PASS" : "Self-Test Room Link Geometry: FAIL");
         }
 
+        [ContextMenu("Self-Test: Orthogonal Route")]
+        public void SelfTestOrthogonalRoute()
+        {
+            bool ok = true;
+
+            var East = P(1f, 0f);
+            var West = P(-1f, 0f);
+            var North = P(0f, -1f);   // tile Y grows SOUTH
+
+            // ── EVERY leg is strictly H or V — the headline, asserted on every fixture below ────────────
+            // (local function so no fixture can forget it)
+            void AssertOrthogonal(List<LinkPoint> path, string who)
+            {
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    bool h = Mathf.Abs(path[i].Y - path[i + 1].Y) <= 1e-3f;
+                    bool v = Mathf.Abs(path[i].X - path[i + 1].X) <= 1e-3f;
+                    if (!h && !v)
+                    { Debug.LogError($"FAIL {who}: leg {i} ({path[i].X:F1},{path[i].Y:F1})→({path[i+1].X:F1},{path[i+1].Y:F1}) is DIAGONAL"); ok = false; return; }
+                }
+            }
+
+            // ── A clean L: one bend, and the door's axis is obeyed ─────────────────────────────────
+            {
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(30f, 50f), North, new List<LinkNode>());
+                AssertOrthogonal(path, "clean-L");
+                if (path.Count != 3)
+                { Debug.LogError($"FAIL clean-L: {path.Count} points, want 3 — an unobstructed link needs exactly one bend"); ok = false; }
+                else if (Mathf.Abs(path[1].X - 30f) > 1e-3f || Mathf.Abs(path[1].Y - 30f) > 1e-3f)
+                { Debug.LogError($"FAIL clean-L: the bend is at ({path[1].X:F1},{path[1].Y:F1}), want (30.0,30.0)"); ok = false; }
+            }
+
+            // ── O5: the first leg leaves ALONG the door's normal, for at least StubTiles ───────────
+            // Structural, and it is the trap that catches a Simplify() that merges a doubling-back pair:
+            // that bug makes the first leg run the OPPOSITE way out of the door.
+            {
+                var obstacles = new List<LinkNode> { N(1, 20f, 30f, 6f, 6f), N(2, 2f, 30f, 6f, 6f) };
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(23f, 30f), East, P(5f, 30f), East, obstacles);
+                AssertOrthogonal(path, "stub");
+                float dx = path[1].X - path[0].X, dy = path[1].Y - path[0].Y;
+                if (dx * East.X + dy * East.Y < RoomLinkGeometry.StubTiles - 1e-3f)
+                { Debug.LogError($"FAIL stub: the first leg runs ({dx:F1},{dy:F1}) — it must leave EAST for at least {RoomLinkGeometry.StubTiles} tiles"); ok = false; }
+            }
+
+            // ── O7: a target BEHIND the door's wall must be reached AROUND the room, not across it ──
+            // Room 1's east door, target to the WEST. Under the revoked C3 (own rooms are not obstacles)
+            // the straight shot wins on bends and is drawn straight through room 1. This is the fixture
+            // that rule was invisible to.
+            {
+                var self = N(1, 20f, 30f, 6f, 6f);
+                var far = N(2, 2f, 30f, 6f, 6f);
+                if (!StraightLineHits(P(23f, 30f), P(5f, 30f), self))
+                { Debug.LogError("FAIL O7 setup: the straight door-to-door line misses room 1 — this fixture would prove nothing"); ok = false; }
+
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(23f, 30f), East, P(5f, 30f), East, new List<LinkNode> { self, far });
+                AssertOrthogonal(path, "O7");
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], self))
+                    { Debug.LogError($"FAIL O7: leg {i} runs across the link's OWN room 1 — own rooms must be obstacles"); ok = false; break; }
+            }
+
+            // ── A trivial link is ONE straight leg ─────────────────────────────────────────────────
+            // Two facing doors on one line. Note this does NOT test O8: without the "or END" skip the
+            // straight line is still the winner (see the O8 fixture below for why).
+            {
+                var a = N(1, 10f, 30f, 6f, 6f);
+                var b = N(2, 40f, 30f, 6f, 6f);
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { a, b });
+                AssertOrthogonal(path, "trivial");
+                if (path.Count != 2)
+                { Debug.LogError($"FAIL trivial: {path.Count} points, want 2 — two facing doors on one line need a single straight leg"); ok = false; }
+            }
+
+            // ── O8: "or END" is what lets a CLEAN path be told apart from a CROSSING one ───────────
+            // Every path's last leg ends inside the far room, so without the "or END" half of the skip
+            // EVERY candidate scores at least one dirty leg. That is not a harmless uniform offset: it
+            // makes "crosses nothing" (0) and "crosses the blocker" (1) TIE at 1 — and `bends` then hands
+            // the win to the straight line THROUGH the blocker. So assert the winner is clean AND bent;
+            // asserting cleanliness alone on an unblocked fixture proves nothing.
+            {
+                var a = N(1, 10f, 30f, 6f, 6f);
+                var b = N(2, 40f, 30f, 6f, 6f);
+                var blocker = N(9, 25f, 30f, 8f, 8f);
+                if (!StraightLineHits(P(13f, 30f), P(37f, 30f), blocker))
+                { Debug.LogError("FAIL O8 setup: the blocker does not block — this fixture would prove nothing"); ok = false; }
+
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { a, b, blocker });
+                AssertOrthogonal(path, "O8");
+                if (path.Count < 4)
+                { Debug.LogError($"FAIL O8: {path.Count} points — the router took the straight line through the blocker, so a clean path can no longer be told from a crossing one"); ok = false; }
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], blocker))
+                    { Debug.LogError($"FAIL O8: leg {i} crosses the blocker"); ok = false; break; }
+            }
+
+            // ── O3: the mid-line comes from the BLOCKER'S EDGE, not just the midpoint ──────────────
+            // Both doors sit at Y=30, so every HVH candidate collapses to the straight line and only a VHV
+            // can get around — i.e. the ROWS carry this fixture. The blocker straddles the midpoint row,
+            // so a router offering only the midpoint has no clean candidate at all: drop obstacle edges
+            // from the mid-line set and the best left is the straight line through the blocker.
+            {
+                var blocker = N(9, 25f, 30f, 10f, 30f);   // spans X 20..30, Y 15..45; the midpoint row is 30
+                if (!StraightLineHits(P(13f, 30f), P(37f, 30f), blocker))
+                { Debug.LogError("FAIL O3 setup: the blocker does not block — this fixture would prove nothing"); ok = false; }
+
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { blocker });
+                AssertOrthogonal(path, "O3");
+                if (path.Count < 4)
+                { Debug.LogError($"FAIL O3: {path.Count} points — nothing bent, so the router had no clean candidate to pick"); ok = false; }
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], blocker))
+                    { Debug.LogError($"FAIL O3: leg {i} still crosses the blocker — the mid-line candidates do not include its edges"); ok = false; break; }
+            }
+
+            // ── O9: boxed in — return something finite and still orthogonal, never nothing, never hang ─
+            {
+                var obstacles = new List<LinkNode>();
+                for (int i = 0; i < 6; i++) obstacles.Add(N(20 + i, 20f + i * 4f, 30f, 4f, 80f));   // a wall of rooms
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(5f, 30f), East, P(60f, 30f), West, obstacles);
+                AssertOrthogonal(path, "boxed-in");
+                if (path.Count < 2)
+                { Debug.LogError("FAIL boxed-in: the router returned no path at all"); ok = false; }
+                foreach (var pt in path)
+                    if (float.IsNaN(pt.X) || float.IsNaN(pt.Y) || float.IsInfinity(pt.X) || float.IsInfinity(pt.Y))
+                    { Debug.LogError("FAIL boxed-in: NaN/Inf in the path"); ok = false; break; }
+            }
+
+            // ── Determinism 1: the obstacle LIST's order must not change the answer ────────────────
+            // Re-running identical input proves nothing (deterministic code, identical result); reversing
+            // the list is what tests the id sort in the mid-line generation.
+            {
+                var b1 = N(5, 25f, 24f, 8f, 8f);
+                var b2 = N(6, 25f, 36f, 8f, 8f);
+                var fwd = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { b1, b2 });
+                var rev = RoomLinkGeometry.OrthogonalRoute(
+                    P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { b2, b1 });
+                if (fwd.Count != rev.Count)
+                { Debug.LogError($"FAIL order-independence: {fwd.Count} points vs {rev.Count} from a reordered obstacle list"); ok = false; }
+                else
+                    for (int i = 0; i < fwd.Count; i++)
+                        if (Mathf.Abs(fwd[i].X - rev[i].X) > 1e-6f || Mathf.Abs(fwd[i].Y - rev[i].Y) > 1e-6f)
+                        { Debug.LogError($"FAIL order-independence: point {i} moved when the obstacle list was reversed"); ok = false; break; }
+            }
+
+            // ── Determinism 2: a hair's movement must not flip the chosen candidate ────────────────
+            // The real anti-flicker property: the caller re-routes every frame WHILE A ROOM IS DRAGGED.
+            // A blocker dead-on the path has two equal-length ways round; nudge it 1e-5 either way and the
+            // length compare must still read a tie (the 1e-4 epsilon) and defer to the candidate order.
+            {
+                float[] nudges = { 0f, 1e-5f, -1e-5f };
+                float firstSide = 0f;
+                for (int k = 0; k < nudges.Length; k++)
+                {
+                    var path = RoomLinkGeometry.OrthogonalRoute(
+                        P(13f, 30f), East, P(37f, 30f), West,
+                        new List<LinkNode> { N(9, 25f, 30f + nudges[k], 8f, 8f) });
+
+                    // WHICH SIDE it went is the path's furthest excursion off the door line — NOT path[1],
+                    // which is the stub's turn point and sits at the door's own Y on every candidate.
+                    float side = 0f;
+                    foreach (var pt in path)
+                        if (Mathf.Abs(pt.Y - 30f) > Mathf.Abs(side)) side = pt.Y - 30f;
+
+                    if (Mathf.Abs(side) < 1e-3f)
+                    { Debug.LogError($"FAIL stability setup: nudge {k} left the path on the door line — nothing bent, so no side was chosen"); ok = false; break; }
+
+                    if (k == 0) firstSide = side;
+                    else if (Mathf.Sign(side) != Mathf.Sign(firstSide))
+                    { Debug.LogError($"FAIL stability: nudging the blocker by {nudges[k]} flipped the route to the other side (excursion {firstSide:F2} → {side:F2}) — corridors will flicker while a room is dragged"); ok = false; break; }
+                }
+            }
+
+            Debug.Log(ok ? "Self-Test Orthogonal Route: PASS" : "Self-Test Orthogonal Route: FAIL");
+        }
+
         [ContextMenu("Self-Test: Corridor Detour")]
         public void SelfTestCorridorDetour()
         {

@@ -54,6 +54,18 @@ namespace WorldGen.Generation
         /// a box, never to a hang. TUNABLE.</summary>
         public const int MaxDetourIterations = 8;
 
+        /// <summary>How far a link runs straight out of its door along the wall normal before it may turn,
+        /// in tiles. MUST exceed ClearanceTiles (OrthogonalRoute clamps it): the turn point has to land
+        /// strictly OUTSIDE the box's inflated rect, or that box is exempt from the leg turning there
+        /// (spec O8) and the link may run back across its own room. TUNABLE — the user eyeballs it.</summary>
+        public const float StubTiles = 2f;
+
+        /// <summary>Slop by which the hit test and the containment test shrink a box, so that merely
+        /// TOUCHING its boundary is not a hit. A leg running along an inflated edge already sits at exactly
+        /// the clearance we asked for. Both tests must use the same value or they disagree about a point on
+        /// the boundary.</summary>
+        const float TouchEps = 1e-4f;
+
         enum Wall { North, East, South, West }
 
         // Hoisted: Build advertises per-frame use, and this was allocating twice per node per call.
@@ -372,9 +384,187 @@ namespace WorldGen.Generation
             return (float)Math.Sqrt(dx * dx + dy * dy);
         }
 
+        /// <summary>An orthogonal path from `from` to `to` — every leg strictly horizontal or vertical —
+        /// that keeps out of every box in `obstacles`.
+        ///
+        /// `fromNormal`/`toNormal` are unit wall normals; pass default(LinkPoint) when an end has no wall
+        /// (a fork sits mid-corridor; a provisional target is a box's CENTRE). An end with a normal runs
+        /// straight out along it for `stubTiles` before the path may turn.
+        ///
+        /// Scores a handful of candidates — the plain L, and Zs whose mid-line sits on a nearby box's
+        /// inflated edge — by (dirty legs, bends, length). Going AROUND a box is not a separate pass here;
+        /// it is what picking the right mid-line does (spec O3).
+        ///
+        /// Never returns null and never fails: when every candidate crosses something the least-bad one is
+        /// returned, so a boxed-in layout degrades to a visible artifact the user can fix by dragging a box
+        /// (spec O9). Deterministic in every choice — the caller re-derives geometry every frame, and a
+        /// choice left to float noise or list order would make corridors flicker as boxes move.</summary>
+        public static List<LinkPoint> OrthogonalRoute(
+            LinkPoint from, LinkPoint fromNormal,
+            LinkPoint to, LinkPoint toNormal,
+            IReadOnlyList<LinkNode> obstacles,
+            float clearanceTiles = ClearanceTiles, float stubTiles = StubTiles)
+        {
+            if (obstacles == null) obstacles = System.Array.Empty<LinkNode>();
+
+            // Spec O5. A turn point ON or INSIDE its own box's inflated rect makes that box exempt from the
+            // leg turning there (spec O8), and the link may then run straight back across its own room.
+            float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+
+            var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
+            var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
+
+            // Candidate mid-lines: the midpoint, plus every NEARBY box's inflated edges — the edges are
+            // what make a path skirt a box. Only boxes overlapping the a2..b2 box contribute, which keeps
+            // the candidate set near 16 instead of 4N; scoring below still checks against EVERY box, so
+            // correctness never leans on this filter. Build re-runs every frame during a drag, and drawing
+            // mid-lines from all N boxes costs ~1M slab tests a frame at dungeon scale.
+            float loX = Math.Min(a2.X, b2.X), hiX = Math.Max(a2.X, b2.X);
+            float loY = Math.Min(a2.Y, b2.Y), hiY = Math.Max(a2.Y, b2.Y);
+
+            var nearby = new List<LinkNode>();
+            foreach (var n in obstacles)
+            {
+                float hw = n.W * 0.5f + clearanceTiles, hh = n.H * 0.5f + clearanceTiles;
+                if (n.CX + hw < loX || n.CX - hw > hiX) continue;
+                if (n.CY + hh < loY || n.CY - hh > hiY) continue;
+                nearby.Add(n);
+            }
+            nearby.Sort((p, q) => p.Id.CompareTo(q.Id));   // generation order never depends on list order
+
+            var columns = new List<float> { (a2.X + b2.X) * 0.5f };
+            var rows = new List<float> { (a2.Y + b2.Y) * 0.5f };
+            foreach (var n in nearby)
+            {
+                float hw = n.W * 0.5f + clearanceTiles, hh = n.H * 0.5f + clearanceTiles;
+                AddDistinct(columns, n.CX - hw);
+                AddDistinct(columns, n.CX + hw);
+                AddDistinct(rows, n.CY - hh);
+                AddDistinct(rows, n.CY + hh);
+            }
+
+            var candidates = new List<List<LinkPoint>>();
+            if (Math.Abs(a2.Y - b2.Y) <= TouchEps) candidates.Add(new List<LinkPoint> { a2, b2 });
+            if (Math.Abs(a2.X - b2.X) <= TouchEps) candidates.Add(new List<LinkPoint> { a2, b2 });
+            candidates.Add(new List<LinkPoint> { a2, new LinkPoint { X = b2.X, Y = a2.Y }, b2 });   // HV
+            candidates.Add(new List<LinkPoint> { a2, new LinkPoint { X = a2.X, Y = b2.Y }, b2 });   // VH
+            foreach (float c in columns)
+                candidates.Add(new List<LinkPoint>
+                { a2, new LinkPoint { X = c, Y = a2.Y }, new LinkPoint { X = c, Y = b2.Y }, b2 });  // HVH
+            foreach (float r in rows)
+                candidates.Add(new List<LinkPoint>
+                { a2, new LinkPoint { X = a2.X, Y = r }, new LinkPoint { X = b2.X, Y = r }, b2 });  // VHV
+
+            List<LinkPoint> best = null;
+            int bestDirty = int.MaxValue, bestBends = int.MaxValue;
+            float bestLen = float.MaxValue;
+
+            foreach (var mid in candidates)
+            {
+                var path = new List<LinkPoint>(mid.Count + 2);
+                path.Add(from);
+                path.AddRange(mid);
+                path.Add(to);
+                Simplify(path);
+
+                int dirty = CountDirtyLegs(path, obstacles, clearanceTiles);
+                int bends = path.Count - 2;
+                if (bends < 0) bends = 0;
+                float len = PathLength(path);
+
+                // Strictly better only — so on a tie the EARLIER candidate stands, which is the
+                // "lower candidate index" tie-break. The length epsilon is the anti-flicker guard: a room
+                // moving by a hair must not swap two paths that are the same length.
+                bool better = dirty < bestDirty
+                    || (dirty == bestDirty && bends < bestBends)
+                    || (dirty == bestDirty && bends == bestBends && len < bestLen - 1e-4f);
+                if (better) { best = path; bestDirty = dirty; bestBends = bends; bestLen = len; }
+            }
+
+            return best ?? new List<LinkPoint> { from, to };   // unreachable: HV and VH are always offered
+        }
+
+        static void AddDistinct(List<float> xs, float v)
+        {
+            foreach (float x in xs) if (Math.Abs(x - v) <= TouchEps) return;
+            xs.Add(v);
+        }
+
+        /// <summary>Drop points the path runs STRAIGHT THROUGH, and exact duplicates. A point goes only
+        /// when its two legs are collinear AND point the same way — never when the path doubles back.
+        ///
+        /// The same-direction half is load-bearing, not tidiness, and the failure it prevents is silent.
+        /// Take an east-facing door whose target lies west: the stub runs east, the next leg runs back west
+        /// across the room, and all three points share a Y. Merge them and they become ONE leg starting at
+        /// the door — and a leg starting inside a box is exempt from that box (spec O8), so the leg that
+        /// should have been caught crossing its own room inherits the stub's exemption, scores zero
+        /// crossings, wins on bends, and ships a corridor drawn across its own room. Unmerged, the
+        /// doubling-back leg starts at the stub's end, which spec O5 keeps strictly OUTSIDE the box, so it
+        /// is counted and the candidate loses.</summary>
+        static void Simplify(List<LinkPoint> path)
+        {
+            for (int i = path.Count - 1; i >= 1; i--)
+                if (Math.Abs(path[i].X - path[i - 1].X) <= TouchEps &&
+                    Math.Abs(path[i].Y - path[i - 1].Y) <= TouchEps)
+                    path.RemoveAt(i);
+
+            // Removing one point can make its neighbour removable, so sweep until nothing changes rather
+            // than trusting a single pass to catch every cascade.
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                for (int i = path.Count - 2; i >= 1; i--)
+                {
+                    float ux = path[i].X - path[i - 1].X, uy = path[i].Y - path[i - 1].Y;
+                    float vx = path[i + 1].X - path[i].X, vy = path[i + 1].Y - path[i].Y;
+                    if (Math.Abs(ux * vy - uy * vx) <= TouchEps && ux * vx + uy * vy > 0f)
+                    { path.RemoveAt(i); changed = true; }
+                }
+            }
+        }
+
+        /// <summary>How many LEGS hit at least one box. A leg cutting three boxes counts ONCE — what
+        /// matters is how many legs are dirty, not how many (leg, box) pairs exist; per-pair counting would
+        /// rank one leg through three rooms as worse than three legs through one room each, a judgement we
+        /// do not want to make.
+        ///
+        /// A box containing the leg's START or END is skipped (spec O8). Both halves are needed: every path
+        /// begins at a door on its own box's boundary AND ends at one, and a fork taps a point that is
+        /// frequently another box's door. Without the skip no candidate could ever be clean.</summary>
+        static int CountDirtyLegs(List<LinkPoint> path, IReadOnlyList<LinkNode> obstacles, float clearance)
+        {
+            int dirty = 0;
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                var p = path[i];
+                var q = path[i + 1];
+                for (int o = 0; o < obstacles.Count; o++)
+                {
+                    var n = obstacles[o];
+                    if (PointInInflatedRect(p, n, clearance) || PointInInflatedRect(q, n, clearance)) continue;
+                    if (SegmentHitsInflatedRect(p, q, n, clearance, out _)) { dirty++; break; }
+                }
+            }
+            return dirty;
+        }
+
+        static float PathLength(List<LinkPoint> path)
+        {
+            float sum = 0f;
+            for (int i = 0; i < path.Count - 1; i++) sum += Dist(path[i], path[i + 1]);
+            return sum;
+        }
+
+        /// <summary>Is the point inside the box's inflated rect? Shrunk by the same TouchEps as the hit
+        /// test so the two agree about the boundary. That agreement is load-bearing: a point exactly ON the
+        /// inflated edge — where a stub's turn lands when stub == clearance — reads as OUTSIDE, so the box
+        /// stays a real obstacle for the leg that turns there (spec O5/O7). A door, sitting `clearance`
+        /// deep inside, is still contained, which is what exempts a stub from its own room (spec O8).</summary>
         static bool PointInInflatedRect(LinkPoint p, LinkNode n, float clearance)
         {
-            float hw = n.W * 0.5f + clearance, hh = n.H * 0.5f + clearance;
+            float hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
+            float hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
             return p.X >= n.CX - hw && p.X <= n.CX + hw && p.Y >= n.CY - hh && p.Y <= n.CY + hh;
         }
 
@@ -390,7 +580,6 @@ namespace WorldGen.Generation
         /// TouchEps dissolves that at the root.</summary>
         static bool SegmentHitsInflatedRect(LinkPoint p, LinkPoint q, LinkNode n, float clearance, out float tEntry)
         {
-            const float TouchEps = 1e-4f;
             tEntry = 0f;
             float hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
             float hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
