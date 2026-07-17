@@ -27,7 +27,7 @@ namespace WorldGen.Rendering
 
         DungeonViewController viewController;
         DungeonFlatRenderer flatRenderer;
-        // DungeonIsoRenderer isoRenderer;   // wired in Task 4
+        // DungeonIsoRenderer isoRenderer;   // deferred — not yet built
         DungeonInspectorPanel inspectorPanel;
         Image linkToggleImg;
         int selectedRoomId;   // mirrors DungeonViewController.SelectedRoomId; drives inspectorPanel.ShowRoom
@@ -197,9 +197,6 @@ namespace WorldGen.Rendering
             levelTabsRow = tabsGO.transform;
         }
 
-
-
-
         /// <summary>Toolbar row below the top strip: add/link/delete controls for the graph canvas.
         /// «Связать» toggles DungeonViewController.LinkMode and highlights (AccentSoft) while active.</summary>
         void BuildToolbar(Transform parent)
@@ -264,9 +261,10 @@ namespace WorldGen.Rendering
             var mapBg = mapGO.AddComponent<Image>();
             ThemeService.Tag(mapBg, ThemeRole.Panel2); mapBg.raycastTarget = true;
 
-            // One interaction host stretched over MapArea; renderers are its children and are swapped by the
-            // Граф/Изо toggle. The controller carries a full-area invisible hit-plate (it IS the raycast target)
-            // and hit-tests in TILE space, so neither renderer needs its own input handling.
+            // One interaction host stretched over MapArea; the renderer is its child. The controller carries
+            // a full-area invisible hit-plate (it IS the raycast target) and hit-tests in TILE space, so the
+            // renderer needs no input handling of its own. A second (isometric) renderer is deferred — it
+            // would plug into this same host through SetRenderer, same as flatRenderer below.
             var viewGO = new GameObject("DungeonView", typeof(RectTransform));
             viewGO.transform.SetParent(MapArea, false);
             Stretch(viewGO.GetComponent<RectTransform>());
@@ -283,7 +281,7 @@ namespace WorldGen.Rendering
             Stretch(flatGO.GetComponent<RectTransform>());
             flatRenderer = flatGO.AddComponent<DungeonFlatRenderer>();
 
-            viewController.SetRenderer(flatRenderer);   // Граф is the default mode
+            viewController.SetRenderer(flatRenderer);   // the only renderer today; the seam a deferred iso renderer plugs into
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);

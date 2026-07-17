@@ -92,6 +92,10 @@ namespace WorldGen.Rendering
             {
                 SelectedRoomId = 0;
                 pendingLinkId = 0;
+                // Same stale-id-across-bind hazard as SelectedRoomId: a leftover anchor from the previous
+                // level may coincidentally match a room here, making this level's first cascade depend on
+                // what was dragged before the switch. Fall back to the leash's own deterministic root.
+                lastAnchorRoomId = 0;
                 // A stale cascade from the PREVIOUS level must not keep running against the new one
                 // (wrong ids, wrong targets) — cancel outright on a genuine level switch.
                 cascading = false;

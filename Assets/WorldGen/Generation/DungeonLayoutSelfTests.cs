@@ -175,16 +175,20 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL loop edge {c.RoomA}-{c.RoomB}: gap {g:F1} never settled"); ok = false; }
             }
 
-            // A DISCONNECTED COMPONENT must never be pulled — this is the int.MaxValue branch. (An orphan
-            // room in zero corridors cannot test it: the leash iterates corridors, so it is unreachable by
-            // construction rather than by the distance logic.)
+            // A DISCONNECTED COMPONENT must never be pulled — the int.MaxValue branch. The pair is placed
+            // FAR APART on purpose: their corridor must be over-leash, or the leash would skip it at the
+            // slack check and this would pass without ever reaching the reachability logic it claims to
+            // test. (That is what made both this test's predecessors tautological.)
             var split = MakeLeashCase();
-            split.Rooms.Add(new Room { Id = 10, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
-            split.Rooms.Add(new Room { Id = 11, X = 0.95f, Y = 0.95f, SizeW = 6, SizeH = 6 });
-            split.Corridors.Add(new Corridor { RoomA = 10, RoomB = 11 });   // linked to each other, not to the anchor
+            split.Rooms.Add(new Room { Id = 10, X = 0.10f, Y = 0.90f, SizeW = 6, SizeH = 6 });
+            split.Rooms.Add(new Room { Id = 11, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
+            split.Corridors.Add(new Corridor { RoomA = 10, RoomB = 11 });   // linked to each other, NOT to the anchor
+            float splitGapBefore = LeashGap(split.GetRoom(10), split.GetRoom(11));
+            if (splitGapBefore <= DungeonLayout.MaxCorridorTiles)
+            { Debug.LogError($"FAIL setup: the disconnected pair is only {splitGapBefore:F1} tiles apart — must exceed {DungeonLayout.MaxCorridorTiles} or this test proves nothing"); ok = false; }
             DungeonLayout.EnforceCorridorLeash(split, 1);
-            if (Mathf.Abs(split.GetRoom(10).X - 0.90f) > 1e-5f || Mathf.Abs(split.GetRoom(11).X - 0.95f) > 1e-5f)
-            { Debug.LogError("FAIL: a disconnected component was pulled"); ok = false; }
+            if (Mathf.Abs(split.GetRoom(10).X - 0.10f) > 1e-5f || Mathf.Abs(split.GetRoom(11).X - 0.90f) > 1e-5f)
+            { Debug.LogError($"FAIL: a disconnected component was pulled ({split.GetRoom(10).X:F3}, {split.GetRoom(11).X:F3})"); ok = false; }
 
             Debug.Log(ok ? "PASS: Corridor Leash" : "FAIL: Corridor Leash");
         }

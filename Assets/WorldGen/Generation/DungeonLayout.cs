@@ -17,9 +17,10 @@ namespace WorldGen.Generation
         public const int TilesPerAxis = 128;
 
         /// <summary>Longest a corridor may stretch, edge-to-edge in tiles, before its rooms start pulling
-        /// each other along (EnforceCorridorLeash). Comfortably above the generator's own worst case (≈9,
-        /// see the compaction self-test) so a freshly generated floor is never already taut. TUNABLE —
-        /// the user eyeballs the feel, as with CascadeSmoothTime.</summary>
+        /// each other along (EnforceCorridorLeash). DungeonGraphGenerator.Generate runs the leash itself
+        /// as its last step, so a freshly generated floor satisfies this BY CONSTRUCTION and the DM's
+        /// first drag never snaps it together. TUNABLE — the user eyeballs the feel, as with
+        /// CascadeSmoothTime.</summary>
         public const float MaxCorridorTiles = 12f;
 
         static float ToTile(float norm) => norm * TilesPerAxis;
