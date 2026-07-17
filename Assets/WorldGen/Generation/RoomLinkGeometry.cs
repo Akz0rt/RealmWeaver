@@ -178,6 +178,12 @@ namespace WorldGen.Generation
             // that end earned one. It only falls back to the far node's CENTRE when the far end is itself
             // a fork that this pass has not reached — unavoidable without a fixpoint, rare, and the tap
             // point stays plausible because the fallback end is still in the right direction.
+            //
+            // `forkOrder` records the edge index of each fork in the order pass B RESOLVES it — nearest
+            // target first, per wall. The CLEAN emit must route forks in THIS order, not short-first: a
+            // recursive fork (a 4th corridor tapping a 3rd's branch) taps geometry that only exists once the
+            // branch it taps is drawn, so the branch must be emitted first.
+            var forkOrder = new List<int>();
             foreach (int nodeId in nodeIds)
             {
                 foreach (Wall wall in AllWalls)
@@ -216,6 +222,7 @@ namespace WorldGen.Generation
                         var fork = NearestPointOnBuilt(built, target);
                         g.Forks.Add(fork);
                         endpoint[(at.EdgeIndex, nodeId)] = fork;
+                        forkOrder.Add(at.EdgeIndex);   // recursion-safe order for the CLEAN emit
                         built.Add((OrthogonalRoute(
                             fork, default,                                     // a fork has no wall: no normal
                             target, NormalOf(wallOf, at.EdgeIndex, at.OtherId),
@@ -273,23 +280,25 @@ namespace WorldGen.Generation
             bool IsFork(int edge, int node) => !wallOf.ContainsKey((edge, node));
 
             g.Forks.Clear();   // pass B's cheap-trunk forks are superseded by the re-tapped ones below
-            var doorEdges = new List<int>();
-            var forkEdges = new List<int>();
-            foreach (int i in order)
-                (IsFork(i, edges[i].A) || IsFork(i, edges[i].B) ? forkEdges : doorEdges).Add(i);
 
-            foreach (int i in doorEdges)
+            // Doors first (short-first, for corridor avoidance), so every trunk is in `occupancy` before a
+            // fork re-taps onto it.
+            foreach (int i in order)
             {
+                if (IsFork(i, edges[i].A) || IsFork(i, edges[i].B)) continue;   // a fork edge — routed below
                 var e = edges[i];
                 Emit(i, AStarRoute(endpoint[(i, e.A)], NormalOf(wallOf, i, e.A),
                                    endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), nodes, occupancy));
             }
 
-            // Forks re-tap the NEAREST drawn geometry. Short-first order means a recursive fork (a 4th
-            // corridor tapping a 3rd's branch) is usually processed after the branch it wants — good enough;
-            // worst case it taps a different-but-real corridor, which still connects (never a void ray).
-            foreach (int i in forkEdges)
+            // Then forks, in pass B's RESOLUTION order (not short-first): a recursive fork taps a shallower
+            // fork's branch, so that branch must already be in `occupancy`. Each fork end re-taps onto the
+            // nearest drawn segment so it connects instead of dangling in the void (spec A8).
+            var orderSet = new HashSet<int>(order);
+            var routedForks = new HashSet<int>();
+            foreach (int i in forkOrder)
             {
+                if (!orderSet.Contains(i) || !routedForks.Add(i)) continue;   // dangling, or already routed
                 var e = edges[i];
                 var pa = endpoint[(i, e.A)];
                 var pb = endpoint[(i, e.B)];
@@ -353,8 +362,9 @@ namespace WorldGen.Generation
             if (obstacles == null) obstacles = System.Array.Empty<LinkNode>();
 
             // Spec O5. A turn point ON or INSIDE its own box's inflated rect makes that box exempt from the
-            // leg turning there (spec O8), and the link may then run straight back across its own room.
-            float stub = stubTiles;
+            // leg turning there (spec O8), and the link may then run straight back across its own room — so
+            // the stub MUST clear the clearance ring. Clamp it up when the caller passes less.
+            float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
 
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
