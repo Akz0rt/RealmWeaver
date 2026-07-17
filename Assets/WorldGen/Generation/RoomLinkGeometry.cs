@@ -172,10 +172,12 @@ namespace WorldGen.Generation
                         return c != 0 ? c : p.OtherId.CompareTo(q.OtherId);
                     });
 
-                    // Place each door at its target's PROJECTION onto the wall — the point that minimises
-                    // the corridor's length (a straight perpendicular when the target sits off the wall),
-                    // kept `DoorMargin` off the corners. Two doors are pushed to at least `DoorSpacing`
-                    // apart so their corridors don't merge, staying centred on their targets.
+                    // Place each door to make the SHORTEST, straightest corridor: when this wall and the
+                    // target's facing wall overlap on the axis, both ends put their door at the centre of
+                    // that overlap (a symmetric choice — both rooms compute the same point — so the corridor
+                    // is one straight leg, not a zig-zag between two offset doors). When they don't overlap,
+                    // project the target's centre. Then slide the door clear of any room packed against this
+                    // wall (ClearDoorPos), and keep two doors `DoorSpacing` apart. Corners: `DoorMargin`.
                     float hw = node.W * 0.5f, hh = node.H * 0.5f;
                     bool horiz = wall == Wall.North || wall == Wall.South;
                     float lo = (horiz ? node.CX - hw : node.CY - hh) + DoorMargin;
@@ -185,8 +187,10 @@ namespace WorldGen.Generation
                     var pos = new float[doorCount];
                     for (int s = 0; s < doorCount; s++)
                     {
-                        float t = doorHolders[s].AlongAxis;
-                        pos[s] = t < lo ? lo : (t > hi ? hi : t);
+                        var target = byId[doorHolders[s].OtherId];
+                        float desired = DesiredDoorAlong(node, wall, target);
+                        desired = desired < lo ? lo : (desired > hi ? hi : desired);
+                        pos[s] = ClearDoorPos(node, wall, desired, lo, hi, nodes, node.Id, target.Id, ClearanceTiles);
                     }
                     if (doorCount == 2 && pos[1] - pos[0] < DoorSpacing)
                     {
@@ -859,6 +863,82 @@ namespace WorldGen.Generation
             float ry = Math.Abs(dy) / hh;
             if (rx >= ry) return dx >= 0f ? Wall.East : Wall.West;
             return dy >= 0f ? Wall.South : Wall.North;
+        }
+
+        /// <summary>The along-wall position a door should aim for toward `target`: the CENTRE of the overlap
+        /// between this wall and the target's facing wall on the shared axis when they overlap (both rooms
+        /// compute the same value, so the corridor comes out one straight leg instead of a zig-zag between
+        /// two offset doors), else the target's centre projected onto this wall. Minimises corridor
+        /// length.</summary>
+        static float DesiredDoorAlong(LinkNode n, Wall wall, LinkNode target)
+        {
+            bool horiz = wall == Wall.North || wall == Wall.South;   // shared axis = X (N/S) or Y (E/W)
+            float nMin, nMax, tMin, tMax, tCtr;
+            if (horiz)
+            {
+                nMin = n.CX - n.W * 0.5f; nMax = n.CX + n.W * 0.5f;
+                tMin = target.CX - target.W * 0.5f; tMax = target.CX + target.W * 0.5f; tCtr = target.CX;
+            }
+            else
+            {
+                nMin = n.CY - n.H * 0.5f; nMax = n.CY + n.H * 0.5f;
+                tMin = target.CY - target.H * 0.5f; tMax = target.CY + target.H * 0.5f; tCtr = target.CY;
+            }
+            float ovLo = Math.Max(nMin, tMin), ovHi = Math.Min(nMax, tMax);
+            if (ovLo <= ovHi) return (ovLo + ovHi) * 0.5f;             // walls overlap → shared centre, straight
+            return tCtr < nMin ? nMin : (tCtr > nMax ? nMax : tCtr);   // no overlap → project target centre
+        }
+
+        /// <summary>Slide a door along its wall to the position nearest `desired` that is clear of every
+        /// OTHER room's clearance zone — so a room packed right against this wall does not trap the door
+        /// inside its footprint, forcing the corridor to hug the neighbour instead of leaving with a gap.
+        /// `selfId` (this room) and `targetId` (the corridor's destination) are exempt: the door is ON its
+        /// own wall, and it is allowed to approach the room it connects. If the whole wall is blocked,
+        /// returns `desired` — the zero-clearance re-route then handles it as a last resort.</summary>
+        static float ClearDoorPos(LinkNode n, Wall wall, float desired, float lo, float hi,
+            IReadOnlyList<LinkNode> rooms, int selfId, int targetId, float clearance)
+        {
+            bool horiz = wall == Wall.North || wall == Wall.South;   // door slides along X (N/S) or Y (E/W)
+            float fixedX = wall == Wall.West ? n.CX - n.W * 0.5f : n.CX + n.W * 0.5f;   // used for E/W
+            float fixedY = wall == Wall.North ? n.CY - n.H * 0.5f : n.CY + n.H * 0.5f;  // used for N/S
+
+            var blocked = new List<(float a, float b)>();
+            foreach (var r in rooms)
+            {
+                if (r.Id == selfId || r.Id == targetId) continue;
+                float rhw = r.W * 0.5f + clearance, rhh = r.H * 0.5f + clearance;
+                if (horiz)
+                {
+                    if (fixedY > r.CY - rhh && fixedY < r.CY + rhh) blocked.Add((r.CX - rhw, r.CX + rhw));
+                }
+                else
+                {
+                    if (fixedX > r.CX - rhw && fixedX < r.CX + rhw) blocked.Add((r.CY - rhh, r.CY + rhh));
+                }
+            }
+            return NearestFree(desired, lo, hi, blocked);
+        }
+
+        /// <summary>Nearest value to `desired` in [lo,hi] that lies in none of the `blocked` open intervals.
+        /// Candidates: `desired` itself, and just outside each blocked interval. Returns `desired` (clamped)
+        /// when every candidate is still blocked.</summary>
+        static float NearestFree(float desired, float lo, float hi, List<(float a, float b)> blocked)
+        {
+            bool Free(float x) { foreach (var b in blocked) if (x > b.a && x < b.b) return false; return true; }
+            float clamped = desired < lo ? lo : (desired > hi ? hi : desired);
+            if (Free(clamped)) return clamped;
+
+            float best = clamped, bestD = float.MaxValue;
+            bool found = false;
+            foreach (var b in blocked)
+                foreach (float cand in new[] { b.a - 1e-3f, b.b + 1e-3f })
+                {
+                    float c = cand < lo ? lo : (cand > hi ? hi : cand);
+                    if (!Free(c)) continue;
+                    float d = Math.Abs(c - desired);
+                    if (d < bestD) { bestD = d; best = c; found = true; }
+                }
+            return found ? best : clamped;
         }
 
         /// <summary>A door on `wall` at position `along` on that wall's axis (X for a North/South wall,
