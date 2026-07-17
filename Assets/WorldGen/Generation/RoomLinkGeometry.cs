@@ -241,23 +241,58 @@ namespace WorldGen.Generation
                 });
 
             var occupancy = new List<(LinkPoint a, LinkPoint b)>();
+
+            void Emit(int edge, List<LinkPoint> path)
+            {
+                for (int k = 0; k < path.Count - 1; k++)
+                {
+                    g.Segments.Add(new LinkSegment { A = path[k], B = path[k + 1], EdgeIndex = edge });
+                    if (mode == RoutingMode.Clean) occupancy.Add((path[k], path[k + 1]));
+                }
+            }
+
+            if (mode == RoutingMode.Fast)
+            {
+                // Drag-time: the cheap L/Z scorer, one pass, corridor-blind. Pass B's fork points already
+                // lie on the FAST trunks (both use OrthogonalRoute), so nothing re-taps.
+                foreach (int i in order)
+                {
+                    var e = edges[i];
+                    Emit(i, OrthogonalRoute(endpoint[(i, e.A)], NormalOf(wallOf, i, e.A),
+                                            endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), nodes));
+                }
+                return g;
+            }
+
+            // CLEAN (spec A8). A* draws a trunk on a DIFFERENT path than pass B's cheap OrthogonalRoute
+            // trunk, so a fork point tapped on the cheap trunk floats off the drawn geometry — the corridor
+            // dangles in the void. Route the DOOR corridors first (both ends are room doors, always on a
+            // wall, so they never dangle), accumulating occupancy; then route the FORK corridors, RE-TAPPING
+            // each fork end onto the nearest point of the geometry actually drawn so it connects. The
+            // re-tapped points, not pass B's, are the real junctions.
+            bool IsFork(int edge, int node) => !wallOf.ContainsKey((edge, node));
+
+            g.Forks.Clear();   // pass B's cheap-trunk forks are superseded by the re-tapped ones below
+            var doorEdges = new List<int>();
+            var forkEdges = new List<int>();
             foreach (int i in order)
+                (IsFork(i, edges[i].A) || IsFork(i, edges[i].B) ? forkEdges : doorEdges).Add(i);
+
+            foreach (int i in doorEdges)
+            {
+                var e = edges[i];
+                Emit(i, AStarRoute(endpoint[(i, e.A)], NormalOf(wallOf, i, e.A),
+                                   endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), nodes, occupancy));
+            }
+
+            foreach (int i in forkEdges)
             {
                 var e = edges[i];
                 var pa = endpoint[(i, e.A)];
                 var pb = endpoint[(i, e.B)];
-                var na = NormalOf(wallOf, i, e.A);
-                var nb = NormalOf(wallOf, i, e.B);
-
-                var path = mode == RoutingMode.Clean
-                    ? AStarRoute(pa, na, pb, nb, nodes, occupancy)
-                    : OrthogonalRoute(pa, na, pb, nb, nodes);
-
-                for (int k = 0; k < path.Count - 1; k++)
-                {
-                    g.Segments.Add(new LinkSegment { A = path[k], B = path[k + 1], EdgeIndex = i });
-                    if (mode == RoutingMode.Clean) occupancy.Add((path[k], path[k + 1]));
-                }
+                if (IsFork(i, e.A)) { pa = NearestOnOccupancy(pa, occupancy); g.Forks.Add(pa); }
+                if (IsFork(i, e.B)) { pb = NearestOnOccupancy(pb, occupancy); g.Forks.Add(pb); }
+                Emit(i, AStarRoute(pa, NormalOf(wallOf, i, e.A), pb, NormalOf(wallOf, i, e.B), nodes, occupancy));
             }
 
             return g;
@@ -807,6 +842,23 @@ namespace WorldGen.Generation
             float t = ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2;
             t = t < 0f ? 0f : (t > 1f ? 1f : t);
             return new LinkPoint { X = a.X + t * dx, Y = a.Y + t * dy };
+        }
+
+        /// <summary>Nearest point to `p` on any segment of the geometry drawn so far — used to RE-TAP a
+        /// fork onto the A* trunk that was actually drawn (spec A8). A fork's pass-B point sat on the CHEAP
+        /// OrthogonalRoute trunk; A* draws the trunk elsewhere, so without this the fork dangles in the
+        /// void. Returns `p` unchanged when nothing is built yet (first link on a wall never forks).</summary>
+        static LinkPoint NearestOnOccupancy(LinkPoint p, List<(LinkPoint a, LinkPoint b)> built)
+        {
+            var best = p;
+            float bestD2 = float.MaxValue;
+            foreach (var s in built)
+            {
+                var c = ClosestOnSegment(s.a, s.b, p);
+                float dx = c.X - p.X, dy = c.Y - p.Y, d2 = dx * dx + dy * dy;
+                if (d2 < bestD2) { bestD2 = d2; best = c; }
+            }
+            return best;
         }
     }
 }
