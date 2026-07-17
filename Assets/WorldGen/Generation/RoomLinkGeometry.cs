@@ -459,13 +459,11 @@ namespace WorldGen.Generation
         /// <summary>Segment × inflated-AABB by the slab method. `tEntry` is the entry parameter along
         /// p→q, clamped to [0,1]. False when the segment misses the box or only TOUCHES its boundary.
         ///
-        /// The boundary-touch exclusion is load-bearing, not a nicety. Every bend this module inserts
-        /// lands ON a blocker's inflated corner, so the new leg runs exactly along that blocker's inflated
-        /// edge — at precisely the clearance we asked for, needing no further detour. Two rooms of the
-        /// same height side by side (ordinary, not exotic) would otherwise make the SECOND report a
-        /// spurious hit against a leg collinear with its edge; and a collinear leg puts all four corners
-        /// on one side of itself, which ChooseDetourChain cannot split. Shrinking the test rect by
-        /// TouchEps dissolves that at the root.</summary>
+        /// The boundary-touch exclusion (the TouchEps shrink) is load-bearing, not a nicety. An orthogonal
+        /// leg routed to skirt a box runs exactly along that box's inflated edge, at precisely the
+        /// clearance we asked for; without the shrink it would report itself as a crossing and no candidate
+        /// path could ever be clean. Shares the shrunk rect with PointInInflatedRect via ShrunkHalfExtents
+        /// so the hit test and the containment test agree about a point on the boundary.</summary>
         static bool SegmentHitsInflatedRect(LinkPoint p, LinkPoint q, LinkNode n, float clearance, out float tEntry)
         {
             tEntry = 0f;
