@@ -11,7 +11,7 @@ namespace WorldGen.Rendering
     /// of DungeonEditorScreen.Sidebar; owns a single vertical ScrollRect (mirrors the pre-Task-1
     /// DungeonEditorScreen.BuildKeySidebar recipe: ScrollRect + Viewport(RectMask2D) + Content
     /// (VerticalLayoutGroup + ContentSizeFitter)) built directly on this component's own transform,
-    /// which the host stretches to fill Sidebar — the same self-contained composition DungeonGraphView
+    /// which the host stretches to fill Sidebar — the same self-contained composition DungeonViewController
     /// uses for MapArea.
     ///
     /// ShowRoom/ShowValidation both funnel into one Rebuild() that destroys and reconstructs the whole
@@ -24,7 +24,7 @@ namespace WorldGen.Rendering
     /// «Отмена»/«Удалить» confirm and a single-«Ок» info dialog — neither reads correctly for a neutral
     /// "change type?" prompt («Удалить» would misleadingly suggest deletion). DungeonOps.SetRoomType is
     /// called directly; it auto-demotes the prior holder to Normal, and the demoted room's card recolors
-    /// immediately on the next graphView.Refresh() (via OnChanged), which is clear feedback on its own.
+    /// immediately on the next viewController.Refresh() (via OnChanged), which is clear feedback on its own.
     /// </summary>
     public class DungeonInspectorPanel : MonoBehaviour
     {
@@ -123,7 +123,7 @@ namespace WorldGen.Rendering
             // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
             // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
             // stepper clamps into RoomSizing's 1..8 range and fires OnChanged, which runs
-            // RevalidateAndRefresh → graphView.BeginCascade(), so the card resizes and the cascade
+            // RevalidateAndRefresh → viewController.BeginCascade(), so the card resizes and the cascade
             // animates the whole floor to its re-settled positions.
             var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
             var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
@@ -299,7 +299,7 @@ namespace WorldGen.Rendering
                 }
         }
 
-        // ── Small builder primitives (self-contained, mirrors DungeonEditorScreen/DungeonGraphView) ──
+        // ── Small builder primitives (self-contained, mirrors DungeonEditorScreen/DungeonViewController) ──
 
         void BuildScroll()
         {

@@ -6,9 +6,9 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>Full-screen dungeon editor (mutually-exclusive AppScreen.Dungeon, opened from the POI
-    /// editor). Hosts the draggable room-graph canvas (DungeonGraphView, Task 4) in MapArea, with a
-    /// toolbar (+ Комната / Связать / Удалить) below the top strip; the room inspector + validation
-    /// panel (DungeonInspectorPanel, Task 5) is hosted in Sidebar. Built imperatively at Awake,
+    /// editor). Hosts the draggable room-graph canvas (DungeonViewController + DungeonFlatRenderer) in
+    /// MapArea, with a toolbar (+ Комната / Связать / Удалить) below the top strip; the room inspector +
+    /// validation panel (DungeonInspectorPanel, Task 5) is hosted in Sidebar. Built imperatively at Awake,
     /// own-canvas pattern (mirrors PoiEditorScreen).</summary>
     public class DungeonEditorScreen : MonoBehaviour
     {
@@ -25,18 +25,13 @@ namespace WorldGen.Rendering
         Transform levelTabsRow;
         Text titleLabel;
 
-        DungeonGraphView graphView;
+        DungeonViewController viewController;
+        DungeonFlatRenderer flatRenderer;
+        // DungeonIsoRenderer isoRenderer;   // wired in Task 4
         DungeonInspectorPanel inspectorPanel;
         Image linkToggleImg;
-        int selectedRoomId;   // mirrors DungeonGraphView.SelectedRoomId; drives inspectorPanel.ShowRoom
+        int selectedRoomId;   // mirrors DungeonViewController.SelectedRoomId; drives inspectorPanel.ShowRoom
 
-        // Граф/Изо toggle (Task 5). IsoArea mirrors MapArea's bounds exactly; only one of
-        // MapArea/IsoArea is active at a time. toolbarGO/bodyRect are stored so Изо can hide the
-        // edit toolbar (view-only) and reclaim its vertical space.
-        public RectTransform IsoArea { get; private set; }
-        DungeonIsoView isoView;
-        GameObject toolbarGO;
-        RectTransform bodyRect;
         Image graphModeImg, isoModeImg;
         bool showIso;   // false = Граф (default, editable graph); true = Изо (view-only iso render)
 
@@ -70,7 +65,7 @@ namespace WorldGen.Rendering
         {
             if (current == null || current.Levels.Count == 0) return;
             CurrentLevelIndex = Mathf.Clamp(index, 0, current.Levels.Count - 1);
-            // DungeonGraphView.Bind resets ITS OWN SelectedRoomId to 0 on a level switch (different
+            // DungeonViewController.Bind resets ITS OWN SelectedRoomId to 0 on a level switch (different
             // bound DungeonLevel) but doesn't fire OnRoomSelected to say so — reset our mirror here too,
             // otherwise a stale id could coincidentally match an unrelated room on the new level and the
             // inspector would show the wrong room while the canvas shows no selection.
@@ -115,34 +110,28 @@ namespace WorldGen.Rendering
         void RefreshBody()
         {
             if (current == null) return;
-            if (graphView != null) graphView.Bind(current, CurrentLevelIndex, font);
+            if (viewController != null) viewController.Bind(current, CurrentLevelIndex, font);
             if (inspectorPanel != null) inspectorPanel.Bind(current, () => CurrentLevelIndex, font);
-            // Only touch isoView while it's actually the visible mode — SetIsoMode(true) Binds it fresh
-            // the moment Изо is shown, so there's no staleness risk in skipping this while hidden.
-            if (isoView != null && showIso) isoView.Bind(current, CurrentLevelIndex, font);
         }
 
         // Re-runs validation and re-renders the graph + inspector in place (no rebind — the bound
         // DungeonLevel object is unchanged, only its Rooms/Corridors/Secrets contents mutated via
-        // DungeonOps). Wired as DungeonGraphView.OnGraphMutated (fires on add/delete/link AND card
+        // DungeonOps). Wired as DungeonViewController.OnGraphMutated (fires on add/delete/link AND card
         // drag-end) and DungeonInspectorPanel.OnChanged (fires on any inspector edit, including the size
         // steppers), and called once at the end of SetLevel so a level switch also gets a fresh
-        // validation pass. This is the SINGLE path that runs the cascade: graphView.BeginCascade() owns
-        // the DungeonLayout.Separate call AND the (animated-or-skipped) redraw — it mutates Room.X/Y and
-        // fires no callbacks of its own, so calling it here cannot loop back into RevalidateAndRefresh,
+        // validation pass. This is the SINGLE path that runs the cascade: viewController.BeginCascade()
+        // owns the DungeonLayout.Separate call AND the (animated-or-skipped) redraw — it mutates Room.X/Y
+        // and fires no callbacks of its own, so calling it here cannot loop back into RevalidateAndRefresh,
         // and both drag-release and a size-stepper edit converge on the same settle-then-redraw sequence.
         // Nothing else may call DungeonLayout.Separate directly — that would double-separate.
         void RevalidateAndRefresh()
         {
-            if (graphView != null) graphView.BeginCascade();
+            if (viewController != null) viewController.BeginCascade();
             if (inspectorPanel != null)
             {
                 inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
                 inspectorPanel.ShowRoom(selectedRoomId);
             }
-            // The sidebar inspector stays visible (and editable) while Изо is showing, so an edit made
-            // there must repaint the iso mesh immediately too — not just the (hidden) graph canvas.
-            if (isoView != null && showIso) isoView.Refresh();
         }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
@@ -215,8 +204,8 @@ namespace WorldGen.Rendering
 
         /// <summary>Граф/Изо toggle, anchored to the top strip's right edge (mirrors «← Назад» anchored to
         /// the left) so it never collides with the level-tabs row regardless of how many tabs it holds.
-        /// Граф (editable room graph) is the default; Изо (view-only iso render) hides the edit toolbar
-        /// and reclaims its vertical space — see SetIsoMode.</summary>
+        /// Граф (editable room graph) is the default; BOTH modes are editable (spec R4) — only the active
+        /// renderer swaps, see SetIsoMode.</summary>
         void BuildModeToggle(Transform parent)
         {
             var group = new GameObject("ModeToggle", typeof(RectTransform));
@@ -239,19 +228,13 @@ namespace WorldGen.Rendering
             RefreshModeToggleHighlight();
         }
 
-        /// <summary>Switches between the editable Граф canvas and the view-only Изо render. Hides/shows
-        /// MapArea+Toolbar vs IsoArea and resizes Body's top offset to reclaim the toolbar's strip when
-        /// it's hidden (Изо is meant to read as a full-bleed map, not leave a blank bar where the toolbar
-        /// was). Binds isoView fresh on every switch to Изо — cheap, and guarantees it reflects any edits
-        /// made while Граф was showing.</summary>
+        /// <summary>Switches between the editable Граф and Изо renderers. BOTH are editable (spec R4), so the
+        /// toolbar now stays visible in Изо — only the renderer swaps. Body's top offset no longer changes.</summary>
         void SetIsoMode(bool iso)
         {
             showIso = iso;
-            if (MapArea != null) MapArea.gameObject.SetActive(!iso);
-            if (toolbarGO != null) toolbarGO.SetActive(!iso);
-            if (IsoArea != null) IsoArea.gameObject.SetActive(iso);
-            if (bodyRect != null) bodyRect.offsetMax = new Vector2(0f, -(StripHeight + (iso ? 0f : ToolbarHeight)));
-            if (iso && isoView != null) isoView.Bind(current, CurrentLevelIndex, font);
+            // Task 4 replaces this with: viewController.SetRenderer(iso ? (IDungeonRenderer)isoRenderer : flatRenderer);
+            viewController?.SetRenderer(flatRenderer);
             RefreshModeToggleHighlight();
         }
 
@@ -262,7 +245,7 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Toolbar row below the top strip: add/link/delete controls for the graph canvas.
-        /// «Связать» toggles DungeonGraphView.LinkMode and highlights (AccentSoft) while active.</summary>
+        /// «Связать» toggles DungeonViewController.LinkMode and highlights (AccentSoft) while active.</summary>
         void BuildToolbar(Transform parent)
         {
             var bar = new GameObject("Toolbar", typeof(RectTransform));
@@ -280,18 +263,16 @@ namespace WorldGen.Rendering
             hlg.childControlHeight = true; hlg.childForceExpandHeight = true;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
-            AddToolbarButton(bar.transform, "+ Комната", 110f, ThemeRole.Elev, () => graphView?.AddRoomAtCenter());
+            AddToolbarButton(bar.transform, "+ Комната", 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
             linkToggleImg = AddToolbarButton(bar.transform, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
-            AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => graphView?.DeleteSelected());
-
-            toolbarGO = bar;   // hidden while Изо (view-only) is shown — see SetIsoMode
+            AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => viewController?.DeleteSelected());
         }
 
         void ToggleLinkMode()
         {
-            if (graphView == null) return;
-            graphView.SetLinkMode(!graphView.LinkMode);
-            if (linkToggleImg != null) ThemeService.Tag(linkToggleImg, graphView.LinkMode ? ThemeRole.AccentSoft : ThemeRole.Elev);
+            if (viewController == null) return;
+            viewController.SetLinkMode(!viewController.LinkMode);
+            if (linkToggleImg != null) ThemeService.Tag(linkToggleImg, viewController.LinkMode ? ThemeRole.AccentSoft : ThemeRole.Elev);
         }
 
         Image AddToolbarButton(Transform parent, string label, float width, ThemeRole bgRole, System.Action onClick)
@@ -318,7 +299,6 @@ namespace WorldGen.Rendering
             var br = body.GetComponent<RectTransform>();
             br.anchorMin = Vector2.zero; br.anchorMax = Vector2.one;
             br.offsetMin = Vector2.zero; br.offsetMax = new Vector2(0f, -(StripHeight + ToolbarHeight));
-            bodyRect = br;   // mutated by SetIsoMode to reclaim the toolbar's strip when Изо hides it
 
             var mapGO = new GameObject("MapArea", typeof(RectTransform));
             mapGO.transform.SetParent(body.transform, false);
@@ -328,30 +308,26 @@ namespace WorldGen.Rendering
             var mapBg = mapGO.AddComponent<Image>();
             ThemeService.Tag(mapBg, ThemeRole.Panel2); mapBg.raycastTarget = true;
 
-            var graphGO = new GameObject("GraphView", typeof(RectTransform));
-            graphGO.transform.SetParent(mapGO.transform, false);
-            Stretch(graphGO.GetComponent<RectTransform>());
-            graphView = graphGO.AddComponent<DungeonGraphView>();
-            graphView.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
-            graphView.OnGraphMutated = RevalidateAndRefresh;
-            graphView.OnJumpToLevel = SetLevel;
+            // One interaction host stretched over MapArea; renderers are its children and are swapped by the
+            // Граф/Изо toggle. The controller carries a full-area invisible hit-plate (it IS the raycast target)
+            // and hit-tests in TILE space, so neither renderer needs its own input handling.
+            var viewGO = new GameObject("DungeonView", typeof(RectTransform));
+            viewGO.transform.SetParent(MapArea, false);
+            Stretch(viewGO.GetComponent<RectTransform>());
+            var hitImg = viewGO.AddComponent<Image>();
+            hitImg.color = new Color(0f, 0f, 0f, 0f);   // invisible hit-plate (mirrors PoiEditorScreen's Viewport mask)
+            hitImg.raycastTarget = true;
+            viewController = viewGO.AddComponent<DungeonViewController>();
+            viewController.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
+            viewController.OnGraphMutated = RevalidateAndRefresh;
+            viewController.OnJumpToLevel = SetLevel;
 
-            // Изо host — same bounds as MapArea, hidden by default (Граф is the default mode). Hosts
-            // DungeonIsoView, a custom Graphic that IS the mesh (see that class's doc comment).
-            var isoGO = new GameObject("IsoArea", typeof(RectTransform));
-            isoGO.transform.SetParent(body.transform, false);
-            IsoArea = isoGO.GetComponent<RectTransform>();
-            IsoArea.anchorMin = new Vector2(0f, 0f); IsoArea.anchorMax = new Vector2(1f, 1f);
-            IsoArea.offsetMin = new Vector2(12f, 12f); IsoArea.offsetMax = new Vector2(-(sidebarWidth + 18f), -12f);
-            var isoBg = isoGO.AddComponent<Image>();
-            ThemeService.Tag(isoBg, ThemeRole.Panel2); isoBg.raycastTarget = false;
+            var flatGO = new GameObject("FlatRenderer", typeof(RectTransform));
+            flatGO.transform.SetParent(viewGO.transform, false);
+            Stretch(flatGO.GetComponent<RectTransform>());
+            flatRenderer = flatGO.AddComponent<DungeonFlatRenderer>();
 
-            var isoViewGO = new GameObject("IsoView", typeof(RectTransform));
-            isoViewGO.transform.SetParent(isoGO.transform, false);
-            Stretch(isoViewGO.GetComponent<RectTransform>());
-            isoView = isoViewGO.AddComponent<DungeonIsoView>();
-
-            isoGO.SetActive(false);   // Граф active by default — see SetIsoMode
+            viewController.SetRenderer(flatRenderer);   // Граф is the default mode
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);
