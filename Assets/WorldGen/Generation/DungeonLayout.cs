@@ -16,6 +16,12 @@ namespace WorldGen.Generation
         // It is pure coordinate headroom.
         public const int TilesPerAxis = 128;
 
+        /// <summary>Longest a corridor may stretch, edge-to-edge in tiles, before its rooms start pulling
+        /// each other along (EnforceCorridorLeash). Comfortably above the generator's own worst case (≈9,
+        /// see the compaction self-test) so a freshly generated floor is never already taut. TUNABLE —
+        /// the user eyeballs the feel, as with CascadeSmoothTime.</summary>
+        public const float MaxCorridorTiles = 12f;
+
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
 
@@ -59,6 +65,105 @@ namespace WorldGen.Generation
         }
 
         static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
+
+        /// <summary>Pull linked rooms so no corridor stretches past maxTiles edge-to-edge, as if the floor
+        /// were stitched together with threads. `anchorRoomId` is the room the DM is dragging: it NEVER
+        /// moves, everything else gives. The pull propagates outward by graph distance from the anchor, so
+        /// a room that gets pulled then pulls its OWN neighbours — drag far enough and the whole (always
+        /// connected) floor follows. That is the intended feel, not a runaway.
+        ///
+        /// Cannot fight Separate: Separate only acts on OVERLAP (edge gap &lt; minGapTiles = 0.1), this only
+        /// on STRETCH (edge gap &gt; 12). The regimes never meet, so they cannot oscillate.
+        ///
+        /// Uses the same Chebyshev edge gap as Separate — a second metric here would make the leash and the
+        /// cascade disagree about what "touching" means. Deterministic; mutates Room.X/Y (kept in [0,1]).</summary>
+        public static void EnforceCorridorLeash(DungeonLevel lvl, int anchorRoomId,
+            float maxTiles = MaxCorridorTiles, int maxIterations = 24)
+        {
+            if (lvl == null || lvl.Rooms.Count < 2 || lvl.Corridors.Count == 0) return;
+
+            // Graph distance from the anchor decides who yields: on each corridor the room FARTHER from
+            // the anchor is the one that moves. Rooms unreachable from the anchor (orphans, or a separate
+            // component) get int.MaxValue and are never pulled — nothing stitches them to the anchor.
+            var dist = BfsFromAnchor(lvl, anchorRoomId);
+
+            for (int iter = 0; iter < maxIterations; iter++)
+            {
+                bool anyPulled = false;
+                foreach (var c in lvl.Corridors)
+                {
+                    var a = lvl.GetRoom(c.RoomA);
+                    var b = lvl.GetRoom(c.RoomB);
+                    if (a == null || b == null) continue;
+
+                    int da = dist.TryGetValue(a.Id, out var xa) ? xa : int.MaxValue;
+                    int db = dist.TryGetValue(b.Id, out var xb) ? xb : int.MaxValue;
+                    if (da == int.MaxValue && db == int.MaxValue) continue;   // neither side reachable
+
+                    // The nearer room holds; the farther one yields. Equal distance (a loop edge) — the
+                    // lower id holds, purely so the result is deterministic.
+                    Room fixedRoom, movingRoom;
+                    if (da < db || (da == db && a.Id < b.Id)) { fixedRoom = a; movingRoom = b; }
+                    else { fixedRoom = b; movingRoom = a; }
+                    if (movingRoom.Id == anchorRoomId) continue;              // the anchor never yields
+
+                    float gap = EdgeGapTiles(fixedRoom, movingRoom);
+                    if (gap <= maxTiles) continue;                            // slack — leave it alone
+                    anyPulled = true;
+
+                    float excess = gap - maxTiles;
+                    float fx = ToTile(fixedRoom.X), fy = ToTile(fixedRoom.Y);
+                    float mx = ToTile(movingRoom.X), my = ToTile(movingRoom.Y);
+                    float dx = fx - mx, dy = fy - my;
+                    float len = (float)Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 1e-4f) continue;                                // coincident — Separate's job
+
+                    // Step the moving room toward the fixed one by the excess, along the centre line.
+                    // One step may not fully close a Chebyshev gap on a diagonal; the iteration converges.
+                    mx += dx / len * excess;
+                    my += dy / len * excess;
+                    movingRoom.X = Clamp01(ToNorm(mx));
+                    movingRoom.Y = Clamp01(ToNorm(my));
+                }
+                if (!anyPulled) break;
+            }
+        }
+
+        static Dictionary<int, int> BfsFromAnchor(DungeonLevel lvl, int anchorRoomId)
+        {
+            var adj = new Dictionary<int, List<int>>();
+            foreach (var r in lvl.Rooms) adj[r.Id] = new List<int>();
+            foreach (var c in lvl.Corridors)
+            {
+                if (adj.ContainsKey(c.RoomA) && adj.ContainsKey(c.RoomB))
+                { adj[c.RoomA].Add(c.RoomB); adj[c.RoomB].Add(c.RoomA); }
+            }
+
+            var dist = new Dictionary<int, int>();
+            if (!adj.ContainsKey(anchorRoomId)) return dist;
+            var queue = new Queue<int>();
+            dist[anchorRoomId] = 0;
+            queue.Enqueue(anchorRoomId);
+            while (queue.Count > 0)
+            {
+                int cur = queue.Dequeue();
+                foreach (int nb in adj[cur])
+                    if (!dist.ContainsKey(nb)) { dist[nb] = dist[cur] + 1; queue.Enqueue(nb); }
+            }
+            return dist;
+        }
+
+        /// <summary>Chebyshev edge gap in tiles between two footprints: centre distance minus both
+        /// half-extents, on the axis of greatest separation. Negative = overlapping. Same measure
+        /// Separate's overlap condition uses.</summary>
+        static float EdgeGapTiles(Room a, Room b)
+        {
+            var (aw, ah) = DungeonProjection.EffectiveSize(a);
+            var (bw, bh) = DungeonProjection.EffectiveSize(b);
+            float dx = Math.Abs(ToTile(b.X) - ToTile(a.X)) - (aw + bw) * 0.5f;
+            float dy = Math.Abs(ToTile(b.Y) - ToTile(a.Y)) - (ah + bh) * 0.5f;
+            return Math.Max(dx, dy);
+        }
 
         /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
         /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.

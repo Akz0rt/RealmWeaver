@@ -327,6 +327,12 @@ namespace WorldGen.Rendering
 
             room.X = Mathf.Clamp(tx / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
             room.Y = Mathf.Clamp(ty / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
+
+            // Stitched-together feel: a corridor may not stretch past MaxCorridorTiles, so dragging this
+            // room drags its linked rooms along, and they drag theirs. Runs per drag sample (live), unlike
+            // the cascade — the pull must be felt while moving, not on release. The dragged room is the
+            // anchor and never yields.
+            DungeonLayout.EnforceCorridorLeash(lvl, draggingRoomId);
             RepositionNow(lvl);
         }
 
