@@ -67,8 +67,13 @@ namespace WorldGen.Generation
 
         /// <summary>How far apart two parallel corridors keep, in tiles, when there is room. A grid lane is
         /// offered exactly this far from every routed corridor (free), and running any nearer pays
-        /// CorridorCrossPenalty — so corridors run beside each other with a gap, not flush. TUNABLE.</summary>
+        /// CorridorGapPenalty — so corridors run beside each other with a gap, not flush. TUNABLE.</summary>
         public const float CorridorGap = 1.5f;
+
+        /// <summary>What running PARALLEL-close to another corridor costs — much less than crossing one
+        /// (CorridorCrossPenalty), so the gap is only a gentle preference: in a tight cluster A\* keeps a
+        /// straight, readable route rather than jogging to hold the gap against every neighbour. TUNABLE.</summary>
+        public const float CorridorGapPenalty = 2f;
 
         /// <summary>Route SHORT links first so main corridors route around the little stubs rather than
         /// the reverse. TUNABLE — flip and re-Build to compare.</summary>
@@ -653,8 +658,9 @@ namespace WorldGen.Generation
 
                     float step = Dist(p, q);
                     if (dir != 4 && dir != d) step += turnPenalty;      // a turn costs
-                    foreach (var s in occ)                              // corridors are soft: keep a gap
-                        if (WithinGap(p, q, s.a, s.b, CorridorGap)) step += corridorPenalty;
+                    foreach (var s in occ)                              // corridors are soft
+                        if (WithinGap(p, q, s.a, s.b, 1e-4f)) step += corridorPenalty;        // crossing: costly
+                        else if (WithinGap(p, q, s.a, s.b, CorridorGap)) step += CorridorGapPenalty;   // parallel-close: gentle
 
                     int nNode = ny * W + nx, nState = nNode * 5 + d;
                     float tentative = gHere + step;
