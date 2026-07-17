@@ -375,20 +375,22 @@ namespace WorldGen.Rendering
 
             // ── Close facing rooms → ONE straight leg, no stub overshoot ───────────────────────────
             // Two rooms stacked 3 tiles apart, doors facing (south of A, north of B). A full 2-tile stub
-            // from each door would sail PAST the other, and the path would zigzag out and double back — a
-            // corridor poking into the void, exactly the tight-packing artifact from the checkpoint. The
-            // stub cap (half the door-to-door distance) makes the two stubs meet in the middle instead, so
-            // the corridor is a single straight line. Delete the cap and this prints ~2 bends.
+            // from each door sails PAST the other, and the path doubles back — a corridor poking into the
+            // void, the tight-packing artifact from the checkpoint. The stub cap (half the facing distance)
+            // makes the two stubs meet in the middle, so the corridor is ONE straight leg — exactly TWO
+            // points. Delete the cap and the stubs overshoot into a 4-point down-up-down wiggle; assert the
+            // point COUNT, because that wiggle is collinear (a Bends()/Y-range check would miss it — the
+            // vacuity this fixture was rewritten to close).
             {
                 var a = N(1, 30f, 20f, 6f, 4f);   // raw Y 18..22
                 var b = N(2, 30f, 27f, 6f, 4f);   // raw Y 25..29 — the door gap is 22..25 = 3 tiles
                 var path = RoomLinkGeometry.AStarRoute(P(30f, 22f), South, P(30f, 25f), North, new List<LinkNode> { a, b }, noOcc);
                 AssertOrtho(path, "close-facing");
-                if (Bends(path) != 0)
-                { Debug.LogError($"FAIL close-facing: {Bends(path)} bends for a straight facing pair — the stubs overshot and doubled back"); ok = false; }
-                foreach (var pt in path)
-                    if (pt.Y < 22f - 1e-2f || pt.Y > 25f + 1e-2f)
-                    { Debug.LogError($"FAIL close-facing: point Y={pt.Y:F1} pokes past a door (gap 22..25) — the stub overshot"); ok = false; break; }
+                if (path.Count != 2)
+                { Debug.LogError($"FAIL close-facing: {path.Count} points, want 2 — the stubs overshot and the path doubled back instead of one straight leg"); ok = false; }
+                else if (Mathf.Abs(path[0].X - 30f) > 1e-2f || Mathf.Abs(path[0].Y - 22f) > 1e-2f
+                      || Mathf.Abs(path[1].X - 30f) > 1e-2f || Mathf.Abs(path[1].Y - 25f) > 1e-2f)
+                { Debug.LogError($"FAIL close-facing: the single leg is not the straight door-to-door segment"); ok = false; }
             }
 
             // ── A room dead between the ends → routed AROUND it, never through ─────────────────────

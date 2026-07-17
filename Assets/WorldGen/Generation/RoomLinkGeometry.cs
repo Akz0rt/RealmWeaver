@@ -210,6 +210,11 @@ namespace WorldGen.Generation
                         if (pos[0] < lo) { pos[0] = lo; pos[1] = lo + DoorSpacing; }
                         if (pos[1] > hi) { pos[1] = hi; pos[0] = hi - DoorSpacing; }
                     }
+                    // A wall narrower than DoorSpacing can't hold two doors that far apart — the push above
+                    // would then drive one past the corner. Clamp back onto the wall (they may end closer
+                    // than DoorSpacing on a tiny wall; that's fine, better than a door off the edge).
+                    for (int s = 0; s < doorCount; s++)
+                        pos[s] = pos[s] < lo ? lo : (pos[s] > hi ? hi : pos[s]);
 
                     for (int slot = 0; slot < doorCount; slot++)
                     {
