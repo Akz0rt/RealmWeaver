@@ -21,7 +21,7 @@ namespace WorldGen.Generation
         /// as its last step, so a freshly generated floor satisfies this BY CONSTRUCTION and the DM's
         /// first drag never snaps it together. TUNABLE — the user eyeballs the feel, as with
         /// CascadeSmoothTime.</summary>
-        public const float MaxCorridorTiles = 12f;
+        public const float MaxCorridorTiles = 8f;
 
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
