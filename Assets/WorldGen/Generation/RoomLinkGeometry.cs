@@ -237,7 +237,7 @@ namespace WorldGen.Generation
                     float di = Dist(endpoint[(i, edges[i].A)], endpoint[(i, edges[i].B)]);
                     float dj = Dist(endpoint[(j, edges[j].A)], endpoint[(j, edges[j].B)]);
                     int c = ShortLinksFirst ? di.CompareTo(dj) : dj.CompareTo(di);
-                    return c != 0 ? c : i.CompareTo(j);   // stable, deterministic
+                    return c != 0 ? c : i.CompareTo(j);   // total-order tie-break → deterministic (List.Sort is not stable)
                 });
 
             var occupancy = new List<(LinkPoint a, LinkPoint b)>();
