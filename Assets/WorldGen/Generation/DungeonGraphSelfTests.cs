@@ -118,5 +118,72 @@ namespace WorldGen.Rendering
 
             Debug.Log(ok ? "Self-Test Dungeon Remove-Level Integrity: PASS" : "Self-Test Dungeon Remove-Level Integrity: FAIL");
         }
+
+        [ContextMenu("Self-test: DungeonProjection round-trip")]
+        public void SelfTestProjectionRoundTrip()
+        {
+            bool ok = true;
+
+            // Round-trip must hold for BOTH views and with a non-zero pan.
+            foreach (float squash in new[] { 1.0f, 0.5f })
+            {
+                var p = new DungeonProjection { PxPerTile = 17.5f, SquashY = squash, PanX = -123.4f, PanY = 77.7f };
+                foreach (var t in new[] { (0f, 0f), (24f, 24f), (3.5f, 47.25f), (47f, 1f) })
+                {
+                    var (lx, ly) = p.TileToLocal(t.Item1, t.Item2);
+                    var (tx, ty) = p.LocalToTile(lx, ly);
+                    if (Mathf.Abs(tx - t.Item1) > 1e-3f || Mathf.Abs(ty - t.Item2) > 1e-3f)
+                    {
+                        Debug.LogError($"FAIL round-trip squash={squash} tile=({t.Item1},{t.Item2}) -> ({tx},{ty})");
+                        ok = false;
+                    }
+                }
+            }
+
+            // Flat view must be ISOTROPIC: one tile is the same pixel count on both axes (regression for B3).
+            var flat = new DungeonProjection { PxPerTile = 10f, SquashY = 1f, PanX = 0f, PanY = 0f };
+            var (ax, ay) = flat.TileToLocal(1f, 0f);
+            var (bx, by) = flat.TileToLocal(0f, 1f);
+            if (Mathf.Abs(ax - 10f) > 1e-3f || Mathf.Abs(by + 10f) > 1e-3f)
+            { Debug.LogError($"FAIL isotropy: x-step={ax} y-step={by} (want 10 / -10)"); ok = false; }
+
+            // Iso squashes Y by exactly half, X untouched.
+            var iso = new DungeonProjection { PxPerTile = 10f, SquashY = 0.5f, PanX = 0f, PanY = 0f };
+            var (cx, cy) = iso.TileToLocal(1f, 1f);
+            if (Mathf.Abs(cx - 10f) > 1e-3f || Mathf.Abs(cy + 5f) > 1e-3f)
+            { Debug.LogError($"FAIL iso squash: ({cx},{cy}) want (10,-5)"); ok = false; }
+
+            // Tile Y grows DOWN (south) but UI local Y grows UP → projected y must be negative for +ty.
+            if (cy >= 0f) { Debug.LogError("FAIL: +tileY must project to NEGATIVE local y"); ok = false; }
+
+            // Fit(): the content centre lands at local (0,0) and everything fits inside the rect.
+            var lvl = new DungeonLevel();
+            lvl.Rooms.Add(new Room { Id = 1, Type = RoomType.Normal, X = 0.25f, Y = 0.25f, SizeW = 6, SizeH = 6 });
+            lvl.Rooms.Add(new Room { Id = 2, Type = RoomType.Boss,   X = 0.75f, Y = 0.75f, SizeW = 10, SizeH = 10 });
+            var fit = DungeonProjection.Fit(lvl, 800f, 400f, 0.5f);
+            var (bminX, bminY, bmaxX, bmaxY) = DungeonProjection.ContentBoundsTiles(lvl);
+            var (ccx, ccy) = fit.TileToLocal((bminX + bmaxX) * 0.5f, (bminY + bmaxY) * 0.5f);
+            if (Mathf.Abs(ccx) > 1e-2f || Mathf.Abs(ccy) > 1e-2f)
+            { Debug.LogError($"FAIL fit centre: ({ccx},{ccy}) want (0,0)"); ok = false; }
+
+            var (p0x, p0y) = fit.TileToLocal(bminX, bminY);
+            var (p1x, p1y) = fit.TileToLocal(bmaxX, bmaxY);
+            if (Mathf.Abs(p1x - p0x) > 800f || Mathf.Abs(p1y - p0y) > 400f)
+            { Debug.LogError($"FAIL fit bounds: {Mathf.Abs(p1x - p0x)}x{Mathf.Abs(p1y - p0y)} exceeds 800x400"); ok = false; }
+
+            // Fit must never divide by zero on a single-room (zero-span) level.
+            var one = new DungeonLevel();
+            one.Rooms.Add(new Room { Id = 1, Type = RoomType.Normal, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 6 });
+            var fitOne = DungeonProjection.Fit(one, 800f, 400f, 0.5f);
+            if (float.IsNaN(fitOne.PxPerTile) || float.IsInfinity(fitOne.PxPerTile) || fitOne.PxPerTile <= 0f)
+            { Debug.LogError($"FAIL fit single-room: PxPerTile={fitOne.PxPerTile}"); ok = false; }
+
+            // An empty level must not throw and must yield a usable projection.
+            var empty = new DungeonLevel();
+            var fitEmpty = DungeonProjection.Fit(empty, 800f, 400f, 1f);
+            if (fitEmpty.PxPerTile <= 0f) { Debug.LogError("FAIL fit empty level"); ok = false; }
+
+            Debug.Log(ok ? "PASS: DungeonProjection round-trip" : "FAIL: DungeonProjection round-trip");
+        }
     }
 }
