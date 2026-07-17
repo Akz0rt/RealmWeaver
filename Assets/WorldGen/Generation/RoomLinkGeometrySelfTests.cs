@@ -62,8 +62,12 @@ namespace WorldGen.Rendering
                 var nodes = new List<LinkNode>
                 {
                     new LinkNode { Id = 1, CX = 20f, CY = 30f, W = 6f, H = 12f },
-                    new LinkNode { Id = 2, CX = 50f, CY = 24f, W = 6f, H = 6f },   // north target
-                    new LinkNode { Id = 3, CX = 50f, CY = 36f, W = 6f, H = 6f },   // south target
+                    // Id 2 is FARTHER than id 3 on purpose: the distance sort (which picks who gets a
+                    // door) then yields [3, 2] while the along-wall sort (which picks WHICH door) yields
+                    // [2, 3]. The two orders must disagree, or this fixture cannot tell the along-wall
+                    // sort from the distance sort and the non-crossing rule goes untested.
+                    new LinkNode { Id = 2, CX = 74f, CY = 24f, W = 6f, H = 6f },   // north target, farther
+                    new LinkNode { Id = 3, CX = 50f, CY = 36f, W = 6f, H = 6f },   // south target, nearer
                 };
                 var edges = new List<LinkEdge>
                 {
@@ -79,6 +83,13 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL two-on-a-wall: {wallDoors.Count} doors on A's east wall, want 2"); ok = false; }
                 else if (Mathf.Abs(wallDoors[0].Y - wallDoors[1].Y) < 1e-3f)
                 { Debug.LogError("FAIL two-on-a-wall: both doors landed on the SAME point"); ok = false; }
+
+                // Guard the premise: if these ever became equidistant, the two sort orders would coincide
+                // and everything below would pass vacuously.
+                float d2 = Mathf.Sqrt((74f - 20f) * (74f - 20f) + (24f - 30f) * (24f - 30f));
+                float d3 = Mathf.Sqrt((50f - 20f) * (50f - 20f) + (36f - 30f) * (36f - 30f));
+                if (Mathf.Abs(d2 - d3) < 1f)
+                { Debug.LogError("FAIL setup: the two targets are equidistant — the distance and along-wall orders coincide, so this fixture tests nothing"); ok = false; }
 
                 // Non-crossing: the segment to the NORTH target must start at the NORTHER door.
                 var segToNorth = SegmentForEdge(g, 0);
@@ -159,8 +170,23 @@ namespace WorldGen.Rendering
                 var seg4 = SegmentForEdge(g, 2);
                 if (seg5 == null || seg4 == null)
                 { Debug.LogError("FAIL four-on-a-wall: missing segments for edges 3/4"); ok = false; }
-                else if (DistanceToSegment(seg5.A, seg4.A, seg4.B) > 1e-2f)
-                { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is NOT on edge 4's segment — the fork search is not recursive"); ok = false; }
+                else
+                {
+                    // With the recursion, edge 5 taps edge 4's OWN forked segment at (67,30). Without it,
+                    // the candidate set is only the two trunks and edge 5 taps trunk1 at (41,34) — which
+                    // is seg4's own START point, so an "is it on seg4?" check ALONE passes either way and
+                    // proves nothing. Assert BOTH: on seg4, and NOT on either trunk.
+                    if (DistanceToSegment(seg5.A, seg4.A, seg4.B) > 1e-2f)
+                    { Debug.LogError($"FAIL four-on-a-wall: edge 5 attached at ({seg5.A.X:F1},{seg5.A.Y:F1}), which is NOT on edge 4's segment"); ok = false; }
+
+                    var trunk0 = SegmentForEdge(g, 0);
+                    var trunk1 = SegmentForEdge(g, 1);
+                    if (trunk0 == null || trunk1 == null)
+                    { Debug.LogError("FAIL four-on-a-wall: missing trunk segments"); ok = false; }
+                    else if (DistanceToSegment(seg5.A, trunk0.A, trunk0.B) < 1e-2f ||
+                             DistanceToSegment(seg5.A, trunk1.A, trunk1.B) < 1e-2f)
+                    { Debug.LogError($"FAIL four-on-a-wall: edge 5 tapped a TRUNK at ({seg5.A.X:F1},{seg5.A.Y:F1}) — the fork search is NOT recursive"); ok = false; }
+                }
             }
 
             // ── No wall may EVER carry more than MaxDoorsPerWall doors ─────────────────────────────
@@ -180,11 +206,16 @@ namespace WorldGen.Rendering
                 foreach (var d in g.Doors)
                 {
                     // Bucket by which of node 1's four edges the door sits on (ignore the targets' doors).
+                    // BOTH coordinates must be on node 1's wall. Testing one axis alone mislabels a
+                    // TARGET's door as node 1's: id 12 sits at CY = 26, so its own west door (57.5, 26)
+                    // would land in the "N" bucket and be counted against node 1's north wall.
+                    bool onX = d.X >= 26f - 1e-3f && d.X <= 34f + 1e-3f;
+                    bool onY = d.Y >= 26f - 1e-3f && d.Y <= 34f + 1e-3f;
                     string key = null;
-                    if (Mathf.Abs(d.X - 34f) < 1e-3f) key = "E";
-                    else if (Mathf.Abs(d.X - 26f) < 1e-3f) key = "W";
-                    else if (Mathf.Abs(d.Y - 26f) < 1e-3f) key = "N";
-                    else if (Mathf.Abs(d.Y - 34f) < 1e-3f) key = "S";
+                    if (Mathf.Abs(d.X - 34f) < 1e-3f && onY) key = "E";
+                    else if (Mathf.Abs(d.X - 26f) < 1e-3f && onY) key = "W";
+                    else if (Mathf.Abs(d.Y - 26f) < 1e-3f && onX) key = "N";
+                    else if (Mathf.Abs(d.Y - 34f) < 1e-3f && onX) key = "S";
                     if (key == null) continue;
                     perWall.TryGetValue(key, out int n);
                     perWall[key] = n + 1;

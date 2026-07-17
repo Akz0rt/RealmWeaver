@@ -47,6 +47,9 @@ namespace WorldGen.Generation
 
         enum Wall { North, East, South, West }
 
+        // Hoisted: Build advertises per-frame use, and this was allocating twice per node per call.
+        static readonly Wall[] AllWalls = { Wall.North, Wall.East, Wall.South, Wall.West };
+
         // One link as seen FROM one node.
         struct Attachment
         {
@@ -108,7 +111,7 @@ namespace WorldGen.Generation
             foreach (int nodeId in nodeIds)
             {
                 var node = byId[nodeId];
-                foreach (Wall wall in new[] { Wall.North, Wall.East, Wall.South, Wall.West })
+                foreach (Wall wall in AllWalls)
                 {
                     if (!wallsOf.TryGetValue((nodeId, wall), out var onWall)) continue;
 
@@ -138,7 +141,7 @@ namespace WorldGen.Generation
             // point stays plausible because the fallback end is still in the right direction.
             foreach (int nodeId in nodeIds)
             {
-                foreach (Wall wall in new[] { Wall.North, Wall.East, Wall.South, Wall.West })
+                foreach (Wall wall in AllWalls)
                 {
                     if (!wallsOf.TryGetValue((nodeId, wall), out var onWall)) continue;
                     int doorCount = Math.Min(MaxDoorsPerWall, onWall.Count);
@@ -225,11 +228,18 @@ namespace WorldGen.Generation
         }
 
         /// <summary>The far end of `at`'s drawn segment, as best it is known when pass B runs: the far
-        /// node's resolved DOOR if that end earned one (the common case — pass A resolved every door
-        /// before pass B started), otherwise the far node's centre. The fallback only fires when the far
-        /// end is itself a fork that has not been resolved yet; resolving that exactly would need a
-        /// fixpoint, and the fallback still points the same way, so a tap computed against it lands
-        /// plausibly rather than exactly.</summary>
+        /// node's resolved DOOR if that end earned one — the common case, since pass A resolves every door
+        /// before pass B starts — otherwise the far node's CENTRE.
+        ///
+        /// KNOWN LIMITATION, not a safe approximation. The fallback fires only when an edge forks at BOTH
+        /// ends AND the far node's id is higher (both passes walk ids ascending, so a lower-id far node's
+        /// fork is already resolved). It needs two rooms each carrying 3+ links on the walls facing each
+        /// other. When it fires, the recorded trunk runs door → the far room's CENTRE — a stretch that
+        /// PENETRATES that room and is never drawn — so a later fork on this wall can project onto it and
+        /// land inside the room, which is precisely what the two-pass split exists to prevent. Resolving
+        /// it exactly needs a fixpoint. No self-test covers this branch: every fixture has at most one
+        /// full wall. Revisit if a double-full-wall layout ever shows a corridor sprouting from inside a
+        /// room.</summary>
         static LinkPoint FarEnd(Dictionary<int, LinkNode> byId,
                                 Dictionary<(int edge, int node), LinkPoint> endpoint, Attachment at)
         {
