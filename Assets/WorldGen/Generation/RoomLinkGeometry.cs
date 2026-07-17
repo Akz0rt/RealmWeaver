@@ -365,6 +365,9 @@ namespace WorldGen.Generation
             // leg turning there (spec O8), and the link may then run straight back across its own room — so
             // the stub MUST clear the clearance ring. Clamp it up when the caller passes less.
             float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+            // ...but cap it to half the door-to-door distance so two stubs on a short link don't overshoot
+            // each other and zigzag out and back (a corridor poking into the void on a tightly packed floor).
+            stub = Math.Min(stub, Dist(from, to) * 0.5f);
 
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
@@ -464,6 +467,11 @@ namespace WorldGen.Generation
             if (rooms == null) rooms = System.Array.Empty<LinkNode>();
 
             float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+            // Don't let the two door stubs OVERSHOOT each other on a short link: when the rooms are close
+            // (a tightly packed floor), a full-length stub from each door sails past the other, and the
+            // path zigzags out and doubles back — a corridor that pokes into the void and returns. Cap each
+            // stub to half the door-to-door distance so they meet, at most, in the middle.
+            stub = Math.Min(stub, Dist(from, to) * 0.5f);
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
 
