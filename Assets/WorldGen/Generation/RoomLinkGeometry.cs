@@ -398,7 +398,13 @@ namespace WorldGen.Generation
         /// Never returns null and never fails: when every candidate crosses something the least-bad one is
         /// returned, so a boxed-in layout degrades to a visible artifact the user can fix by dragging a box
         /// (spec O9). Deterministic in every choice — the caller re-derives geometry every frame, and a
-        /// choice left to float noise or list order would make corridors flicker as boxes move.</summary>
+        /// choice left to float noise or list order would make corridors flicker as boxes move.
+        ///
+        /// TWO CALLER OBLIGATIONS, neither checked here. Normals must be axis-aligned (±1,0)/(0,±1): the
+        /// "every leg is H or V" headline rests on it, and a diagonal normal yields a diagonal stub in
+        /// silence. And box Ids must be unique: List.Sort is introsort, i.e. UNSTABLE, so it normalises
+        /// order only for distinct Ids — two boxes sharing one leave the mid-line order decided by the
+        /// input arrangement, which is the very flicker the sort exists to prevent.</summary>
         public static List<LinkPoint> OrthogonalRoute(
             LinkPoint from, LinkPoint fromNormal,
             LinkPoint to, LinkPoint toNormal,
@@ -409,15 +415,17 @@ namespace WorldGen.Generation
 
             // Spec O5. A turn point ON or INSIDE its own box's inflated rect makes that box exempt from the
             // leg turning there (spec O8), and the link may then run straight back across its own room.
-            float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+            float stub = stubTiles;
 
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
 
             // Candidate mid-lines: the midpoint, plus every NEARBY box's inflated edges — the edges are
             // what make a path skirt a box. Only boxes overlapping the a2..b2 box contribute, which keeps
-            // the candidate set near 16 instead of 4N; scoring below still checks against EVERY box, so
-            // correctness never leans on this filter. Build re-runs every frame during a drag, and drawing
+            // the candidate set near 16 instead of 4N; nothing ever crosses a box undetected. It DOES cost completeness, though: candidates travel
+            // outside this box, and a box out there contributes no mid-line to route around, so a clean
+            // route that exists can be missed — acceptable under spec O9 (degrade to a visible artifact the
+            // user can drag out of), and the price of per-frame cost. Build re-runs every frame during a drag, and drawing
             // mid-lines from all N boxes costs ~1M slab tests a frame at dungeon scale.
             float loX = Math.Min(a2.X, b2.X), hiX = Math.Max(a2.X, b2.X);
             float loY = Math.Min(a2.Y, b2.Y), hiY = Math.Max(a2.Y, b2.Y);
@@ -466,6 +474,7 @@ namespace WorldGen.Generation
                 path.AddRange(mid);
                 path.Add(to);
                 Simplify(path);
+                if (path.Count < 2) path.Add(to);   // coincident from/to: keep the two-point contract
 
                 int dirty = CountDirtyLegs(path, obstacles, clearanceTiles);
                 int bends = path.Count - 2;
@@ -556,6 +565,17 @@ namespace WorldGen.Generation
             return sum;
         }
 
+        /// <summary>Half-extents of a box's inflated rect, shrunk by TouchEps. The hit test and the
+        /// containment test MUST use the same rect: they disagree otherwise about a point exactly ON the
+        /// boundary, which is precisely where a stub's turn point lands when stub == clearance. One
+        /// function, so that agreement is structural rather than a promise two comments make to each
+        /// other.</summary>
+        static void ShrunkHalfExtents(LinkNode n, float clearance, out float hw, out float hh)
+        {
+            hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
+            hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
+        }
+
         /// <summary>Is the point inside the box's inflated rect? Shrunk by the same TouchEps as the hit
         /// test so the two agree about the boundary. That agreement is load-bearing: a point exactly ON the
         /// inflated edge — where a stub's turn lands when stub == clearance — reads as OUTSIDE, so the box
@@ -563,8 +583,7 @@ namespace WorldGen.Generation
         /// deep inside, is still contained, which is what exempts a stub from its own room (spec O8).</summary>
         static bool PointInInflatedRect(LinkPoint p, LinkNode n, float clearance)
         {
-            float hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
-            float hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
+            ShrunkHalfExtents(n, clearance, out float hw, out float hh);
             return p.X >= n.CX - hw && p.X <= n.CX + hw && p.Y >= n.CY - hh && p.Y <= n.CY + hh;
         }
 
@@ -581,8 +600,7 @@ namespace WorldGen.Generation
         static bool SegmentHitsInflatedRect(LinkPoint p, LinkPoint q, LinkNode n, float clearance, out float tEntry)
         {
             tEntry = 0f;
-            float hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
-            float hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
+            ShrunkHalfExtents(n, clearance, out float hw, out float hh);
             float minX = n.CX - hw, maxX = n.CX + hw, minY = n.CY - hh, maxY = n.CY + hh;
 
             float dx = q.X - p.X, dy = q.Y - p.Y;

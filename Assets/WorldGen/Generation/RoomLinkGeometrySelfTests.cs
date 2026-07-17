@@ -353,9 +353,33 @@ namespace WorldGen.Rendering
                 var path = RoomLinkGeometry.OrthogonalRoute(
                     P(23f, 30f), East, P(5f, 30f), East, obstacles);
                 AssertOrthogonal(path, "stub");
-                float dx = path[1].X - path[0].X, dy = path[1].Y - path[0].Y;
-                if (dx * East.X + dy * East.Y < RoomLinkGeometry.StubTiles - 1e-3f)
-                { Debug.LogError($"FAIL stub: the first leg runs ({dx:F1},{dy:F1}) — it must leave EAST for at least {RoomLinkGeometry.StubTiles} tiles"); ok = false; }
+                if (path.Count < 2)
+                { Debug.LogError($"FAIL stub: {path.Count} points — there is no first leg to check"); ok = false; }
+                else
+                {
+                    float dx = path[1].X - path[0].X, dy = path[1].Y - path[0].Y;
+                    if (dx * East.X + dy * East.Y < RoomLinkGeometry.StubTiles - 1e-3f)
+                    { Debug.LogError($"FAIL stub: the first leg runs ({dx:F1},{dy:F1}) — it must leave EAST for at least {RoomLinkGeometry.StubTiles} tiles"); ok = false; }
+                }
+            }
+
+            // ── O5's CLAMP: a stub at or below the clearance must be corrected, not obeyed ─────────
+            // Every other fixture uses the defaults (2 > 1), so the clamp's branch never runs — delete the
+            // clamp and they all still pass. It is not cosmetic: with stub <= clearance the turn point
+            // lands ON or INSIDE the room's own inflated rect, so that room is exempt from the leg turning
+            // there (spec O8), the straight shot back across it scores a perfect zero, and it wins on
+            // bends. Traced: unclamped at stub=0.5 the winner is [(23,30),(23.5,30),(5,30)] — straight
+            // through room 1.
+            {
+                var self = N(1, 20f, 30f, 6f, 6f);
+                var far = N(2, 2f, 30f, 6f, 6f);
+                var path = RoomLinkGeometry.OrthogonalRoute(
+                    P(23f, 30f), East, P(5f, 30f), East, new List<LinkNode> { self, far },
+                    clearanceTiles: 1f, stubTiles: 0.5f);          // below the clearance ring — must be clamped UP
+                AssertOrthogonal(path, "clamp");
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], self))
+                    { Debug.LogError($"FAIL clamp: leg {i} runs across the link's OWN room 1 — a stub below ClearanceTiles was obeyed instead of clamped"); ok = false; break; }
             }
 
             // ── O7: a target BEHIND the door's wall must be reached AROUND the room, not across it ──
@@ -432,36 +456,53 @@ namespace WorldGen.Rendering
                     { Debug.LogError($"FAIL O3: leg {i} still crosses the blocker — the mid-line candidates do not include its edges"); ok = false; break; }
             }
 
-            // ── O9: boxed in — return something finite and still orthogonal, never nothing, never hang ─
+            // ── Many blockers: the router stays orthogonal, finite, and bounded ────────────────────
+            // NOT an O9 fixture, and deliberately not labelled one: "return the least-bad when nothing is
+            // clean" is not a branch, it is the ABSENCE of a `return null`, so no rule can be deleted to
+            // make such a fixture fail. (The previous version claimed O9 and did not even reach it — the
+            // wall's own inflated edge handed the router a clean row around its end.)
+            //
+            // What IS checkable: a path is [from] + at most 4 mid-points + [to], so 6 points is a hard
+            // ceiling. Nothing else pins that, and a candidate builder or Simplify that ran away would
+            // blow straight through it.
             {
                 var obstacles = new List<LinkNode>();
-                for (int i = 0; i < 6; i++) obstacles.Add(N(20 + i, 20f + i * 4f, 30f, 4f, 80f));   // a wall of rooms
+                for (int i = 0; i < 6; i++) obstacles.Add(N(20 + i, 20f + i * 4f, 30f, 4f, 80f));
                 var path = RoomLinkGeometry.OrthogonalRoute(
                     P(5f, 30f), East, P(60f, 30f), West, obstacles);
-                AssertOrthogonal(path, "boxed-in");
-                if (path.Count < 2)
-                { Debug.LogError("FAIL boxed-in: the router returned no path at all"); ok = false; }
+                AssertOrthogonal(path, "many-blockers");
+                if (path.Count < 2 || path.Count > 6)
+                { Debug.LogError($"FAIL many-blockers: {path.Count} points — a path is [from] + at most 4 mid-points + [to], so 2..6"); ok = false; }
                 foreach (var pt in path)
                     if (float.IsNaN(pt.X) || float.IsNaN(pt.Y) || float.IsInfinity(pt.X) || float.IsInfinity(pt.Y))
-                    { Debug.LogError("FAIL boxed-in: NaN/Inf in the path"); ok = false; break; }
+                    { Debug.LogError("FAIL many-blockers: NaN/Inf in the path"); ok = false; break; }
             }
 
             // ── Determinism 1: the obstacle LIST's order must not change the answer ────────────────
-            // Re-running identical input proves nothing (deterministic code, identical result); reversing
-            // the list is what tests the id sort in the mid-line generation.
+            // Re-running identical input proves nothing (deterministic code, identical result). This
+            // reverses the list, which is the only thing that exercises the id sort behind the mid-line
+            // generation. The boxes MUST straddle the door row or they are filtered out as "not nearby"
+            // and the sort runs on an empty list — proving nothing while looking thorough.
+            //
+            // Rows 21 and 39 are the only clean ones and they tie on length, so candidate ORDER decides.
+            // With the sort both directions yield rows [30,21,31,29,39] and r=21 wins. Without it the
+            // reversed list yields [30,29,39,21,31], r=39 wins first, and the path flips to the far side.
             {
-                var b1 = N(5, 25f, 24f, 8f, 8f);
-                var b2 = N(6, 25f, 36f, 8f, 8f);
+                var b1 = N(5, 25f, 26f, 8f, 8f);   // inflated Y 21..31 — straddles the door row
+                var b2 = N(6, 25f, 34f, 8f, 8f);   // inflated Y 29..39 — straddles it too
                 var fwd = RoomLinkGeometry.OrthogonalRoute(
                     P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { b1, b2 });
                 var rev = RoomLinkGeometry.OrthogonalRoute(
                     P(13f, 30f), East, P(37f, 30f), West, new List<LinkNode> { b2, b1 });
-                if (fwd.Count != rev.Count)
+
+                if (fwd.Count < 3)
+                { Debug.LogError($"FAIL order-independence setup: {fwd.Count} points — nothing bent, so no candidate order was ever consulted"); ok = false; }
+                else if (fwd.Count != rev.Count)
                 { Debug.LogError($"FAIL order-independence: {fwd.Count} points vs {rev.Count} from a reordered obstacle list"); ok = false; }
                 else
                     for (int i = 0; i < fwd.Count; i++)
                         if (Mathf.Abs(fwd[i].X - rev[i].X) > 1e-6f || Mathf.Abs(fwd[i].Y - rev[i].Y) > 1e-6f)
-                        { Debug.LogError($"FAIL order-independence: point {i} moved when the obstacle list was reversed"); ok = false; break; }
+                        { Debug.LogError($"FAIL order-independence: point {i} moved when the obstacle list was reversed — list position is deciding, not the id sort"); ok = false; break; }
             }
 
             // ── Determinism 2: a hair's movement must not flip the chosen candidate ────────────────
