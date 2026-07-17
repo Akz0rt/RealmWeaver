@@ -539,10 +539,10 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Orthogonal Route: PASS" : "Self-Test Orthogonal Route: FAIL");
         }
 
-        // ── detour fixture helpers ────────────────────────────────────────────────────────────────
+        // ── routing fixture helpers ─────────────────────────────────────────────────────────────
 
-        /// <summary>Every leg of a link's polyline, in emission order. A link no longer owns exactly one
-        /// segment — the detour splits it wherever it bends around a box.</summary>
+        /// <summary>Every leg of a link's path, in emission order. A link no longer owns exactly one
+        /// segment — the orthogonal router splits it into H/V legs wherever it turns.</summary>
         static List<LinkSegment> SegmentsForEdge(LinkGeometry g, int edgeIndex)
         {
             var list = new List<LinkSegment>();
