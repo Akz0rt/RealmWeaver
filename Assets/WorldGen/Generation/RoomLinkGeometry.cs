@@ -49,11 +49,6 @@ namespace WorldGen.Generation
         /// exactly makes the link graze the wall. TUNABLE — the user eyeballs it.</summary>
         public const float ClearanceTiles = 1f;
 
-        /// <summary>Cap on detour re-checks. Bending around one box can push a leg into the next, so the
-        /// pass iterates; a boxed-in layout must degrade to a visible artifact the user can fix by moving
-        /// a box, never to a hang. TUNABLE.</summary>
-        public const int MaxDetourIterations = 8;
-
         /// <summary>How far a link runs straight out of its door along the wall normal before it may turn,
         /// in tiles. MUST exceed ClearanceTiles (OrthogonalRoute clamps it): the turn point has to land
         /// strictly OUTSIDE the box's inflated rect, or that box is exempt from the leg turning there
@@ -107,8 +102,9 @@ namespace WorldGen.Generation
             // a tap point sitting INSIDE the other room, on a stretch that is never drawn.
             var endpoint = new Dictionary<(int edge, int node), LinkPoint>();
 
-            // Each end's resolved polyline (door/fork → far end), already bent around obstacles.
-            var polyOf = new Dictionary<(int edge, int node), List<LinkPoint>>();
+            // The wall each DOOR sits on, so routing knows which way to leave. Absent for a fork: a fork
+            // sits mid-corridor and has no wall — which is precisely the "no normal" signal routing wants.
+            var wallOf = new Dictionary<(int edge, int node), Wall>();
 
             var nodeIds = new List<int>(perNode.Keys);
             nodeIds.Sort();                       // deterministic node order
@@ -155,6 +151,7 @@ namespace WorldGen.Generation
                         var door = DoorPoint(node, wall, slot, doorHolders.Count);
                         g.Doors.Add(door);
                         endpoint[(doorHolders[slot].EdgeIndex, nodeId)] = door;
+                        wallOf[(doorHolders[slot].EdgeIndex, nodeId)] = wall;
                     }
                 }
             }
@@ -168,25 +165,30 @@ namespace WorldGen.Generation
                 foreach (Wall wall in AllWalls)
                 {
                     if (!wallsOf.TryGetValue((nodeId, wall), out var onWall)) continue;
+
                     int doorCount = Math.Min(MaxDoorsPerWall, onWall.Count);
 
-                    // Runs for EVERY wall, not only overfull ones. This pass resolves each link's
-                    // polyline and the emission loop draws nothing without it, so gating it on "the wall
-                    // is full" silently deletes every corridor on a wall carrying one or two links — which
-                    // is nearly all of them. No guard is needed: when the wall is not full,
-                    // doorCount == onWall.Count and the fork loop below simply runs zero times.
+                    // Only a full wall forks, and `built` exists SOLELY for forks to tap, so a wall that
+                    // cannot fork needs no provisional routing.
                     //
-                    // `built` holds BENT polylines, not straight segments — that is spec C2. A trunk is
-                    // detoured BEFORE it enters the fork search's candidate set, so a fork taps geometry
-                    // that will actually be drawn. Bending trunks afterwards would leave every fork hanging
-                    // beside its trunk instead of on it.
+                    // This guard is safe ONLY because nothing downstream reads pass B's paths: the emission
+                    // loop re-routes from `endpoint`, which pass A fills for every door. It was NOT safe in
+                    // the previous design, where pass B stashed the very polyline the emission loop drew —
+                    // this exact line then silently deleted every corridor on a wall carrying one or two
+                    // links, i.e. nearly all of them. Do not move the stash back under it.
+                    if (onWall.Count <= doorCount) continue;
+
+                    // Spec C2, still: a trunk is routed BEFORE it enters the fork search's candidate set,
+                    // so a fork taps geometry that is actually drawn. Route the trunks afterwards and every
+                    // fork hangs beside its trunk instead of on it.
                     var built = new List<(List<LinkPoint> poly, int edgeIndex)>();
                     for (int i = 0; i < doorCount; i++)
                     {
                         var at = onWall[i];
-                        var poly = new List<LinkPoint> { endpoint[(at.EdgeIndex, nodeId)], FarEnd(byId, endpoint, at) };
-                        DetourAround(poly, ObstaclesFor(nodes, at.SelfId, at.OtherId));
-                        built.Add((poly, at.EdgeIndex));
+                        built.Add((OrthogonalRoute(
+                            endpoint[(at.EdgeIndex, nodeId)], NormalOf(wallOf, at.EdgeIndex, nodeId),
+                            FarEnd(byId, endpoint, at), NormalOf(wallOf, at.EdgeIndex, at.OtherId),
+                            nodes), at.EdgeIndex));
                     }
 
                     for (int k = doorCount; k < onWall.Count; k++)
@@ -196,186 +198,37 @@ namespace WorldGen.Generation
                         var fork = NearestPointOnBuilt(built, target);
                         g.Forks.Add(fork);
                         endpoint[(at.EdgeIndex, nodeId)] = fork;
-                        var poly = new List<LinkPoint> { fork, target };
-                        DetourAround(poly, ObstaclesFor(nodes, at.SelfId, at.OtherId));
-                        built.Add((poly, at.EdgeIndex));
+                        built.Add((OrthogonalRoute(
+                            fork, default,                                     // a fork has no wall: no normal
+                            target, NormalOf(wallOf, at.EdgeIndex, at.OtherId),
+                            nodes), at.EdgeIndex));
                     }
-
-                    // Stash each resolved polyline so the emission loop below can lay out its legs.
-                    foreach (var b in built) polyOf[(b.edgeIndex, nodeId)] = b.poly;
                 }
             }
 
-            // Emit one segment per LEG of each edge's polyline. A link no longer owns exactly one segment:
-            // the detour splits it wherever it bends around a box.
+            // Route each link ONE more time, now that BOTH ends are resolved. Pass B's paths were
+            // provisional: built toward FarEnd, which falls back to the far box's CENTRE when that end had
+            // not been reached yet, and they existed only for forks to tap.
             //
-            // Take the A-end's polyline, but FORCE its last point to B's RESOLVED attachment. Pass B built
-            // that polyline toward FarEnd, which falls back to the far box's CENTRE when the far end is a
-            // fork it had not reached yet — emitting that verbatim would draw a link ending inside a box,
-            // the very defect the two-pass split exists to prevent. Pass B's own bends are kept (they are
-            // what the forks tapped) and the corrected leg is re-checked below.
+            // Routing is deterministic, so wherever the far end earned a door this returns pass B's path
+            // exactly, and the forks that tapped it are still on it. Where the far end FORKED the final
+            // path differs and a fork tapping this trunk can hang beside it — that needs BOTH ends' walls
+            // overfull at once, and it is the same fallback the two-pass split has always accepted.
+            //
+            // Reading `endpoint` (not a pass-B stash) is what makes this whole. Pass A fills it for every
+            // door, so every well-formed edge emits.
             for (int i = 0; i < edges.Count; i++)
             {
                 var e = edges[i];
-                if (!endpoint.TryGetValue((i, e.A), out _)) continue;
+                if (!endpoint.TryGetValue((i, e.A), out var pa)) continue;
                 if (!endpoint.TryGetValue((i, e.B), out var pb)) continue;
-                if (!polyOf.TryGetValue((i, e.A), out var poly) || poly.Count < 2) continue;
 
-                var final = new List<LinkPoint>(poly);
-                final[final.Count - 1] = pb;                 // the far end's real door or fork
-
-                // Moving the terminus can invalidate the last leg, so re-check it. Pass B bent this
-                // polyline toward FarEnd, which falls back to the far box's CENTRE when that end is a fork
-                // this pass had not reached yet; snapping the end to the real fork point can push that leg
-                // through a box the detour never saw. A no-op in the common case (the far end earned a
-                // door, so FarEnd == pb and the polyline is already clean).
-                DetourAround(final, ObstaclesFor(nodes, e.A, e.B));
-
-                for (int k = 0; k < final.Count - 1; k++)
-                    g.Segments.Add(new LinkSegment { A = final[k], B = final[k + 1], EdgeIndex = i });
+                var path = OrthogonalRoute(pa, NormalOf(wallOf, i, e.A), pb, NormalOf(wallOf, i, e.B), nodes);
+                for (int k = 0; k < path.Count - 1; k++)
+                    g.Segments.Add(new LinkSegment { A = path[k], B = path[k + 1], EdgeIndex = i });
             }
 
             return g;
-        }
-
-        /// <summary>
-        /// Bend `poly` around any `obstacles` its legs cross, in place. Straight/diagonal legs are kept —
-        /// a bend is inserted ONLY where a leg actually crosses a box (spec C1: minimal detour, chosen
-        /// over full orthogonal routing and over grid pathfinding).
-        ///
-        /// One blocker per iteration, re-checking from the start each time, because bending around one box
-        /// can push a fresh leg into the next. Capped: a boxed-in leg returns as-is rather than hanging.
-        ///
-        /// Deterministic in every choice — which blocker, which side, which corner order. The caller
-        /// re-derives geometry every frame, so a choice left to float noise would make corridors flicker
-        /// between sides as rooms move.
-        /// </summary>
-        public static void DetourAround(List<LinkPoint> poly, IReadOnlyList<LinkNode> obstacles,
-            float clearanceTiles = ClearanceTiles, int maxIterations = MaxDetourIterations)
-        {
-            if (poly == null || poly.Count < 2 || obstacles == null || obstacles.Count == 0) return;
-
-            for (int iter = 0; iter < maxIterations; iter++)
-            {
-                if (!FindFirstBlock(poly, obstacles, clearanceTiles, out int legIndex, out int obsIndex)) return;
-
-                var p = poly[legIndex];
-                var q = poly[legIndex + 1];
-                var chain = ChooseDetourChain(p, q, obstacles[obsIndex], clearanceTiles);
-                if (chain.Count == 0) return;   // nothing sensible to insert — leave the leg alone
-
-                poly.InsertRange(legIndex + 1, chain);
-            }
-        }
-
-        /// <summary>The earliest leg that crosses a box, and within that leg the box whose entry is
-        /// nearest the leg's start. Ties on box id — never on list order.
-        ///
-        /// SKIPS any box whose inflated rect already CONTAINS the leg's start (spec C7). You cannot route
-        /// around what you are standing on, and this is not hypothetical: a fork taps the nearest point on
-        /// built geometry, which is frequently another box's door — exactly ON that box's boundary. Without
-        /// the skip, the first check reports a hit at t≈0, a bend is spliced, and the new leg starts inside
-        /// the same inflated rect again, spinning to the cap and emitting garbage.</summary>
-        static bool FindFirstBlock(List<LinkPoint> poly, IReadOnlyList<LinkNode> obstacles, float clearance,
-                                   out int legIndex, out int obsIndex)
-        {
-            legIndex = -1; obsIndex = -1;
-            for (int i = 0; i < poly.Count - 1; i++)
-            {
-                var p = poly[i]; var q = poly[i + 1];
-                float bestT = float.MaxValue; int best = -1;
-                for (int o = 0; o < obstacles.Count; o++)
-                {
-                    if (PointInInflatedRect(p, obstacles[o], clearance)) continue;              // C7
-                    if (!SegmentHitsInflatedRect(p, q, obstacles[o], clearance, out float tEntry)) continue;
-                    if (tEntry < bestT - 1e-6f ||
-                        (Math.Abs(tEntry - bestT) <= 1e-6f && (best < 0 || obstacles[o].Id < obstacles[best].Id)))
-                    { bestT = tEntry; best = o; }
-                }
-                if (best >= 0) { legIndex = i; obsIndex = best; return true; }
-            }
-            return false;
-        }
-
-        /// <summary>The corner chain to splice between p and q to get around `blocker`. Inflate the box by
-        /// `clearance` → 4 corners (0=NW, 1=NE, 2=SE, 3=SW; tile Y grows SOUTH). Split them by which side
-        /// of the line p→q they fall on; each side gives a chain of 1..2 corners, ordered along p→q. Take
-        /// the cheaper side by total path length; on a tie take the side holding the LOWER corner index.
-        /// A corner exactly ON the line goes to the `cross >= 0` side — by rule, so a box centred dead-on
-        /// the path resolves the same way every frame instead of by float noise.
-        /// An empty side means the line only touches the boundary — see the give-up below.</summary>
-        static List<LinkPoint> ChooseDetourChain(LinkPoint p, LinkPoint q, LinkNode blocker, float clearance)
-        {
-            var corners = InflatedCorners(blocker, clearance);
-
-            var sideA = new List<int>();
-            var sideB = new List<int>();
-            for (int c = 0; c < 4; c++)
-            {
-                float cross = (q.X - p.X) * (corners[c].Y - p.Y) - (q.Y - p.Y) * (corners[c].X - p.X);
-                if (cross >= 0f) sideA.Add(c); else sideB.Add(c);
-            }
-
-            // Unreachable: a line through the box's INTERIOR always leaves at least one corner strictly on
-            // each side, and SegmentHitsInflatedRect's TouchEps shrink means we are only called for lines
-            // that DO cross the interior. Kept as an honest give-up (spec C6 — degrade to a visible
-            // artifact, never to garbage). The old code returned the non-empty side here: a chain visiting
-            // ALL FOUR corners, which necessarily cuts straight through the box it was meant to avoid.
-            if (sideA.Count == 0 || sideB.Count == 0) return new List<LinkPoint>();
-
-            var chainA = OrderAlong(p, q, corners, sideA);
-            var chainB = OrderAlong(p, q, corners, sideB);
-
-            float costA = ChainCost(p, q, chainA);
-            float costB = ChainCost(p, q, chainB);
-
-            if (Math.Abs(costA - costB) > 1e-4f) return costA < costB ? chainA : chainB;
-            return MinIndex(sideA) <= MinIndex(sideB) ? chainA : chainB;   // deterministic tie-break
-        }
-
-        static LinkPoint[] InflatedCorners(LinkNode n, float clearance)
-        {
-            float hw = n.W * 0.5f + clearance, hh = n.H * 0.5f + clearance;
-            return new[]
-            {
-                new LinkPoint { X = n.CX - hw, Y = n.CY - hh },   // 0 = NW
-                new LinkPoint { X = n.CX + hw, Y = n.CY - hh },   // 1 = NE
-                new LinkPoint { X = n.CX + hw, Y = n.CY + hh },   // 2 = SE
-                new LinkPoint { X = n.CX - hw, Y = n.CY + hh },   // 3 = SW
-            };
-        }
-
-        /// <summary>The side's corners ordered by their projection along p→q, so the chain runs the same
-        /// direction the leg does instead of doubling back.</summary>
-        static List<LinkPoint> OrderAlong(LinkPoint p, LinkPoint q, LinkPoint[] corners, List<int> side)
-        {
-            float dx = q.X - p.X, dy = q.Y - p.Y;
-            var idx = new List<int>(side);
-            idx.Sort((u, v) =>
-            {
-                float tu = (corners[u].X - p.X) * dx + (corners[u].Y - p.Y) * dy;
-                float tv = (corners[v].X - p.X) * dx + (corners[v].Y - p.Y) * dy;
-                int c = tu.CompareTo(tv);
-                return c != 0 ? c : u.CompareTo(v);   // deterministic on a tie
-            });
-            var chain = new List<LinkPoint>(idx.Count);
-            foreach (int i in idx) chain.Add(corners[i]);
-            return chain;
-        }
-
-        static float ChainCost(LinkPoint p, LinkPoint q, List<LinkPoint> chain)
-        {
-            if (chain.Count == 0) return float.MaxValue;
-            float sum = Dist(p, chain[0]);
-            for (int i = 1; i < chain.Count; i++) sum += Dist(chain[i - 1], chain[i]);
-            return sum + Dist(chain[chain.Count - 1], q);
-        }
-
-        static int MinIndex(List<int> side)
-        {
-            int m = int.MaxValue;
-            foreach (int i in side) if (i < m) m = i;
-            return m;
         }
 
         static float Dist(LinkPoint a, LinkPoint b)
@@ -383,6 +236,22 @@ namespace WorldGen.Generation
             float dx = b.X - a.X, dy = b.Y - a.Y;
             return (float)Math.Sqrt(dx * dx + dy * dy);
         }
+
+        static LinkPoint WallNormal(Wall w)
+        {
+            switch (w)
+            {
+                case Wall.East: return new LinkPoint { X = 1f, Y = 0f };
+                case Wall.West: return new LinkPoint { X = -1f, Y = 0f };
+                case Wall.South: return new LinkPoint { X = 0f, Y = 1f };    // tile Y grows SOUTH
+                default: return new LinkPoint { X = 0f, Y = -1f };           // North
+            }
+        }
+
+        /// <summary>The outward normal of the wall this link's end leaves through, or a zero vector when
+        /// that end is a fork — a fork sits mid-corridor and has no wall to leave through.</summary>
+        static LinkPoint NormalOf(Dictionary<(int edge, int node), Wall> wallOf, int edge, int node)
+            => wallOf.TryGetValue((edge, node), out var w) ? WallNormal(w) : default;
 
         /// <summary>An orthogonal path from `from` to `to` — every leg strictly horizontal or vertical —
         /// that keeps out of every box in `obstacles`.
@@ -709,15 +578,6 @@ namespace WorldGen.Generation
                     if (d2 < bestD2) { bestD2 = d2; best = p; }
                 }
             return best;
-        }
-
-        /// <summary>Every box except the link's own two ends (spec C3) — a link starts and ends at their
-        /// doors, which sit ON their boundaries, so they can never be things to route around.</summary>
-        static List<LinkNode> ObstaclesFor(IReadOnlyList<LinkNode> nodes, int selfId, int otherId)
-        {
-            var list = new List<LinkNode>(nodes.Count);
-            foreach (var n in nodes) if (n.Id != selfId && n.Id != otherId) list.Add(n);
-            return list;
         }
 
         static LinkPoint ClosestOnSegment(LinkPoint a, LinkPoint b, LinkPoint p)
