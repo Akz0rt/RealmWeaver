@@ -59,10 +59,16 @@ namespace WorldGen.Generation
         /// instead of staircased. TUNABLE — the user eyeballs it.</summary>
         public const float TurnPenalty = 2f;
 
-        /// <summary>A\* pays this many tiles for each already-routed corridor segment a leg intersects, so
-        /// it prefers routes that cross other corridors less — but crosses anyway when the clear detour
-        /// costs more than this. Rooms, by contrast, are never crossed. TUNABLE.</summary>
+        /// <summary>A\* pays this many tiles for each already-routed corridor a leg comes within
+        /// CorridorGap of (crossing it, or running parallel closer than the gap), so it prefers routes that
+        /// keep clear of other corridors — but comes close anyway when the clear detour costs more than
+        /// this. Rooms, by contrast, are never crossed. TUNABLE.</summary>
         public const float CorridorCrossPenalty = 8f;
+
+        /// <summary>How far apart two parallel corridors keep, in tiles, when there is room. A grid lane is
+        /// offered exactly this far from every routed corridor (free), and running any nearer pays
+        /// CorridorCrossPenalty — so corridors run beside each other with a gap, not flush. TUNABLE.</summary>
+        public const float CorridorGap = 1.5f;
 
         /// <summary>Route SHORT links first so main corridors route around the little stubs rather than
         /// the reverse. TUNABLE — flip and re-Build to compare.</summary>
@@ -555,6 +561,14 @@ namespace WorldGen.Generation
                 AddDistinct(xs, n.CX - hw); AddDistinct(xs, n.CX + hw);
                 AddDistinct(ys, n.CY - hh); AddDistinct(ys, n.CY + hh);
             }
+            // A lane exactly CorridorGap from every existing corridor, so a parallel one can keep its
+            // distance (the penalty below makes anything nearer costly). A horizontal corridor offsets ROWS,
+            // a vertical one offsets COLUMNS.
+            foreach (var s in occ)
+            {
+                if (Math.Abs(s.a.Y - s.b.Y) <= TouchEps) { AddDistinct(ys, s.a.Y + CorridorGap); AddDistinct(ys, s.a.Y - CorridorGap); }
+                if (Math.Abs(s.a.X - s.b.X) <= TouchEps) { AddDistinct(xs, s.a.X + CorridorGap); AddDistinct(xs, s.a.X - CorridorGap); }
+            }
             xs.Sort(); ys.Sort();
             int W = xs.Count, H = ys.Count;
 
@@ -639,8 +653,8 @@ namespace WorldGen.Generation
 
                     float step = Dist(p, q);
                     if (dir != 4 && dir != d) step += turnPenalty;      // a turn costs
-                    foreach (var s in occ)                              // corridors are soft
-                        if (SegBBoxOverlap(p, q, s.a, s.b)) step += corridorPenalty;
+                    foreach (var s in occ)                              // corridors are soft: keep a gap
+                        if (WithinGap(p, q, s.a, s.b, CorridorGap)) step += corridorPenalty;
 
                     int nNode = ny * W + nx, nState = nNode * 5 + d;
                     float tentative = gHere + step;
@@ -688,19 +702,19 @@ namespace WorldGen.Generation
             return p.X >= minX - 1e-4f && p.X <= maxX + 1e-4f && p.Y >= minY - 1e-4f && p.Y <= maxY + 1e-4f;
         }
 
-        /// <summary>Do two AXIS-ALIGNED segments intersect? For axis-aligned segments this is exactly
-        /// bounding-box overlap (a horizontal and a vertical overlap iff the vertical's x is in the
-        /// horizontal's x-range and the horizontal's y is in the vertical's y-range; two collinear ones
-        /// overlap iff their shared-axis intervals do). Counts a shared endpoint as an intersection — a
-        /// slight over-penalty on T-junctions, which only nudges A\* toward fewer of them.</summary>
-        static bool SegBBoxOverlap(LinkPoint a, LinkPoint b, LinkPoint c, LinkPoint d)
+        /// <summary>Is the axis-aligned segment p→q within `gap` of the axis-aligned segment c→d — crossing
+        /// it, OR running parallel closer than `gap`? Inflate p→q's bounding box by `gap` and test STRICT
+        /// overlap with c→d's box: a leg exactly `gap` away (on the offset grid lane) is free, anything
+        /// nearer pays. Two axis-aligned boxes overlap iff they overlap on both axes; the inflation turns
+        /// that into a proximity test. A shared endpoint / T-junction counts as near — a slight over-nudge
+        /// toward fewer of them, which is fine.</summary>
+        static bool WithinGap(LinkPoint p, LinkPoint q, LinkPoint c, LinkPoint d, float gap)
         {
-            float aMinX = Math.Min(a.X, b.X), aMaxX = Math.Max(a.X, b.X);
-            float aMinY = Math.Min(a.Y, b.Y), aMaxY = Math.Max(a.Y, b.Y);
+            float aMinX = Math.Min(p.X, q.X) - gap, aMaxX = Math.Max(p.X, q.X) + gap;
+            float aMinY = Math.Min(p.Y, q.Y) - gap, aMaxY = Math.Max(p.Y, q.Y) + gap;
             float bMinX = Math.Min(c.X, d.X), bMaxX = Math.Max(c.X, d.X);
             float bMinY = Math.Min(c.Y, d.Y), bMaxY = Math.Max(c.Y, d.Y);
-            return aMinX <= bMaxX + 1e-4f && bMinX <= aMaxX + 1e-4f
-                && aMinY <= bMaxY + 1e-4f && bMinY <= aMaxY + 1e-4f;
+            return aMinX < bMaxX && bMinX < aMaxX && aMinY < bMaxY && bMinY < aMaxY;
         }
 
         static void AddDistinct(List<float> xs, float v)
