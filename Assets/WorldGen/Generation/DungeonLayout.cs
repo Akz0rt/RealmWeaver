@@ -8,7 +8,13 @@ namespace WorldGen.Generation
     /// normalized 0..1; sizes are in tiles; all math runs in TILE space via TilesPerAxis. No Unity types.</summary>
     public static class DungeonLayout
     {
-        public const int TilesPerAxis = 48;   // normalized 0..1 spans this many tiles (bridges pos↔size units)
+        // Normalized 0..1 spans this many tiles (bridges pos↔size units). Raised 48→128 once room
+        // footprints grew (Normal up to 8, Boss up to 14): at 48, six BFS layers of 8-tile rooms plus
+        // gaps needed 63 tiles, and the generator's Clamp01 silently stacked the overflow at the field
+        // edge — the opposite of compaction. This costs nothing visually: DungeonProjection.Fit scales by
+        // the level's OCCUPIED bounds (ContentBoundsTiles), so the field size never reaches the renderer.
+        // It is pure coordinate headroom.
+        public const int TilesPerAxis = 128;
 
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
