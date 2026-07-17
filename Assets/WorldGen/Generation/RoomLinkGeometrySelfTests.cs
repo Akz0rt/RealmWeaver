@@ -266,6 +266,168 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Room Link Geometry: PASS" : "Self-Test Room Link Geometry: FAIL");
         }
 
+        [ContextMenu("Self-Test: Corridor Detour")]
+        public void SelfTestCorridorDetour()
+        {
+            bool ok = true;
+
+            // ── A clean path must not be touched at all ────────────────────────────────────────────
+            // The obstacle sits far off the line. If the detour fired anyway, a straight corridor would
+            // gain phantom bends on every frame.
+            {
+                var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                var obstacles = new List<LinkNode> { N(9, 20f, 40f, 6f, 6f) };
+                RoomLinkGeometry.DetourAround(poly, obstacles);
+                if (poly.Count != 2)
+                { Debug.LogError($"FAIL clean: {poly.Count} points, want 2 — the detour fired when nothing blocked"); ok = false; }
+            }
+
+            // ── THE HEADLINE: a link whose straight line crosses a room must bend around it ─────────
+            // Room 9 sits dead on the path from (0,0) to (40,0). Assert the premise first: if it ever
+            // stopped blocking, everything below would pass vacuously.
+            {
+                var blocker = N(9, 20f, 0f, 8f, 8f);
+                if (!StraightLineHits(P(0f, 0f), P(40f, 0f), blocker))
+                { Debug.LogError("FAIL setup: the blocker does not actually block — this fixture would prove nothing"); ok = false; }
+
+                var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { blocker });
+
+                if (poly.Count <= 2)
+                { Debug.LogError($"FAIL blocked: {poly.Count} points — the corridor still runs straight through the room"); ok = false; }
+                for (int i = 0; i < poly.Count - 1; i++)
+                    if (SegmentEntersRect(poly[i], poly[i + 1], blocker))
+                    { Debug.LogError($"FAIL blocked: leg {i} ({poly[i].X:F1},{poly[i].Y:F1})→({poly[i+1].X:F1},{poly[i+1].Y:F1}) still crosses the room"); ok = false; break; }
+            }
+
+            // ── The detour takes the SHORT way ─────────────────────────────────────────────────────
+            // The blocker is pushed NORTH of the path's midline, so going south is clearly shorter. If
+            // the side choice were arbitrary, this fails half the time — which is exactly the point.
+            {
+                var blocker = N(9, 20f, -2f, 8f, 12f);   // spans Y -8..+4 — the path at Y=0 clips its south part
+                var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { blocker });
+
+                // Going SOUTH means every bend point is south of the line (Y > 0). Going north would put
+                // them at Y < -8 — a much longer way round.
+                bool anyNorth = false;
+                for (int i = 1; i < poly.Count - 1; i++) if (poly[i].Y < 0f) anyNorth = true;
+                if (anyNorth)
+                { Debug.LogError("FAIL short-way: the detour went NORTH around a blocker whose south side is nearer"); ok = false; }
+            }
+
+            // ── TWO blockers in a row force TWO bends — this is what tests the ITERATION ────────────
+            // A single-blocker fixture passes even with the loop capped at one pass. Assert BOTH rooms
+            // are cleared, or the re-check after the first bend goes untested.
+            {
+                var b1 = N(9, 15f, 0f, 6f, 6f);
+                var b2 = N(10, 30f, 0f, 6f, 6f);
+                var poly = new List<LinkPoint> { P(0f, 0f), P(45f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { b1, b2 });
+
+                foreach (var b in new[] { b1, b2 })
+                    for (int i = 0; i < poly.Count - 1; i++)
+                        if (SegmentEntersRect(poly[i], poly[i + 1], b))
+                        { Debug.LogError($"FAIL two-blockers: leg {i} still crosses room {b.Id} — the detour does not re-check after bending"); ok = false; break; }
+            }
+
+            // ── Clearance is real ──────────────────────────────────────────────────────────────────
+            // No leg may pass closer to the blocker's rect than ClearanceTiles (minus an epsilon for the
+            // corner points, which sit exactly at the clearance distance by construction).
+            {
+                var blocker = N(9, 20f, 0f, 8f, 8f);
+                var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { blocker });
+                if (SegmentEntersRect(poly[0], poly[1], blocker))
+                { Debug.LogError("FAIL clearance setup"); ok = false; }
+                foreach (var pt in poly)
+                {
+                    float d = DistancePointToRect(pt, blocker);
+                    if (d < RoomLinkGeometry.ClearanceTiles - 1e-2f && d > -1e-6f)
+                    { Debug.LogError($"FAIL clearance: point ({pt.X:F1},{pt.Y:F1}) is {d:F2} from the room, want >= {RoomLinkGeometry.ClearanceTiles}"); ok = false; }
+                }
+            }
+
+            // ── C7: a leg STARTING on an obstacle must not try to route around it ──────────────────
+            // This really happens: a fork taps the nearest point on built geometry, and that point is
+            // often another room's DOOR — which sits exactly ON that room's boundary, inside its
+            // clearance-inflated rect. Delete C7 and the first check reports a hit at t≈0, splices a
+            // bend, and the new leg starts inside the same inflated rect again — spinning to the cap.
+            // So assert the path is CLEAN and SHORT, not merely that the call returned.
+            {
+                var standingOn = N(9, 0f, 0f, 8f, 8f);        // the leg starts on this room's east wall
+                var poly = new List<LinkPoint> { P(4f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { standingOn });
+                if (poly.Count != 2)
+                { Debug.LogError($"FAIL C7: {poly.Count} points — the leg tried to route around the room it starts ON"); ok = false; }
+            }
+
+            // ── A boxed-in leg terminates and returns something finite ─────────────────────────────
+            {
+                var obstacles = new List<LinkNode>();
+                for (int i = 0; i < 6; i++) obstacles.Add(N(20 + i, 10f + i * 5f, 0f, 4f, 60f));   // a wall of rooms
+                var poly = new List<LinkPoint> { P(0f, 0f), P(45f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, obstacles);
+                if (poly.Count < 2)
+                { Debug.LogError("FAIL boxed-in: the polyline was destroyed"); ok = false; }
+                foreach (var pt in poly)
+                    if (float.IsNaN(pt.X) || float.IsNaN(pt.Y) || float.IsInfinity(pt.X) || float.IsInfinity(pt.Y))
+                    { Debug.LogError("FAIL boxed-in: NaN/Inf in the polyline"); ok = false; break; }
+            }
+
+            // ── Determinism, including WHICH SIDE was chosen ───────────────────────────────────────
+            // A blocker centred dead-on the path is the case where the side choice could fall to float
+            // noise; the rule must decide it instead.
+            {
+                var blocker = N(9, 20f, 0f, 8f, 8f);
+                var a = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                var b = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(a, new List<LinkNode> { blocker });
+                RoomLinkGeometry.DetourAround(b, new List<LinkNode> { blocker });
+                if (a.Count != b.Count)
+                { Debug.LogError("FAIL determinism: different point counts from identical input"); ok = false; }
+                else
+                    for (int i = 0; i < a.Count; i++)
+                        if (Mathf.Abs(a[i].X - b[i].X) > 1e-6f || Mathf.Abs(a[i].Y - b[i].Y) > 1e-6f)
+                        { Debug.LogError($"FAIL determinism: point {i} differs — the side choice is not rule-driven"); ok = false; break; }
+            }
+
+            Debug.Log(ok ? "Self-Test Corridor Detour: PASS" : "Self-Test Corridor Detour: FAIL");
+        }
+
+        // ── detour fixture helpers ────────────────────────────────────────────────────────────────
+
+        static LinkPoint P(float x, float y) => new LinkPoint { X = x, Y = y };
+        static LinkNode N(int id, float cx, float cy, float w, float h)
+            => new LinkNode { Id = id, CX = cx, CY = cy, W = w, H = h };
+
+        /// <summary>Does the segment enter the node's RAW rect (no clearance)? Independent
+        /// reimplementation — a sampling check rather than the slab method the module uses, so a bug in
+        /// the module's own intersection math cannot hide behind an identical test.</summary>
+        static bool SegmentEntersRect(LinkPoint a, LinkPoint b, LinkNode n)
+        {
+            const int Samples = 200;
+            float hw = n.W * 0.5f - 1e-3f, hh = n.H * 0.5f - 1e-3f;
+            for (int i = 1; i < Samples; i++)
+            {
+                float t = i / (float)Samples;
+                float x = a.X + (b.X - a.X) * t, y = a.Y + (b.Y - a.Y) * t;
+                if (x > n.CX - hw && x < n.CX + hw && y > n.CY - hh && y < n.CY + hh) return true;
+            }
+            return false;
+        }
+
+        static bool StraightLineHits(LinkPoint a, LinkPoint b, LinkNode n) => SegmentEntersRect(a, b, n);
+
+        /// <summary>Distance from a point to a rect's boundary; 0 or negative if inside.</summary>
+        static float DistancePointToRect(LinkPoint p, LinkNode n)
+        {
+            float dx = Mathf.Max(Mathf.Abs(p.X - n.CX) - n.W * 0.5f, 0f);
+            float dy = Mathf.Max(Mathf.Abs(p.Y - n.CY) - n.H * 0.5f, 0f);
+            if (dx == 0f && dy == 0f) return -1f;   // inside
+            return Mathf.Sqrt(dx * dx + dy * dy);
+        }
+
         // ── fixtures + helpers ────────────────────────────────────────────────────────────────────
 
         static List<LinkNode> FanNodes()
