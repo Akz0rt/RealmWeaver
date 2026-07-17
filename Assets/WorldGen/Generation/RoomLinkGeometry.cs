@@ -240,7 +240,8 @@ namespace WorldGen.Generation
                 {
                     if (PointInInflatedRect(p, obstacles[o], clearance)) continue;              // C7
                     if (!SegmentHitsInflatedRect(p, q, obstacles[o], clearance, out float tEntry)) continue;
-                    if (tEntry < bestT || (Math.Abs(tEntry - bestT) < 1e-6f && best >= 0 && obstacles[o].Id < obstacles[best].Id))
+                    if (tEntry < bestT - 1e-6f ||
+                        (Math.Abs(tEntry - bestT) <= 1e-6f && (best < 0 || obstacles[o].Id < obstacles[best].Id)))
                     { bestT = tEntry; best = o; }
                 }
                 if (best >= 0) { legIndex = i; obsIndex = best; return true; }
@@ -253,7 +254,8 @@ namespace WorldGen.Generation
         /// of the line p→q they fall on; each side gives a chain of 1..2 corners, ordered along p→q. Take
         /// the cheaper side by total path length; on a tie take the side holding the LOWER corner index.
         /// A corner exactly ON the line goes to the `cross >= 0` side — by rule, so a box centred dead-on
-        /// the path resolves the same way every frame instead of by float noise.</summary>
+        /// the path resolves the same way every frame instead of by float noise.
+        /// An empty side means the line only touches the boundary — see the give-up below.</summary>
         static List<LinkPoint> ChooseDetourChain(LinkPoint p, LinkPoint q, LinkNode blocker, float clearance)
         {
             var corners = InflatedCorners(blocker, clearance);
@@ -266,14 +268,19 @@ namespace WorldGen.Generation
                 if (cross >= 0f) sideA.Add(c); else sideB.Add(c);
             }
 
+            // Unreachable: a line through the box's INTERIOR always leaves at least one corner strictly on
+            // each side, and SegmentHitsInflatedRect's TouchEps shrink means we are only called for lines
+            // that DO cross the interior. Kept as an honest give-up (spec C6 — degrade to a visible
+            // artifact, never to garbage). The old code returned the non-empty side here: a chain visiting
+            // ALL FOUR corners, which necessarily cuts straight through the box it was meant to avoid.
+            if (sideA.Count == 0 || sideB.Count == 0) return new List<LinkPoint>();
+
             var chainA = OrderAlong(p, q, corners, sideA);
             var chainB = OrderAlong(p, q, corners, sideB);
 
             float costA = ChainCost(p, q, chainA);
             float costB = ChainCost(p, q, chainB);
 
-            if (chainA.Count == 0) return chainB;
-            if (chainB.Count == 0) return chainA;
             if (Math.Abs(costA - costB) > 1e-4f) return costA < costB ? chainA : chainB;
             return MinIndex(sideA) <= MinIndex(sideB) ? chainA : chainB;   // deterministic tie-break
         }
@@ -336,11 +343,21 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Segment × inflated-AABB by the slab method. `tEntry` is the entry parameter along
-        /// p→q, clamped to [0,1]. False when the segment misses or merely touches the boundary.</summary>
+        /// p→q, clamped to [0,1]. False when the segment misses the box or only TOUCHES its boundary.
+        ///
+        /// The boundary-touch exclusion is load-bearing, not a nicety. Every bend this module inserts
+        /// lands ON a blocker's inflated corner, so the new leg runs exactly along that blocker's inflated
+        /// edge — at precisely the clearance we asked for, needing no further detour. Two rooms of the
+        /// same height side by side (ordinary, not exotic) would otherwise make the SECOND report a
+        /// spurious hit against a leg collinear with its edge; and a collinear leg puts all four corners
+        /// on one side of itself, which ChooseDetourChain cannot split. Shrinking the test rect by
+        /// TouchEps dissolves that at the root.</summary>
         static bool SegmentHitsInflatedRect(LinkPoint p, LinkPoint q, LinkNode n, float clearance, out float tEntry)
         {
+            const float TouchEps = 1e-4f;
             tEntry = 0f;
-            float hw = n.W * 0.5f + clearance, hh = n.H * 0.5f + clearance;
+            float hw = Math.Max(n.W * 0.5f + clearance - TouchEps, 0f);
+            float hh = Math.Max(n.H * 0.5f + clearance - TouchEps, 0f);
             float minX = n.CX - hw, maxX = n.CX + hw, minY = n.CY - hh, maxY = n.CY + hh;
 
             float dx = q.X - p.X, dy = q.Y - p.Y;

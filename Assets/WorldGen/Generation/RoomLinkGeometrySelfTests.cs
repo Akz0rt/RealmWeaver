@@ -316,6 +316,21 @@ namespace WorldGen.Rendering
                 { Debug.LogError("FAIL short-way: the detour went NORTH around a blocker whose south side is nearer"); ok = false; }
             }
 
+            // ── ...and the MIRROR, or "always return sideA" would pass the fixture above ────────────
+            // Same geometry reflected: now the NORTH way is shorter. For a west→east leg with Y growing
+            // south, `cross >= 0` is always the south side — so without this, a detour hardwired to sideA
+            // passes every fixture in this file.
+            {
+                var blocker = N(9, 20f, 2f, 8f, 12f);   // spans Y -4..+8 — the path at Y=0 clips its north part
+                var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { blocker });
+
+                bool anySouth = false;
+                for (int i = 1; i < poly.Count - 1; i++) if (poly[i].Y > 0f) anySouth = true;
+                if (anySouth)
+                { Debug.LogError("FAIL short-way mirror: the detour went SOUTH around a blocker whose north side is nearer"); ok = false; }
+            }
+
             // ── TWO blockers in a row force TWO bends — this is what tests the ITERATION ────────────
             // A single-blocker fixture passes even with the loop capped at one pass. Assert BOTH rooms
             // are cleared, or the re-check after the first bend goes untested.
@@ -331,20 +346,42 @@ namespace WorldGen.Rendering
                         { Debug.LogError($"FAIL two-blockers: leg {i} still crosses room {b.Id} — the detour does not re-check after bending"); ok = false; break; }
             }
 
+            // ── Two same-height rooms in a row: the bend leg runs ALONG the second's inflated edge ─────
+            // The ordinary consequence of bending: iteration 1 parks a leg exactly on b1's inflated edge,
+            // and b2 shares that edge's Y because it shares CY and H. A leg collinear with an edge puts
+            // ALL FOUR of that box's corners on one side of itself — unsplittable. This once emitted a
+            // chain visiting all four corners, which drove the corridor through (22,0), b2's dead centre.
+            {
+                var b1 = N(9, 15f, 0f, 6f, 6f);
+                var b2 = N(10, 22f, 0f, 6f, 6f);   // same CY, same H, near-flush → shares b1's inflated edge Y
+                var poly = new List<LinkPoint> { P(0f, 0f), P(45f, 0f) };
+                RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { b1, b2 });
+
+                foreach (var b in new[] { b1, b2 })
+                    for (int i = 0; i < poly.Count - 1; i++)
+                        if (SegmentEntersRect(poly[i], poly[i + 1], b))
+                        { Debug.LogError($"FAIL flush-pair: leg {i} ({poly[i].X:F1},{poly[i].Y:F1})→({poly[i+1].X:F1},{poly[i+1].Y:F1}) cuts through room {b.Id}"); ok = false; break; }
+            }
+
             // ── Clearance is real ──────────────────────────────────────────────────────────────────
-            // No leg may pass closer to the blocker's rect than ClearanceTiles (minus an epsilon for the
-            // corner points, which sit exactly at the clearance distance by construction).
+            // Every point must stay at least ClearanceTiles from the blocker's raw rect. The threshold is
+            // hardcoded ON PURPOSE: reading ClearanceTiles here would make the fixture vacuous — set the
+            // constant to 0 and the comparison could never fire. Bend points land on the INFLATED corner,
+            // so they sit at clearance*sqrt(2) ≈ 1.41 from the raw rect; 0.99 leaves float slop under that
+            // and still catches a detour that ignored the clearance (its corners would land AT the rect,
+            // d = -1).
             {
                 var blocker = N(9, 20f, 0f, 8f, 8f);
+                if (!StraightLineHits(P(0f, 0f), P(40f, 0f), blocker))
+                { Debug.LogError("FAIL clearance setup: the blocker does not block — this fixture would prove nothing"); ok = false; }
+
                 var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
                 RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { blocker });
-                if (SegmentEntersRect(poly[0], poly[1], blocker))
-                { Debug.LogError("FAIL clearance setup"); ok = false; }
                 foreach (var pt in poly)
                 {
-                    float d = DistancePointToRect(pt, blocker);
-                    if (d < RoomLinkGeometry.ClearanceTiles - 1e-2f && d > -1e-6f)
-                    { Debug.LogError($"FAIL clearance: point ({pt.X:F1},{pt.Y:F1}) is {d:F2} from the room, want >= {RoomLinkGeometry.ClearanceTiles}"); ok = false; }
+                    float d = DistancePointToRect(pt, blocker);   // negative when inside
+                    if (d < 0.99f)
+                    { Debug.LogError($"FAIL clearance: point ({pt.X:F1},{pt.Y:F1}) is {d:F2} from the room, want >= 1.0"); ok = false; }
                 }
             }
 
@@ -373,23 +410,50 @@ namespace WorldGen.Rendering
                 foreach (var pt in poly)
                     if (float.IsNaN(pt.X) || float.IsNaN(pt.Y) || float.IsInfinity(pt.X) || float.IsInfinity(pt.Y))
                     { Debug.LogError("FAIL boxed-in: NaN/Inf in the polyline"); ok = false; break; }
+                if (poly.Count > 2 + 2 * RoomLinkGeometry.MaxDetourIterations)
+                { Debug.LogError($"FAIL boxed-in: {poly.Count} points — each pass may splice at most 2 corners, so the cap bounds this at {2 + 2 * RoomLinkGeometry.MaxDetourIterations}"); ok = false; }
             }
 
-            // ── Determinism, including WHICH SIDE was chosen ───────────────────────────────────────
-            // A blocker centred dead-on the path is the case where the side choice could fall to float
-            // noise; the rule must decide it instead.
+            // ── Determinism 1: the blocker LIST's order must not change the answer ─────────────────
+            // Two boxes whose entry parameters are exactly equal (same inflated minX, both straddling the
+            // path). Which one is "first" must fall to the id tie-break, never to list position. Reverse
+            // the list and the answer must be identical.
             {
-                var blocker = N(9, 20f, 0f, 8f, 8f);
-                var a = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
-                var b = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
-                RoomLinkGeometry.DetourAround(a, new List<LinkNode> { blocker });
-                RoomLinkGeometry.DetourAround(b, new List<LinkNode> { blocker });
-                if (a.Count != b.Count)
-                { Debug.LogError("FAIL determinism: different point counts from identical input"); ok = false; }
+                var b1 = N(5, 20f, -2f, 8f, 8f);   // inflated X 15..25, Y -7..3  → entry t = 15/40
+                var b2 = N(6, 20f,  2f, 8f, 8f);   // inflated X 15..25, Y -3..7  → entry t = 15/40, an exact tie
+                var fwd = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                var rev = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                RoomLinkGeometry.DetourAround(fwd, new List<LinkNode> { b1, b2 });
+                RoomLinkGeometry.DetourAround(rev, new List<LinkNode> { b2, b1 });
+
+                if (fwd.Count != rev.Count)
+                { Debug.LogError($"FAIL order-independence: {fwd.Count} points vs {rev.Count} from a reordered list"); ok = false; }
                 else
-                    for (int i = 0; i < a.Count; i++)
-                        if (Mathf.Abs(a[i].X - b[i].X) > 1e-6f || Mathf.Abs(a[i].Y - b[i].Y) > 1e-6f)
-                        { Debug.LogError($"FAIL determinism: point {i} differs — the side choice is not rule-driven"); ok = false; break; }
+                    for (int i = 0; i < fwd.Count; i++)
+                        if (Mathf.Abs(fwd[i].X - rev[i].X) > 1e-6f || Mathf.Abs(fwd[i].Y - rev[i].Y) > 1e-6f)
+                        { Debug.LogError($"FAIL order-independence: point {i} moved when the blocker list was reversed — list position is deciding, not the id tie-break"); ok = false; break; }
+            }
+
+            // ── Determinism 2: a hair's movement must not flip the chosen side ─────────────────────
+            // This is the anti-flicker property, and re-running identical input can never test it: the
+            // caller re-derives geometry every frame WHILE A ROOM IS BEING DRAGGED. A blocker centred
+            // dead-on the path has two equal-cost ways around; nudge it by 1e-5 either way and the cost
+            // compare must still read a tie (the 1e-4 epsilon) and defer to the rule. Without that
+            // epsilon the two nudges pick OPPOSITE sides and the corridor snaps back and forth.
+            {
+                float[] nudges = { 0f, 1e-5f, -1e-5f };
+                float firstSideY = 0f;
+                for (int k = 0; k < nudges.Length; k++)
+                {
+                    var poly = new List<LinkPoint> { P(0f, 0f), P(40f, 0f) };
+                    RoomLinkGeometry.DetourAround(poly, new List<LinkNode> { N(9, 20f, nudges[k], 8f, 8f) });
+                    if (poly.Count < 3)
+                    { Debug.LogError($"FAIL stability setup: nudge {k} produced {poly.Count} points — nothing bent, so no side was chosen"); ok = false; break; }
+
+                    if (k == 0) firstSideY = poly[1].Y;
+                    else if (Mathf.Sign(poly[1].Y) != Mathf.Sign(firstSideY))
+                    { Debug.LogError($"FAIL stability: nudging the blocker by {nudges[k]} flipped the detour to the other side (bend Y {firstSideY:F2} → {poly[1].Y:F2}) — corridors will flicker while a room is dragged"); ok = false; break; }
+                }
             }
 
             Debug.Log(ok ? "Self-Test Corridor Detour: PASS" : "Self-Test Corridor Detour: FAIL");
