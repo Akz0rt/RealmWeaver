@@ -72,6 +72,14 @@ namespace WorldGen.Generation
         /// (guaranteed clean, corridor-aware) for a settled layout. The controller picks per frame.</summary>
         public enum RoutingMode { Fast, Clean }
 
+        /// <summary>A door sits at least this far from its wall's corners, so a corridor leaving it does not
+        /// graze the perpendicular wall. TUNABLE.</summary>
+        public const float DoorMargin = 0.5f;
+
+        /// <summary>Two doors on one wall are pushed to at least this far apart, so their corridors stay
+        /// distinct. TUNABLE.</summary>
+        public const float DoorSpacing = 2f;
+
         /// <summary>Slop by which the hit test and the containment test shrink a box, so that merely
         /// TOUCHING its boundary is not a hit. A leg running along an inflated edge already sits at exactly
         /// the clearance we asked for. Both tests must use the same value or they disagree about a point on
@@ -164,9 +172,33 @@ namespace WorldGen.Generation
                         return c != 0 ? c : p.OtherId.CompareTo(q.OtherId);
                     });
 
-                    for (int slot = 0; slot < doorHolders.Count; slot++)
+                    // Place each door at its target's PROJECTION onto the wall — the point that minimises
+                    // the corridor's length (a straight perpendicular when the target sits off the wall),
+                    // kept `DoorMargin` off the corners. Two doors are pushed to at least `DoorSpacing`
+                    // apart so their corridors don't merge, staying centred on their targets.
+                    float hw = node.W * 0.5f, hh = node.H * 0.5f;
+                    bool horiz = wall == Wall.North || wall == Wall.South;
+                    float lo = (horiz ? node.CX - hw : node.CY - hh) + DoorMargin;
+                    float hi = (horiz ? node.CX + hw : node.CY + hh) - DoorMargin;
+                    if (hi < lo) { float m = (lo + hi) * 0.5f; lo = hi = m; }   // wall shorter than 2*margin
+
+                    var pos = new float[doorCount];
+                    for (int s = 0; s < doorCount; s++)
                     {
-                        var door = DoorPoint(node, wall, slot, doorHolders.Count);
+                        float t = doorHolders[s].AlongAxis;
+                        pos[s] = t < lo ? lo : (t > hi ? hi : t);
+                    }
+                    if (doorCount == 2 && pos[1] - pos[0] < DoorSpacing)
+                    {
+                        float mid = (pos[0] + pos[1]) * 0.5f, half = DoorSpacing * 0.5f;
+                        pos[0] = mid - half; pos[1] = mid + half;
+                        if (pos[0] < lo) { pos[0] = lo; pos[1] = lo + DoorSpacing; }
+                        if (pos[1] > hi) { pos[1] = hi; pos[0] = hi - DoorSpacing; }
+                    }
+
+                    for (int slot = 0; slot < doorCount; slot++)
+                    {
+                        var door = DoorPointAt(node, wall, pos[slot]);
                         g.Doors.Add(door);
                         endpoint[(doorHolders[slot].EdgeIndex, nodeId)] = door;
                         wallOf[(doorHolders[slot].EdgeIndex, nodeId)] = wall;
@@ -829,18 +861,17 @@ namespace WorldGen.Generation
             return dy >= 0f ? Wall.South : Wall.North;
         }
 
-        /// <summary>Where slot `slot` of `count` sits on `wall`. One door → the wall's midpoint; two →
-        /// 1/3 and 2/3 along it. Always exactly ON the boundary, never inside the box.</summary>
-        static LinkPoint DoorPoint(LinkNode n, Wall wall, int slot, int count)
+        /// <summary>A door on `wall` at position `along` on that wall's axis (X for a North/South wall,
+        /// Y for East/West). Always exactly ON the boundary, never inside the box.</summary>
+        static LinkPoint DoorPointAt(LinkNode n, Wall wall, float along)
         {
-            float t = count <= 1 ? 0.5f : (slot + 1f) / (count + 1f);   // 1 → .5 ; 2 → .333/.667
             float hw = n.W * 0.5f, hh = n.H * 0.5f;
             switch (wall)
             {
-                case Wall.North: return new LinkPoint { X = n.CX - hw + n.W * t, Y = n.CY - hh };
-                case Wall.South: return new LinkPoint { X = n.CX - hw + n.W * t, Y = n.CY + hh };
-                case Wall.West:  return new LinkPoint { X = n.CX - hw, Y = n.CY - hh + n.H * t };
-                default:         return new LinkPoint { X = n.CX + hw, Y = n.CY - hh + n.H * t };   // East
+                case Wall.North: return new LinkPoint { X = along, Y = n.CY - hh };
+                case Wall.South: return new LinkPoint { X = along, Y = n.CY + hh };
+                case Wall.West:  return new LinkPoint { X = n.CX - hw, Y = along };
+                default:         return new LinkPoint { X = n.CX + hw, Y = along };   // East
             }
         }
 
