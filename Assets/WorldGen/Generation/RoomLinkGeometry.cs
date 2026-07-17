@@ -281,14 +281,30 @@ namespace WorldGen.Generation
 
             g.Forks.Clear();   // pass B's cheap-trunk forks are superseded by the re-tapped ones below
 
+            // Route with A* at full clearance; if that had to cross a room FOOTPRINT — a door jammed against
+            // a tight neighbour, where no clearance-respecting path out exists — retry with ZERO clearance
+            // so the corridor hugs walls and routes around the footprints instead. Clearance is thus a
+            // PREFERENCE, not a wall: kept when there's room, given up (never the footprint) when packed.
+            // This is the "find the nearest gap it fits through" behaviour rather than crossing the room.
+            List<LinkPoint> RouteClean(LinkPoint pa, LinkPoint na, LinkPoint pb, LinkPoint nb, int exA, int exB)
+            {
+                var p = AStarRoute(pa, na, pb, nb, nodes, occupancy);
+                if (CrossesFootprint(p, nodes, exA, exB))
+                    // Zero clearance AND zero stub: start right at the door (which sits on its own wall,
+                    // outside a jammed neighbour's footprint) so A* can turn immediately and route around,
+                    // instead of the fixed stub driving it straight into the neighbour first.
+                    p = AStarRoute(pa, na, pb, nb, nodes, occupancy, 0f, 0f);
+                return p;
+            }
+
             // Doors first (short-first, for corridor avoidance), so every trunk is in `occupancy` before a
             // fork re-taps onto it.
             foreach (int i in order)
             {
                 if (IsFork(i, edges[i].A) || IsFork(i, edges[i].B)) continue;   // a fork edge — routed below
                 var e = edges[i];
-                Emit(i, AStarRoute(endpoint[(i, e.A)], NormalOf(wallOf, i, e.A),
-                                   endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), nodes, occupancy));
+                Emit(i, RouteClean(endpoint[(i, e.A)], NormalOf(wallOf, i, e.A),
+                                   endpoint[(i, e.B)], NormalOf(wallOf, i, e.B), e.A, e.B));
             }
 
             // Then forks, in pass B's RESOLUTION order (not short-first): a recursive fork taps a shallower
@@ -304,7 +320,7 @@ namespace WorldGen.Generation
                 var pb = endpoint[(i, e.B)];
                 if (IsFork(i, e.A)) { pa = NearestOnOccupancy(pa, occupancy); g.Forks.Add(pa); }
                 if (IsFork(i, e.B)) { pb = NearestOnOccupancy(pb, occupancy); g.Forks.Add(pb); }
-                Emit(i, AStarRoute(pa, NormalOf(wallOf, i, e.A), pb, NormalOf(wallOf, i, e.B), nodes, occupancy));
+                Emit(i, RouteClean(pa, NormalOf(wallOf, i, e.A), pb, NormalOf(wallOf, i, e.B), e.A, e.B));
             }
 
             return g;
@@ -466,7 +482,9 @@ namespace WorldGen.Generation
         {
             if (rooms == null) rooms = System.Array.Empty<LinkNode>();
 
-            float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+            // Stub length: 0 when the caller asks for none (the zero-clearance re-route, which must start
+            // right at the door), else at least clear the clearance ring (spec O5).
+            float stub = stubTiles <= 0f ? 0f : (stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f);
             // Don't let the two door stubs OVERSHOOT each other on a short link: when the rooms are close
             // (a tightly packed floor), a full-length stub from each door sails past the other, and the
             // path zigzags out and doubles back — a corridor that pokes into the void and returns. Cap each
@@ -882,6 +900,23 @@ namespace WorldGen.Generation
                 if (d2 < bestD2) { bestD2 = d2; best = c; }
             }
             return best;
+        }
+
+        /// <summary>Does any leg of `path` cross a room FOOTPRINT (its raw rect, at clearance 0), other than
+        /// the two endpoint rooms the corridor connects? Used to detect a full-clearance route that had to
+        /// fall through a room because a door was jammed against a tight neighbour — the caller then re-routes
+        /// at zero clearance to route around the footprint instead. Grazing a wall (a leg on the raw edge) is
+        /// NOT a crossing (SegmentHitsInflatedRect's TouchEps shrink), only entering the interior is.</summary>
+        static bool CrossesFootprint(List<LinkPoint> path, IReadOnlyList<LinkNode> rooms, int exA, int exB)
+        {
+            if (path == null) return false;
+            for (int i = 0; i < path.Count - 1; i++)
+                foreach (var n in rooms)
+                {
+                    if (n.Id == exA || n.Id == exB) continue;
+                    if (SegmentHitsInflatedRect(path[i], path[i + 1], n, 0f, out _)) return true;
+                }
+            return false;
         }
     }
 }
