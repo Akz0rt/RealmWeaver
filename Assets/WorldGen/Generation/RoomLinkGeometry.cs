@@ -381,9 +381,14 @@ namespace WorldGen.Generation
             // leg turning there (spec O8), and the link may then run straight back across its own room — so
             // the stub MUST clear the clearance ring. Clamp it up when the caller passes less.
             float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
-            // ...but cap it to half the door-to-door distance so two stubs on a short link don't overshoot
-            // each other and zigzag out and back (a corridor poking into the void on a tightly packed floor).
+            // ...but cap it so two stubs on a short link don't overshoot each other and zigzag out and back
+            // (a corridor poking into the void on a tightly packed floor): half the door-to-door distance,
+            // and half the FACING distance (the separation projected onto each normal) when the doors face
+            // each other — offset doors overshoot on their shared axis even when the straight line is long.
             stub = Math.Min(stub, Dist(from, to) * 0.5f);
+            float projA = fromNormal.X * (to.X - from.X) + fromNormal.Y * (to.Y - from.Y);
+            float projB = toNormal.X * (from.X - to.X) + toNormal.Y * (from.Y - to.Y);
+            if (projA > 0f && projB > 0f) stub = Math.Min(stub, Math.Min(projA, projB) * 0.5f);
 
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
@@ -487,9 +492,14 @@ namespace WorldGen.Generation
             float stub = stubTiles <= 0f ? 0f : (stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f);
             // Don't let the two door stubs OVERSHOOT each other on a short link: when the rooms are close
             // (a tightly packed floor), a full-length stub from each door sails past the other, and the
-            // path zigzags out and doubles back — a corridor that pokes into the void and returns. Cap each
-            // stub to half the door-to-door distance so they meet, at most, in the middle.
+            // path zigzags out and doubles back — a corridor that pokes into the void and returns. Cap by
+            // half the door-to-door distance, AND — because offset doors overshoot on their SHARED axis
+            // even when the straight-line distance looks big enough — by half the FACING distance (the door
+            // separation projected onto each normal), whenever the doors face each other.
             stub = Math.Min(stub, Dist(from, to) * 0.5f);
+            float projA = fromNormal.X * (to.X - from.X) + fromNormal.Y * (to.Y - from.Y);
+            float projB = toNormal.X * (from.X - to.X) + toNormal.Y * (from.Y - to.Y);
+            if (projA > 0f && projB > 0f) stub = Math.Min(stub, Math.Min(projA, projB) * 0.5f);
             var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
             var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
 
