@@ -79,7 +79,9 @@ namespace WorldGen.Generation
             }
             if (bossId != 0) lvl.GetRoom(bossId).Type = RoomType.Boss;
 
-            foreach (var r in lvl.Rooms) { var (w, h) = RoomSizing.Default(r.Type); r.SizeW = w; r.SizeH = h; }
+            // Sizes roll AFTER types are final (entrance at step 1, boss just above) — Roll is keyed on
+            // type. Uses the generator's own seeded rng, so a seed still reproduces its floor exactly.
+            foreach (var r in lvl.Rooms) { var (w, h) = RoomSizing.Roll(r.Type, rng); r.SizeW = w; r.SizeH = h; }
 
             // 7. Layout X/Y by BFS depth so the initial layout is readable, not a clump.
             LayoutByDepth(lvl, dist);

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
@@ -241,6 +242,66 @@ namespace WorldGen.Rendering
             float dx = Mathf.Abs(bx - ax) - (aw + bw) * 0.5f;
             float dy = Mathf.Abs(by - ay) - (ah + bh) * 0.5f;
             return Mathf.Max(dx, dy);
+        }
+
+        [ContextMenu("Self-test: random room sizes")]
+        public void SelfTestRandomRoomSizes()
+        {
+            bool ok = true;
+
+            // Ranges must sit inside RoomSizing's own clamp, or Roll would emit sizes Clamp then silently rewrites.
+            foreach (RoomType t in new[] { RoomType.Entrance, RoomType.Boss, RoomType.Normal })
+            {
+                var (min, max) = RoomSizing.Range(t);
+                if (min < RoomSizing.MinSide || max > RoomSizing.MaxSide || min > max)
+                { Debug.LogError($"FAIL range {t}: {min}..{max} outside {RoomSizing.MinSide}..{RoomSizing.MaxSide}"); ok = false; }
+
+                // The manual/migration default must be a legal roll too, or a hand-added room would look like
+                // nothing the generator can produce.
+                var (dw, dh) = RoomSizing.Default(t);
+                if (dw < min || dw > max || dh < min || dh > max)
+                { Debug.LogError($"FAIL default {t} {dw}x{dh} outside its own range {min}..{max}"); ok = false; }
+            }
+
+            // Roll must stay in range, and must actually vary (a constant "roll" would pass a bounds-only check).
+            var rng = new System.Random(12345);
+            foreach (RoomType t in new[] { RoomType.Entrance, RoomType.Boss, RoomType.Normal })
+            {
+                var (min, max) = RoomSizing.Range(t);
+                var seen = new HashSet<int>();
+                for (int i = 0; i < 200; i++)
+                {
+                    var (w, h) = RoomSizing.Roll(t, rng);
+                    if (w < min || w > max || h < min || h > max)
+                    { Debug.LogError($"FAIL roll {t}: {w}x{h} outside {min}..{max}"); ok = false; break; }
+                    seen.Add(w); seen.Add(h);
+                }
+                if (max > min && seen.Count < 2)
+                { Debug.LogError($"FAIL roll {t}: never varied across 200 rolls"); ok = false; }
+            }
+
+            // Determinism: the SAME seed must still produce byte-identical floors. This is what a UnityEngine.Random
+            // roll would have broken, silently and only sometimes.
+            var a = DungeonGraphGenerator.Generate(4242, 8, 3);
+            var b = DungeonGraphGenerator.Generate(4242, 8, 3);
+            if (a.Rooms.Count != b.Rooms.Count) { Debug.LogError("FAIL determinism: room count"); ok = false; }
+            else
+                for (int i = 0; i < a.Rooms.Count; i++)
+                {
+                    var ra = a.Rooms[i]; var rb = b.Rooms[i];
+                    if (ra.SizeW != rb.SizeW || ra.SizeH != rb.SizeH || ra.Type != rb.Type ||
+                        Mathf.Abs(ra.X - rb.X) > 1e-6f || Mathf.Abs(ra.Y - rb.Y) > 1e-6f)
+                    { Debug.LogError($"FAIL determinism at room {ra.Id}: {ra.SizeW}x{ra.SizeH} vs {rb.SizeW}x{rb.SizeH}"); ok = false; break; }
+                }
+
+            // Two DIFFERENT seeds must differ in at least one size — proves sizes are seed-driven, not fixed.
+            var c = DungeonGraphGenerator.Generate(777, 8, 3);
+            bool anyDiff = false;
+            for (int i = 0; i < Mathf.Min(a.Rooms.Count, c.Rooms.Count); i++)
+                if (a.Rooms[i].SizeW != c.Rooms[i].SizeW || a.Rooms[i].SizeH != c.Rooms[i].SizeH) { anyDiff = true; break; }
+            if (!anyDiff) { Debug.LogError("FAIL: two different seeds produced identical sizes"); ok = false; }
+
+            Debug.Log(ok ? "PASS: random room sizes" : "FAIL: random room sizes");
         }
     }
 }
