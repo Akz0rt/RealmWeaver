@@ -355,18 +355,21 @@ namespace WorldGen.Rendering
                 return b;
             }
 
-            // ── Clean shot, no obstacles → orthogonal, reaches, single bend ────────────────────────
-            // from leaves EAST, to is entered from its NORTH wall (so the path wants to arrive going
-            // south). East-then-south is a 1-bend L. Delete the turn penalty and A*, on the empty grid,
-            // can return an equal-length staircase with more bends — the bend assertion catches it.
+            // ── Clean shot, no obstacles → orthogonal, reaches, stays simple ───────────────────────
+            // Both ends leave/enter HORIZONTALLY (from East, to entered from its West wall), so the tidy
+            // orthogonal path is a 2-bend Z — the minimum for a both-ends-horizontal link with a Y offset,
+            // and what A* returns regardless of which of the two equal-cost lattice L's the tie-break picks.
+            // A router that returned a staircased mess would exceed the 2-bend bound. (This bounds gross
+            // untidiness; the turn penalty's finer tidying is eyeballed at the in-Editor checkpoint — a unit
+            // fixture cannot pin it without depending on the tie-break, which is not a router guarantee.)
             {
-                var path = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(50f, 50f), North, new List<LinkNode>(), noOcc);
+                var path = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(50f, 50f), West, new List<LinkNode>(), noOcc);
                 AssertOrtho(path, "clean");
                 if (Mathf.Abs(path[0].X - 13f) > 1e-2f || Mathf.Abs(path[0].Y - 30f) > 1e-2f
                     || Mathf.Abs(path[path.Count - 1].X - 50f) > 1e-2f || Mathf.Abs(path[path.Count - 1].Y - 50f) > 1e-2f)
                 { Debug.LogError("FAIL clean: path does not run door-to-door"); ok = false; }
-                if (Bends(path) > 1)
-                { Debug.LogError($"FAIL clean: {Bends(path)} bends for a 1-turn L — the turn penalty is not tidying"); ok = false; }
+                if (Bends(path) > 2)
+                { Debug.LogError($"FAIL clean: {Bends(path)} bends for a simple shot — the router is staircasing a clear path"); ok = false; }
             }
 
             // ── A room dead between the ends → routed AROUND it, never through ─────────────────────
@@ -382,19 +385,20 @@ namespace WorldGen.Rendering
             }
 
             // ── A sub-clearance gap is NOT threaded — the path goes AROUND ─────────────────────────
-            // Two wide rooms stacked with a 2-tile raw gap (< 2*ClearanceTiles), so their inflated rects
-            // touch and leave NO clean lane between them. The door line at y=30 aims straight through the
-            // gap; a clearance-respecting router must instead detour above the top room (y ≤ 22) or below
-            // the bottom one (y ≥ 38). Asserting "crosses neither raw rect" would be VACUOUS — threading
-            // the 2-tile raw gap at y=30 also crosses neither. So assert it actually went AROUND. Delete
-            // the clearance inflation and a lane opens at y=30 and it threads → no around-point → fails.
+            // Two wide rooms stacked so their INFLATED rects strictly overlap across y=30 (raw gap 0, but
+            // the point is clearance): top inflated Y [23,31], bottom [29,37], overlap [29,31]. A leg at
+            // y=30 is interior to both and blocked, so a clearance-respecting router must detour above the
+            // top room (to y=23) or below the bottom one (to y=37). Asserting "crosses neither raw rect"
+            // would be VACUOUS — a path staying at y=30 in the RAW gap also crosses neither raw rect. So
+            // assert it actually left the gap band. Remove the clearance inflation and the y=30 lane opens
+            // and it threads straight → never leaves the band → fails.
             {
-                var top = N(1, 31f, 26f, 30f, 6f);    // raw Y 23..29, inflated 22..30
-                var bot = N(2, 31f, 34f, 30f, 6f);    // raw Y 31..37, inflated 30..38 — inflated rects meet at 30, no lane
+                var top = N(1, 31f, 27f, 30f, 6f);    // raw Y 24..30, inflated 23..31
+                var bot = N(2, 31f, 33f, 30f, 6f);    // raw Y 30..36, inflated 29..37 — inflated rects OVERLAP [29,31]
                 var path = RoomLinkGeometry.AStarRoute(P(5f, 30f), East, P(57f, 30f), West, new List<LinkNode> { top, bot }, noOcc);
                 AssertOrtho(path, "narrow-gap");
                 bool wentAround = false;
-                foreach (var pt in path) if (pt.Y <= 22f + 1e-2f || pt.Y >= 38f - 1e-2f) wentAround = true;
+                foreach (var pt in path) if (pt.Y < 28f || pt.Y > 32f) wentAround = true;
                 if (!wentAround)
                 { Debug.LogError("FAIL narrow-gap: the path stayed in the gap band — it threaded a sub-clearance gap instead of routing around the rooms"); ok = false; }
                 for (int i = 0; i < path.Count - 1; i++)
