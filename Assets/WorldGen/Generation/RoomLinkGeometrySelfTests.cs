@@ -315,6 +315,196 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Room Link Geometry: PASS" : "Self-Test Room Link Geometry: FAIL");
         }
 
+        [ContextMenu("Self-Test: A* Route")]
+        public void SelfTestAStarRoute()
+        {
+            bool ok = true;
+            var East = P(1f, 0f);
+            var West = P(-1f, 0f);
+            var North = P(0f, -1f);   // tile Y grows SOUTH, so North is −Y
+            var noOcc = new List<(LinkPoint a, LinkPoint b)>();
+
+            // Count how many legs of `path` intersect the axis-aligned segment a→b.
+            int CrossCount(List<LinkPoint> path, LinkPoint a, LinkPoint b)
+            {
+                int c = 0;
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (RoomLinkGeometry_SegOverlap(path[i], path[i + 1], a, b)) c++;
+                return c;
+            }
+
+            void AssertOrtho(List<LinkPoint> path, string who)
+            {
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    bool h = Mathf.Abs(path[i].Y - path[i + 1].Y) <= 1e-3f;
+                    bool v = Mathf.Abs(path[i].X - path[i + 1].X) <= 1e-3f;
+                    if (!h && !v)
+                    { Debug.LogError($"FAIL {who}: leg {i} is DIAGONAL"); ok = false; return; }
+                }
+            }
+            int Bends(List<LinkPoint> path)
+            {
+                int b = 0;
+                for (int i = 1; i < path.Count - 1; i++)
+                {
+                    float ux = path[i].X - path[i - 1].X, uy = path[i].Y - path[i - 1].Y;
+                    float vx = path[i + 1].X - path[i].X, vy = path[i + 1].Y - path[i].Y;
+                    if (Mathf.Abs(ux * vy - uy * vx) > 1e-3f) b++;
+                }
+                return b;
+            }
+
+            // ── Clean shot, no obstacles → orthogonal, reaches, single bend ────────────────────────
+            // from leaves EAST, to is entered from its NORTH wall (so the path wants to arrive going
+            // south). East-then-south is a 1-bend L. Delete the turn penalty and A*, on the empty grid,
+            // can return an equal-length staircase with more bends — the bend assertion catches it.
+            {
+                var path = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(50f, 50f), North, new List<LinkNode>(), noOcc);
+                AssertOrtho(path, "clean");
+                if (Mathf.Abs(path[0].X - 13f) > 1e-2f || Mathf.Abs(path[0].Y - 30f) > 1e-2f
+                    || Mathf.Abs(path[path.Count - 1].X - 50f) > 1e-2f || Mathf.Abs(path[path.Count - 1].Y - 50f) > 1e-2f)
+                { Debug.LogError("FAIL clean: path does not run door-to-door"); ok = false; }
+                if (Bends(path) > 1)
+                { Debug.LogError($"FAIL clean: {Bends(path)} bends for a 1-turn L — the turn penalty is not tidying"); ok = false; }
+            }
+
+            // ── A room dead between the ends → routed AROUND it, never through ─────────────────────
+            {
+                var blocker = N(9, 31f, 30f, 10f, 10f);   // raw X 26..36, Y 25..35 — on the door line
+                if (!StraightLineHits(P(13f, 30f), P(50f, 30f), blocker))
+                { Debug.LogError("FAIL around setup: the blocker does not block — proves nothing"); ok = false; }
+                var path = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(50f, 30f), West, new List<LinkNode> { blocker }, noOcc);
+                AssertOrtho(path, "around");
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], blocker))
+                    { Debug.LogError($"FAIL around: leg {i} crosses the room A* was meant to avoid"); ok = false; break; }
+            }
+
+            // ── A sub-clearance gap is NOT threaded — the path goes AROUND ─────────────────────────
+            // Two wide rooms stacked with a 2-tile raw gap (< 2*ClearanceTiles), so their inflated rects
+            // touch and leave NO clean lane between them. The door line at y=30 aims straight through the
+            // gap; a clearance-respecting router must instead detour above the top room (y ≤ 22) or below
+            // the bottom one (y ≥ 38). Asserting "crosses neither raw rect" would be VACUOUS — threading
+            // the 2-tile raw gap at y=30 also crosses neither. So assert it actually went AROUND. Delete
+            // the clearance inflation and a lane opens at y=30 and it threads → no around-point → fails.
+            {
+                var top = N(1, 31f, 26f, 30f, 6f);    // raw Y 23..29, inflated 22..30
+                var bot = N(2, 31f, 34f, 30f, 6f);    // raw Y 31..37, inflated 30..38 — inflated rects meet at 30, no lane
+                var path = RoomLinkGeometry.AStarRoute(P(5f, 30f), East, P(57f, 30f), West, new List<LinkNode> { top, bot }, noOcc);
+                AssertOrtho(path, "narrow-gap");
+                bool wentAround = false;
+                foreach (var pt in path) if (pt.Y <= 22f + 1e-2f || pt.Y >= 38f - 1e-2f) wentAround = true;
+                if (!wentAround)
+                { Debug.LogError("FAIL narrow-gap: the path stayed in the gap band — it threaded a sub-clearance gap instead of routing around the rooms"); ok = false; }
+                for (int i = 0; i < path.Count - 1; i++)
+                    if (SegmentEntersRect(path[i], path[i + 1], top) || SegmentEntersRect(path[i], path[i + 1], bot))
+                    { Debug.LogError($"FAIL narrow-gap: leg {i} clipped a room"); ok = false; break; }
+            }
+
+            // ── Corridor soft-cost, AVOID: routed around a corridor when a detour lane exists ───────
+            // A room forces link 2 to detour left (x=27, near) or right (x=41, far). Occupancy fills the
+            // NEAR lane. Compared with-vs-without: WITHOUT occupancy A* takes the near lane (shorter) and
+            // runs along where the corridor sits — the premise. WITH occupancy the near lane is penalized
+            // per overlapped edge and A* flips to the far lane, clean. Self-validating: if the "without"
+            // run does NOT use the near lane the setup is wrong (it says so); if the "with" run still
+            // overlaps, the penalty is too weak for this geometry (it says that instead).
+            {
+                var room = new List<LinkNode> { N(9, 34f, 30f, 12f, 8f) };   // inflated X 27..41 — lanes at 27 (near) / 41 (far)
+                var occSeg = (P(27f, 20f), P(27f, 40f));                     // fills the near lane
+                var occ = new List<(LinkPoint a, LinkPoint b)> { occSeg };
+                var without = RoomLinkGeometry.AStarRoute(P(31f, 15f), P(0f, 1f), P(31f, 45f), North, room, noOcc);
+                var with = RoomLinkGeometry.AStarRoute(P(31f, 15f), P(0f, 1f), P(31f, 45f), North, room, occ);
+                AssertOrtho(with, "avoid");
+                if (CrossCount(without, occSeg.Item1, occSeg.Item2) == 0)
+                { Debug.LogError("FAIL avoid setup: without occupancy the path did NOT take the near lane — this fixture cannot show avoidance"); ok = false; }
+                else if (CrossCount(with, occSeg.Item1, occSeg.Item2) != 0)
+                { Debug.LogError("FAIL avoid: with occupancy the path still runs along the corridor — CorridorCrossPenalty did not steer it to the clear lane"); ok = false; }
+            }
+
+            // ── Corridor soft-cost, CROSS: a field-spanning corridor is crossed, not treated as a wall ─
+            // Occupancy spans the whole width at y=30; any vertical link must cross it. A SOFT cost lets
+            // A* pay and cross (and reach); if corridors were HARD like rooms, every crossing edge would be
+            // blocked and the link could not get through at all. Assert it reaches AND is orthogonal AND
+            // does cross — a sanity check that the penalty never blocks routing.
+            {
+                var occSeg = (P(-40f, 30f), P(80f, 30f));
+                var occ = new List<(LinkPoint a, LinkPoint b)> { occSeg };
+                var path = RoomLinkGeometry.AStarRoute(P(31f, 15f), P(0f, 1f), P(31f, 45f), North, new List<LinkNode>(), occ);
+                AssertOrtho(path, "cross");
+                if (Mathf.Abs(path[path.Count - 1].Y - 45f) > 1e-2f)
+                { Debug.LogError("FAIL cross: link did not reach its far end — a soft corridor cost blocked routing like a wall"); ok = false; }
+                if (CrossCount(path, occSeg.Item1, occSeg.Item2) == 0)
+                { Debug.LogError("FAIL cross: link somehow avoided a field-spanning corridor — impossible unless it left the field"); ok = false; }
+            }
+
+            // ── Fork exemption: a link STARTING on an occupancy segment routes without hanging ──────
+            // A fork's `from` lies ON its trunk. This is a SANITY check — the link starts on the bar and
+            // must still return a valid orthogonal path that reaches its goal, never hanging or exploding.
+            // The exemption's full effect (the fork branches off the trunk instead of being shoved away by
+            // the penalty) is not bulletproof to isolate in a unit fixture — it is verified by the reviewer
+            // reading the `PointOnSeg` filter in AStarRoute and by the in-Editor checkpoint (forks visibly
+            // branch off their trunks). If this fixture ever HANGS or the goal is unreached, the exemption
+            // or the start-on-occupancy handling is broken.
+            {
+                var occ = new List<(LinkPoint a, LinkPoint b)> { (P(20f, 30f), P(42f, 30f)) };
+                var path = RoomLinkGeometry.AStarRoute(P(31f, 30f), default, P(31f, 50f), North, new List<LinkNode>(), occ);
+                AssertOrtho(path, "fork-exempt");
+                if (Mathf.Abs(path[0].X - 31f) > 1e-2f || Mathf.Abs(path[0].Y - 30f) > 1e-2f
+                    || Mathf.Abs(path[path.Count - 1].Y - 50f) > 1e-2f)
+                { Debug.LogError("FAIL fork-exempt: a link starting on a corridor did not run from its start to its goal"); ok = false; }
+            }
+
+            // ── Boxed in → A7 fallback to OrthogonalRoute, no hang, no empty path ────────────────────
+            // A single finite wall can always be gone around (A* slides along its inflated edge), so a
+            // "wall" fixture would NOT exercise A7. Instead ENGULF the goal's stub-end: a room centred on
+            // b2 makes the goal node interior, every edge into it crosses the room and is blocked, A*
+            // fails, and A7 must return the OrthogonalRoute fallback. Assert the path EQUALS that fallback
+            // — delete A7 (return an empty list on failure) and this mismatches → fails.
+            {
+                var rooms = new List<LinkNode> { N(9, 32f, 30f, 20f, 20f) };   // inflated 21..43 × 19..41; b2=(32,30) is deep inside
+                var path = RoomLinkGeometry.AStarRoute(P(5f, 5f), East, P(30f, 30f), East, rooms, noOcc);
+                var fallback = RoomLinkGeometry.OrthogonalRoute(P(5f, 5f), East, P(30f, 30f), East, rooms);
+                AssertOrtho(path, "boxed");
+                bool matches = path.Count == fallback.Count;
+                for (int i = 0; matches && i < path.Count; i++)
+                    if (Mathf.Abs(path[i].X - fallback[i].X) > 1e-4f || Mathf.Abs(path[i].Y - fallback[i].Y) > 1e-4f) matches = false;
+                if (!matches)
+                { Debug.LogError($"FAIL boxed: an unreachable goal returned {path.Count} points, not the OrthogonalRoute fallback ({fallback.Count}) — A7 is not degrading gracefully"); ok = false; }
+            }
+
+            // ── Determinism: reversing the room list AND the occupancy list changes nothing ─────────
+            {
+                var r1 = N(5, 25f, 26f, 8f, 8f);
+                var r2 = N(6, 40f, 34f, 8f, 8f);
+                var o1 = (P(15f, 22f), P(15f, 40f));
+                var o2 = (P(48f, 22f), P(48f, 40f));
+                var fwd = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(57f, 30f), West,
+                    new List<LinkNode> { r1, r2 }, new List<(LinkPoint a, LinkPoint b)> { o1, o2 });
+                var rev = RoomLinkGeometry.AStarRoute(P(13f, 30f), East, P(57f, 30f), West,
+                    new List<LinkNode> { r2, r1 }, new List<(LinkPoint a, LinkPoint b)> { o2, o1 });
+                if (fwd.Count != rev.Count)
+                { Debug.LogError($"FAIL determinism: {fwd.Count} vs {rev.Count} points from reordered inputs"); ok = false; }
+                else
+                    for (int i = 0; i < fwd.Count; i++)
+                        if (Mathf.Abs(fwd[i].X - rev[i].X) > 1e-6f || Mathf.Abs(fwd[i].Y - rev[i].Y) > 1e-6f)
+                        { Debug.LogError($"FAIL determinism: point {i} moved when inputs were reordered"); ok = false; break; }
+            }
+
+            Debug.Log(ok ? "Self-Test A* Route: PASS" : "Self-Test A* Route: FAIL");
+        }
+
+        /// <summary>Test-only axis-aligned segment overlap (bounding-box), independent of the module's own
+        /// SegBBoxOverlap so a bug there cannot hide behind an identical test.</summary>
+        static bool RoomLinkGeometry_SegOverlap(LinkPoint a, LinkPoint b, LinkPoint c, LinkPoint d)
+        {
+            float aMinX = Mathf.Min(a.X, b.X), aMaxX = Mathf.Max(a.X, b.X);
+            float aMinY = Mathf.Min(a.Y, b.Y), aMaxY = Mathf.Max(a.Y, b.Y);
+            float bMinX = Mathf.Min(c.X, d.X), bMaxX = Mathf.Max(c.X, d.X);
+            float bMinY = Mathf.Min(c.Y, d.Y), bMaxY = Mathf.Max(c.Y, d.Y);
+            return aMinX <= bMaxX + 1e-3f && bMinX <= aMaxX + 1e-3f && aMinY <= bMaxY + 1e-3f && bMinY <= aMaxY + 1e-3f;
+        }
+
         [ContextMenu("Self-Test: Orthogonal Route")]
         public void SelfTestOrthogonalRoute()
         {

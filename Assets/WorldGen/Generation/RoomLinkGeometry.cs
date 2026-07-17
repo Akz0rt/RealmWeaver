@@ -55,6 +55,19 @@ namespace WorldGen.Generation
         /// (spec O8) and the link may run back across its own room. TUNABLE — the user eyeballs it.</summary>
         public const float StubTiles = 2f;
 
+        /// <summary>A\* pays this many tiles for each 90° turn, so clean routes come out straight and tidy
+        /// instead of staircased. TUNABLE — the user eyeballs it.</summary>
+        public const float TurnPenalty = 2f;
+
+        /// <summary>A\* pays this many tiles for each already-routed corridor segment a leg intersects, so
+        /// it prefers routes that cross other corridors less — but crosses anyway when the clear detour
+        /// costs more than this. Rooms, by contrast, are never crossed. TUNABLE.</summary>
+        public const float CorridorCrossPenalty = 8f;
+
+        /// <summary>Fast = the L/Z scorer (cheap, room-aware only, may cross) for live drag; Clean = A\*
+        /// (guaranteed clean, corridor-aware) for a settled layout. The controller picks per frame.</summary>
+        public enum RoutingMode { Fast, Clean }
+
         /// <summary>Slop by which the hit test and the containment test shrink a box, so that merely
         /// TOUCHING its boundary is not a hit. A leg running along an inflated edge already sits at exactly
         /// the clearance we asked for. Both tests must use the same value or they disagree about a point on
@@ -360,6 +373,195 @@ namespace WorldGen.Generation
             }
 
             return best ?? new List<LinkPoint> { from, to };   // unreachable: HV and VH are always offered
+        }
+
+        /// <summary>An orthogonal path from `from` to `to` that NEVER crosses a room and minimizes crossing
+        /// already-routed corridors (`occupancy`). A\* over a coordinate-compressed (Hanan) grid whose lines
+        /// are every room's inflated edges plus the two endpoints — that grid provably contains a shortest
+        /// rectilinear obstacle-avoiding path. Rooms are hard (blocked edges); corridors are soft
+        /// (corridorPenalty per intersected segment); a turn costs turnPenalty so routes stay tidy.
+        ///
+        /// `fromNormal`/`toNormal` are unit wall normals; pass default(LinkPoint) for a fork end (no wall,
+        /// no stub). An occupancy segment that CONTAINS `from` or `to` is exempt from the penalty — a fork
+        /// taps its trunk there and must be free to branch off it.
+        ///
+        /// Never returns null: when no grid path exists (a boxed-in door) it falls back to OrthogonalRoute,
+        /// a visible artifact the user can drag out of (spec A7). Deterministic: the lattice is sorted, the
+        /// heap tie-breaks on state index, and nothing reads input list order.</summary>
+        public static List<LinkPoint> AStarRoute(
+            LinkPoint from, LinkPoint fromNormal, LinkPoint to, LinkPoint toNormal,
+            IReadOnlyList<LinkNode> rooms, IReadOnlyList<(LinkPoint a, LinkPoint b)> occupancy,
+            float clearanceTiles = ClearanceTiles, float stubTiles = StubTiles,
+            float turnPenalty = TurnPenalty, float corridorPenalty = CorridorCrossPenalty)
+        {
+            if (rooms == null) rooms = System.Array.Empty<LinkNode>();
+
+            float stub = stubTiles > clearanceTiles ? stubTiles : clearanceTiles + 1f;
+            var a2 = new LinkPoint { X = from.X + fromNormal.X * stub, Y = from.Y + fromNormal.Y * stub };
+            var b2 = new LinkPoint { X = to.X + toNormal.X * stub, Y = to.Y + toNormal.Y * stub };
+
+            // Occupancy this link is allowed to touch for free: any segment through its own endpoints (its
+            // trunk, for a fork). Filtered ONCE, not per edge.
+            var occ = new List<(LinkPoint a, LinkPoint b)>();
+            if (occupancy != null)
+                foreach (var s in occupancy)
+                    if (!PointOnSeg(from, s.a, s.b) && !PointOnSeg(to, s.a, s.b)) occ.Add(s);
+
+            // ── the compressed grid ────────────────────────────────────────────────────────────────
+            var xs = new List<float> { a2.X, b2.X };
+            var ys = new List<float> { a2.Y, b2.Y };
+            foreach (var n in rooms)
+            {
+                float hw = n.W * 0.5f + clearanceTiles, hh = n.H * 0.5f + clearanceTiles;
+                AddDistinct(xs, n.CX - hw); AddDistinct(xs, n.CX + hw);
+                AddDistinct(ys, n.CY - hh); AddDistinct(ys, n.CY + hh);
+            }
+            xs.Sort(); ys.Sort();
+            int W = xs.Count, H = ys.Count;
+
+            int sx = GridIndexOf(xs, a2.X), sy = GridIndexOf(ys, a2.Y);
+            int gx = GridIndexOf(xs, b2.X), gy = GridIndexOf(ys, b2.Y);
+            int startNode = sy * W + sx, goalNode = gy * W + gx;
+
+            // ── A\* over states (node, incomingDir): dir 0=E 1=W 2=S 3=N, 4=none(start) ─────────────
+            // g-scores and came-from are keyed by state = node*5 + dir. The heap tie-breaks on state so
+            // equal-cost pops are deterministic regardless of push order.
+            var gScore = new Dictionary<int, float>();
+            var cameFrom = new Dictionary<int, int>();
+            var closed = new HashSet<int>();
+            var heap = new List<(float f, int state)>();
+
+            void HeapPush(float f, int state)
+            {
+                heap.Add((f, state));
+                int i = heap.Count - 1;
+                while (i > 0)
+                {
+                    int p = (i - 1) / 2;
+                    if (heap[p].f < heap[i].f || (heap[p].f == heap[i].f && heap[p].state <= heap[i].state)) break;
+                    var t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p;
+                }
+            }
+            (float f, int state) HeapPop()
+            {
+                var top = heap[0];
+                int last = heap.Count - 1;
+                heap[0] = heap[last]; heap.RemoveAt(last);
+                int i = 0, n = heap.Count;
+                while (true)
+                {
+                    int l = 2 * i + 1, r = 2 * i + 2, m = i;
+                    if (l < n && (heap[l].f < heap[m].f || (heap[l].f == heap[m].f && heap[l].state < heap[m].state))) m = l;
+                    if (r < n && (heap[r].f < heap[m].f || (heap[r].f == heap[m].f && heap[r].state < heap[m].state))) m = r;
+                    if (m == i) break;
+                    var t = heap[m]; heap[m] = heap[i]; heap[i] = t; i = m;
+                }
+                return top;
+            }
+
+            float H2Goal(int node)   // Manhattan heuristic — admissible (penalties only ever add)
+            {
+                int ix = node % W, iy = node / W;
+                return Math.Abs(xs[ix] - b2.X) + Math.Abs(ys[iy] - b2.Y);
+            }
+
+            int startState = startNode * 5 + 4;
+            gScore[startState] = 0f;
+            HeapPush(H2Goal(startNode), startState);
+
+            // dir deltas, indexed 0=E 1=W 2=S 3=N
+            int[] ddx = { 1, -1, 0, 0 };
+            int[] ddy = { 0, 0, 1, -1 };
+
+            int goalState = -1;
+            while (heap.Count > 0)
+            {
+                var (_, state) = HeapPop();
+                if (closed.Contains(state)) continue;
+                closed.Add(state);
+
+                int node = state / 5, dir = state % 5;
+                if (node == goalNode) { goalState = state; break; }
+
+                int ix = node % W, iy = node / W;
+                float gHere = gScore[state];
+                var p = new LinkPoint { X = xs[ix], Y = ys[iy] };
+
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = ix + ddx[d], ny = iy + ddy[d];
+                    if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+                    var q = new LinkPoint { X = xs[nx], Y = ys[ny] };
+
+                    bool blocked = false;                      // rooms are hard
+                    foreach (var rm in rooms)
+                        if (SegmentHitsInflatedRect(p, q, rm, clearanceTiles, out _)) { blocked = true; break; }
+                    if (blocked) continue;
+
+                    float step = Dist(p, q);
+                    if (dir != 4 && dir != d) step += turnPenalty;      // a turn costs
+                    foreach (var s in occ)                              // corridors are soft
+                        if (SegBBoxOverlap(p, q, s.a, s.b)) step += corridorPenalty;
+
+                    int nNode = ny * W + nx, nState = nNode * 5 + d;
+                    float tentative = gHere + step;
+                    if (gScore.TryGetValue(nState, out float old) && tentative >= old) continue;
+                    gScore[nState] = tentative;
+                    cameFrom[nState] = state;
+                    HeapPush(tentative + H2Goal(nNode), nState);
+                }
+            }
+
+            if (goalState < 0)                                          // boxed in → spec A7 fallback
+                return OrthogonalRoute(from, fromNormal, to, toNormal, rooms, clearanceTiles, stubTiles);
+
+            // reconstruct lattice nodes start→goal, then wrap with the true endpoints and simplify
+            var latticeNodes = new List<int>();
+            int cur = goalState;
+            latticeNodes.Add(cur / 5);
+            while (cameFrom.TryGetValue(cur, out int prev)) { cur = prev; latticeNodes.Add(cur / 5); }
+            latticeNodes.Reverse();
+
+            var path = new List<LinkPoint>(latticeNodes.Count + 2);
+            path.Add(from);
+            foreach (int nd in latticeNodes)
+                path.Add(new LinkPoint { X = xs[nd % W], Y = ys[nd / W] });
+            path.Add(to);
+            Simplify(path);
+            if (path.Count < 2) path.Add(to);                          // coincident from/to guard
+            return path;
+        }
+
+        /// <summary>Index in a sorted, epsilon-deduped coordinate list of the entry equal to `v` (which was
+        /// added to the list, so it is present). Linear — the lists are ~2N long.</summary>
+        static int GridIndexOf(List<float> sorted, float v)
+        {
+            for (int i = 0; i < sorted.Count; i++) if (Math.Abs(sorted[i] - v) <= 1e-4f) return i;
+            return 0;   // unreachable: v was AddDistinct'd into the list
+        }
+
+        /// <summary>Does point `p` lie on the axis-aligned segment a→b (within epsilon)? Used to exempt a
+        /// fork's own trunk from the corridor penalty.</summary>
+        static bool PointOnSeg(LinkPoint p, LinkPoint a, LinkPoint b)
+        {
+            float minX = Math.Min(a.X, b.X), maxX = Math.Max(a.X, b.X);
+            float minY = Math.Min(a.Y, b.Y), maxY = Math.Max(a.Y, b.Y);
+            return p.X >= minX - 1e-4f && p.X <= maxX + 1e-4f && p.Y >= minY - 1e-4f && p.Y <= maxY + 1e-4f;
+        }
+
+        /// <summary>Do two AXIS-ALIGNED segments intersect? For axis-aligned segments this is exactly
+        /// bounding-box overlap (a horizontal and a vertical overlap iff the vertical's x is in the
+        /// horizontal's x-range and the horizontal's y is in the vertical's y-range; two collinear ones
+        /// overlap iff their shared-axis intervals do). Counts a shared endpoint as an intersection — a
+        /// slight over-penalty on T-junctions, which only nudges A\* toward fewer of them.</summary>
+        static bool SegBBoxOverlap(LinkPoint a, LinkPoint b, LinkPoint c, LinkPoint d)
+        {
+            float aMinX = Math.Min(a.X, b.X), aMaxX = Math.Max(a.X, b.X);
+            float aMinY = Math.Min(a.Y, b.Y), aMaxY = Math.Max(a.Y, b.Y);
+            float bMinX = Math.Min(c.X, d.X), bMaxX = Math.Max(c.X, d.X);
+            float bMinY = Math.Min(c.Y, d.Y), bMaxY = Math.Max(c.Y, d.Y);
+            return aMinX <= bMaxX + 1e-4f && bMinX <= aMaxX + 1e-4f
+                && aMinY <= bMaxY + 1e-4f && bMinY <= aMaxY + 1e-4f;
         }
 
         static void AddDistinct(List<float> xs, float v)
