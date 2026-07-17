@@ -261,6 +261,10 @@ namespace WorldGen.Rendering
         {
             tx = ty = 0f;
             if (renderer == null || renderer.Area == null) return false;
+            // An unfitted projection (PxPerTile == 0, before the first ResolveProjection) makes
+            // LocalToTile return (0,0) by design. Acting on that would clamp a dragged room to the
+            // corner. The rect can be valid a frame before LateUpdate fits — reject that window.
+            if (renderer.Projection.PxPerTile <= 0f) return false;
             var area = renderer.Area;
             if (area.rect.width <= 0f || area.rect.height <= 0f) return false;
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(area, data.position, null, out var local))
@@ -291,7 +295,14 @@ namespace WorldGen.Rendering
         {
             var lvl = BoundLevel;
             if (lvl == null) return;
-            if (draggingRoomId != 0) { draggingRoomId = 0; return; }   // release of a drag — not a click
+            // Release of a drag — not a click. Read data.dragging; do NOT consume draggingRoomId here.
+            // Unity's release order is pointerUp → pointerCLICK → endDrag, so this handler runs BEFORE
+            // OnEndDrag. Clearing draggingRoomId here would make OnEndDrag's guard swallow the
+            // OnGraphMutated that drives the cascade — a silent no-settle-after-drag regression. And
+            // because pointerPress == pointerDrag (this component is both handlers on one GameObject),
+            // eligibleForClick is never cleared, so this click DOES fire on every in-place release.
+            // data.dragging is still true here; the input module clears it only after endDrag.
+            if (data.dragging) return;
             if (!TryPointerToTile(data, out float tx, out float ty)) return;
             int id = HitRoomId(lvl, tx, ty);
             if (id == 0) { SelectRoom(0); return; }                    // background → clear selection
@@ -322,8 +333,10 @@ namespace WorldGen.Rendering
         public void OnEndDrag(PointerEventData data)
         {
             if (draggingRoomId == 0) return;
-            // Leave draggingRoomId set — OnPointerClick fires right after and uses it to suppress the
-            // stray click that would otherwise re-select (or, worse, feed link mode). It clears there.
+            // Clear on EVERY drag path, here and nowhere else. If the release lands outside this
+            // hit-plate (over the toolbar, or a badge Button), no click fires at all — leaving the clear
+            // to OnPointerClick would strand draggingRoomId set and swallow the next click.
+            draggingRoomId = 0;
             OnGraphMutated?.Invoke();
         }
 

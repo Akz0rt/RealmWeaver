@@ -122,7 +122,12 @@ namespace WorldGen.Rendering
 
         public void SetHighlight(int roomId, bool on)
         {
-            if (outlines.TryGetValue(roomId, out var o) && o != null) o.enabled = on;
+            if (roomId == 0)   // interface contract: 0 = clear every highlight
+            {
+                foreach (var o in outlines.Values) if (o != null) o.enabled = false;
+                return;
+            }
+            if (outlines.TryGetValue(roomId, out var outline) && outline != null) outline.enabled = on;
         }
 
         Vector2 Local(float tx, float ty)
