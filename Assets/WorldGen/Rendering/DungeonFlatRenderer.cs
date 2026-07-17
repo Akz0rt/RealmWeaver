@@ -99,13 +99,23 @@ namespace WorldGen.Rendering
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             if (lvl == null) return;
             rg = lastRg;
+
+            // The routed graph re-derives on every call and its segment/junction COUNT varies frame to
+            // frame — crossings appear and vanish as rooms move, and Fast vs Clean produce different leg
+            // counts. The line/junction rects are a POOL sized once at RebuildView; without reconciling it
+            // here, a frame with FEWER segments leaves the surplus rects sitting on the PREVIOUS frame's
+            // geometry — phantom "doubled"/extra corridors that never clear. Grow the pool to fit and hide
+            // the surplus.
+            SyncPool(lineRects, rg.Segments.Count, BuildLineRect);
+            SyncPool(junctionRects, rg.Junctions.Count, BuildJunctionRect);
+
             foreach (var r in lvl.Rooms)
             {
                 if (!cards.TryGetValue(r.Id, out var rt) || rt == null) continue;
                 rt.anchoredPosition = Local(r.X * DungeonLayout.TilesPerAxis, r.Y * DungeonLayout.TilesPerAxis);
                 rt.sizeDelta = FootprintPx(r);
             }
-            for (int i = 0; i < lineRects.Count && i < rg.Segments.Count; i++)
+            for (int i = 0; i < rg.Segments.Count && i < lineRects.Count; i++)
             {
                 var seg = rg.Segments[i];
                 PlaceLine(lineRects[i],
@@ -113,11 +123,20 @@ namespace WorldGen.Rendering
                     Local(seg.B.X * DungeonLayout.TilesPerAxis, seg.B.Y * DungeonLayout.TilesPerAxis),
                     LineThickness);
             }
-            for (int i = 0; i < junctionRects.Count && i < rg.Junctions.Count; i++)
+            for (int i = 0; i < rg.Junctions.Count && i < junctionRects.Count; i++)
             {
                 var j = rg.Junctions[i];
                 junctionRects[i].anchoredPosition = Local(j.X * DungeonLayout.TilesPerAxis, j.Y * DungeonLayout.TilesPerAxis);
             }
+        }
+
+        /// <summary>Grow `pool` to at least `want` rects (via `make`) and hide any surplus, so exactly the
+        /// current `want` rects are visible. The pool only grows — a full RebuildView resets it.</summary>
+        static void SyncPool(List<RectTransform> pool, int want, System.Func<RectTransform> make)
+        {
+            while (pool.Count < want) pool.Add(make());
+            for (int i = 0; i < pool.Count; i++)
+                if (pool[i] != null) pool[i].gameObject.SetActive(i < want);
         }
 
         public void SetHighlight(int roomId, bool on)
