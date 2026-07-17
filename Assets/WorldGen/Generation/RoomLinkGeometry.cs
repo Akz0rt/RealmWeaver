@@ -64,6 +64,10 @@ namespace WorldGen.Generation
         /// costs more than this. Rooms, by contrast, are never crossed. TUNABLE.</summary>
         public const float CorridorCrossPenalty = 8f;
 
+        /// <summary>Route SHORT links first so main corridors route around the little stubs rather than
+        /// the reverse. TUNABLE — flip and re-Build to compare.</summary>
+        public const bool ShortLinksFirst = true;
+
         /// <summary>Fast = the L/Z scorer (cheap, room-aware only, may cross) for live drag; Clean = A\*
         /// (guaranteed clean, corridor-aware) for a settled layout. The controller picks per frame.</summary>
         public enum RoutingMode { Fast, Clean }
@@ -89,7 +93,8 @@ namespace WorldGen.Generation
             public float AlongAxis;     // the target's position along the wall's axis, orders the doors
         }
 
-        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges)
+        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges,
+                                         RoutingMode mode = RoutingMode.Clean)
         {
             var g = new LinkGeometry();
             if (nodes == null || edges == null || nodes.Count == 0 || edges.Count == 0) return g;
@@ -219,26 +224,40 @@ namespace WorldGen.Generation
                 }
             }
 
-            // Route each link ONE more time, now that BOTH ends are resolved. Pass B's paths were
-            // provisional: built toward FarEnd, which falls back to the far box's CENTRE when that end had
-            // not been reached yet, and they existed only for forks to tap.
-            //
-            // Routing is deterministic, so wherever the far end earned a door this returns pass B's path
-            // exactly, and the forks that tapped it are still on it. Where the far end FORKED the final
-            // path differs and a fork tapping this trunk can hang beside it — that needs BOTH ends' walls
-            // overfull at once, and it is the same fallback the two-pass split has always accepted.
-            //
-            // Reading `endpoint` (not a pass-B stash) is what makes this whole. Pass A fills it for every
-            // door, so every well-formed edge emits.
+            // Route each link with both ends resolved. FAST reuses the L/Z scorer (drag-time); CLEAN uses
+            // A*, in a deterministic SHORT-FIRST order, each routed corridor becoming soft cost for the
+            // ones after it (spec A4). Order matters only for CLEAN — Fast ignores occupancy.
+            var order = new List<int>();
             for (int i = 0; i < edges.Count; i++)
+                if (endpoint.ContainsKey((i, edges[i].A)) && endpoint.ContainsKey((i, edges[i].B))) order.Add(i);
+
+            if (mode == RoutingMode.Clean)
+                order.Sort((i, j) =>
+                {
+                    float di = Dist(endpoint[(i, edges[i].A)], endpoint[(i, edges[i].B)]);
+                    float dj = Dist(endpoint[(j, edges[j].A)], endpoint[(j, edges[j].B)]);
+                    int c = ShortLinksFirst ? di.CompareTo(dj) : dj.CompareTo(di);
+                    return c != 0 ? c : i.CompareTo(j);   // stable, deterministic
+                });
+
+            var occupancy = new List<(LinkPoint a, LinkPoint b)>();
+            foreach (int i in order)
             {
                 var e = edges[i];
-                if (!endpoint.TryGetValue((i, e.A), out var pa)) continue;
-                if (!endpoint.TryGetValue((i, e.B), out var pb)) continue;
+                var pa = endpoint[(i, e.A)];
+                var pb = endpoint[(i, e.B)];
+                var na = NormalOf(wallOf, i, e.A);
+                var nb = NormalOf(wallOf, i, e.B);
 
-                var path = OrthogonalRoute(pa, NormalOf(wallOf, i, e.A), pb, NormalOf(wallOf, i, e.B), nodes);
+                var path = mode == RoutingMode.Clean
+                    ? AStarRoute(pa, na, pb, nb, nodes, occupancy)
+                    : OrthogonalRoute(pa, na, pb, nb, nodes);
+
                 for (int k = 0; k < path.Count - 1; k++)
+                {
                     g.Segments.Add(new LinkSegment { A = path[k], B = path[k + 1], EdgeIndex = i });
+                    if (mode == RoutingMode.Clean) occupancy.Add((path[k], path[k + 1]));
+                }
             }
 
             return g;

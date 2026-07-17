@@ -214,7 +214,7 @@ namespace WorldGen.Rendering
                 r.Y = Mathf.Clamp01(next.y);
                 maxRemaining = Mathf.Max(maxRemaining, (tgt - next).magnitude);
             }
-            RepositionNow(lvl);
+            RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
 
             if (maxRemaining < CascadeDoneEpsilon)
             {
@@ -224,17 +224,17 @@ namespace WorldGen.Rendering
                     if (!cascadeTargets.TryGetValue(r.Id, out var target)) continue;
                     r.X = target.x; r.Y = target.y;
                 }
-                RepositionNow(lvl);
+                RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Clean);
                 cascading = false;
                 cascadeTargets = null;
                 cascadeVel = null;
             }
         }
 
-        void RepositionNow(DungeonLevel lvl)
+        void RepositionNow(DungeonLevel lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl));
+            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, mode));
         }
 
         // ── Commands ─────────────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ namespace WorldGen.Rendering
             // the cascade — the pull must be felt while moving, not on release. The dragged room is the
             // anchor and never yields.
             DungeonLayout.EnforceCorridorLeash(lvl, draggingRoomId);
-            RepositionNow(lvl);
+            RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
         }
 
         public void OnEndDrag(PointerEventData data)

@@ -192,7 +192,7 @@ namespace WorldGen.Generation
         /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
         /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.
         /// DERIVED — not stored. Only DM corridors are crossed (no recursion on the split sub-segments).</summary>
-        public static RenderGraph BuildRenderGraph(DungeonLevel lvl)
+        public static RenderGraph BuildRenderGraph(DungeonLevel lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
         {
             var g = new RenderGraph();
             if (lvl == null) return g;
@@ -217,7 +217,7 @@ namespace WorldGen.Generation
             var linkEdges = new List<LinkEdge>(lvl.Corridors.Count);
             foreach (var c in lvl.Corridors) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
-            var routed = RoomLinkGeometry.Build(nodes, linkEdges);
+            var routed = RoomLinkGeometry.Build(nodes, linkEdges, mode);
 
             var segs = new List<(LayoutPoint a, LayoutPoint b)>();
             foreach (var s in routed.Segments)
