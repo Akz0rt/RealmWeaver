@@ -61,6 +61,17 @@ namespace WorldGen.Rendering
             dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Floors.Count
                 ? dungeon.Floors[levelIndex] : null;
 
+        /// <summary>Buildings share ONE coordinate frame and nest upward (C1: bbox(N+1) ⊆ bbox(N)); fit the
+        /// projection to the GROUND floor (the building footprint) for EVERY floor so all floors render in
+        /// the same frame and upper floors appear nested inside it. Dungeons keep per-floor fit (fit to the
+        /// current level).</summary>
+        InteriorFloor FitReferenceFloor()
+        {
+            if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
+                return dungeon.Floors[0];
+            return BoundLevel;
+        }
+
         /// <summary>Swap the active renderer (Граф ⇄ Изо). Deactivates the old host, activates the new,
         /// re-fits the new renderer's projection to the bound level and rebuilds it. Selection, link mode
         /// and cascade state all survive the swap — they live here, not in the renderer.</summary>
@@ -114,7 +125,7 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null) { renderer.RebuildView(dungeon, levelIndex, null, new RenderGraph(), font, OnJumpToLevel); return; }
 
-            if (needsProjectionFit && renderer.ResolveProjection(lvl)) needsProjectionFit = false;
+            if (needsProjectionFit && renderer.ResolveProjection(FitReferenceFloor())) needsProjectionFit = false;
 
             var rg = DungeonLayout.BuildRenderGraph(lvl);
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
@@ -127,7 +138,7 @@ namespace WorldGen.Rendering
             if (!needsProjectionFit || renderer == null) return;
             var lvl = BoundLevel;
             if (lvl == null) return;
-            if (!renderer.ResolveProjection(lvl)) return;   // rect still {0,0} — retry next frame
+            if (!renderer.ResolveProjection(FitReferenceFloor())) return;   // rect still {0,0} — retry next frame
             needsProjectionFit = false;
             Refresh();
         }
