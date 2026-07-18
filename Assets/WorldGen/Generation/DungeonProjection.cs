@@ -75,9 +75,19 @@ namespace WorldGen.Generation
         /// the caller defers to the first valid-rect frame anyway (rect gotcha).</summary>
         public static DungeonProjection Fit(InteriorFloor lvl, float rectW, float rectH, float squashY)
         {
+            var (minX, minY, maxX, maxY) = ContentBoundsTiles(lvl);
+            return FitBounds(minX, minY, maxX, maxY, rectW, rectH, squashY);
+        }
+
+        /// <summary>Same as Fit, but against caller-supplied TILE-space bounds instead of one level's own
+        /// content (extracted from Fit — building-coherence C2' revision). Lets a caller fit to bounds
+        /// other than a single floor's own footprint — e.g. the UNION of the current Building floor's
+        /// bounds with floor 0's contour bounds, so neither is ever clipped (spec C-render).</summary>
+        public static DungeonProjection FitBounds(float minX, float minY, float maxX, float maxY,
+                                                   float rectW, float rectH, float squashY)
+        {
             if (squashY <= 0f) squashY = 1f;
 
-            var (minX, minY, maxX, maxY) = ContentBoundsTiles(lvl);
             float spanX = Max(maxX - minX, MinSpanTiles);
             float spanY = Max(maxY - minY, MinSpanTiles);
 
@@ -96,6 +106,16 @@ namespace WorldGen.Generation
                 PanX = -ctx * px,
                 PanY = cty * px * squashY,
             };
+        }
+
+        /// <summary>Componentwise min/max union of two tile-space bounds tuples — used to fit a Building's
+        /// projection to "current floor ∪ floor-0 contour" (C2' revision) so a room dragged outside the
+        /// contour stays on-screen instead of being clipped.</summary>
+        public static (float minX, float minY, float maxX, float maxY) UnionBounds(
+            (float minX, float minY, float maxX, float maxY) a,
+            (float minX, float minY, float maxX, float maxY) b)
+        {
+            return (Min(a.minX, b.minX), Min(a.minY, b.minY), Max(a.maxX, b.maxX), Max(a.maxY, b.maxY));
         }
 
         /// <summary>Room footprint in tiles, with the same &lt;=0 fallback + clamp RoomSizing.ApplyDefaults

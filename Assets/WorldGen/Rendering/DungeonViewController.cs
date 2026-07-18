@@ -61,15 +61,20 @@ namespace WorldGen.Rendering
             dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Floors.Count
                 ? dungeon.Floors[levelIndex] : null;
 
-        /// <summary>Buildings share ONE coordinate frame and nest upward (C1: bbox(N+1) ⊆ bbox(N)); fit the
-        /// projection to the GROUND floor (the building footprint) for EVERY floor so all floors render in
-        /// the same frame and upper floors appear nested inside it. Dungeons keep per-floor fit (fit to the
-        /// current level).</summary>
-        InteriorFloor FitReferenceFloor()
+        /// <summary>Tile-space bounds to fit the projection to for `lvl` (C2' revision — replaces the C2
+        /// FitReferenceFloor approach of fitting the whole view to floor 0 outright). For a Building, the
+        /// UNION of the current floor's own occupied bounds and floor 0's contour bounds, so BOTH the whole
+        /// current floor AND the whole blue contour stay on-screen — including a room dragged outside the
+        /// contour (C4, later), which must stay visible (and red) rather than being clipped. For a
+        /// well-nested floor the union equals the floor-0 bounds, so an upper floor still renders smaller,
+        /// nested inside it (accepted look, spec C-render). Dungeons: the current floor's own bounds only —
+        /// byte-identical to the pre-C2' per-floor fit.</summary>
+        (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
+            var bounds = DungeonProjection.ContentBoundsTiles(lvl);
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
-                return dungeon.Floors[0];
-            return BoundLevel;
+                bounds = DungeonProjection.UnionBounds(bounds, DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]));
+            return bounds;
         }
 
         /// <summary>Swap the active renderer (Граф ⇄ Изо). Deactivates the old host, activates the new,
@@ -125,7 +130,11 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null) { renderer.RebuildView(dungeon, levelIndex, null, new RenderGraph(), font, OnJumpToLevel); return; }
 
-            if (needsProjectionFit && renderer.ResolveProjection(FitReferenceFloor())) needsProjectionFit = false;
+            if (needsProjectionFit)
+            {
+                var (fminX, fminY, fmaxX, fmaxY) = FitBoundsFor(lvl);
+                if (renderer.ResolveProjection(fminX, fminY, fmaxX, fmaxY)) needsProjectionFit = false;
+            }
 
             var rg = DungeonLayout.BuildRenderGraph(lvl);
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
@@ -138,7 +147,8 @@ namespace WorldGen.Rendering
             if (!needsProjectionFit || renderer == null) return;
             var lvl = BoundLevel;
             if (lvl == null) return;
-            if (!renderer.ResolveProjection(FitReferenceFloor())) return;   // rect still {0,0} — retry next frame
+            var (minX, minY, maxX, maxY) = FitBoundsFor(lvl);
+            if (!renderer.ResolveProjection(minX, minY, maxX, maxY)) return;   // rect still {0,0} — retry next frame
             needsProjectionFit = false;
             Refresh();
         }

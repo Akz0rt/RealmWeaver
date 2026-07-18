@@ -24,10 +24,15 @@ namespace WorldGen.Rendering
         /// <summary>The GameObject the controller activates/deactivates when the Граф/Изо toggle flips.</summary>
         GameObject Host { get; }
 
-        /// <summary>Fit Projection to `lvl` and this renderer's own rect. Called ONCE per bind, and again
-        /// on the first frame the rect becomes valid. Returns false if the rect is still {0,0} (not laid
-        /// out) — the controller then retries next LateUpdate (rect gotcha).</summary>
-        bool ResolveProjection(InteriorFloor lvl);
+        /// <summary>Fit Projection to the given TILE-space bounds and this renderer's own rect. Called ONCE
+        /// per bind, and again on the first frame the rect becomes valid. Returns false if the rect is
+        /// still {0,0} (not laid out) — the controller then retries next LateUpdate (rect gotcha).
+        ///
+        /// Takes bounds rather than a level (C2' revision) so the controller can fit to something other
+        /// than one floor's own content — a Building fits to the UNION of the current floor's bounds and
+        /// floor 0's contour bounds (spec C-render); a Dungeon passes the current floor's own bounds,
+        /// unchanged from before.</summary>
+        bool ResolveProjection(float minX, float minY, float maxX, float maxY);
 
         /// <summary>Tear down and rebuild every visual from scratch (structural change: add/delete/link,
         /// level switch, room type/size change).
