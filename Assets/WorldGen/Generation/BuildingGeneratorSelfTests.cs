@@ -57,14 +57,17 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL stairs: floor {f}->{f + 1} stair targets room {target}, which does not exist on floor {f + 1}"); ok = false; }
             }
 
-            // ---- 5. Rooms are MODEST-sized -------------------------------------------------------------
-            // Guards against accidentally routing sizes through RoomSizing's dungeon-Boss default, which
-            // would make a building's TypeId-2 "Приватная" room 10x10 (well outside 1..8).
+            // ---- 5. Rooms sized in the generator's OWN modest range 4..6 -------------------------------
+            // Bound = the generator's exact roll range (rng.Next(4,7)). Tighter than "1..8" ON PURPOSE:
+            // routing sizes through RoomSizing.Roll instead (dungeon ranges 4..8 / 5..8, Boss 8..14) would
+            // roll a 7 or 8 — for THIS seed/params the review verified the RoomSizing path peaks at 8 > 6, so
+            // the regression this guard names actually FAILS it. A "<=8" bound passed vacuously (no TypeId-2
+            // room rolls for seed 42, and the other types' RoomSizing max is 8 anyway).
             foreach (var fl in b.Floors)
                 foreach (var r in fl.Rooms)
-                    if (!(r.SizeW >= 1 && r.SizeW <= 8 && r.SizeH >= 1 && r.SizeH <= 8))
+                    if (!(r.SizeW >= 4 && r.SizeW <= 6 && r.SizeH >= 4 && r.SizeH <= 6))
                     {
-                        Debug.LogError($"FAIL size: room {r.Id} is {r.SizeW}x{r.SizeH}, want 1..8 (looks Boss-sized, not building-modest)");
+                        Debug.LogError($"FAIL size: room {r.Id} is {r.SizeW}x{r.SizeH}, want 4..6 (building-modest, not RoomSizing/Boss-sized)");
                         ok = false;
                     }
 
