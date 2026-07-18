@@ -22,7 +22,8 @@ namespace WorldGen.Rendering
             ok &= dun.RoomTypes[0].Role == ThemeRole.Accent
                 && dun.RoomTypes[1].Role == ThemeRole.Elev
                 && dun.RoomTypes[2].Role == ThemeRole.Danger;
-            ok &= dun.RoomTypes[1].LabelRole == ThemeRole.Txt
+            ok &= dun.RoomTypes[0].LabelRole == ThemeRole.AccentInk
+                && dun.RoomTypes[1].LabelRole == ThemeRole.Txt
                 && dun.RoomTypes[2].LabelRole == ThemeRole.AccentInk;
 
             ok &= dun.Layout == LayoutMode.Spread && bld.Layout == LayoutMode.Compact;
