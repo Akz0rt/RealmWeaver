@@ -153,6 +153,71 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Compact Layout Settle: PASS" : "Self-Test Compact Layout Settle: FAIL");
         }
 
+        [ContextMenu("Self-Test: Settle Within Contour")]
+        public void SelfTestSettleWithinContour()
+        {
+            bool ok = true;
+
+            // ---- 7. CONTAIN-IF-IT-FITS: a compact floor that pokes out is slid fully inside ------------
+            // The entrance sits near the box's right edge; its one linked room packs FLUSH to the right and
+            // so pokes past maxX. The pair (span 8) fits the 20-wide box, so SettleWithinContour must
+            // translate the whole cluster inside. Remove the contain step → the room stays out → this fails.
+            const float aMinX = 40, aMinY = 40, aMaxX = 60, aMaxY = 60;
+            var fitFloor = TwoRoom(entranceTileX: 58, entranceTileY: 50);
+            CompactLayout.SettleWithinContour(fitFloor, anchorRoomId: 0, aMinX, aMinY, aMaxX, aMaxY);
+            foreach (var r in fitFloor.Rooms)
+                if (!AabbInside(r, aMinX, aMinY, aMaxX, aMaxY, 0.05f))
+                { Debug.LogError($"FAIL contour-fit: room {r.Id} not inside the box after contain"); ok = false; }
+
+            // ---- 8. TOO SMALL: a box narrower than the compact floor stays SOFT (centre, don't force) ---
+            // The same pair (span 8) but a 5-wide box cannot hold it. SettleWithinContour must CENTRE the
+            // cluster (as contained as possible) and LEAVE the overflow poking out — never hard-clamp both
+            // rooms in. Two asserts, each non-vacuous: (a) the bbox is centred on the box (fails if the
+            // contain translate is dropped); (b) some room still pokes out (fails if a hard clamp is added —
+            // exactly the C2-HARD behaviour C4 replaced).
+            const float bMinX = 50, bMinY = 48, bMaxX = 55, bMaxY = 52;
+            var bigFloor = TwoRoom(entranceTileX: 50, entranceTileY: 50);
+            CompactLayout.SettleWithinContour(bigFloor, anchorRoomId: 0, bMinX, bMinY, bMaxX, bMaxY);
+            var (gMinX, _, gMaxX, _) = Bounds(bigFloor);
+            if (Mathf.Abs((gMinX + gMaxX) * 0.5f - (bMinX + bMaxX) * 0.5f) > 0.05f)
+            { Debug.LogError("FAIL contour-toosmall: oversized floor not centred on the box"); ok = false; }
+            bool anyOut = false;
+            foreach (var r in bigFloor.Rooms)
+                if (!AabbInside(r, bMinX, bMinY, bMaxX, bMaxY, 0.05f)) anyOut = true;
+            if (!anyOut)
+            { Debug.LogError("FAIL contour-toosmall: a floor bigger than the box was hard-clamped fully inside"); ok = false; }
+
+            // ---- 9. LEAVE-WHAT-THE-DM-PARKED-OUT: a room dropped mostly outside stays outside -----------
+            // Chain 1-2-3, entrance inside the box; room 3 is DRAGGED fully outside (⇒ "mostly outside") and
+            // passed as the anchor. SettleWithinContour must LEAVE room 3 where it was dropped (C2' flags it)
+            // while rooms 1 & 2 re-pack compactly INSIDE the box. Remove the leave-parked rule → room 3 is
+            // re-absorbed flush inside → its centre lands ≤ maxX → this fails.
+            const float cMinX = 40, cMinY = 40, cMaxX = 70, cMaxY = 70;
+            int T = DungeonLayout.TilesPerAxis;
+            var parkFloor = ChainParked(entranceTileX: 55, entranceTileY: 50, parkedTileX: 95, parkedTileY: 50);
+            CompactLayout.SettleWithinContour(parkFloor, anchorRoomId: 3, cMinX, cMinY, cMaxX, cMaxY);
+            var parked = parkFloor.GetRoom(3);
+            if (parked.X * T <= cMaxX)
+            { Debug.LogError($"FAIL parked: room 3 was pulled back inside (cx={parked.X * T:F1}, box maxX={cMaxX})"); ok = false; }
+            if (!AabbInside(parkFloor.GetRoom(1), cMinX, cMinY, cMaxX, cMaxY, 0.05f) ||
+                !AabbInside(parkFloor.GetRoom(2), cMinX, cMinY, cMaxX, cMaxY, 0.05f))
+            { Debug.LogError("FAIL parked: rooms 1/2 are not compact inside the box"); ok = false; }
+            if (!CompactLayout.AdjacentAlongWall(parkFloor.GetRoom(1), parkFloor.GetRoom(2)))
+            { Debug.LogError("FAIL parked: rooms 1-2 not wall-adjacent after settle (lost compactness)"); ok = false; }
+
+            // ---- 10. Determinism (independent copies → identical) -------------------------------------
+            var d1 = ChainParked(55, 50, 95, 50); CompactLayout.SettleWithinContour(d1, 3, cMinX, cMinY, cMaxX, cMaxY);
+            var d2 = ChainParked(55, 50, 95, 50); CompactLayout.SettleWithinContour(d2, 3, cMinX, cMinY, cMaxX, cMaxY);
+            for (int id = 1; id <= 3; id++)
+            {
+                var r1 = d1.GetRoom(id); var r2 = d2.GetRoom(id);
+                if (!Mathf.Approximately(r1.X, r2.X) || !Mathf.Approximately(r1.Y, r2.Y))
+                { Debug.LogError($"FAIL determinism: room {id} differs between runs"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Settle Within Contour: PASS" : "Self-Test Settle Within Contour: FAIL");
+        }
+
         // ------------------------------------------------------------------------------------------------
         // Fixtures & independent helpers (read DungeonLayout.TilesPerAxis + EffectiveSize — never copy them).
         // ------------------------------------------------------------------------------------------------
@@ -221,6 +286,57 @@ namespace WorldGen.Rendering
             float dx = Mathf.Abs((a.X - b.X) * T) - (aw + bw) * 0.5f;
             float dy = Mathf.Abs((a.Y - b.Y) * T) - (ah + bh) * 0.5f;
             return dx < -0.01f && dy < -0.01f;
+        }
+
+        // Entrance (TypeId 0) at a TILE centre + one linked 4×4 room (start pos irrelevant — Settle re-places
+        // it flush from the entrance). The SettleWithinContour contain-vs-leave fixtures.
+        static InteriorFloor TwoRoom(float entranceTileX, float entranceTileY)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var f = new InteriorFloor { NextRoomId = 3 };
+            f.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
+            f.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            return f;
+        }
+
+        // Chain 1(entrance)-2-3 with the entrance inside the box and room 3 pre-dragged to a mostly-outside
+        // TILE position — the "parked" drop the settle must respect (room 3 is the drag anchor).
+        static InteriorFloor ChainParked(float entranceTileX, float entranceTileY, float parkedTileX, float parkedTileY)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var f = new InteriorFloor { NextRoomId = 4 };
+            f.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
+            f.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
+            f.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = parkedTileX / T, Y = parkedTileY / T });
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 2, RoomB = 3 });
+            return f;
+        }
+
+        // Tile-space footprint bbox over all rooms (independent of ContentBoundsTiles; reads TilesPerAxis).
+        static (float minX, float minY, float maxX, float maxY) Bounds(InteriorFloor f)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var r in f.Rooms)
+            {
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                float cx = r.X * T, cy = r.Y * T;
+                minX = Mathf.Min(minX, cx - w * 0.5f); maxX = Mathf.Max(maxX, cx + w * 0.5f);
+                minY = Mathf.Min(minY, cy - h * 0.5f); maxY = Mathf.Max(maxY, cy + h * 0.5f);
+            }
+            return (minX, minY, maxX, maxY);
+        }
+
+        // True iff room r's tile-space footprint AABB is fully inside [minX,maxX]×[minY,maxY] (± eps).
+        static bool AabbInside(Room r, float minX, float minY, float maxX, float maxY, float eps)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var (w, h) = DungeonProjection.EffectiveSize(r);
+            float cx = r.X * T, cy = r.Y * T;
+            return cx - w * 0.5f >= minX - eps && cx + w * 0.5f <= maxX + eps
+                && cy - h * 0.5f >= minY - eps && cy + h * 0.5f <= maxY + eps;
         }
     }
 }

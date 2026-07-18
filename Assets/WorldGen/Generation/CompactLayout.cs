@@ -168,6 +168,90 @@ namespace WorldGen.Generation
         }
 
         // ---------------------------------------------------------------------------------------------
+        // SettleWithinContour — building drag-settle: compact re-pack + SOFT contain (spec C4).
+        // ---------------------------------------------------------------------------------------------
+
+        // A just-dragged room counts as "mostly inside" the contour when at least this fraction of its
+        // footprint AREA lies within the box. Below it, the DM has clearly parked the room outside on
+        // purpose, so the settle LEAVES it there (C2' red-flags it) instead of easing it back in. 0.5 =
+        // "more than half of it is out" ⇒ parked. Heuristic, deterministic, user-tunable at the checkpoint.
+        const float MostlyInsideFrac = 0.5f;
+
+        /// <summary>Building drag-settle under SOFT floor-coherence (spec C4). Re-packs the floor COMPACTLY
+        /// and then GENTLY contains it inside the ground-floor contour box [minX,maxX]×[minY,maxY] — the
+        /// deliberate opposite of the dungeon's spread cascade (Separate + leash), which pushes rooms apart.
+        /// Distinct from <see cref="Settle"/> in two ways: the pack is anchored on the STABLE entrance (never
+        /// the dragged room) so the building can't teleport to chase a dragged room, and the just-dragged
+        /// <paramref name="anchorRoomId"/> is NOT pinned — it may be eased inward like any other room.
+        ///
+        /// Two soft, deterministic rules:
+        /// 1. CONTAIN-IF-IT-FITS — after the compact re-pack the whole cluster is translated RIGIDLY (one
+        ///    offset, so every shared wall/door survives) by the least amount that puts its footprint bbox
+        ///    inside the box (<see cref="ContainWithinBox"/>). If the compact floor is WIDER than the box on
+        ///    an axis — contour too small, or the interior packed full — NO offset can contain it, so it is
+        ///    centred and the overflow rooms poke out, LEFT for C2' to red-flag. Never a hard clamp.
+        /// 2. LEAVE-WHAT-THE-DM-PARKED-OUT — a mostly-inside dragged room is re-absorbed flush by the pack
+        ///    (= "gently pulled to a suitable spot inside"); but if the DM dropped it MOSTLY OUTSIDE the box
+        ///    (&lt; <see cref="MostlyInsideFrac"/> of its area inside, measured BEFORE the re-pack moves it),
+        ///    that is read as an explicit "leave this outside" gesture and the room is restored to where it
+        ///    was dropped and LEFT (flagged). The entrance is never parked out.
+        ///
+        /// The caller applies this only to UPPER floors and passes the ground floor's own bbox as the box; the
+        /// ground floor IS the contour and uses plain <see cref="Settle"/> (no nudge). Deterministic (fixed
+        /// entrance, deterministic Settle, pure tile-space translate; no RNG, no ref-keyed iteration).</summary>
+        public static void SettleWithinContour(InteriorFloor floor, int anchorRoomId,
+            float minX, float minY, float maxX, float maxY)
+        {
+            if (floor == null || floor.Rooms.Count == 0) return;
+            var entrance = PickEntrance(floor);
+            if (entrance == null) return;
+
+            // Read the dragged room's fate from where the DM DROPPED it — before the re-pack relocates it.
+            var anchor = floor.GetRoom(anchorRoomId);
+            bool leaveAnchorOut = anchor != null && anchor.Id != entrance.Id
+                                  && InsideFraction(anchor, minX, minY, maxX, maxY) < MostlyInsideFrac;
+            float keepX = anchor != null ? anchor.X : 0f;
+            float keepY = anchor != null ? anchor.Y : 0f;
+
+            // Compact re-pack around the STABLE entrance (recenterRoot:false keeps it put) — the building
+            // stays where it is; a mostly-inside dragged room is re-absorbed flush = eased inward.
+            Settle(floor, entrance.Id);
+
+            // Gently contain the compact cluster (rigid translate; centred, not squashed, when it can't fit).
+            ContainWithinBox(floor, minX, minY, maxX, maxY);
+
+            // Honour an explicit "leave this outside" drag — restore the parked room; C2' red-flags it.
+            if (leaveAnchorOut) { anchor.X = keepX; anchor.Y = keepY; }
+        }
+
+        /// <summary>Rigidly translate the WHOLE floor (single offset — every shared wall preserved) by the
+        /// least amount that brings its footprint bbox inside [minX,maxX]×[minY,maxY]. On an axis where the
+        /// bbox is WIDER than the box, no translation can contain it, so <see cref="ClampTranslate"/> centres
+        /// it (lo &gt; hi → midpoint) and the overflow is LEFT poking out — the SOFT half of spec C4, never a
+        /// per-room clamp. desired == 0: the floor only moves if it actually pokes out. Deterministic.</summary>
+        static void ContainWithinBox(InteriorFloor floor, float minX, float minY, float maxX, float maxY)
+        {
+            var (bMinX, bMinY, bMaxX, bMaxY) = DungeonProjection.ContentBoundsTiles(floor);
+            float dx = ClampTranslate(0f, minX - bMinX, maxX - bMaxX);
+            float dy = ClampTranslate(0f, minY - bMinY, maxY - bMaxY);
+            TranslateAllTiles(floor, dx, dy);
+        }
+
+        /// <summary>Fraction (0..1) of room <paramref name="r"/>'s footprint AREA lying inside the tile-space
+        /// box [minX,maxX]×[minY,maxY]: 1 when fully inside, 0 when fully outside. The deterministic "mostly
+        /// inside" measure SettleWithinContour uses to tell an ease-in from a parked-outside drop. Footprint
+        /// via EffectiveSize, the same measure ContentBoundsTiles/OutsideContour use.</summary>
+        static float InsideFraction(Room r, float minX, float minY, float maxX, float maxY)
+        {
+            var (w, h) = DungeonProjection.EffectiveSize(r);
+            if (w <= 0 || h <= 0) return 1f;
+            float cx = ToTile(r.X), cy = ToTile(r.Y);
+            float ix = Max(0f, Min(cx + w * 0.5f, maxX) - Max(cx - w * 0.5f, minX));
+            float iy = Max(0f, Min(cy + h * 0.5f, maxY) - Max(cy - h * 0.5f, minY));
+            return (ix * iy) / (w * h);
+        }
+
+        // ---------------------------------------------------------------------------------------------
         // AdjacentAlongWall — strict shared-wall predicate.
         // ---------------------------------------------------------------------------------------------
 

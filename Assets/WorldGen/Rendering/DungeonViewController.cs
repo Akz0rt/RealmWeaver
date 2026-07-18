@@ -167,17 +167,41 @@ namespace WorldGen.Rendering
             var start = new Dictionary<int, (float x, float y)>();
             foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
 
-            // Separate → leash → Separate. Separate resolves overlap but knows nothing about corridors, so
-            // on its own it can leave a corridor stretched past the leash with nothing to pull it back
-            // (the leash otherwise only runs during a drag). The leash pass then re-pulls, and the second
-            // Separate cleans up any overlap that pull introduced.
-            //
-            // Best-effort, NOT a proven joint fixpoint: the final Separate could in principle re-stretch a
-            // corridor a little. Both passes are convergent and cheap, and any residual is small and
-            // cosmetic — the alternative is a combined solver, which this does not need.
-            DungeonLayout.Separate(lvl);
-            DungeonLayout.EnforceCorridorLeash(lvl, lastAnchorRoomId);
-            DungeonLayout.Separate(lvl);   // mutates rooms to resolved target positions
+            if (dungeon != null && dungeon.Kind == InteriorKind.Building)
+            {
+                // BUILDING (spec C4): a building wants tight, touching chambers — the exact opposite of the
+                // dungeon spread cascade below (which pushes rooms APART and stretches corridors). So re-pack
+                // the floor COMPACTLY (adjacency, doors-not-corridors) instead. The ground floor (index 0) IS
+                // the contour, so it only compacts; each upper floor also gets a GENTLE nudge into floor 0's
+                // bbox when it fits, leaving a room the DM parked outside for C2' to red-flag. This still
+                // mutates Room.X/Y to the resolved targets, so the shared snapshot→rollback→SmoothDamp path
+                // below animates it exactly like the dungeon settle.
+                if (levelIndex == 0)
+                    CompactLayout.Settle(lvl, lastAnchorRoomId);
+                else
+                {
+                    var (cMinX, cMinY, cMaxX, cMaxY) =
+                        DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]);
+                    CompactLayout.SettleWithinContour(lvl, lastAnchorRoomId, cMinX, cMinY, cMaxX, cMaxY);
+                }
+            }
+            else
+            {
+                // DUNGEON — byte-identical to the pre-C4 cascade; do not touch (user re-verifies at the
+                // checkpoint that dungeon drag/settle is unchanged).
+                //
+                // Separate → leash → Separate. Separate resolves overlap but knows nothing about corridors, so
+                // on its own it can leave a corridor stretched past the leash with nothing to pull it back
+                // (the leash otherwise only runs during a drag). The leash pass then re-pulls, and the second
+                // Separate cleans up any overlap that pull introduced.
+                //
+                // Best-effort, NOT a proven joint fixpoint: the final Separate could in principle re-stretch a
+                // corridor a little. Both passes are convergent and cheap, and any residual is small and
+                // cosmetic — the alternative is a combined solver, which this does not need.
+                DungeonLayout.Separate(lvl);
+                DungeonLayout.EnforceCorridorLeash(lvl, lastAnchorRoomId);
+                DungeonLayout.Separate(lvl);   // mutates rooms to resolved target positions
+            }
 
             const float eps = 1e-4f;
             var targets = new Dictionary<int, (float x, float y)>();
@@ -366,11 +390,15 @@ namespace WorldGen.Rendering
             room.X = Mathf.Clamp(tx / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
             room.Y = Mathf.Clamp(ty / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
 
-            // Stitched-together feel: a corridor may not stretch past MaxCorridorTiles, so dragging this
-            // room drags its linked rooms along, and they drag theirs. Runs per drag sample (live), unlike
-            // the cascade — the pull must be felt while moving, not on release. The dragged room is the
+            // BUILDING (spec C4): the room moves FREELY with the cursor — NO corridor leash — so the DM can
+            // pull it right out of the contour and watch C2' flag it (RepositionRooms re-tests the contour
+            // every sample). The compact re-pack + gentle contain happens on settle (BeginCascade), animated.
+            // DUNGEON: stitched-together feel — a corridor may not stretch past MaxCorridorTiles, so dragging
+            // this room drags its linked rooms along, and they drag theirs. Runs per drag sample (live),
+            // unlike the cascade — the pull must be felt while moving, not on release. The dragged room is the
             // anchor and never yields.
-            DungeonLayout.EnforceCorridorLeash(lvl, draggingRoomId);
+            if (dungeon == null || dungeon.Kind != InteriorKind.Building)
+                DungeonLayout.EnforceCorridorLeash(lvl, draggingRoomId);
             RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
         }
 
