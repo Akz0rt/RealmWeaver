@@ -119,14 +119,17 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL stair-align: pair {f} stair rooms off by ({dx:F1},{dy:F1}) tiles, tol {BuildingGenerator.StairAlignTol}"); ok = false; }
             }
 
-            // ---- 8. Nesting is REAL, not concentric-luck (the non-vacuous proof) ------------------------
-            // Feed the nesting entry point a hand-built OFF-CENTRE lower bbox: a 24x24-tile box in the field's
-            // top-left, whose CENTRE (~20,20) is nowhere near the field centre (64,64). A correctly nested
-            // upper floor lands inside it. Remove the ArrangeWithin translate (Arrange alone centres the floor
-            // at the field centre, bbox ~[54,74]) and the result falls ENTIRELY outside [8,32] -> contained
-            // goes false -> FAIL. That is exactly what makes this containment assertion non-vacuous: the
-            // lower bbox does not straddle the field centre, so a field-centred floor cannot accidentally sit
-            // inside it.
+            // ---- 8. Nesting is REAL, not concentric-luck (non-vacuous fixture) --------------------------
+            // Off-centre lower box: 24x24 tiles in the field's top-left, centre ~(20,20), far from the field
+            // centre (64,64). Containment is DOUBLE-enforced, so the two sub-asserts isolate different pieces
+            // (do NOT read the containment assert alone as proof the nest ran):
+            //   * CONTAINMENT (below) is enforced by NudgeRoomToward's clamp against the lower box. Remove
+            //     that clamp and an unclamped field-centred floor's bbox ~[54,74] escapes [8,32] -> FAIL.
+            //     (It stays TRUE if only ArrangeWithin's centring is removed — the clamp covers it.)
+            //   * STAIR (further below) is what catches removal of the ArrangeWithin nest/centring: containment
+            //     still holds via the clamp, but a field-centred floor's stair room is ~36 tiles from the
+            //     lower stair (28,28) >> StairAlignTol -> FAIL.
+            // Because the box does not straddle the field centre, a field-centred floor passes NEITHER assert.
             {
                 float loMinX = 8f, loMinY = 8f, loMaxX = 32f, loMaxY = 32f;
                 float stairX = 28f, stairY = 28f;   // a stair point near the box's far corner
