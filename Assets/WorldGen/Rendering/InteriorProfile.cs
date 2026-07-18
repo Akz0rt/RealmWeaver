@@ -16,15 +16,19 @@ namespace WorldGen.Rendering
     /// pre-profile renderer. Role paints the card; LabelRole paints the room-name text on that card.</summary>
     public struct RoomTypeDef
     {
-        public string Label;
+        public string Label;      // the type-picker button label in the inspector (e.g. "Обычная")
         public ThemeRole Role;
         public ThemeRole LabelRole;
+        public string CardLabel;  // the node-card label for an UNtitled room (e.g. "Комната") — may differ from Label
 
-        public RoomTypeDef(string label, ThemeRole role, ThemeRole labelRole)
+        // cardLabel defaults to label; pass it only when the card fallback text differs from the picker label
+        // (the dungeon's Normal type: picker "Обычная" vs card "Комната", preserving the pre-profile renderer).
+        public RoomTypeDef(string label, ThemeRole role, ThemeRole labelRole, string cardLabel = null)
         {
             Label = label;
             Role = role;
             LabelRole = labelRole;
+            CardLabel = cardLabel ?? label;
         }
     }
 
@@ -63,7 +67,7 @@ namespace WorldGen.Rendering
                 RoomTypes = new[]
                 {
                     new RoomTypeDef("Вход",    ThemeRole.Accent, ThemeRole.AccentInk),
-                    new RoomTypeDef("Обычная", ThemeRole.Elev,   ThemeRole.Txt),
+                    new RoomTypeDef("Обычная", ThemeRole.Elev,   ThemeRole.Txt, cardLabel: "Комната"), // card shows "Комната", picker shows "Обычная" (pre-profile parity)
                     new RoomTypeDef("Босс",    ThemeRole.Danger, ThemeRole.AccentInk),
                 },
                 Layout = LayoutMode.Spread,

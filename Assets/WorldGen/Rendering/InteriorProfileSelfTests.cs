@@ -25,6 +25,11 @@ namespace WorldGen.Rendering
             ok &= dun.RoomTypes[0].LabelRole == ThemeRole.AccentInk
                 && dun.RoomTypes[1].LabelRole == ThemeRole.Txt
                 && dun.RoomTypes[2].LabelRole == ThemeRole.AccentInk;
+            // Node-card labels (used by DungeonFlatRenderer.NodeLabel for untitled rooms). Normal's card
+            // label "Комната" differs from its picker label "Обычная" — reproduces the pre-profile TypeLabel.
+            ok &= dun.RoomTypes[0].CardLabel == "Вход"
+                && dun.RoomTypes[1].CardLabel == "Комната"
+                && dun.RoomTypes[2].CardLabel == "Босс";
 
             ok &= dun.Layout == LayoutMode.Spread && bld.Layout == LayoutMode.Compact;
             ok &= dun.HasBossRule && !bld.HasBossRule;

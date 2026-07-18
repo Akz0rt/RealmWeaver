@@ -241,7 +241,9 @@ namespace WorldGen.Rendering
 
         ThemeRole LabelRole(int t) => profile.TypeOf(t).LabelRole;
 
-        string TypeLabel(int t) => profile.TypeOf(t).Label;
+        // CardLabel, NOT Label: the untitled-room card fallback. For a dungeon Normal room this is "Комната"
+        // (matching the pre-profile TypeLabel default), while the inspector's picker button uses Label "Обычная".
+        string TypeLabel(int t) => profile.TypeOf(t).CardLabel;
 
         string NodeLabel(Room r) => $"{r.Id}. {(string.IsNullOrEmpty(r.Title) ? TypeLabel(r.TypeId) : r.Title)}";
     }
