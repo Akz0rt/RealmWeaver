@@ -499,12 +499,7 @@ namespace WorldGen.Rendering
             outline.enabled = false;
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = bg;
-            btn.onClick.AddListener(() =>
-            {
-                if (current != null) poiManager.UpdatePoiType(current.Id, type);
-                ApplyTypeHighlight(type);
-                RefreshPreview();
-            });
+            btn.onClick.AddListener(() => OnTypePicked(type));
 
             var iconGO = new GameObject("Icon");
             iconGO.transform.SetParent(go.transform, false);
@@ -540,6 +535,42 @@ namespace WorldGen.Rendering
                 kvp.Value.outline.effectColor = ThemeService.Get(ThemeRole.Accent);
                 kvp.Value.outline.enabled = on;
             }
+        }
+
+        /// <summary>Handles a type-button click. If the POI already has a saved interior whose Kind
+        /// won't match the new type's interior kind (or the new type has no interior at all, e.g.
+        /// City), the saved map would become a mismatch — confirm with the DM before discarding it.
+        /// Otherwise applies the type change immediately (bug #3: this must run RefreshMapSectionLabel
+        /// so the «КАРТА ЛОКАЦИИ» row updates right away, not only after leaving and reopening).</summary>
+        void OnTypePicked(PoiType type)
+        {
+            if (current == null) return;
+            var newKind = Profiles.InteriorKindForPoiType(type);
+            var existing = dungeonManager != null ? dungeonManager.GetByPoiId(current.Id) : null;
+            // Conflict when a map exists AND the new type's interior kind differs (a null new-kind, e.g. City, also conflicts).
+            bool conflict = existing != null && newKind != existing.Kind;
+            if (conflict)
+            {
+                string mapWord = existing.Kind == InteriorKind.Building ? "здания" : "подземелья";
+                ConfirmDialog.Show(font, "Сменить тип точки?",
+                    $"У этой точки есть карта {mapWord}, которая не подойдёт новому типу. Сбросить карту?",
+                    ok =>
+                    {
+                        if (!ok) return;                       // keep the OLD type + map — do nothing
+                        dungeonManager.RemoveForPoi(current.Id);
+                        ApplyType(type);
+                    });
+                return;                                        // wait for the dialog; do NOT change the type yet
+            }
+            ApplyType(type);
+        }
+
+        void ApplyType(PoiType type)
+        {
+            poiManager.UpdatePoiType(current.Id, type);
+            ApplyTypeHighlight(type);
+            RefreshPreview();
+            RefreshMapSectionLabel();   // #3: refresh the map row visibility + label immediately on type change
         }
 
         void BuildIconRow(Transform t)

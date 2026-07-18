@@ -43,5 +43,9 @@ namespace WorldGen.Rendering
         }
 
         public void ClearAll() => dungeons.Clear();
+
+        /// <summary>Discards the interior owned by a POI (used when a type change makes the saved
+        /// interior's Kind no longer match the POI's new type — see PoiEditorScreen.OnTypePicked).</summary>
+        public void RemoveForPoi(string poiId) => dungeons.RemoveAll(d => d.OwnerPoiId == poiId);
     }
 }
