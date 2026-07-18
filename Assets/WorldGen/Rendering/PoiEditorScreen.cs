@@ -49,6 +49,8 @@ namespace WorldGen.Rendering
         Slider labelScaleSlider;
         Text notesLabel;
         Text mapSectionLabel;
+        GameObject mapCaptionGO;
+        GameObject mapRowGO;
         Image previewIcon;
         Text previewLabel;
         RawImage previewMapImage;   // shows a fragment of the real map (RenderTexture) under the icon
@@ -615,8 +617,9 @@ namespace WorldGen.Rendering
 
         void BuildMapStub(Transform t)
         {
-            AddCaption(t, "КАРТА ЛОКАЦИИ");
+            mapCaptionGO = AddCaption(t, "КАРТА ЛОКАЦИИ").gameObject;
             var rowGO = new GameObject("MapDungeonRow");
+            mapRowGO = rowGO;
             rowGO.transform.SetParent(t, false);
             var bg = rowGO.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Elev);
@@ -633,12 +636,30 @@ namespace WorldGen.Rendering
         /// editor is re-shown after returning from the dungeon editor (no re-Bind happens on that path).</summary>
         public void RefreshMapSection() => RefreshMapSectionLabel();
 
+        /// <summary>Gates the «КАРТА ЛОКАЦИИ» row: visible only for a POI type that can open an interior
+        /// (Tower/Temple/Fortress/Ruin/Dungeon), OR one that already has an interior saved (covers a POI
+        /// whose type was since changed away from an interior-eligible type). Label adapts by kind — a
+        /// Building POI reads "…карту здания" (N этажей), a Dungeon POI keeps the existing "…подземелья"
+        /// wording (N уровней).</summary>
         void RefreshMapSectionLabel()
         {
-            if (mapSectionLabel == null) return;
-            int levels = (dungeonManager != null && current != null && dungeonManager.HasDungeon(current.Id))
-                ? dungeonManager.GetByPoiId(current.Id).Floors.Count : 0;
-            mapSectionLabel.text = levels > 0 ? $"Открыть карту подземелья ({levels} ур.)" : "Создать карту подземелья";
+            if (mapSectionLabel == null || current == null) return;
+            var typeKind = Profiles.InteriorKindForPoiType(current.Type);
+            bool hasInterior = dungeonManager != null && dungeonManager.HasDungeon(current.Id);
+            bool show = typeKind != null || hasInterior;
+            if (mapCaptionGO != null) mapCaptionGO.SetActive(show);
+            if (mapRowGO != null) mapRowGO.SetActive(show);
+            if (!show) return;
+
+            var existing = hasInterior ? dungeonManager.GetByPoiId(current.Id) : null;
+            // The POI's current type decides the label's wording; fall back to the saved interior's own
+            // Kind only if the type no longer maps to an interior (edge case above) but one still exists.
+            InteriorKind kind = typeKind ?? existing.Kind;
+            int floors = existing != null ? existing.Floors.Count : 0;
+
+            mapSectionLabel.text = kind == InteriorKind.Building
+                ? (floors > 0 ? $"Открыть карту здания ({floors} эт.)" : "Создать карту здания")
+                : (floors > 0 ? $"Открыть карту подземелья ({floors} ур.)" : "Создать карту подземелья");
         }
 
         void BuildDeleteRow(Transform t)

@@ -96,7 +96,8 @@ namespace WorldGen.Rendering
         public void OpenDungeonEditor(PoiData poi)
         {
             if (poi == null || dungeonManager == null) return;
-            editingDungeon = dungeonManager.GetOrCreateForPoi(poi.Id);
+            var kind = Profiles.InteriorKindForPoiType(poi.Type) ?? InteriorKind.Dungeon;
+            editingDungeon = dungeonManager.GetOrCreateForPoi(poi.Id, kind);
             if (dungeonEditorScreen != null) dungeonEditorScreen.Bind(editingDungeon);
             RefreshScreenState();
         }

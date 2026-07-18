@@ -28,10 +28,11 @@ namespace WorldGen.Rendering
         public InteriorData GetByPoiId(string poiId) =>
             poiId != null ? dungeons.FirstOrDefault(d => d.OwnerPoiId == poiId) : null;
 
-        public InteriorData GetOrCreateForPoi(string poiId)
+        public InteriorData GetOrCreateForPoi(string poiId, InteriorKind kind = InteriorKind.Dungeon)
         {
             var d = GetByPoiId(poiId);
-            if (d == null) { d = new InteriorData { OwnerPoiId = poiId }; dungeons.Add(d); }
+            // Kind only matters on CREATE — an existing interior keeps its stored Kind.
+            if (d == null) { d = new InteriorData { OwnerPoiId = poiId, Kind = kind }; dungeons.Add(d); }
             return d;
         }
 

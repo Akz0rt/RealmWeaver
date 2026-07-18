@@ -37,6 +37,8 @@ namespace WorldGen.Rendering
 
         const float StripHeight = 44f;
         const float ToolbarHeight = 36f;
+        const int DefaultBuildingFloors = 2;
+        const int DefaultRooms = 6;
 
         void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }
 
@@ -54,7 +56,13 @@ namespace WorldGen.Rendering
         {
             EnsureBuilt();
             current = dungeon;
-            if (current.Floors.Count == 0) current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
+            if (current.Floors.Count == 0)
+            {
+                if (current.Kind == InteriorKind.Building)
+                    current.Floors.AddRange(BuildingGenerator.Generate(FreshSeed(), current.OwnerPoiId, DefaultRooms, DefaultBuildingFloors).Floors);
+                else
+                    current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), DefaultRooms));
+            }
             SetLevel(0);
         }
 
@@ -75,7 +83,28 @@ namespace WorldGen.Rendering
         public void AddLevel()
         {
             if (current == null) return;
-            current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
+            if (current.Kind == InteriorKind.Building)
+            {
+                // ONE new building floor, no entrance (upper floors don't have one), linked to the
+                // previous top floor by a stair on that floor's first room.
+                var floor = BuildingGenerator.Generate(FreshSeed(), current.OwnerPoiId, DefaultRooms, 1).Floors[0];
+                foreach (var r in floor.Rooms) if (r.TypeId == 0) r.TypeId = 1;   // upper floors have no entrance
+                int lowerIdx = current.Floors.Count - 1;
+                var lower = current.Floors[lowerIdx];
+                current.Floors.Add(floor);
+                if (lower.Rooms.Count > 0 && floor.Rooms.Count > 0)
+                    lower.Rooms[0].Portals.Add(new Portal
+                    {
+                        Kind = PortalKind.Stairs,
+                        Hidden = false,
+                        TargetFloorIndex = lowerIdx + 1,
+                        TargetRoomId = floor.Rooms[0].Id,
+                        Bidirectional = true,
+                        Label = "Лестница",
+                    });
+            }
+            else
+                current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), DefaultRooms));
             SetLevel(current.Floors.Count - 1);
         }
 
