@@ -16,7 +16,7 @@ namespace WorldGen.Rendering
                 ""Rooms"":[
                     {""Id"":1,""Type"":0,""X"":0.2,""Y"":0.2,""Secrets"":[]},
                     {""Id"":2,""Type"":2,""X"":0.8,""Y"":0.8,
-                     ""Secrets"":[{""Kind"":1,""TargetLevelIndex"":0,""TargetRoomId"":1,""Bidirectional"":true,""Label"":""e""}]}
+                     ""Secrets"":[{""Kind"":1,""TargetLevelIndex"":1,""TargetRoomId"":1,""Bidirectional"":true,""Label"":""e""}]}
                 ],
                 ""Corridors"":[{""RoomA"":1,""RoomB"":2}], ""NextRoomId"":3 } ] }";
             var d = JsonConvert.DeserializeObject<InteriorData>(v6);
@@ -29,7 +29,7 @@ namespace WorldGen.Rendering
             var p = r2.Portals[0];
             ok &= p.Hidden == true;                               // absent Hidden defaults to legacy-secret
             ok &= p.Kind == PortalKind.DungeonExit;              // old SecretTargetKind.DungeonExit(1) int-maps
-            ok &= p.TargetFloorIndex == 0;                        // "TargetLevelIndex" mapped
+            ok &= p.TargetFloorIndex == 1;                        // "TargetLevelIndex":1 mapped (nonzero ≠ field default 0, so a dropped attribute WOULD fail this)
 
             Debug.Log(ok ? "Self-Test Interior v6 Migration: PASS" : "Self-Test Interior v6 Migration: FAIL");
         }

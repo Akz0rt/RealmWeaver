@@ -387,7 +387,7 @@ namespace WorldGen.Persistence
         public void SelfTestDungeonV5SizeMigration()
         {
             // A FormatVersion-5 file whose rooms predate Size (no SizeW/SizeH). On load they must get
-            // the type default (Entrance 4x3, Boss 5x5, Normal 3x3), not stay 0x0.
+            // the type default (Entrance 7x5, Boss 10x10, Normal 6x6 — see RoomSizing.Default), not stay 0x0.
             string json =
                 "{ \"FormatVersion\": 5, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
                 "\"Cells\": [], \"Pois\": [], \"Dungeons\": [ { \"OwnerPoiId\": \"p\", \"Levels\": [ { \"NextRoomId\": 3, " +
@@ -398,8 +398,8 @@ namespace WorldGen.Persistence
             try { File.Delete(path); } catch { }
             var l = r.Success && r.Dungeons.Count == 1 ? r.Dungeons[0].Floors[0] : null;
             bool ok = l != null
-                && l.GetRoom(1).SizeW == 4 && l.GetRoom(1).SizeH == 3    // Entrance default
-                && l.GetRoom(2).SizeW == 5 && l.GetRoom(2).SizeH == 5;   // Boss default
+                && l.GetRoom(1).SizeW == 7 && l.GetRoom(1).SizeH == 5    // Entrance default (RoomSizing.Default(0))
+                && l.GetRoom(2).SizeW == 10 && l.GetRoom(2).SizeH == 10; // Boss default (RoomSizing.Default(2))
             Debug.Log(ok ? "Self-Test Dungeon v5 Size Migration: PASS" : "Self-Test Dungeon v5 Size Migration: FAIL");
         }
     }
