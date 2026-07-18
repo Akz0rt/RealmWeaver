@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace WorldGen.Generation
 {
-    /// <summary>Pure, headless layout services over a DungeonLevel graph: cascade non-overlap separation
+    /// <summary>Pure, headless layout services over an InteriorFloor graph: cascade non-overlap separation
     /// (Separate) and derived corridor-crossing junctions (BuildRenderGraph, Task 3). Positions are
     /// normalized 0..1; sizes are in tiles; all math runs in TILE space via TilesPerAxis. No Unity types.</summary>
     public static class DungeonLayout
@@ -31,7 +31,7 @@ namespace WorldGen.Generation
 
         /// <summary>Push overlapping room footprints apart (cascade) until none overlap with a minGapTiles
         /// clearance, or maxIterations is reached. Deterministic. Mutates Room.X/Y (kept in [0,1]).</summary>
-        public static void Separate(DungeonLevel lvl, float minGapTiles = 0.1f, int maxIterations = 40)
+        public static void Separate(InteriorFloor lvl, float minGapTiles = 0.1f, int maxIterations = 40)
         {
             if (lvl == null || lvl.Rooms.Count < 2) return;
             var rooms = lvl.Rooms;
@@ -87,10 +87,10 @@ namespace WorldGen.Generation
         ///
         /// Uses the same Chebyshev edge gap as Separate — a second metric here would make the leash and the
         /// cascade disagree about what "touching" means. Deterministic; mutates Room.X/Y (kept in [0,1]).</summary>
-        public static void EnforceCorridorLeash(DungeonLevel lvl, int anchorRoomId,
+        public static void EnforceCorridorLeash(InteriorFloor lvl, int anchorRoomId,
             float maxTiles = MaxCorridorTiles, int maxIterations = 24)
         {
-            if (lvl == null || lvl.Rooms.Count < 2 || lvl.Corridors.Count == 0) return;
+            if (lvl == null || lvl.Rooms.Count < 2 || lvl.Links.Count == 0) return;
 
             // Graph distance from the anchor decides who yields: on each corridor the room FARTHER from
             // the anchor is the one that moves. Rooms unreachable from the anchor (orphans, or a separate
@@ -104,7 +104,7 @@ namespace WorldGen.Generation
             for (int iter = 0; iter < maxIterations; iter++)
             {
                 bool anyPulled = false;
-                foreach (var c in lvl.Corridors)
+                foreach (var c in lvl.Links)
                 {
                     var a = lvl.GetRoom(c.RoomA);
                     var b = lvl.GetRoom(c.RoomB);
@@ -146,18 +146,18 @@ namespace WorldGen.Generation
             }
         }
 
-        static int LowestRoomId(DungeonLevel lvl)
+        static int LowestRoomId(InteriorFloor lvl)
         {
             int best = 0;
             foreach (var r in lvl.Rooms) if (best == 0 || r.Id < best) best = r.Id;
             return best;
         }
 
-        static Dictionary<int, int> BfsFromAnchor(DungeonLevel lvl, int anchorRoomId)
+        static Dictionary<int, int> BfsFromAnchor(InteriorFloor lvl, int anchorRoomId)
         {
             var adj = new Dictionary<int, List<int>>();
             foreach (var r in lvl.Rooms) adj[r.Id] = new List<int>();
-            foreach (var c in lvl.Corridors)
+            foreach (var c in lvl.Links)
             {
                 if (adj.ContainsKey(c.RoomA) && adj.ContainsKey(c.RoomB))
                 { adj[c.RoomA].Add(c.RoomB); adj[c.RoomB].Add(c.RoomA); }
@@ -192,7 +192,7 @@ namespace WorldGen.Generation
         /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
         /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.
         /// DERIVED — not stored. Only DM corridors are crossed (no recursion on the split sub-segments).</summary>
-        public static RenderGraph BuildRenderGraph(DungeonLevel lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
+        public static RenderGraph BuildRenderGraph(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
         {
             var g = new RenderGraph();
             if (lvl == null) return g;
@@ -214,8 +214,8 @@ namespace WorldGen.Generation
                     W = w, H = h,
                 });
             }
-            var linkEdges = new List<LinkEdge>(lvl.Corridors.Count);
-            foreach (var c in lvl.Corridors) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+            var linkEdges = new List<LinkEdge>(lvl.Links.Count);
+            foreach (var c in lvl.Links) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
             var routed = RoomLinkGeometry.Build(nodes, linkEdges, mode);
 

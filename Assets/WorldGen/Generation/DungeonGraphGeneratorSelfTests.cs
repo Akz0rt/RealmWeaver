@@ -23,8 +23,8 @@ namespace WorldGen.Rendering
                 foreach (var r in lvl.Rooms)
                 {
                     if (!ids.Add(r.Id)) countOk = false;                  // distinct ids
-                    if (r.Type == RoomType.Entrance) { entrances++; entranceId = r.Id; }
-                    if (r.Type == RoomType.Boss) { bosses++; bossId = r.Id; }
+                    if (r.TypeId == 0) { entrances++; entranceId = r.Id; }
+                    if (r.TypeId == 2) { bosses++; bossId = r.Id; }
                 }
                 bool oneEntrance = entrances == 1;
                 bool oneBoss = bosses == 1;                              // roomCount >= 4 here → a boss is guaranteed
@@ -48,34 +48,34 @@ namespace WorldGen.Rendering
             bool ok = true;
             var a = DungeonGraphGenerator.Generate(123, 8);
             var b = DungeonGraphGenerator.Generate(123, 8);
-            ok &= a.Rooms.Count == b.Rooms.Count && a.Corridors.Count == b.Corridors.Count;
+            ok &= a.Rooms.Count == b.Rooms.Count && a.Links.Count == b.Links.Count;
             for (int i = 0; i < a.Rooms.Count && ok; i++)
-                ok &= a.Rooms[i].Id == b.Rooms[i].Id && a.Rooms[i].Type == b.Rooms[i].Type
+                ok &= a.Rooms[i].Id == b.Rooms[i].Id && a.Rooms[i].TypeId == b.Rooms[i].TypeId
                       && Mathf.Approximately(a.Rooms[i].X, b.Rooms[i].X) && Mathf.Approximately(a.Rooms[i].Y, b.Rooms[i].Y);
 
             var one = DungeonGraphGenerator.Generate(1, 1);
-            ok &= one.Rooms.Count == 1 && one.Rooms[0].Type == RoomType.Entrance && one.Corridors.Count == 0;
+            ok &= one.Rooms.Count == 1 && one.Rooms[0].TypeId == 0 && one.Links.Count == 0;
             var zero = DungeonGraphGenerator.Generate(1, 0);
-            ok &= zero.Rooms.Count == 0 && zero.Corridors.Count == 0;
+            ok &= zero.Rooms.Count == 0 && zero.Links.Count == 0;
 
             var two = DungeonGraphGenerator.Generate(7, 2);
             int twoEnt = 0, twoBoss = 0;
-            foreach (var r in two.Rooms) { if (r.Type == RoomType.Entrance) twoEnt++; if (r.Type == RoomType.Boss) twoBoss++; }
-            ok &= two.Rooms.Count == 2 && twoEnt == 1 && twoBoss == 1 && two.Corridors.Count == 1;
+            foreach (var r in two.Rooms) { if (r.TypeId == 0) twoEnt++; if (r.TypeId == 2) twoBoss++; }
+            ok &= two.Rooms.Count == 2 && twoEnt == 1 && twoBoss == 1 && two.Links.Count == 1;
 
             Debug.Log(ok ? "Self-Test Dungeon Graph Generator Determinism + Degenerate: PASS"
                          : "Self-Test Dungeon Graph Generator Determinism + Degenerate: FAIL");
         }
 
-        static Dictionary<int, HashSet<int>> BuildAdj(DungeonLevel lvl)
+        static Dictionary<int, HashSet<int>> BuildAdj(InteriorFloor lvl)
         {
             var adj = new Dictionary<int, HashSet<int>>();
             foreach (var r in lvl.Rooms) adj[r.Id] = new HashSet<int>();
-            foreach (var c in lvl.Corridors) { adj[c.RoomA].Add(c.RoomB); adj[c.RoomB].Add(c.RoomA); }
+            foreach (var c in lvl.Links) { adj[c.RoomA].Add(c.RoomB); adj[c.RoomB].Add(c.RoomA); }
             return adj;
         }
 
-        static bool ReachesAll(DungeonLevel lvl, int startId)
+        static bool ReachesAll(InteriorFloor lvl, int startId)
         {
             if (lvl.Rooms.Count == 0) return true;
             var adj = BuildAdj(lvl);
@@ -85,7 +85,7 @@ namespace WorldGen.Rendering
             return seen.Count == lvl.Rooms.Count;
         }
 
-        static int Distance(DungeonLevel lvl, int a, int b)
+        static int Distance(InteriorFloor lvl, int a, int b)
         {
             var adj = BuildAdj(lvl);
             var dist = new Dictionary<int, int> { [a] = 0 };

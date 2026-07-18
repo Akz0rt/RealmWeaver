@@ -72,7 +72,7 @@ namespace WorldGen.Persistence
             var notes = new NotesDocument { Groups = new List<PageGroup> { group } };
 
             string path = Path.Combine(Application.temporaryCachePath, "project_roundtrip_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -132,7 +132,7 @@ namespace WorldGen.Persistence
             var pois = new List<PoiData> { poiFortress, poiPort };
 
             string path = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_selftest.json");
-            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
+            ProjectSerializer.Save(path, genParams, cells, pois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -147,7 +147,7 @@ namespace WorldGen.Persistence
             // accidental reorder shifting existing values). ---
             var oldStylePois = new List<PoiData> { new PoiData { Type = PoiType.Port, Name = "Гавань", OwnerCellId = 2 } };
             string newPath = Path.Combine(Application.temporaryCachePath, "poi_type_backcompat_new_selftest.json");
-            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
+            ProjectSerializer.Save(newPath, genParams, cells, oldStylePois, notes, new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
 
             string json = File.ReadAllText(newPath);
             string oldJson = json.Replace("\"Type\": 10", "\"Type\": 4");
@@ -194,7 +194,7 @@ namespace WorldGen.Persistence
                 new System.Collections.Generic.List<VoronoiCell>(),
                 new System.Collections.Generic.List<PoiData>(),
                 new NotesDocument(), regionLabels, new System.Collections.Generic.List<RegionData>(),
-                new System.Collections.Generic.List<DungeonData>());
+                new System.Collections.Generic.List<InteriorData>());
             var result = ProjectSerializer.Load(path);
             // old-save compat: a JSON with no RegionLabels field -> empty list (not null).
             string legacy = System.IO.File.ReadAllText(path).Replace("\"RegionLabels\"", "\"RegionLabelsRenamed\"");
@@ -250,7 +250,7 @@ namespace WorldGen.Persistence
 
             string path = Path.Combine(Application.temporaryCachePath, "regions_roundtrip_selftest.json");
             ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), regions, new List<DungeonData>());
+                new List<RegionLabelData>(), regions, new List<InteriorData>());
             var result = ProjectSerializer.Load(path);
             File.Delete(path);
 
@@ -279,7 +279,7 @@ namespace WorldGen.Persistence
 
             string path = Path.Combine(Application.temporaryCachePath, "legacy_region_migration_selftest.json");
             ProjectSerializer.Save(path, genParams, cells, new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData>());
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
 
             // Also simulate a genuinely old file that predates the "Regions" property entirely (not
             // just an empty array) - same idiom as SelfTestRegionLabelsRoundTrip's legacy check above.
@@ -308,36 +308,36 @@ namespace WorldGen.Persistence
         {
             string path = Path.Combine(Path.GetTempPath(), "dungeon_graph_roundtrip_test.dndproj");
 
-            var lvl = new DungeonLevel { NextRoomId = 4 };
-            var entrance = new Room { Id = 1, Type = RoomType.Entrance, Title = "Вход", X = 0.5f, Y = 0.1f };
-            var mid      = new Room { Id = 2, Type = RoomType.Normal, Title = "Зал", X = 0.5f, Y = 0.5f };
-            var boss     = new Room { Id = 3, Type = RoomType.Boss, Title = "Логово", Body = "дракон", X = 0.5f, Y = 0.9f };
-            boss.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.DungeonExit, Bidirectional = false, Label = "трещина" });
-            mid.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = 3, Bidirectional = true });
+            var lvl = new InteriorFloor { NextRoomId = 4 };
+            var entrance = new Room { Id = 1, TypeId = 0, Title = "Вход", X = 0.5f, Y = 0.1f };
+            var mid      = new Room { Id = 2, TypeId = 1, Title = "Зал", X = 0.5f, Y = 0.5f };
+            var boss     = new Room { Id = 3, TypeId = 2, Title = "Логово", Body = "дракон", X = 0.5f, Y = 0.9f };
+            boss.Portals.Add(new Portal { Kind = PortalKind.DungeonExit, Bidirectional = false, Label = "трещина" });
+            mid.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = 3, Bidirectional = true });
             lvl.Rooms.Add(entrance); lvl.Rooms.Add(mid); lvl.Rooms.Add(boss);
-            lvl.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            lvl.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });
-            var dungeon = new DungeonData { OwnerPoiId = "poi-xyz", Levels = { lvl } };
+            lvl.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            lvl.Links.Add(new Link { RoomA = 2, RoomB = 3 });
+            var dungeon = new InteriorData { OwnerPoiId = "poi-xyz", Floors = { lvl } };
 
             ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
                 new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData> { dungeon });
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { dungeon });
             var r = ProjectSerializer.Load(path);
             try { File.Delete(path); } catch { }
 
             bool ok = r.Success && r.Dungeons != null && r.Dungeons.Count == 1;
             var d = r.Dungeons != null && r.Dungeons.Count == 1 ? r.Dungeons[0] : null;
-            var l = d != null && d.Levels.Count == 1 ? d.Levels[0] : null;
+            var l = d != null && d.Floors.Count == 1 ? d.Floors[0] : null;
             ok &= d != null && d.OwnerPoiId == "poi-xyz";
-            ok &= l != null && l.Rooms.Count == 3 && l.Corridors.Count == 2 && l.NextRoomId == 4;
+            ok &= l != null && l.Rooms.Count == 3 && l.Links.Count == 2 && l.NextRoomId == 4;
             var b = l?.GetRoom(3);
-            ok &= b != null && b.Type == RoomType.Boss && b.Title == "Логово" && b.Body == "дракон"
-                  && b.Secrets.Count == 1 && b.Secrets[0].Kind == SecretTargetKind.DungeonExit && !b.Secrets[0].Bidirectional;
+            ok &= b != null && b.TypeId == 2 && b.Title == "Логово" && b.Body == "дракон"
+                  && b.Portals.Count == 1 && b.Portals[0].Kind == PortalKind.DungeonExit && !b.Portals[0].Bidirectional;
             var m = l?.GetRoom(2);
-            ok &= m != null && m.Secrets.Count == 1 && m.Secrets[0].Kind == SecretTargetKind.Room
-                  && m.Secrets[0].TargetLevelIndex == 0 && m.Secrets[0].TargetRoomId == 3 && m.Secrets[0].Bidirectional;
+            ok &= m != null && m.Portals.Count == 1 && m.Portals[0].Kind == PortalKind.SecretDoor
+                  && m.Portals[0].TargetFloorIndex == 0 && m.Portals[0].TargetRoomId == 3 && m.Portals[0].Bidirectional;
             var e = l?.GetRoom(1);
-            ok &= e != null && e.Type == RoomType.Entrance && Mathf.Approximately(e.Y, 0.1f);
+            ok &= e != null && e.TypeId == 0 && Mathf.Approximately(e.Y, 0.1f);
 
             Debug.Log(ok ? "Self-Test Dungeon Graph Round-Trip: PASS" : "Self-Test Dungeon Graph Round-Trip: FAIL");
         }
@@ -367,17 +367,17 @@ namespace WorldGen.Persistence
         public void SelfTestDungeonRoomSizeRoundTrip()
         {
             string path = Path.Combine(Path.GetTempPath(), "dungeon_size_roundtrip_test.dndproj");
-            var lvl = new DungeonLevel { NextRoomId = 3 };
-            lvl.Rooms.Add(new Room { Id = 1, Type = RoomType.Entrance, SizeW = 4, SizeH = 3 });
-            lvl.Rooms.Add(new Room { Id = 2, Type = RoomType.Boss, SizeW = 6, SizeH = 5 });
-            var dungeon = new DungeonData { OwnerPoiId = "poi-sz", Levels = { lvl } };
+            var lvl = new InteriorFloor { NextRoomId = 3 };
+            lvl.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 3 });
+            lvl.Rooms.Add(new Room { Id = 2, TypeId = 2, SizeW = 6, SizeH = 5 });
+            var dungeon = new InteriorData { OwnerPoiId = "poi-sz", Floors = { lvl } };
             ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
                 new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), new List<RegionData>(), new List<DungeonData> { dungeon });
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { dungeon });
             var r = ProjectSerializer.Load(path);
             try { File.Delete(path); } catch { }
             bool ok = r.Success && r.Dungeons.Count == 1;
-            var l = r.Dungeons.Count == 1 ? r.Dungeons[0].Levels[0] : null;
+            var l = r.Dungeons.Count == 1 ? r.Dungeons[0].Floors[0] : null;
             ok &= l != null && l.GetRoom(1).SizeW == 4 && l.GetRoom(1).SizeH == 3
                   && l.GetRoom(2).SizeW == 6 && l.GetRoom(2).SizeH == 5;
             Debug.Log(ok ? "Self-Test Dungeon Room Size Round-Trip: PASS" : "Self-Test Dungeon Room Size Round-Trip: FAIL");
@@ -396,7 +396,7 @@ namespace WorldGen.Persistence
             File.WriteAllText(path, json);
             var r = ProjectSerializer.Load(path);
             try { File.Delete(path); } catch { }
-            var l = r.Success && r.Dungeons.Count == 1 ? r.Dungeons[0].Levels[0] : null;
+            var l = r.Success && r.Dungeons.Count == 1 ? r.Dungeons[0].Floors[0] : null;
             bool ok = l != null
                 && l.GetRoom(1).SizeW == 4 && l.GetRoom(1).SizeH == 3    // Entrance default
                 && l.GetRoom(2).SizeW == 5 && l.GetRoom(2).SizeH == 5;   // Boss default

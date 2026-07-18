@@ -46,7 +46,7 @@ namespace WorldGen.Generation
 
         /// <summary>Tile-space AABB over every room FOOTPRINT (not just centres) on the level. Returns a
         /// centred MinSpanTiles-sized box for an empty level so Fit() stays well-defined.</summary>
-        public static (float minX, float minY, float maxX, float maxY) ContentBoundsTiles(DungeonLevel lvl)
+        public static (float minX, float minY, float maxX, float maxY) ContentBoundsTiles(InteriorFloor lvl)
         {
             if (lvl == null || lvl.Rooms.Count == 0)
             {
@@ -73,7 +73,7 @@ namespace WorldGen.Generation
         /// scale, centred, FitPadding margin). Call ONCE per level bind — NEVER during drag/cascade, or
         /// the map rescales under the cursor (spec R6). Safe with rectW/rectH == 0 (returns PxPerTile=1);
         /// the caller defers to the first valid-rect frame anyway (rect gotcha).</summary>
-        public static DungeonProjection Fit(DungeonLevel lvl, float rectW, float rectH, float squashY)
+        public static DungeonProjection Fit(InteriorFloor lvl, float rectW, float rectH, float squashY)
         {
             if (squashY <= 0f) squashY = 1f;
 
@@ -105,7 +105,7 @@ namespace WorldGen.Generation
             int w = r.SizeW, h = r.SizeH;
             if (w <= 0 || h <= 0)
             {
-                var (dw, dh) = RoomSizing.Default(r.Type);
+                var (dw, dh) = RoomSizing.Default(r.TypeId);
                 if (w <= 0) w = dw;
                 if (h <= 0) h = dh;
             }

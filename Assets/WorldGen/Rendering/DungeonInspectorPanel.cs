@@ -30,7 +30,7 @@ namespace WorldGen.Rendering
     {
         public System.Action OnChanged;   // fires after any edit; screen re-runs validation + view.BeginCascade()
 
-        DungeonData dungeon;
+        InteriorData dungeon;
         System.Func<int> currentLevelIndex;
         Font font;
 
@@ -40,13 +40,13 @@ namespace WorldGen.Rendering
         RectTransform content;
         bool built;
 
-        DungeonLevel CurrentLevel
+        InteriorFloor CurrentLevel
         {
             get
             {
                 if (dungeon == null || currentLevelIndex == null) return null;
                 int idx = currentLevelIndex();
-                return idx >= 0 && idx < dungeon.Levels.Count ? dungeon.Levels[idx] : null;
+                return idx >= 0 && idx < dungeon.Floors.Count ? dungeon.Floors[idx] : null;
             }
         }
 
@@ -60,7 +60,7 @@ namespace WorldGen.Rendering
             built = true;
         }
 
-        public void Bind(DungeonData dungeon, System.Func<int> currentLevelIndex, Font font)
+        public void Bind(InteriorData dungeon, System.Func<int> currentLevelIndex, Font font)
         {
             EnsureBuilt();
             this.dungeon = dungeon;
@@ -110,15 +110,15 @@ namespace WorldGen.Rendering
 
         // ── Комната ──────────────────────────────────────────────────────────────
 
-        void BuildRoomSection(Transform parent, DungeonLevel lvl, Room room)
+        void BuildRoomSection(Transform parent, InteriorFloor lvl, Room room)
         {
             var sec = AddSection(parent, "RoomSection");
             AddInfoText(sec.transform, "КОМНАТА", 10, ThemeRole.Mut, FontStyle.Bold);
 
             var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
-            AddChoiceButton(typeRow.transform, "Вход", room.Type == RoomType.Entrance, () => SetType(lvl, room, RoomType.Entrance));
-            AddChoiceButton(typeRow.transform, "Обычная", room.Type == RoomType.Normal, () => SetType(lvl, room, RoomType.Normal));
-            AddChoiceButton(typeRow.transform, "Босс", room.Type == RoomType.Boss, () => SetType(lvl, room, RoomType.Boss));
+            AddChoiceButton(typeRow.transform, "Вход", room.TypeId == 0, () => SetType(lvl, room, 0));
+            AddChoiceButton(typeRow.transform, "Обычная", room.TypeId == 1, () => SetType(lvl, room, 1));
+            AddChoiceButton(typeRow.transform, "Босс", room.TypeId == 2, () => SetType(lvl, room, 2));
 
             // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
             // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
@@ -147,7 +147,7 @@ namespace WorldGen.Rendering
         }
 
         // Singleton demote is silent (see class doc) — SetRoomType handles the auto-demote itself.
-        void SetType(DungeonLevel lvl, Room room, RoomType type)
+        void SetType(InteriorFloor lvl, Room room, int type)
         {
             DungeonOps.SetRoomType(lvl, room.Id, type);
             Rebuild();
@@ -166,7 +166,7 @@ namespace WorldGen.Rendering
 
         // ── Секретные ходы ───────────────────────────────────────────────────────
 
-        // No DungeonLevel param needed — secret targets are resolved against dungeon.Levels directly
+        // No InteriorFloor param needed — secret targets are resolved against dungeon.Floors directly
         // (SafeLevelIndex/StepFloor/StepRoom), not the current room's own level.
         void BuildSecretsSection(Transform parent, Room room)
         {
@@ -174,8 +174,8 @@ namespace WorldGen.Rendering
             AddInfoText(sec.transform, "СЕКРЕТНЫЕ ХОДЫ", 10, ThemeRole.Mut, FontStyle.Bold);
 
             // Snapshot: BuildSecretRow only registers click callbacks during this loop, it never mutates
-            // room.Secrets while iterating — a defensive copy costs nothing and rules the concern out.
-            foreach (var s in new List<SecretPassage>(room.Secrets))
+            // room.Portals while iterating — a defensive copy costs nothing and rules the concern out.
+            foreach (var s in new List<Portal>(room.Portals))
                 BuildSecretRow(sec.transform, room, s);
 
             AddFullWidthButton(sec.transform, "+ Секретный ход", ThemeRole.Elev, () =>
@@ -186,24 +186,24 @@ namespace WorldGen.Rendering
             });
         }
 
-        void BuildSecretRow(Transform parent, Room room, SecretPassage s)
+        void BuildSecretRow(Transform parent, Room room, Portal s)
         {
             var row = AddSection(parent, "SecretRow", 4f, new RectOffset(6, 6, 4, 4));
             ThemeService.Tag(row.gameObject.AddComponent<Image>(), ThemeRole.Panel2);
 
             var header = AddRow(row.transform, "Header", 24f, 4f);
-            AddChoiceButton(header.transform, "Комната", s.Kind == SecretTargetKind.Room,
-                () => { s.Kind = SecretTargetKind.Room; Rebuild(); OnChanged?.Invoke(); });
-            AddChoiceButton(header.transform, "Выход", s.Kind == SecretTargetKind.DungeonExit,
-                () => { s.Kind = SecretTargetKind.DungeonExit; Rebuild(); OnChanged?.Invoke(); });
+            AddChoiceButton(header.transform, "Комната", s.Kind == PortalKind.SecretDoor,
+                () => { s.Kind = PortalKind.SecretDoor; Rebuild(); OnChanged?.Invoke(); });
+            AddChoiceButton(header.transform, "Выход", s.Kind == PortalKind.DungeonExit,
+                () => { s.Kind = PortalKind.DungeonExit; Rebuild(); OnChanged?.Invoke(); });
             AddRemoveButton(header.transform, () => { DungeonOps.RemoveSecret(room, s); Rebuild(); OnChanged?.Invoke(); });
 
-            if (s.Kind == SecretTargetKind.Room)
+            if (s.Kind == PortalKind.SecretDoor)
             {
                 var targetRow = AddRow(row.transform, "Target", 22f, 4f);
-                bool floorEnabled = dungeon != null && dungeon.Levels.Count > 1;
+                bool floorEnabled = dungeon != null && dungeon.Floors.Count > 1;
                 BuildStepper(targetRow.transform, "Эт.", FloorLabel(s), () => StepFloor(s, -1), () => StepFloor(s, 1), floorEnabled);
-                bool roomEnabled = dungeon != null && dungeon.Levels.Count > 0 && dungeon.Levels[SafeLevelIndex(s)].Rooms.Count > 0;
+                bool roomEnabled = dungeon != null && dungeon.Floors.Count > 0 && dungeon.Floors[SafeLevelIndex(s)].Rooms.Count > 0;
                 BuildStepper(targetRow.transform, "Ком.", RoomLabel(s), () => StepRoom(s, -1), () => StepRoom(s, 1), roomEnabled);
             }
 
@@ -215,40 +215,40 @@ namespace WorldGen.Rendering
             labelField.onEndEdit.AddListener(v => { s.Label = v; OnChanged?.Invoke(); });
         }
 
-        // Target level, safely wrapped into 0..Levels.Count-1 even if serialized data drifted out of range.
-        int SafeLevelIndex(SecretPassage s)
+        // Target level, safely wrapped into 0..Floors.Count-1 even if serialized data drifted out of range.
+        int SafeLevelIndex(Portal s)
         {
-            if (dungeon == null || dungeon.Levels.Count == 0) return 0;
-            int n = dungeon.Levels.Count;
-            return ((s.TargetLevelIndex % n) + n) % n;
+            if (dungeon == null || dungeon.Floors.Count == 0) return 0;
+            int n = dungeon.Floors.Count;
+            return ((s.TargetFloorIndex % n) + n) % n;
         }
 
-        string FloorLabel(SecretPassage s) =>
-            dungeon != null && dungeon.Levels.Count > 0 ? $"Эт.{SafeLevelIndex(s) + 1}" : "-";
+        string FloorLabel(Portal s) =>
+            dungeon != null && dungeon.Floors.Count > 0 ? $"Эт.{SafeLevelIndex(s) + 1}" : "-";
 
         // Invalid target (TargetRoomId not present on the target level) is shown, not hidden — the
         // validator already raises a hard error for it; the stepper still recovers it (jumps to the
         // list's first room) on the next click.
-        string RoomLabel(SecretPassage s)
+        string RoomLabel(Portal s)
         {
-            if (dungeon == null || dungeon.Levels.Count == 0) return "-";
-            var targetLvl = dungeon.Levels[SafeLevelIndex(s)];
+            if (dungeon == null || dungeon.Floors.Count == 0) return "-";
+            var targetLvl = dungeon.Floors[SafeLevelIndex(s)];
             return targetLvl.GetRoom(s.TargetRoomId) != null ? s.TargetRoomId.ToString() : $"{s.TargetRoomId}⚠";
         }
 
-        void StepFloor(SecretPassage s, int dir)
+        void StepFloor(Portal s, int dir)
         {
-            if (dungeon == null || dungeon.Levels.Count == 0) return;
-            int n = dungeon.Levels.Count;
-            s.TargetLevelIndex = ((SafeLevelIndex(s) + dir) % n + n) % n;
+            if (dungeon == null || dungeon.Floors.Count == 0) return;
+            int n = dungeon.Floors.Count;
+            s.TargetFloorIndex = ((SafeLevelIndex(s) + dir) % n + n) % n;
             Rebuild();
             OnChanged?.Invoke();
         }
 
-        void StepRoom(SecretPassage s, int dir)
+        void StepRoom(Portal s, int dir)
         {
-            if (dungeon == null || dungeon.Levels.Count == 0) return;
-            var targetLvl = dungeon.Levels[SafeLevelIndex(s)];
+            if (dungeon == null || dungeon.Floors.Count == 0) return;
+            var targetLvl = dungeon.Floors[SafeLevelIndex(s)];
             if (targetLvl.Rooms.Count == 0) return;
             int idx = targetLvl.Rooms.FindIndex(r => r.Id == s.TargetRoomId);
             idx = idx < 0 ? 0 : ((idx + dir) % targetLvl.Rooms.Count + targetLvl.Rooms.Count) % targetLvl.Rooms.Count;
@@ -259,13 +259,13 @@ namespace WorldGen.Rendering
 
         // ── Коридоры ─────────────────────────────────────────────────────────────
 
-        void BuildCorridorsSection(Transform parent, DungeonLevel lvl, Room room)
+        void BuildCorridorsSection(Transform parent, InteriorFloor lvl, Room room)
         {
             var sec = AddSection(parent, "CorridorsSection");
             AddInfoText(sec.transform, "КОРИДОРЫ", 10, ThemeRole.Mut, FontStyle.Bold);
 
             bool any = false;
-            foreach (var c in lvl.Corridors)
+            foreach (var c in lvl.Links)
             {
                 if (c.RoomA != room.Id && c.RoomB != room.Id) continue;
                 any = true;

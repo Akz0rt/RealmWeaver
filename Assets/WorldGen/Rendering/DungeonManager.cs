@@ -12,7 +12,7 @@ namespace WorldGen.Rendering
         [Header("Dependencies")]
         public WorldMapRenderer mapRenderer;
 
-        readonly List<DungeonData> dungeons = new List<DungeonData>();
+        readonly List<InteriorData> dungeons = new List<InteriorData>();
 
         void Awake()
         {
@@ -23,19 +23,19 @@ namespace WorldGen.Rendering
             if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= ClearAll;
         }
 
-        public IReadOnlyList<DungeonData> GetAll() => dungeons;
+        public IReadOnlyList<InteriorData> GetAll() => dungeons;
         public bool HasDungeon(string poiId) => GetByPoiId(poiId) != null;
-        public DungeonData GetByPoiId(string poiId) =>
+        public InteriorData GetByPoiId(string poiId) =>
             poiId != null ? dungeons.FirstOrDefault(d => d.OwnerPoiId == poiId) : null;
 
-        public DungeonData GetOrCreateForPoi(string poiId)
+        public InteriorData GetOrCreateForPoi(string poiId)
         {
             var d = GetByPoiId(poiId);
-            if (d == null) { d = new DungeonData { OwnerPoiId = poiId }; dungeons.Add(d); }
+            if (d == null) { d = new InteriorData { OwnerPoiId = poiId }; dungeons.Add(d); }
             return d;
         }
 
-        public void LoadDungeons(List<DungeonData> loaded)
+        public void LoadDungeons(List<InteriorData> loaded)
         {
             dungeons.Clear();
             if (loaded != null) dungeons.AddRange(loaded);

@@ -33,7 +33,7 @@ namespace WorldGen.Rendering
 
         // Last drawn level+graph, cached so SetProjection (pan/zoom) can repaint without the controller
         // having to hand them back. Both renderers keep this pair for the same reason.
-        DungeonLevel lastLvl;
+        InteriorFloor lastLvl;
         RenderGraph lastRg = new RenderGraph();
 
         const float MinCardPx = 20f;      // a 1-tile room must stay a usable click target
@@ -62,7 +62,7 @@ namespace WorldGen.Rendering
             return rt;
         }
 
-        public bool ResolveProjection(DungeonLevel lvl)
+        public bool ResolveProjection(InteriorFloor lvl)
         {
             var rect = Area.rect;
             if (rect.width <= 0f || rect.height <= 0f) return false;   // not laid out — controller retries
@@ -76,7 +76,7 @@ namespace WorldGen.Rendering
             RepositionRooms(lastLvl, lastRg);
         }
 
-        public void RebuildView(DungeonData dungeon, int levelIndex, DungeonLevel lvl, RenderGraph rg, Font font,
+        public void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                                 System.Action<int> onJumpToLevel)
         {
             EnsureBuilt();
@@ -94,7 +94,7 @@ namespace WorldGen.Rendering
             RepositionRooms(lvl, lastRg);
         }
 
-        public void RepositionRooms(DungeonLevel lvl, RenderGraph rg)
+        public void RepositionRooms(InteriorFloor lvl, RenderGraph rg)
         {
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             if (lvl == null) return;
@@ -165,7 +165,7 @@ namespace WorldGen.Rendering
                 Mathf.Max(MinCardPx, h * Projection.PxPerTile * Projection.SquashY));
         }
 
-        void BuildCard(DungeonData dungeon, int levelIndex, Room r, Font font, System.Action<int> onJumpToLevel)
+        void BuildCard(InteriorData dungeon, int levelIndex, Room r, Font font, System.Action<int> onJumpToLevel)
         {
             var go = new GameObject($"Room_{r.Id}", typeof(RectTransform));
             go.transform.SetParent(nodesLayer, false);
@@ -174,7 +174,7 @@ namespace WorldGen.Rendering
             rt.pivot = new Vector2(0.5f, 0.5f);
 
             var img = go.AddComponent<Image>();
-            ThemeService.Tag(img, TypeRole(r.Type));
+            ThemeService.Tag(img, TypeRole(r.TypeId));
             img.raycastTarget = false;   // the CONTROLLER hit-tests in tile space — cards must not eat clicks
 
             var outline = go.AddComponent<Outline>();
@@ -183,7 +183,7 @@ namespace WorldGen.Rendering
             outline.enabled = false;
             outlines[r.Id] = outline;
 
-            var lbl = DungeonUiKit.MakeText(go.transform, font, NodeLabel(r), 11, LabelRole(r.Type),
+            var lbl = DungeonUiKit.MakeText(go.transform, font, NodeLabel(r), 11, LabelRole(r.TypeId),
                                             FontStyle.Bold, TextAnchor.MiddleCenter);
             DungeonUiKit.Stretch(lbl.rectTransform);
             lbl.raycastTarget = false;
@@ -233,23 +233,24 @@ namespace WorldGen.Rendering
             lineRect.localEulerAngles = new Vector3(0, 0, Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg);
         }
 
-        static ThemeRole TypeRole(RoomType t) => t switch
+        // t is Room.TypeId: Entrance=0, Normal=1, Boss=2 (see DungeonData.cs).
+        static ThemeRole TypeRole(int t) => t switch
         {
-            RoomType.Entrance => ThemeRole.Accent,
-            RoomType.Boss => ThemeRole.Danger,
+            0 => ThemeRole.Accent,
+            2 => ThemeRole.Danger,
             _ => ThemeRole.Elev,
         };
 
         // AccentInk reads on both the Accent and Danger card tints; Normal cards (Elev) use plain Txt.
-        static ThemeRole LabelRole(RoomType t) => t == RoomType.Normal ? ThemeRole.Txt : ThemeRole.AccentInk;
+        static ThemeRole LabelRole(int t) => t == 1 ? ThemeRole.Txt : ThemeRole.AccentInk;
 
-        internal static string TypeLabel(RoomType t) => t switch
+        internal static string TypeLabel(int t) => t switch
         {
-            RoomType.Entrance => "Вход",
-            RoomType.Boss => "Босс",
+            0 => "Вход",
+            2 => "Босс",
             _ => "Комната",
         };
 
-        internal static string NodeLabel(Room r) => $"{r.Id}. {(string.IsNullOrEmpty(r.Title) ? TypeLabel(r.Type) : r.Title)}";
+        internal static string NodeLabel(Room r) => $"{r.Id}. {(string.IsNullOrEmpty(r.Title) ? TypeLabel(r.TypeId) : r.Title)}";
     }
 }

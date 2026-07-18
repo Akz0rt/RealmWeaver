@@ -637,7 +637,7 @@ namespace WorldGen.Rendering
         {
             if (mapSectionLabel == null) return;
             int levels = (dungeonManager != null && current != null && dungeonManager.HasDungeon(current.Id))
-                ? dungeonManager.GetByPoiId(current.Id).Levels.Count : 0;
+                ? dungeonManager.GetByPoiId(current.Id).Floors.Count : 0;
             mapSectionLabel.text = levels > 0 ? $"Открыть карту подземелья ({levels} ур.)" : "Создать карту подземелья";
         }
 

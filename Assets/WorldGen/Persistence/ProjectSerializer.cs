@@ -20,7 +20,7 @@ namespace WorldGen.Persistence
         public NotesDocument Notes;
         public List<RegionLabelData> RegionLabels;
         public List<RegionData> Regions;
-        public List<DungeonData> Dungeons;
+        public List<InteriorData> Dungeons;
     }
 
     /// <summary>
@@ -30,7 +30,7 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 6;
+        public const int CurrentFormatVersion = 7;
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {
@@ -42,7 +42,7 @@ namespace WorldGen.Persistence
                                  IReadOnlyList<PoiData> pois, NotesDocument notes,
                                  IReadOnlyList<RegionLabelData> regionLabels,
                                  IReadOnlyList<RegionData> regions,
-                                 IReadOnlyList<DungeonData> dungeons)
+                                 IReadOnlyList<InteriorData> dungeons)
         {
             var data = new ProjectSaveData
             {
@@ -54,7 +54,7 @@ namespace WorldGen.Persistence
                 Notes = notes,
                 RegionLabels = new List<RegionLabelData>(regionLabels),
                 Regions = new List<RegionData>(regions ?? new List<RegionData>()),
-                Dungeons = new List<DungeonData>(dungeons ?? new List<DungeonData>())
+                Dungeons = new List<InteriorData>(dungeons ?? new List<InteriorData>())
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -99,8 +99,8 @@ namespace WorldGen.Persistence
                 // migrated (a graph can't be recovered from the old floor "blob"), so they are dropped; the rest
                 // of the project loads normally.
                 Dungeons = data.FormatVersion >= 5
-                    ? (data.Dungeons ?? new List<DungeonData>())
-                    : new List<DungeonData>()
+                    ? (data.Dungeons ?? new List<InteriorData>())
+                    : new List<InteriorData>()
             };
 
             foreach (var d in result.Dungeons) RoomSizing.ApplyDefaults(d);

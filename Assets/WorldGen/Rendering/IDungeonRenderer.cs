@@ -27,7 +27,7 @@ namespace WorldGen.Rendering
         /// <summary>Fit Projection to `lvl` and this renderer's own rect. Called ONCE per bind, and again
         /// on the first frame the rect becomes valid. Returns false if the rect is still {0,0} (not laid
         /// out) — the controller then retries next LateUpdate (rect gotcha).</summary>
-        bool ResolveProjection(DungeonLevel lvl);
+        bool ResolveProjection(InteriorFloor lvl);
 
         /// <summary>Tear down and rebuild every visual from scratch (structural change: add/delete/link,
         /// level switch, room type/size change).
@@ -36,12 +36,12 @@ namespace WorldGen.Rendering
         /// which ALREADY has a public virtual Rebuild(CanvasUpdate). A same-name member would be a legal
         /// overload but a genuine landmine — a mistyped argument would silently bind to Unity's canvas
         /// rebuild instead of ours.</summary>
-        void RebuildView(DungeonData dungeon, int levelIndex, DungeonLevel lvl, RenderGraph rg, Font font,
+        void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                          System.Action<int> onJumpToLevel);
 
         /// <summary>Cheap per-frame reposition of existing visuals from current Room.X/Y — NO allocation,
         /// NO destroy/create. Called every cascade frame and every drag sample.</summary>
-        void RepositionRooms(DungeonLevel lvl, RenderGraph rg);
+        void RepositionRooms(InteriorFloor lvl, RenderGraph rg);
 
         /// <summary>Turn the selection/link highlight on or off for one room. `roomId` 0 = clear all.</summary>
         void SetHighlight(int roomId, bool on);

@@ -1,7 +1,9 @@
 namespace WorldGen.Generation
 {
     /// <summary>Type-driven default room footprints (in tiles) + clamps. Pure, headless. The DM overrides
-    /// per room via the inspector; these are just the starting sizes on generation / a fresh room / migration.</summary>
+    /// per room via the inspector; these are just the starting sizes on generation / a fresh room / migration.
+    ///
+    /// `type` is Room.TypeId. Dungeon ints: Entrance=0, Normal=1, Boss=2 (see DungeonData.cs).</summary>
     public static class RoomSizing
     {
         public const int MinSide = 1;
@@ -10,13 +12,13 @@ namespace WorldGen.Generation
         // dungeon (big chambers, short passages) rather than dots on a void.
         public const int MaxSide = 16;
 
-        public static (int w, int h) Default(RoomType type)
+        public static (int w, int h) Default(int type)
         {
             switch (type)
             {
-                case RoomType.Entrance: return (7, 5);
-                case RoomType.Boss:     return (10, 10);
-                default:                return (6, 6);   // Normal
+                case 0: return (7, 5);    // Entrance
+                case 2: return (10, 10);  // Boss
+                default: return (6, 6);   // Normal
             }
         }
 
@@ -24,13 +26,13 @@ namespace WorldGen.Generation
         /// separate from Default: Default is the fixed size a hand-added or migrated room gets, while
         /// Range is the spread the generator rolls within, so no two generated dungeons look alike.
         /// Every Default must lie inside its own Range (self-tested).</summary>
-        public static (int min, int max) Range(RoomType type)
+        public static (int min, int max) Range(int type)
         {
             switch (type)
             {
-                case RoomType.Entrance: return (5, 8);
-                case RoomType.Boss:     return (8, 14);
-                default:                return (4, 8);   // Normal
+                case 0: return (5, 8);    // Entrance
+                case 2: return (8, 14);   // Boss
+                default: return (4, 8);   // Normal
             }
         }
 
@@ -41,9 +43,9 @@ namespace WorldGen.Generation
         /// documented deterministic by seed and self-tested for it. Drawing from UnityEngine.Random here
         /// would make the same seed produce different dungeons, and would only surface as a flaky test.
         ///
-        /// Named Roll, not Random: a static Random(RoomType, System.Random) member invites exactly the
+        /// Named Roll, not Random: a static Random(int, System.Random) member invites exactly the
         /// same-name shadowing this codebase has already been bitten by more than once.</summary>
-        public static (int w, int h) Roll(RoomType type, System.Random rng)
+        public static (int w, int h) Roll(int type, System.Random rng)
         {
             var (min, max) = Range(type);
             return (Clamp(rng.Next(min, max + 1)), Clamp(rng.Next(min, max + 1)));   // max+1: Next's upper bound is exclusive
@@ -53,14 +55,14 @@ namespace WorldGen.Generation
 
         /// <summary>Give every room with a non-positive footprint its type default (migration / new rooms).
         /// Idempotent — leaves already-sized rooms untouched.</summary>
-        public static void ApplyDefaults(DungeonData dungeon)
+        public static void ApplyDefaults(InteriorData dungeon)
         {
             if (dungeon == null) return;
-            foreach (var lvl in dungeon.Levels)
+            foreach (var lvl in dungeon.Floors)
                 foreach (var r in lvl.Rooms)
                     if (r.SizeW <= 0 || r.SizeH <= 0)
                     {
-                        var (w, h) = Default(r.Type);
+                        var (w, h) = Default(r.TypeId);
                         r.SizeW = w; r.SizeH = h;
                     }
         }

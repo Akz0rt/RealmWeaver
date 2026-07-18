@@ -30,9 +30,9 @@ namespace WorldGen.Rendering
         public int SelectedRoomId { get; private set; }
         public bool LinkMode { get; private set; }
 
-        DungeonData dungeon;
+        InteriorData dungeon;
         int levelIndex;
-        DungeonLevel boundLevel;   // last-bound level OBJECT (not just index) — see Bind's sameBinding check
+        InteriorFloor boundLevel;   // last-bound level OBJECT (not just index) — see Bind's sameBinding check
         Font font;
         IDungeonRenderer renderer;
         int pendingLinkId;
@@ -57,9 +57,9 @@ namespace WorldGen.Rendering
         const float DragClampMin = 0.04f;
         const float DragClampMax = 0.96f;
 
-        DungeonLevel BoundLevel =>
-            dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Levels.Count
-                ? dungeon.Levels[levelIndex] : null;
+        InteriorFloor BoundLevel =>
+            dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Floors.Count
+                ? dungeon.Floors[levelIndex] : null;
 
         /// <summary>Swap the active renderer (Граф ⇄ Изо). Deactivates the old host, activates the new,
         /// re-fits the new renderer's projection to the bound level and rebuilds it. Selection, link mode
@@ -75,14 +75,14 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>(Re)bind to a level and rebuild. Selection/link state resets only when the dungeon or
-        /// the bound DungeonLevel OBJECT actually changes — a same-level re-Bind (DungeonEditorScreen
+        /// the bound InteriorFloor OBJECT actually changes — a same-level re-Bind (DungeonEditorScreen
         /// re-Binds on every refresh) preserves the current selection instead of stomping it. Keying on the
         /// OBJECT, not the index: RemoveCurrentLevel re-binds the same index to a DIFFERENT level, and
         /// keying on the index alone would let a stale SelectedRoomId match an unrelated room.</summary>
-        public void Bind(DungeonData dungeon, int levelIndex, Font font)
+        public void Bind(InteriorData dungeon, int levelIndex, Font font)
         {
-            var newLevel = (dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Levels.Count)
-                ? dungeon.Levels[levelIndex] : null;
+            var newLevel = (dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Floors.Count)
+                ? dungeon.Floors[levelIndex] : null;
             bool sameBinding = this.dungeon == dungeon && this.levelIndex == levelIndex && newLevel == boundLevel;
             this.dungeon = dungeon;
             this.levelIndex = levelIndex;
@@ -231,7 +231,7 @@ namespace WorldGen.Rendering
             }
         }
 
-        void RepositionNow(DungeonLevel lvl, RoomLinkGeometry.RoutingMode mode)
+        void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
             renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, mode));
@@ -296,7 +296,7 @@ namespace WorldGen.Rendering
         /// <summary>Topmost room whose FOOTPRINT contains the tile point. "Topmost" = drawn last = largest
         /// tile Y (painter's order is by Y — see DungeonIsoRenderer.DepthOf), so overlapping rooms resolve
         /// the same way they LOOK stacked. Returns 0 for a miss (background).</summary>
-        int HitRoomId(DungeonLevel lvl, float tx, float ty)
+        int HitRoomId(InteriorFloor lvl, float tx, float ty)
         {
             int best = 0;
             float bestY = float.MinValue;

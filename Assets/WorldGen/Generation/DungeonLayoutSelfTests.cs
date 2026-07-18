@@ -13,14 +13,14 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // Two rooms dropped on the same point → after Separate they must not overlap.
-            var lvl = new DungeonLevel();
+            var lvl = new InteriorFloor();
             lvl.Rooms.Add(new Room { Id = 1, X = 0.5f, Y = 0.5f, SizeW = 4, SizeH = 4 });
             lvl.Rooms.Add(new Room { Id = 2, X = 0.5f, Y = 0.5f, SizeW = 4, SizeH = 4 });
             DungeonLayout.Separate(lvl);
             ok &= !Overlap(lvl.Rooms[0], lvl.Rooms[1], 0.1f);
 
             // A cluster of 5 overlapping rooms → none overlap after Separate.
-            var lvl2 = new DungeonLevel();
+            var lvl2 = new InteriorFloor();
             for (int i = 0; i < 5; i++) lvl2.Rooms.Add(new Room { Id = i + 1, X = 0.5f, Y = 0.5f, SizeW = 3, SizeH = 3 });
             DungeonLayout.Separate(lvl2);
             for (int i = 0; i < lvl2.Rooms.Count && ok; i++)
@@ -39,9 +39,9 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Dungeon Layout Separate: PASS" : "Self-Test Dungeon Layout Separate: FAIL");
         }
 
-        static DungeonLevel Cluster()
+        static InteriorFloor Cluster()
         {
-            var l = new DungeonLevel();
+            var l = new InteriorFloor();
             for (int i = 0; i < 6; i++) l.Rooms.Add(new Room { Id = i + 1, X = 0.4f + i * 0.02f, Y = 0.5f, SizeW = 3 + i % 2, SizeH = 3 });
             return l;
         }
@@ -64,35 +64,35 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // Two corridors that cross (an X) → 1 junction, 4 segments.
-            var lvl = new DungeonLevel { NextRoomId = 5 };
+            var lvl = new InteriorFloor { NextRoomId = 5 };
             lvl.Rooms.Add(new Room { Id = 1, X = 0.2f, Y = 0.2f });
             lvl.Rooms.Add(new Room { Id = 2, X = 0.8f, Y = 0.8f });
             lvl.Rooms.Add(new Room { Id = 3, X = 0.8f, Y = 0.2f });
             lvl.Rooms.Add(new Room { Id = 4, X = 0.2f, Y = 0.8f });
-            lvl.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });   // ↘
-            lvl.Corridors.Add(new Corridor { RoomA = 3, RoomB = 4 });   // ↙  crosses at center
+            lvl.Links.Add(new Link { RoomA = 1, RoomB = 2 });   // ↘
+            lvl.Links.Add(new Link { RoomA = 3, RoomB = 4 });   // ↙  crosses at center
             var g = DungeonLayout.BuildRenderGraph(lvl);
             ok &= g.Junctions.Count == 1 && g.Segments.Count == 4;
             ok &= Mathf.Abs(g.Junctions[0].X - 0.5f) < 0.02f && Mathf.Abs(g.Junctions[0].Y - 0.5f) < 0.02f;
 
             // Two corridors that DON'T cross → 0 junctions, 2 segments.
-            var lvl2 = new DungeonLevel();
+            var lvl2 = new InteriorFloor();
             lvl2.Rooms.Add(new Room { Id = 1, X = 0.1f, Y = 0.1f });
             lvl2.Rooms.Add(new Room { Id = 2, X = 0.3f, Y = 0.1f });
             lvl2.Rooms.Add(new Room { Id = 3, X = 0.1f, Y = 0.9f });
             lvl2.Rooms.Add(new Room { Id = 4, X = 0.3f, Y = 0.9f });
-            lvl2.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            lvl2.Corridors.Add(new Corridor { RoomA = 3, RoomB = 4 });
+            lvl2.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            lvl2.Links.Add(new Link { RoomA = 3, RoomB = 4 });
             var g2 = DungeonLayout.BuildRenderGraph(lvl2);
             ok &= g2.Junctions.Count == 0 && g2.Segments.Count == 2;
 
             // Corridors that share a room endpoint must NOT count as a crossing.
-            var lvl3 = new DungeonLevel();
+            var lvl3 = new InteriorFloor();
             lvl3.Rooms.Add(new Room { Id = 1, X = 0.5f, Y = 0.2f });
             lvl3.Rooms.Add(new Room { Id = 2, X = 0.2f, Y = 0.8f });
             lvl3.Rooms.Add(new Room { Id = 3, X = 0.8f, Y = 0.8f });
-            lvl3.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            lvl3.Corridors.Add(new Corridor { RoomA = 1, RoomB = 3 });
+            lvl3.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            lvl3.Links.Add(new Link { RoomA = 1, RoomB = 3 });
             var g3 = DungeonLayout.BuildRenderGraph(lvl3);
             ok &= g3.Junctions.Count == 0 && g3.Segments.Count == 2;
 
@@ -105,12 +105,12 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // A chain 1-2-3. Drag room 1 far away; 2 must follow, and 3 must follow 2 ("stitched with threads").
-            var lvl = new DungeonLevel { NextRoomId = 4 };
+            var lvl = new InteriorFloor { NextRoomId = 4 };
             lvl.Rooms.Add(new Room { Id = 1, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             lvl.Rooms.Add(new Room { Id = 2, X = 0.55f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             lvl.Rooms.Add(new Room { Id = 3, X = 0.60f, Y = 0.5f, SizeW = 6, SizeH = 6 });
-            lvl.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            lvl.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });
+            lvl.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            lvl.Links.Add(new Link { RoomA = 2, RoomB = 3 });
 
             lvl.GetRoom(1).X = 0.05f;                      // the DM yanks room 1 to the far left
             DungeonLayout.EnforceCorridorLeash(lvl, 1);
@@ -119,7 +119,7 @@ namespace WorldGen.Rendering
             if (Mathf.Abs(lvl.GetRoom(1).X - 0.05f) > 1e-4f)
             { Debug.LogError($"FAIL: anchor moved to {lvl.GetRoom(1).X}"); ok = false; }
 
-            foreach (var c in lvl.Corridors)
+            foreach (var c in lvl.Links)
             {
                 float gap = LeashGap(lvl.GetRoom(c.RoomA), lvl.GetRoom(c.RoomB));
                 if (gap > DungeonLayout.MaxCorridorTiles + 0.1f)
@@ -131,10 +131,10 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL: room 3 (2 hops out) never followed — X={lvl.GetRoom(3).X:F3}"); ok = false; }
 
             // A layout already within the leash must not be touched at all (no drift on every drag sample).
-            var calm = new DungeonLevel { NextRoomId = 3 };
+            var calm = new InteriorFloor { NextRoomId = 3 };
             calm.Rooms.Add(new Room { Id = 1, X = 0.50f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             calm.Rooms.Add(new Room { Id = 2, X = 0.56f, Y = 0.5f, SizeW = 6, SizeH = 6 });
-            calm.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            calm.Links.Add(new Link { RoomA = 1, RoomB = 2 });
             float beforeX = calm.GetRoom(2).X;
             DungeonLayout.EnforceCorridorLeash(calm, 1);
             if (Mathf.Abs(calm.GetRoom(2).X - beforeX) > 1e-5f)
@@ -149,10 +149,10 @@ namespace WorldGen.Rendering
 
             // DIAGONAL chain — the only case where one step cannot fully close a Chebyshev gap, so this is
             // what proves the iteration converges rather than stalling.
-            var diag = new DungeonLevel { NextRoomId = 3 };
+            var diag = new InteriorFloor { NextRoomId = 3 };
             diag.Rooms.Add(new Room { Id = 1, X = 0.10f, Y = 0.10f, SizeW = 6, SizeH = 6 });
             diag.Rooms.Add(new Room { Id = 2, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
-            diag.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
+            diag.Links.Add(new Link { RoomA = 1, RoomB = 2 });
             DungeonLayout.EnforceCorridorLeash(diag, 1);
             float dgap = LeashGap(diag.GetRoom(1), diag.GetRoom(2));
             if (dgap > DungeonLayout.MaxCorridorTiles + 0.1f)
@@ -160,15 +160,15 @@ namespace WorldGen.Rendering
 
             // LOOP EDGE — two rooms at equal graph distance from the anchor. Exercises the id tie-break;
             // if it were unstable these two would fight and the gap would never settle.
-            var loop = new DungeonLevel { NextRoomId = 4 };
+            var loop = new InteriorFloor { NextRoomId = 4 };
             loop.Rooms.Add(new Room { Id = 1, X = 0.50f, Y = 0.20f, SizeW = 6, SizeH = 6 });
             loop.Rooms.Add(new Room { Id = 2, X = 0.05f, Y = 0.80f, SizeW = 6, SizeH = 6 });
             loop.Rooms.Add(new Room { Id = 3, X = 0.95f, Y = 0.80f, SizeW = 6, SizeH = 6 });
-            loop.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            loop.Corridors.Add(new Corridor { RoomA = 1, RoomB = 3 });
-            loop.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });   // the loop edge: 2 and 3 are both 1 hop out
+            loop.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            loop.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+            loop.Links.Add(new Link { RoomA = 2, RoomB = 3 });   // the loop edge: 2 and 3 are both 1 hop out
             DungeonLayout.EnforceCorridorLeash(loop, 1);
-            foreach (var c in loop.Corridors)
+            foreach (var c in loop.Links)
             {
                 float g = LeashGap(loop.GetRoom(c.RoomA), loop.GetRoom(c.RoomB));
                 if (g > DungeonLayout.MaxCorridorTiles + 0.1f)
@@ -182,7 +182,7 @@ namespace WorldGen.Rendering
             var split = MakeLeashCase();
             split.Rooms.Add(new Room { Id = 10, X = 0.10f, Y = 0.90f, SizeW = 6, SizeH = 6 });
             split.Rooms.Add(new Room { Id = 11, X = 0.90f, Y = 0.90f, SizeW = 6, SizeH = 6 });
-            split.Corridors.Add(new Corridor { RoomA = 10, RoomB = 11 });   // linked to each other, NOT to the anchor
+            split.Links.Add(new Link { RoomA = 10, RoomB = 11 });   // linked to each other, NOT to the anchor
             float splitGapBefore = LeashGap(split.GetRoom(10), split.GetRoom(11));
             if (splitGapBefore <= DungeonLayout.MaxCorridorTiles)
             { Debug.LogError($"FAIL setup: the disconnected pair is only {splitGapBefore:F1} tiles apart — must exceed {DungeonLayout.MaxCorridorTiles} or this test proves nothing"); ok = false; }
@@ -193,14 +193,14 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "PASS: Corridor Leash" : "FAIL: Corridor Leash");
         }
 
-        static DungeonLevel MakeLeashCase()
+        static InteriorFloor MakeLeashCase()
         {
-            var l = new DungeonLevel { NextRoomId = 4 };
+            var l = new InteriorFloor { NextRoomId = 4 };
             l.Rooms.Add(new Room { Id = 1, X = 0.05f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             l.Rooms.Add(new Room { Id = 2, X = 0.55f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             l.Rooms.Add(new Room { Id = 3, X = 0.60f, Y = 0.5f, SizeW = 6, SizeH = 6 });
-            l.Corridors.Add(new Corridor { RoomA = 1, RoomB = 2 });
-            l.Corridors.Add(new Corridor { RoomA = 2, RoomB = 3 });
+            l.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            l.Links.Add(new Link { RoomA = 2, RoomB = 3 });
             return l;
         }
 

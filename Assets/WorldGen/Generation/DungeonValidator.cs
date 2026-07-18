@@ -14,22 +14,22 @@ namespace WorldGen.Generation
     /// <summary>Read-only rule checks over a dungeon graph. No Unity types — headless + self-testable.</summary>
     public static class DungeonValidator
     {
-        public static List<DungeonIssue> Validate(DungeonData dungeon,
+        public static List<DungeonIssue> Validate(InteriorData dungeon,
             int minBossDistance = DungeonGraphGenerator.DefaultMinBossDistance)
         {
             var issues = new List<DungeonIssue>();
             if (dungeon == null) return issues;
 
-            for (int li = 0; li < dungeon.Levels.Count; li++)
+            for (int li = 0; li < dungeon.Floors.Count; li++)
             {
-                var lvl = dungeon.Levels[li];
+                var lvl = dungeon.Floors[li];
                 int human = li + 1;
 
                 int entrances = 0, entranceId = 0, bosses = 0, bossId = 0;
                 foreach (var r in lvl.Rooms)
                 {
-                    if (r.Type == RoomType.Entrance) { entrances++; entranceId = r.Id; }
-                    if (r.Type == RoomType.Boss) { bosses++; bossId = r.Id; }
+                    if (r.TypeId == 0) { entrances++; entranceId = r.Id; }
+                    if (r.TypeId == 2) { bosses++; bossId = r.Id; }
                 }
 
                 if (entrances != 1)
@@ -60,11 +60,11 @@ namespace WorldGen.Generation
 
                 // Dangling secret targets.
                 foreach (var r in lvl.Rooms)
-                    foreach (var s in r.Secrets)
-                        if (s.Kind == SecretTargetKind.Room)
+                    foreach (var s in r.Portals)
+                        if (s.Kind == PortalKind.SecretDoor)
                         {
-                            bool valid = s.TargetLevelIndex >= 0 && s.TargetLevelIndex < dungeon.Levels.Count
-                                         && dungeon.Levels[s.TargetLevelIndex].GetRoom(s.TargetRoomId) != null;
+                            bool valid = s.TargetFloorIndex >= 0 && s.TargetFloorIndex < dungeon.Floors.Count
+                                         && dungeon.Floors[s.TargetFloorIndex].GetRoom(s.TargetRoomId) != null;
                             if (!valid)
                                 Add(issues, IssueSeverity.Error, li,
                                     $"Этаж {human}: секретный ход из комнаты {r.Id} ведёт в несуществующую комнату.");
@@ -76,11 +76,11 @@ namespace WorldGen.Generation
         static void Add(List<DungeonIssue> list, IssueSeverity sev, int li, string msg)
             => list.Add(new DungeonIssue { Severity = sev, LevelIndex = li, Message = msg });
 
-        static Dictionary<int, HashSet<int>> BuildAdj(DungeonLevel lvl)
+        static Dictionary<int, HashSet<int>> BuildAdj(InteriorFloor lvl)
         {
             var adj = new Dictionary<int, HashSet<int>>();
             foreach (var r in lvl.Rooms) adj[r.Id] = new HashSet<int>();
-            foreach (var c in lvl.Corridors)
+            foreach (var c in lvl.Links)
                 if (adj.ContainsKey(c.RoomA) && adj.ContainsKey(c.RoomB)) { adj[c.RoomA].Add(c.RoomB); adj[c.RoomB].Add(c.RoomA); }
             return adj;
         }

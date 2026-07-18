@@ -15,37 +15,37 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // AddRoom assigns a fresh id and bumps NextRoomId.
-            var lvl = new DungeonLevel();
+            var lvl = new InteriorFloor();
             var r1 = DungeonOps.AddRoom(lvl, 0.1f, 0.1f);
             var r2 = DungeonOps.AddRoom(lvl, 0.2f, 0.2f);
             ok &= r1.Id == 1 && r2.Id == 2 && lvl.NextRoomId == 3 && lvl.Rooms.Count == 2;
 
             // AddCorridor: happy path, self-loop, duplicate, missing.
-            ok &= DungeonOps.AddCorridor(lvl, 1, 2) == null && lvl.Corridors.Count == 1;
+            ok &= DungeonOps.AddCorridor(lvl, 1, 2) == null && lvl.Links.Count == 1;
             ok &= DungeonOps.AddCorridor(lvl, 1, 1) != null;      // self
             ok &= DungeonOps.AddCorridor(lvl, 2, 1) != null;      // duplicate (order-independent)
             ok &= DungeonOps.AddCorridor(lvl, 1, 99) != null;     // missing
-            ok &= lvl.Corridors.Count == 1;
+            ok &= lvl.Links.Count == 1;
 
             // Singleton conflict + SetRoomType demote.
-            DungeonOps.SetRoomType(lvl, 1, RoomType.Entrance);
-            ok &= DungeonOps.FindSingletonConflict(lvl, 2, RoomType.Entrance) == 1;
-            DungeonOps.SetRoomType(lvl, 2, RoomType.Entrance);    // should demote r1
-            ok &= lvl.GetRoom(1).Type == RoomType.Normal && lvl.GetRoom(2).Type == RoomType.Entrance;
-            ok &= DungeonOps.FindSingletonConflict(lvl, 2, RoomType.Normal) == 0;   // Normal is not singleton
+            DungeonOps.SetRoomType(lvl, 1, 0);
+            ok &= DungeonOps.FindSingletonConflict(lvl, 2, 0) == 1;
+            DungeonOps.SetRoomType(lvl, 2, 0);    // should demote r1
+            ok &= lvl.GetRoom(1).TypeId == 1 && lvl.GetRoom(2).TypeId == 0;
+            ok &= DungeonOps.FindSingletonConflict(lvl, 2, 1) == 0;   // Normal is not singleton
 
             // RemoveRoom integrity: corridors + secrets (owned and cross-level targeting) vanish.
-            var dungeon = new DungeonData();
-            var l0 = new DungeonLevel(); var l1 = new DungeonLevel();
-            dungeon.Levels.Add(l0); dungeon.Levels.Add(l1);
+            var dungeon = new InteriorData();
+            var l0 = new InteriorFloor(); var l1 = new InteriorFloor();
+            dungeon.Floors.Add(l0); dungeon.Floors.Add(l1);
             var a = DungeonOps.AddRoom(l0, 0, 0); var b = DungeonOps.AddRoom(l0, 0, 0);
             var c = DungeonOps.AddRoom(l1, 0, 0);
             DungeonOps.AddCorridor(l0, a.Id, b.Id);
-            b.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = a.Id });
-            c.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = a.Id });
+            b.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = a.Id });
+            c.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = a.Id });
             DungeonOps.RemoveRoom(dungeon, 0, a.Id);
-            ok &= l0.GetRoom(a.Id) == null && l0.Corridors.Count == 0;
-            ok &= b.Secrets.Count == 0 && c.Secrets.Count == 0;   // both the owned and the cross-level target-secret removed
+            ok &= l0.GetRoom(a.Id) == null && l0.Links.Count == 0;
+            ok &= b.Portals.Count == 0 && c.Portals.Count == 0;   // both the owned and the cross-level target-secret removed
 
             Debug.Log(ok ? "Self-Test Dungeon Ops: PASS" : "Self-Test Dungeon Ops: FAIL");
         }
@@ -56,40 +56,40 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // Clean floor from the generator → no errors.
-            var clean = new DungeonData { Levels = { DungeonGraphGenerator.Generate(5, 8) } };
+            var clean = new InteriorData { Floors = { DungeonGraphGenerator.Generate(5, 8) } };
             var cleanIssues = DungeonValidator.Validate(clean);
             ok &= cleanIssues.All(i => i.Severity != IssueSeverity.Error);
 
             // No entrance → error. Two entrances → error.
-            var lvl = new DungeonLevel();
+            var lvl = new InteriorFloor();
             var a = DungeonOps.AddRoom(lvl, 0, 0); var b = DungeonOps.AddRoom(lvl, 0, 0);
-            var d0 = new DungeonData { Levels = { lvl } };
+            var d0 = new InteriorData { Floors = { lvl } };
             ok &= DungeonValidator.Validate(d0).Any(i => i.Severity == IssueSeverity.Error && i.Message.Contains("вход"));
-            DungeonOps.SetRoomType(lvl, a.Id, RoomType.Entrance);
-            b.Type = RoomType.Entrance;   // force a second entrance without demote
+            DungeonOps.SetRoomType(lvl, a.Id, 0);
+            b.TypeId = 0;   // force a second entrance without demote
             ok &= DungeonValidator.Validate(d0).Any(i => i.Severity == IssueSeverity.Error && i.Message.Contains("вход"));
 
             // Two bosses → error.
-            var lvl2 = new DungeonLevel();
+            var lvl2 = new InteriorFloor();
             var e = DungeonOps.AddRoom(lvl2, 0, 0); var f = DungeonOps.AddRoom(lvl2, 0, 0); var g = DungeonOps.AddRoom(lvl2, 0, 0);
-            DungeonOps.SetRoomType(lvl2, e.Id, RoomType.Entrance);
-            f.Type = RoomType.Boss; g.Type = RoomType.Boss;
-            var d1 = new DungeonData { Levels = { lvl2 } };
+            DungeonOps.SetRoomType(lvl2, e.Id, 0);
+            f.TypeId = 2; g.TypeId = 2;
+            var d1 = new InteriorData { Floors = { lvl2 } };
             ok &= DungeonValidator.Validate(d1).Any(i => i.Severity == IssueSeverity.Error && i.Message.Contains("босс"));
 
             // Orphan warning: entrance + a disconnected room.
-            var lvl3 = new DungeonLevel();
+            var lvl3 = new InteriorFloor();
             var h = DungeonOps.AddRoom(lvl3, 0, 0); var iRoom = DungeonOps.AddRoom(lvl3, 0, 0);
-            DungeonOps.SetRoomType(lvl3, h.Id, RoomType.Entrance);   // iRoom left unconnected
-            var d2 = new DungeonData { Levels = { lvl3 } };
+            DungeonOps.SetRoomType(lvl3, h.Id, 0);   // iRoom left unconnected
+            var d2 = new InteriorData { Floors = { lvl3 } };
             ok &= DungeonValidator.Validate(d2).Any(i => i.Severity == IssueSeverity.Warning && i.Message.Contains("недостижим"));
 
             // Dangling secret target → error.
-            var lvl4 = new DungeonLevel();
+            var lvl4 = new InteriorFloor();
             var j = DungeonOps.AddRoom(lvl4, 0, 0);
-            DungeonOps.SetRoomType(lvl4, j.Id, RoomType.Entrance);
-            j.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = 999 });
-            var d3 = new DungeonData { Levels = { lvl4 } };
+            DungeonOps.SetRoomType(lvl4, j.Id, 0);
+            j.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = 999 });
+            var d3 = new InteriorData { Floors = { lvl4 } };
             ok &= DungeonValidator.Validate(d3).Any(i => i.Severity == IssueSeverity.Error && i.Message.Contains("секретный"));
 
             Debug.Log(ok ? "Self-Test Dungeon Validator: PASS" : "Self-Test Dungeon Validator: FAIL");
@@ -99,23 +99,23 @@ namespace WorldGen.Rendering
         public void SelfTestRemoveLevel()
         {
             bool ok = true;
-            var d = new DungeonData();
-            for (int i = 0; i < 3; i++) d.Levels.Add(new DungeonLevel());
-            var r0 = DungeonOps.AddRoom(d.Levels[0], 0, 0);
-            var r2 = DungeonOps.AddRoom(d.Levels[2], 0, 0);
-            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 0, TargetRoomId = r0.Id });
-            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 1, TargetRoomId = 5 });   // targets the removed level
-            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.Room, TargetLevelIndex = 2, TargetRoomId = r2.Id }); // level above → shifts to 1
-            r0.Secrets.Add(new SecretPassage { Kind = SecretTargetKind.DungeonExit });
+            var d = new InteriorData();
+            for (int i = 0; i < 3; i++) d.Floors.Add(new InteriorFloor());
+            var r0 = DungeonOps.AddRoom(d.Floors[0], 0, 0);
+            var r2 = DungeonOps.AddRoom(d.Floors[2], 0, 0);
+            r0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = r0.Id });
+            r0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 1, TargetRoomId = 5 });   // targets the removed level
+            r0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 2, TargetRoomId = r2.Id }); // level above → shifts to 1
+            r0.Portals.Add(new Portal { Kind = PortalKind.DungeonExit });
 
             DungeonOps.RemoveLevel(d, 1);
 
-            ok &= d.Levels.Count == 2;
-            ok &= r0.Secrets.Count == 3;                                                                    // the level-1 target was removed
-            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.Room && s.TargetLevelIndex == 0 && s.TargetRoomId == r0.Id);   // unchanged
-            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.Room && s.TargetLevelIndex == 1 && s.TargetRoomId == r2.Id);   // was 2 → 1
-            ok &= !r0.Secrets.Exists(s => s.TargetRoomId == 5);                                             // removed
-            ok &= r0.Secrets.Exists(s => s.Kind == SecretTargetKind.DungeonExit);                          // unchanged
+            ok &= d.Floors.Count == 2;
+            ok &= r0.Portals.Count == 3;                                                                    // the level-1 target was removed
+            ok &= r0.Portals.Exists(s => s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex == 0 && s.TargetRoomId == r0.Id);   // unchanged
+            ok &= r0.Portals.Exists(s => s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex == 1 && s.TargetRoomId == r2.Id);   // was 2 → 1
+            ok &= !r0.Portals.Exists(s => s.TargetRoomId == 5);                                             // removed
+            ok &= r0.Portals.Exists(s => s.Kind == PortalKind.DungeonExit);                          // unchanged
 
             Debug.Log(ok ? "Self-Test Dungeon Remove-Level Integrity: PASS" : "Self-Test Dungeon Remove-Level Integrity: FAIL");
         }
@@ -158,9 +158,9 @@ namespace WorldGen.Rendering
             if (cy >= 0f) { Debug.LogError("FAIL: +tileY must project to NEGATIVE local y"); ok = false; }
 
             // Fit(): the content centre lands at local (0,0) and everything fits inside the rect.
-            var lvl = new DungeonLevel();
-            lvl.Rooms.Add(new Room { Id = 1, Type = RoomType.Normal, X = 0.25f, Y = 0.25f, SizeW = 6, SizeH = 6 });
-            lvl.Rooms.Add(new Room { Id = 2, Type = RoomType.Boss,   X = 0.75f, Y = 0.75f, SizeW = 10, SizeH = 10 });
+            var lvl = new InteriorFloor();
+            lvl.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.25f, Y = 0.25f, SizeW = 6, SizeH = 6 });
+            lvl.Rooms.Add(new Room { Id = 2, TypeId = 2, X = 0.75f, Y = 0.75f, SizeW = 10, SizeH = 10 });
             var fit = DungeonProjection.Fit(lvl, 800f, 400f, 0.5f);
             var (bminX, bminY, bmaxX, bmaxY) = DungeonProjection.ContentBoundsTiles(lvl);
             var (ccx, ccy) = fit.TileToLocal((bminX + bmaxX) * 0.5f, (bminY + bmaxY) * 0.5f);
@@ -173,14 +173,14 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL fit bounds: {Mathf.Abs(p1x - p0x)}x{Mathf.Abs(p1y - p0y)} exceeds 800x400"); ok = false; }
 
             // Fit must never divide by zero on a single-room (zero-span) level.
-            var one = new DungeonLevel();
-            one.Rooms.Add(new Room { Id = 1, Type = RoomType.Normal, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 6 });
+            var one = new InteriorFloor();
+            one.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 6 });
             var fitOne = DungeonProjection.Fit(one, 800f, 400f, 0.5f);
             if (float.IsNaN(fitOne.PxPerTile) || float.IsInfinity(fitOne.PxPerTile) || fitOne.PxPerTile <= 0f)
             { Debug.LogError($"FAIL fit single-room: PxPerTile={fitOne.PxPerTile}"); ok = false; }
 
             // An empty level must not throw and must yield a usable projection.
-            var empty = new DungeonLevel();
+            var empty = new InteriorFloor();
             var fitEmpty = DungeonProjection.Fit(empty, 800f, 400f, 1f);
             if (fitEmpty.PxPerTile <= 0f) { Debug.LogError("FAIL fit empty level"); ok = false; }
 
@@ -192,10 +192,10 @@ namespace WorldGen.Rendering
         {
             bool ok = true;
 
-            // New defaults (spec R7).
-            var checks = new (RoomType t, int w, int h)[]
+            // New defaults (spec R7). t is Room.TypeId: Entrance=0, Boss=2, Normal=1.
+            var checks = new (int t, int w, int h)[]
             {
-                (RoomType.Entrance, 7, 5), (RoomType.Boss, 10, 10), (RoomType.Normal, 6, 6),
+                (0, 7, 5), (2, 10, 10), (1, 6, 6),
             };
             foreach (var c in checks)
             {
@@ -235,7 +235,7 @@ namespace WorldGen.Rendering
                         }
                     }
 
-                    foreach (var c in lvl.Corridors)
+                    foreach (var c in lvl.Links)
                     {
                         var a = lvl.GetRoom(c.RoomA); var b = lvl.GetRoom(c.RoomB);
                         if (a == null || b == null) continue;
@@ -280,7 +280,8 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // Ranges must sit inside RoomSizing's own clamp, or Roll would emit sizes Clamp then silently rewrites.
-            foreach (RoomType t in new[] { RoomType.Entrance, RoomType.Boss, RoomType.Normal })
+            // t is Room.TypeId: Entrance=0, Boss=2, Normal=1.
+            foreach (int t in new[] { 0, 2, 1 })
             {
                 var (min, max) = RoomSizing.Range(t);
                 if (min < RoomSizing.MinSide || max > RoomSizing.MaxSide || min > max)
@@ -295,7 +296,7 @@ namespace WorldGen.Rendering
 
             // Roll must stay in range, and must actually vary (a constant "roll" would pass a bounds-only check).
             var rng = new System.Random(12345);
-            foreach (RoomType t in new[] { RoomType.Entrance, RoomType.Boss, RoomType.Normal })
+            foreach (int t in new[] { 0, 2, 1 })
             {
                 var (min, max) = RoomSizing.Range(t);
                 var seen = new HashSet<int>();
@@ -319,7 +320,7 @@ namespace WorldGen.Rendering
                 for (int i = 0; i < a.Rooms.Count; i++)
                 {
                     var ra = a.Rooms[i]; var rb = b.Rooms[i];
-                    if (ra.SizeW != rb.SizeW || ra.SizeH != rb.SizeH || ra.Type != rb.Type ||
+                    if (ra.SizeW != rb.SizeW || ra.SizeH != rb.SizeH || ra.TypeId != rb.TypeId ||
                         Mathf.Abs(ra.X - rb.X) > 1e-6f || Mathf.Abs(ra.Y - rb.Y) > 1e-6f)
                     { Debug.LogError($"FAIL determinism at room {ra.Id}: {ra.SizeW}x{ra.SizeH} vs {rb.SizeW}x{rb.SizeH}"); ok = false; break; }
                 }

@@ -102,7 +102,7 @@ namespace WorldGen.Rendering
             {
                 var regionLabels = regionLabelManager != null ? new List<RegionLabelData>(regionLabelManager.GetAll()) : new List<RegionLabelData>();
                 var regions = mapRenderer.regionManager != null ? new List<RegionData>(mapRenderer.regionManager.Regions) : new List<RegionData>();
-                var dungeons = dungeonManager != null ? new List<DungeonData>(dungeonManager.GetAll()) : new List<DungeonData>();
+                var dungeons = dungeonManager != null ? new List<InteriorData>(dungeonManager.GetAll()) : new List<InteriorData>();
                 ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons);
             }
             catch (System.Exception ex)

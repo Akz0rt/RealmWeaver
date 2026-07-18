@@ -13,26 +13,28 @@ namespace WorldGen.Generation
     {
         public const int DefaultMinBossDistance = 3;
 
-        public static DungeonLevel Generate(int seed, int roomCount, int minBossDistance = DefaultMinBossDistance)
+        public static InteriorFloor Generate(int seed, int roomCount, int minBossDistance = DefaultMinBossDistance)
         {
-            var lvl = new DungeonLevel();
+            var lvl = new InteriorFloor();
             if (roomCount <= 0) return lvl;                 // empty floor (validator will flag "no entrance")
 
             var rng = new Random(seed);
 
             // 1. Rooms, ids 1..roomCount. Room 1 is the entrance.
             for (int i = 0; i < roomCount; i++)
-                lvl.Rooms.Add(new Room { Id = i + 1, Type = RoomType.Normal });
+                lvl.Rooms.Add(new Room { Id = i + 1, TypeId = 1 });
             lvl.NextRoomId = roomCount + 1;
-            lvl.Rooms[0].Type = RoomType.Entrance;
+            lvl.Rooms[0].TypeId = 0;
 
             var adj = new Dictionary<int, HashSet<int>>();
             foreach (var r in lvl.Rooms) adj[r.Id] = new HashSet<int>();
-            void Link(int a, int b)
+            // Named Connect, not Link — a local function sharing a name with the Link TYPE is exactly the
+            // same-name shadowing landmine this codebase has been bitten by before.
+            void Connect(int a, int b)
             {
                 if (a == b || adj[a].Contains(b)) return;
                 adj[a].Add(b); adj[b].Add(a);
-                lvl.Corridors.Add(new Corridor { RoomA = a, RoomB = b });
+                lvl.Links.Add(new Link { RoomA = a, RoomB = b });
             }
 
             // 2. Guaranteed SPINE 0-1-...-spineLen. A plain random-recursive-tree is too shallow on small
@@ -40,13 +42,13 @@ namespace WorldGen.Generation
             //    spine is what makes a far-enough boss reliable. spineLen rooms sit in a line from the entrance.
             int spineLen = Math.Min(minBossDistance, roomCount - 1);
             for (int i = 1; i <= spineLen; i++)
-                Link(lvl.Rooms[i].Id, lvl.Rooms[i - 1].Id);
+                Connect(lvl.Rooms[i].Id, lvl.Rooms[i - 1].Id);
 
             // 3. Remaining rooms attach to a random earlier room (random branches off the spine/tree).
             for (int i = spineLen + 1; i < roomCount; i++)
             {
                 int parent = rng.Next(0, i);                // 0..i-1
-                Link(lvl.Rooms[i].Id, lvl.Rooms[parent].Id);
+                Connect(lvl.Rooms[i].Id, lvl.Rooms[parent].Id);
             }
 
             // 4. Loop edges ONLY among the non-spine rooms (indices > spineLen), so a loop can never shortcut
@@ -60,7 +62,7 @@ namespace WorldGen.Generation
                 int a = nonSpineStart + rng.Next(nonSpineCount);
                 int b = nonSpineStart + rng.Next(nonSpineCount);
                 if (a == b || adj[lvl.Rooms[a].Id].Contains(lvl.Rooms[b].Id)) continue;
-                Link(lvl.Rooms[a].Id, lvl.Rooms[b].Id);
+                Connect(lvl.Rooms[a].Id, lvl.Rooms[b].Id);
                 extra--;
             }
 
@@ -77,11 +79,11 @@ namespace WorldGen.Generation
                 int d = dist.TryGetValue(r.Id, out var dd) ? dd : -1;
                 if (d > bestDist) { bestDist = d; bossId = r.Id; }
             }
-            if (bossId != 0) lvl.GetRoom(bossId).Type = RoomType.Boss;
+            if (bossId != 0) lvl.GetRoom(bossId).TypeId = 2;
 
             // Sizes roll AFTER types are final (entrance at step 1, boss just above) — Roll is keyed on
             // type. Uses the generator's own seeded rng, so a seed still reproduces its floor exactly.
-            foreach (var r in lvl.Rooms) { var (w, h) = RoomSizing.Roll(r.Type, rng); r.SizeW = w; r.SizeH = h; }
+            foreach (var r in lvl.Rooms) { var (w, h) = RoomSizing.Roll(r.TypeId, rng); r.SizeW = w; r.SizeH = h; }
 
             // 7. Layout X/Y by BFS depth so the initial layout is readable, not a clump.
             LayoutByDepth(lvl, dist);
@@ -121,7 +123,7 @@ namespace WorldGen.Generation
         ///
         /// Generate() runs EnforceCorridorLeash afterwards, which is what actually GUARANTEES the corridor
         /// bound — this method's job is to make that pass a near-no-op, not to prove the bound itself.</summary>
-        static void LayoutByDepth(DungeonLevel lvl, Dictionary<int, int> dist)
+        static void LayoutByDepth(InteriorFloor lvl, Dictionary<int, int> dist)
         {
             const float DesiredGapTiles = 3f;
             const float T = DungeonLayout.TilesPerAxis;
@@ -226,11 +228,11 @@ namespace WorldGen.Generation
 
         /// <summary>This room's BFS parent = its neighbour one layer shallower. 0 when it has none (the
         /// entrance, or a disconnected room).</summary>
-        static int ParentId(DungeonLevel lvl, Dictionary<int, int> dist, Room r)
+        static int ParentId(InteriorFloor lvl, Dictionary<int, int> dist, Room r)
         {
             if (!dist.TryGetValue(r.Id, out int myD)) return 0;
             int best = 0;
-            foreach (var c in lvl.Corridors)
+            foreach (var c in lvl.Links)
             {
                 int other = c.RoomA == r.Id ? c.RoomB : (c.RoomB == r.Id ? c.RoomA : 0);
                 if (other == 0) continue;

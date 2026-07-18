@@ -14,11 +14,11 @@ namespace WorldGen.Rendering
     {
         public System.Action OnCloseRequested;      // wired to MapScreenController.CloseDungeonEditor
 
-        DungeonData current;
+        InteriorData current;
         public int CurrentLevelIndex { get; private set; }
-        public DungeonLevel CurrentLevel =>
-            current != null && CurrentLevelIndex >= 0 && CurrentLevelIndex < current.Levels.Count
-                ? current.Levels[CurrentLevelIndex] : null;
+        public InteriorFloor CurrentLevel =>
+            current != null && CurrentLevelIndex >= 0 && CurrentLevelIndex < current.Floors.Count
+                ? current.Floors[CurrentLevelIndex] : null;
 
         public RectTransform MapArea { get; private set; }     // graph canvas host (Task 4)
         public RectTransform Sidebar { get; private set; }     // inspector host (Task 5)
@@ -50,20 +50,20 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Bind a dungeon; ensure it has at least one level; show level 0.</summary>
-        public void Bind(DungeonData dungeon)
+        public void Bind(InteriorData dungeon)
         {
             EnsureBuilt();
             current = dungeon;
-            if (current.Levels.Count == 0) current.Levels.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
+            if (current.Floors.Count == 0) current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
             SetLevel(0);
         }
 
         public void SetLevel(int index)
         {
-            if (current == null || current.Levels.Count == 0) return;
-            CurrentLevelIndex = Mathf.Clamp(index, 0, current.Levels.Count - 1);
+            if (current == null || current.Floors.Count == 0) return;
+            CurrentLevelIndex = Mathf.Clamp(index, 0, current.Floors.Count - 1);
             // DungeonViewController.Bind resets ITS OWN SelectedRoomId to 0 on a level switch (different
-            // bound DungeonLevel) but doesn't fire OnRoomSelected to say so — reset our mirror here too,
+            // bound InteriorFloor) but doesn't fire OnRoomSelected to say so — reset our mirror here too,
             // otherwise a stale id could coincidentally match an unrelated room on the new level and the
             // inspector would show the wrong room while the canvas shows no selection.
             selectedRoomId = 0;
@@ -75,15 +75,15 @@ namespace WorldGen.Rendering
         public void AddLevel()
         {
             if (current == null) return;
-            current.Levels.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
-            SetLevel(current.Levels.Count - 1);
+            current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), 6));
+            SetLevel(current.Floors.Count - 1);
         }
 
         public void RemoveCurrentLevel()
         {
-            if (current == null || current.Levels.Count <= 1) return;
+            if (current == null || current.Floors.Count <= 1) return;
             DungeonOps.RemoveLevel(current, CurrentLevelIndex);
-            SetLevel(Mathf.Min(CurrentLevelIndex, current.Levels.Count - 1));
+            SetLevel(Mathf.Min(CurrentLevelIndex, current.Floors.Count - 1));
         }
 
         /// <summary>«× Этаж» handler: if the level has authored room content, confirm before discarding
@@ -92,7 +92,7 @@ namespace WorldGen.Rendering
         void RequestRemoveCurrentLevel()
         {
             var lvl = CurrentLevel;
-            if (current == null || current.Levels.Count <= 1 || lvl == null) return;
+            if (current == null || current.Floors.Count <= 1 || lvl == null) return;
             bool annotated = lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
             if (annotated)
                 WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?",
@@ -112,7 +112,7 @@ namespace WorldGen.Rendering
         }
 
         // Re-runs validation and re-renders the graph + inspector in place (no rebind — the bound
-        // DungeonLevel object is unchanged, only its Rooms/Corridors/Secrets contents mutated via
+        // InteriorFloor object is unchanged, only its Rooms/Links/Portals contents mutated via
         // DungeonOps). Wired as DungeonViewController.OnGraphMutated (fires on add/delete/link AND card
         // drag-end) and DungeonInspectorPanel.OnChanged (fires on any inspector edit, including the size
         // steppers), and called once at the end of SetLevel so a level switch also gets a fresh
@@ -302,13 +302,13 @@ namespace WorldGen.Rendering
         {
             if (levelTabsRow == null || current == null) return;
             for (int i = levelTabsRow.childCount - 1; i >= 0; i--) Destroy(levelTabsRow.GetChild(i).gameObject);
-            for (int i = 0; i < current.Levels.Count; i++)
+            for (int i = 0; i < current.Floors.Count; i++)
             {
                 int idx = i;
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+ Этаж", 64f, false, AddLevel);
-            if (current.Levels.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RequestRemoveCurrentLevel);
+            if (current.Floors.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RequestRemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)

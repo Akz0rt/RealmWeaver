@@ -21,8 +21,8 @@ namespace WorldGen.Persistence
         /// VoronoiCell.RegionId (see Cells above). Added in FormatVersion 3; older saves have
         /// this empty and get default RegionData synthesized on load (see ProjectSerializer.Load).</summary>
         public List<RegionData> Regions = new List<RegionData>();
-        /// <summary>Cave dungeons, one per owning POI (DungeonData.OwnerPoiId == PoiData.Id).
+        /// <summary>Cave dungeons, one per owning POI (InteriorData.OwnerPoiId == PoiData.Id).
         /// Added in FormatVersion 4; older saves have this empty (a POI with no dungeon is valid).</summary>
-        public List<DungeonData> Dungeons = new List<DungeonData>();
+        public List<InteriorData> Dungeons = new List<InteriorData>();
     }
 }

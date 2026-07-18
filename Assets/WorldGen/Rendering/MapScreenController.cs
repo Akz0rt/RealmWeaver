@@ -33,7 +33,7 @@ namespace WorldGen.Rendering
 
         Coroutine activeGeneration;
         PoiData editingPoi;
-        DungeonData editingDungeon;
+        InteriorData editingDungeon;
         ScreenSwitcher switcher;
 
         void Awake()
