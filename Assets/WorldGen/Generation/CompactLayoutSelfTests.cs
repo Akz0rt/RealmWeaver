@@ -72,14 +72,20 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL door: door.Y {door.Y:F3} outside overlap span [{yLow:F3},{yHigh:F3}]"); ok = false; }
             }
 
-            // ---- 5. Determinism ----------------------------------------------------------------------
-            // Two independently-built copies, Arrange both → identical X/Y everywhere. Fails if any ordering
-            // (BFS, side choice, room iteration) depends on hashing or insertion order.
-            var a = Chain(); var b = Chain();
+            // ---- 5. Determinism (independent of Link insertion order) --------------------------------
+            // SAME branching graph, but the two copies insert the identical Link SET in a DIFFERENT order.
+            // Arrange must produce identical layouts regardless — that is exactly what BuildAdjacency's
+            // neighbour .Sort() guarantees. On the hub (room 1 has THREE unplaced neighbours) removing that
+            // sort makes BFS place neighbours in insertion order, so the two copies DIVERGE → this fails. A
+            // linear Chain could never detect it (every node has ≤1 unplaced neighbour, so order is moot).
+            var a = Branching(false); var b = Branching(true);
             CompactLayout.Arrange(a); CompactLayout.Arrange(b);
-            for (int i = 0; i < a.Rooms.Count; i++)
-                if (!Mathf.Approximately(a.Rooms[i].X, b.Rooms[i].X) || !Mathf.Approximately(a.Rooms[i].Y, b.Rooms[i].Y))
-                { Debug.LogError($"FAIL determinism: room {a.Rooms[i].Id} differs between runs"); ok = false; }
+            for (int id = 1; id <= 4; id++)
+            {
+                var ra = a.GetRoom(id); var rb = b.GetRoom(id);
+                if (!Mathf.Approximately(ra.X, rb.X) || !Mathf.Approximately(ra.Y, rb.Y))
+                { Debug.LogError($"FAIL determinism: room {id} differs under permuted link order"); ok = false; }
+            }
 
             Debug.Log(ok ? "Self-Test Compact Layout: PASS" : "Self-Test Compact Layout: FAIL");
         }
@@ -131,12 +137,18 @@ namespace WorldGen.Rendering
                     if (Overlap(g.Rooms[i], g.Rooms[j]))
                     { Debug.LogError($"FAIL settle: orphan overlap {g.Rooms[i].Id}/{g.Rooms[j].Id} not resolved"); ok = false; }
 
-            // ---- 6c. Settle determinism --------------------------------------------------------------
-            var c1 = SettleCase(); CompactLayout.Settle(c1, 1);
-            var c2 = SettleCase(); CompactLayout.Settle(c2, 1);
-            for (int i = 0; i < c1.Rooms.Count; i++)
-                if (!Mathf.Approximately(c1.Rooms[i].X, c2.Rooms[i].X) || !Mathf.Approximately(c1.Rooms[i].Y, c2.Rooms[i].Y))
-                { Debug.LogError($"FAIL settle: not deterministic at room {c1.Rooms[i].Id}"); ok = false; }
+            // ---- 6c. Settle determinism (independent of Link insertion order) ------------------------
+            // Same branching hub, permuted Link order, one leaf perturbed identically in both; Settle both
+            // around anchor 1 → identical. Settle's re-pack shares BuildAdjacency, so removing the neighbour
+            // .Sort() makes the permuted copy diverge here too.
+            var c1 = BranchingSettleCase(false); CompactLayout.Settle(c1, 1);
+            var c2 = BranchingSettleCase(true);  CompactLayout.Settle(c2, 1);
+            for (int id = 1; id <= 4; id++)
+            {
+                var r1 = c1.GetRoom(id); var r2 = c2.GetRoom(id);
+                if (!Mathf.Approximately(r1.X, r2.X) || !Mathf.Approximately(r1.Y, r2.Y))
+                { Debug.LogError($"FAIL settle: not deterministic under permuted link order at room {id}"); ok = false; }
+            }
 
             Debug.Log(ok ? "Self-Test Compact Layout Settle: PASS" : "Self-Test Compact Layout Settle: FAIL");
         }
@@ -157,12 +169,37 @@ namespace WorldGen.Rendering
             return f;
         }
 
-        // An arranged chain with room 3 yanked far away — the Settle stimulus, built fresh per call.
-        static InteriorFloor SettleCase()
+        // A HUB: entrance 1 linked to 2, 3 AND 4 — so room 1 has three unplaced neighbours and neighbour
+        // ORDER actually matters (unlike the linear Chain). `permuted` inserts the SAME Link set in a
+        // different order; comparing Branching(false) vs Branching(true) is what makes the determinism
+        // tests non-vacuous w.r.t. BuildAdjacency's neighbour .Sort().
+        static InteriorFloor Branching(bool permuted)
         {
-            var f = Chain();
+            var f = new InteriorFloor { NextRoomId = 5 };
+            for (int i = 1; i <= 4; i++)
+                f.Rooms.Add(new Room { Id = i, TypeId = i == 1 ? 0 : 1, SizeW = 4, SizeH = 4, X = 0.5f, Y = 0.5f });
+            if (permuted)
+            {
+                f.Links.Add(new Link { RoomA = 1, RoomB = 4 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+            }
+            else
+            {
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 4 });
+            }
+            return f;
+        }
+
+        // An arranged branching hub with one leaf yanked far away — the Settle determinism stimulus. The
+        // perturbation is identical regardless of `permuted`, so any divergence comes only from link order.
+        static InteriorFloor BranchingSettleCase(bool permuted)
+        {
+            var f = Branching(permuted);
             CompactLayout.Arrange(f);
-            f.GetRoom(3).X = 0.95f; f.GetRoom(3).Y = 0.5f;
+            f.GetRoom(4).X = 0.95f; f.GetRoom(4).Y = 0.5f;
             return f;
         }
 
