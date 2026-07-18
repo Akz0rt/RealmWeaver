@@ -116,9 +116,12 @@ namespace WorldGen.Rendering
             AddInfoText(sec.transform, "КОМНАТА", 10, ThemeRole.Mut, FontStyle.Bold);
 
             var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
-            AddChoiceButton(typeRow.transform, "Вход", room.TypeId == 0, () => SetType(lvl, room, 0));
-            AddChoiceButton(typeRow.transform, "Обычная", room.TypeId == 1, () => SetType(lvl, room, 1));
-            AddChoiceButton(typeRow.transform, "Босс", room.TypeId == 2, () => SetType(lvl, room, 2));
+            var profile = Profiles.ForRoom(dungeon);
+            for (int i = 0; i < profile.RoomTypes.Length; i++)
+            {
+                int typeId = i;   // capture for the closure
+                AddChoiceButton(typeRow.transform, profile.RoomTypes[i].Label, room.TypeId == typeId, () => SetType(lvl, room, typeId));
+            }
 
             // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
             // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each

@@ -216,7 +216,13 @@ namespace WorldGen.Rendering
             hlg.childControlHeight = true; hlg.childForceExpandHeight = true;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
-            AddToolbarButton(bar.transform, "+ Комната", 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
+            // BuildToolbar runs at EnsureBuilt() time, which Awake() can trigger BEFORE Bind() ever sets
+            // `current` (the scene's DungeonEditorScreen GameObject starts active, so Awake fires at scene
+            // load — see DungeonFlatRenderer's identical dungeon!=null guard for the same reason). Fall back
+            // to the dungeon profile so this never null-refs; for a dungeon it's the exact same profile
+            // Profiles.ForRoom(current) would give once bound.
+            var profile = current != null ? Profiles.ForRoom(current) : Profiles.For(InteriorKind.Dungeon);
+            AddToolbarButton(bar.transform, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
             linkToggleImg = AddToolbarButton(bar.transform, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
             AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => viewController?.DeleteSelected());
         }
@@ -301,14 +307,15 @@ namespace WorldGen.Rendering
         void RebuildLevelTabs()
         {
             if (levelTabsRow == null || current == null) return;
+            var profile = Profiles.ForRoom(current);
             for (int i = levelTabsRow.childCount - 1; i >= 0; i--) Destroy(levelTabsRow.GetChild(i).gameObject);
             for (int i = 0; i < current.Floors.Count; i++)
             {
                 int idx = i;
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
-            AddLevelTabButton("+ Этаж", 64f, false, AddLevel);
-            if (current.Floors.Count > 1) AddLevelTabButton("× Этаж", 64f, false, RequestRemoveCurrentLevel);
+            AddLevelTabButton("+ " + profile.TermFloor, 64f, false, AddLevel);
+            if (current.Floors.Count > 1) AddLevelTabButton("× " + profile.TermFloor, 64f, false, RequestRemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)

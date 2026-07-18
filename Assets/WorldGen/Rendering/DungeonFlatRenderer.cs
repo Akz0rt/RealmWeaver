@@ -24,6 +24,8 @@ namespace WorldGen.Rendering
         public RectTransform Area => (RectTransform)transform;
         public GameObject Host => gameObject;
 
+        InteriorProfile profile;
+
         RectTransform linesLayer, junctionsLayer, nodesLayer;
         readonly Dictionary<int, Outline> outlines = new Dictionary<int, Outline>();
         readonly Dictionary<int, RectTransform> cards = new Dictionary<int, RectTransform>();
@@ -79,6 +81,7 @@ namespace WorldGen.Rendering
         public void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                                 System.Action<int> onJumpToLevel)
         {
+            profile = dungeon != null ? Profiles.ForRoom(dungeon) : Profiles.For(InteriorKind.Dungeon);
             EnsureBuilt();
             DungeonUiKit.ClearLayer(nodesLayer);
             DungeonUiKit.ClearLayer(linesLayer);
@@ -233,24 +236,13 @@ namespace WorldGen.Rendering
             lineRect.localEulerAngles = new Vector3(0, 0, Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg);
         }
 
-        // t is Room.TypeId: Entrance=0, Normal=1, Boss=2 (see DungeonData.cs).
-        static ThemeRole TypeRole(int t) => t switch
-        {
-            0 => ThemeRole.Accent,
-            2 => ThemeRole.Danger,
-            _ => ThemeRole.Elev,
-        };
+        // t is Room.TypeId: profile.TypeOf(t) clamps out-of-range ids to index 0 (never throws).
+        ThemeRole TypeRole(int t) => profile.TypeOf(t).Role;
 
-        // AccentInk reads on both the Accent and Danger card tints; Normal cards (Elev) use plain Txt.
-        static ThemeRole LabelRole(int t) => t == 1 ? ThemeRole.Txt : ThemeRole.AccentInk;
+        ThemeRole LabelRole(int t) => profile.TypeOf(t).LabelRole;
 
-        internal static string TypeLabel(int t) => t switch
-        {
-            0 => "Вход",
-            2 => "Босс",
-            _ => "Комната",
-        };
+        string TypeLabel(int t) => profile.TypeOf(t).Label;
 
-        internal static string NodeLabel(Room r) => $"{r.Id}. {(string.IsNullOrEmpty(r.Title) ? TypeLabel(r.TypeId) : r.Title)}";
+        string NodeLabel(Room r) => $"{r.Id}. {(string.IsNullOrEmpty(r.Title) ? TypeLabel(r.TypeId) : r.Title)}";
     }
 }
