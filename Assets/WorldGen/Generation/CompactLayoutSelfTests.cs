@@ -215,6 +215,28 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL determinism: room {id} differs between runs"); ok = false; }
             }
 
+            // ---- 11. LEAVE-PARKED-OUT on an ENTRANCE-LESS (upper) floor — the drag anchor IS the pack root ---
+            // An UPPER floor has NO TypeId==0 room, so PickEntrance falls back to the lowest-Id room (id 1) as
+            // BOTH the pack root AND — here — the drag anchor. Room 1 is dropped fully OUTSIDE the box and passed
+            // as the anchor; rooms 2 & 3 are its linked chain. SettleWithinContour must LEAVE room 1 where it was
+            // parked while rooms 2 & 3 re-pack compactly INSIDE the box.
+            // Non-vacuous / must FAIL pre-fix: the OLD condition `anchor.Id != entrance.Id` was FALSE here
+            // (anchor 1 == fallback entrance 1), so leaveAnchorOut was false — the packed cluster (incl. room 1)
+            // was slid fully inside by ContainWithinBox and NEVER restored out, so room 1's centre landed at
+            // tile 60 (≤ maxX 70) → the first assert fires. The fix keys the exemption on a REAL TypeId==0
+            // entrance (there is none here), so leaveAnchorOut is true and room 1 is restored to tile 95 (> 70).
+            const float eMinX = 40, eMinY = 40, eMaxX = 70, eMaxY = 70;
+            var upperFloor = EntrancelessParked(anchorTileX: 95, anchorTileY: 50, restTileX: 50, restTileY: 50);
+            CompactLayout.SettleWithinContour(upperFloor, anchorRoomId: 1, eMinX, eMinY, eMaxX, eMaxY);
+            var upperAnchor = upperFloor.GetRoom(1);
+            if (upperAnchor.X * T <= eMaxX)
+            { Debug.LogError($"FAIL upper-parked: fallback anchor pulled back inside (cx={upperAnchor.X * T:F1}, box maxX={eMaxX})"); ok = false; }
+            if (!AabbInside(upperFloor.GetRoom(2), eMinX, eMinY, eMaxX, eMaxY, 0.05f) ||
+                !AabbInside(upperFloor.GetRoom(3), eMinX, eMinY, eMaxX, eMaxY, 0.05f))
+            { Debug.LogError("FAIL upper-parked: rooms 2/3 are not compact inside the box"); ok = false; }
+            if (!CompactLayout.AdjacentAlongWall(upperFloor.GetRoom(2), upperFloor.GetRoom(3)))
+            { Debug.LogError("FAIL upper-parked: rooms 2-3 not wall-adjacent after settle (lost compactness)"); ok = false; }
+
             Debug.Log(ok ? "Self-Test Settle Within Contour: PASS" : "Self-Test Settle Within Contour: FAIL");
         }
 
@@ -309,6 +331,22 @@ namespace WorldGen.Rendering
             f.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
             f.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = entranceTileX / T, Y = entranceTileY / T });
             f.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = parkedTileX / T, Y = parkedTileY / T });
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 2, RoomB = 3 });
+            return f;
+        }
+
+        // An ENTRANCE-LESS chain 1-2-3 — NO room has TypeId 0, exactly like an UPPER building floor. PickEntrance
+        // therefore falls back to the lowest-Id room (id 1), which is BOTH the pack root AND the drag anchor here.
+        // Room 1 starts pre-dragged to a mostly-outside TILE position; rooms 2 & 3 sit at (restTileX,restTileY)
+        // (start pos irrelevant — Settle re-places them flush from the anchor). The C4 upper-floor leave-out case.
+        static InteriorFloor EntrancelessParked(float anchorTileX, float anchorTileY, float restTileX, float restTileY)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var f = new InteriorFloor { NextRoomId = 4 };
+            f.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 4, SizeH = 4, X = anchorTileX / T, Y = anchorTileY / T });
+            f.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = restTileX / T, Y = restTileY / T });
+            f.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = restTileX / T, Y = restTileY / T });
             f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
             f.Links.Add(new Link { RoomA = 2, RoomB = 3 });
             return f;

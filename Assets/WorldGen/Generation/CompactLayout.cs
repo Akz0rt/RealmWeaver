@@ -194,7 +194,8 @@ namespace WorldGen.Generation
         ///    (= "gently pulled to a suitable spot inside"); but if the DM dropped it MOSTLY OUTSIDE the box
         ///    (&lt; <see cref="MostlyInsideFrac"/> of its area inside, measured BEFORE the re-pack moves it),
         ///    that is read as an explicit "leave this outside" gesture and the room is restored to where it
-        ///    was dropped and LEFT (flagged). The entrance is never parked out.
+        ///    was dropped and LEFT (flagged). Only a REAL entrance (TypeId==0, floor 0) is never parked out;
+        ///    on an entrance-less UPPER floor the lowest-Id fallback anchor may be left out like any room.
         ///
         /// The caller applies this only to UPPER floors and passes the ground floor's own bbox as the box; the
         /// ground floor IS the contour and uses plain <see cref="Settle"/> (no nudge). Deterministic (fixed
@@ -207,8 +208,16 @@ namespace WorldGen.Generation
             if (entrance == null) return;
 
             // Read the dragged room's fate from where the DM DROPPED it — before the re-pack relocates it.
+            // Exempt from "leave it parked out" ONLY a REAL entrance (TypeId==0): that room is the building's
+            // ground entry and stays the fixed anchor pulled inside. On an UPPER floor there is NO TypeId==0
+            // room (BuildingGenerator puts the entrance only on floor 0; DungeonEditorScreen strips any that
+            // leak up), so PickEntrance FELL BACK to the lowest-Id room — an ORDINARY room. If that fallback is
+            // the drag target and the DM dropped it mostly-outside, it must be allowed to stay parked out like
+            // any other room (spec C4's core promise), NOT force-pulled in just because it happens to be the
+            // pack root. So the exemption is conditioned on a real entrance, not merely anchor.Id==entrance.Id.
             var anchor = floor.GetRoom(anchorRoomId);
-            bool leaveAnchorOut = anchor != null && anchor.Id != entrance.Id
+            bool anchorIsRealEntrance = anchor != null && anchor.Id == entrance.Id && entrance.TypeId == 0;
+            bool leaveAnchorOut = anchor != null && !anchorIsRealEntrance
                                   && InsideFraction(anchor, minX, minY, maxX, maxY) < MostlyInsideFrac;
             float keepX = anchor != null ? anchor.X : 0f;
             float keepY = anchor != null ? anchor.Y : 0f;
