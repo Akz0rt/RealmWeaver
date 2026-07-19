@@ -316,6 +316,90 @@ namespace WorldGen.Generation
         static bool Approx(float a, float b) => System.Math.Abs(a - b) <= 1e-4f;
 
         // ---------------------------------------------------------------------------------------------
+        // PackAroundColumnWithinFootprint — shape-aware building-floor packing (spec stairwell-column stage B).
+        // ---------------------------------------------------------------------------------------------
+
+        /// <summary>Pack a building floor's rooms flush around a FIXED column room (pinned exactly at
+        /// colXTiles,colYTiles) so EVERY placed room stays inside <paramref name="contourFloor"/>'s footprint
+        /// shape (+margin — the drawn contour). BFS from the column over Links; each child takes the first flush
+        /// side (Right/Down/Left/Up at increasing distance) that overlaps nothing already placed AND lies inside
+        /// the footprint. A room with no valid in-footprint slot — and any room reachable only through it — is
+        /// DROPPED (removed from <c>floor.Rooms</c>, with its Links). Returns the number of rooms KEPT (incl.
+        /// the column). Shape-aware: this replaces the free Arrange + reduce-to-1 that collapsed a non-convex
+        /// floor to just the column. Deterministic (fixed BFS/side order, no RNG); headless.</summary>
+        public static int PackAroundColumnWithinFootprint(InteriorFloor floor, int columnRoomId,
+            float colXTiles, float colYTiles, InteriorFloor contourFloor, float margin)
+        {
+            if (floor == null || floor.Rooms.Count == 0) return 0;
+            var column = floor.GetRoom(columnRoomId);
+            if (column == null || contourFloor == null) return floor.Rooms.Count;
+
+            column.X = Clamp01(ToNorm(colXTiles));
+            column.Y = Clamp01(ToNorm(colYTiles));
+
+            var placed = new List<Room> { column };
+            var placedIds = new HashSet<int> { column.Id };
+            var adj = BuildAdjacency(floor);
+            var queue = new Queue<int>();
+            queue.Enqueue(column.Id);
+            while (queue.Count > 0)
+            {
+                var cur = floor.GetRoom(queue.Dequeue());
+                if (cur == null || !adj.TryGetValue(cur.Id, out var nbs)) continue;
+                foreach (int nb in nbs)   // ascending id
+                {
+                    if (placedIds.Contains(nb)) continue;
+                    var child = floor.GetRoom(nb);
+                    if (child == null) continue;
+                    if (TryPlaceAgainstInFootprint(child, cur, placed, contourFloor, margin))
+                    {
+                        placed.Add(child);
+                        placedIds.Add(nb);
+                        queue.Enqueue(nb);
+                    }
+                }
+            }
+
+            // Drop rooms (and their links) that had no valid in-footprint slot.
+            floor.Rooms.RemoveAll(r => !placedIds.Contains(r.Id));
+            floor.Links.RemoveAll(l => !placedIds.Contains(l.RoomA) || !placedIds.Contains(l.RoomB));
+            return placed.Count;
+        }
+
+        /// <summary>Like <see cref="PlaceAgainst"/> but a room is placed ONLY at a flush side that is both free
+        /// of overlap AND inside the footprint (<see cref="FloorFootprint.ContainsRect"/>). Returns false — and
+        /// leaves the child unplaced — when no such slot exists within the field. Deterministic.</summary>
+        static bool TryPlaceAgainstInFootprint(Room child, Room parent, List<Room> placed,
+            InteriorFloor contourFloor, float margin)
+        {
+            var (cw, ch) = DungeonProjection.EffectiveSize(child);
+            var (pw, ph) = DungeonProjection.EffectiveSize(parent);
+            float px = ToTile(parent.X), py = ToTile(parent.Y);
+            float offX = (pw + cw) * 0.5f, offY = (ph + ch) * 0.5f;
+            int max = DungeonLayout.TilesPerAxis;
+            for (int d = 0; d <= max; d++)
+                for (int s = 0; s < 4; s++)
+                {
+                    float cx, cy;
+                    switch (s)
+                    {
+                        case 0: cx = px + offX + d; cy = py; break;   // Right
+                        case 1: cx = px; cy = py + offY + d; break;   // Down (+Y)
+                        case 2: cx = px - offX - d; cy = py; break;   // Left
+                        default: cx = px; cy = py - offY - d; break;  // Up
+                    }
+                    if (IsFree(cx, cy, cw, ch, placed)
+                        && FloorFootprint.ContainsRect(contourFloor, margin, cx, cy, cw, ch))
+                    {
+                        child.X = Clamp01(ToNorm(cx));
+                        child.Y = Clamp01(ToNorm(cy));
+                        return true;
+                    }
+                }
+            return false;
+        }
+
+        // ---------------------------------------------------------------------------------------------
         // AdjacentAlongWall — strict shared-wall predicate.
         // ---------------------------------------------------------------------------------------------
 

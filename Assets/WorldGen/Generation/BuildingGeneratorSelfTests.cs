@@ -82,26 +82,27 @@ namespace WorldGen.Rendering
                         ok = false;
                     }
 
-            // ---- 7. Coherence: every floor's footprint bbox is CONTAINED in FLOOR 0's outline -------------
-            // The generation boundary is floor 0 (the drawn contour), so all floors nest in it. This checks the
-            // GENERATED building end-to-end; it is a WEAK guard on its own (floor 0's Arrange root, the
-            // entrance, is field-centred, so a fewer-room upper floor tends to fit even without the clamp) —
-            // test 8 below is the STRONG, non-vacuous guard for the within-outline fit (off-centre box).
+            // ---- 7. Coherence: every floor's footprint bbox is within FLOOR 0's outline (+ the contour margin)
+            // Rooms are packed inside floor 0's footprint SHAPE, which extends ContourMargin beyond floor 0's
+            // rooms, so an upper floor may reach up to that margin past floor 0's bbox — the tolerance allows it.
+            // WEAK guard on its own (floor 0's entrance root is field-centred); test 8 is the STRONG, non-vacuous
+            // shape-fit guard.
             var bc = BuildingGenerator.Generate(seed: 7, ownerPoiId: "p", roomCount: 8, floorCount: 3);
             var f0box = Bbox(bc.Floors[0]);
+            float coTol = FloorFootprint.ContourMargin + Eps;
             for (int f = 1; f < bc.Floors.Count; f++)
             {
                 var hi = Bbox(bc.Floors[f]);
-                bool contained = hi.minX >= f0box.minX - Eps && hi.minY >= f0box.minY - Eps
-                              && hi.maxX <= f0box.maxX + Eps && hi.maxY <= f0box.maxY + Eps;
+                bool contained = hi.minX >= f0box.minX - coTol && hi.minY >= f0box.minY - coTol
+                              && hi.maxX <= f0box.maxX + coTol && hi.maxY <= f0box.maxY + coTol;
                 if (!contained)
                 { Debug.LogError($"FAIL coherence: floor {f} bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] not within floor 0 [{f0box.minX:F1},{f0box.minY:F1}..{f0box.maxX:F1},{f0box.maxY:F1}]"); ok = false; }
             }
 
             // ---- 7c. COLUMN: the Лестница sits at the SAME (x,y) on EVERY floor (one vertical shaft) -------
-            // The defining invariant of the stairwell-column model. NON-VACUOUS: without the nudge-to-column
-            // step an upper Лестница lands at the field centre (Arrange centres its root), far from floor 0's
-            // off-centre column, so the offset would exceed a tile. Uses `bc` (off-centre column, seed 7).
+            // The defining invariant. PackAroundColumnWithinFootprint PINS the column exactly at floor 0's
+            // column position, so every floor's Лестница shares it. NON-VACUOUS: drop the pin and an upper
+            // Лестница keeps its graph-build default (~0,0), far off floor 0's off-centre column. (seed 7.)
             {
                 Room col0 = null;
                 foreach (var r in bc.Floors[0].Rooms) if (r.TypeId == 2) col0 = r;
@@ -120,11 +121,12 @@ namespace WorldGen.Rendering
                     }
             }
 
-            // ---- 8. GenerateFloorAroundColumn keeps EVERY room inside the contour SHAPE, not just its bbox ---
-            // contourFloor = an L (rooms at (14,14),(26,14),(14,26)); its bbox [8,32]² has an EMPTY bottom-right
-            // corner that is NOT part of the footprint. Every generated room must sit inside the L-shape (the
-            // SAME ContainsRect the renderer's out-of-contour flag uses), and the Лестница on the column.
-            // Non-vacuous: a bbox-only fit would let a room land in the empty corner → ContainsRect false → FAIL.
+            // ---- 8. Shape-aware packing: rooms APPEAR inside the contour SHAPE (the "only-Лестница" bug fix) --
+            // contourFloor = an L (rooms at (14,14),(26,14),(14,26)) — non-convex, with an empty bottom-right
+            // corner NOT in the footprint. Packing 6 rooms around a central column must: (a) place MORE than
+            // just the column (rooms actually appear — not reduce-to-1), (b) keep EVERY placed room inside the
+            // L-shape (the SAME ContainsRect the renderer's flag uses → flag-free), (c) pin the Лестница exactly
+            // on the column. Non-vacuous: reduce-to-1 fails (a); a bbox-only fit fails (b).
             {
                 int T2 = DungeonLayout.TilesPerAxis;
                 var contour = new InteriorFloor();
@@ -134,15 +136,16 @@ namespace WorldGen.Rendering
                 var upper = BuildingGenerator.GenerateFloorAroundColumn(
                     new System.Random(20260718), roomBudget: 6, 14f, 14f, 4, 4, contour, out var upStair);
 
+                if (upper.Rooms.Count < 2)
+                { Debug.LogError($"FAIL packing: only {upper.Rooms.Count} room(s) placed — rooms must pack around the column, not collapse to just the Лестница"); ok = false; }
                 foreach (var r in upper.Rooms)
                 {
                     var (w, h) = DungeonProjection.EffectiveSize(r);
                     if (!FloorFootprint.ContainsRect(contour, FloorFootprint.ContourMargin, r.X * T2, r.Y * T2, w, h))
-                    { Debug.LogError($"FAIL footprint-fit: room {r.Id} is outside the L-shaped contour"); ok = false; }
+                    { Debug.LogError($"FAIL packing: room {r.Id} is outside the L-shaped contour"); ok = false; }
                 }
-                float sdx = Mathf.Abs(upStair.X * T2 - 14f), sdy = Mathf.Abs(upStair.Y * T2 - 14f);
-                if (sdx > 1f || sdy > 1f)
-                { Debug.LogError($"FAIL footprint-fit: Лестница off the column by ({sdx:F1},{sdy:F1})"); ok = false; }
+                if (Mathf.Abs(upStair.X * T2 - 14f) > 0.5f || Mathf.Abs(upStair.Y * T2 - 14f) > 0.5f)
+                { Debug.LogError("FAIL packing: Лестница not pinned exactly on the column"); ok = false; }
             }
 
             // ---- 6. Determinism: same seed -> identical structure AND identical positions/bboxes ---------
