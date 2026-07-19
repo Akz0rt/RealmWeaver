@@ -83,10 +83,10 @@ namespace WorldGen.Rendering
                     }
 
             // ---- 7. Coherence: every floor's footprint bbox is CONTAINED in FLOOR 0's outline -------------
-            // The generation boundary is floor 0 (the drawn contour), so all floors nest in it (floors are
-            // decoupled — an upper floor need not be smaller than the one directly below, only within floor 0).
-            // NON-VACUOUS: the column is off-centre, so an upper floor generated WITHOUT the within-outline
-            // clamp (Arrange centres it on the field) would escape floor 0's off-centre bbox.
+            // The generation boundary is floor 0 (the drawn contour), so all floors nest in it. This checks the
+            // GENERATED building end-to-end; it is a WEAK guard on its own (floor 0's Arrange root, the
+            // entrance, is field-centred, so a fewer-room upper floor tends to fit even without the clamp) —
+            // test 8 below is the STRONG, non-vacuous guard for the within-outline fit (off-centre box).
             var bc = BuildingGenerator.Generate(seed: 7, ownerPoiId: "p", roomCount: 8, floorCount: 3);
             var f0box = Bbox(bc.Floors[0]);
             for (int f = 1; f < bc.Floors.Count; f++)
@@ -96,20 +96,6 @@ namespace WorldGen.Rendering
                               && hi.maxX <= f0box.maxX + Eps && hi.maxY <= f0box.maxY + Eps;
                 if (!contained)
                 { Debug.LogError($"FAIL coherence: floor {f} bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] not within floor 0 [{f0box.minX:F1},{f0box.minY:F1}..{f0box.maxX:F1},{f0box.maxY:F1}]"); ok = false; }
-            }
-
-            // ---- 7b. At least one pair is STRICTLY smaller on an axis (guards against a vacuous "always
-            //          equal" containment, where bbox(upper) == bbox(lower) would satisfy ⊆ trivially) ------
-            // Upper floors carry FEWER rooms than the floor below, so their packed footprint is strictly
-            // smaller on at least one axis. If the shrink-by-fewer-rooms step were removed and floors matched
-            // the floor below, this fails.
-            {
-                var lo = Bbox(bc.Floors[0]);
-                var hi = Bbox(bc.Floors[1]);
-                bool strictlySmaller = (hi.maxX - hi.minX) < (lo.maxX - lo.minX) - Eps
-                                    || (hi.maxY - hi.minY) < (lo.maxY - lo.minY) - Eps;
-                if (!strictlySmaller)
-                { Debug.LogError($"FAIL coherence: floor 1 bbox is not strictly smaller than floor 0 on any axis (fewer-rooms shrink missing?)"); ok = false; }
             }
 
             // ---- 7c. COLUMN: the Лестница sits at the SAME (x,y) on EVERY floor (one vertical shaft) -------

@@ -17,8 +17,11 @@ namespace WorldGen.Rendering
 
             ok &= dun.RoomTypes.Length == 3 && bld.RoomTypes.Length == 3;   // building = {Вход, Комната, Лестница}
             ok &= dun.RoomTypes[0].Label == "Вход" && bld.RoomTypes[0].Label == "Вход"; // index 0 = entrance
-            ok &= bld.RoomTypes[1].Label == "Комната" && bld.RoomTypes[1].CardLabel == "Комната"; // the plain room
-            ok &= bld.RoomTypes[2].Label == "Лестница"; // index 2 = the stairwell column
+            if (bld.RoomTypes.Length >= 3)   // guard the index access so a shrunk palette logs FAIL, not a throw
+            {
+                ok &= bld.RoomTypes[1].Label == "Комната" && bld.RoomTypes[1].CardLabel == "Комната"; // the plain room
+                ok &= bld.RoomTypes[2].Label == "Лестница"; // index 2 = the stairwell column
+            }
 
             // Pixel-identity lock: reproduces DungeonFlatRenderer's pre-profile TypeRole/LabelRole switches.
             ok &= dun.RoomTypes[0].Role == ThemeRole.Accent

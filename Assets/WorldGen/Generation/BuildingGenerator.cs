@@ -30,9 +30,13 @@ namespace WorldGen.Generation
         const int StairTypeId = 2;
 
         // A floor "fits" the outline when, after the rigid slide, its Лестница lands within this many tiles of
-        // the column (0 = exactly on it). Sub-tile in practice: NudgeRoomToward either aligns exactly (fits) or
-        // clamps with a multi-tile residual (doesn't fit), so 1 tile cleanly separates the two cases.
+        // the column (0 = exactly on it) AND its whole footprint stays inside the box (checked separately — the
+        // residual alone is not sufficient; see FitAroundColumn).
         const float AlignEps = 1f;
+
+        // Slack (tiles) for the "footprint bbox inside the outline box" check — generous vs the ToNorm/ToTile
+        // round-trip, far below one whole tile.
+        const float FitEps = 1e-3f;
 
         static int T => DungeonLayout.TilesPerAxis;
 
@@ -150,7 +154,14 @@ namespace WorldGen.Generation
         {
             CompactLayout.Arrange(floor);
             var (rdx, rdy) = CompactLayout.NudgeRoomToward(floor, floor.Rooms[0].Id, colX, colY, minX, minY, maxX, maxY);
-            return rdx < AlignEps && rdy < AlignEps;
+            if (rdx >= AlignEps || rdy >= AlignEps) return false;   // Лестница not on the column
+            // The residual alone is NOT sufficient: when the floor is WIDER than the box, NudgeRoomToward
+            // centres the over-wide bbox (ClampTranslate's lo>hi branch), and because the column is near the
+            // box centre the residual can be ~0 while the floor pokes out. So ALSO require the whole footprint
+            // to sit inside the box (the extent check the old ArrangeWithin used).
+            var (bMinX, bMinY, bMaxX, bMaxY) = DungeonProjection.ContentBoundsTiles(floor);
+            return bMinX >= minX - FitEps && bMinY >= minY - FitEps
+                && bMaxX <= maxX + FitEps && bMaxY <= maxY + FitEps;
         }
 
         /// <summary>Ground floor graph: room 0 is the entrance (TypeId 0), the rest plain rooms (TypeId 1);
@@ -230,7 +241,8 @@ namespace WorldGen.Generation
                 if (r.TypeId == EntranceTypeId) continue;
                 float dx = r.X * T - cx, dy = r.Y * T - cy;
                 float d = dx * dx + dy * dy;
-                if (best == null || d < bestD - 1e-6f) { bestD = d; best = r; }
+                if (best == null || d < bestD - 1e-6f
+                    || (Math.Abs(d - bestD) <= 1e-6f && r.Id < best.Id)) { bestD = d; best = r; }
             }
             return best;
         }
