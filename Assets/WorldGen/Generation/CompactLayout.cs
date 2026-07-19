@@ -213,6 +213,109 @@ namespace WorldGen.Generation
         }
 
         // ---------------------------------------------------------------------------------------------
+        // New-room placement (spec C6 / user 2026-07-19): a + room must land as PART of the building, never
+        // floating in empty space outside the contour.
+        // ---------------------------------------------------------------------------------------------
+
+        /// <summary>Place a NEWLY ADDED room FLUSH against the existing interior so it becomes part of the
+        /// building — used on the GROUND floor, where adding a room GROWS the footprint (the contour is
+        /// recomputed from this floor and will wrap the new room). Picks the existing room nearest the new
+        /// room's current position as the parent and snaps the new room to that parent's first free side
+        /// (Right/Down/Left/Up), exactly like generation's adjacency placement, so it lands touching the
+        /// building. Moves ONLY the new room; a lone first room is left where it is. Deterministic, headless.</summary>
+        public static void AttachNewRoom(InteriorFloor floor, int roomId)
+        {
+            if (floor == null || floor.Rooms.Count == 0) return;
+            var room = floor.GetRoom(roomId);
+            if (room == null) return;
+            var others = new List<Room>();
+            foreach (var r in SortedById(floor.Rooms)) if (r.Id != room.Id) others.Add(r);
+            if (others.Count == 0) return;   // first room on the floor — nothing to attach to
+            PlaceAgainst(room, NearestRoom(room, others), others);
+        }
+
+        /// <summary>Place a NEWLY ADDED room on an UPPER floor at the spot with the MOST free space INSIDE the
+        /// floor-0 contour (user 2026-07-19): if the room fits inside the contour without overlapping another
+        /// room it lands there; if the interior is full it goes where the most of its footprint is clear —
+        /// which pushes it to the edge, so it may poke OUTSIDE the contour and be red-flagged, but its
+        /// position is driven by "where there is the most room". Scans candidate centres on a 1-tile grid over
+        /// the contour's bbox, keeping only centres INSIDE the contour; scores each by the fraction of the
+        /// room footprint free of other rooms (primary), then the fraction inside the contour (tie-break),
+        /// then nearest the contour centroid. Moves ONLY the new room. Deterministic, headless.</summary>
+        public static void PlaceNewRoomInContour(InteriorFloor floor, int roomId, InteriorFloor contourFloor, float margin)
+        {
+            if (floor == null) return;
+            var room = floor.GetRoom(roomId);
+            if (room == null || contourFloor == null || contourFloor.Rooms.Count == 0) return;
+            var (w, h) = DungeonProjection.EffectiveSize(room);
+
+            var others = new List<Room>();
+            foreach (var r in SortedById(floor.Rooms)) if (r.Id != room.Id) others.Add(r);
+
+            var (cMinX, cMinY, cMaxX, cMaxY) = DungeonProjection.ContentBoundsTiles(contourFloor);
+            float ccx = (cMinX + cMaxX) * 0.5f, ccy = (cMinY + cMaxY) * 0.5f;
+
+            bool found = false;
+            float bestFree = -1f, bestInside = -1f, bestDist = 0f, bestX = 0f, bestY = 0f;
+            for (float cx = cMinX; cx <= cMaxX + 1e-3f; cx += 1f)
+                for (float cy = cMinY; cy <= cMaxY + 1e-3f; cy += 1f)
+                {
+                    if (!FloorFootprint.CoversPoint(contourFloor, margin, cx, cy)) continue;
+                    var (free, inside) = FootprintSampleScores(cx, cy, w, h, contourFloor, margin, others);
+                    float dist = (cx - ccx) * (cx - ccx) + (cy - ccy) * (cy - ccy);
+                    bool better = !found
+                        || free > bestFree + 1e-4f
+                        || (Approx(free, bestFree) && inside > bestInside + 1e-4f)
+                        || (Approx(free, bestFree) && Approx(inside, bestInside) && dist < bestDist - 1e-4f);
+                    if (better) { found = true; bestFree = free; bestInside = inside; bestDist = dist; bestX = cx; bestY = cy; }
+                }
+            if (found) { room.X = Clamp01(ToNorm(bestX)); room.Y = Clamp01(ToNorm(bestY)); }
+        }
+
+        // (freeOfRooms, insideContour) fractions of the room footprint centred at (cx,cy), sampled on a 5×5
+        // grid: freeOfRooms = samples not inside any OTHER room; insideContour = samples inside the contour.
+        static (float free, float inside) FootprintSampleScores(float cx, float cy, float w, float h,
+            InteriorFloor contourFloor, float margin, List<Room> others)
+        {
+            const int N = 5;
+            int freeCount = 0, insideCount = 0, total = 0;
+            for (int i = 0; i < N; i++)
+                for (int j = 0; j < N; j++)
+                {
+                    float sx = cx - w * 0.5f + w * (i + 0.5f) / N;
+                    float sy = cy - h * 0.5f + h * (j + 0.5f) / N;
+                    total++;
+                    if (FloorFootprint.CoversPoint(contourFloor, margin, sx, sy)) insideCount++;
+                    bool inOther = false;
+                    foreach (var o in others)
+                    {
+                        var (ow, oh) = DungeonProjection.EffectiveSize(o);
+                        float ox = ToTile(o.X), oy = ToTile(o.Y);
+                        if (sx > ox - ow * 0.5f && sx < ox + ow * 0.5f && sy > oy - oh * 0.5f && sy < oy + oh * 0.5f)
+                        { inOther = true; break; }
+                    }
+                    if (!inOther) freeCount++;
+                }
+            return (freeCount / (float)total, insideCount / (float)total);
+        }
+
+        /// <summary>The candidate nearest <paramref name="from"/> by normalized centre distance; ties broken
+        /// by lowest Id for determinism.</summary>
+        static Room NearestRoom(Room from, List<Room> candidates)
+        {
+            Room best = null; float bestD = float.MaxValue;
+            foreach (var c in candidates)
+            {
+                float dx = c.X - from.X, dy = c.Y - from.Y;
+                float d = dx * dx + dy * dy;
+                if (best == null || d < bestD - 1e-6f) { bestD = d; best = c; }
+            }
+            return best;
+        }
+
+        static bool Approx(float a, float b) => System.Math.Abs(a - b) <= 1e-4f;
+
+        // ---------------------------------------------------------------------------------------------
         // AdjacentAlongWall — strict shared-wall predicate.
         // ---------------------------------------------------------------------------------------------
 

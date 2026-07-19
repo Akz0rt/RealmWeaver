@@ -214,6 +214,96 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Nudge Off Overlaps: PASS" : "Self-Test Nudge Off Overlaps: FAIL");
         }
 
+        [ContextMenu("Self-Test: Floor Footprint")]
+        public void SelfTestFloorFootprint()
+        {
+            bool ok = true;
+            float m = FloorFootprint.ContourMargin;
+
+            // L-shaped floor 0: rooms at (50,50), (56,50), (50,56) — the bottom-right quadrant (~57,57) is
+            // EMPTY. A bbox contour would COVER that corner; the footprint SHAPE must not. 6×6 rooms so the
+            // empty corner survives the outward margin.
+            var f = new InteriorFloor { NextRoomId = 4 };
+            f.Rooms.Add(RoomAt(1, 50, 50, 6, 6));
+            f.Rooms.Add(RoomAt(2, 56, 50, 6, 6));
+            f.Rooms.Add(RoomAt(3, 50, 56, 6, 6));
+
+            // ---- 11. Room interiors covered; empty bbox corner NOT (the "hug the shape" property) ----------
+            if (!FloorFootprint.CoversPoint(f, m, 50, 50) || !FloorFootprint.CoversPoint(f, m, 56, 50) || !FloorFootprint.CoversPoint(f, m, 50, 56))
+            { Debug.LogError("FAIL footprint: a room centre is not inside the footprint"); ok = false; }
+            if (FloorFootprint.CoversPoint(f, m, 57, 57))
+            { Debug.LogError("FAIL footprint: the empty bbox corner is inside the footprint (bbox, not shape)"); ok = false; }
+
+            // ---- 12. ContainsRect: over a room = inside; over the empty corner = outside (→ red-flagged) ----
+            if (!FloorFootprint.ContainsRect(f, m, 50, 50, 6, 6))
+            { Debug.LogError("FAIL footprint: a floor-0 room reads as outside its own footprint"); ok = false; }
+            if (FloorFootprint.ContainsRect(f, m, 57, 57, 6, 6))
+            { Debug.LogError("FAIL footprint: a rect in the empty corner reads as inside the footprint"); ok = false; }
+
+            // ---- 13. Outline has a CONCAVE-NOTCH segment strictly inside the bbox ---------------------------
+            // Impossible for a bbox rectangle (its every edge lies on the bbox border), so this proves the
+            // outline traces the SHAPE. Fails if OutlineSegments returns a plain bounding rectangle.
+            var segs = FloorFootprint.OutlineSegments(f, m);
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var s in segs)
+            {
+                minX = Mathf.Min(minX, Mathf.Min(s.x0, s.x1)); maxX = Mathf.Max(maxX, Mathf.Max(s.x0, s.x1));
+                minY = Mathf.Min(minY, Mathf.Min(s.y0, s.y1)); maxY = Mathf.Max(maxY, Mathf.Max(s.y0, s.y1));
+            }
+            bool interiorSeg = false;
+            foreach (var s in segs)
+            {
+                bool vertical = Mathf.Approximately(s.x0, s.x1);
+                if (vertical && s.x0 > minX + 0.1f && s.x0 < maxX - 0.1f) interiorSeg = true;
+                if (!vertical && s.y0 > minY + 0.1f && s.y0 < maxY - 0.1f) interiorSeg = true;
+            }
+            if (segs.Count == 0 || !interiorSeg)
+            { Debug.LogError("FAIL footprint: outline has no interior (concave-notch) segment — tracing a bbox, not the shape"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Floor Footprint: PASS" : "Self-Test Floor Footprint: FAIL");
+        }
+
+        [ContextMenu("Self-Test: New Room Placement")]
+        public void SelfTestNewRoomPlacement()
+        {
+            bool ok = true;
+            int T = DungeonLayout.TilesPerAxis;
+            float m = FloorFootprint.ContourMargin;
+
+            // ---- 14. AttachNewRoom (ground floor): a + room snaps flush to the building --------------------
+            // Two flush rooms + a new room dropped FAR away. AttachNewRoom must snap it wall-adjacent to the
+            // nearest existing room (touching, non-overlapping) — it becomes part of the building, never floats
+            // outside. Fails if it no-ops (stays far, not adjacent).
+            var f = new InteriorFloor { NextRoomId = 4 };
+            f.Rooms.Add(RoomAt(1, 50, 50, 4, 4));
+            f.Rooms.Add(RoomAt(2, 54, 50, 4, 4));
+            f.Rooms.Add(RoomAt(3, 90, 90, 4, 4));   // the "new" room, dropped far away
+            CompactLayout.AttachNewRoom(f, 3);
+            var nr = f.GetRoom(3);
+            if (Overlap(nr, f.GetRoom(1)) || Overlap(nr, f.GetRoom(2)))
+            { Debug.LogError("FAIL attach: new room overlaps an existing room"); ok = false; }
+            if (!CompactLayout.AdjacentAlongWall(nr, f.GetRoom(1)) && !CompactLayout.AdjacentAlongWall(nr, f.GetRoom(2)))
+            { Debug.LogError("FAIL attach: new room not wall-adjacent to the building (didn't attach)"); ok = false; }
+
+            // ---- 15. PlaceNewRoomInContour (upper floor): a + room lands INSIDE the contour, not outside ---
+            // Contour = one big ground room; an upper floor with one room in the middle + a new room dropped
+            // far outside. It must be moved to a spot whose CENTRE is inside the contour, and (space existing)
+            // not overlapping the existing upper room. Fails if it no-ops (stays far outside the contour).
+            var contour = new InteriorFloor { NextRoomId = 2 };
+            contour.Rooms.Add(RoomAt(1, 64, 64, 12, 12));   // ground footprint ≈ [58,70]²
+            var upper = new InteriorFloor { NextRoomId = 3 };
+            upper.Rooms.Add(RoomAt(1, 64, 64, 4, 4));        // existing upper room, centre
+            upper.Rooms.Add(RoomAt(2, 100, 100, 4, 4));      // the "new" room, dropped far outside
+            CompactLayout.PlaceNewRoomInContour(upper, 2, contour, m);
+            var un = upper.GetRoom(2);
+            if (!FloorFootprint.CoversPoint(contour, m, un.X * T, un.Y * T))
+            { Debug.LogError("FAIL place-in-contour: new room centre not inside the contour"); ok = false; }
+            if (Overlap(un, upper.GetRoom(1)))
+            { Debug.LogError("FAIL place-in-contour: new room overlaps the existing upper room (a free spot existed)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test New Room Placement: PASS" : "Self-Test New Room Placement: FAIL");
+        }
+
         // ------------------------------------------------------------------------------------------------
         // Fixtures & independent helpers (read DungeonLayout.TilesPerAxis + EffectiveSize — never copy them).
         // ------------------------------------------------------------------------------------------------

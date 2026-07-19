@@ -42,12 +42,17 @@ namespace WorldGen.Rendering
         InteriorFloor lastLvl;
         RenderGraph lastRg = new RenderGraph();
 
-        // The Building floor-0 contour (C2' — spec C-render): the SAME reference rectangle drawn on every
-        // floor, recomputed once per RebuildView (not per drag/cascade frame — matches the "fit once per
-        // bind" cadence). `hasContour` gates BOTH the contour rect and the per-room red flag; strictly
-        // false for dungeons so their card hierarchy stays untouched.
+        // The Building floor-0 contour (spec C6): traces floor 0's FOOTPRINT SHAPE (union of its room rects
+        // + a small margin), NOT a bounding rectangle — so an L/T-shaped building reads as its real shape.
+        // The SAME reference on every floor. `contourSegs` (tile-space outline edges) is recomputed once per
+        // RebuildView (not per drag/cascade frame — matches the "fit once per bind" cadence); `contourFloor`
+        // is floor 0 itself, used LIVE by the per-room red-flag test (a floor-0 room is always inside its own
+        // footprint, so it never self-flags; upper-floor rooms flag when they poke outside floor 0's shape).
+        // `hasContour` gates BOTH the contour outline and the per-room red flag; strictly false for dungeons
+        // so their card hierarchy stays untouched.
         bool hasContour;
-        float contourMinX, contourMinY, contourMaxX, contourMaxY;
+        InteriorFloor contourFloor;
+        readonly List<(float x0, float y0, float x1, float y1)> contourSegs = new List<(float, float, float, float)>();
 
         const float MinCardPx = 20f;      // a 1-tile room must stay a usable click target
         const float LineThickness = 3f;
@@ -104,19 +109,20 @@ namespace WorldGen.Rendering
             DungeonUiKit.ClearLayer(contourLayer);
             outlines.Clear(); violationOutlines.Clear(); cards.Clear();
             lineRects.Clear(); junctionRects.Clear(); contourEdges.Clear();
+            contourSegs.Clear(); contourFloor = null;
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             hasContour = false;
             if (lvl == null) return;
 
-            // C2' — Building coherence overlay: the floor-0 contour is the SAME reference rectangle on
-            // every floor (spec C, 2026-07-18 revision). Strictly gated on Kind==Building — dungeons get
-            // neither the contour nor the out-of-contour red flag, and this leaves their card hierarchy
-            // untouched.
+            // C6 — Building coherence overlay: the floor-0 FOOTPRINT SHAPE (not a bbox) is the SAME reference
+            // on every floor. Strictly gated on Kind==Building — dungeons get neither the contour nor the
+            // out-of-contour red flag, and this leaves their card hierarchy untouched.
             hasContour = dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0;
             if (hasContour)
             {
-                (contourMinX, contourMinY, contourMaxX, contourMaxY) = DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]);
-                for (int i = 0; i < 4; i++) contourEdges.Add(BuildContourEdgeRect());
+                contourFloor = dungeon.Floors[0];
+                contourSegs.AddRange(FloorFootprint.OutlineSegments(contourFloor, FloorFootprint.ContourMargin));
+                for (int i = 0; i < contourSegs.Count; i++) contourEdges.Add(BuildContourEdgeRect());
             }
 
             foreach (var seg in lastRg.Segments) lineRects.Add(BuildLineRect());
@@ -152,7 +158,7 @@ namespace WorldGen.Rendering
                 rt.anchoredPosition = Local(r.X * DungeonLayout.TilesPerAxis, r.Y * DungeonLayout.TilesPerAxis);
                 rt.sizeDelta = FootprintPx(r);
                 if (hasContour && violationOutlines.TryGetValue(r.Id, out var vOutline) && vOutline != null)
-                    vOutline.enabled = OutsideContour(r, contourMinX, contourMinY, contourMaxX, contourMaxY);
+                    vOutline.enabled = OutsideContour(r);
             }
             for (int i = 0; i < rg.Segments.Count && i < lineRects.Count; i++)
             {
@@ -254,7 +260,7 @@ namespace WorldGen.Rendering
             return (RectTransform)go.transform;
         }
 
-        /// <summary>One edge of the floor-0 contour rectangle (C2', Building only) — a fixed light-blue
+        /// <summary>One edge of the floor-0 footprint outline (C6, Building only) — a fixed light-blue
         /// colour, NOT ThemeService-tagged, so it does not repaint on a Dark/Light theme switch (spec's
         /// colours are provisional and theme-independent for now). Draw-only, never selectable.</summary>
         RectTransform BuildContourEdgeRect()
@@ -267,33 +273,31 @@ namespace WorldGen.Rendering
             return (RectTransform)go.transform;
         }
 
-        /// <summary>Re-place the 4 contour edge rects from the cached floor-0 bounds and the CURRENT
-        /// Projection. Runs every RepositionRooms call (not just RebuildView) so the contour tracks a
-        /// future pan/zoom (Task 5) the same way cards do; the bounds themselves only change on the next
-        /// RebuildView, matching the "fit once per bind" cadence.</summary>
+        /// <summary>Re-place the cached footprint-outline edge rects (one per <see cref="contourSegs"/>
+        /// segment) through the CURRENT Projection. Runs every RepositionRooms call (not just RebuildView) so
+        /// the contour tracks a future pan/zoom (Task 5) the same way cards do; the segments themselves only
+        /// change on the next RebuildView, matching the "fit once per bind" cadence.</summary>
         void RepositionContour()
         {
-            if (contourEdges.Count < 4) return;
-            Vector2 p00 = Local(contourMinX, contourMinY);
-            Vector2 p10 = Local(contourMaxX, contourMinY);
-            Vector2 p11 = Local(contourMaxX, contourMaxY);
-            Vector2 p01 = Local(contourMinX, contourMaxY);
-            PlaceLine(contourEdges[0], p00, p10, ContourThickness);
-            PlaceLine(contourEdges[1], p10, p11, ContourThickness);
-            PlaceLine(contourEdges[2], p11, p01, ContourThickness);
-            PlaceLine(contourEdges[3], p01, p00, ContourThickness);
+            for (int i = 0; i < contourSegs.Count && i < contourEdges.Count; i++)
+            {
+                var s = contourSegs[i];
+                PlaceLine(contourEdges[i], Local(s.x0, s.y0), Local(s.x1, s.y1), ContourThickness);
+            }
         }
 
-        /// <summary>True if room `r`'s tile-space footprint AABB is not FULLY inside [minX..maxX]×[minY..maxY]
-        /// — i.e. it pokes outside the floor-0 contour and should be red-flagged (spec C: "change or remove
-        /// me"). Footprint via EffectiveSize, same as ContentBoundsTiles/HitTest use.</summary>
-        static bool OutsideContour(Room r, float minX, float minY, float maxX, float maxY)
+        /// <summary>True if room `r`'s tile-space footprint is not FULLY inside floor 0's footprint SHAPE
+        /// (union of its room rects + margin) — i.e. it pokes outside the drawn contour and should be red-
+        /// flagged (spec C6: "change or remove me"). A floor-0 room is part of that footprint, so it never
+        /// self-flags; upper-floor rooms flag when they extend past floor 0's shape. Footprint via
+        /// EffectiveSize, same as the contour/HitTest use.</summary>
+        bool OutsideContour(Room r)
         {
+            if (contourFloor == null) return false;
             float cx = r.X * DungeonLayout.TilesPerAxis;
             float cy = r.Y * DungeonLayout.TilesPerAxis;
             var (w, h) = DungeonProjection.EffectiveSize(r);
-            float hw = w * 0.5f, hh = h * 0.5f;
-            return (cx - hw) < minX || (cx + hw) > maxX || (cy - hh) < minY || (cy + hh) > maxY;
+            return !FloorFootprint.ContainsRect(contourFloor, FloorFootprint.ContourMargin, cx, cy, w, h);
         }
 
         /// <summary>Draw-only crossing marker: a small diamond (square rotated 45°). Never selectable, no

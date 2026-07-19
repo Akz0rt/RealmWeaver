@@ -306,11 +306,20 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null) return null;
             var room = DungeonOps.AddRoom(lvl, 0.5f, 0.5f);
-            // BUILDING (spec C4 model): a new room appears at the canvas centre, likely ON TOP of the packed
-            // interior. Treat it as the "just-placed" room so the settle below nudges IT (and only it) off any
-            // overlap to a free spot near the centre — never re-packing the existing rooms. Dungeons keep the
-            // previous anchor (their Separate cascade handles a new room as before).
-            if (dungeon != null && dungeon.Kind == InteriorKind.Building) lastAnchorRoomId = room.Id;
+            // BUILDING (spec C6 / user 2026-07-19): a + room must become PART of the building, never float in
+            // empty space outside the contour. GROUND floor → attach it flush to the nearest room (the
+            // footprint grows to wrap it). UPPER floor → place it at the spot with the most free space INSIDE
+            // floor 0's contour (may poke out and get red-flagged if the interior is full, but its position is
+            // driven by where there's the most room). The placement is FINAL — we do NOT set lastAnchorRoomId,
+            // so BeginCascade's anti-overlap nudge does not drag the new room off its chosen spot. Dungeons
+            // keep their previous behaviour (Separate cascade handles a new room as before).
+            if (dungeon != null && dungeon.Kind == InteriorKind.Building)
+            {
+                if (levelIndex == 0)
+                    CompactLayout.AttachNewRoom(lvl, room.Id);
+                else
+                    CompactLayout.PlaceNewRoomInContour(lvl, room.Id, dungeon.Floors[0], FloorFootprint.ContourMargin);
+            }
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
