@@ -100,45 +100,66 @@ namespace WorldGen.Rendering
                 AddInfoText(content, "Выберите комнату", 12, ThemeRole.Mut, FontStyle.Italic);
             else
             {
-                BuildRoomSection(content, lvl, room);
-                BuildSecretsSection(content, room);
-                BuildCorridorsSection(content, lvl, room);
+                bool locked = StructureLocked;
+                BuildRoomSection(content, lvl, room, locked);
+                if (!locked)   // structural editing is disabled on a generated upper floor — see StructureLocked
+                {
+                    BuildSecretsSection(content, room);
+                    BuildCorridorsSection(content, lvl, room);
+                }
                 AddDivider(content);
             }
             BuildValidationSection(content);
         }
 
+        /// <summary>A building's GENERATED upper floors are machine-maintained (DungeonEditorScreen's generate-only
+        /// toolbar): the layout — room type, size, corridors, secret passages — is not hand-edited here, because
+        /// those edits would overlap neighbours or break the shared stairwell and are never re-packed. The DM may
+        /// still name/annotate rooms (Title/Body stay live). Floor 0 and dungeons are fully editable.</summary>
+        bool StructureLocked =>
+            dungeon != null && dungeon.Kind == InteriorKind.Building && currentLevelIndex != null && currentLevelIndex() > 0;
+
         // ── Комната ──────────────────────────────────────────────────────────────
 
-        void BuildRoomSection(Transform parent, InteriorFloor lvl, Room room)
+        void BuildRoomSection(Transform parent, InteriorFloor lvl, Room room, bool locked)
         {
             var sec = AddSection(parent, "RoomSection");
             AddInfoText(sec.transform, "КОМНАТА", 10, ThemeRole.Mut, FontStyle.Bold);
 
-            var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
-            var profile = Profiles.ForRoom(dungeon);
-            for (int i = 0; i < profile.RoomTypes.Length; i++)
+            if (locked)
             {
-                int typeId = i;   // capture for the closure
-                AddChoiceButton(typeRow.transform, profile.RoomTypes[i].Label, room.TypeId == typeId, () => SetType(lvl, room, typeId));
+                // Generated upper floor: no type / size / corridor / secret editing (see StructureLocked). Only
+                // the notes below stay live; a hint explains why the structural controls are absent.
+                AddInfoText(sec.transform, "Этаж генерируется — правьте раскладку через «Перегенерировать». Здесь редактируются только заметки.",
+                    10, ThemeRole.Mut, FontStyle.Italic);
             }
+            else
+            {
+                var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
+                var profile = Profiles.ForRoom(dungeon);
+                for (int i = 0; i < profile.RoomTypes.Length; i++)
+                {
+                    int typeId = i;   // capture for the closure
+                    AddChoiceButton(typeRow.transform, profile.RoomTypes[i].Label, room.TypeId == typeId, () => SetType(lvl, room, typeId));
+                }
 
-            // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
-            // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
-            // stepper clamps into RoomSizing's 1..MaxSide range and fires OnChanged, which runs
-            // RevalidateAndRefresh → viewController.BeginCascade(), so the room resizes and the cascade
-            // animates the whole floor to its re-settled positions.
-            var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
-            var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
-            sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
-            sizeCap.raycastTarget = false;
-            BuildStepper(sizeRow.transform, "W", room.SizeW.ToString(),
-                () => ResizeRoom(room, -1, 0), () => ResizeRoom(room, 1, 0), true);
-            var sizeX = MakeText(sizeRow.transform, "×", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleCenter);
-            sizeX.gameObject.AddComponent<LayoutElement>().preferredWidth = 12f;
-            sizeX.raycastTarget = false;
-            BuildStepper(sizeRow.transform, "H", room.SizeH.ToString(),
-                () => ResizeRoom(room, 0, -1), () => ResizeRoom(room, 0, 1), true);
+                // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
+                // same nesting precedent as the secret-passage «Эт./Ком.» steppers below (targetRow). Each
+                // stepper clamps into RoomSizing's 1..MaxSide range and fires OnChanged, which runs
+                // RevalidateAndRefresh → viewController.BeginCascade(), so the room resizes and the cascade
+                // animates the whole floor to its re-settled positions.
+                var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
+                var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
+                sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
+                sizeCap.raycastTarget = false;
+                BuildStepper(sizeRow.transform, "W", room.SizeW.ToString(),
+                    () => ResizeRoom(room, -1, 0), () => ResizeRoom(room, 1, 0), true);
+                var sizeX = MakeText(sizeRow.transform, "×", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleCenter);
+                sizeX.gameObject.AddComponent<LayoutElement>().preferredWidth = 12f;
+                sizeX.raycastTarget = false;
+                BuildStepper(sizeRow.transform, "H", room.SizeH.ToString(),
+                    () => ResizeRoom(room, 0, -1), () => ResizeRoom(room, 0, 1), true);
+            }
 
             var titleField = BuildInputField(sec.transform, false, "Название комнаты");
             titleField.text = room.Title;

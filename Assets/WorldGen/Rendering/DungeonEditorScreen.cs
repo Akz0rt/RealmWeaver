@@ -46,6 +46,8 @@ namespace WorldGen.Rendering
         const float ToolbarHeight = 36f;
         const int DefaultBuildingFloors = 2;
         const int DefaultRooms = 6;
+        const int MaxUpperRooms = 20;    // hard ceiling for the generate-only stepper (below the area cap when it's tighter)
+        const int RegenAttempts = 16;    // seeds tried per «Перегенерировать»: within the area cap, one press reliably packs
 
         void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }
 
@@ -290,11 +292,13 @@ namespace WorldGen.Rendering
             bool generateOnly = current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex > 0;
             if (generateOnly)
             {
-                upperRoomCount = Mathf.Max(1, CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms);
+                int cap = UpperCap();
+                upperRoomCount = Mathf.Clamp(CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms, 1, cap);
                 AddToolbarLabel(toolbarBar, "Комнаты:", 76f);
                 AddToolbarButton(toolbarBar, "−", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(-1));
                 upperCountLabel = AddToolbarLabel(toolbarBar, upperRoomCount.ToString(), 30f);
                 AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
+                AddToolbarLabel(toolbarBar, $"из {cap}", 52f);   // the contour's deterministic area capacity
                 AddToolbarButton(toolbarBar, "Перегенерировать", 150f, ThemeRole.Accent, RegenerateUpperFloor);
                 regenMsgLabel = AddToolbarLabel(toolbarBar, "", 320f);
                 ThemeService.Tag(regenMsgLabel, ThemeRole.Danger);
@@ -310,8 +314,19 @@ namespace WorldGen.Rendering
 
         void AdjustUpperRoomCount(int delta)
         {
-            upperRoomCount = Mathf.Clamp(upperRoomCount + delta, 1, 20);
+            upperRoomCount = Mathf.Clamp(upperRoomCount + delta, 1, UpperCap());
             if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
+        }
+
+        /// <summary>Deterministic max total room count (column + rooms) that fits the CURRENT upper floor by AREA,
+        /// capped at the stepper's hard ceiling. Non-mutating (reads floor 0's existing column, never designates
+        /// one), so it is safe from the toolbar refresh. Falls back to the ceiling when floor 0 has no column
+        /// yet — there is nothing to size a capacity against until one exists.</summary>
+        int UpperCap()
+        {
+            var col = current != null ? BuildingGenerator.FindFloorZeroColumn(current) : null;
+            if (col == null) return MaxUpperRooms;
+            return Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], col.SizeW, col.SizeH), 1, MaxUpperRooms);
         }
 
         /// <summary>«Перегенерировать» for a building UPPER floor: rebuild it around the shared column with the
@@ -320,13 +335,46 @@ namespace WorldGen.Rendering
         void RegenerateUpperFloor()
         {
             if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
+            // Regenerate REPLACES the whole floor, discarding any authored room content. Mirror the floor-
+            // removal safeguard: confirm first when the floor has named/annotated rooms (there is no undo).
+            var lvl = CurrentLevel;
+            bool annotated = lvl != null && lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
+            if (annotated)
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Перегенерировать этаж?",
+                    "Комнаты этого этажа, их названия и заметки будут заменены.", ok => { if (ok) DoRegenerateUpperFloor(); });
+            else
+                DoRegenerateUpperFloor();
+        }
+
+        void DoRegenerateUpperFloor()
+        {
+            if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
             var column = BuildingGenerator.EnsureFloorZeroColumn(current);
             if (column == null) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+
+            // Deterministic verdict FIRST: compare the contour's area against what the requested rooms need. This
+            // is seed-independent, so an over-capacity count is rejected the SAME way every press (the old check
+            // ran a single greedy pack, which could fail one seed and succeed the next — the flip-flop the DM saw).
+            int cap = Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], column.SizeW, column.SizeH), 1, MaxUpperRooms);
+            if (upperRoomCount > cap)
+            {
+                upperRoomCount = cap;   // pin the stepper to the real limit so the next press succeeds
+                if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
+                ShowRegenMsg($"В контур помещается не более {cap} комнат");
+                return;   // floor unchanged — nothing was generated
+            }
+
+            // Within the area cap a single greedy pack can still miss on an unlucky room-size roll; retry fresh
+            // seeds so ONE press reliably packs (no "won't fit -> press again -> fits").
             int T = DungeonLayout.TilesPerAxis;
-            bool fits = BuildingGenerator.TryGenerateFloorAroundColumn(FreshSeed(), upperRoomCount,
-                column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out var newFloor, out var newStair);
-            if (!fits) { ShowRegenMsg($"{upperRoomCount} комнат не помещается в контур — уменьшите количество"); return; }
+            InteriorFloor newFloor = null; Room newStair = null; bool fits = false;
+            for (int a = 0; a < RegenAttempts && !fits; a++)
+                fits = BuildingGenerator.TryGenerateFloorAroundColumn(FreshSeed(), upperRoomCount,
+                    column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out newFloor, out newStair);
+            if (!fits) { ShowRegenMsg($"Не удалось разместить {upperRoomCount} — уменьшите количество"); return; }
+
             ReplaceCurrentUpperFloor(newFloor, newStair);
+            selectedRoomId = 0;   // old room ids are gone — clear the mirror so the inspector doesn't show a stale room
             ShowRegenMsg("");
             RefreshBody();
             RevalidateAndRefresh();

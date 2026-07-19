@@ -252,6 +252,56 @@ namespace WorldGen.Rendering
             if (made != null && made.Id == 1)
             { Debug.LogError("FAIL column-ensure: the entrance was designated as the column"); ok = false; }
 
+            // ---- 12. Deterministic AREA capacity (the «Перегенерировать» flip-flop fix) --------------------
+            // The old fit-check ran a single seed-dependent pack, so one press said "won't fit" and the next
+            // generated the same count. MaxRoomsByArea is a pure AREA verdict — same answer every call — and it
+            // must BOUND what the packer can actually realize. Non-vacuous: a broken area sum, a lost margin, a
+            // non-monotone cap, or an area verdict that disagrees with the packer each flips an assertion.
+            {
+                int T3 = DungeonLayout.TilesPerAxis;
+                float m = FloorFootprint.ContourMargin;
+
+                // (a) EXACT union area of a single 6×6 room = (6+2m)² (margin is added on BOTH sides).
+                var one = new InteriorFloor();
+                one.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 6, SizeH = 6, X = 0.5f, Y = 0.5f });
+                float wantArea = (6f + 2f * m) * (6f + 2f * m);
+                float gotArea = FloorFootprint.UsableAreaTiles(one, m);
+                if (Mathf.Abs(gotArea - wantArea) > 0.01f)
+                { Debug.LogError($"FAIL area: single 6×6 room usable area {gotArea:F2}, want {wantArea:F2}"); ok = false; }
+
+                // (b) DETERMINISTIC: same contour → same cap every call (no hidden RNG / seed dependence).
+                int capOne = BuildingGenerator.MaxRoomsByArea(one, 4, 4);
+                if (BuildingGenerator.MaxRoomsByArea(one, 4, 4) != capOne)
+                { Debug.LogError("FAIL cap: MaxRoomsByArea not deterministic for the same contour"); ok = false; }
+
+                // (c) MONOTONE: a larger contour admits strictly more rooms than a smaller one.
+                var big = new InteriorFloor();
+                big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 20, SizeH = 20, X = 0.5f, Y = 0.5f });
+                int capBig = BuildingGenerator.MaxRoomsByArea(big, 4, 4);
+                if (!(capBig > capOne))
+                { Debug.LogError($"FAIL cap: larger contour cap {capBig} not > smaller {capOne}"); ok = false; }
+
+                // (d) SOUND vs the packer. The cap must FORBID a count the packer genuinely can't place, and be
+                //     consistent with one it can. Small contour: cap rejects 12, and no seed packs 12. Big
+                //     contour: cap admits 3 (col+2), and some seed packs 3 within a handful of retries.
+                float cx = 0.5f * T3, cy = 0.5f * T3;
+                if (capOne >= 12)
+                { Debug.LogError($"FAIL cap: small contour cap {capOne} should reject 12"); ok = false; }
+                bool any12 = false;
+                for (int s = 0; s < 12 && !any12; s++)
+                    if (BuildingGenerator.TryGenerateFloorAroundColumn(1000 + s, 12, cx, cy, 4, 4, one, out _, out _)) any12 = true;
+                if (any12)
+                { Debug.LogError("FAIL cap: packer placed 12 rooms in a contour whose area forbids it — area verdict unsound"); ok = false; }
+
+                if (capBig < 3)
+                { Debug.LogError($"FAIL cap: big contour cap {capBig} should admit 3"); ok = false; }
+                bool any3 = false;
+                for (int s = 0; s < 12 && !any3; s++)
+                    if (BuildingGenerator.TryGenerateFloorAroundColumn(2000 + s, 3, cx, cy, 4, 4, big, out _, out _)) any3 = true;
+                if (!any3)
+                { Debug.LogError("FAIL cap: no seed packed 3 rooms into a contour whose area easily admits them (retry-feasibility broken)"); ok = false; }
+            }
+
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
         }
 

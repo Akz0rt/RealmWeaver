@@ -114,6 +114,25 @@ namespace WorldGen.Generation
             return segs;
         }
 
+        /// <summary>Exact area (tile²) enclosed by the floor footprint — the union of the expanded room rects,
+        /// i.e. the region inside the drawn contour. Summed over the covered cells of the SAME rectangle
+        /// arrangement the outline uses, so "area inside the contour" means exactly what the contour shows (an
+        /// L/T notch removes its area). 0 for an empty floor. Used to decide, deterministically, how many rooms
+        /// can fit a floor by area (unlike a single seed-dependent pack attempt).</summary>
+        public static float UsableAreaTiles(InteriorFloor floor, float margin)
+        {
+            var rects = ExpandedRects(floor, margin);
+            if (rects.Count == 0) return 0f;
+            var xs = AllEdges(rects, true);
+            var ys = AllEdges(rects, false);
+            float area = 0f;
+            for (int i = 0; i + 1 < xs.Count; i++)
+                for (int j = 0; j + 1 < ys.Count; j++)
+                    if (CoveredByAny(rects, (xs[i] + xs[i + 1]) * 0.5f, (ys[j] + ys[j + 1]) * 0.5f))
+                        area += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+            return area;
+        }
+
         // Sorted, de-duplicated edge coordinates (x or y) of all rects.
         static List<float> AllEdges(List<Box> rects, bool xAxis)
         {

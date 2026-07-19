@@ -29,6 +29,13 @@ namespace WorldGen.Generation
         const int RoomTypeId = 1;
         public const int StairTypeId = 2;   // Лестница — the stairwell column (the editor's +этаж reads this)
 
+        // Deterministic AREA capacity. Sides roll uniformly in [MinSide, MaxSideExclusive) -> E[side]=5,
+        // E[area]=25 tile². PackFill discounts for the gaps a real flush-pack around a fixed column leaves
+        // (empirical; tune at the checkpoint like ContourMargin). Used to reject an impossible room count BEFORE
+        // a seed-dependent pack, and to only offer counts a retry-driven pack can actually realize.
+        static float AvgRoomArea { get { float s = (MinSide + MaxSideExclusive - 1) * 0.5f; return s * s; } }
+        public const float PackFill = 0.72f;
+
         static int T => DungeonLayout.TilesPerAxis;
 
         public static InteriorData Generate(int seed, string ownerPoiId, int roomCount, int floorCount)
@@ -106,12 +113,36 @@ namespace WorldGen.Generation
         public static Room EnsureFloorZeroColumn(InteriorData d)
         {
             if (d == null || d.Floors == null || d.Floors.Count == 0) return null;
+            var existing = FindFloorZeroColumn(d);
+            if (existing != null) return existing;   // already has a column
             var floor0 = d.Floors[0];
-            foreach (var r in floor0.Rooms) if (r.TypeId == StairTypeId) return r;   // already has a column
             var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(floor0);
             var col = NearestNonEntranceRoomToCentre(floor0, minX, minY, maxX, maxY);
             if (col != null) col.TypeId = StairTypeId;
             return col;
+        }
+
+        /// <summary>Floor 0's stairwell column (its Лестница) if one is already designated, else null. NON-mutating,
+        /// unlike <see cref="EnsureFloorZeroColumn"/> — safe to call from display/refresh paths (the toolbar's
+        /// capacity readout) that must not designate a column as a side effect.</summary>
+        public static Room FindFloorZeroColumn(InteriorData d)
+        {
+            if (d == null || d.Floors == null || d.Floors.Count == 0) return null;
+            foreach (var r in d.Floors[0].Rooms) if (r.TypeId == StairTypeId) return r;
+            return null;
+        }
+
+        /// <summary>Deterministic capacity: the largest TOTAL room count (INCLUDING the Лестница column) that fits
+        /// by AREA inside <paramref name="contourFloor"/>'s drawn contour. The contour's usable area, minus the
+        /// column footprint, divided by the average room footprint (discounted by <see cref="PackFill"/> for
+        /// packing gaps). Seed-INDEPENDENT — unlike a single greedy pack it gives the SAME verdict every time, so
+        /// «Перегенерировать» stops flip-flopping between "won't fit" and success on one count. Always ≥ 1.</summary>
+        public static int MaxRoomsByArea(InteriorFloor contourFloor, int colW, int colH)
+        {
+            float usable = FloorFootprint.UsableAreaTiles(contourFloor, FloorFootprint.ContourMargin);
+            float avail = usable - colW * colH;
+            int extra = avail > 0f ? (int)(avail * PackFill / AvgRoomArea) : 0;
+            return 1 + Math.Max(0, extra);
         }
 
         /// <summary>Generate ONE upper floor around the stairwell column: a Лестница (room 0, the column's
