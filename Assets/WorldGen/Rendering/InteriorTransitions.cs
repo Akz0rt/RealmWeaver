@@ -87,6 +87,22 @@ namespace WorldGen.Rendering
                     });
                 }
 
+            // Non-stair portals (secret passages / exit): the generator makes none, but the shared inspector
+            // lets a DM author a secret passage on a building room too — render it the SAME "⇢" way a dungeon
+            // does so it is never silently dropped (Stairs/Ladder/Trapdoor are already shown above as ⬆/⬇).
+            foreach (var p in room.Portals)
+            {
+                if (IsStair(p.Kind)) continue;
+                bool portalExit = p.Kind == PortalKind.DungeonExit;
+                list.Add(new Transition
+                {
+                    Arrow = Side,
+                    Label = portalExit ? "Выход" : $"Э{p.TargetFloorIndex + 1}·{p.TargetRoomId}",
+                    TargetFloorIndex = p.TargetFloorIndex,
+                    Clickable = p.Kind == PortalKind.SecretDoor
+                });
+            }
+
             // The building entrance is the exit to the outside (floor 0). Informational — leaving the building
             // is live navigation (session mode), deferred.
             if (room.TypeId == 0 && floorIndex == 0)

@@ -11,6 +11,7 @@ namespace WorldGen.Rendering
     {
         const string Up = "⬆";
         const string Down = "⬇";
+        const string Side = "⇢";
 
         [ContextMenu("Self-Test: Interior Transitions")]
         public void SelfTestInteriorTransitions()
@@ -86,6 +87,53 @@ namespace WorldGen.Rendering
             var dEntT = InteriorTransitions.For(d, FloorLinkMode.ImplicitDescent, 0, df0.Rooms[0]);
             if (!Has(dEntT, Up, "Выход") || dEntT.Count != 1)
             { Debug.LogError($"FAIL dungeon: floor-0 entrance want ⬆ Выход, got {dEntT.Count}"); ok = false; }
+
+            // 7. DUNGEON portals render "⇢" — the byte-identity case the boss/entrance tests miss. A SecretDoor
+            //    is clickable→its target; a DungeonExit is informational. Fails if the "⇢ Э{n}·{room}" format,
+            //    the +1 floor offset, or the SecretDoor-only clickable gate regresses.
+            var portalRoom = new Room { Id = 3, TypeId = 1 };
+            portalRoom.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 1, TargetRoomId = 1 });
+            portalRoom.Portals.Add(new Portal { Kind = PortalKind.DungeonExit });
+            df0.Rooms.Add(portalRoom);
+            var portT = InteriorTransitions.For(d, FloorLinkMode.ImplicitDescent, 0, portalRoom);
+            var secret = Find(portT, Side, "Э2·1");
+            var dexit = Find(portT, Side, "Выход");
+            if (portT.Count != 2) { Debug.LogError($"FAIL dungeon-portal: want 2 portal badges, got {portT.Count}"); ok = false; }
+            if (secret.Arrow == null || !secret.Clickable || secret.TargetFloorIndex != 1)
+            { Debug.LogError("FAIL dungeon-portal: SecretDoor must be ⇢ Э2·1, clickable→floor 1"); ok = false; }
+            if (dexit.Arrow == null || dexit.Clickable)
+            { Debug.LogError("FAIL dungeon-portal: DungeonExit must be ⇢ Выход, not clickable"); ok = false; }
+
+            // 8. BUILDING explicit+derived DEDUP: floor-1 room B links DOWN to floor-0 room A explicitly, and
+            //    floor-0 room A links UP to B. B must show the down badge exactly ONCE (its explicit one), not
+            //    also a derived duplicate. Fails with Count 2 if the linkedFloors dedup is removed.
+            var bd = new InteriorData { Kind = InteriorKind.Building };
+            var bd0 = new InteriorFloor();
+            var roomA = new Room { Id = 1, TypeId = 1 };
+            roomA.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 1, TargetRoomId = 1 });
+            bd0.Rooms.Add(roomA);
+            bd.Floors.Add(bd0);
+            var bd1 = new InteriorFloor();
+            var roomB = new Room { Id = 1, TypeId = 1 };
+            roomB.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 0, TargetRoomId = 1 });
+            bd1.Rooms.Add(roomB);
+            bd.Floors.Add(bd1);
+            var dedupT = InteriorTransitions.For(bd, FloorLinkMode.ExplicitStairs, 1, roomB);
+            if (!Has(dedupT, Down, "Этаж 1") || dedupT.Count != 1)
+            { Debug.LogError($"FAIL building-dedup: room B want exactly one ⬇ Этаж 1, got {dedupT.Count}"); ok = false; }
+
+            // 9. BUILDING non-stair portal is NOT dropped: a hand-authored SecretDoor on a building room still
+            //    renders a ⇢ badge (before C5 it did; the stair-only path must not silently drop it).
+            var bs = new InteriorData { Kind = InteriorKind.Building };
+            var bs0 = new InteriorFloor();
+            var secretRoom = new Room { Id = 1, TypeId = 1 };
+            secretRoom.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 0, TargetRoomId = 2 });
+            bs0.Rooms.Add(secretRoom);
+            bs0.Rooms.Add(new Room { Id = 2, TypeId = 1 });
+            bs.Floors.Add(bs0);
+            var bsecretT = InteriorTransitions.For(bs, FloorLinkMode.ExplicitStairs, 0, secretRoom);
+            if (!Has(bsecretT, Side, "Э1·2"))
+            { Debug.LogError("FAIL building-secret: a SecretDoor on a building room must still render ⇢ Э1·2"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Interior Transitions: PASS" : "Self-Test Interior Transitions: FAIL");
         }
