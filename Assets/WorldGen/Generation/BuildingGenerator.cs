@@ -27,7 +27,7 @@ namespace WorldGen.Generation
         // Building room type ids — mirror BuildingProfile.RoomTypes order: 0 Вход, 1 Комната, 2 Лестница.
         const int EntranceTypeId = 0;
         const int RoomTypeId = 1;
-        const int StairTypeId = 2;
+        public const int StairTypeId = 2;   // Лестница — the stairwell column (the editor's +этаж reads this)
 
         // A floor "fits" the outline when, after the rigid slide, its Лестница lands within this many tiles of
         // the column (0 = exactly on it) AND its whole footprint stays inside the box (checked separately — the
@@ -107,6 +107,21 @@ namespace WorldGen.Generation
             foreach (var f in d.Floors)
                 foreach (var r in f.Rooms)
                     if (r.TypeId >= 3) r.TypeId = RoomTypeId;
+        }
+
+        /// <summary>Return floor 0's stairwell column (its Лестница room). If floor 0 has none yet, DESIGNATE a
+        /// central non-entrance room as the column (the user's single column, per the spec) and return it. Null
+        /// only when floor 0 is empty or has just the entrance (no room to host a stairwell). Used by the
+        /// editor's +этаж so a new floor can be generated around the SAME column. Deterministic; headless.</summary>
+        public static Room EnsureFloorZeroColumn(InteriorData d)
+        {
+            if (d == null || d.Floors == null || d.Floors.Count == 0) return null;
+            var floor0 = d.Floors[0];
+            foreach (var r in floor0.Rooms) if (r.TypeId == StairTypeId) return r;   // already has a column
+            var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(floor0);
+            var col = NearestNonEntranceRoomToCentre(floor0, minX, minY, maxX, maxY);
+            if (col != null) col.TypeId = StairTypeId;
+            return col;
         }
 
         /// <summary>Generate ONE upper floor around the stairwell column: a Лестница (room 0, the column's

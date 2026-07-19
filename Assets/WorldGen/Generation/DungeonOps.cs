@@ -68,22 +68,29 @@ namespace WorldGen.Generation
             room.TypeId = type;
         }
 
-        /// <summary>Remove a whole level with referential integrity: drop secret passages (on ANY level)
-        /// that targeted the removed level, and decrement TargetFloorIndex for secrets targeting any level
-        /// ABOVE the removed one (those floors shift down by one). Then remove the level itself.</summary>
+        /// <summary>Remove a whole level with referential integrity: drop INTER-FLOOR portals (on ANY level)
+        /// that targeted the removed level — so a building never keeps a stairwell to a floor that no longer
+        /// exists ("лестница вникуда") — and decrement TargetFloorIndex for those targeting any level ABOVE the
+        /// removed one (those floors shift down by one). Covers Stairs/Ladder/Trapdoor and SecretDoor alike; a
+        /// DungeonExit has no floor target and is left untouched. Then remove the level itself.</summary>
         public static void RemoveLevel(InteriorData dungeon, int levelIndex)
         {
             if (dungeon == null || levelIndex < 0 || levelIndex >= dungeon.Floors.Count) return;
             foreach (var lvl in dungeon.Floors)
                 foreach (var r in lvl.Rooms)
                 {
-                    r.Portals.RemoveAll(s => s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex == levelIndex);
+                    r.Portals.RemoveAll(s => IsInterFloor(s.Kind) && s.TargetFloorIndex == levelIndex);
                     foreach (var s in r.Portals)
-                        if (s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex > levelIndex)
+                        if (IsInterFloor(s.Kind) && s.TargetFloorIndex > levelIndex)
                             s.TargetFloorIndex--;
                 }
             dungeon.Floors.RemoveAt(levelIndex);
         }
+
+        // A portal that points at another FLOOR (its TargetFloorIndex is meaningful) — everything except the
+        // DungeonExit, which just leaves the dungeon.
+        static bool IsInterFloor(PortalKind k) =>
+            k == PortalKind.SecretDoor || k == PortalKind.Stairs || k == PortalKind.Ladder || k == PortalKind.Trapdoor;
 
         public static Portal AddSecret(Room room)
         {

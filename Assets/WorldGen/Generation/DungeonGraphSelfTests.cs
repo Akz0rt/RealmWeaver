@@ -107,14 +107,20 @@ namespace WorldGen.Rendering
             r0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 1, TargetRoomId = 5 });   // targets the removed level
             r0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, TargetFloorIndex = 2, TargetRoomId = r2.Id }); // level above → shifts to 1
             r0.Portals.Add(new Portal { Kind = PortalKind.DungeonExit });
+            // Stairs are inter-floor too: a stair to the removed level must be dropped (no "лестница вникуда"),
+            // and a stair to a level ABOVE must shift down — same integrity as secret doors.
+            r0.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 1, TargetRoomId = 7 });   // to the removed level → removed
+            r0.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 2, TargetRoomId = r2.Id }); // to the level above → shifts to 1
 
             DungeonOps.RemoveLevel(d, 1);
 
             ok &= d.Floors.Count == 2;
-            ok &= r0.Portals.Count == 3;                                                                    // the level-1 target was removed
+            ok &= r0.Portals.Count == 4;                                                                    // the two level-1 targets were removed
             ok &= r0.Portals.Exists(s => s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex == 0 && s.TargetRoomId == r0.Id);   // unchanged
             ok &= r0.Portals.Exists(s => s.Kind == PortalKind.SecretDoor && s.TargetFloorIndex == 1 && s.TargetRoomId == r2.Id);   // was 2 → 1
-            ok &= !r0.Portals.Exists(s => s.TargetRoomId == 5);                                             // removed
+            ok &= !r0.Portals.Exists(s => s.TargetRoomId == 5);                                             // secret to removed level: gone
+            ok &= !r0.Portals.Exists(s => s.TargetRoomId == 7);                                             // stair to removed level: gone (no лестница вникуда)
+            ok &= r0.Portals.Exists(s => s.Kind == PortalKind.Stairs && s.TargetFloorIndex == 1 && s.TargetRoomId == r2.Id);       // stair was 2 → 1
             ok &= r0.Portals.Exists(s => s.Kind == PortalKind.DungeonExit);                          // unchanged
 
             Debug.Log(ok ? "Self-Test Dungeon Remove-Level Integrity: PASS" : "Self-Test Dungeon Remove-Level Integrity: FAIL");

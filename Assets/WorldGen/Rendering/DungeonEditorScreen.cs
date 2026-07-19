@@ -85,21 +85,34 @@ namespace WorldGen.Rendering
             if (current == null) return;
             if (current.Kind == InteriorKind.Building)
             {
-                // ONE new building floor, linked to the previous top floor by a stair on that floor's first
-                // room. Its room 0 is the entrance and IS the room that stair targets (user 2026-07-19: the
-                // stair-arrival room is the floor's entrance), so we KEEP it as the entrance — no longer
-                // stripped like the old "upper floors have no entrance" rule.
-                var floor = BuildingGenerator.Generate(FreshSeed(), current.OwnerPoiId, DefaultRooms, 1).Floors[0];
+                // A new building floor is GENERATED around the shared stairwell column (spec 2026-07-19): a
+                // Лестница of the column's footprint at the column (x,y) + rooms packed within floor 0's outline.
+                // The column comes from floor 0 (user-placed; auto-designated if missing). The new floor's
+                // Лестница is joined to the PREVIOUS top floor's Лестница by a Stairs portal up the column.
+                var column = BuildingGenerator.EnsureFloorZeroColumn(current);
+                if (column == null) return;   // floor 0 has no room to host a stairwell — nothing to build on
+                var floor0 = current.Floors[0];
+                int T = DungeonLayout.TilesPerAxis;
+                var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(floor0);
+                var floor = BuildingGenerator.GenerateFloorAroundColumn(
+                    new System.Random(FreshSeed()), DefaultRooms,
+                    column.X * T, column.Y * T, column.SizeW, column.SizeH,
+                    minX, minY, maxX, maxY, out var newStair);
+
                 int lowerIdx = current.Floors.Count - 1;
                 var lower = current.Floors[lowerIdx];
+                Room lowerStair = null;
+                foreach (var r in lower.Rooms) if (r.TypeId == BuildingGenerator.StairTypeId) { lowerStair = r; break; }
+                if (lowerStair == null && lower.Rooms.Count > 0) lowerStair = lower.Rooms[0];   // malformed-floor fallback
+
                 current.Floors.Add(floor);
-                if (lower.Rooms.Count > 0 && floor.Rooms.Count > 0)
-                    lower.Rooms[0].Portals.Add(new Portal
+                if (lowerStair != null)
+                    lowerStair.Portals.Add(new Portal
                     {
                         Kind = PortalKind.Stairs,
                         Hidden = false,
                         TargetFloorIndex = lowerIdx + 1,
-                        TargetRoomId = floor.Rooms[0].Id,
+                        TargetRoomId = newStair.Id,
                         Bidirectional = true,
                         Label = "Лестница",
                     });

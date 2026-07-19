@@ -226,6 +226,27 @@ namespace WorldGen.Rendering
                 || lr.GetRoom(4).TypeId != 1 || lr.GetRoom(5).TypeId != 1)
             { Debug.LogError("FAIL normalize: want {0→0, 1→1, 2→2 (Лестница kept), 3→1, 4→1}"); ok = false; }
 
+            // ---- 11. EnsureFloorZeroColumn: returns the existing column, or designates a central non-entrance
+            //          room (the editor's +этаж relies on this to anchor a new floor on the column) -----------
+            // Case A: the generated building `b` already has a floor-0 column → it is returned, still the single
+            // Лестница. Case B: a building whose floor 0 has NO Лестница → a non-entrance room is designated.
+            var existing = BuildingGenerator.EnsureFloorZeroColumn(b);
+            int cols = 0; foreach (var r in b.Floors[0].Rooms) if (r.TypeId == 2) cols++;
+            if (existing == null || existing.TypeId != 2 || cols != 1)
+            { Debug.LogError("FAIL column-ensure: existing floor-0 column not returned as the single Лестница"); ok = false; }
+
+            var noCol = new InteriorData { Kind = InteriorKind.Building };
+            var g = new InteriorFloor();
+            g.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = 0.40f, Y = 0.5f });   // entrance
+            g.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.50f, Y = 0.5f });   // central plain room
+            g.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.60f, Y = 0.5f });
+            noCol.Floors.Add(g);
+            var made = BuildingGenerator.EnsureFloorZeroColumn(noCol);
+            if (made == null || made.TypeId != 2)
+            { Debug.LogError("FAIL column-ensure: no column designated on a building lacking one"); ok = false; }
+            if (made != null && made.Id == 1)
+            { Debug.LogError("FAIL column-ensure: the entrance was designated as the column"); ok = false; }
+
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
         }
 
