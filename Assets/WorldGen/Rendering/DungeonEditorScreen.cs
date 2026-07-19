@@ -47,7 +47,7 @@ namespace WorldGen.Rendering
         const int DefaultBuildingFloors = 2;
         const int DefaultRooms = 6;
         const int MaxUpperRooms = 20;    // hard ceiling for the generate-only stepper (below the area cap when it's tighter)
-        const int RegenAttempts = 16;    // seeds tried per «Перегенерировать»: within the area cap, one press reliably packs
+        const int RegenAttempts = 24;    // seeds tried per «Перегенерировать»: with the conservative area cap, one press reliably packs
 
         void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }
 
@@ -318,16 +318,21 @@ namespace WorldGen.Rendering
             if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
         }
 
-        /// <summary>Deterministic max total room count (column + rooms) that fits the CURRENT upper floor by AREA,
-        /// capped at the stepper's hard ceiling. Non-mutating (reads floor 0's existing column, never designates
-        /// one), so it is safe from the toolbar refresh. Falls back to the ceiling when floor 0 has no column
-        /// yet — there is nothing to size a capacity against until one exists.</summary>
-        int UpperCap()
+        /// <summary>Floor 0's stairwell column + the deterministic area capacity (total rooms, incl. the column)
+        /// for the current building, both NON-mutating. False (with a null column) when floor 0 has no Лестница —
+        /// the caller shows "add a stair on floor 0" rather than silently designating one (that stays a +этаж
+        /// action). Used by the toolbar readout, the pre-confirm check, and the regen itself so all three agree.</summary>
+        bool TryGetColumnAndCap(out Room column, out int cap)
         {
-            var col = current != null ? BuildingGenerator.FindFloorZeroColumn(current) : null;
-            if (col == null) return MaxUpperRooms;
-            return Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], col.SizeW, col.SizeH), 1, MaxUpperRooms);
+            column = current != null ? BuildingGenerator.FindFloorZeroColumn(current) : null;
+            cap = 1;
+            if (column == null) return false;
+            cap = Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], column.SizeW, column.SizeH), 1, MaxUpperRooms);
+            return true;
         }
+
+        // The area cap for the current upper floor (ceiling when floor 0 has no column yet — nothing to size against).
+        int UpperCap() => TryGetColumnAndCap(out _, out int cap) ? cap : MaxUpperRooms;
 
         /// <summary>«Перегенерировать» for a building UPPER floor: rebuild it around the shared column with the
         /// requested room count. Atomic — if the count can't fit floor 0's contour, NOTHING changes and the DM
@@ -335,8 +340,15 @@ namespace WorldGen.Rendering
         void RegenerateUpperFloor()
         {
             if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
-            // Regenerate REPLACES the whole floor, discarding any authored room content. Mirror the floor-
-            // removal safeguard: confirm first when the floor has named/annotated rooms (there is no undo).
+            if (!TryGetColumnAndCap(out _, out int cap)) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+
+            // Deterministic verdict FIRST — and BEFORE the confirm, so an over-capacity count is rejected without
+            // asking the DM to discard a floor that isn't going to change. Seed-independent: the same count is
+            // rejected the same way every press (the old single-pack check could fail one seed, pass the next).
+            if (upperRoomCount > cap) { ClampToCapWithMessage(cap); return; }
+
+            // Regenerate REPLACES the whole floor, discarding any authored room content. Mirror the floor-removal
+            // safeguard: confirm first when the floor has named/annotated rooms (there is no undo).
             var lvl = CurrentLevel;
             bool annotated = lvl != null && lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
             if (annotated)
@@ -346,26 +358,24 @@ namespace WorldGen.Rendering
                 DoRegenerateUpperFloor();
         }
 
+        // Pin the stepper to the real limit and tell the DM. Called when the requested count exceeds the area cap.
+        void ClampToCapWithMessage(int cap)
+        {
+            upperRoomCount = cap;
+            if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
+            ShowRegenMsg($"В контур помещается не более {cap} комнат");
+        }
+
         void DoRegenerateUpperFloor()
         {
             if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
-            var column = BuildingGenerator.EnsureFloorZeroColumn(current);
-            if (column == null) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+            // Re-read the column non-mutatingly (the DM could have edited floor 0 between the confirm and here);
+            // never designate one on this path — that would mutate floor 0 on a run that may still reject.
+            if (!TryGetColumnAndCap(out var column, out int cap)) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+            if (upperRoomCount > cap) { ClampToCapWithMessage(cap); return; }
 
-            // Deterministic verdict FIRST: compare the contour's area against what the requested rooms need. This
-            // is seed-independent, so an over-capacity count is rejected the SAME way every press (the old check
-            // ran a single greedy pack, which could fail one seed and succeed the next — the flip-flop the DM saw).
-            int cap = Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], column.SizeW, column.SizeH), 1, MaxUpperRooms);
-            if (upperRoomCount > cap)
-            {
-                upperRoomCount = cap;   // pin the stepper to the real limit so the next press succeeds
-                if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
-                ShowRegenMsg($"В контур помещается не более {cap} комнат");
-                return;   // floor unchanged — nothing was generated
-            }
-
-            // Within the area cap a single greedy pack can still miss on an unlucky room-size roll; retry fresh
-            // seeds so ONE press reliably packs (no "won't fit -> press again -> fits").
+            // Within the CONSERVATIVE area cap a flush pack around the column almost always succeeds; retry a few
+            // fresh seeds so one press reliably packs (kills the residual "won't fit -> press again -> fits").
             int T = DungeonLayout.TilesPerAxis;
             InteriorFloor newFloor = null; Room newStair = null; bool fits = false;
             for (int a = 0; a < RegenAttempts && !fits; a++)

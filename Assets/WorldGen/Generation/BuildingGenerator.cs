@@ -29,12 +29,15 @@ namespace WorldGen.Generation
         const int RoomTypeId = 1;
         public const int StairTypeId = 2;   // Лестница — the stairwell column (the editor's +этаж reads this)
 
-        // Deterministic AREA capacity. Sides roll uniformly in [MinSide, MaxSideExclusive) -> E[side]=5,
-        // E[area]=25 tile². PackFill discounts for the gaps a real flush-pack around a fixed column leaves
-        // (empirical; tune at the checkpoint like ContourMargin). Used to reject an impossible room count BEFORE
-        // a seed-dependent pack, and to only offer counts a retry-driven pack can actually realize.
-        static float AvgRoomArea { get { float s = (MinSide + MaxSideExclusive - 1) * 0.5f; return s * s; } }
-        public const float PackFill = 0.72f;
+        // Deterministic AREA capacity — the contour area budgeted PER ROOM. Deliberately CONSERVATIVE: the
+        // LARGEST room footprint (MaxSideExclusive-1)² = 36 tile², not the ~25 mean, DIVIDED by a packing-
+        // efficiency factor for the gaps a flush-pack around a fixed column leaves. A looser value would let the
+        // cap exceed what the packer can actually realize on an awkward contour, so counts near the cap would
+        // sometimes fail and sometimes succeed — the very flip-flop this replaces. Tune at the checkpoint (like
+        // ContourMargin): raise TilesPerRoom to be stricter, lower it to allow more rooms (risking rare misses).
+        static float MaxRoomArea { get { float s = MaxSideExclusive - 1; return s * s; } }   // 6*6 = 36
+        public const float PackFill = 0.8f;                                                  // flush-pack efficiency
+        static float TilesPerRoom => MaxRoomArea / PackFill;                                  // 36 / 0.8 = 45
 
         static int T => DungeonLayout.TilesPerAxis;
 
@@ -134,14 +137,15 @@ namespace WorldGen.Generation
 
         /// <summary>Deterministic capacity: the largest TOTAL room count (INCLUDING the Лестница column) that fits
         /// by AREA inside <paramref name="contourFloor"/>'s drawn contour. The contour's usable area, minus the
-        /// column footprint, divided by the average room footprint (discounted by <see cref="PackFill"/> for
-        /// packing gaps). Seed-INDEPENDENT — unlike a single greedy pack it gives the SAME verdict every time, so
-        /// «Перегенерировать» stops flip-flopping between "won't fit" and success on one count. Always ≥ 1.</summary>
+        /// column footprint, divided by <see cref="TilesPerRoom"/> (the CONSERVATIVE per-room area budget). Seed-
+        /// INDEPENDENT — unlike a single greedy pack it gives the SAME verdict every time, and the conservative
+        /// budget keeps the cap within what the packer can realize so «Перегенерировать» does not flip-flop
+        /// between "won't fit" and success on one count. Always ≥ 1.</summary>
         public static int MaxRoomsByArea(InteriorFloor contourFloor, int colW, int colH)
         {
             float usable = FloorFootprint.UsableAreaTiles(contourFloor, FloorFootprint.ContourMargin);
             float avail = usable - colW * colH;
-            int extra = avail > 0f ? (int)(avail * PackFill / AvgRoomArea) : 0;
+            int extra = avail > 0f ? (int)(avail / TilesPerRoom) : 0;
             return 1 + Math.Max(0, extra);
         }
 

@@ -276,30 +276,31 @@ namespace WorldGen.Rendering
 
                 // (c) MONOTONE: a larger contour admits strictly more rooms than a smaller one.
                 var big = new InteriorFloor();
-                big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 20, SizeH = 20, X = 0.5f, Y = 0.5f });
+                big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 16, SizeH = 16, X = 0.5f, Y = 0.5f });
                 int capBig = BuildingGenerator.MaxRoomsByArea(big, 4, 4);
                 if (!(capBig > capOne))
                 { Debug.LogError($"FAIL cap: larger contour cap {capBig} not > smaller {capOne}"); ok = false; }
 
-                // (d) SOUND vs the packer. The cap must FORBID a count the packer genuinely can't place, and be
-                //     consistent with one it can. Small contour: cap rejects 12, and no seed packs 12. Big
-                //     contour: cap admits 3 (col+2), and some seed packs 3 within a handful of retries.
+                // (d) SOUND vs the packer, BOTH directions. The (conservative) cap must be ACHIEVABLE — the flush
+                //     packer reaches a mid-range count on the fat 16×16 contour within a few seeds — and must not
+                //     OVER-promise: 12 rooms are unpackable for every seed on the tiny 6×6 contour that forbids
+                //     them. A cap that exceeds real packability (the flip-flop cause) fails the achievability probe.
                 float cx = 0.5f * T3, cy = 0.5f * T3;
+                if (capBig < 5)
+                { Debug.LogError($"FAIL cap: big 16×16 contour cap {capBig} should admit >=5"); ok = false; }
+                bool packed5 = false;
+                for (int s = 0; s < 40 && !packed5; s++)
+                    if (BuildingGenerator.TryGenerateFloorAroundColumn(3000 + s, 5, cx, cy, 4, 4, big, out _, out _)) packed5 = true;
+                if (!packed5)
+                { Debug.LogError("FAIL cap: no seed packed 5 rooms into a 16×16 contour whose cap admits them (cap not achievable → flip-flop)"); ok = false; }
+
                 if (capOne >= 12)
-                { Debug.LogError($"FAIL cap: small contour cap {capOne} should reject 12"); ok = false; }
+                { Debug.LogError($"FAIL cap: small 6×6 contour cap {capOne} should reject 12"); ok = false; }
                 bool any12 = false;
                 for (int s = 0; s < 12 && !any12; s++)
                     if (BuildingGenerator.TryGenerateFloorAroundColumn(1000 + s, 12, cx, cy, 4, 4, one, out _, out _)) any12 = true;
                 if (any12)
                 { Debug.LogError("FAIL cap: packer placed 12 rooms in a contour whose area forbids it — area verdict unsound"); ok = false; }
-
-                if (capBig < 3)
-                { Debug.LogError($"FAIL cap: big contour cap {capBig} should admit 3"); ok = false; }
-                bool any3 = false;
-                for (int s = 0; s < 12 && !any3; s++)
-                    if (BuildingGenerator.TryGenerateFloorAroundColumn(2000 + s, 3, cx, cy, 4, 4, big, out _, out _)) any3 = true;
-                if (!any3)
-                { Debug.LogError("FAIL cap: no seed packed 3 rooms into a contour whose area easily admits them (retry-feasibility broken)"); ok = false; }
             }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
