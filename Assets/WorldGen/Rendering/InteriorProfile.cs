@@ -81,10 +81,11 @@ namespace WorldGen.Rendering
         }
     }
 
-    /// <summary>Building interior profile. Simplified 2-type palette (user 2026-07-19): just an entrance and
-    /// a plain room — the earlier Приватная/Служебная/Особая categories were dropped. The RoomCommon role
-    /// paints the plain room; RoomPrivate/RoomService/RoomSpecial are now unused (kept in ThemeService for
-    /// now, removable later). Legacy saves with TypeId 2/3/4 are collapsed to 1 by
+    /// <summary>Building interior profile (user 2026-07-19). Three types: an outside entrance, a plain room,
+    /// and the stairwell that connects floors vertically. The stairwell column is user-placed on floor 0 and
+    /// sits at the SAME (x,y) on every floor (<see cref="Generation.BuildingGenerator"/>). RoomCommon paints
+    /// the plain room; the stair reuses RoomSpecial provisionally (tunable). RoomPrivate/RoomService are unused
+    /// (kept in ThemeService for now). Legacy saves with the old TypeId 3/4 are collapsed by
     /// <see cref="Generation.BuildingGenerator.NormalizeTypes"/> on load.</summary>
     public static class BuildingProfile
     {
@@ -95,8 +96,9 @@ namespace WorldGen.Rendering
                 Kind = InteriorKind.Building,
                 RoomTypes = new[]
                 {
-                    new RoomTypeDef("Вход",    ThemeRole.Accent,     ThemeRole.AccentInk),
-                    new RoomTypeDef("Комната", ThemeRole.RoomCommon, ThemeRole.Txt),
+                    new RoomTypeDef("Вход",     ThemeRole.Accent,      ThemeRole.AccentInk),
+                    new RoomTypeDef("Комната",  ThemeRole.RoomCommon,  ThemeRole.Txt),
+                    new RoomTypeDef("Лестница", ThemeRole.RoomSpecial, ThemeRole.Txt),
                 },
                 Layout = LayoutMode.Compact,
                 FloorLinks = FloorLinkMode.ExplicitStairs,

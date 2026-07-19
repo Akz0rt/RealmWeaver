@@ -25,26 +25,30 @@ namespace WorldGen.Rendering
             if (b.Floors.Count != 3)
             { Debug.LogError($"FAIL shape: expected 3 floors, got {b.Floors.Count}"); ok = false; }
 
-            // ---- 2. Exactly one entrance (TypeId 0) on floor 0 ------------------------------------------
-            // Remove the "room 1 on floor 0 = entrance" rule and this count drifts away from 1.
-            int e0 = 0;
-            foreach (var r in b.Floors[0].Rooms) if (r.TypeId == 0) e0++;
+            // ---- 2. Floor 0: exactly one entrance (TypeId 0) AND exactly one stairwell column (TypeId 2) --
+            // Remove the entrance rule → e0 drifts; remove the column designation → s0 == 0.
+            int e0 = 0, s0 = 0;
+            foreach (var r in b.Floors[0].Rooms) { if (r.TypeId == 0) e0++; if (r.TypeId == 2) s0++; }
             if (e0 != 1)
             { Debug.LogError($"FAIL entrance: floor 0 has {e0} TypeId==0 rooms, want exactly 1"); ok = false; }
+            if (s0 != 1)
+            { Debug.LogError($"FAIL column: floor 0 has {s0} TypeId==2 (Лестница) rooms, want exactly 1 (the column)"); ok = false; }
 
-            // ---- 3. Each UPPER floor has EXACTLY ONE entrance, and it IS the stair-ARRIVAL room ----------
-            // (user 2026-07-19: the room the stairs from below lead into is that floor's entrance.) Remove the
-            // "stairUp.TypeId = 0" mark in the generator → the count drops to 0 → fails; mark the WRONG room →
-            // the id mismatch fails.
+            // ---- 3. Each UPPER floor: exactly one Лестница (TypeId 2), NO entrance, and the Лестница IS the
+            //         stair-ARRIVAL room the floor below targets ------------------------------------------------
+            // Remove the per-floor column → stairs count drops to 0; mis-target the stair → the id mismatch fires;
+            // leak an entrance onto an upper floor → ent != 0.
             for (int f = 1; f < b.Floors.Count; f++)
             {
-                int ent = 0; Room entRoom = null;
-                foreach (var r in b.Floors[f].Rooms) if (r.TypeId == 0) { ent++; entRoom = r; }
-                if (ent != 1)
-                { Debug.LogError($"FAIL entrance: upper floor {f} has {ent} TypeId==0 rooms, want exactly 1 (the stair arrival)"); ok = false; }
+                int ent = 0, stairs = 0; Room stairRoom = null;
+                foreach (var r in b.Floors[f].Rooms) { if (r.TypeId == 0) ent++; if (r.TypeId == 2) { stairs++; stairRoom = r; } }
+                if (ent != 0)
+                { Debug.LogError($"FAIL upper: floor {f} has {ent} entrance rooms, want 0 (upper floors have no Вход)"); ok = false; }
+                if (stairs != 1)
+                { Debug.LogError($"FAIL upper: floor {f} has {stairs} Лестница rooms, want exactly 1"); ok = false; }
                 int arrival = StairTarget(b, f - 1);   // the room the f-1 -> f stair targets
-                if (entRoom == null || entRoom.Id != arrival)
-                { Debug.LogError($"FAIL entrance: upper floor {f} entrance is room {(entRoom == null ? -1 : entRoom.Id)}, but the stair from below arrives at room {arrival}"); ok = false; }
+                if (stairRoom == null || stairRoom.Id != arrival)
+                { Debug.LogError($"FAIL upper: floor {f} Лестница is room {(stairRoom == null ? -1 : stairRoom.Id)}, but the stair from below targets {arrival}"); ok = false; }
             }
 
             // ---- 4. Exactly one non-hidden Stairs portal per consecutive floor pair, stored on the LOWER
@@ -78,22 +82,20 @@ namespace WorldGen.Rendering
                         ok = false;
                     }
 
-            // ---- 7. Floor coherence: every upper floor's footprint bbox is CONTAINED in the floor below ---
-            // The invariant that makes floors read as one nesting building. NON-VACUOUS here because each
-            // upper floor is placed OFF-CENTRE (biased over the lower floor's peripheral stair room), so the
-            // floors are NOT concentric: pair (1,2) in particular has floor 1 well off the field centre, and
-            // an upper floor placed without the ArrangeWithin/nest step (Arrange centres it on the field)
-            // would stick out. A concentric small-inside-big case could pass without the constraint; these
-            // off-centre floors cannot. (Test 8 below pins this proof with a hand-built off-centre fixture.)
+            // ---- 7. Coherence: every floor's footprint bbox is CONTAINED in FLOOR 0's outline -------------
+            // The generation boundary is floor 0 (the drawn contour), so all floors nest in it (floors are
+            // decoupled — an upper floor need not be smaller than the one directly below, only within floor 0).
+            // NON-VACUOUS: the column is off-centre, so an upper floor generated WITHOUT the within-outline
+            // clamp (Arrange centres it on the field) would escape floor 0's off-centre bbox.
             var bc = BuildingGenerator.Generate(seed: 7, ownerPoiId: "p", roomCount: 8, floorCount: 3);
+            var f0box = Bbox(bc.Floors[0]);
             for (int f = 1; f < bc.Floors.Count; f++)
             {
-                var lo = Bbox(bc.Floors[f - 1]);
                 var hi = Bbox(bc.Floors[f]);
-                bool contained = hi.minX >= lo.minX - Eps && hi.minY >= lo.minY - Eps
-                              && hi.maxX <= lo.maxX + Eps && hi.maxY <= lo.maxY + Eps;
+                bool contained = hi.minX >= f0box.minX - Eps && hi.minY >= f0box.minY - Eps
+                              && hi.maxX <= f0box.maxX + Eps && hi.maxY <= f0box.maxY + Eps;
                 if (!contained)
-                { Debug.LogError($"FAIL coherence: floor {f} bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] not within floor {f - 1} [{lo.minX:F1},{lo.minY:F1}..{lo.maxX:F1},{lo.maxY:F1}]"); ok = false; }
+                { Debug.LogError($"FAIL coherence: floor {f} bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] not within floor 0 [{f0box.minX:F1},{f0box.minY:F1}..{f0box.maxX:F1},{f0box.maxY:F1}]"); ok = false; }
             }
 
             // ---- 7b. At least one pair is STRICTLY smaller on an axis (guards against a vacuous "always
@@ -110,50 +112,49 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL coherence: floor 1 bbox is not strictly smaller than floor 0 on any axis (fewer-rooms shrink missing?)"); ok = false; }
             }
 
-            // ---- 7c. Stairs roughly above: each pair's two stair rooms are within StairAlignTol on X AND Y -
-            // Fails if the alignment/nesting bias is removed: the lower stair room is a PERIPHERAL room, so an
-            // un-nested (field-centred) upper floor's rooms all sit far from it, exceeding the tolerance.
-            for (int f = 0; f < bc.Floors.Count - 1; f++)
+            // ---- 7c. COLUMN: the Лестница sits at the SAME (x,y) on EVERY floor (one vertical shaft) -------
+            // The defining invariant of the stairwell-column model. NON-VACUOUS: without the nudge-to-column
+            // step an upper Лестница lands at the field centre (Arrange centres its root), far from floor 0's
+            // off-centre column, so the offset would exceed a tile. Uses `bc` (off-centre column, seed 7).
             {
-                if (!StairRooms(bc, f, out var lowerRoom, out var upperRoom))
-                { Debug.LogError($"FAIL stair-align: pair {f} has no resolvable stair endpoints"); ok = false; continue; }
-                float dx = Mathf.Abs(lowerRoom.X - upperRoom.X) * DungeonLayout.TilesPerAxis;
-                float dy = Mathf.Abs(lowerRoom.Y - upperRoom.Y) * DungeonLayout.TilesPerAxis;
-                if (dx > BuildingGenerator.StairAlignTol || dy > BuildingGenerator.StairAlignTol)
-                { Debug.LogError($"FAIL stair-align: pair {f} stair rooms off by ({dx:F1},{dy:F1}) tiles, tol {BuildingGenerator.StairAlignTol}"); ok = false; }
+                Room col0 = null;
+                foreach (var r in bc.Floors[0].Rooms) if (r.TypeId == 2) col0 = r;
+                if (col0 == null)
+                { Debug.LogError("FAIL column: floor 0 has no Лестница to define the column"); ok = false; }
+                else
+                    for (int f = 1; f < bc.Floors.Count; f++)
+                    {
+                        Room colF = null;
+                        foreach (var r in bc.Floors[f].Rooms) if (r.TypeId == 2) colF = r;
+                        if (colF == null) continue;   // missing column is caught by test 3
+                        float dx = Mathf.Abs(colF.X - col0.X) * DungeonLayout.TilesPerAxis;
+                        float dy = Mathf.Abs(colF.Y - col0.Y) * DungeonLayout.TilesPerAxis;
+                        if (dx > 1f || dy > 1f)
+                        { Debug.LogError($"FAIL column: floor {f} Лестница off the column by ({dx:F1},{dy:F1}) tiles"); ok = false; }
+                    }
             }
 
-            // ---- 8. Nesting is REAL, not concentric-luck (non-vacuous fixture) --------------------------
-            // Off-centre lower box: 24x24 tiles in the field's top-left, centre ~(20,20), far from the field
-            // centre (64,64). Containment is DOUBLE-enforced, so the two sub-asserts isolate different pieces
-            // (do NOT read the containment assert alone as proof the nest ran):
-            //   * CONTAINMENT (below) is enforced by NudgeRoomToward's clamp against the lower box. Remove
-            //     that clamp and an unclamped field-centred floor's bbox ~[54,74] escapes [8,32] -> FAIL.
-            //     (It stays TRUE if only ArrangeWithin's centring is removed — the clamp covers it.)
-            //   * STAIR (further below) is what catches removal of the ArrangeWithin nest/centring: containment
-            //     still holds via the clamp, but a field-centred floor's stair room is ~36 tiles from the
-            //     lower stair (28,28) >> StairAlignTol -> FAIL.
-            // Because the box does not straddle the field centre, a field-centred floor passes NEITHER assert.
+            // ---- 8. GenerateFloorAroundColumn fits within an OFF-CENTRE outline (non-vacuous nest) ---------
+            // Off-centre box 24x24 in the field's top-left, column near its far corner. The generated floor's
+            // bbox must stay inside the box — a floor built without the within-outline clamp (Arrange centres it
+            // on the field, ~[54,74]) escapes [8,32]. And its Лестница must land on the column.
             {
                 float loMinX = 8f, loMinY = 8f, loMaxX = 32f, loMaxY = 32f;
-                float stairX = 28f, stairY = 28f;   // a stair point near the box's far corner
-                var upper = BuildingGenerator.GenerateNestedUpperFloor(
-                    new System.Random(20260718), roomBudget: 6,
-                    loMinX, loMinY, loMaxX, loMaxY, stairX, stairY, out var downStair);
+                float colX = 26f, colY = 26f;   // a column near the box's far corner
+                var upper = BuildingGenerator.GenerateFloorAroundColumn(
+                    new System.Random(20260718), roomBudget: 6, colX, colY, 4, 4,
+                    loMinX, loMinY, loMaxX, loMaxY, out var upStair);
 
                 var hi = Bbox(upper);
                 bool contained = hi.minX >= loMinX - Eps && hi.minY >= loMinY - Eps
                               && hi.maxX <= loMaxX + Eps && hi.maxY <= loMaxY + Eps;
                 if (!contained)
-                { Debug.LogError($"FAIL nesting: off-centre fixture upper bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] escaped lower box [8,8..32,32] (ArrangeWithin nest missing?)"); ok = false; }
+                { Debug.LogError($"FAIL nesting: off-centre fixture upper bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] escaped box [8,8..32,32] (within-outline clamp missing?)"); ok = false; }
 
-                // The nudged stair room sits within tolerance of the (off-centre) lower stair point. Remove
-                // the nudge/nearest-room bias and this fires -- a field-centred floor's stair room is ~36 tiles
-                // from (28,28).
-                float sdx = Mathf.Abs(downStair.X * DungeonLayout.TilesPerAxis - stairX);
-                float sdy = Mathf.Abs(downStair.Y * DungeonLayout.TilesPerAxis - stairY);
-                if (sdx > BuildingGenerator.StairAlignTol || sdy > BuildingGenerator.StairAlignTol)
-                { Debug.LogError($"FAIL nesting: off-centre fixture stair room off by ({sdx:F1},{sdy:F1}) from (28,28)"); ok = false; }
+                float sdx = Mathf.Abs(upStair.X * DungeonLayout.TilesPerAxis - colX);
+                float sdy = Mathf.Abs(upStair.Y * DungeonLayout.TilesPerAxis - colY);
+                if (sdx > 1f || sdy > 1f)
+                { Debug.LogError($"FAIL nesting: off-centre fixture Лестница off the column by ({sdx:F1},{sdy:F1})"); ok = false; }
             }
 
             // ---- 6. Determinism: same seed -> identical structure AND identical positions/bboxes ---------
@@ -222,20 +223,22 @@ namespace WorldGen.Rendering
             if (anyEntranceError)
             { Debug.LogError("FAIL validate: a building floor is missing its entrance"); ok = false; }
 
-            // ---- 10. NormalizeTypes collapses legacy building types (2/3/4) to the plain room (1) --------
-            // A save from before the 2-type simplification must not render its old rooms as the entrance.
-            // Entrance (0) and plain (1) are untouched; 2/3/4 -> 1. Fails if the remap is dropped.
+            // ---- 10. NormalizeTypes collapses only the DROPPED legacy types (3/4) to the plain room --------
+            // Valid ids 0/1/2 stay (2 is now the Лестница!); only the removed Служебная/Особая (3/4) → 1. Fails
+            // if the remap is dropped, or if it still collapses 2 (which would wipe every generated stairwell).
             var legacy = new InteriorData { Kind = InteriorKind.Building };
             var lf = new InteriorFloor();
-            lf.Rooms.Add(new Room { Id = 1, TypeId = 0 });
-            lf.Rooms.Add(new Room { Id = 2, TypeId = 1 });
-            lf.Rooms.Add(new Room { Id = 3, TypeId = 3 });
-            lf.Rooms.Add(new Room { Id = 4, TypeId = 4 });
+            lf.Rooms.Add(new Room { Id = 1, TypeId = 0 });   // entrance stays
+            lf.Rooms.Add(new Room { Id = 2, TypeId = 1 });   // plain stays
+            lf.Rooms.Add(new Room { Id = 3, TypeId = 2 });   // Лестница — must STAY 2
+            lf.Rooms.Add(new Room { Id = 4, TypeId = 3 });   // legacy Служебная -> 1
+            lf.Rooms.Add(new Room { Id = 5, TypeId = 4 });   // legacy Особая -> 1
             legacy.Floors.Add(lf);
             BuildingGenerator.NormalizeTypes(legacy);
             var lr = legacy.Floors[0];
-            if (lr.GetRoom(1).TypeId != 0 || lr.GetRoom(2).TypeId != 1 || lr.GetRoom(3).TypeId != 1 || lr.GetRoom(4).TypeId != 1)
-            { Debug.LogError("FAIL normalize: legacy building types not collapsed to {0 stays, 1 stays, 2/3/4 -> 1}"); ok = false; }
+            if (lr.GetRoom(1).TypeId != 0 || lr.GetRoom(2).TypeId != 1 || lr.GetRoom(3).TypeId != 2
+                || lr.GetRoom(4).TypeId != 1 || lr.GetRoom(5).TypeId != 1)
+            { Debug.LogError("FAIL normalize: want {0→0, 1→1, 2→2 (Лестница kept), 3→1, 4→1}"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
         }
@@ -267,22 +270,6 @@ namespace WorldGen.Rendering
                 if (cy + h * 0.5f > maxY) maxY = cy + h * 0.5f;
             }
             return (minX, minY, maxX, maxY);
-        }
-
-        // Resolve the two stair-portal ENDPOINT rooms for floor pair f -> f+1: the lower room hosting the
-        // non-hidden Stairs portal, and the upper room it targets. False if no such portal.
-        static bool StairRooms(InteriorData data, int f, out Room lowerRoom, out Room upperRoom)
-        {
-            lowerRoom = null; upperRoom = null;
-            foreach (var r in data.Floors[f].Rooms)
-                foreach (var p in r.Portals)
-                    if (p.Kind == PortalKind.Stairs && !p.Hidden && p.TargetFloorIndex == f + 1)
-                    {
-                        lowerRoom = r;
-                        upperRoom = data.Floors[f + 1].GetRoom(p.TargetRoomId);
-                        return upperRoom != null;
-                    }
-            return false;
         }
 
         // The non-hidden Stairs portal target room id for floor pair f -> f+1, or -1 if none is found.
