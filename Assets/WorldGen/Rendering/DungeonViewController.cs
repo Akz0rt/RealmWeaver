@@ -38,7 +38,9 @@ namespace WorldGen.Rendering
         int pendingLinkId;
         bool needsProjectionFit;
         int draggingRoomId;
-        // The last room the DM dragged. BeginCascade needs it as the leash's anchor, but OnEndDrag has
+        // The room the current settle should treat as the "just-moved" one: the last room the DM dragged
+        // (OnEndDrag) or a freshly added room (AddRoomAtCenter). For a BUILDING it's the room BeginCascade
+        // nudges off overlaps; for a DUNGEON it's the leash/Separate anchor. Held here because OnEndDrag has
         // already cleared draggingRoomId by the time OnGraphMutated → BeginCascade runs.
         int lastAnchorRoomId;
 
@@ -65,7 +67,7 @@ namespace WorldGen.Rendering
         /// FitReferenceFloor approach of fitting the whole view to floor 0 outright). For a Building, the
         /// UNION of the current floor's own occupied bounds and floor 0's contour bounds, so BOTH the whole
         /// current floor AND the whole blue contour stay on-screen — including a room dragged outside the
-        /// contour (C4, later), which must stay visible (and red) rather than being clipped. For a
+        /// contour (C4), which must stay visible (and red) rather than being clipped. For a
         /// well-nested floor the union equals the floor-0 bounds, so an upper floor still renders smaller,
         /// nested inside it (accepted look, spec C-render). Dungeons: the current floor's own bounds only —
         /// byte-identical to the pre-C2' per-floor fit.</summary>
@@ -169,21 +171,16 @@ namespace WorldGen.Rendering
 
             if (dungeon != null && dungeon.Kind == InteriorKind.Building)
             {
-                // BUILDING (spec C4): a building wants tight, touching chambers — the exact opposite of the
-                // dungeon spread cascade below (which pushes rooms APART and stretches corridors). So re-pack
-                // the floor COMPACTLY (adjacency, doors-not-corridors) instead. The ground floor (index 0) IS
-                // the contour, so it only compacts; each upper floor also gets a GENTLE nudge into floor 0's
-                // bbox when it fits, leaving a room the DM parked outside for C2' to red-flag. This still
-                // mutates Room.X/Y to the resolved targets, so the shared snapshot→rollback→SmoothDamp path
-                // below animates it exactly like the dungeon settle.
-                if (levelIndex == 0)
-                    CompactLayout.Settle(lvl, lastAnchorRoomId);
-                else
-                {
-                    var (cMinX, cMinY, cMaxX, cMaxY) =
-                        DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]);
-                    CompactLayout.SettleWithinContour(lvl, lastAnchorRoomId, cMinX, cMinY, cMaxX, cMaxY);
-                }
+                // BUILDING (spec C4, revised 2026-07-19): a dragged room STAYS exactly where the DM dropped
+                // it — NO floor re-pack, NO cascade of other rooms (the user's hard rule: dragging a room
+                // must never move another). The sole correction is anti-overlap on the just-moved room itself
+                // (lastAnchorRoomId): if it landed on top of another room, IT ALONE is shoved clear. A room
+                // parked outside floor 0's contour is LEFT there (C2' red-flags it) — out-of-contour is a
+                // deliberate choice, not auto-fixed. This mutates at most that one room's X/Y, so the shared
+                // snapshot→rollback→SmoothDamp path below animates only its small nudge (every other room has
+                // start==target and does not move). Floor 0 and upper floors behave identically now (no
+                // per-floor contour containment).
+                CompactLayout.NudgeRoomOffOverlaps(lvl, lastAnchorRoomId);
             }
             else
             {
@@ -309,6 +306,11 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null) return null;
             var room = DungeonOps.AddRoom(lvl, 0.5f, 0.5f);
+            // BUILDING (spec C4 model): a new room appears at the canvas centre, likely ON TOP of the packed
+            // interior. Treat it as the "just-placed" room so the settle below nudges IT (and only it) off any
+            // overlap to a free spot near the centre — never re-packing the existing rooms. Dungeons keep the
+            // previous anchor (their Separate cascade handles a new room as before).
+            if (dungeon != null && dungeon.Kind == InteriorKind.Building) lastAnchorRoomId = room.Id;
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
@@ -391,8 +393,9 @@ namespace WorldGen.Rendering
             room.Y = Mathf.Clamp(ty / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
 
             // BUILDING (spec C4): the room moves FREELY with the cursor — NO corridor leash — so the DM can
-            // pull it right out of the contour and watch C2' flag it (RepositionRooms re-tests the contour
-            // every sample). The compact re-pack + gentle contain happens on settle (BeginCascade), animated.
+            // pull it right out of the contour and watch C2' flag it live (RepositionRooms re-tests the
+            // contour every sample). On release (BeginCascade) the ONLY correction is anti-overlap on THIS
+            // room; it otherwise stays exactly where dropped and no other room ever moves.
             // DUNGEON: stitched-together feel — a corridor may not stretch past MaxCorridorTiles, so dragging
             // this room drags its linked rooms along, and they drag theirs. Runs per drag sample (live),
             // unlike the cascade — the pull must be felt while moving, not on release. The dragged room is the
