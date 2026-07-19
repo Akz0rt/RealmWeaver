@@ -517,7 +517,12 @@ namespace WorldGen.Rendering
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+ " + profile.TermFloor, 64f, false, AddLevel);
-            if (current.Floors.Count > 1) AddLevelTabButton("× " + profile.TermFloor, 64f, false, RequestRemoveCurrentLevel);
+            // A building can only lose its TOP floor (removing a middle one would sever the shaft). Show the
+            // remove button only while the top floor is selected, so «× Этаж» always means "remove THIS floor"
+            // — no surprise removal of a different floor. Dungeons remove the current floor, so show it always.
+            bool canRemove = current.Floors.Count > 1
+                && (current.Kind != InteriorKind.Building || CurrentLevelIndex == current.Floors.Count - 1);
+            if (canRemove) AddLevelTabButton("× " + profile.TermFloor, 64f, false, RequestRemoveCurrentLevel);
         }
 
         void AddLevelTabButton(string label, float width, bool active, System.Action onClick)

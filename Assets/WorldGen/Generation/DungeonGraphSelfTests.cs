@@ -178,6 +178,12 @@ namespace WorldGen.Rendering
             if (Mathf.Abs(p1x - p0x) > 800f || Mathf.Abs(p1y - p0y) > 400f)
             { Debug.LogError($"FAIL fit bounds: {Mathf.Abs(p1x - p0x)}x{Mathf.Abs(p1y - p0y)} exceeds 800x400"); ok = false; }
 
+            // ...and the content actually FILLS the rect: a tiny constant scale would still centre and not overflow
+            // (passing the checks above) yet render the map a speck. At least one axis must use a real fraction.
+            float fillX = Mathf.Abs(p1x - p0x) / 800f, fillY = Mathf.Abs(p1y - p0y) / 400f;
+            if (Mathf.Max(fillX, fillY) < 0.5f)
+            { Debug.LogError($"FAIL fit scale: content fills only {fillX:F2}x{fillY:F2} of the rect (scale too small)"); ok = false; }
+
             // Fit must never divide by zero on a single-room (zero-span) level.
             var one = new InteriorFloor();
             one.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 6 });

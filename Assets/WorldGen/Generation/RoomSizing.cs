@@ -14,10 +14,13 @@ namespace WorldGen.Generation
 
         public static (int w, int h) Default(int type)
         {
+            // TypeId 2 is the Boss for a DUNGEON; for a BUILDING it is the Лестница, but BuildingGenerator always
+            // sets the column's size explicitly, so this Boss default never reaches a building column (ApplyDefaults
+            // only fires on size ≤ 0). Kept dungeon-oriented on purpose.
             switch (type)
             {
                 case 0: return (7, 5);    // Entrance
-                case 2: return (10, 10);  // Boss
+                case 2: return (10, 10);  // Boss (dungeon)
                 default: return (6, 6);   // Normal
             }
         }

@@ -52,22 +52,26 @@ namespace WorldGen.Generation
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: должна быть ровно одна лестница (сейчас {typeTwo}).");
 
                 var adj = BuildAdj(lvl);
-                if (entrances == 1)
+                // Boss distance (dungeon only, entrance present).
+                if (bossRule && typeTwo == 1 && entrances == 1)
                 {
-                    // Boss distance (dungeon only).
-                    if (bossRule && typeTwo == 1)
-                    {
-                        int d = Distance(entranceId, bossId, adj);
-                        if (d >= 0 && d < minBossDistance)
-                            Add(issues, IssueSeverity.Warning, li,
-                                $"Этаж {human}: комната босса слишком близко ко входу ({d} шаг(ов), нужно ≥ {minBossDistance}).");
-                    }
-                    // Orphans (unreachable from the entrance via corridors).
-                    var reached = Reachable(entranceId, adj);
+                    int d = Distance(entranceId, bossId, adj);
+                    if (d >= 0 && d < minBossDistance)
+                        Add(issues, IssueSeverity.Warning, li,
+                            $"Этаж {human}: комната босса слишком близко ко входу ({d} шаг(ов), нужно ≥ {minBossDistance}).");
+                }
+                // Orphans: rooms unreachable from the floor's ROOT via corridors. Dungeons and a building's floor 0
+                // root at the entrance; a building UPPER floor has no Вход, so it roots at the Лестница (the stair
+                // arrival) — otherwise deleting a corridor upstairs could strand a room with no warning.
+                int rootId = (isBuilding && li > 0) ? bossId : entranceId;
+                if (rootId != 0)
+                {
+                    var reached = Reachable(rootId, adj);
                     int orphans = 0;
                     foreach (var r in lvl.Rooms) if (!reached.Contains(r.Id)) orphans++;
                     if (orphans > 0)
-                        Add(issues, IssueSeverity.Warning, li, $"Этаж {human}: {orphans} комнат(ы) недостижимы от входа по коридорам.");
+                        Add(issues, IssueSeverity.Warning, li,
+                            $"Этаж {human}: {orphans} комнат(ы) недостижимы от {(isBuilding && li > 0 ? "лестницы" : "входа")} по коридорам.");
                 }
 
                 // Dangling inter-floor targets. A secret door or a stairwell must point at a room that still
@@ -89,7 +93,36 @@ namespace WorldGen.Generation
                         }
                     }
             }
+
+            // Building SHAFT integrity: every Лестница must share the floor-0 column's (x,y) AND footprint — one
+            // vertical shaft. Floor 0 is free-edit, so moving/resizing the column there desyncs the upper floors
+            // (they are pinned to the column only at generation time); flag it so the DM re-generates the floor.
+            if (isBuilding && dungeon.Floors.Count > 1)
+            {
+                var col0 = FindStair(dungeon.Floors[0]);
+                if (col0 != null)
+                    for (int li = 1; li < dungeon.Floors.Count; li++)
+                    {
+                        var colF = FindStair(dungeon.Floors[li]);
+                        if (colF == null) continue;   // a missing column is already flagged per-floor above
+                        bool aligned = System.Math.Abs(colF.X - col0.X) < ShaftTol
+                                    && System.Math.Abs(colF.Y - col0.Y) < ShaftTol
+                                    && colF.SizeW == col0.SizeW && colF.SizeH == col0.SizeH;
+                        if (!aligned)
+                            Add(issues, IssueSeverity.Error, li,
+                                $"Этаж {li + 1}: лестница не совпадает со столбом 1-го этажа — перегенерируйте этаж.");
+                    }
+            }
             return issues;
+        }
+
+        // Normalized-coordinate tolerance for "same column position" — matches the ToNorm/ToTile round-trip.
+        const float ShaftTol = 1e-3f;
+
+        static Room FindStair(InteriorFloor lvl)
+        {
+            foreach (var r in lvl.Rooms) if (r.TypeId == BuildingGenerator.StairTypeId) return r;
+            return null;
         }
 
         static void Add(List<DungeonIssue> list, IssueSeverity sev, int li, string msg)

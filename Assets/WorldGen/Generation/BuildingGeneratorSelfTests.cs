@@ -335,6 +335,12 @@ namespace WorldGen.Rendering
                 }
                 if (pointed && !HasMsg(DungeonValidator.Validate(dangling), "несуществующий этаж"))
                 { Debug.LogError("FAIL validate: dangling Stairs portal not flagged"); ok = false; }
+
+                // (c) Broken shaft: move an upper Лестница off the floor-0 column → "не совпадает со столбом".
+                var desync = BuildingGenerator.Generate(3, "p", 6, 3);
+                foreach (var r in desync.Floors[1].Rooms) if (r.TypeId == 2) { r.X += 0.1f; break; }
+                if (!HasMsg(DungeonValidator.Validate(desync), "не совпадает со столбом"))
+                { Debug.LogError("FAIL validate: desynced stairwell column not flagged"); ok = false; }
             }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
