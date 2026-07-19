@@ -218,6 +218,7 @@ namespace WorldGen.Generation
             foreach (var c in lvl.Links) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
             var routed = RoomLinkGeometry.Build(nodes, linkEdges, mode);
+            foreach (var d in routed.Doors) g.Doors.Add(ToLayout(d));   // door points → renderer's wall gaps
 
             var segs = new List<(LayoutPoint a, LayoutPoint b)>();
             foreach (var s in routed.Segments)
@@ -286,5 +287,8 @@ namespace WorldGen.Generation
     {
         public System.Collections.Generic.List<LayoutPoint> Junctions = new System.Collections.Generic.List<LayoutPoint>();
         public System.Collections.Generic.List<RenderSegment> Segments = new System.Collections.Generic.List<RenderSegment>();
+        // Door points on room walls (from RoomLinkGeometry) — normalized. The renderer draws room-wall outlines
+        // with a gap at each door so a compact building reads as walled rooms with openings, not a colour blob.
+        public System.Collections.Generic.List<LayoutPoint> Doors = new System.Collections.Generic.List<LayoutPoint>();
     }
 }

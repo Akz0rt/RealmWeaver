@@ -26,7 +26,7 @@ namespace WorldGen.Rendering
 
         InteriorProfile profile;
 
-        RectTransform linesLayer, junctionsLayer, nodesLayer, contourLayer;
+        RectTransform linesLayer, junctionsLayer, nodesLayer, contourLayer, wallsLayer;
         readonly Dictionary<int, Outline> outlines = new Dictionary<int, Outline>();
         // Out-of-contour red flag (C2' — Building only). Separate from `outlines` (selection highlight):
         // a room can be selected AND flagged at once, and the two must toggle independently.
@@ -35,6 +35,9 @@ namespace WorldGen.Rendering
         readonly List<RectTransform> lineRects = new List<RectTransform>();
         readonly List<RectTransform> junctionRects = new List<RectTransform>();
         readonly List<RectTransform> contourEdges = new List<RectTransform>();
+        readonly List<RectTransform> wallRects = new List<RectTransform>();
+        readonly List<(Vector2 a, Vector2 b)> wallSegBuf = new List<(Vector2, Vector2)>();
+        readonly List<float> wallGapBuf = new List<float>();
         bool built;
 
         // Last drawn level+graph, cached so SetProjection (pan/zoom) can repaint without the controller
@@ -58,8 +61,11 @@ namespace WorldGen.Rendering
         const float LineThickness = 3f;
         const float JunctionPx = 9f;
         const float ContourThickness = 3f;
+        const float WallThickness = 3f;     // room-outline wall stroke
+        const float DoorGapTiles = 1.4f;    // opening carved out of a wall at each door, in tiles
         static readonly Color ContourColor = new Color(0.45f, 0.75f, 1f, 0.9f);     // provisional — user will tune
         static readonly Color ViolationColor = new Color(0.85f, 0.25f, 0.2f, 0.85f); // provisional — user will tune
+        static readonly Color WallColor = new Color(0.10f, 0.11f, 0.13f, 0.92f);     // provisional — user will tune
 
         void Awake() { EnsureBuilt(); }
 
@@ -72,6 +78,7 @@ namespace WorldGen.Rendering
             linesLayer = MakeLayer("LinesLayer");
             junctionsLayer = MakeLayer("JunctionsLayer");   // AFTER lines → draws on top of segments
             nodesLayer = MakeLayer("NodesLayer");           // AFTER junctions → draws on top
+            wallsLayer = MakeLayer("WallsLayer");           // LAST → room-outline walls draw on top of the fills
             built = true;
         }
 
@@ -107,8 +114,9 @@ namespace WorldGen.Rendering
             DungeonUiKit.ClearLayer(linesLayer);
             DungeonUiKit.ClearLayer(junctionsLayer);
             DungeonUiKit.ClearLayer(contourLayer);
+            DungeonUiKit.ClearLayer(wallsLayer);
             outlines.Clear(); violationOutlines.Clear(); cards.Clear();
-            lineRects.Clear(); junctionRects.Clear(); contourEdges.Clear();
+            lineRects.Clear(); junctionRects.Clear(); contourEdges.Clear(); wallRects.Clear();
             contourSegs.Clear(); contourFloor = null;
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             hasContour = false;
@@ -173,6 +181,78 @@ namespace WorldGen.Rendering
                 var j = rg.Junctions[i];
                 junctionRects[i].anchoredPosition = Local(j.X * DungeonLayout.TilesPerAxis, j.Y * DungeonLayout.TilesPerAxis);
             }
+
+            // Room-outline walls with door openings — recomputed every frame like the corridor pool, so the
+            // openings track a live drag/regen. Building only (flush rooms need boundary clarity); dungeons keep
+            // their spread-card look untouched.
+            if (hasContour) RebuildWalls(lvl, rg);
+        }
+
+        /// <summary>Draw each room's 4 walls as thin strokes, leaving a <see cref="DoorGapTiles"/>-wide gap where a
+        /// door (from the routed link graph) sits on the wall — so a compact building reads as walled rooms with
+        /// openings between them, not one colour blob. Pooled like the corridor rects; rebuilt each reposition.</summary>
+        void RebuildWalls(InteriorFloor lvl, RenderGraph rg)
+        {
+            wallSegBuf.Clear();
+            int T = DungeonLayout.TilesPerAxis;
+            foreach (var r in lvl.Rooms)
+            {
+                float cx = r.X * T, cy = r.Y * T;
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                float hw = w * 0.5f, hh = h * 0.5f;
+                float left = cx - hw, right = cx + hw, bottom = cy - hh, top = cy + hh;
+                AddWall(rg, T, horizontal: true,  perp: bottom, a0: left,   a1: right);
+                AddWall(rg, T, horizontal: true,  perp: top,    a0: left,   a1: right);
+                AddWall(rg, T, horizontal: false, perp: left,   a0: bottom, a1: top);
+                AddWall(rg, T, horizontal: false, perp: right,  a0: bottom, a1: top);
+            }
+            SyncPool(wallRects, wallSegBuf.Count, BuildWallRect);
+            for (int i = 0; i < wallSegBuf.Count; i++)
+                PlaceLine(wallRects[i], wallSegBuf[i].a, wallSegBuf[i].b, WallThickness);
+        }
+
+        // Emit the sub-segments of ONE wall (a horizontal wall at fixed Y=perp spanning X in [a0,a1], or a vertical
+        // wall at fixed X=perp spanning Y in [a0,a1]), skipping a DoorGapTiles-wide opening at every door lying on
+        // that wall line and within its extent. Tile space in; buffered as Local-space endpoints.
+        void AddWall(RenderGraph rg, int T, bool horizontal, float perp, float a0, float a1)
+        {
+            wallGapBuf.Clear();
+            foreach (var d in rg.Doors)
+            {
+                float dx = d.X * T, dy = d.Y * T;
+                float dPerp = horizontal ? dy : dx;
+                float dAlong = horizontal ? dx : dy;
+                if (Mathf.Abs(dPerp - perp) > 0.2f) continue;              // not on this wall's line
+                if (dAlong < a0 - 0.05f || dAlong > a1 + 0.05f) continue;  // outside the wall's extent
+                wallGapBuf.Add(dAlong);
+            }
+            wallGapBuf.Sort();
+            float cursor = a0, half = DoorGapTiles * 0.5f;
+            foreach (var g in wallGapBuf)
+            {
+                float gStart = Mathf.Max(a0, g - half), gEnd = Mathf.Min(a1, g + half);
+                if (gStart > cursor) EmitWallSeg(horizontal, perp, cursor, gStart);
+                cursor = Mathf.Max(cursor, gEnd);
+            }
+            if (cursor < a1) EmitWallSeg(horizontal, perp, cursor, a1);
+        }
+
+        void EmitWallSeg(bool horizontal, float perp, float from, float to)
+        {
+            if (to - from < 0.05f) return;   // opening ate the whole run
+            Vector2 p0 = horizontal ? Local(from, perp) : Local(perp, from);
+            Vector2 p1 = horizontal ? Local(to, perp) : Local(perp, to);
+            wallSegBuf.Add((p0, p1));
+        }
+
+        RectTransform BuildWallRect()
+        {
+            var go = new GameObject("Wall", typeof(RectTransform));
+            go.transform.SetParent(wallsLayer, false);
+            var img = go.AddComponent<Image>();
+            img.color = WallColor;
+            img.raycastTarget = false;
+            return (RectTransform)go.transform;
         }
 
         /// <summary>Grow `pool` to at least `want` rects (via `make`) and hide any surplus, so exactly the

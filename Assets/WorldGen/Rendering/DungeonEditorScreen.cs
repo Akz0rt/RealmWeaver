@@ -301,7 +301,7 @@ namespace WorldGen.Rendering
                 upperCountLabel = AddToolbarLabel(toolbarBar, upperRoomCount.ToString(), 30f);
                 AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
                 AddToolbarLabel(toolbarBar, $"из {cap}", 52f);   // the contour's deterministic area capacity
-                AddToolbarButton(toolbarBar, "Перегенерировать", 150f, ThemeRole.Accent, RegenerateUpperFloor);
+                AddToolbarButton(toolbarBar, "Перегенерировать", 185f, ThemeRole.Accent, RegenerateUpperFloor);
                 regenMsgLabel = AddToolbarLabel(toolbarBar, "", 320f);
                 ThemeService.Tag(regenMsgLabel, ThemeRole.Danger);
             }
