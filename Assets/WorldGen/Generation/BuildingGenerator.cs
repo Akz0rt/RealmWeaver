@@ -24,9 +24,9 @@ namespace WorldGen.Generation
     ///
     /// Room sizes are rolled directly here (NOT via <see cref="RoomSizing.Roll"/>/<see cref="RoomSizing.Default"/>)
     /// -- RoomSizing's ranges are keyed on DUNGEON type semantics (TypeId 2 == Boss -> 10x10 default, 8..14
-    /// roll range), and a building's TypeId 2 means "Приватная" (private room; see BuildingProfile), which
-    /// must NOT come out boss-sized. Buildings want modest, roughly-uniform chambers instead, so this class
-    /// rolls its own small independent-per-axis range.</summary>
+    /// roll range), which is meaningless for a building (its types are just {0 Вход, 1 Комната}) and would
+    /// wrongly blow a plain room up to boss size. Buildings want modest, roughly-uniform chambers instead, so
+    /// this class rolls its own small independent-per-axis range.</summary>
     public static class BuildingGenerator
     {
         // Independent per-axis roll range (tiles, inclusive) for a building room's footprint -- deliberately
@@ -88,6 +88,11 @@ namespace WorldGen.Generation
                 var upper = GenerateNestedUpperFloor(rng, budget,
                     lMinX, lMinY, lMaxX, lMaxY, sx, sy, out var stairUp);
 
+                // The stair-ARRIVAL room is this upper floor's entrance (user 2026-07-19: the room the stairs
+                // from below lead into is the floor's entrance). Marked AFTER layout — a pure type change, it
+                // moves/resizes nothing (sizes are explicit; the layout already ran on the no-entrance graph).
+                stairUp.TypeId = 0;
+
                 // Exactly ONE non-hidden Stairs portal per consecutive pair, stored on the LOWER floor's
                 // stair room, pointing up to the chosen (roughly-above) room on the floor immediately above.
                 stairDown.Portals.Add(new Portal
@@ -104,6 +109,19 @@ namespace WorldGen.Generation
             }
 
             return data;
+        }
+
+        /// <summary>Collapse legacy building room types (Приватная/Служебная/Особая = TypeId 2/3/4, from before
+        /// the 2-type simplification) down to the plain room (TypeId 1), so a saved building doesn't render
+        /// them as the entrance — the 2-entry building palette makes <see cref="Rendering.InteriorProfile.TypeOf"/>
+        /// clamp any out-of-range id to index 0 (Вход). Entrances (0) and plain rooms (1) are untouched.
+        /// A no-op for non-building interiors. Applied on load; deterministic, headless.</summary>
+        public static void NormalizeTypes(InteriorData d)
+        {
+            if (d == null || d.Kind != InteriorKind.Building) return;
+            foreach (var f in d.Floors)
+                foreach (var r in f.Rooms)
+                    if (r.TypeId >= 2) r.TypeId = 1;
         }
 
         /// <summary>Generate ONE upper floor's room graph and NEST it inside a lower floor's footprint bbox
@@ -163,19 +181,21 @@ namespace WorldGen.Generation
                 floor.Rooms.Add(new Room { Id = i + 1, TypeId = 1 });
             floor.NextRoomId = roomCount + 1;
 
-            // 2. TYPES. Floor 0 room 1 (index 0) is the building entrance (TypeId 0) -- exactly one, and
-            //    ONLY on floor 0. Every other room, on EVERY floor (the rest of floor 0, and ALL rooms on
-            //    floors > 0), rolls a building type in 1..4 (see BuildingProfile: 1=Общая, 2=Приватная,
-            //    3=Служебная, 4=Особая).
+            // 2. TYPES (simplified 2-type palette, user 2026-07-19). Floor 0 room 1 (index 0) is the building
+            //    entrance (TypeId 0); every OTHER room is a plain room (TypeId 1). An UPPER floor has no
+            //    entrance here -- Generate() marks the stair-ARRIVAL room as that floor's entrance after layout.
+            //    We still CONSUME one rng draw per non-entrance room (as the old 1..4 roll did) so the rng
+            //    sequence -- and thus every seed's sizes/positions -- is byte-identical to pre-simplification.
             for (int i = 0; i < roomCount; i++)
             {
                 bool isTheEntrance = isGroundFloor && i == 0;
-                floor.Rooms[i].TypeId = isTheEntrance ? 0 : rng.Next(1, 5);   // upper bound exclusive -> 1..4
+                if (!isTheEntrance) rng.Next(1, 5);   // consumed to keep the seed sequence stable; value unused
+                floor.Rooms[i].TypeId = isTheEntrance ? 0 : 1;
             }
 
             // 3. SIZES. Rolled independently per axis in a small MODEST range -- see the class doc for why
             //    this deliberately bypasses RoomSizing (its Boss/TypeId-2 default would blow a building's
-            //    "Приватная" room up to 10x10). Sizes stay 4..6 on EVERY floor: a higher floor shrinks by
+            //    plain room up to 10x10). Sizes stay 4..6 on EVERY floor: a higher floor shrinks by
             //    having fewer rooms, never smaller ones.
             foreach (var r in floor.Rooms)
             {

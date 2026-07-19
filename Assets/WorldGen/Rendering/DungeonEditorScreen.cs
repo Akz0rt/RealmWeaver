@@ -85,10 +85,11 @@ namespace WorldGen.Rendering
             if (current == null) return;
             if (current.Kind == InteriorKind.Building)
             {
-                // ONE new building floor, no entrance (upper floors don't have one), linked to the
-                // previous top floor by a stair on that floor's first room.
+                // ONE new building floor, linked to the previous top floor by a stair on that floor's first
+                // room. Its room 0 is the entrance and IS the room that stair targets (user 2026-07-19: the
+                // stair-arrival room is the floor's entrance), so we KEEP it as the entrance — no longer
+                // stripped like the old "upper floors have no entrance" rule.
                 var floor = BuildingGenerator.Generate(FreshSeed(), current.OwnerPoiId, DefaultRooms, 1).Floors[0];
-                foreach (var r in floor.Rooms) if (r.TypeId == 0) r.TypeId = 1;   // upper floors have no entrance
                 int lowerIdx = current.Floors.Count - 1;
                 var lower = current.Floors[lowerIdx];
                 current.Floors.Add(floor);

@@ -39,7 +39,13 @@ namespace WorldGen.Rendering
         public void LoadDungeons(List<InteriorData> loaded)
         {
             dungeons.Clear();
-            if (loaded != null) dungeons.AddRange(loaded);
+            if (loaded != null)
+            {
+                // Collapse any legacy building room types (2/3/4) to the plain room so a save from before the
+                // 2-type simplification doesn't render random rooms as the entrance (user 2026-07-19).
+                foreach (var d in loaded) BuildingGenerator.NormalizeTypes(d);
+                dungeons.AddRange(loaded);
+            }
         }
 
         public void ClearAll() => dungeons.Clear();

@@ -32,16 +32,20 @@ namespace WorldGen.Rendering
             if (e0 != 1)
             { Debug.LogError($"FAIL entrance: floor 0 has {e0} TypeId==0 rooms, want exactly 1"); ok = false; }
 
-            // ---- 3. NO entrance anywhere on floors > 0 --------------------------------------------------
-            // Remove the "floor 0 only" guard (e.g. let every floor's room 0 roll a raw 0..4 type) and this
-            // fires on floor 1/2.
+            // ---- 3. Each UPPER floor has EXACTLY ONE entrance, and it IS the stair-ARRIVAL room ----------
+            // (user 2026-07-19: the room the stairs from below lead into is that floor's entrance.) Remove the
+            // "stairUp.TypeId = 0" mark in the generator → the count drops to 0 → fails; mark the WRONG room →
+            // the id mismatch fails.
             for (int f = 1; f < b.Floors.Count; f++)
-                foreach (var r in b.Floors[f].Rooms)
-                    if (r.TypeId == 0)
-                    {
-                        Debug.LogError($"FAIL entrance: floor {f} room {r.Id} has TypeId 0 (entrance leaked to an upper floor)");
-                        ok = false;
-                    }
+            {
+                int ent = 0; Room entRoom = null;
+                foreach (var r in b.Floors[f].Rooms) if (r.TypeId == 0) { ent++; entRoom = r; }
+                if (ent != 1)
+                { Debug.LogError($"FAIL entrance: upper floor {f} has {ent} TypeId==0 rooms, want exactly 1 (the stair arrival)"); ok = false; }
+                int arrival = StairTarget(b, f - 1);   // the room the f-1 -> f stair targets
+                if (entRoom == null || entRoom.Id != arrival)
+                { Debug.LogError($"FAIL entrance: upper floor {f} entrance is room {(entRoom == null ? -1 : entRoom.Id)}, but the stair from below arrives at room {arrival}"); ok = false; }
+            }
 
             // ---- 4. Exactly one non-hidden Stairs portal per consecutive floor pair, stored on the LOWER
             //         floor, pointing up, target room exists on the floor above --------------------------
@@ -202,6 +206,21 @@ namespace WorldGen.Rendering
                     }
                 }
             }
+
+            // ---- 8. NormalizeTypes collapses legacy building types (2/3/4) to the plain room (1) ---------
+            // A save from before the 2-type simplification must not render its old rooms as the entrance.
+            // Entrance (0) and plain (1) are untouched; 2/3/4 -> 1. Fails if the remap is dropped.
+            var legacy = new InteriorData { Kind = InteriorKind.Building };
+            var lf = new InteriorFloor();
+            lf.Rooms.Add(new Room { Id = 1, TypeId = 0 });
+            lf.Rooms.Add(new Room { Id = 2, TypeId = 1 });
+            lf.Rooms.Add(new Room { Id = 3, TypeId = 3 });
+            lf.Rooms.Add(new Room { Id = 4, TypeId = 4 });
+            legacy.Floors.Add(lf);
+            BuildingGenerator.NormalizeTypes(legacy);
+            var lr = legacy.Floors[0];
+            if (lr.GetRoom(1).TypeId != 0 || lr.GetRoom(2).TypeId != 1 || lr.GetRoom(3).TypeId != 1 || lr.GetRoom(4).TypeId != 1)
+            { Debug.LogError("FAIL normalize: legacy building types not collapsed to {0 stays, 1 stays, 2/3/4 -> 1}"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
         }

@@ -21,8 +21,9 @@ namespace WorldGen.Rendering
             // ── BUILDING (ExplicitStairs) ────────────────────────────────────────────────────────────
             // 3 floors. Floor 0: entrance (id1) + stair room (id2) with a Stairs portal UP to floor 1 room 1.
             // Floor 1: room 1 is the TARGET of floor-0's stair AND has its own Stairs portal UP to floor 2 —
-            // a middle floor, so it must show BOTH ⬆ (own) and ⬇ (derived). Room 2 is TypeId 2 ("Приватная",
-            // NOT a boss). Floor 2: room 1 is the target of floor-1's stair (down endpoint only).
+            // a middle floor, so it must show BOTH ⬆ (own) and ⬇ (derived). Room 2 carries TypeId 2 (a legacy/
+            // out-of-palette value — buildings are now just {0,1}) to prove the building path NEVER treats a
+            // TypeId-2 room as a dungeon boss. Floor 2: room 1 is the target of floor-1's stair (down only).
             var b = new InteriorData { Kind = InteriorKind.Building };
             var bf0 = new InteriorFloor();
             bf0.Rooms.Add(new Room { Id = 1, TypeId = 0 });
@@ -35,7 +36,7 @@ namespace WorldGen.Rendering
             var mid = new Room { Id = 1, TypeId = 1 };
             mid.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 2, TargetRoomId = 1 });
             bf1.Rooms.Add(mid);
-            bf1.Rooms.Add(new Room { Id = 2, TypeId = 2 });   // "Приватная" — must NOT descend like a dungeon boss
+            bf1.Rooms.Add(new Room { Id = 2, TypeId = 2 });   // legacy/out-of-palette type — must NOT descend like a dungeon boss
             b.Floors.Add(bf1);
 
             var bf2 = new InteriorFloor();

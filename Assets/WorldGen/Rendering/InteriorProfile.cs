@@ -81,9 +81,11 @@ namespace WorldGen.Rendering
         }
     }
 
-    /// <summary>Building interior profile. Distinct readable room-type roles (RoomCommon/RoomPrivate/
-    /// RoomService/RoomSpecial) added to ThemeService for this purpose; provisional hex values, tuned
-    /// visually once the building renderer ships.</summary>
+    /// <summary>Building interior profile. Simplified 2-type palette (user 2026-07-19): just an entrance and
+    /// a plain room — the earlier Приватная/Служебная/Особая categories were dropped. The RoomCommon role
+    /// paints the plain room; RoomPrivate/RoomService/RoomSpecial are now unused (kept in ThemeService for
+    /// now, removable later). Legacy saves with TypeId 2/3/4 are collapsed to 1 by
+    /// <see cref="Generation.BuildingGenerator.NormalizeTypes"/> on load.</summary>
     public static class BuildingProfile
     {
         public static InteriorProfile Build()
@@ -93,11 +95,8 @@ namespace WorldGen.Rendering
                 Kind = InteriorKind.Building,
                 RoomTypes = new[]
                 {
-                    new RoomTypeDef("Вход",      ThemeRole.Accent,      ThemeRole.AccentInk),
-                    new RoomTypeDef("Общая",     ThemeRole.RoomCommon,  ThemeRole.Txt),
-                    new RoomTypeDef("Приватная", ThemeRole.RoomPrivate, ThemeRole.Txt),
-                    new RoomTypeDef("Служебная", ThemeRole.RoomService, ThemeRole.Txt),
-                    new RoomTypeDef("Особая",    ThemeRole.RoomSpecial, ThemeRole.Txt),
+                    new RoomTypeDef("Вход",    ThemeRole.Accent,     ThemeRole.AccentInk),
+                    new RoomTypeDef("Комната", ThemeRole.RoomCommon, ThemeRole.Txt),
                 },
                 Layout = LayoutMode.Compact,
                 FloorLinks = FloorLinkMode.ExplicitStairs,
