@@ -270,7 +270,7 @@ namespace WorldGen.Rendering
 
             var hlg = bar.AddComponent<HorizontalLayoutGroup>();
             hlg.spacing = 6f; hlg.padding = new RectOffset(12, 12, 4, 4);
-            hlg.childControlWidth = false; hlg.childForceExpandWidth = false;
+            hlg.childControlWidth = true; hlg.childForceExpandWidth = false;   // honour each item's preferredWidth
             hlg.childControlHeight = true; hlg.childForceExpandHeight = true;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
@@ -302,7 +302,11 @@ namespace WorldGen.Rendering
                 AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
                 AddToolbarLabel(toolbarBar, $"из {cap}", 52f);   // the contour's deterministic area capacity
                 AddToolbarButton(toolbarBar, "Перегенерировать", 185f, ThemeRole.Accent, RegenerateUpperFloor);
-                regenMsgLabel = AddToolbarLabel(toolbarBar, "", 320f);
+                // The layout is generate-only, but the DM may still author TRANSITIONS between rooms: «Связать»
+                // adds a corridor (click two rooms); removal is in the inspector. Links don't move rooms, so the
+                // generated layout is undisturbed. Drag stays locked (OnBeginDrag early-returns on upper floors).
+                linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
+                regenMsgLabel = AddToolbarLabel(toolbarBar, "", 300f);
                 ThemeService.Tag(regenMsgLabel, ThemeRole.Danger);
             }
             else

@@ -100,22 +100,22 @@ namespace WorldGen.Rendering
                 AddInfoText(content, "Выберите комнату", 12, ThemeRole.Mut, FontStyle.Italic);
             else
             {
-                bool locked = StructureLocked;
-                BuildRoomSection(content, lvl, room, locked);
-                if (!locked)   // structural editing is disabled on a generated upper floor — see StructureLocked
-                {
-                    BuildSecretsSection(content, room);
-                    BuildCorridorsSection(content, lvl, room);
-                }
+                // On a generated upper floor the ROOM (type/size) is locked, but TRANSITIONS stay editable — the
+                // DM authors which rooms connect. So corridors + secret passages are always shown; only
+                // BuildRoomSection hides the layout-affecting type/size controls when locked.
+                BuildRoomSection(content, lvl, room, StructureLocked);
+                BuildSecretsSection(content, room);
+                BuildCorridorsSection(content, lvl, room);
                 AddDivider(content);
             }
             BuildValidationSection(content);
         }
 
         /// <summary>A building's GENERATED upper floors are machine-maintained (DungeonEditorScreen's generate-only
-        /// toolbar): the layout — room type, size, corridors, secret passages — is not hand-edited here, because
-        /// those edits would overlap neighbours or break the shared stairwell and are never re-packed. The DM may
-        /// still name/annotate rooms (Title/Body stay live). Floor 0 and dungeons are fully editable.</summary>
+        /// toolbar): the LAYOUT-affecting controls — room type and size — are not hand-edited here, because a
+        /// type change could break the shared stairwell and a resize would overlap neighbours with no re-pack.
+        /// Transitions (corridors, secret passages) and Title/Body stay editable — they don't move rooms. Floor 0
+        /// and dungeons are fully editable.</summary>
         bool StructureLocked =>
             dungeon != null && dungeon.Kind == InteriorKind.Building && currentLevelIndex != null && currentLevelIndex() > 0;
 
@@ -128,9 +128,9 @@ namespace WorldGen.Rendering
 
             if (locked)
             {
-                // Generated upper floor: no type / size / corridor / secret editing (see StructureLocked). Only
-                // the notes below stay live; a hint explains why the structural controls are absent.
-                AddInfoText(sec.transform, "Этаж генерируется — правьте раскладку через «Перегенерировать». Здесь редактируются только заметки.",
+                // Generated upper floor: type + size are locked (layout is machine-maintained). Transitions and
+                // notes below stay editable; a hint explains why type/size are absent.
+                AddInfoText(sec.transform, "Раскладка этажа генерируется («Перегенерировать»). Тип и размер не меняются; переходы и заметки — редактируются.",
                     10, ThemeRole.Mut, FontStyle.Italic);
             }
             else
