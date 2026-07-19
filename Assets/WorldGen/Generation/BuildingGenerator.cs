@@ -29,15 +29,14 @@ namespace WorldGen.Generation
         const int RoomTypeId = 1;
         public const int StairTypeId = 2;   // Лестница — the stairwell column (the editor's +этаж reads this)
 
-        // Deterministic AREA capacity — the contour area budgeted PER ROOM. Deliberately CONSERVATIVE: the
-        // LARGEST room footprint (MaxSideExclusive-1)² = 36 tile², not the ~25 mean, DIVIDED by a packing-
-        // efficiency factor for the gaps a flush-pack around a fixed column leaves. A looser value would let the
-        // cap exceed what the packer can actually realize on an awkward contour, so counts near the cap would
-        // sometimes fail and sometimes succeed — the very flip-flop this replaces. Tune at the checkpoint (like
-        // ContourMargin): raise TilesPerRoom to be stricter, lower it to allow more rooms (risking rare misses).
-        static float MaxRoomArea { get { float s = MaxSideExclusive - 1; return s * s; } }   // 6*6 = 36
-        public const float PackFill = 0.8f;                                                  // flush-pack efficiency
-        static float TilesPerRoom => MaxRoomArea / PackFill;                                  // 36 / 0.8 = 45
+        // AREA is only an UPPER BOUND on the room count — it can't predict whether the flush pack around the fixed
+        // column will actually realize that many on a given contour SHAPE. So the displayed cap comes from a real
+        // packing PROBE (MaxRoomsPackable); MaxRoomsByArea just sizes that probe. It is therefore GENEROUS: usable
+        // area over the SMALLEST room footprint (MinSide² = 16), an upper bound the true packable max can't exceed,
+        // clamped so the probe stays cheap.
+        static float MinRoomArea { get { float s = MinSide; return s * s; } }   // 4*4 = 16
+        const int ProbeSeeds = 10;        // fixed-seed packing probes → the deterministic, ACHIEVABLE displayed max
+        const int MaxProbeBudget = 24;    // ceiling on probe room budget (keeps probing cheap)
 
         static int T => DungeonLayout.TilesPerAxis;
 
@@ -135,18 +134,96 @@ namespace WorldGen.Generation
             return null;
         }
 
-        /// <summary>Deterministic capacity: the largest TOTAL room count (INCLUDING the Лестница column) that fits
-        /// by AREA inside <paramref name="contourFloor"/>'s drawn contour. The contour's usable area, minus the
-        /// column footprint, divided by <see cref="TilesPerRoom"/> (the CONSERVATIVE per-room area budget). Seed-
-        /// INDEPENDENT — unlike a single greedy pack it gives the SAME verdict every time, and the conservative
-        /// budget keeps the cap within what the packer can realize so «Перегенерировать» does not flip-flop
-        /// between "won't fit" and success on one count. Always ≥ 1.</summary>
+        /// <summary>AREA UPPER BOUND on the total room count (INCLUDING the Лестница column) for
+        /// <paramref name="contourFloor"/>'s contour: usable area minus the column, over the smallest room
+        /// footprint, clamped to <see cref="MaxProbeBudget"/>. NOT the displayed cap — it only sizes the packing
+        /// probe (<see cref="MaxRoomsPackable"/>); the real achievable max is measured, not estimated. Always ≥ 1.</summary>
         public static int MaxRoomsByArea(InteriorFloor contourFloor, int colW, int colH)
         {
             float usable = FloorFootprint.UsableAreaTiles(contourFloor, FloorFootprint.ContourMargin);
             float avail = usable - colW * colH;
-            int extra = avail > 0f ? (int)(avail / TilesPerRoom) : 0;
-            return 1 + Math.Max(0, extra);
+            int extra = avail > 0f ? (int)(avail / MinRoomArea) : 0;
+            return Math.Min(MaxProbeBudget, 1 + Math.Max(0, extra));
+        }
+
+        /// <summary>The ACTUAL maximum rooms (incl. the column) the packer can place around the column inside this
+        /// contour — found by PROBING (a real pack), because area only bounds it: a small/awkward contour packs
+        /// fewer than its area allows. Deterministic (fixed probe seeds) so the «из N» readout is stable, and
+        /// always ACHIEVABLE (it is a real packing result), so any count ≤ it is GUARANTEED to generate via
+        /// <see cref="TryBuildUpperFloorExact"/>. ≥ 1 (the column alone always fits).</summary>
+        public static int MaxRoomsPackable(float colX, float colY, int colW, int colH, InteriorFloor contourFloor)
+        {
+            int budget = MaxRoomsByArea(contourFloor, colW, colH);
+            int best = 1;
+            for (int s = 0; s < ProbeSeeds; s++)
+            {
+                var f = GenerateFloorAroundColumn(new Random(s), budget, colX, colY, colW, colH, contourFloor, out _);
+                if (f.Rooms.Count > best) best = f.Rooms.Count;
+            }
+            return best;
+        }
+
+        /// <summary>Build an upper floor with EXACTLY <paramref name="targetCount"/> rooms (incl. the column),
+        /// GUARANTEED to succeed whenever targetCount ≤ <see cref="MaxRoomsPackable"/>. Phase 1 tries
+        /// <paramref name="variety"/> seeds derived from <paramref name="varietySeed"/> for a fresh natural layout
+        /// that packs AT LEAST targetCount, then trims it down to exactly targetCount; phase 2 falls back to the
+        /// fixed probe seeds, which reach the packable max by construction — so an in-range count always yields a
+        /// valid arrangement instead of a "won't fit" dead end. Returns false only if targetCount genuinely
+        /// exceeds what the contour can pack.</summary>
+        public static bool TryBuildUpperFloorExact(int targetCount, int varietySeed, int variety,
+            float colX, float colY, int colW, int colH, InteriorFloor contourFloor, out InteriorFloor floor, out Room stair)
+        {
+            targetCount = Math.Max(1, targetCount);
+            int budget = Math.Max(targetCount, MaxRoomsByArea(contourFloor, colW, colH));
+
+            // Phase 1: fresh (varietySeed-derived) seeds — a new-looking layout each press.
+            for (int i = 0; i < variety; i++)
+                if (TryPackAtLeast(unchecked(varietySeed + i), targetCount, budget, colX, colY, colW, colH, contourFloor, out floor, out stair))
+                { TrimToRoomCount(floor, targetCount, stair.Id); return true; }
+
+            // Phase 2: deterministic probe seeds — these reach the packable max, so any in-range count is found here.
+            for (int s = 0; s < ProbeSeeds; s++)
+                if (TryPackAtLeast(s, targetCount, budget, colX, colY, colW, colH, contourFloor, out floor, out stair))
+                { TrimToRoomCount(floor, targetCount, stair.Id); return true; }
+
+            floor = null; stair = null;
+            return false;
+        }
+
+        static bool TryPackAtLeast(int seed, int targetCount, int budget,
+            float colX, float colY, int colW, int colH, InteriorFloor contourFloor, out InteriorFloor floor, out Room stair)
+        {
+            floor = GenerateFloorAroundColumn(new Random(seed), budget, colX, colY, colW, colH, contourFloor, out stair);
+            return floor.Rooms.Count >= targetCount;
+        }
+
+        /// <summary>Reduce a freshly generated floor to EXACTLY <paramref name="targetCount"/> rooms, keeping the
+        /// column and a CONNECTED subset (a BFS prefix from the column) and dropping the rest with their links.
+        /// Lets an exact requested count be hit from a pack that placed more. No-op if already ≤ targetCount.</summary>
+        public static void TrimToRoomCount(InteriorFloor floor, int targetCount, int columnRoomId)
+        {
+            if (floor == null || floor.Rooms.Count <= targetCount) return;
+            var keep = new HashSet<int> { columnRoomId };
+            var queue = new Queue<int>();
+            queue.Enqueue(columnRoomId);
+            while (queue.Count > 0 && keep.Count < targetCount)
+            {
+                int cur = queue.Dequeue();
+                foreach (var lk in floor.Links)
+                {
+                    if (keep.Count >= targetCount) break;
+                    int other = lk.RoomA == cur ? lk.RoomB : (lk.RoomB == cur ? lk.RoomA : -1);
+                    if (other < 0 || keep.Contains(other)) continue;
+                    keep.Add(other); queue.Enqueue(other);
+                }
+            }
+            // Disconnected remainder (a connected pack shouldn't hit this) — top up with any rooms to reach target.
+            if (keep.Count < targetCount)
+                foreach (var r in floor.Rooms) { if (keep.Count >= targetCount) break; keep.Add(r.Id); }
+            floor.Rooms.RemoveAll(r => !keep.Contains(r.Id));
+            floor.Links.RemoveAll(l => !keep.Contains(l.RoomA) || !keep.Contains(l.RoomB));
+            int maxId = 0; foreach (var r in floor.Rooms) if (r.Id > maxId) maxId = r.Id;
+            floor.NextRoomId = maxId + 1;
         }
 
         /// <summary>Generate ONE upper floor around the stairwell column: a Лестница (room 0, the column's

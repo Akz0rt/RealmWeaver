@@ -252,11 +252,11 @@ namespace WorldGen.Rendering
             if (made != null && made.Id == 1)
             { Debug.LogError("FAIL column-ensure: the entrance was designated as the column"); ok = false; }
 
-            // ---- 12. Deterministic AREA capacity (the «Перегенерировать» flip-flop fix) --------------------
-            // The old fit-check ran a single seed-dependent pack, so one press said "won't fit" and the next
-            // generated the same count. MaxRoomsByArea is a pure AREA verdict — same answer every call — and it
-            // must BOUND what the packer can actually realize. Non-vacuous: a broken area sum, a lost margin, a
-            // non-monotone cap, or an area verdict that disagrees with the packer each flips an assertion.
+            // ---- 12. Packable capacity + GUARANTEED exact-count generation (the «Перегенерировать» fix) --------
+            // Area only bounds the count; the displayed «из N» is the PROBED packable max, and every count ≤ N must
+            // generate EXACTLY that many rooms (the user's requirement: an in-range count always finds a layout).
+            // Non-vacuous: a broken area sum, a non-deterministic/over-promising cap, or a trim that keeps the wrong
+            // count each flips an assertion.
             {
                 int T3 = DungeonLayout.TilesPerAxis;
                 float m = FloorFootprint.ContourMargin;
@@ -269,38 +269,42 @@ namespace WorldGen.Rendering
                 if (Mathf.Abs(gotArea - wantArea) > 0.01f)
                 { Debug.LogError($"FAIL area: single 6×6 room usable area {gotArea:F2}, want {wantArea:F2}"); ok = false; }
 
-                // (b) DETERMINISTIC: same contour → same cap every call (no hidden RNG / seed dependence).
-                int capOne = BuildingGenerator.MaxRoomsByArea(one, 4, 4);
-                if (BuildingGenerator.MaxRoomsByArea(one, 4, 4) != capOne)
-                { Debug.LogError("FAIL cap: MaxRoomsByArea not deterministic for the same contour"); ok = false; }
-
-                // (c) MONOTONE: a larger contour admits strictly more rooms than a smaller one.
                 var big = new InteriorFloor();
                 big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 16, SizeH = 16, X = 0.5f, Y = 0.5f });
-                int capBig = BuildingGenerator.MaxRoomsByArea(big, 4, 4);
-                if (!(capBig > capOne))
-                { Debug.LogError($"FAIL cap: larger contour cap {capBig} not > smaller {capOne}"); ok = false; }
-
-                // (d) SOUND vs the packer, BOTH directions. The (conservative) cap must be ACHIEVABLE — the flush
-                //     packer reaches a mid-range count on the fat 16×16 contour within a few seeds — and must not
-                //     OVER-promise: 12 rooms are unpackable for every seed on the tiny 6×6 contour that forbids
-                //     them. A cap that exceeds real packability (the flip-flop cause) fails the achievability probe.
                 float cx = 0.5f * T3, cy = 0.5f * T3;
-                if (capBig < 5)
-                { Debug.LogError($"FAIL cap: big 16×16 contour cap {capBig} should admit >=5"); ok = false; }
-                bool packed5 = false;
-                for (int s = 0; s < 40 && !packed5; s++)
-                    if (BuildingGenerator.TryGenerateFloorAroundColumn(3000 + s, 5, cx, cy, 4, 4, big, out _, out _)) packed5 = true;
-                if (!packed5)
-                { Debug.LogError("FAIL cap: no seed packed 5 rooms into a 16×16 contour whose cap admits them (cap not achievable → flip-flop)"); ok = false; }
 
-                if (capOne >= 12)
-                { Debug.LogError($"FAIL cap: small 6×6 contour cap {capOne} should reject 12"); ok = false; }
-                bool any12 = false;
-                for (int s = 0; s < 12 && !any12; s++)
-                    if (BuildingGenerator.TryGenerateFloorAroundColumn(1000 + s, 12, cx, cy, 4, 4, one, out _, out _)) any12 = true;
-                if (any12)
-                { Debug.LogError("FAIL cap: packer placed 12 rooms in a contour whose area forbids it — area verdict unsound"); ok = false; }
+                // (b) The probed max is DETERMINISTIC (stable «из N»), ACHIEVABLE (≥1), and ≤ the area upper bound.
+                int capBig = BuildingGenerator.MaxRoomsPackable(cx, cy, 4, 4, big);
+                if (capBig != BuildingGenerator.MaxRoomsPackable(cx, cy, 4, 4, big))
+                { Debug.LogError("FAIL packable: MaxRoomsPackable not deterministic"); ok = false; }
+                if (capBig < 2 || capBig > BuildingGenerator.MaxRoomsByArea(big, 4, 4))
+                { Debug.LogError($"FAIL packable: capBig {capBig} out of [2, areaBound]"); ok = false; }
+
+                // (c) GUARANTEE: EVERY count 1..capBig builds EXACTLY that many rooms, column present + pinned, all
+                //     rooms inside the contour. This is the property the user asked for — an in-range count always
+                //     generates. A packer that can't reach a count, or a trim that keeps the wrong number, fails here.
+                for (int c = 1; c <= capBig; c++)
+                {
+                    bool built = BuildingGenerator.TryBuildUpperFloorExact(c, 777 + c, 8, cx, cy, 4, 4, big, out var fl, out var st);
+                    if (!built) { Debug.LogError($"FAIL guarantee: TryBuildUpperFloorExact failed for in-range count {c}/{capBig}"); ok = false; continue; }
+                    if (fl.Rooms.Count != c) { Debug.LogError($"FAIL guarantee: asked {c} rooms, got {fl.Rooms.Count}"); ok = false; }
+                    if (st == null || st.TypeId != 2 || fl.GetRoom(st.Id) == null)
+                    { Debug.LogError($"FAIL guarantee: column missing from the {c}-room floor"); ok = false; }
+                    if (st != null && (Mathf.Abs(st.X * T3 - cx) > 0.5f || Mathf.Abs(st.Y * T3 - cy) > 0.5f))
+                    { Debug.LogError($"FAIL guarantee: column not pinned on the {c}-room floor"); ok = false; }
+                }
+
+                // (d) TrimToRoomCount keeps EXACTLY the target and the column. Build a max floor, trim to 2.
+                if (capBig >= 3 && BuildingGenerator.TryBuildUpperFloorExact(capBig, 42, 8, cx, cy, 4, 4, big, out var full, out var fullSt))
+                {
+                    BuildingGenerator.TrimToRoomCount(full, 2, fullSt.Id);
+                    if (full.Rooms.Count != 2 || full.GetRoom(fullSt.Id) == null)
+                    { Debug.LogError($"FAIL trim: expected 2 rooms incl. column, got {full.Rooms.Count}"); ok = false; }
+                }
+
+                // (e) The cap does NOT over-promise: a count far ABOVE it can't be built.
+                if (BuildingGenerator.TryBuildUpperFloorExact(capBig + 8, 5, 8, cx, cy, 4, 4, big, out _, out _))
+                { Debug.LogError($"FAIL cap: built {capBig + 8} rooms though the packable max is {capBig}"); ok = false; }
             }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");

@@ -38,6 +38,7 @@ namespace WorldGen.Rendering
         Text upperCountLabel;
         Text regenMsgLabel;
         int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
+        int currentUpperCap = DefaultRooms;  // probed packable max for the current upper floor (set in RefreshToolbar)
 
         Font font;
         bool built;
@@ -292,7 +293,8 @@ namespace WorldGen.Rendering
             bool generateOnly = current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex > 0;
             if (generateOnly)
             {
-                int cap = UpperCap();
+                currentUpperCap = UpperCap();   // probe once per floor switch; +/- clamps against this cached value
+                int cap = currentUpperCap;
                 upperRoomCount = Mathf.Clamp(CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms, 1, cap);
                 AddToolbarLabel(toolbarBar, "Комнаты:", 76f);
                 AddToolbarButton(toolbarBar, "−", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(-1));
@@ -314,7 +316,7 @@ namespace WorldGen.Rendering
 
         void AdjustUpperRoomCount(int delta)
         {
-            upperRoomCount = Mathf.Clamp(upperRoomCount + delta, 1, UpperCap());
+            upperRoomCount = Mathf.Clamp(upperRoomCount + delta, 1, currentUpperCap);   // cached cap — no re-probe per click
             if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
         }
 
@@ -327,7 +329,10 @@ namespace WorldGen.Rendering
             column = current != null ? BuildingGenerator.FindFloorZeroColumn(current) : null;
             cap = 1;
             if (column == null) return false;
-            cap = Mathf.Clamp(BuildingGenerator.MaxRoomsByArea(current.Floors[0], column.SizeW, column.SizeH), 1, MaxUpperRooms);
+            int T = DungeonLayout.TilesPerAxis;
+            // The displayed max is the ACTUAL packable count (probed), not an area estimate — so «из N» is real and
+            // any count ≤ N is guaranteed to generate.
+            cap = Mathf.Clamp(BuildingGenerator.MaxRoomsPackable(column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0]), 1, MaxUpperRooms);
             return true;
         }
 
@@ -374,14 +379,13 @@ namespace WorldGen.Rendering
             if (!TryGetColumnAndCap(out var column, out int cap)) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
             if (upperRoomCount > cap) { ClampToCapWithMessage(cap); return; }
 
-            // Within the CONSERVATIVE area cap a flush pack around the column almost always succeeds; retry a few
-            // fresh seeds so one press reliably packs (kills the residual "won't fit -> press again -> fits").
+            // GUARANTEED for an in-range count (upperRoomCount ≤ cap, and cap is a real packing result): search
+            // fresh seeds for a natural layout, then fall back to the probe seeds that reach the packable max —
+            // so «Перегенерировать» always finds a valid arrangement instead of a "won't fit" dead end.
             int T = DungeonLayout.TilesPerAxis;
-            InteriorFloor newFloor = null; Room newStair = null; bool fits = false;
-            for (int a = 0; a < RegenAttempts && !fits; a++)
-                fits = BuildingGenerator.TryGenerateFloorAroundColumn(FreshSeed(), upperRoomCount,
-                    column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out newFloor, out newStair);
-            if (!fits) { ShowRegenMsg($"Не удалось разместить {upperRoomCount} — уменьшите количество"); return; }
+            bool ok = BuildingGenerator.TryBuildUpperFloorExact(upperRoomCount, FreshSeed(), RegenAttempts,
+                column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out var newFloor, out var newStair);
+            if (!ok) { ShowRegenMsg($"Не удалось разместить {upperRoomCount} — уменьшите количество"); return; }
 
             ReplaceCurrentUpperFloor(newFloor, newStair);
             selectedRoomId = 0;   // old room ids are gone — clear the mirror so the inspector doesn't show a stale room
