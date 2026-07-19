@@ -392,6 +392,9 @@ namespace WorldGen.Rendering
         {
             var lvl = BoundLevel;
             if (lvl == null) return;
+            // Building UPPER floors are GENERATE-ONLY (spec stairwell stage B): rooms can't be dragged — the
+            // floor is (re)generated around the column. Leaving draggingRoomId at 0 makes OnDrag a no-op.
+            if (dungeon != null && dungeon.Kind == InteriorKind.Building && levelIndex > 0) return;
             if (!TryPointerToTile(data, out float tx, out float ty)) return;
             draggingRoomId = HitRoomId(lvl, tx, ty);
         }

@@ -32,6 +32,13 @@ namespace WorldGen.Rendering
         Image linkToggleImg;
         int selectedRoomId;   // mirrors DungeonViewController.SelectedRoomId; drives inspectorPanel.ShowRoom
 
+        // Toolbar swaps per floor: free-edit (dungeon / building floor 0) vs generate-only (building upper
+        // floors — a room-count stepper + «Перегенерировать» + a failure message). Rebuilt on every SetLevel.
+        Transform toolbarBar;
+        Text upperCountLabel;
+        Text regenMsgLabel;
+        int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
+
         Font font;
         bool built;
 
@@ -76,6 +83,7 @@ namespace WorldGen.Rendering
             // inspector would show the wrong room while the canvas shows no selection.
             selectedRoomId = 0;
             RebuildLevelTabs();
+            RefreshToolbar();   // free-edit vs generate-only, per the floor we just switched to
             RefreshBody();
             RevalidateAndRefresh();
         }
@@ -263,15 +271,97 @@ namespace WorldGen.Rendering
             hlg.childControlHeight = true; hlg.childForceExpandHeight = true;
             hlg.childAlignment = TextAnchor.MiddleLeft;
 
-            // BuildToolbar runs at EnsureBuilt() time, which Awake() can trigger BEFORE Bind() ever sets
-            // `current` (the scene's DungeonEditorScreen GameObject starts active, so Awake fires at scene
-            // load — see DungeonFlatRenderer's identical dungeon!=null guard for the same reason). Fall back
-            // to the dungeon profile so this never null-refs; for a dungeon it's the exact same profile
-            // Profiles.ForRoom(current) would give once bound.
-            var profile = current != null ? Profiles.ForRoom(current) : Profiles.For(InteriorKind.Dungeon);
-            AddToolbarButton(bar.transform, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
-            linkToggleImg = AddToolbarButton(bar.transform, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
-            AddToolbarButton(bar.transform, "Удалить", 90f, ThemeRole.Elev, () => viewController?.DeleteSelected());
+            toolbarBar = bar.transform;
+            RefreshToolbar();   // fills in the buttons for the current floor (free-edit by default until Bind)
+        }
+
+        /// <summary>(Re)build the toolbar for the CURRENT floor. Dungeons and a building's ground floor get the
+        /// free-edit controls (+ Комната / Связать / Удалить). A building's UPPER floor is GENERATE-ONLY (spec
+        /// stairwell stage B): a room-count stepper + «Перегенерировать» + a failure message — no free editing.
+        /// Called on every SetLevel (and once at build time). BuildToolbar can run before Bind sets `current`,
+        /// so fall back to the dungeon profile (same profile a dungeon would resolve to).</summary>
+        void RefreshToolbar()
+        {
+            if (toolbarBar == null) return;
+            for (int i = toolbarBar.childCount - 1; i >= 0; i--) Destroy(toolbarBar.GetChild(i).gameObject);
+            linkToggleImg = null; upperCountLabel = null; regenMsgLabel = null;
+            viewController?.SetLinkMode(false);   // link mode is per-floor — a floor switch exits it
+
+            bool generateOnly = current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex > 0;
+            if (generateOnly)
+            {
+                upperRoomCount = Mathf.Max(1, CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms);
+                AddToolbarLabel(toolbarBar, "Комнаты:", 76f);
+                AddToolbarButton(toolbarBar, "−", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(-1));
+                upperCountLabel = AddToolbarLabel(toolbarBar, upperRoomCount.ToString(), 30f);
+                AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
+                AddToolbarButton(toolbarBar, "Перегенерировать", 150f, ThemeRole.Accent, RegenerateUpperFloor);
+                regenMsgLabel = AddToolbarLabel(toolbarBar, "", 320f);
+                ThemeService.Tag(regenMsgLabel, ThemeRole.Danger);
+            }
+            else
+            {
+                var profile = current != null ? Profiles.ForRoom(current) : Profiles.For(InteriorKind.Dungeon);
+                AddToolbarButton(toolbarBar, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
+                linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
+                AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, () => viewController?.DeleteSelected());
+            }
+        }
+
+        void AdjustUpperRoomCount(int delta)
+        {
+            upperRoomCount = Mathf.Clamp(upperRoomCount + delta, 1, 20);
+            if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
+        }
+
+        /// <summary>«Перегенерировать» for a building UPPER floor: rebuild it around the shared column with the
+        /// requested room count. Atomic — if the count can't fit floor 0's contour, NOTHING changes and the DM
+        /// is told the reason; otherwise the floor is replaced and its stairs re-linked up/down the column.</summary>
+        void RegenerateUpperFloor()
+        {
+            if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
+            var column = BuildingGenerator.EnsureFloorZeroColumn(current);
+            if (column == null) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+            int T = DungeonLayout.TilesPerAxis;
+            bool fits = BuildingGenerator.TryGenerateFloorAroundColumn(FreshSeed(), upperRoomCount,
+                column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out var newFloor, out var newStair);
+            if (!fits) { ShowRegenMsg($"{upperRoomCount} комнат не помещается в контур — уменьшите количество"); return; }
+            ReplaceCurrentUpperFloor(newFloor, newStair);
+            ShowRegenMsg("");
+            RefreshBody();
+            RevalidateAndRefresh();
+        }
+
+        // Swap the current upper floor for a freshly generated one and re-link the stairwell: the floor BELOW
+        // now targets the new floor's Лестница, and (if a floor exists above) the new Лестница links up to it.
+        void ReplaceCurrentUpperFloor(InteriorFloor newFloor, Room newStair)
+        {
+            int k = CurrentLevelIndex;
+            current.Floors[k] = newFloor;
+            foreach (var r in current.Floors[k - 1].Rooms)
+                foreach (var p in r.Portals)
+                    if (p.Kind == PortalKind.Stairs && p.TargetFloorIndex == k) p.TargetRoomId = newStair.Id;
+            if (k + 1 < current.Floors.Count)
+            {
+                Room above = null;
+                foreach (var r in current.Floors[k + 1].Rooms) if (r.TypeId == BuildingGenerator.StairTypeId) { above = r; break; }
+                if (above != null)
+                    newStair.Portals.Add(new Portal
+                    {
+                        Kind = PortalKind.Stairs, Hidden = false, TargetFloorIndex = k + 1,
+                        TargetRoomId = above.Id, Bidirectional = true, Label = "Лестница",
+                    });
+            }
+        }
+
+        void ShowRegenMsg(string msg) { if (regenMsgLabel != null) regenMsgLabel.text = msg; }
+
+        Text AddToolbarLabel(Transform parent, string text, float width)
+        {
+            var lbl = MakeText(parent, text, 12, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleLeft);
+            lbl.gameObject.AddComponent<LayoutElement>().preferredWidth = width;
+            lbl.raycastTarget = false;
+            return lbl;
         }
 
         void ToggleLinkMode()
