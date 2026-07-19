@@ -207,7 +207,22 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // ---- 8. NormalizeTypes collapses legacy building types (2/3/4) to the plain room (1) ---------
+            // ---- 9. A generated building VALIDATES CLEANLY: no boss warnings, every floor has its entrance -
+            // Buildings have no boss, so DungeonValidator must be Kind-gated. Fails with a per-floor "нет
+            // комнаты босса" warning if the boss check isn't gated, or a "ровно один вход" error if any floor
+            // (esp. an upper one, whose entrance is the stair-arrival room) lacks its entrance.
+            bool anyBossIssue = false, anyEntranceError = false;
+            foreach (var iss in DungeonValidator.Validate(b))
+            {
+                if (iss.Message.Contains("босс")) anyBossIssue = true;
+                if (iss.Severity == IssueSeverity.Error && iss.Message.Contains("вход")) anyEntranceError = true;
+            }
+            if (anyBossIssue)
+            { Debug.LogError("FAIL validate: building produced a boss-room issue (DungeonValidator not Kind-gated)"); ok = false; }
+            if (anyEntranceError)
+            { Debug.LogError("FAIL validate: a building floor is missing its entrance"); ok = false; }
+
+            // ---- 10. NormalizeTypes collapses legacy building types (2/3/4) to the plain room (1) --------
             // A save from before the 2-type simplification must not render its old rooms as the entrance.
             // Entrance (0) and plain (1) are untouched; 2/3/4 -> 1. Fails if the remap is dropped.
             var legacy = new InteriorData { Kind = InteriorKind.Building };

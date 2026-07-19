@@ -76,9 +76,10 @@ namespace WorldGen.Generation
                 var (lMinX, lMinY, lMaxX, lMaxY) = DungeonProjection.ContentBoundsTiles(lower);
 
                 // Stair-DOWN room on the lower floor: the room farthest from that floor's own footprint centre
-                // (a peripheral "back room", and never the centred entrance). Being off-centre is what makes
-                // the stair-align invariant meaningful -- an un-nested upper floor would centre on the field,
-                // far from this room.
+                // (a peripheral "back room"). Being off-centre is what makes the stair-align invariant
+                // meaningful -- an un-nested upper floor would centre on the field, far from this room. (On an
+                // upper floor the entrance is itself peripheral, so this may pick that floor's own entrance as
+                // the next stair-down -- harmless: that room just hosts both the arrival-down and departure-up.)
                 var stairDown = FarthestRoomFromCentre(lower, lMinX, lMinY, lMaxX, lMaxY);
                 float sx = stairDown.X * T, sy = stairDown.Y * T;
 
@@ -118,7 +119,7 @@ namespace WorldGen.Generation
         /// A no-op for non-building interiors. Applied on load; deterministic, headless.</summary>
         public static void NormalizeTypes(InteriorData d)
         {
-            if (d == null || d.Kind != InteriorKind.Building) return;
+            if (d == null || d.Kind != InteriorKind.Building || d.Floors == null) return;
             foreach (var f in d.Floors)
                 foreach (var r in f.Rooms)
                     if (r.TypeId >= 2) r.TypeId = 1;

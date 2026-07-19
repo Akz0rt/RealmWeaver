@@ -20,6 +20,10 @@ namespace WorldGen.Generation
             var issues = new List<DungeonIssue>();
             if (dungeon == null) return issues;
 
+            // Boss rooms are a DUNGEON concept (a building has no boss — its types are just {Вход, Комната}).
+            // Without this gate a building would warn "нет комнаты босса" on every floor.
+            bool bossRule = dungeon.Kind != InteriorKind.Building;
+
             for (int li = 0; li < dungeon.Floors.Count; li++)
             {
                 var lvl = dungeon.Floors[li];
@@ -34,16 +38,16 @@ namespace WorldGen.Generation
 
                 if (entrances != 1)
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: должен быть ровно один вход (сейчас {entrances}).");
-                if (bosses > 1)
+                if (bossRule && bosses > 1)
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: не более одной комнаты босса (сейчас {bosses}).");
-                if (bosses == 0)
+                if (bossRule && bosses == 0)
                     Add(issues, IssueSeverity.Warning, li, $"Этаж {human}: нет комнаты босса — глубже только через секретный ход.");
 
                 var adj = BuildAdj(lvl);
                 if (entrances == 1)
                 {
-                    // Boss distance.
-                    if (bosses == 1)
+                    // Boss distance (dungeon only).
+                    if (bossRule && bosses == 1)
                     {
                         int d = Distance(entranceId, bossId, adj);
                         if (d >= 0 && d < minBossDistance)

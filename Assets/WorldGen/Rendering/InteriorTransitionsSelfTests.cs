@@ -33,7 +33,7 @@ namespace WorldGen.Rendering
             b.Floors.Add(bf0);
 
             var bf1 = new InteriorFloor();
-            var mid = new Room { Id = 1, TypeId = 1 };
+            var mid = new Room { Id = 1, TypeId = 0 };   // the stair-arrival room IS this floor's entrance (as the generator marks it)
             mid.Portals.Add(new Portal { Kind = PortalKind.Stairs, TargetFloorIndex = 2, TargetRoomId = 1 });
             bf1.Rooms.Add(mid);
             bf1.Rooms.Add(new Room { Id = 2, TypeId = 2 });   // legacy/out-of-palette type — must NOT descend like a dungeon boss
@@ -43,7 +43,10 @@ namespace WorldGen.Rendering
             bf2.Rooms.Add(new Room { Id = 1, TypeId = 1 });
             b.Floors.Add(bf2);
 
-            // 1. Middle stair room: BOTH up (own portal → Этаж 3) and down (DERIVED from floor 0 → Этаж 1).
+            // 1. Middle stair room: BOTH up (own portal → Этаж 3) and down (DERIVED from floor 0 → Этаж 1) — and
+            //    NOTHING else. mid is TypeId 0 (a per-floor entrance), so Count==2 also proves an UPPER-floor
+            //    entrance does NOT leak a "Выход" badge (that is gated to floor 0). Drop the floorIndex==0 gate
+            //    on the exit → a 3rd "⬆ Выход" badge appears → Count!=2 → fails.
             var midT = InteriorTransitions.For(b, FloorLinkMode.ExplicitStairs, 1, mid);
             if (!Has(midT, Up, "Этаж 3")) { Debug.LogError("FAIL building: middle floor missing up ⬆ Этаж 3"); ok = false; }
             if (!Has(midT, Down, "Этаж 1")) { Debug.LogError("FAIL building: middle floor missing DERIVED down ⬇ Этаж 1"); ok = false; }
