@@ -120,27 +120,29 @@ namespace WorldGen.Rendering
                     }
             }
 
-            // ---- 8. GenerateFloorAroundColumn fits within an OFF-CENTRE outline (non-vacuous nest) ---------
-            // Off-centre box 24x24 in the field's top-left, column near its far corner. The generated floor's
-            // bbox must stay inside the box — a floor built without the within-outline clamp (Arrange centres it
-            // on the field, ~[54,74]) escapes [8,32]. And its Лестница must land on the column.
+            // ---- 8. GenerateFloorAroundColumn keeps EVERY room inside the contour SHAPE, not just its bbox ---
+            // contourFloor = an L (rooms at (14,14),(26,14),(14,26)); its bbox [8,32]² has an EMPTY bottom-right
+            // corner that is NOT part of the footprint. Every generated room must sit inside the L-shape (the
+            // SAME ContainsRect the renderer's out-of-contour flag uses), and the Лестница on the column.
+            // Non-vacuous: a bbox-only fit would let a room land in the empty corner → ContainsRect false → FAIL.
             {
-                float loMinX = 8f, loMinY = 8f, loMaxX = 32f, loMaxY = 32f;
-                float colX = 26f, colY = 26f;   // a column near the box's far corner
+                int T2 = DungeonLayout.TilesPerAxis;
+                var contour = new InteriorFloor();
+                contour.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 12, SizeH = 12, X = 14f / T2, Y = 14f / T2 });
+                contour.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 12, SizeH = 12, X = 26f / T2, Y = 14f / T2 });
+                contour.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 12, SizeH = 12, X = 14f / T2, Y = 26f / T2 });
                 var upper = BuildingGenerator.GenerateFloorAroundColumn(
-                    new System.Random(20260718), roomBudget: 6, colX, colY, 4, 4,
-                    loMinX, loMinY, loMaxX, loMaxY, out var upStair);
+                    new System.Random(20260718), roomBudget: 6, 14f, 14f, 4, 4, contour, out var upStair);
 
-                var hi = Bbox(upper);
-                bool contained = hi.minX >= loMinX - Eps && hi.minY >= loMinY - Eps
-                              && hi.maxX <= loMaxX + Eps && hi.maxY <= loMaxY + Eps;
-                if (!contained)
-                { Debug.LogError($"FAIL nesting: off-centre fixture upper bbox [{hi.minX:F1},{hi.minY:F1}..{hi.maxX:F1},{hi.maxY:F1}] escaped box [8,8..32,32] (within-outline clamp missing?)"); ok = false; }
-
-                float sdx = Mathf.Abs(upStair.X * DungeonLayout.TilesPerAxis - colX);
-                float sdy = Mathf.Abs(upStair.Y * DungeonLayout.TilesPerAxis - colY);
+                foreach (var r in upper.Rooms)
+                {
+                    var (w, h) = DungeonProjection.EffectiveSize(r);
+                    if (!FloorFootprint.ContainsRect(contour, FloorFootprint.ContourMargin, r.X * T2, r.Y * T2, w, h))
+                    { Debug.LogError($"FAIL footprint-fit: room {r.Id} is outside the L-shaped contour"); ok = false; }
+                }
+                float sdx = Mathf.Abs(upStair.X * T2 - 14f), sdy = Mathf.Abs(upStair.Y * T2 - 14f);
                 if (sdx > 1f || sdy > 1f)
-                { Debug.LogError($"FAIL nesting: off-centre fixture Лестница off the column by ({sdx:F1},{sdy:F1})"); ok = false; }
+                { Debug.LogError($"FAIL footprint-fit: Лестница off the column by ({sdx:F1},{sdy:F1})"); ok = false; }
             }
 
             // ---- 6. Determinism: same seed -> identical structure AND identical positions/bboxes ---------
@@ -237,9 +239,9 @@ namespace WorldGen.Rendering
 
             var noCol = new InteriorData { Kind = InteriorKind.Building };
             var g = new InteriorFloor();
-            g.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = 0.40f, Y = 0.5f });   // entrance
-            g.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.50f, Y = 0.5f });   // central plain room
-            g.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.60f, Y = 0.5f });
+            g.Rooms.Add(new Room { Id = 1, TypeId = 0, SizeW = 4, SizeH = 4, X = 0.50f, Y = 0.5f });   // entrance AT the bbox centre
+            g.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.40f, Y = 0.5f });   // plain, off to the left
+            g.Rooms.Add(new Room { Id = 3, TypeId = 1, SizeW = 4, SizeH = 4, X = 0.60f, Y = 0.5f });   // plain, off to the right
             noCol.Floors.Add(g);
             var made = BuildingGenerator.EnsureFloorZeroColumn(noCol);
             if (made == null || made.TypeId != 2)

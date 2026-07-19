@@ -34,10 +34,6 @@ namespace WorldGen.Generation
         // residual alone is not sufficient; see FitAroundColumn).
         const float AlignEps = 1f;
 
-        // Slack (tiles) for the "footprint bbox inside the outline box" check — generous vs the ToNorm/ToTile
-        // round-trip, far below one whole tile.
-        const float FitEps = 1e-3f;
-
         static int T => DungeonLayout.TilesPerAxis;
 
         public static InteriorData Generate(int seed, string ownerPoiId, int roomCount, int floorCount)
@@ -77,8 +73,7 @@ namespace WorldGen.Generation
             for (int k = 1; k < floorCount; k++)
             {
                 budget = Math.Max(1, budget - rng.Next(1, 3));   // fewer rooms upstairs
-                var upper = GenerateFloorAroundColumn(rng, budget, colX, colY, colW, colH,
-                    minX, minY, maxX, maxY, out var upperStair);
+                var upper = GenerateFloorAroundColumn(rng, budget, colX, colY, colW, colH, ground, out var upperStair);
                 lowerStair.Portals.Add(new Portal
                 {
                     Kind = PortalKind.Stairs,
@@ -125,18 +120,18 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Generate ONE upper floor around the stairwell column: a Лестница (room 0, the column's
-        /// footprint) at (colX,colY) + compact Комнаты around it, the whole floor kept within
-        /// [minX..maxX]×[minY..maxY] (floor 0's bbox). REDUCES the room count until it fits with the Лестница
+        /// footprint) at (colX,colY) + compact Комнаты around it, EVERY room kept inside <paramref name="contourFloor"/>'s
+        /// footprint SHAPE (the drawn contour — floor 0). REDUCES the room count until it fits with the Лестница
         /// exactly on the column (a lone Лестница — the column footprint itself — always fits). Deterministic.</summary>
         public static InteriorFloor GenerateFloorAroundColumn(Random rng, int roomBudget,
-            float colX, float colY, int colW, int colH,
-            float minX, float minY, float maxX, float maxY, out Room stair)
+            float colX, float colY, int colW, int colH, InteriorFloor contourFloor, out Room stair)
         {
+            var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(contourFloor);
             int count = Math.Max(1, roomBudget);
             while (true)
             {
                 var floor = BuildStairFloorGraph(rng, count, colW, colH);
-                if (FitAroundColumn(floor, colX, colY, minX, minY, maxX, maxY) || count <= 1)
+                if (FitAroundColumn(floor, colX, colY, contourFloor, minX, minY, maxX, maxY) || count <= 1)
                 {
                     stair = floor.Rooms[0];
                     return floor;
@@ -146,37 +141,42 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Attempt to generate an upper floor with EXACTLY <paramref name="roomCount"/> rooms around
-        /// the column, within the box — WITHOUT reducing the count. Returns whether the rooms fit inside the
-        /// outline; the editor's «Перегенерировать» uses this to report a failure and keep the current floor
-        /// when the requested count doesn't fit. Deterministic by seed.</summary>
+        /// the column, inside <paramref name="contourFloor"/>'s footprint — WITHOUT reducing the count. Returns
+        /// whether the rooms fit; the editor's «Перегенерировать» uses this to report a failure and keep the
+        /// current floor when the requested count doesn't fit. Deterministic by seed.</summary>
         public static bool TryGenerateFloorAroundColumn(int seed, int roomCount,
-            float colX, float colY, int colW, int colH,
-            float minX, float minY, float maxX, float maxY, out InteriorFloor floor, out Room stair)
+            float colX, float colY, int colW, int colH, InteriorFloor contourFloor, out InteriorFloor floor, out Room stair)
         {
             var rng = new Random(seed);
+            var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(contourFloor);
             floor = BuildStairFloorGraph(rng, Math.Max(1, roomCount), colW, colH);
-            bool fits = FitAroundColumn(floor, colX, colY, minX, minY, maxX, maxY);
+            bool fits = FitAroundColumn(floor, colX, colY, contourFloor, minX, minY, maxX, maxY);
             stair = floor.Rooms[0];
             return fits;
         }
 
         /// <summary>Arrange the floor with the Лестница (room 0) as the root, then rigidly slide the whole floor
-        /// so the Лестница sits on the column, staying inside the box. True iff the Лестница reached the column
-        /// (⇒ the whole floor fits). The floor has no TypeId-0 entrance, so <see cref="CompactLayout.Arrange"/>
-        /// picks the lowest-id room — the Лестница (room 0) — as the centred root.</summary>
-        static bool FitAroundColumn(InteriorFloor floor, float colX, float colY,
+        /// so the Лестница sits on the column (staying within the outline bbox). True iff the Лестница reached
+        /// the column AND every room's footprint sits inside <paramref name="contourFloor"/>'s footprint SHAPE.
+        /// The floor has no TypeId-0 entrance, so <see cref="CompactLayout.Arrange"/> picks the lowest-id room —
+        /// the Лестница (room 0) — as the centred root.</summary>
+        static bool FitAroundColumn(InteriorFloor floor, float colX, float colY, InteriorFloor contourFloor,
             float minX, float minY, float maxX, float maxY)
         {
             CompactLayout.Arrange(floor);
             var (rdx, rdy) = CompactLayout.NudgeRoomToward(floor, floor.Rooms[0].Id, colX, colY, minX, minY, maxX, maxY);
             if (rdx >= AlignEps || rdy >= AlignEps) return false;   // Лестница not on the column
-            // The residual alone is NOT sufficient: when the floor is WIDER than the box, NudgeRoomToward
-            // centres the over-wide bbox (ClampTranslate's lo>hi branch), and because the column is near the
-            // box centre the residual can be ~0 while the floor pokes out. So ALSO require the whole footprint
-            // to sit inside the box (the extent check the old ArrangeWithin used).
-            var (bMinX, bMinY, bMaxX, bMaxY) = DungeonProjection.ContentBoundsTiles(floor);
-            return bMinX >= minX - FitEps && bMinY >= minY - FitEps
-                && bMaxX <= maxX + FitEps && bMaxY <= maxY + FitEps;
+            // Every room must sit inside floor 0's footprint SHAPE (the drawn contour), NOT merely its bounding
+            // box: a non-rectangular floor 0 (an L / cross) has bbox area OUTSIDE the contour where a room would
+            // be red-flagged. Uses the SAME test the renderer's out-of-contour flag uses, so a floor that fits
+            // here is flag-free on screen.
+            foreach (var r in floor.Rooms)
+            {
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                if (!FloorFootprint.ContainsRect(contourFloor, FloorFootprint.ContourMargin, r.X * T, r.Y * T, w, h))
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>Ground floor graph: room 0 is the entrance (TypeId 0), the rest plain rooms (TypeId 1);

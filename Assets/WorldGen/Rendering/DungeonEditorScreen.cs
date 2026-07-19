@@ -93,11 +93,9 @@ namespace WorldGen.Rendering
                 if (column == null) return;   // floor 0 has no room to host a stairwell — nothing to build on
                 var floor0 = current.Floors[0];
                 int T = DungeonLayout.TilesPerAxis;
-                var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(floor0);
                 var floor = BuildingGenerator.GenerateFloorAroundColumn(
                     new System.Random(FreshSeed()), DefaultRooms,
-                    column.X * T, column.Y * T, column.SizeW, column.SizeH,
-                    minX, minY, maxX, maxY, out var newStair);
+                    column.X * T, column.Y * T, column.SizeW, column.SizeH, floor0, out var newStair);
 
                 int lowerIdx = current.Floors.Count - 1;
                 var lower = current.Floors[lowerIdx];
@@ -122,10 +120,16 @@ namespace WorldGen.Rendering
             SetLevel(current.Floors.Count - 1);
         }
 
+        // A building is a vertical stack on the stairwell column, so it only ever loses its TOP floor —
+        // removing a MIDDLE floor would sever the column (the stair down is dropped and the stair up dies with
+        // the floor, leaving disconnected floors). Dungeons remove the currently-selected floor as before.
+        int FloorToRemove() => (current != null && current.Kind == InteriorKind.Building)
+            ? current.Floors.Count - 1 : CurrentLevelIndex;
+
         public void RemoveCurrentLevel()
         {
             if (current == null || current.Floors.Count <= 1) return;
-            DungeonOps.RemoveLevel(current, CurrentLevelIndex);
+            DungeonOps.RemoveLevel(current, FloorToRemove());
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Floors.Count - 1));
         }
 
@@ -134,8 +138,8 @@ namespace WorldGen.Rendering
         /// saved); otherwise remove directly. ConfirmDialog.Show's «Удалить» is the correct label here.</summary>
         void RequestRemoveCurrentLevel()
         {
-            var lvl = CurrentLevel;
-            if (current == null || current.Floors.Count <= 1 || lvl == null) return;
+            if (current == null || current.Floors.Count <= 1) return;
+            var lvl = current.Floors[FloorToRemove()];   // the floor that will actually be removed (top, for buildings)
             bool annotated = lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
             if (annotated)
                 WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?",

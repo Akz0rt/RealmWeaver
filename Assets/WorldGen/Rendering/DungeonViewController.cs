@@ -67,25 +67,22 @@ namespace WorldGen.Rendering
         // canvas edge. Beyond ContourMargin (which sets how far the outline sits from the rooms).
         const float ContourViewPad = 2f;
 
-        /// <summary>Tile-space bounds to fit the projection to for `lvl`. For a Building, the whole CONTOUR
-        /// must stay on-screen — the blue outline extends <see cref="FloorFootprint.ContourMargin"/> beyond
-        /// floor 0's rooms (spec C6), so fitting to the rooms alone clips it (user 2026-07-19). Fit to floor
-        /// 0's footprint bbox EXPANDED by that margin + a little pad, UNIONed with the current floor's own
-        /// bounds so a room dragged outside the contour also stays visible (and red) rather than clipped. For
-        /// a well-nested floor the union equals the padded contour, so an upper floor still renders smaller,
-        /// nested inside it (accepted look, spec C-render). Dungeons: the current floor's own bounds only —
-        /// byte-identical to the pre-contour per-floor fit.</summary>
+        /// <summary>Tile-space bounds to fit the projection to for `lvl`. For a BUILDING the fit is CONSTANT
+        /// across floors — floor 0's footprint bbox expanded by the contour margin + a little pad — so every
+        /// floor renders at the IDENTICAL scale and position, and the stairwell column (and every room) looks
+        /// absolutely the same on every floor (user 2026-07-19). The current floor is NOT unioned in: upper
+        /// floors are generated within this outline (nothing is clipped), and floor 0's own rooms ARE the
+        /// outline, so a per-floor union would only make the fit jitter between floors. Dungeons: the current
+        /// floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
         (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
-            var bounds = DungeonProjection.ContentBoundsTiles(lvl);
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
             {
                 var c = DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]);
                 float pad = FloorFootprint.ContourMargin + ContourViewPad;
-                var contour = (c.minX - pad, c.minY - pad, c.maxX + pad, c.maxY + pad);
-                bounds = DungeonProjection.UnionBounds(bounds, contour);
+                return (c.minX - pad, c.minY - pad, c.maxX + pad, c.maxY + pad);
             }
-            return bounds;
+            return DungeonProjection.ContentBoundsTiles(lvl);
         }
 
         /// <summary>Swap the active renderer (Граф ⇄ Изо). Deactivates the old host, activates the new,
