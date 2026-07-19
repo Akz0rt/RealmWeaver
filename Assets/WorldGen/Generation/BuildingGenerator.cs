@@ -134,6 +134,28 @@ namespace WorldGen.Generation
             return null;
         }
 
+        /// <summary>Auto-realign the shaft: re-sync every upper floor's Лестница to floor 0's column by TRANSLATING
+        /// the whole upper floor so its Лестница lands on the column's (x,y), then matching the column footprint.
+        /// Called after the DM moves/resizes the column on floor 0 (which is free-edit) so the "one vertical shaft"
+        /// invariant holds without regeneration. Idempotent (already-aligned floors are untouched) and content-
+        /// preserving (rooms shift together; one pushed outside the contour is left for the red flag). Headless.</summary>
+        public static void RealignUpperFloorsToColumn(InteriorData d)
+        {
+            if (d == null || d.Floors == null || d.Floors.Count <= 1) return;
+            var col0 = FindFloorZeroColumn(d);
+            if (col0 == null) return;
+            for (int k = 1; k < d.Floors.Count; k++)
+            {
+                Room colK = null;
+                foreach (var r in d.Floors[k].Rooms) if (r.TypeId == StairTypeId) { colK = r; break; }
+                if (colK == null) continue;   // a missing column is a separate (validator-flagged) problem
+                float dx = col0.X - colK.X, dy = col0.Y - colK.Y;
+                if (dx != 0f || dy != 0f)
+                    foreach (var r in d.Floors[k].Rooms) { r.X += dx; r.Y += dy; }
+                colK.SizeW = col0.SizeW; colK.SizeH = col0.SizeH;
+            }
+        }
+
         /// <summary>AREA UPPER BOUND on the total room count (INCLUDING the Лестница column) for
         /// <paramref name="contourFloor"/>'s contour: usable area minus the column, over the smallest room
         /// footprint, clamped to <see cref="MaxProbeBudget"/>. NOT the displayed cap — it only sizes the packing

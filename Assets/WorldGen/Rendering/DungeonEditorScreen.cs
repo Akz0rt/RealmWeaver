@@ -181,6 +181,10 @@ namespace WorldGen.Rendering
         // Nothing else may call DungeonLayout.Separate directly — that would double-separate.
         void RevalidateAndRefresh()
         {
+            // Keep the vertical shaft aligned: if the DM moved/resized the column on floor 0, slide every upper
+            // floor so its Лестница re-lands on the column (auto-realign). Idempotent — a no-op when already aligned.
+            if (current != null && current.Kind == InteriorKind.Building)
+                BuildingGenerator.RealignUpperFloorsToColumn(current);
             if (viewController != null) viewController.BeginCascade();
             if (inspectorPanel != null)
             {

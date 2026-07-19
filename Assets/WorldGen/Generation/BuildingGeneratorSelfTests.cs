@@ -336,11 +336,23 @@ namespace WorldGen.Rendering
                 if (pointed && !HasMsg(DungeonValidator.Validate(dangling), "несуществующий этаж"))
                 { Debug.LogError("FAIL validate: dangling Stairs portal not flagged"); ok = false; }
 
-                // (c) Broken shaft: move an upper Лестница off the floor-0 column → "не совпадает со столбом".
+                // (c) Broken shaft is FLAGGED, and auto-realign re-syncs the WHOLE upper floor to the floor-0 column.
                 var desync = BuildingGenerator.Generate(3, "p", 6, 3);
-                foreach (var r in desync.Floors[1].Rooms) if (r.TypeId == 2) { r.X += 0.1f; break; }
+                Room upCol = desync.Floors[1].Rooms.Find(r => r.TypeId == 2);
+                Room sibling = desync.Floors[1].Rooms.Find(r => r.TypeId != 2);
+                float sibBefore = sibling != null ? sibling.X : 0f;
+                upCol.X += 0.1f;   // shove the upper Лестница off the column
                 if (!HasMsg(DungeonValidator.Validate(desync), "не совпадает со столбом"))
                 { Debug.LogError("FAIL validate: desynced stairwell column not flagged"); ok = false; }
+
+                BuildingGenerator.RealignUpperFloorsToColumn(desync);
+                Room col0d = desync.Floors[0].Rooms.Find(r => r.TypeId == 2);
+                if (Mathf.Abs(upCol.X - col0d.X) > 1e-4f || Mathf.Abs(upCol.Y - col0d.Y) > 1e-4f)
+                { Debug.LogError("FAIL realign: upper Лестница not re-aligned to the floor-0 column"); ok = false; }
+                if (sibling != null && Mathf.Abs((sibling.X - sibBefore) - (-0.1f)) > 1e-3f)
+                { Debug.LogError("FAIL realign: the upper floor did not translate as a whole with its column"); ok = false; }
+                if (HasMsg(DungeonValidator.Validate(desync), "не совпадает со столбом"))
+                { Debug.LogError("FAIL realign: shaft still flagged after auto-realign"); ok = false; }
             }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
