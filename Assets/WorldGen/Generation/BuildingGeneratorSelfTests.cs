@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using WorldGen.Generation;
 
@@ -310,7 +311,39 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL cap: built {areaBound + 1} rooms though area allows at most {areaBound}"); ok = false; }
             }
 
+            // ---- 13. Validator BUILDING rules: one Лестница per floor (multi-floor) + no stairs to nowhere -----
+            // Non-vacuous: a fresh building must NOT report a stair issue; removing an upper Лестница or dangling a
+            // Stairs portal each must raise the matching error.
+            {
+                var fresh = BuildingGenerator.Generate(seed: 3, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+                if (HasMsg(DungeonValidator.Validate(fresh), "лестниц"))
+                { Debug.LogError("FAIL validate: a fresh building reports a stair issue"); ok = false; }
+
+                // (a) Upper floor missing its Лестница → "одна лестница". Retype floor 1's column to a plain room.
+                var missing = BuildingGenerator.Generate(3, "p", 6, 3);
+                foreach (var r in missing.Floors[1].Rooms) if (r.TypeId == 2) { r.TypeId = 1; break; }
+                if (!HasMsg(DungeonValidator.Validate(missing), "одна лестница"))
+                { Debug.LogError("FAIL validate: missing upper-floor Лестница not flagged"); ok = false; }
+
+                // (b) Stairs to nowhere → dangling-stair error. Point a floor-0 Stairs portal at a missing room.
+                var dangling = BuildingGenerator.Generate(3, "p", 6, 3);
+                bool pointed = false;
+                foreach (var r in dangling.Floors[0].Rooms)
+                {
+                    foreach (var s in r.Portals) if (s.Kind == PortalKind.Stairs) { s.TargetRoomId = 99999; pointed = true; break; }
+                    if (pointed) break;
+                }
+                if (pointed && !HasMsg(DungeonValidator.Validate(dangling), "несуществующий этаж"))
+                { Debug.LogError("FAIL validate: dangling Stairs portal not flagged"); ok = false; }
+            }
+
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
+        }
+
+        static bool HasMsg(List<DungeonIssue> issues, string substr)
+        {
+            foreach (var i in issues) if (i.Message.Contains(substr)) return true;
+            return false;
         }
 
         // ------------------------------------------------------------------------------------------------

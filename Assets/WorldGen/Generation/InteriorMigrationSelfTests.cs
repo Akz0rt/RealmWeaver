@@ -33,5 +33,31 @@ namespace WorldGen.Rendering
 
             Debug.Log(ok ? "Self-Test Interior v6 Migration: PASS" : "Self-Test Interior v6 Migration: FAIL");
         }
+
+        [ContextMenu("Self-Test: Building Round-Trip")]
+        public void SelfTestBuildingRoundTrip()
+        {
+            // Buildings are unreleased (no FormatVersion bump needed), but they serialize as the SAME InteriorData
+            // as dungeons, so a save/load must preserve Kind, every floor's single Лестница column, and all links/
+            // portals — i.e. the loaded building still VALIDATES clean. NormalizeTypes is what the load path runs.
+            bool ok = true;
+            var b = BuildingGenerator.Generate(seed: 11, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+            string json = JsonConvert.SerializeObject(b);
+            var d = JsonConvert.DeserializeObject<InteriorData>(json);
+            BuildingGenerator.NormalizeTypes(d);
+
+            ok &= d.Kind == InteriorKind.Building;                 // Kind survives the round-trip (else reads as Dungeon)
+            ok &= d.Floors.Count == b.Floors.Count;
+            for (int f = 0; f < d.Floors.Count && ok; f++)
+            {
+                int stairs = 0; foreach (var r in d.Floors[f].Rooms) if (r.TypeId == 2) stairs++;
+                ok &= stairs == 1;                                 // the shared column survived on every floor
+                ok &= d.Floors[f].Rooms.Count == b.Floors[f].Rooms.Count;
+            }
+            foreach (var iss in DungeonValidator.Validate(d))
+                if (iss.Severity == IssueSeverity.Error) { ok = false; Debug.LogError($"FAIL round-trip: validate error — {iss.Message}"); }
+
+            Debug.Log(ok ? "Self-Test Building Round-Trip: PASS" : "Self-Test Building Round-Trip: FAIL");
+        }
     }
 }

@@ -96,81 +96,6 @@ namespace WorldGen.Generation
         }
 
         // ---------------------------------------------------------------------------------------------
-        // ArrangeWithin / NudgeRoomToward — nest a floor inside a tile-space box (multi-floor coherence).
-        // ---------------------------------------------------------------------------------------------
-
-        // A footprint bbox counts as FITTING a target box on an axis when it is no wider than the box beyond
-        // this slack (tiles) — generous vs the ToNorm/ToTile round-trip, far below one whole tile.
-        const float FitEps = 1e-3f;
-
-        /// <summary>Adjacency-first <see cref="Arrange"/>, THEN rigidly translate EVERY room by a single
-        /// offset so the whole floor's footprint bbox is centred inside the tile-space box
-        /// [minX,maxX]×[minY,maxY]. Room SIZES and relative positions are untouched — a smaller building is
-        /// made of FEWER rooms, never squashed ones, so this only ever slides the packed cluster; it does not
-        /// scale it. Returns TRUE iff the arranged bbox actually fits the box on BOTH axes (extent ≤ box
-        /// extent + FitEps); FALSE means the packed floor is too big for the box and the CALLER must
-        /// regenerate with fewer rooms. Deterministic; pure tile space (reads TilesPerAxis + EffectiveSize
-        /// through <see cref="DungeonProjection.ContentBoundsTiles"/>, never a hardcoded field size).</summary>
-        public static bool ArrangeWithin(InteriorFloor floor, float minX, float minY, float maxX, float maxY)
-        {
-            Arrange(floor);
-            if (floor == null || floor.Rooms.Count == 0) return true;
-
-            var (bMinX, bMinY, bMaxX, bMaxY) = DungeonProjection.ContentBoundsTiles(floor);
-            bool fits = (bMaxX - bMinX) <= (maxX - minX) + FitEps
-                     && (bMaxY - bMinY) <= (maxY - minY) + FitEps;
-
-            // Slide the cluster so its bbox centre lands on the box centre (as centred as possible even when
-            // it does not fit, so an overflowing floor still straddles the box rather than escaping to one
-            // side — the caller reduces the room count and tries again).
-            float dx = (minX + maxX) * 0.5f - (bMinX + bMaxX) * 0.5f;
-            float dy = (minY + maxY) * 0.5f - (bMinY + bMaxY) * 0.5f;
-            TranslateAllTiles(floor, dx, dy);
-            return fits;
-        }
-
-        /// <summary>Rigidly translate the WHOLE floor (single offset — every shared wall preserved) so
-        /// <paramref name="roomId"/>'s centre moves as close as possible to (targetXTiles, targetYTiles)
-        /// WITHOUT the floor's footprint bbox leaving [minX,maxX]×[minY,maxY]. Returns the residual
-        /// (|dx|,|dy| in tiles) between that room's centre and the target after the clamped move — 0 when the
-        /// box had enough slack to align exactly. Used to sit an upper floor's stair room "roughly above" the
-        /// lower floor's while keeping the upper floor nested in the lower footprint. Deterministic.</summary>
-        public static (float dxTiles, float dyTiles) NudgeRoomToward(InteriorFloor floor, int roomId,
-            float targetXTiles, float targetYTiles, float minX, float minY, float maxX, float maxY)
-        {
-            if (floor == null || floor.Rooms.Count == 0) return (0f, 0f);
-            var room = floor.GetRoom(roomId);
-            if (room == null) return (0f, 0f);
-
-            var (bMinX, bMinY, bMaxX, bMaxY) = DungeonProjection.ContentBoundsTiles(floor);
-            float rcx = ToTile(room.X), rcy = ToTile(room.Y);
-
-            // Translation range that keeps the bbox inside the box: [box.min - bbox.min, box.max - bbox.max].
-            float desiredX = targetXTiles - rcx, desiredY = targetYTiles - rcy;
-            float dx = ClampTranslate(desiredX, minX - bMinX, maxX - bMaxX);
-            float dy = ClampTranslate(desiredY, minY - bMinY, maxY - bMaxY);
-            TranslateAllTiles(floor, dx, dy);
-
-            return (System.Math.Abs(desiredX - dx), System.Math.Abs(desiredY - dy));
-        }
-
-        /// <summary>Clamp a 1-D translation into [lo,hi]. When lo &gt; hi the bbox is WIDER than the box on
-        /// this axis (no offset can contain it) — centre it instead (midpoint = boxCentre − bboxCentre).</summary>
-        static float ClampTranslate(float desired, float lo, float hi)
-        {
-            if (lo > hi) return (lo + hi) * 0.5f;
-            return desired < lo ? lo : (desired > hi ? hi : desired);
-        }
-
-        /// <summary>Slide every room by one TILE-space offset (converted to normalized). Preserves all shared
-        /// walls; Clamp01 is a defensive no-op here (nested content sits well inside the field).</summary>
-        static void TranslateAllTiles(InteriorFloor floor, float dxTiles, float dyTiles)
-        {
-            float dnx = ToNorm(dxTiles), dny = ToNorm(dyTiles);
-            foreach (var r in floor.Rooms) { r.X = Clamp01(r.X + dnx); r.Y = Clamp01(r.Y + dny); }
-        }
-
-        // ---------------------------------------------------------------------------------------------
         // NudgeRoomOffOverlaps — building drag-settle: move ONLY the dragged room off overlaps (spec C4).
         // ---------------------------------------------------------------------------------------------
 
@@ -182,7 +107,7 @@ namespace WorldGen.Generation
         /// single movable room). Every OTHER room is FIXED, so dragging one room can never relocate another.
         ///
         /// This deliberately does NOT re-pack the floor (compactness is a GENERATION concern — see
-        /// <see cref="Arrange"/> / <see cref="ArrangeWithin"/> — not an interaction one) and does NOT contain
+        /// <see cref="Arrange"/> — not an interaction one) and does NOT contain
         /// the room to any contour: a room parked outside the ground-floor contour is LEFT there for the C2'
         /// red-flag, since out-of-contour is a deliberate DM choice, not an error to auto-fix. A room dropped
         /// in free space is not moved at all (no overlap ⇒ no-op). Deterministic, headless. Same behaviour on

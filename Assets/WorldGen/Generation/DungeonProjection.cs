@@ -108,16 +108,6 @@ namespace WorldGen.Generation
             };
         }
 
-        /// <summary>Componentwise min/max union of two tile-space bounds tuples — used to fit a Building's
-        /// projection to "current floor ∪ floor-0 contour" (C2' revision) so a room dragged outside the
-        /// contour stays on-screen instead of being clipped.</summary>
-        public static (float minX, float minY, float maxX, float maxY) UnionBounds(
-            (float minX, float minY, float maxX, float maxY) a,
-            (float minX, float minY, float maxX, float maxY) b)
-        {
-            return (Min(a.minX, b.minX), Min(a.minY, b.minY), Max(a.maxX, b.maxX), Max(a.maxY, b.maxY));
-        }
-
         /// <summary>Room footprint in tiles, with the same &lt;=0 fallback + clamp RoomSizing.ApplyDefaults
         /// applies — serialized data can predate sizing or drift out of range.</summary>
         public static (int w, int h) EffectiveSize(Room r)

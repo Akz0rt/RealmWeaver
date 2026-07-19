@@ -31,25 +31,31 @@ namespace WorldGen.Generation
                 var lvl = dungeon.Floors[li];
                 int human = li + 1;
 
-                int entrances = 0, entranceId = 0, bosses = 0, bossId = 0;
+                // TypeId 2 is the Boss for a DUNGEON but the Лестница (stairwell column) for a BUILDING — the two
+                // never coexist (Kind decides which rules below apply), so one counter serves both.
+                int entrances = 0, entranceId = 0, typeTwo = 0, bossId = 0;
                 foreach (var r in lvl.Rooms)
                 {
                     if (r.TypeId == 0) { entrances++; entranceId = r.Id; }
-                    if (r.TypeId == 2) { bosses++; bossId = r.Id; }
+                    if (r.TypeId == BuildingGenerator.StairTypeId) { typeTwo++; bossId = r.Id; }
                 }
 
                 if ((!isBuilding || li == 0) && entrances != 1)
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: должен быть ровно один вход (сейчас {entrances}).");
-                if (bossRule && bosses > 1)
-                    Add(issues, IssueSeverity.Error, li, $"Этаж {human}: не более одной комнаты босса (сейчас {bosses}).");
-                if (bossRule && bosses == 0)
+                if (bossRule && typeTwo > 1)
+                    Add(issues, IssueSeverity.Error, li, $"Этаж {human}: не более одной комнаты босса (сейчас {typeTwo}).");
+                if (bossRule && typeTwo == 0)
                     Add(issues, IssueSeverity.Warning, li, $"Этаж {human}: нет комнаты босса — глубже только через секретный ход.");
+                // Building stairwell: a multi-floor building carries exactly one Лестница per floor (the shared
+                // column). A missing or duplicate one means the vertical shaft is broken.
+                if (isBuilding && dungeon.Floors.Count > 1 && typeTwo != 1)
+                    Add(issues, IssueSeverity.Error, li, $"Этаж {human}: должна быть ровно одна лестница (сейчас {typeTwo}).");
 
                 var adj = BuildAdj(lvl);
                 if (entrances == 1)
                 {
                     // Boss distance (dungeon only).
-                    if (bossRule && bosses == 1)
+                    if (bossRule && typeTwo == 1)
                     {
                         int d = Distance(entranceId, bossId, adj);
                         if (d >= 0 && d < minBossDistance)
@@ -64,23 +70,35 @@ namespace WorldGen.Generation
                         Add(issues, IssueSeverity.Warning, li, $"Этаж {human}: {orphans} комнат(ы) недостижимы от входа по коридорам.");
                 }
 
-                // Dangling secret targets.
+                // Dangling inter-floor targets. A secret door or a stairwell must point at a room that still
+                // exists on an existing floor — "no stairs to nowhere" (a level removal / hand-edit could strand it).
                 foreach (var r in lvl.Rooms)
                     foreach (var s in r.Portals)
+                    {
                         if (s.Kind == PortalKind.SecretDoor)
                         {
-                            bool valid = s.TargetFloorIndex >= 0 && s.TargetFloorIndex < dungeon.Floors.Count
-                                         && dungeon.Floors[s.TargetFloorIndex].GetRoom(s.TargetRoomId) != null;
-                            if (!valid)
+                            if (!TargetExists(dungeon, s))
                                 Add(issues, IssueSeverity.Error, li,
                                     $"Этаж {human}: секретный ход из комнаты {r.Id} ведёт в несуществующую комнату.");
                         }
+                        else if (s.Kind == PortalKind.Stairs)
+                        {
+                            if (!TargetExists(dungeon, s))
+                                Add(issues, IssueSeverity.Error, li,
+                                    $"Этаж {human}: лестница из комнаты {r.Id} ведёт на несуществующий этаж.");
+                        }
+                    }
             }
             return issues;
         }
 
         static void Add(List<DungeonIssue> list, IssueSeverity sev, int li, string msg)
             => list.Add(new DungeonIssue { Severity = sev, LevelIndex = li, Message = msg });
+
+        // An inter-floor portal's target resolves iff its floor index is in range and the room still exists there.
+        static bool TargetExists(InteriorData dungeon, Portal s)
+            => s.TargetFloorIndex >= 0 && s.TargetFloorIndex < dungeon.Floors.Count
+               && dungeon.Floors[s.TargetFloorIndex].GetRoom(s.TargetRoomId) != null;
 
         static Dictionary<int, HashSet<int>> BuildAdj(InteriorFloor lvl)
         {
