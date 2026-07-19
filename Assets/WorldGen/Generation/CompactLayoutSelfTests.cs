@@ -194,6 +194,23 @@ namespace WorldGen.Rendering
             if (!Mathf.Approximately(d1.GetRoom(3).X, d2.GetRoom(3).X) || !Mathf.Approximately(d1.GetRoom(3).Y, d2.GetRoom(3).Y))
             { Debug.LogError("FAIL nudge: NudgeRoomOffOverlaps not deterministic"); ok = false; }
 
+            // ---- 10. TRAPPED narrow gap — least-pen alone can't clear → guaranteed-clear fallback ------
+            // Two FIXED 4×4 rooms at tile 50 and 56 leave a 2-tile gap [52,54] — NARROWER than the 4-wide
+            // dragged room. Room 3 dropped at 53 overlaps BOTH; the least-penetration shove alone oscillates
+            // 51.9↔54.1 and stops STILL overlapping (no on-axis position fits the gap). NudgeRoomOffOverlaps
+            // must fall back to a nearest-free-slot relocation so room 3 ends clear of both — while rooms 1 & 2
+            // stay EXACTLY put. Remove the fallback → room 3 stays overlapping room 1 → assert (a) fails.
+            var t = new InteriorFloor { NextRoomId = 4 };
+            t.Rooms.Add(RoomAt(1, 50, 50, 4, 4));
+            t.Rooms.Add(RoomAt(2, 56, 50, 4, 4));
+            t.Rooms.Add(RoomAt(3, 53, 50, 4, 4));   // dropped into the too-narrow gap, overlapping both
+            float t1x = t.GetRoom(1).X, t1y = t.GetRoom(1).Y, t2x = t.GetRoom(2).X, t2y = t.GetRoom(2).Y;
+            CompactLayout.NudgeRoomOffOverlaps(t, 3);
+            if (Overlap(t.GetRoom(3), t.GetRoom(1)) || Overlap(t.GetRoom(3), t.GetRoom(2)))
+            { Debug.LogError("FAIL nudge-trap: room 3 still overlaps after fallback (least-pen trap not escaped)"); ok = false; }
+            if (t.GetRoom(1).X != t1x || t.GetRoom(1).Y != t1y || t.GetRoom(2).X != t2x || t.GetRoom(2).Y != t2y)
+            { Debug.LogError("FAIL nudge-trap: a fixed room moved during the fallback relocation"); ok = false; }
+
             Debug.Log(ok ? "Self-Test Nudge Off Overlaps: PASS" : "Self-Test Nudge Off Overlaps: FAIL");
         }
 

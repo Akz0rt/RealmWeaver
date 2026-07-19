@@ -69,7 +69,7 @@ namespace WorldGen.Generation
         /// <summary>Compact re-pack primitive: re-pack the floor around a FIXED anchor (the anchor never
         /// moves). Not wired to drag under the revised spec C4 (drag uses <see cref="NudgeRoomOffOverlaps"/>,
         /// which moves only the dragged room); kept as a general "compact this floor" building block for a
-        /// future manual tidy / generation-time re-pack. Rebuild
+        /// future manual tidy / generation-time re-pack. It rebuilds
         /// the flush adjacency tree by BFS from the anchor at its CURRENT position — this pulls every linked
         /// room back toward flush adjacency with its neighbour and, because each room is placed only in a slot
         /// that overlaps nothing already placed, resolves overlaps by construction using the SAME Chebyshev
@@ -192,7 +192,24 @@ namespace WorldGen.Generation
             if (floor == null || floor.Rooms.Count == 0) return;
             var room = floor.GetRoom(roomId);
             if (room == null) return;
+
+            // Gentle first: shove the dragged room off overlaps along the axis of LEAST penetration — it
+            // slides just clear of the neighbour it landed on and stays close to where it was dropped (the
+            // common single-overlap case).
             ResolveOverlapsMovableOnly(floor, new List<Room> { room });
+
+            // Guarantee-clear fallback: the least-penetration shove can OSCILLATE and stop STILL overlapping
+            // when the dragged room is wedged in a gap NARROWER than itself (blocked on the least-pen axis on
+            // both sides — e.g. dropped into a 2-tile gap between two 4-wide fixed rooms). The chosen model is
+            // "anti-overlap": a room must never be silently left on top of another. So if it is still
+            // overlapping, relocate ONLY it to the NEAREST free slot expanding outward from where it now sits
+            // (rooms it isn't overlapping never move). Nearest-slot keeps it as close as possible; the model
+            // already accepts moving the dragged room itself, only never the others.
+            var others = new List<Room>();
+            foreach (var r in floor.Rooms) if (r.Id != room.Id) others.Add(r);
+            var (rw, rh) = DungeonProjection.EffectiveSize(room);
+            if (!IsFree(ToTile(room.X), ToTile(room.Y), rw, rh, others))
+                PlaceOutwardFromPoint(room, ToTile(room.X), ToTile(room.Y), others);
         }
 
         // ---------------------------------------------------------------------------------------------
