@@ -246,7 +246,7 @@ namespace WorldGen.Rendering
             DungeonUiKit.Stretch(lbl.rectTransform);
             lbl.raycastTarget = false;
 
-            DungeonBadgeStrip.Build(go.transform, dungeon, levelIndex, r, font, onJumpToLevel);
+            DungeonBadgeStrip.Build(go.transform, dungeon, profile.FloorLinks, levelIndex, r, font, onJumpToLevel);
             cards[r.Id] = rt;
         }
 

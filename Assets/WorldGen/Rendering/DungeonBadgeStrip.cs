@@ -6,43 +6,24 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Inter-floor badge strip stacked below a room's visual: a Boss room's descend badge (only when a
-    /// next level exists), an Entrance room's ascend badge (previous floor, or «Выход» on floor 1), then
-    /// one badge per secret passage. Extracted from DungeonGraphView so the flat AND iso renderers share
-    /// one implementation — badges are overlay chrome in both views, not projected geometry.
+    /// Inter-floor badge strip stacked below a room's visual: one chip per inter-floor transition (up/down/
+    /// exit stairs, secret passages). WHAT the transitions are is decided by <see cref="InteriorTransitions"/>
+    /// per the interior's <see cref="FloorLinkMode"/> (dungeon = type-derived descent; building = explicit
+    /// stairs + derived reverse + exit); this class only DRAWS them. Badges are overlay chrome, not projected
+    /// geometry.
     /// </summary>
     public static class DungeonBadgeStrip
     {
-        public static void Build(Transform parent, InteriorData dungeon, int levelIndex, Room r, Font font,
-                                 System.Action<int> onJumpToLevel)
+        public static void Build(Transform parent, InteriorData dungeon, FloorLinkMode mode, int levelIndex,
+                                 Room r, Font font, System.Action<int> onJumpToLevel)
         {
-            int index = 0;
-            if (r.TypeId == 2 && dungeon != null && levelIndex + 1 < dungeon.Floors.Count)
+            var transitions = InteriorTransitions.For(dungeon, mode, levelIndex, r);
+            for (int i = 0; i < transitions.Count; i++)
             {
-                int target = levelIndex + 1;
-                AddBadge(parent, font, $"⬇ Этаж {levelIndex + 2}", index++, () => onJumpToLevel?.Invoke(target));
-            }
-            // Entrance mirrors the boss descent: it returns UP to the previous floor (its boss), or on
-            // floor 1 it is the dungeon exit. Leaving the dungeon is live navigation (sub-project 2), so
-            // «Выход» is informational here — no in-editor jump.
-            if (r.TypeId == 0)
-            {
-                if (levelIndex <= 0) AddBadge(parent, font, "⬆ Выход", index++, null);
-                else
-                {
-                    int prev = levelIndex - 1;
-                    AddBadge(parent, font, $"⬆ Этаж {levelIndex}", index++, () => onJumpToLevel?.Invoke(prev));
-                }
-            }
-            foreach (var s in r.Portals)
-            {
-                var kind = s.Kind;
-                int targetLevel = s.TargetFloorIndex;
-                int targetRoom = s.TargetRoomId;
-                string summary = kind == PortalKind.DungeonExit ? "⇢ Выход" : $"⇢ Э{targetLevel + 1}·{targetRoom}";
-                System.Action onClick = kind == PortalKind.SecretDoor
-                    ? (System.Action)(() => onJumpToLevel?.Invoke(targetLevel)) : null;
-                AddBadge(parent, font, summary, index++, onClick);
+                var t = transitions[i];
+                System.Action onClick = (t.Clickable && t.TargetFloorIndex >= 0)
+                    ? (System.Action)(() => onJumpToLevel?.Invoke(t.TargetFloorIndex)) : null;
+                AddBadge(parent, font, t.Arrow + " " + t.Label, i, onClick);
             }
         }
 
