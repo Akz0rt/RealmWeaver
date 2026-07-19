@@ -345,12 +345,11 @@ namespace WorldGen.Rendering
         void RegenerateUpperFloor()
         {
             if (current == null || current.Kind != InteriorKind.Building || CurrentLevelIndex <= 0) return;
-            if (!TryGetColumnAndCap(out _, out int cap)) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
-
-            // Deterministic verdict FIRST — and BEFORE the confirm, so an over-capacity count is rejected without
-            // asking the DM to discard a floor that isn't going to change. Seed-independent: the same count is
-            // rejected the same way every press (the old single-pack check could fail one seed, pass the next).
-            if (upperRoomCount > cap) { ClampToCapWithMessage(cap); return; }
+            // Cheap pre-check BEFORE the confirm (no re-probe — reuse the cap cached at floor-switch): bail if
+            // floor 0 lost its column, and reject an over-capacity count without asking the DM to discard a floor
+            // that isn't going to change. DoRegenerateUpperFloor re-derives the cap authoritatively.
+            if (BuildingGenerator.FindFloorZeroColumn(current) == null) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
+            if (upperRoomCount > currentUpperCap) { ClampToCapWithMessage(currentUpperCap); return; }
 
             // Regenerate REPLACES the whole floor, discarding any authored room content. Mirror the floor-removal
             // safeguard: confirm first when the floor has named/annotated rooms (there is no undo).

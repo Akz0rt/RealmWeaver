@@ -199,7 +199,10 @@ namespace WorldGen.Generation
 
         /// <summary>Reduce a freshly generated floor to EXACTLY <paramref name="targetCount"/> rooms, keeping the
         /// column and a CONNECTED subset (a BFS prefix from the column) and dropping the rest with their links.
-        /// Lets an exact requested count be hit from a pack that placed more. No-op if already ≤ targetCount.</summary>
+        /// Lets an exact requested count be hit from a pack that placed more. No-op if already ≤ targetCount.
+        /// PRECONDITION: the floor carries no Portals (it is straight out of <see cref="GenerateFloorAroundColumn"/>);
+        /// portals are attached later by the caller. Trimming a floor that already has portals could orphan a
+        /// portal that targeted a dropped room — prune those at the call site before reusing this on such a floor.</summary>
         public static void TrimToRoomCount(InteriorFloor floor, int targetCount, int columnRoomId)
         {
             if (floor == null || floor.Rooms.Count <= targetCount) return;
@@ -239,22 +242,6 @@ namespace WorldGen.Generation
             CompactLayout.PackAroundColumnWithinFootprint(floor, column.Id, colX, colY, contourFloor, FloorFootprint.ContourMargin);
             stair = column;
             return floor;
-        }
-
-        /// <summary>Attempt to place EXACTLY <paramref name="roomCount"/> rooms around the column inside
-        /// <paramref name="contourFloor"/>'s footprint. Returns true iff EVERY requested room fit (none dropped);
-        /// the editor's «Перегенерировать» uses this to report "N rooms don't fit" and keep the current floor.
-        /// Deterministic by seed.</summary>
-        public static bool TryGenerateFloorAroundColumn(int seed, int roomCount,
-            float colX, float colY, int colW, int colH, InteriorFloor contourFloor, out InteriorFloor floor, out Room stair)
-        {
-            var rng = new Random(seed);
-            roomCount = Math.Max(1, roomCount);
-            floor = BuildStairFloorGraph(rng, roomCount, colW, colH);
-            var column = floor.Rooms[0];
-            int placed = CompactLayout.PackAroundColumnWithinFootprint(floor, column.Id, colX, colY, contourFloor, FloorFootprint.ContourMargin);
-            stair = column;
-            return placed == roomCount;
         }
 
         /// <summary>Ground floor graph: room 0 is the entrance (TypeId 0), the rest plain rooms (TypeId 1);

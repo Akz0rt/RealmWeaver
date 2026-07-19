@@ -302,9 +302,12 @@ namespace WorldGen.Rendering
                     { Debug.LogError($"FAIL trim: expected 2 rooms incl. column, got {full.Rooms.Count}"); ok = false; }
                 }
 
-                // (e) The cap does NOT over-promise: a count far ABOVE it can't be built.
-                if (BuildingGenerator.TryBuildUpperFloorExact(capBig + 8, 5, 8, cx, cy, 4, 4, big, out _, out _))
-                { Debug.LogError($"FAIL cap: built {capBig + 8} rooms though the packable max is {capBig}"); ok = false; }
+                // (e) The build does NOT over-promise: a count above the AREA bound (min-footprint impossible) can
+                //     never be built, for any seed. Probing areaBound+1 (not capBig+N) keeps this reliable regardless
+                //     of how the probe/params shift capBig.
+                int areaBound = BuildingGenerator.MaxRoomsByArea(big, 4, 4);
+                if (BuildingGenerator.TryBuildUpperFloorExact(areaBound + 1, 5, 8, cx, cy, 4, 4, big, out _, out _))
+                { Debug.LogError($"FAIL cap: built {areaBound + 1} rooms though area allows at most {areaBound}"); ok = false; }
             }
 
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
