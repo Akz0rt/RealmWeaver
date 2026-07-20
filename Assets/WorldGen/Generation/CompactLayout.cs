@@ -27,6 +27,16 @@ namespace WorldGen.Generation
         // treated as FREE, not as an overlap — flush placement is the whole point.
         const float OverlapEps = 1e-3f;
 
+        // Extra clearance (tiles) ResolveOverlapsMovableOnly adds on top of the measured penetration when it
+        // shoves a movable room clear. Bounded on BOTH sides, not just one:
+        //   - ABOVE the ToNorm/ToTile float round-trip noise floor (~1e-5 tiles), so the shoved room provably
+        //     ends up outside the other footprint and doesn't get read back as still overlapping; and
+        //   - BELOW TouchEps (0.02), so the resolved edge gap still reads as TOUCHING — the shoved room must
+        //     land flush, the same as a generated room, not with a visible gap. A too-large clearance here was
+        //     the bug: 0.1 (5x TouchEps) resolved overlaps into a gap wide enough that AdjacentAlongWall / a
+        //     shared-wall door never triggered, so a manually dropped room diverged from a generated one.
+        const float ShoveClearance = 0.005f;
+
         static float ToTile(float norm) => norm * DungeonLayout.TilesPerAxis;
         static float ToNorm(float tile) => tile / DungeonLayout.TilesPerAxis;
         static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
@@ -566,12 +576,13 @@ namespace WorldGen.Generation
                         float overlapY = (mh + oh) * 0.5f - System.Math.Abs(dy);
                         if (overlapX <= OverlapEps || overlapY <= OverlapEps) continue;   // touching/clear
                         moved = true;
-                        // Full one-sided shove (the pinned side does not give) plus a clear margin, so the
-                        // resulting edge gap sits comfortably above any round-trip noise / test threshold.
+                        // Full one-sided shove (the pinned side does not give) plus ShoveClearance — just
+                        // enough to clear round-trip noise, not enough to push the pair out of "touching"
+                        // (see ShoveClearance's comment). The room lands FLUSH, like a generated one.
                         if (overlapX < overlapY)
-                            mx += (overlapX + 0.1f) * (dx >= 0f ? 1f : -1f);
+                            mx += (overlapX + ShoveClearance) * (dx >= 0f ? 1f : -1f);
                         else
-                            my += (overlapY + 0.1f) * (dy >= 0f ? 1f : -1f);
+                            my += (overlapY + ShoveClearance) * (dy >= 0f ? 1f : -1f);
                         m.X = Clamp01(ToNorm(mx));
                         m.Y = Clamp01(ToNorm(my));
                     }
