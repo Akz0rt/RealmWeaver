@@ -1,0 +1,31 @@
+<!--
+  Offline (non-Unity) harness for task F2 the upper-floor packer.
+
+  It compiles the REAL Unity sources (copied verbatim into gen/ by sync.ps1) against ~40 lines of
+  UnityEngine/Newtonsoft stubs, so every number it prints comes from the shipped code, not a paraphrase.
+
+  Usage (from this directory):
+      powershell -File sync.ps1
+      dotnet run -c Release [SEP] selftests    runs the real Editor self-test suites
+      dotnet run -c Release [SEP] sweep        three-variant corpus sweep (old / spread-only / max)
+      dotnet run -c Release [SEP] perf         MaxRoomsPackable + regen timings on realistic contours
+      dotnet run -c Release [SEP] case         dump one fixture under every variant
+  where [SEP] is the two-dash argument separator (XML comments cannot contain it).
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>f2harness</AssemblyName>
+    <RootNamespace>F2Harness</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0169;CS0649;CS0162;CS0219</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="gen/*.cs" />
+    <Compile Include="stubs/*.cs" />
+    <Compile Include="tools/*.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

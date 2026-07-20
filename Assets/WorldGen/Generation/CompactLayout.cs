@@ -472,7 +472,10 @@ namespace WorldGen.Generation
                 else otherAnchors.Add(anchor);
             }
 
-            int limit = MaxUsefulDistance(room, anchors, bounds);
+            // Phase 2 (maxDistance == 0) only ever clamps the result to 0 (or leaves it at -1 when even d == 0
+            // is hopeless), so paying for the full four-side/every-anchor scan there is wasted work — skip
+            // straight to 0 and let TrySeatAtDistance's own bbox pre-test reject the rare hopeless case cheaply.
+            int limit = maxDistance == 0 ? 0 : MaxUsefulDistance(room, anchors, bounds);
             if (limit > maxDistance) limit = maxDistance;
             for (int d = 0; d <= limit; d++)
             {

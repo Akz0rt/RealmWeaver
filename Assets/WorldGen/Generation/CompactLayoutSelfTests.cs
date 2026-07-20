@@ -391,25 +391,18 @@ namespace WorldGen.Rendering
             if (f.GetRoom(3) == null || f.GetRoom(4) == null)
             { Debug.LogError("FAIL pack-fill: room 3 (boxed-in BFS parent) and/or room 4 (reachable only through it) was dropped"); ok = false; }
 
-            // ---- 17. Flush + DOOR: a phase-2 room touches its anchor and gains a Link ----------------------
-            // Room 3 was seated flush against room 2 (hand-derived above: (58,66) under (58,62)). Two assertions:
-            // (a) the Chebyshev edge gap is ~0 on the shared axis — measured INDEPENDENTLY here, not via
-            // AdjacentAlongWall — so a shared-wall door renders; (b) a Link 2-3 exists, which the fixture did NOT
-            // contain (its links are 1-2, 1-3, 4-3). Fails if phase 2 seats at a distance (no shared wall) or if
-            // the link-adding step is removed (the pair would render as a blank wall with a corridor around it).
-            if (f.GetRoom(3) != null)
-            {
-                var r2 = f.GetRoom(2); var r3 = f.GetRoom(3);
-                var (w2, h2) = DungeonProjection.EffectiveSize(r2);
-                var (w3, h3) = DungeonProjection.EffectiveSize(r3);
-                float gapX = Mathf.Abs((r2.X - r3.X) * T) - (w2 + w3) * 0.5f;
-                float gapY = Mathf.Abs((r2.Y - r3.Y) * T) - (h2 + h3) * 0.5f;
-                bool touches = (Mathf.Abs(gapX) <= 0.02f && gapY < -0.02f) || (Mathf.Abs(gapY) <= 0.02f && gapX < -0.02f);
-                if (!touches)
-                { Debug.LogError($"FAIL pack-flush: phase-2 room 3 is not flush against its anchor 2 (gapX {gapX:F3}, gapY {gapY:F3})"); ok = false; }
-                if (LinkCount(f, 2, 3) != 1)
-                { Debug.LogError($"FAIL pack-door: {LinkCount(f, 2, 3)} link(s) between the flush pair 2-3, want exactly 1 (phase 2 must add the shared-wall door link)"); ok = false; }
-            }
+            // ---- 17. Phase 2 must ADD a Link when it seats a room flush against a new anchor ----------------
+            // Room 3 was seated flush against room 2 (hand-derived above: (58,66) under (58,62)) — geometrically
+            // the ONLY slot available on this fixture, so a "the edge gap is ~0" check here would pass under
+            // EVERY distance-ordered search, correct or broken (confirmed against MutAnchorOuter and against
+            // phase 3 run alone) — that part was deleted per review I3 as unpinned; assertions 23 and 25 are what
+            // actually exercise the distance/anchor ordering. What this fixture DOES pin down: room 3's original
+            // links (1-2, 1-3, 4-3) do NOT include 2-3, so a fresh Link must appear between the newly-flush pair.
+            // Non-vacuous: remove the link-add step and this reads 0 (blank wall + a corridor routed around it,
+            // instead of the door the shared wall should render) — no other assertion here pins "a fresh flush
+            // pair gains a link" specifically (18/25 pin non-duplication of an ALREADY-linked pair instead).
+            if (f.GetRoom(3) != null && LinkCount(f, 2, 3) != 1)
+            { Debug.LogError($"FAIL pack-door: {LinkCount(f, 2, 3)} link(s) between the flush pair 2-3, want exactly 1 (phase 2 must add the shared-wall door link)"); ok = false; }
 
             // ---- 18. No DUPLICATE links: an already-linked pair must not gain a second edge -----------------
             // Room 4 is seated against room 3, so the packer offers the pair as (anchor 3, room 4) — while the
@@ -500,8 +493,9 @@ namespace WorldGen.Rendering
 
             // ---- 22. The COMPACT run must exist: the mirror image of 21 -------------------------------------
             // Same structure, opposite winner: on this L-shaped contour the SPREAD run's phase 1 pushes room 3
-            // down the long arm at a distance, which costs it the two rooms hanging off room 2 (4 kept), while the
-            // COMPACT run's flush-only seeding keeps room 3 tight beside the column and fits all five.
+            // down the long arm at a distance, which costs it room 4 — room 5 is still re-seated (phase 2 finds
+            // it a different anchor) — netting 4 kept, while the COMPACT run's flush-only seeding keeps room 3
+            // tight beside the column and fits all five.
             // NON-VACUOUS (measured, harness `design`): spread-run-only keeps 4 here and the pre-fix packer keeps
             // 3; the shipped best-of-two keeps 5. Delete the COMPACT run and this test fails.
             // 21 and 22 together are why the packer runs the pipeline twice: neither seeding dominates the other.
@@ -580,6 +574,35 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL pack-linked-anchor: room 4 is not flush against its linked room 3"); ok = false; }
             if (LinkCount(lp, 3, 4) != 1)
             { Debug.LogError($"FAIL pack-linked-anchor: {LinkCount(lp, 3, 4)} links between 3-4, want exactly 1"); ok = false; }
+
+            // ---- 26. MaxUsefulDistance's cut-off is EXACT — pins the boundary itself, not "large enough" ----
+            // Contour = ONE room, raw x=[78,80] y=[62,66] -> margin-expanded footprint [76.5,81.5]x[60.5,67.5].
+            // Column 1 (4x4) at (64,64); room 2 (4x4, UNLINKED, so it only ever reaches the fill phases) has no
+            // flush slot (phase 2, d==0, fails on all four sides) and no Down/Left/Up slot at ANY distance — the
+            // footprint never covers x<=76.5, so those three sides (which keep cx==64 or move further LEFT) are
+            // hopeless regardless of d. Its ONLY reachable slot is Right, and only once the ray clears the
+            // footprint's left edge: cx = 64+4+d, rect = [cx-2,cx+2]; this fits [76.5,81.5] first at d = 11
+            // (cx=79, rect [77,81]) — d = 10 (rect [76,80]) still pokes 0.5 tiles past the left edge.
+            // MaxUsefulDistance's own formula for this exact case: r = bounds.maxX - px - offX - cw*0.5
+            // = 81.501 - 64 - 4 - 2 = 11.501 -> floor 11 -> limit 11, and it is the UNIQUE positive contributor
+            // (l, up and down are all negative here) — so this fixture pins the Right-side term exactly, with no
+            // other anchor or side able to accidentally cover for a broken cut-off.
+            // NON-VACUOUS in two different ways: (1) TIGHTEN the cut-off by even ONE (limit 10 instead of 11) and
+            // the d==11 slot is never tried -> room 2 is dropped; (2) COLLAPSE the four-side max down to a single
+            // side (e.g. "best = up" instead of the max over r/l/dn/up) and the cut-off goes negative (up here is
+            // -2.499) -> the distance loop never runs at all -> room 2 is dropped. Both are caught by the SAME
+            // "kept == 2, room 2 at (79,64)" assertion below — verified against the harness mutants MutTightCut
+            // and MutOneSideMax (`dotnet run -c Release -- mutants`).
+            var tc = TightCutFloor();
+            int keptT = CompactLayout.PackAroundColumnWithinFootprint(tc, 1, 64f, 64f, TightCutContour(), m);
+            var r2t = tc.GetRoom(2);
+            if (keptT != 2 || r2t == null || !Approx(r2t.X * T, 79f) || !Approx(r2t.Y * T, 64f))
+            {
+                Debug.LogError($"FAIL pack-tight-cut: kept {keptT}, room 2 at "
+                    + (r2t == null ? "DROPPED" : $"({r2t.X * T:F2},{r2t.Y * T:F2})") + ", want (79.00,64.00) — the"
+                    + " farthest useful distance must be found EXACTLY, not approximately");
+                ok = false;
+            }
 
             Debug.Log(ok ? "Self-Test Column Packing: PASS" : "Self-Test Column Packing: FAIL");
         }
@@ -782,6 +805,28 @@ namespace WorldGen.Rendering
             for (int id = 1; id <= 4; id++) f.Rooms.Add(RoomAt(id, 64, 64, 4, 4));
             f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
             f.Links.Add(new Link { RoomA = 3, RoomB = 4 });
+            return f;
+        }
+
+        // ---- assertion 26: MaxUsefulDistance's exact cut-off ---------------------------------------------
+        // ONE contour room, raw x=[78,80] y=[62,66] -> margin-expanded footprint [76.5,81.5]x[60.5,67.5]. Chosen
+        // so the column's Right-side term is the UNIQUE positive contributor to MaxUsefulDistance's four-side/
+        // every-anchor max (see assertion 26's comment for the worked arithmetic), so the fixture pins that one
+        // term exactly rather than whichever side/anchor happens to be loosest.
+        static InteriorFloor TightCutContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 2 };
+            c.Rooms.Add(RoomAt(1, 79, 64, 2, 4));
+            return c;
+        }
+
+        // Column 1 (4x4) + an UNLINKED 4x4 room 2 — unlinked so it never reaches phase 1 (BFS over Links) and is
+        // seated purely by the MaxUsefulDistance-bounded phase 3 search.
+        static InteriorFloor TightCutFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 3 };
+            f.Rooms.Add(RoomAt(1, 64, 64, 4, 4));
+            f.Rooms.Add(RoomAt(2, 64, 64, 4, 4));
             return f;
         }
 

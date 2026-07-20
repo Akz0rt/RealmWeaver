@@ -54,3 +54,11 @@ crashlytics-build.properties
 /.claude/
 /docs/superpowers/
 /.vsconfig
+
+# Tools/f2-harness is a TRACKED offline (non-Unity) test harness for the building-interiors packer — its
+# project file is real evidence, not IDE scratch, so it is exempted from the blanket *.csproj rule above.
+# Its own generated/build output stays ignored (sync.ps1 regenerates gen/ from the real Assets/ sources).
+!/Tools/f2-harness/*.csproj
+/Tools/f2-harness/bin/
+/Tools/f2-harness/obj/
+/Tools/f2-harness/gen/

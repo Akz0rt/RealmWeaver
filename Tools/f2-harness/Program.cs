@@ -1,0 +1,51 @@
+using System;
+using System.Collections.Generic;
+using WorldGen.Generation;
+
+// Offline driver for the F2 packer work — see f2-harness.csproj for usage.
+static class Program
+{
+    static void Main(string[] args)
+    {
+        string cmd = args.Length > 0 ? args[0] : "help";
+        switch (cmd)
+        {
+            case "selftests": SelfTests(); break;
+            case "sweep": Sweep.RunPacks(); Console.WriteLine(); Sweep.RunCaps(); break;
+            case "packs": Sweep.RunPacks(); break;
+            case "caps": Sweep.RunCaps(); break;
+            case "perf": Perf.Run(); break;
+            case "design": Design.Run(); break;
+            case "hunt": Design.Hunt(); break;
+            case "huntmut": Design.HuntMutant(args.Length > 1 ? args[1] : ""); break;
+            case "mutants": Mutants.Run(); break;
+            default:
+                Console.WriteLine("usage: dotnet run -c Release -- <cmd>   where cmd is one of:");
+                Console.WriteLine("  selftests  the real Editor self-test suites, compiled from Assets/");
+                Console.WriteLine("  sweep      three-variant corpus sweep: old packer / spread-only / max (also: packs, caps)");
+                Console.WriteLine("  mutants    non-vacuity check: the suite re-run against each one-rule-removed packer");
+                Console.WriteLine("  perf       MaxRoomsPackable + regen timings on realistic floor-0 contours");
+                Console.WriteLine("  design     dump every self-test fixture under every variant and mutant");
+                Console.WriteLine("  hunt       search for fixtures where the compact and spread runs disagree");
+                Console.WriteLine("  huntmut <anchor-outer|link-pref|tight-bounds>   search for mutant-discriminating fixtures");
+                break;
+        }
+    }
+
+    // Runs the REAL Editor self-test suites (the [ContextMenu] methods), compiled from Assets/.
+    static void SelfTests()
+    {
+        var t = new WorldGen.Rendering.CompactLayoutSelfTests();
+        t.SelfTestCompact();
+        t.SelfTestCompactSettle();
+        t.SelfTestNudgeOffOverlaps();
+        t.SelfTestFloorFootprint();
+        t.SelfTestNewRoomPlacement();
+        t.SelfTestColumnPacking();
+        new WorldGen.Rendering.BuildingGeneratorSelfTests().SelfTestBuilding();
+        Console.WriteLine(UnityEngine.Debug.Errors == 0
+            ? "EDITOR SELF-TESTS: NO ERRORS"
+            : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
+        Environment.ExitCode = UnityEngine.Debug.Errors == 0 ? 0 : 1;
+    }
+}
