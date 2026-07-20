@@ -42,7 +42,10 @@ static class Program
         t.SelfTestFloorFootprint();
         t.SelfTestNewRoomPlacement();
         t.SelfTestColumnPacking();
-        new WorldGen.Rendering.BuildingGeneratorSelfTests().SelfTestBuilding();
+        var b = new WorldGen.Rendering.BuildingGeneratorSelfTests();
+        b.SelfTestBuilding();
+        b.SelfTestFloorRemoval();
+        new WorldGen.Rendering.DungeonGraphSelfTests().SelfTestDungeonUnaffectedByRewire();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
