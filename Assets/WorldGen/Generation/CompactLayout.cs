@@ -37,6 +37,11 @@ namespace WorldGen.Generation
         //     shared-wall door never triggered, so a manually dropped room diverged from a generated one.
         const float ShoveClearance = 0.005f;
 
+        // Slack (tiles) added to the footprint BOUNDING BOX used as the packer's cheap pre-rejection of candidate
+        // slots (see FootprintBoundsTiles). Only has to swallow float round-off — the box is an over-approximation
+        // of the footprint either way, and FloorFootprint.ContainsRect remains the real accept predicate.
+        const float BoundsSlack = 1e-3f;
+
         static float ToTile(float norm) => norm * DungeonLayout.TilesPerAxis;
         static float ToNorm(float tile) => tile / DungeonLayout.TilesPerAxis;
         static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
@@ -256,12 +261,44 @@ namespace WorldGen.Generation
 
         /// <summary>Pack a building floor's rooms flush around a FIXED column room (pinned exactly at
         /// colXTiles,colYTiles) so EVERY placed room stays inside <paramref name="contourFloor"/>'s footprint
-        /// shape (+margin — the drawn contour). BFS from the column over Links; each child takes the first flush
-        /// side (Right/Down/Left/Up at increasing distance) that overlaps nothing already placed AND lies inside
-        /// the footprint. A room with no valid in-footprint slot — and any room reachable only through it — is
-        /// DROPPED (removed from <c>floor.Rooms</c>, with its Links). Returns the number of rooms KEPT (incl.
-        /// the column). Shape-aware: this replaces the free Arrange + reduce-to-1 that collapsed a non-convex
-        /// floor to just the column. Deterministic (fixed BFS/side order, no RNG); headless.</summary>
+        /// shape (+margin — the drawn contour). Returns the number of rooms KEPT (incl. the column); rooms with
+        /// no valid in-footprint slot are DROPPED (removed from <c>floor.Rooms</c>, with their Links).
+        ///
+        /// THREE PHASES, all sharing the two accept predicates — <see cref="IsFree"/> (Chebyshev non-overlap vs.
+        /// every room placed so far) AND <see cref="FloorFootprint.ContainsRect"/> (entirely inside the drawn
+        /// contour). The column is never moved by any phase.
+        ///   1. SEED — BFS over Links from the column (neighbours ascending id), each child seated on the first
+        ///      free side of the room it was reached through. Only placed rooms are enqueued.
+        ///   2. FILL, swept until stable: every still-unplaced room (ascending id) is tried FLUSH (d == 0) against
+        ///      EVERY already-placed room (ascending id), four sides each; a room placed this way becomes an anchor
+        ///      for the rest of the sweep, so the sweep repeats until it places nothing new. This is the fix for
+        ///      the reported "max rooms still leaves an empty pocket": phase 1 alone tries a room ONLY against its
+        ///      own BFS parent, so a boxed-in parent dropped the child (and everything reachable only through it)
+        ///      even when a completely different placed room had a free flush side next to the pocket.
+        ///   3. RELAXED FALLBACK, swept until stable: whatever is still unplaced gets the ORIGINAL search —
+        ///      increasing outward distance d rays (d &gt; 0 renders as a corridor, not a door) — against every
+        ///      placed room. Its d loop starts at 0, so it subsumes phase 2's search; phase 2 still earns its keep
+        ///      by running to a FIXPOINT first, which means no room is ever given a corridor slot while some other
+        ///      room could still have opened a flush (door) slot for it.
+        /// The pipeline is run TWICE, and the run that keeps MORE rooms wins (ties → the first, compact one):
+        ///   • COMPACT run — phase 1 seats flush only (d == 0). Packs tighter, so it usually leaves one big
+        ///     contiguous pocket for phase 2 rather than several unusable slivers; this is what actually raises
+        ///     the cap.
+        ///   • SPREAD run — phase 1 is the PRE-FIX search (increasing d against the BFS parent). Its phase 1 is
+        ///     bit-for-bit the old packer, and phases 2/3 only ADD rooms into free slots without moving anything,
+        ///     so this run can never keep fewer rooms than the old packer did. Taking the better of the two makes
+        ///     "never worse than before" a property of the CODE, not a hope: measured over 2880 packs the compact
+        ///     run alone regressed on 2.7% of them (worst −3 rooms, and −2 on the probed «из N» cap for 3% of
+        ///     contours) even with phase 3 present, because a flush placement can occupy a slot the spread layout
+        ///     left free.
+        /// Phases 2 and 3 ADD a Link between the room and the anchor it was seated against when the pair is not
+        /// linked yet (deduplicated, either direction): flush ⇒ the shared wall renders as a DOOR, and every
+        /// placed room stays connected to the column (the validator's orphan rule, and TrimToRoomCount's BFS
+        /// prefix, both read Links). Links are only ever ADDED, never removed except with a dropped room.
+        /// Deterministic — no RNG, every iteration order fixed (BFS then ascending id), and the placement decisions
+        /// never read the rooms' INPUT positions (only the column pin and rooms already placed in the same run), so
+        /// the two runs cannot influence each other. PRECONDITION: <paramref name="contourFloor"/> is a different
+        /// floor than <paramref name="floor"/> (packing rewrites floor's positions). Headless.</summary>
         public static int PackAroundColumnWithinFootprint(InteriorFloor floor, int columnRoomId,
             float colXTiles, float colYTiles, InteriorFloor contourFloor, float margin)
         {
@@ -272,9 +309,43 @@ namespace WorldGen.Generation
             column.X = Clamp01(ToNorm(colXTiles));
             column.Y = Clamp01(ToNorm(colYTiles));
 
-            var placed = new List<Room> { column };
-            var placedIds = new HashSet<int> { column.Id };
+            var bounds = FootprintBoundsTiles(contourFloor, margin);
+            var ordered = SortedById(floor.Rooms);   // the fixed ascending-id sweep order of phases 2 and 3
             var adj = BuildAdjacency(floor);
+
+            var compact = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds, seedMaxDistance: 0);
+            var spread = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
+                seedMaxDistance: DungeonLayout.TilesPerAxis);
+            var chosen = spread.Ids.Count > compact.Ids.Count ? spread : compact;
+            Apply(floor, chosen);
+            return chosen.Ids.Count;
+        }
+
+        /// <summary>What one run of the three phases decided: which rooms it placed, where, and which room↔anchor
+        /// Links its fill phases want added. Nothing is committed to the floor until <see cref="Apply"/> — so two
+        /// runs can be compared and only the winner's layout kept.</summary>
+        sealed class PackResult
+        {
+            public readonly List<Room> Placed = new List<Room>();          // placement order (the IsFree working set)
+            public readonly HashSet<int> Ids = new HashSet<int>();
+            public readonly Dictionary<int, (float x, float y)> Pos = new Dictionary<int, (float x, float y)>();
+            public readonly List<int> LinkA = new List<int>();             // parallel arrays: LinkA[i] ↔ LinkB[i]
+            public readonly List<int> LinkB = new List<int>();
+        }
+
+        /// <summary>One full run of phases 1-3. <paramref name="seedMaxDistance"/> is the BFS phase's outward
+        /// search limit: 0 = flush-only (the compact run), TilesPerAxis = the pre-fix ray search (the spread run).
+        /// Writes positions onto the rooms as it goes (the phases must measure real geometry) and snapshots them
+        /// at the end; the caller keeps only the winning snapshot. Deterministic.</summary>
+        static PackResult RunPhases(InteriorFloor floor, Room column, List<Room> ordered,
+            Dictionary<int, List<int>> adj, InteriorFloor contourFloor, float margin,
+            (float minX, float minY, float maxX, float maxY) bounds, int seedMaxDistance)
+        {
+            var res = new PackResult();
+            res.Placed.Add(column);
+            res.Ids.Add(column.Id);
+
+            // --- Phase 1: BFS from the column over Links. ------------------------------------------------
             var queue = new Queue<int>();
             queue.Enqueue(column.Id);
             while (queue.Count > 0)
@@ -283,55 +354,141 @@ namespace WorldGen.Generation
                 if (cur == null || !adj.TryGetValue(cur.Id, out var nbs)) continue;
                 foreach (int nb in nbs)   // ascending id
                 {
-                    if (placedIds.Contains(nb)) continue;
+                    if (res.Ids.Contains(nb)) continue;
                     var child = floor.GetRoom(nb);
                     if (child == null) continue;
-                    if (TryPlaceAgainstInFootprint(child, cur, placed, contourFloor, margin))
-                    {
-                        placed.Add(child);
-                        placedIds.Add(nb);
-                        queue.Enqueue(nb);
-                    }
+                    bool seated = false;
+                    for (int d = 0; d <= seedMaxDistance && !seated; d++)
+                        seated = TrySeatAtDistance(child, cur, d, res.Placed, contourFloor, margin, bounds);
+                    if (!seated) continue;
+                    res.Placed.Add(child);
+                    res.Ids.Add(nb);
+                    queue.Enqueue(nb);
                 }
             }
 
-            // Drop rooms (and their links) that had no valid in-footprint slot.
-            floor.Rooms.RemoveAll(r => !placedIds.Contains(r.Id));
-            floor.Links.RemoveAll(l => !placedIds.Contains(l.RoomA) || !placedIds.Contains(l.RoomB));
-            return placed.Count;
+            // --- Phase 2: fill the space phase 1 left — flush against ANY placed room. --------------------
+            FillSweeps(res, ordered, contourFloor, margin, bounds, maxDistance: 0);
+
+            // --- Phase 3: relaxed fallback — outward rays against any placed room. ------------------------
+            FillSweeps(res, ordered, contourFloor, margin, bounds, maxDistance: DungeonLayout.TilesPerAxis);
+
+            foreach (var r in res.Placed) res.Pos[r.Id] = (r.X, r.Y);
+            return res;
         }
 
-        /// <summary>Like <see cref="PlaceAgainst"/> but a room is placed ONLY at a flush side that is both free
-        /// of overlap AND inside the footprint (<see cref="FloorFootprint.ContainsRect"/>). Returns false — and
-        /// leaves the child unplaced — when no such slot exists within the field. Deterministic.</summary>
-        static bool TryPlaceAgainstInFootprint(Room child, Room parent, List<Room> placed,
-            InteriorFloor contourFloor, float margin)
+        /// <summary>Commit one run to the floor: restore its positions (the other run may have overwritten them),
+        /// add its fill-phase links (deduplicated), then DROP every room it could not place, with their links.</summary>
+        static void Apply(InteriorFloor floor, PackResult res)
+        {
+            foreach (var r in res.Placed)
+            {
+                var p = res.Pos[r.Id];
+                r.X = p.x; r.Y = p.y;
+            }
+            for (int i = 0; i < res.LinkA.Count; i++) AddLinkIfAbsent(floor, res.LinkA[i], res.LinkB[i]);
+            floor.Rooms.RemoveAll(r => !res.Ids.Contains(r.Id));
+            floor.Links.RemoveAll(l => !res.Ids.Contains(l.RoomA) || !res.Ids.Contains(l.RoomB));
+        }
+
+        /// <summary>Sweep every still-unplaced room (ascending id) against every already-placed room, seating it
+        /// at the first slot that is free AND inside the footprint, and repeat the whole sweep until one places
+        /// nothing new (a room placed mid-sweep is an anchor for the rest of it). <paramref name="maxDistance"/>
+        /// 0 = flush only (phase 2); TilesPerAxis = the original outward-ray search (phase 3). Each placement
+        /// records the room↔anchor Link. Terminates: every sweep either places a room (bounded by the room count)
+        /// or ends the loop. Deterministic.</summary>
+        static void FillSweeps(PackResult res, List<Room> ordered, InteriorFloor contourFloor, float margin,
+            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
+        {
+            bool progress = true;
+            while (progress)
+            {
+                progress = false;
+                foreach (var room in ordered)   // ascending id
+                {
+                    if (res.Ids.Contains(room.Id)) continue;
+                    var anchor = SeatAgainstAnyPlaced(room, res.Placed, contourFloor, margin, bounds, maxDistance);
+                    if (anchor == null) continue;
+                    res.Placed.Add(room);
+                    res.Ids.Add(room.Id);
+                    res.LinkA.Add(anchor.Id); res.LinkB.Add(room.Id);
+                    progress = true;
+                }
+            }
+        }
+
+        /// <summary>Seat <paramref name="room"/> against the already-placed rooms, nearest distance first: for
+        /// each outward distance d (0 = flush) every placed room in ASCENDING ID order, four sides each. Returns
+        /// the anchor it was seated against (and writes room.X/Y), or null when no slot passes both predicates.
+        /// Distance-outer so a flush (door) slot always wins over a pushed-out (corridor) one. Deterministic.</summary>
+        static Room SeatAgainstAnyPlaced(Room room, List<Room> placed, InteriorFloor contourFloor, float margin,
+            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
+        {
+            var anchors = SortedById(placed);   // ascending id — the fixed anchor order
+            for (int d = 0; d <= maxDistance; d++)
+                foreach (var anchor in anchors)
+                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds)) return anchor;
+            return null;
+        }
+
+        /// <summary>Try the four sides (Right, Down, Left, Up) of <paramref name="anchor"/> at the FIXED outward
+        /// distance <paramref name="d"/> (0 = flush, so the pair shares a wall), taking the first candidate that
+        /// is free of overlap AND inside the footprint. Writes child.X/Y normalized+clamped and returns true on
+        /// success; leaves the child untouched otherwise. <paramref name="bounds"/> is the footprint's bounding
+        /// box: a candidate poking outside it can NEVER be inside the footprint union, so rejecting it there is
+        /// exact and skips the arrangement work for the far-out rays of phase 3. Deterministic.</summary>
+        static bool TrySeatAtDistance(Room child, Room anchor, int d, List<Room> placed,
+            InteriorFloor contourFloor, float margin, (float minX, float minY, float maxX, float maxY) bounds)
         {
             var (cw, ch) = DungeonProjection.EffectiveSize(child);
-            var (pw, ph) = DungeonProjection.EffectiveSize(parent);
-            float px = ToTile(parent.X), py = ToTile(parent.Y);
+            var (pw, ph) = DungeonProjection.EffectiveSize(anchor);
+            float px = ToTile(anchor.X), py = ToTile(anchor.Y);
             float offX = (pw + cw) * 0.5f, offY = (ph + ch) * 0.5f;
-            int max = DungeonLayout.TilesPerAxis;
-            for (int d = 0; d <= max; d++)
-                for (int s = 0; s < 4; s++)
+            for (int s = 0; s < 4; s++)
+            {
+                float cx, cy;
+                switch (s)
                 {
-                    float cx, cy;
-                    switch (s)
-                    {
-                        case 0: cx = px + offX + d; cy = py; break;   // Right
-                        case 1: cx = px; cy = py + offY + d; break;   // Down (+Y)
-                        case 2: cx = px - offX - d; cy = py; break;   // Left
-                        default: cx = px; cy = py - offY - d; break;  // Up
-                    }
-                    if (IsFree(cx, cy, cw, ch, placed)
-                        && FloorFootprint.ContainsRect(contourFloor, margin, cx, cy, cw, ch))
-                    {
-                        child.X = Clamp01(ToNorm(cx));
-                        child.Y = Clamp01(ToNorm(cy));
-                        return true;
-                    }
+                    case 0: cx = px + offX + d; cy = py; break;   // Right
+                    case 1: cx = px; cy = py + offY + d; break;   // Down (+Y)
+                    case 2: cx = px - offX - d; cy = py; break;   // Left
+                    default: cx = px; cy = py - offY - d; break;  // Up
                 }
+                if (cx - cw * 0.5f < bounds.minX || cx + cw * 0.5f > bounds.maxX
+                    || cy - ch * 0.5f < bounds.minY || cy + ch * 0.5f > bounds.maxY) continue;
+                if (IsFree(cx, cy, cw, ch, placed)
+                    && FloorFootprint.ContainsRect(contourFloor, margin, cx, cy, cw, ch))
+                {
+                    child.X = Clamp01(ToNorm(cx));
+                    child.Y = Clamp01(ToNorm(cy));
+                    return true;
+                }
+            }
             return false;
+        }
+
+        /// <summary>Bounding box (tile space) of the drawn footprint = the contour rooms' content bounds grown by
+        /// the contour margin. <see cref="FloorFootprint.ContainsRect"/> can only be true for a rect inside the
+        /// union of the margin-expanded room rects, and that union lies inside this box — so failing this box is
+        /// a sound (never over-rejecting) O(1) pre-test. Grown by one more hair (BoundsSlack) so a rect sitting
+        /// EXACTLY on the contour edge can never be rejected by float round-off: the pre-test must only ever
+        /// discard candidates ContainsRect would have discarded anyway.</summary>
+        static (float minX, float minY, float maxX, float maxY) FootprintBoundsTiles(InteriorFloor contourFloor, float margin)
+        {
+            var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(contourFloor);
+            float g = margin + BoundsSlack;
+            return (minX - g, minY - g, maxX + g, maxY + g);
+        }
+
+        /// <summary>Add an undirected Link between two rooms unless the pair is ALREADY linked in EITHER
+        /// direction (or is the same room) — the packer's fill phases must never duplicate an edge the graph
+        /// builder already made. Same construction as BuildingGenerator's link builder.</summary>
+        static void AddLinkIfAbsent(InteriorFloor floor, int a, int b)
+        {
+            if (a == b) return;
+            foreach (var l in floor.Links)
+                if ((l.RoomA == a && l.RoomB == b) || (l.RoomA == b && l.RoomB == a)) return;
+            floor.Links.Add(new Link { RoomA = a, RoomB = b });
         }
 
         // ---------------------------------------------------------------------------------------------
