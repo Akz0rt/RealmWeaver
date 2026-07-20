@@ -373,7 +373,7 @@ namespace WorldGen.Rendering
             // ---- 16. THE FIX: a pocket the BFS parent can never reach is filled by phase 2 ------------------
             // Fixture (all tile-space numbers hand-derived, see LContour/LPocketFloor): an L-shaped contour whose
             // horizontal arm is [50,62]x[58.5,65.5] and vertical arm [54.5,61.5]x[62,74]. Exactly FOUR 4x4 rooms
-            // fit: (54,62) [the pinned column], (58,62), (58,66), (58,70). Links are 1-2, 1-3, 3-4 — so room 3's
+            // fit: (54,62) [the pinned column], (58,62), (58,66), (58,70). Links are 1-2, 1-3, 4-3 — so room 3's
             // BFS parent is the COLUMN, and the column is boxed: Right is taken by room 2, Left/Up leave the
             // contour, and Down (54,66) pokes into the empty x<54.5 pocket that neither arm covers. Under the
             // OLD packer (and equally under PHASE 1 ALONE, either seeding variant) room 3 is therefore dropped at
@@ -395,7 +395,7 @@ namespace WorldGen.Rendering
             // Room 3 was seated flush against room 2 (hand-derived above: (58,66) under (58,62)). Two assertions:
             // (a) the Chebyshev edge gap is ~0 on the shared axis — measured INDEPENDENTLY here, not via
             // AdjacentAlongWall — so a shared-wall door renders; (b) a Link 2-3 exists, which the fixture did NOT
-            // contain (its links are 1-2, 1-3, 3-4). Fails if phase 2 seats at a distance (no shared wall) or if
+            // contain (its links are 1-2, 1-3, 4-3). Fails if phase 2 seats at a distance (no shared wall) or if
             // the link-adding step is removed (the pair would render as a blank wall with a corridor around it).
             if (f.GetRoom(3) != null)
             {
@@ -412,9 +412,11 @@ namespace WorldGen.Rendering
             }
 
             // ---- 18. No DUPLICATE links: an already-linked pair must not gain a second edge -----------------
-            // Room 4 is seated against room 3, and the fixture ALREADY contains the link 3-4. The dedup guard
-            // must recognise it (in either direction) and add nothing. Remove the guard → two 3-4 links → fails.
-            // The general sweep also catches a duplicate of any other pair.
+            // Room 4 is seated against room 3, so the packer offers the pair as (anchor 3, room 4) — while the
+            // fixture stores that pre-existing link the OTHER way round, as {RoomA = 4, RoomB = 3}. So only
+            // AddLinkIfAbsent's REVERSE half (l.RoomA == b && l.RoomB == a) can recognise it: keep just the
+            // forward half and this pair gets a second edge. Removing the guard entirely fails too, and the
+            // general sweep below catches a duplicate of any other pair.
             if (LinkCount(f, 3, 4) != 1)
             { Debug.LogError($"FAIL pack-dedup: {LinkCount(f, 3, 4)} links between 3-4, want exactly 1 (the pair was already linked before packing)"); ok = false; }
             for (int i = 0; i < f.Rooms.Count; i++)
@@ -461,12 +463,14 @@ namespace WorldGen.Rendering
                 if (!reached.Contains(r.Id))
                 { Debug.LogError($"FAIL pack-connect: room {r.Id} is unreachable from the column over Links (a phase-2/3 placement must add its anchor link)"); ok = false; }
 
-            // ---- 20. Determinism under a PERMUTED input room order ------------------------------------------
-            // The same L fixture, but floor.Rooms is built in REVERSE id order. Packing must yield identical
-            // positions per room id — that is exactly what the ascending-id sweep order (SortedById over rooms
-            // AND over the anchor list) guarantees. NON-VACUOUS: sweeping floor.Rooms in list order instead makes
-            // the reversed copy try room 4 before room 3, so 4 takes (58,66) and 3 takes (58,70) — the two runs
-            // then disagree on both rooms. (Re-packing an identical copy would assert nothing.)
+            // ---- 20. Determinism under a PERMUTED input room AND link order ---------------------------------
+            // The same L fixture, but floor.Rooms AND floor.Links are both built in REVERSE order. Packing must
+            // yield identical positions per room id — that is exactly what the ascending-id orders guarantee:
+            // SortedById over the swept rooms, SortedById over the anchor list, and BuildAdjacency's neighbour
+            // .Sort() for phase 1. NON-VACUOUS: sweeping floor.Rooms in list order instead makes the reversed
+            // copy try room 4 before room 3, so 4 takes (58,66) and 3 takes (58,70) — the two runs then disagree
+            // on both rooms; and without the neighbour .Sort() phase 1 would follow link-insertion order.
+            // (Re-packing an identical copy would assert nothing.)
             var f2 = LPocketFloor(reversed: true);
             CompactLayout.PackAroundColumnWithinFootprint(f2, 1, 54f, 62f, LContour(), m);
             if (f2.Rooms.Count != f.Rooms.Count)
@@ -481,22 +485,107 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL pack-determinism: room {id} at ({ra.X * T:F2},{ra.Y * T:F2}) vs ({rb.X * T:F2},{rb.Y * T:F2}) under permuted room order"); ok = false; }
             }
 
-            // ---- 21. NON-REGRESSION: the spread run must keep what the pre-fix packer kept -------------------
+            // ---- 21. The SPREAD run must exist: a contour where flush-first seeding packs FEWER -------------
             // The packer runs its three phases TWICE — once seeding the BFS flush-only (compact) and once with the
-            // pre-fix increasing-distance search (spread) — and keeps whichever placed more rooms. This fixture is
-            // a zig-zag contour (see ZigZagContour) where the COMPACT run loses: it seats room 3 flush under room 2
-            // in the narrow lower arm and then the 5x5 room 4 has nowhere to go (3 rooms kept), while the SPREAD
-            // run's BFS puts room 3 in the side arm and drops room 4 down the lower arm (4 rooms kept — the exact
-            // layout the pre-fix packer produced). NON-VACUOUS: delete the spread run (or the "keep the better"
-            // choice) and this fixture packs 3 instead of 4, i.e. the packer would have become WORSE than the code
-            // it replaced on this input — measured over 2880 generated packs, that happened on 2.7% of them.
-            var zz = ZigZagFloor();
-            int keptZ = CompactLayout.PackAroundColumnWithinFootprint(zz, 1, 60f, 56f, ZigZagContour(), m);
-            if (keptZ != 4 || zz.GetRoom(4) == null)
-            { Debug.LogError($"FAIL pack-nonregression: kept {keptZ} rooms (room 4 present: {zz.GetRoom(4) != null}), want 4 — the spread run must win here"); ok = false; }
+            // pre-fix increasing-distance search (spread) — and keeps whichever placed more rooms. Here the
+            // COMPACT run loses: seeding rooms 2 and 3 flush down the middle arm fills it, and the 5x4 room 4 then
+            // only fits beside room 3 while the 4x5 room 5 has nowhere left (4 kept). The SPREAD run pushes room 4
+            // one step further down the lower arm, which leaves room 5 a slot beside it (5 kept).
+            // NON-VACUOUS (measured, harness `design`): compact-run-only keeps 4 here and the pre-fix packer keeps
+            // 4; the shipped best-of-two keeps 5. Delete the spread run and this test fails.
+            var sw = SpreadWinsFloor();
+            int keptS = CompactLayout.PackAroundColumnWithinFootprint(sw, 1, 60f, 56f, SpreadWinsContour(), m);
+            if (keptS != 5 || sw.GetRoom(5) == null)
+            { Debug.LogError($"FAIL pack-spread-run: kept {keptS} rooms (room 5 present: {sw.GetRoom(5) != null}), want 5 — the SPREAD run must win here"); ok = false; }
+
+            // ---- 22. The COMPACT run must exist: the mirror image of 21 -------------------------------------
+            // Same structure, opposite winner: on this L-shaped contour the SPREAD run's phase 1 pushes room 3
+            // down the long arm at a distance, which costs it the two rooms hanging off room 2 (4 kept), while the
+            // COMPACT run's flush-only seeding keeps room 3 tight beside the column and fits all five.
+            // NON-VACUOUS (measured, harness `design`): spread-run-only keeps 4 here and the pre-fix packer keeps
+            // 3; the shipped best-of-two keeps 5. Delete the COMPACT run and this test fails.
+            // 21 and 22 together are why the packer runs the pipeline twice: neither seeding dominates the other.
+            var cw = CompactWinsFloor();
+            int keptC = CompactLayout.PackAroundColumnWithinFootprint(cw, 1, 58f, 56f, CompactWinsContour(), m);
+            if (keptC != 5 || cw.GetRoom(4) == null || cw.GetRoom(5) == null)
+            { Debug.LogError($"FAIL pack-compact-run: kept {keptC} rooms, want 5 — the COMPACT run must win here"); ok = false; }
+
+            // ---- 23. DISTANCE-outer: the nearest slot wins over an earlier anchor's farther one -------------
+            // Contour arms (margin-inflated): [56.5,71.5]x[60.5,67.5] (top), [54.5,73.5]x[52.5,59.5] (middle) and
+            // [48.5,63.5]² (left block) — connected, but the top and middle arms are separated by an uncovered
+            // band y in (59.5,60.5), so a 6-tall room can never straddle them.
+            // Column 1 (4x4) is pinned at (64,64); room 2 (4x5) seats flush right of it at (68,64); the 6x6 room 3
+            // has no flush slot anywhere, so it falls through to the outward-ray phase. There its first valid slot
+            // against the COLUMN (id 1, and the anchor it is LINKED to, so it is tried first at every distance) is
+            // Up at d = 3 -> (64,56); its first valid slot against room 2 (id 2, unlinked) is Up at d = 2 ->
+            // (68,56.5). Distance-outer therefore takes the NEARER one: (68,56.5), a 2-tile corridor.
+            // NON-VACUOUS: swap SeatAgainstAnyPlaced's loops to anchor-outer/distance-inner and anchor 1 wins the
+            // whole search at d = 3, putting room 3 at (64,56) with a 3-tile corridor — verified by running that
+            // mutant in the offline harness. It also shows the distance ordering outranks the linked-anchor
+            // preference of assertion 25, which is the intended precedence.
+            var dz = DistanceOrderFloor();
+            int keptD = CompactLayout.PackAroundColumnWithinFootprint(dz, 1, 64f, 64f, DistanceOrderContour(), m);
+            var r3d = dz.GetRoom(3);
+            if (keptD != 3 || r3d == null || !Approx(r3d.X * T, 68f) || !Approx(r3d.Y * T, 56.5f))
+            {
+                Debug.LogError($"FAIL pack-distance-order: kept {keptD}, room 3 at "
+                    + (r3d == null ? "DROPPED" : $"({r3d.X * T:F2},{r3d.Y * T:F2})") + ", want (68.00,56.50) — the"
+                    + " nearest slot must win even though it is at a LATER anchor");
+                ok = false;
+            }
+
+            // ---- 24. The footprint bbox pre-test must not clip the contour's OUTER edge ----------------------
+            // TrySeatAtDistance rejects a candidate outside the footprint's bounding BOX before paying for
+            // ContainsRect. The box is the contour rooms' content bounds grown by the CONTOUR MARGIN (+ a hair):
+            // drop the margin term and rooms sitting flush against the drawn outline stop being placeable, which
+            // is a silent capacity loss with no other symptom. Fixture: a horizontal strip whose footprint is
+            // [51,78]x[60.5,67.5] (content bounds [52.5,76.5]); the chain 1-2-3-4 of 4x4 rooms seats right of the
+            // column at 68, 72 and 76, and room 4 then spans x[74,78] — its right edge EXACTLY on the outer edge.
+            // NON-VACUOUS: with the margin term stripped from FootprintBoundsTiles the box ends at 76.5, room 4's
+            // slot is rejected and it lands at (60,64) on the other side instead — verified with that mutant.
+            var eg = EdgeChainFloor();
+            int keptE = CompactLayout.PackAroundColumnWithinFootprint(eg, 1, 64f, 64f, EdgeStripContour(), m);
+            var r4e = eg.GetRoom(4);
+            if (keptE != 4 || r4e == null || !Approx(r4e.X * T, 76f) || !Approx(r4e.Y * T, 64f))
+            {
+                Debug.LogError($"FAIL pack-bounds-margin: kept {keptE}, room 4 at "
+                    + (r4e == null ? "DROPPED" : $"({r4e.X * T:F2},{r4e.Y * T:F2})") + ", want (76.00,64.00) — a room"
+                    + " flush against the contour's outer edge must survive the bounding-box pre-test");
+                ok = false;
+            }
+
+            // ---- 25. LINKED anchors are preferred, so a room's own link renders as a door -------------------
+            // A room's ORIGINAL links survive packing. Seat it against an unrelated room and those links route as
+            // long corridors across the floor — the "detached rooms joined by corridors" look this packer exists
+            // to avoid. So at every distance the anchors the room is already linked to are tried first.
+            // Fixture: the same strip contour ([46.5,81.5]x[60.5,67.5], one row of 4x4 rooms). Links are 1-2 and
+            // 3-4 only, so phase 1 seats just room 2 (right of the column, at (68,64)); phase 2 then seats room 3
+            // against the column at (60,64) (its own link partner 4 is not placed yet), and finally room 4 — whose
+            // link partner 3 IS placed and has a free flush side at (56,64), while the LOWER-id, unrelated room 2
+            // also has one at (72,64). The linked anchor must win: room 4 lands at (56,64), flush against room 3.
+            // NON-VACUOUS: drop the preference (plain ascending-id anchors) and room 4 goes to (72,64) with a NEW
+            // 2-4 link, leaving its 3-4 link stretched 16 tiles across the floor — that is exactly what the packer
+            // as first written did, verified against both that mutant and the pre-fix build.
+            var lp = LinkedAnchorFloor();
+            int keptL = CompactLayout.PackAroundColumnWithinFootprint(lp, 1, 64f, 64f, StripContour(), m);
+            var r4l = lp.GetRoom(4);
+            if (keptL != 4 || r4l == null || !Approx(r4l.X * T, 56f) || !Approx(r4l.Y * T, 64f))
+            {
+                Debug.LogError($"FAIL pack-linked-anchor: kept {keptL}, room 4 at "
+                    + (r4l == null ? "DROPPED" : $"({r4l.X * T:F2},{r4l.Y * T:F2})") + ", want (56.00,64.00) — a room"
+                    + " must be seated against an anchor it is ALREADY linked to when one is viable");
+                ok = false;
+            }
+            else if (!CompactLayout.AdjacentAlongWall(r4l, lp.GetRoom(3)))
+            { Debug.LogError("FAIL pack-linked-anchor: room 4 is not flush against its linked room 3"); ok = false; }
+            if (LinkCount(lp, 3, 4) != 1)
+            { Debug.LogError($"FAIL pack-linked-anchor: {LinkCount(lp, 3, 4)} links between 3-4, want exactly 1"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Column Packing: PASS" : "Self-Test Column Packing: FAIL");
         }
+
+        // Tile-space float compare for the packer fixtures (positions are exact multiples of 1/128).
+        static bool Approx(float a, float b) => Mathf.Abs(a - b) <= 1e-3f;
 
         // ------------------------------------------------------------------------------------------------
         // Fixtures & independent helpers (read DungeonLayout.TilesPerAxis + EffectiveSize — never copy them).
@@ -516,17 +605,30 @@ namespace WorldGen.Rendering
             return c;
         }
 
-        // The upper floor packed into LContour: column 1 + three 4x4 rooms, linked 1-2, 1-3, 3-4. Start
+        // The upper floor packed into LContour: column 1 + three 4x4 rooms, linked 1-2, 1-3 and 4-3. Start
         // positions are irrelevant (the packer assigns every placed room's position), so they are all stacked at
-        // the column. `reversed` inserts the SAME rooms in descending id — the determinism stimulus.
+        // the column. `reversed` inserts the SAME rooms AND the SAME links in the opposite order — the
+        // determinism stimulus for both the ascending-id sweeps and BuildAdjacency's neighbour sort.
+        // NOTE the 4-3 link is deliberately stored with the HIGHER id first: room 4 is seated against room 3, so
+        // the packer offers the pair as (3,4) and only the REVERSE half of AddLinkIfAbsent's test can recognise
+        // it as already linked. That is what assertion 18 guards (see the comment there).
         static InteriorFloor LPocketFloor(bool reversed)
         {
             var f = new InteriorFloor { NextRoomId = 5 };
             if (reversed) for (int id = 4; id >= 1; id--) f.Rooms.Add(RoomAt(id, 54, 62, 4, 4));
             else for (int id = 1; id <= 4; id++) f.Rooms.Add(RoomAt(id, 54, 62, 4, 4));
-            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
-            f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
-            f.Links.Add(new Link { RoomA = 3, RoomB = 4 });
+            if (reversed)
+            {
+                f.Links.Add(new Link { RoomA = 4, RoomB = 3 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            }
+            else
+            {
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+                f.Links.Add(new Link { RoomA = 4, RoomB = 3 });
+            }
             return f;
         }
 
@@ -555,32 +657,131 @@ namespace WorldGen.Rendering
             return f;
         }
 
-        // A zig-zag floor-0 contour: three overlapping rooms whose margin-inflated boxes are
-        //   [54.5,65.5]x[52.5,59.5]  (top arm, holds the column)
-        //   [52.5,59.5]x[60.5,67.5]  (side arm, offset LEFT)
-        //   [56.5,63.5]x[62.5,73.5]  (lower arm, offset back RIGHT)
-        // No flush side of the column at (60,56) reaches the side/lower arms — they are only reachable by a
-        // pushed-out (corridor) hop, which is what makes the two packing runs disagree.
-        static InteriorFloor ZigZagContour()
+        // ---- assertion 21: a contour where the SPREAD run wins ------------------------------------------
+        // Three OVERLAPPING rooms (a real floor 0 is packed flush by CompactLayout.Arrange, so its footprint is
+        // always one connected blob — a fixture must not rely on a disconnected one). Margin-inflated boxes:
+        //   [56.5,63.5]x[50.5,61.5]  (top arm, holds the column at (60,56))
+        //   [54.5,65.5]x[54.5,65.5]  (middle block, overlaps both others)
+        //   [56.5,67.5]x[60.5,71.5]  (lower arm, offset RIGHT)
+        static InteriorFloor SpreadWinsContour()
         {
             var c = new InteriorFloor { NextRoomId = 4 };
-            c.Rooms.Add(RoomAt(1, 60, 56, 8, 4));
-            c.Rooms.Add(RoomAt(2, 56, 64, 4, 4));
-            c.Rooms.Add(RoomAt(3, 60, 68, 4, 8));
+            c.Rooms.Add(RoomAt(1, 60, 56, 4, 8));
+            c.Rooms.Add(RoomAt(2, 62, 66, 8, 8));
+            c.Rooms.Add(RoomAt(3, 60, 60, 8, 8));
             return c;
         }
 
-        // Column 1 (4x4) + rooms 2 (4x4), 3 (5x4), 4 (5x5); links 2-1, 3-2, 4-1.
-        static InteriorFloor ZigZagFloor()
+        // Column 1 (4x4) + rooms 2 (6x5), 3 (4x4), 4 (5x4), 5 (4x5); every room linked to the column (a star).
+        static InteriorFloor SpreadWinsFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 6 };
+            f.Rooms.Add(RoomAt(1, 60, 56, 4, 4));
+            f.Rooms.Add(RoomAt(2, 60, 56, 6, 5));
+            f.Rooms.Add(RoomAt(3, 60, 56, 4, 4));
+            f.Rooms.Add(RoomAt(4, 60, 56, 5, 4));
+            f.Rooms.Add(RoomAt(5, 60, 56, 4, 5));
+            for (int id = 2; id <= 5; id++) f.Links.Add(new Link { RoomA = id, RoomB = 1 });
+            return f;
+        }
+
+        // ---- assertion 22: the mirror — a contour where the COMPACT run wins ----------------------------
+        // Two overlapping rooms forming an L. Margin-inflated boxes:
+        //   [52.5,63.5]x[52.5,59.5]  (top arm, holds the column at (58,56))
+        //   [50.5,61.5]x[56.5,67.5]  (lower arm, offset LEFT; overlaps the top arm on [52.5,61.5]x[56.5,59.5])
+        static InteriorFloor CompactWinsContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 3 };
+            c.Rooms.Add(RoomAt(1, 58, 56, 8, 4));
+            c.Rooms.Add(RoomAt(2, 56, 62, 8, 8));
+            return c;
+        }
+
+        // Column 1 (4x4) + rooms 2 (6x4), 3 (4x4), 4 (5x5), 5 (5x4); links 2-1, 3-1, 4-2, 5-4.
+        static InteriorFloor CompactWinsFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 6 };
+            f.Rooms.Add(RoomAt(1, 58, 56, 4, 4));
+            f.Rooms.Add(RoomAt(2, 58, 56, 6, 4));
+            f.Rooms.Add(RoomAt(3, 58, 56, 4, 4));
+            f.Rooms.Add(RoomAt(4, 58, 56, 5, 5));
+            f.Rooms.Add(RoomAt(5, 58, 56, 5, 4));
+            f.Links.Add(new Link { RoomA = 2, RoomB = 1 });
+            f.Links.Add(new Link { RoomA = 3, RoomB = 1 });
+            f.Links.Add(new Link { RoomA = 4, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 5, RoomB = 4 });
+            return f;
+        }
+
+        // ---- assertion 23: distance-outer vs anchor-outer -----------------------------------------------
+        // Margin-inflated boxes: [56.5,71.5]x[60.5,67.5] (top, holds the column at (64,64)),
+        // [54.5,73.5]x[52.5,59.5] (middle) and [48.5,63.5]² (left block, which connects the other two).
+        // The uncovered band y in (59.5,60.5) between the top and middle arms is what forces the 6x6 room out to
+        // a distance: it can sit ENTIRELY in the middle arm, but never across the two.
+        static InteriorFloor DistanceOrderContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 4 };
+            c.Rooms.Add(RoomAt(1, 64, 64, 12, 4));
+            c.Rooms.Add(RoomAt(2, 64, 56, 16, 4));
+            c.Rooms.Add(RoomAt(3, 56, 56, 12, 12));
+            return c;
+        }
+
+        // Column 1 (4x4) + room 2 (4x5) + room 3 (6x6); links 2-1 and 3-1 (so room 3 is linked to the COLUMN).
+        static InteriorFloor DistanceOrderFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 4 };
+            f.Rooms.Add(RoomAt(1, 64, 64, 4, 4));
+            f.Rooms.Add(RoomAt(2, 64, 64, 4, 5));
+            f.Rooms.Add(RoomAt(3, 64, 64, 6, 6));
+            f.Links.Add(new Link { RoomA = 2, RoomB = 1 });
+            f.Links.Add(new Link { RoomA = 3, RoomB = 1 });
+            return f;
+        }
+
+        // ---- assertions 24 & 25: horizontal strip contours ----------------------------------------------
+        // RoomSizing.MaxSide is 16, so one contour room can only span 16 tiles — these use two overlapping
+        // 16x4 rooms. Both strips are 7 tiles tall, so exactly ONE row of 4-tall rooms fits and every placement
+        // decision is a pure left/right one.
+
+        // Footprint [46.5,81.5] x [60.5,67.5], centred on the column at (64,64).
+        static InteriorFloor StripContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 3 };
+            c.Rooms.Add(RoomAt(1, 56, 64, 16, 4));
+            c.Rooms.Add(RoomAt(2, 72, 64, 16, 4));
+            return c;
+        }
+
+        // Footprint [51,78] x [60.5,67.5] — shifted so the flush chain right of the column (68, 72, 76) ends
+        // with a room whose right edge is EXACTLY the outer edge x = 78.
+        static InteriorFloor EdgeStripContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 3 };
+            c.Rooms.Add(RoomAt(1, 60.5f, 64, 16, 4));
+            c.Rooms.Add(RoomAt(2, 68.5f, 64, 16, 4));
+            return c;
+        }
+
+        // Column 1 + three 4x4 rooms in a CHAIN 1-2-3-4 — seated right of the column at 68, 72, 76.
+        static InteriorFloor EdgeChainFloor()
         {
             var f = new InteriorFloor { NextRoomId = 5 };
-            f.Rooms.Add(RoomAt(1, 60, 56, 4, 4));
-            f.Rooms.Add(RoomAt(2, 60, 56, 4, 4));
-            f.Rooms.Add(RoomAt(3, 60, 56, 5, 4));
-            f.Rooms.Add(RoomAt(4, 60, 56, 5, 5));
-            f.Links.Add(new Link { RoomA = 2, RoomB = 1 });
-            f.Links.Add(new Link { RoomA = 3, RoomB = 2 });
-            f.Links.Add(new Link { RoomA = 4, RoomB = 1 });
+            for (int id = 1; id <= 4; id++) f.Rooms.Add(RoomAt(id, 64, 64, 4, 4));
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 2, RoomB = 3 });
+            f.Links.Add(new Link { RoomA = 3, RoomB = 4 });
+            return f;
+        }
+
+        // Column 1 + three 4x4 rooms, linked ONLY 1-2 and 3-4: the BFS reaches room 2 and stops, so rooms 3 and
+        // 4 are seated by the fill phases — and room 4's only link partner (3) is placed by then.
+        static InteriorFloor LinkedAnchorFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 5 };
+            for (int id = 1; id <= 4; id++) f.Rooms.Add(RoomAt(id, 64, 64, 4, 4));
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 3, RoomB = 4 });
             return f;
         }
 

@@ -278,19 +278,27 @@ namespace WorldGen.Generation
         ///   3. RELAXED FALLBACK, swept until stable: whatever is still unplaced gets the ORIGINAL search —
         ///      increasing outward distance d rays (d &gt; 0 renders as a corridor, not a door) — against every
         ///      placed room. Its d loop starts at 0, so it subsumes phase 2's search; phase 2 still earns its keep
-        ///      by running to a FIXPOINT first, which means no room is ever given a corridor slot while some other
-        ///      room could still have opened a flush (door) slot for it.
+        ///      by running to a FIXPOINT first, so that when phase 3 starts NO unplaced room has a flush slot
+        ///      against any placed room — a corridor slot is only ever handed out once flush packing is exhausted.
+        /// Within phases 2 and 3, each distance tries the anchors the room is ALREADY LINKED to before any other
+        /// anchor (see <see cref="SeatAgainstAnyPlaced"/>): a room's original links survive packing, so seating it
+        /// next to an unrelated room leaves those links to render as long routed corridors — exactly the
+        /// "detached rooms joined by corridors" look this packer exists to avoid.
         /// The pipeline is run TWICE, and the run that keeps MORE rooms wins (ties → the first, compact one):
         ///   • COMPACT run — phase 1 seats flush only (d == 0). Packs tighter, so it usually leaves one big
         ///     contiguous pocket for phase 2 rather than several unusable slivers; this is what actually raises
         ///     the cap.
-        ///   • SPREAD run — phase 1 is the PRE-FIX search (increasing d against the BFS parent). Its phase 1 is
-        ///     bit-for-bit the old packer, and phases 2/3 only ADD rooms into free slots without moving anything,
-        ///     so this run can never keep fewer rooms than the old packer did. Taking the better of the two makes
-        ///     "never worse than before" a property of the CODE, not a hope: measured over 2880 packs the compact
-        ///     run alone regressed on 2.7% of them (worst −3 rooms, and −2 on the probed «из N» cap for 3% of
-        ///     contours) even with phase 3 present, because a flush placement can occupy a slot the spread layout
-        ///     left free.
+        ///   • SPREAD run — phase 1 is the PRE-FIX search (increasing d against the BFS parent): the same BFS, the
+        ///     same neighbour/side/distance orders and the same two accept predicates, PLUS the sound bounding-box
+        ///     pre-rejection of <see cref="TrySeatAtDistance"/> (which never discards a slot ContainsRect would
+        ///     have accepted) — so it reproduces the old packer's placements exactly. Phases 2/3 only ADD rooms
+        ///     into free slots without moving anything, so this run can never keep fewer rooms than the old packer.
+        /// Taking the better of the two makes "never worse than before" a property of the CODE, not a hope, and it
+        /// is not free insurance either: measured over 2880 packs on real generated contours, the compact run alone
+        /// regressed against the old packer on 2.7% of them (worst −3), while best-of-two beat SPREAD-ONLY on 8.1%
+        /// of packs and on 12.3% of the probed «из N» caps (up to +2 rooms). Both runs earn their keep.
+        /// If the compact run already placed EVERY room the spread run cannot beat it, so it is skipped — a pure
+        /// speed-up that cannot change the result (ties go to compact anyway).
         /// Phases 2 and 3 ADD a Link between the room and the anchor it was seated against when the pair is not
         /// linked yet (deduplicated, either direction): flush ⇒ the shared wall renders as a DOOR, and every
         /// placed room stays connected to the column (the validator's orphan rule, and TrimToRoomCount's BFS
@@ -298,7 +306,10 @@ namespace WorldGen.Generation
         /// Deterministic — no RNG, every iteration order fixed (BFS then ascending id), and the placement decisions
         /// never read the rooms' INPUT positions (only the column pin and rooms already placed in the same run), so
         /// the two runs cannot influence each other. PRECONDITION: <paramref name="contourFloor"/> is a different
-        /// floor than <paramref name="floor"/> (packing rewrites floor's positions). Headless.</summary>
+        /// floor than <paramref name="floor"/> (packing rewrites floor's positions). NOT IDEMPOTENT: the fill
+        /// phases APPEND to <c>floor.Links</c>, so a second call on the SAME floor packs against a different
+        /// adjacency and can produce a different layout. Every call site packs a floor built fresh by
+        /// <see cref="BuildingGenerator.GenerateFloorAroundColumn"/>, which is what makes that safe. Headless.</summary>
         public static int PackAroundColumnWithinFootprint(InteriorFloor floor, int columnRoomId,
             float colXTiles, float colYTiles, InteriorFloor contourFloor, float margin)
         {
@@ -314,9 +325,13 @@ namespace WorldGen.Generation
             var adj = BuildAdjacency(floor);
 
             var compact = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds, seedMaxDistance: 0);
-            var spread = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
-                seedMaxDistance: DungeonLayout.TilesPerAxis);
-            var chosen = spread.Ids.Count > compact.Ids.Count ? spread : compact;
+            // The spread run can at best MATCH a compact run that already placed everything, and ties go to
+            // compact — so skipping it there is a pure speed-up with a bit-identical result.
+            var spread = compact.Ids.Count >= ordered.Count
+                ? null
+                : RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
+                    seedMaxDistance: DungeonLayout.TilesPerAxis);
+            var chosen = spread != null && spread.Ids.Count > compact.Ids.Count ? spread : compact;
             Apply(floor, chosen);
             return chosen.Ids.Count;
         }
@@ -368,10 +383,13 @@ namespace WorldGen.Generation
             }
 
             // --- Phase 2: fill the space phase 1 left — flush against ANY placed room. --------------------
-            FillSweeps(res, ordered, contourFloor, margin, bounds, maxDistance: 0);
+            FillSweeps(res, ordered, adj, contourFloor, margin, bounds, maxDistance: 0);
 
             // --- Phase 3: relaxed fallback — outward rays against any placed room. ------------------------
-            FillSweeps(res, ordered, contourFloor, margin, bounds, maxDistance: DungeonLayout.TilesPerAxis);
+            // Skipped outright when phase 1+2 already placed everything: there is nothing left to seat, and this
+            // is the phase whose 129-distance scan dominates the packer's cost.
+            if (res.Ids.Count < ordered.Count)
+                FillSweeps(res, ordered, adj, contourFloor, margin, bounds, maxDistance: DungeonLayout.TilesPerAxis);
 
             foreach (var r in res.Placed) res.Pos[r.Id] = (r.X, r.Y);
             return res;
@@ -396,10 +414,16 @@ namespace WorldGen.Generation
         /// nothing new (a room placed mid-sweep is an anchor for the rest of it). <paramref name="maxDistance"/>
         /// 0 = flush only (phase 2); TilesPerAxis = the original outward-ray search (phase 3). Each placement
         /// records the room↔anchor Link. Terminates: every sweep either places a room (bounded by the room count)
-        /// or ends the loop. Deterministic.</summary>
-        static void FillSweeps(PackResult res, List<Room> ordered, InteriorFloor contourFloor, float margin,
+        /// or ends the loop. The ascending-id anchor list is maintained here (inserted into on placement) instead
+        /// of being re-sorted for every room. Deterministic.</summary>
+        static void FillSweeps(PackResult res, List<Room> ordered, Dictionary<int, List<int>> adj,
+            InteriorFloor contourFloor, float margin,
             (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
         {
+            if (res.Ids.Count >= ordered.Count) return;   // everything is already placed — nothing to sweep
+            var anchors = SortedById(res.Placed);   // ascending id — the fixed anchor order, kept sorted below
+            var linkedAnchors = new List<Room>();   // scratch, reused by every SeatAgainstAnyPlaced call below
+            var otherAnchors = new List<Room>();
             bool progress = true;
             while (progress)
             {
@@ -407,28 +431,96 @@ namespace WorldGen.Generation
                 foreach (var room in ordered)   // ascending id
                 {
                     if (res.Ids.Contains(room.Id)) continue;
-                    var anchor = SeatAgainstAnyPlaced(room, res.Placed, contourFloor, margin, bounds, maxDistance);
+                    var anchor = SeatAgainstAnyPlaced(room, anchors, linkedAnchors, otherAnchors, adj,
+                        res.Placed, contourFloor, margin, bounds, maxDistance);
                     if (anchor == null) continue;
                     res.Placed.Add(room);
                     res.Ids.Add(room.Id);
+                    InsertById(anchors, room);
                     res.LinkA.Add(anchor.Id); res.LinkB.Add(room.Id);
                     progress = true;
                 }
+                if (res.Ids.Count >= ordered.Count) return;   // every room placed — no further sweep can do anything
             }
         }
 
         /// <summary>Seat <paramref name="room"/> against the already-placed rooms, nearest distance first: for
-        /// each outward distance d (0 = flush) every placed room in ASCENDING ID order, four sides each. Returns
-        /// the anchor it was seated against (and writes room.X/Y), or null when no slot passes both predicates.
-        /// Distance-outer so a flush (door) slot always wins over a pushed-out (corridor) one. Deterministic.</summary>
-        static Room SeatAgainstAnyPlaced(Room room, List<Room> placed, InteriorFloor contourFloor, float margin,
+        /// each outward distance d (0 = flush), the anchors the room is ALREADY LINKED to (ascending id) and then
+        /// every other placed room (ascending id), four sides each. Returns the anchor it was seated against (and
+        /// writes room.X/Y), or null when no slot passes both predicates.
+        /// DISTANCE-outer so a flush (door) slot always wins over a pushed-out (corridor) one at ANY anchor.
+        /// LINKED-anchor first because the room's own links survive packing: seating it next to an unrelated room
+        /// leaves those links to route as long corridors across the floor, which is the look this packer exists to
+        /// avoid. <paramref name="anchors"/> is <paramref name="placed"/> in ascending id, maintained by the
+        /// caller; it is split ONCE per call into the two preference groups, using the caller's reusable
+        /// <paramref name="linkedAnchors"/>/<paramref name="otherAnchors"/> buffers. The distance loop
+        /// stops at <see cref="MaxUsefulDistance"/> instead of the full TilesPerAxis: past it every candidate is
+        /// outside the footprint's bounding box, so this only skips work that could not have succeeded — the same
+        /// exactness the box pre-test in <see cref="TrySeatAtDistance"/> relies on. Deterministic.</summary>
+        static Room SeatAgainstAnyPlaced(Room room, List<Room> anchors,
+            List<Room> linkedAnchors, List<Room> otherAnchors, Dictionary<int, List<int>> adj,
+            List<Room> placed, InteriorFloor contourFloor, float margin,
             (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
         {
-            var anchors = SortedById(placed);   // ascending id — the fixed anchor order
-            for (int d = 0; d <= maxDistance; d++)
-                foreach (var anchor in anchors)
+            List<int> linked = null;
+            if (adj != null) adj.TryGetValue(room.Id, out linked);
+
+            linkedAnchors.Clear(); otherAnchors.Clear();   // caller-owned scratch; both keep the ascending-id order
+            foreach (var anchor in anchors)
+            {
+                if (linked != null && linked.Contains(anchor.Id)) linkedAnchors.Add(anchor);
+                else otherAnchors.Add(anchor);
+            }
+
+            int limit = MaxUsefulDistance(room, anchors, bounds);
+            if (limit > maxDistance) limit = maxDistance;
+            for (int d = 0; d <= limit; d++)
+            {
+                foreach (var anchor in linkedAnchors)
                     if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds)) return anchor;
+                foreach (var anchor in otherAnchors)
+                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds)) return anchor;
+            }
             return null;
+        }
+
+        /// <summary>Largest outward distance d at which ANY anchor could still put <paramref name="room"/> inside
+        /// the footprint bounding box, or -1 when even d = 0 is hopeless. A candidate on the Right side sits at
+        /// <c>px + offX + d</c>, so it fits the box only while <c>d ≤ maxX − px − offX − w/2</c>; the other three
+        /// sides give the mirrored bounds. Taking the best over the four sides and over every anchor is therefore
+        /// an EXACT cut-off — every larger d is rejected by the box pre-test anyway. It matters because phase 3's
+        /// nominal range is 0..TilesPerAxis (129 distances) while a real floor-0 footprint spans ~20-30 tiles.</summary>
+        static int MaxUsefulDistance(Room room, List<Room> anchors,
+            (float minX, float minY, float maxX, float maxY) bounds)
+        {
+            var (cw, ch) = DungeonProjection.EffectiveSize(room);
+            float best = float.NegativeInfinity;
+            foreach (var anchor in anchors)
+            {
+                var (pw, ph) = DungeonProjection.EffectiveSize(anchor);
+                float px = ToTile(anchor.X), py = ToTile(anchor.Y);
+                float offX = (pw + cw) * 0.5f, offY = (ph + ch) * 0.5f;
+                float r = bounds.maxX - px - offX - cw * 0.5f;   // Right
+                float l = px - bounds.minX - offX - cw * 0.5f;   // Left
+                float dn = bounds.maxY - py - offY - ch * 0.5f;  // Down (+Y)
+                float up = py - bounds.minY - offY - ch * 0.5f;  // Up
+                if (r > best) best = r;
+                if (l > best) best = l;
+                if (dn > best) best = dn;
+                if (up > best) best = up;
+            }
+            // Nudged by the same hair the box itself is grown by, so float round-off can only ever admit one extra
+            // distance (which the box pre-test then discards) — never cut a distance that could succeed.
+            best += BoundsSlack;
+            return best < 0f ? -1 : (int)System.Math.Floor(best);
+        }
+
+        /// <summary>Insert a room into an ascending-id list, keeping it sorted (the ids are distinct).</summary>
+        static void InsertById(List<Room> sorted, Room room)
+        {
+            int i = sorted.Count;
+            while (i > 0 && sorted[i - 1].Id > room.Id) i--;
+            sorted.Insert(i, room);
         }
 
         /// <summary>Try the four sides (Right, Down, Left, Up) of <paramref name="anchor"/> at the FIXED outward
