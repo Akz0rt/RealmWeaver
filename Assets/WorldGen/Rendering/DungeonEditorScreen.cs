@@ -347,9 +347,65 @@ namespace WorldGen.Rendering
             cap = 1;
             if (column == null) return false;
             int T = DungeonLayout.TilesPerAxis;
+            var contour = current.Floors[0];
+            var key = CapKey(column, contour);
+            if (ReferenceEquals(capMemoData, current) && ReferenceEquals(capMemoContour, contour)
+                && SameCapKey(capMemoKey, key))
+            { cap = capMemoCap; return true; }
             // The displayed max is the ACTUAL packable count (probed), not an area estimate — so «из N» is real and
             // any count ≤ N is guaranteed to generate.
-            cap = Mathf.Clamp(BuildingGenerator.MaxRoomsPackable(column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0]), 1, MaxUpperRooms);
+            cap = Mathf.Clamp(BuildingGenerator.MaxRoomsPackable(column.X * T, column.Y * T, column.SizeW, column.SizeH, contour), 1, MaxUpperRooms);
+            capMemoData = current; capMemoContour = contour; capMemoKey = key; capMemoCap = cap;
+            return true;
+        }
+
+        // ---- Probed-cap memo ---------------------------------------------------------------------------------
+        // MaxRoomsPackable is TEN real packs (12-26 ms on a realistic floor 0 since the F4 lateral slide), and it
+        // is asked for on EVERY floor-tab click (RefreshToolbar -> UpperCap) and AGAIN inside
+        // DoRegenerateUpperFloor — almost always for a floor 0 that has not changed at all. This memo returns the
+        // previous answer when the probe's input is unchanged and recomputes otherwise.
+        //
+        // A STALE cap would be a CORRECTNESS bug, not just a wrong readout: the DM would be shown an «из N» the
+        // packer can no longer build, and "any count <= N is guaranteed to generate" would become false. So the
+        // key is not a cheap fingerprint or a mutation counter — it is the probe's COMPLETE input, compared
+        // element by element:
+        //   • the InteriorData and the floor-0 InteriorFloor OBJECT identities (a different building, or a
+        //     replaced floor-0 object, can never hit the memo);
+        //   • the column pin — X, Y, SizeW, SizeH, the four scalars passed alongside the contour; and
+        //   • floor 0's whole room list, in list order: Id, TypeId, X, Y, SizeW, SizeH for every room.
+        // That is exhaustive, not a guess: MaxRoomsPackable touches the contour only through MaxRoomsByArea and
+        // GenerateFloorAroundColumn, and BOTH reach it only via FloorFootprint, which reads exactly room.X/Y and
+        // DungeonProjection.EffectiveSize(room) (= SizeW/SizeH, falling back to RoomSizing.Default(TypeId) when a
+        // side is <= 0). Nothing else about a floor-0 room is observable to the probe. So every way the DM can
+        // move the cap — free-editing floor 0, dragging a room, the size steppers, add/delete room, and
+        // RealignUpperFloorsToColumn resizing/moving the column on RevalidateAndRefresh — changes this key first.
+        // (Room list ORDER is part of the key too, which is strictly finer than needed; that direction is safe.)
+        InteriorData capMemoData;       // the interior the memo belongs to
+        InteriorFloor capMemoContour;   // its floor-0 object
+        float[] capMemoKey;
+        int capMemoCap;
+
+        // The probe's whole input, flattened: [colX, colY, colW, colH] then 6 numbers per floor-0 room.
+        static float[] CapKey(Room column, InteriorFloor contour)
+        {
+            var key = new float[4 + contour.Rooms.Count * 6];
+            key[0] = column.X; key[1] = column.Y; key[2] = column.SizeW; key[3] = column.SizeH;
+            int i = 4;
+            foreach (var r in contour.Rooms)
+            {
+                key[i++] = r.Id; key[i++] = r.TypeId;
+                key[i++] = r.X; key[i++] = r.Y;
+                key[i++] = r.SizeW; key[i++] = r.SizeH;
+            }
+            return key;
+        }
+
+        // EXACT equality on purpose (no epsilon): these are copied field values, not computed ones, so a bit that
+        // differs means the DM changed something. NaN compares unequal, which recomputes — the safe direction.
+        static bool SameCapKey(float[] a, float[] b)
+        {
+            if (a == null || b == null || a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
             return true;
         }
 

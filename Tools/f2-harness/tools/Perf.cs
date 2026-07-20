@@ -61,6 +61,47 @@ namespace WorldGen.Generation
             return true;
         }
 
+        /// <summary>DungeonEditorScreen's probed-cap memo, replicated literally (that file is Unity-side and not
+        /// compiled here, the same reason CapWith/RegenWith replicate BuildingGenerator). Key = the column pin
+        /// plus every floor-0 room's Id/TypeId/X/Y/SizeW/SizeH, compared element by element — so what is timed
+        /// below as a "memo hit" is the REAL cost of the fast path, not an assumed zero.</summary>
+        sealed class CapMemo
+        {
+            InteriorFloor contour;
+            float[] key;
+            int cap;
+
+            static float[] KeyOf(float colX, float colY, int colW, int colH, InteriorFloor c)
+            {
+                var k = new float[4 + c.Rooms.Count * 6];
+                k[0] = colX; k[1] = colY; k[2] = colW; k[3] = colH;
+                int i = 4;
+                foreach (var r in c.Rooms)
+                {
+                    k[i++] = r.Id; k[i++] = r.TypeId;
+                    k[i++] = r.X; k[i++] = r.Y;
+                    k[i++] = r.SizeW; k[i++] = r.SizeH;
+                }
+                return k;
+            }
+
+            static bool Same(float[] a, float[] b)
+            {
+                if (a == null || b == null || a.Length != b.Length) return false;
+                for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+                return true;
+            }
+
+            public int Cap(float colX, float colY, int colW, int colH, InteriorFloor c)
+            {
+                var k = KeyOf(colX, colY, colW, colH, c);
+                if (ReferenceEquals(contour, c) && Same(key, k)) return cap;
+                cap = BuildingGenerator.MaxRoomsPackable(colX, colY, colW, colH, c);
+                contour = c; key = k;
+                return cap;
+            }
+        }
+
         static double TimeMs(Action a, int reps)
         {
             a();   // warm up / JIT
@@ -76,7 +117,10 @@ namespace WorldGen.Generation
             Console.WriteLine("F4 note: `pre-F4` is CompactLayout at e409a9c (the build the DM tested) and `cap` columns are");
             Console.WriteLine("that packer's own «из N» vs the shipped one's — a regen is timed for the cap ITS packer reports,");
             Console.WriteLine("which is the worst case each build actually asks for.");
-            Console.WriteLine("| contour                              | rooms | budget | cap pre-F4 | cap now | MaxRoomsPackable: dd6e3dc | spread-only | pre-F4 | SHIPPED | one regen: pre-F4 | SHIPPED | SHIPPED @ pre-F4 cap |");
+            Console.WriteLine("The last two columns are the review-fix (I2) numbers: the floor-tab click served by the probed-cap");
+            Console.WriteLine("memo (unchanged floor 0 => no re-probe at all) and a regen that no longer re-probes the cap it was");
+            Console.WriteLine("just handed. Both are what the DM actually feels after the first click on a building.");
+            Console.WriteLine("| contour                              | rooms | budget | cap pre-F4 | cap now | MaxRoomsPackable: dd6e3dc | spread-only | pre-F4 | SHIPPED | one regen: pre-F4 | SHIPPED | SHIPPED @ pre-F4 cap | I2 click: memo hit | I2 regen: memo cap |");
 
             var big = new InteriorFloor();
             big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 16, SizeH = 16, X = 0.5f, Y = 0.5f });
@@ -121,8 +165,25 @@ namespace WorldGen.Generation
                 BuildingGenerator.TryBuildUpperFloorExact(capPreSlide, 1000 + (k++), RegenAttempts, cx, cy, colW, colH, ground, out _, out _);
             }, 10);
 
+            // I2 (a): the floor-tab click once the memo is warm — the whole TryGetColumnAndCap fast path (build
+            // the key over floor 0's rooms, compare it element by element, return the stored cap).
+            var memo = new CapMemo();
+            memo.Cap(cx, cy, colW, colH, ground);   // cold: the one probe the DM pays on the first click
+            double memoHitMs = TimeMs(() => memo.Cap(cx, cy, colW, colH, ground), 2000);
+            if (memo.Cap(cx, cy, colW, colH, ground) != cap)
+                Console.WriteLine($"  BAD MEMO {tag}: memo cap {memo.Cap(cx, cy, colW, colH, ground)} != probed cap {cap}");
+            // I2 (b): «Перегенерировать» at the cap without the second probe (DoRegenerateUpperFloor's own
+            // TryGetColumnAndCap is now a memo hit, because nothing on floor 0 changed since the tab click).
+            int n = 0;
+            double regenMemoMs = TimeMs(() =>
+            {
+                memo.Cap(cx, cy, colW, colH, ground);
+                BuildingGenerator.TryBuildUpperFloorExact(cap, 1000 + (n++), RegenAttempts, cx, cy, colW, colH, ground, out _, out _);
+            }, 10);
+
             Console.WriteLine($"| {tag,-36} | {ground.Rooms.Count,5} | {budget,6} | {capPreSlide,10} | {cap,7} | {preMs,24:F2}"
-                + $" | {spreadMs,11:F2} | {preSlideMs,6:F2} | {nowMs,7:F2} | {regenPreSlideMs,17:F2} | {regenMs,7:F2} | {regenSameCapMs,21:F2} |");
+                + $" | {spreadMs,11:F2} | {preSlideMs,6:F2} | {nowMs,7:F2} | {regenPreSlideMs,17:F2} | {regenMs,7:F2} | {regenSameCapMs,21:F2}"
+                + $" | {memoHitMs,18:F4} | {regenMemoMs,18:F2} |");
         }
     }
 }

@@ -255,7 +255,14 @@ namespace WorldGen.Generation
             targetCount = Math.Max(1, targetCount);
             int budget = Math.Max(targetCount, MaxRoomsByArea(contourFloor, colW, colH));
 
-            // Phase 1: fresh (varietySeed-derived) seeds — a new-looking layout each press.
+            // Phase 1: fresh (varietySeed-derived) seeds — a new-looking layout each press. NOTE (asked twice in
+            // review, so stated here): this ALREADY stops at the first attempt that reaches targetCount — the
+            // `return true` below exits the loop. All `variety` attempts are only ever walked when NONE of them
+            // packs targetCount rooms, which is essentially only the case targetCount == the probed cap, and
+            // there falling through to phase 2 is exactly what keeps the guarantee. Shrinking `budget` towards
+            // targetCount would make each attempt cheaper but would ALSO change which graph is generated, and
+            // phase 2 would then no longer reproduce MaxRoomsPackable's probes seed-for-seed — which is the one
+            // thing that makes "targetCount <= cap always builds" true. So budget stays.
             for (int i = 0; i < variety; i++)
                 if (TryPackAtLeast(unchecked(varietySeed + i), targetCount, budget, colX, colY, colW, colH, contourFloor, out floor, out stair))
                 { TrimToRoomCount(floor, targetCount, stair.Id); return true; }
