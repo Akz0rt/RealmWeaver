@@ -317,13 +317,14 @@ namespace WorldGen.Generation
         /// the slide-free run in the mix, 0 fall and 270 rise (sum 10234 vs 9940). That first figure is re-derived
         /// by the harness variant NoPlainRunLayout — runs 1+2 only — as the sweep's "(f) vs (e)" tally.
         /// Older evidence for the first two runs is unchanged, but note WHICH pipeline it is about: over 2880 packs
-        /// the SLIDE-FREE compact run alone (harness variant CompactNoSlideLayout, the sweep's "(c') compact-only,
-        /// no slide" column — NOT CompactOnlyLayout, which since F4 is the compact+SLIDE pipeline and is reported
-        /// separately as the "(c'') compact+slide only" column) regressed against the ORIGINAL packer on 2.7%
+        /// the SLIDE-FREE compact run alone (harness variant CompactNoSlideLayout, the sweep's "(c') compact, no
+        /// slide" column — NOT CompactOnlyLayout, which since F4 is the compact+SLIDE pipeline and is reported
+        /// separately as the "(c'') compact+slide" column) regressed against the ORIGINAL packer on 2.7%
         /// of them (77/2880, worst −3) — which is why it is a FALLBACK and not the only run. The companion
         /// figure "best-of-two beat spread-only on 8.1% of packs and 12.3% of caps" is a PRE-F4 measurement of a
         /// pipeline that no longer exists as a column; today's (c) is best-of-three WITH the slide and beats
-        /// spread-only on 16.6% of packs (478/2880) and 33.7% of caps (404/1200).
+        /// spread-only on 16.6% of packs (478/2880) and 33.7% of caps (404/1200) — quoted verbatim from the
+        /// sweep's own "(c) vs (b)" lines (M-2; see RunPacks/RunCaps in Sweep.cs).
         /// Each run after the first is SKIPPED once some run has placed every room — it could then only tie, and
         /// ties go to the earlier run anyway, so this is a pure speed-up with a bit-identical result.
         /// Phases 2 and 3 ADD a Link between the room and the anchor it was seated against when the pair is not
@@ -365,9 +366,17 @@ namespace WorldGen.Generation
             // have kept. That identity is the entire non-regression proof: it is the only reason "F4 can never
             // report a smaller «из N» than the build the DM has" is structural rather than a hope (see the
             // summary above for why the slide alone cannot promise it).
-            // NOT a speed/quality knob — do NOT delete this run to buy back the ~10-15% it costs. Measured
-            // consequence of deleting it: 34 of 1200 corpus contours report a LOWER cap than the DM's current
-            // build, worst -2 (harness variant NoPlainRunLayout, the sweep's "(f) vs (e)" tally).
+            // NOT a speed/quality knob — do NOT delete this run to buy back its cost. Measured consequence of
+            // deleting it: 34 of 1200 corpus contours report a LOWER cap than the DM's current build, worst -2
+            // (harness variant NoPlainRunLayout, the sweep's "(f) vs (e)" tally). The COST side is re-measured the
+            // same way (M-3): Perf.cs times NoPlainRunLayout — this run missing, nothing else changed — against
+            // SHIPPED on the same realistic contours it already reports on, so the percentage comes from the
+            // CURRENT tree, not a two-run intermediate build that no longer exists. One representative `perf` run
+            // put it at +23-38% per call on the 8/10-room contours the DM waits on (see the F4 report's §14/M-3
+            // for that run's exact table) — but per-call wall-clock timing on these sub-25ms calls is genuinely
+            // noisy run to run (observed swinging from roughly -25% to +250% on individual rows across repeat
+            // runs), so treat the SIGN (run 3 costs something, it is not free) as the load-bearing fact and any
+            // single percentage, including this one, as illustrative rather than a contract.
             var plain = chosen.Ids.Count >= ordered.Count
                 ? null
                 : RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,

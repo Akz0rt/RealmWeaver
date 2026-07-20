@@ -21,6 +21,7 @@ static class Program
             case "mutants": Mutants.Run(); break;
             case "lobecap": Lobe.Run(); break;
             case "optcheck": OptCheck.Run(); break;
+            case "capmemo": CapMemoCheck.Run(); break;
             default:
                 Console.WriteLine("usage: dotnet run -c Release -- <cmd>   where cmd is one of:");
                 Console.WriteLine("  selftests  the real Editor self-test suites, compiled from Assets/");
@@ -29,6 +30,7 @@ static class Program
                 Console.WriteLine("  perf       MaxRoomsPackable + regen timings on realistic floor-0 contours");
                 Console.WriteLine("  lobecap    the «из N» cap on F4's L-shaped contour, per packer variant");
                 Console.WriteLine("  optcheck   F4's two fill-sweep skips vs the same pipelines at e409a9c, position by position");
+                Console.WriteLine("  capmemo    I-1: mutation ladder against a live probed-cap memo + a TypeId-dropped negative control");
                 Console.WriteLine("  design     dump every self-test fixture under every variant and mutant");
                 Console.WriteLine("  hunt       search for fixtures where the compact and spread runs disagree");
                 Console.WriteLine("  huntmut <anchor-outer|link-pref|tight-bounds>   search for mutant-discriminating fixtures");

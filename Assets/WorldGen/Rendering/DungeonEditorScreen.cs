@@ -380,6 +380,13 @@ namespace WorldGen.Rendering
         // move the cap — free-editing floor 0, dragging a room, the size steppers, add/delete room, and
         // RealignUpperFloorsToColumn resizing/moving the column on RevalidateAndRefresh — changes this key first.
         // (Room list ORDER is part of the key too, which is strictly finer than needed; that direction is safe.)
+        //
+        // M-6: the column pin (key[0..3]) and the room list are NOT two independent parts of the key that happen
+        // to agree — TryGetColumnAndCap's `column` comes from FindFloorZeroColumn -> FindStairRoom, which can only
+        // ever return a member of `contour.Rooms` (floor 0's own Лестница room). So key[0..3] is always a byte-for-
+        // byte copy of that same room's tail entry (Id/TypeId/X/Y/SizeW/SizeH) already present later in the array.
+        // Redundant by construction, kept anyway so the key stands alone (and this proof doesn't have to be
+        // re-derived) if the column ever stops being a floor-0 room.
         InteriorData capMemoData;       // the interior the memo belongs to
         InteriorFloor capMemoContour;   // its floor-0 object
         float[] capMemoKey;
