@@ -7,9 +7,16 @@ namespace WorldGen.Generation
     /// anchor it has already failed against, and (2) phase 3 does not re-walk the flush (d == 0) search phase 2
     /// already took to a fixpoint. Both are argued EXACT (an anchor never moves, the contour never changes and
     /// IsFree only tightens, so a failed candidate stays failed), which is a claim about RESULTS, not just about
-    /// speed. This runs the same single pipeline WITH the skips (cut out of the shipped source) and WITHOUT them
-    /// (cut out of e409a9c) over the pack corpus and compares the kept room set AND every room's exact X/Y.
-    /// Both pipelines are run slide-free, so the ONLY difference between them is the two skips.</summary>
+    /// speed. This runs the same single pipeline WITH the skips and WITHOUT them over the pack corpus and compares
+    /// the kept room set AND every room's exact X/Y.
+    ///
+    /// THREE pairs, because the first two do not exercise the case the skips exist for:
+    ///   • spread / compact — shipped single pipelines vs. the SAME single pipelines cut out of e409a9c. Both
+    ///     sides are SLIDE-FREE, so `maxSlide` is 0 over the flush-filtered lists and cut 2 never gets to skip a
+    ///     SLID d == 0 pass. These check the skips against the real pre-F4 code.
+    ///   • compact+slide — CompactOnlyLayout (compact+slide WITH both cuts) vs. CompactSlideNoCuts (the same
+    ///     pipeline with sync.ps1's two regex kills applied: `minSeq` forced to 0 and `flushDoneSeq` forced to 0).
+    ///     This is the ONLY pair that runs the slide, i.e. the only one in which the cuts skip slid work at all.</summary>
     public static class OptCheck
     {
         const int T = DungeonLayout.TilesPerAxis;
@@ -22,8 +29,9 @@ namespace WorldGen.Generation
             int cases = 0, mismatches = 0, roomsCompared = 0;
             var pairs = new (string name, PackFn now, PackFn before)[]
             {
-                ("spread pipeline ", SpreadOnlyLayout.PackAroundColumnWithinFootprint, PreSlideSpreadOnly.PackAroundColumnWithinFootprint),
-                ("compact pipeline", CompactNoSlideLayout.PackAroundColumnWithinFootprint, PreSlideCompactOnly.PackAroundColumnWithinFootprint),
+                ("spread pipeline (no slide)  ", SpreadOnlyLayout.PackAroundColumnWithinFootprint, PreSlideSpreadOnly.PackAroundColumnWithinFootprint),
+                ("compact pipeline (no slide) ", CompactNoSlideLayout.PackAroundColumnWithinFootprint, PreSlideCompactOnly.PackAroundColumnWithinFootprint),
+                ("compact+slide (THE SLIDE ON)", CompactOnlyLayout.PackAroundColumnWithinFootprint, CompactSlideNoCuts.PackAroundColumnWithinFootprint),
             };
             var perPair = new int[pairs.Length];
 

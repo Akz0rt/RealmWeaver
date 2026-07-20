@@ -8,9 +8,17 @@ namespace WorldGen.Generation
     ///   (a) old packer            — LegacyPacker (a verbatim copy of the pre-fix PackAroundColumnWithinFootprint)
     ///   (b) spread-only           — SpreadOnlyLayout   (old seeding + phases 2/3)
     ///   (c) max(compact, spread)  — CompactLayout      (whatever is currently shipped)
-    ///   (c') compact-only         — CompactOnlyLayout  (flush seeding + phases 2/3), for context
+    ///   (c') compact-only, no slide — CompactNoSlideLayout (flush seeding + phases 2/3, F4's slide OFF). This is
+    ///        the column the class doc's historical "the compact run alone regressed on 2.7% of packs" figure is
+    ///        about. It used to be CompactOnlyLayout, but F4 turned THAT class into the compact+SLIDE pipeline,
+    ///        which is a different measurement — so it now has its own column, (c'').
+    ///   (c'') compact+slide only  — CompactOnlyLayout  (flush seeding + the lateral slide) = run 1 on its own
     ///   (d) no-link-pref          — MutNoLinkPref      (shipped minus the I6 linked-anchor preference), for I2
-    /// (b), (c'), (d) are mechanically derived from the shipped CompactLayout.cs by sync.ps1, so they cannot
+    ///   (e) pre-F4                — PreSlideLayout     (CompactLayout at e409a9c, the build the DM tested)
+    ///   (f) F4 runs 1+2 only      — NoPlainRunLayout   (shipped MINUS run 3, the slide-free compact fallback).
+    ///        "(f) vs (e)" re-derives the "34 of 1200 caps FALL without run 3" figure that makes run 3
+    ///        load-bearing rather than optional — quoted in CompactLayout's class doc and the F4 report.
+    /// (b), (c'), (c''), (d), (f) are mechanically derived from the shipped CompactLayout.cs by sync.ps1, so they cannot
     /// drift. (d) reuses the SAME class the self-test mutant table binds to for non-vacuity (Mutants.cs) — it
     /// is a full two-run pipeline identical to shipped except SeatAgainstAnyPlaced never prefers an anchor the
     /// room is already linked to, so (c) vs (d) isolates I6's cost in rooms kept / cap, not just link length.
@@ -82,8 +90,9 @@ namespace WorldGen.Generation
         {
             float m = FloorFootprint.ContourMargin;
             int cases = 0;
-            Tally ta = default, tb = default, tc = default, tcc = default, td = default, te = default;   // vs (a)
-            Tally cVsB = default, cVsD = default, cVsE = default;
+            Tally ta = default, tb = default, tc = default, tcc = default, tcs = default, td = default,
+                  te = default, tf = default;   // vs (a)
+            Tally cVsB = default, cVsD = default, cVsE = default, fVsE = default;
             var deltaHist = new Dictionary<int, int>();
             int contoursWhereCBeatsB = 0;
             var exampleCBeatsB = new List<string>();
@@ -102,25 +111,31 @@ namespace WorldGen.Generation
                         var fb = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fc = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fcc = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
+                        var fcs = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fd = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fe = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
+                        var ff = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         int na = LegacyPacker.Pack(fa, fa.Rooms[0].Id, cx, cy, ground, m, flushOnly: false);
                         int nb = SpreadOnlyLayout.PackAroundColumnWithinFootprint(fb, fb.Rooms[0].Id, cx, cy, ground, m);
                         int nc = CompactLayout.PackAroundColumnWithinFootprint(fc, fc.Rooms[0].Id, cx, cy, ground, m);
-                        int ncc = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
+                        int ncc = CompactNoSlideLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
+                        int ncs = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcs, fcs.Rooms[0].Id, cx, cy, ground, m);
                         int nd = MutNoLinkPref.PackAroundColumnWithinFootprint(fd, fd.Rooms[0].Id, cx, cy, ground, m);
                         int ne = PreSlideLayout.PackAroundColumnWithinFootprint(fe, fe.Rooms[0].Id, cx, cy, ground, m);
+                        int nf = NoPlainRunLayout.PackAroundColumnWithinFootprint(ff, ff.Rooms[0].Id, cx, cy, ground, m);
 
                         cases++;
-                        ta.Add(na, na); tb.Add(nb, na); tc.Add(nc, na); tcc.Add(ncc, na); td.Add(nd, na); te.Add(ne, na);
+                        ta.Add(na, na); tb.Add(nb, na); tc.Add(nc, na); tcc.Add(ncc, na); tcs.Add(ncs, na);
+                        td.Add(nd, na); te.Add(ne, na); tf.Add(nf, na);
                         cVsB.Add(nc, nb);
                         cVsD.Add(nc, nd);
                         cVsE.Add(nc, ne);
+                        fVsE.Add(nf, ne);
                         int d = nc - nb;
                         deltaHist.TryGetValue(d, out int n0); deltaHist[d] = n0 + 1;
                         if (d > 0 && !contourHit) { contourHit = true; contoursWhereCBeatsB++; }
                         if (d > 0 && exampleCBeatsB.Count < 6)
-                            exampleCBeatsB.Add($"contour {contourSeed}/{groundRooms} packSeed {packSeed}: (c) {nc} > (b) {nb} (old {na}, compact-only {ncc}, budget {budget})");
+                            exampleCBeatsB.Add($"contour {contourSeed}/{groundRooms} packSeed {packSeed}: (c) {nc} > (b) {nb} (old {na}, compact-no-slide {ncc}, budget {budget})");
 
                         Validate($"{contourSeed}/{groundRooms}/{packSeed}", fc, ground, m);
                     }
@@ -131,9 +146,11 @@ namespace WorldGen.Generation
             Console.WriteLine(ta.Row("(a) old packer", cases));
             Console.WriteLine(tb.Row("(b) spread-only", cases));
             Console.WriteLine(tc.Row("(c) max(compact,spread)", cases));
-            Console.WriteLine(tcc.Row("(c') compact-only", cases));
+            Console.WriteLine(tcc.Row("(c') compact, no slide", cases));
+            Console.WriteLine(tcs.Row("(c'') compact+slide", cases));
             Console.WriteLine(td.Row("(d) no-link-pref (I2)", cases));
             Console.WriteLine(te.Row("(e) pre-F4 e409a9c", cases));
+            Console.WriteLine(tf.Row("(f) F4 runs 1+2 only", cases));
             Console.WriteLine($"(c) vs (b): better {cVsB.Better}, equal {cVsB.Equal}, worse {cVsB.Worse} (worst -{cVsB.WorstDelta}); "
                               + $"total rooms {tc.Total} vs {tb.Total} (+{tc.Total - tb.Total}); "
                               + $"packs where (c)>(b): {cVsB.Better}/{cases} = {100.0 * cVsB.Better / cases:F2}%, "
@@ -143,6 +160,9 @@ namespace WorldGen.Generation
             Console.WriteLine($"(c) vs (e) [F4 — the lateral slide]: better {cVsE.Better}, equal {cVsE.Equal}, "
                               + $"worse {cVsE.Worse} (worst -{cVsE.WorstDelta}); total rooms {tc.Total} vs {te.Total} "
                               + $"({tc.Total - te.Total:+0;-0;0})");
+            Console.WriteLine($"(f) vs (e) [run 3 DELETED — what F4's slid runs ALONE would ship]: better {fVsE.Better}, "
+                              + $"equal {fVsE.Equal}, worse {fVsE.Worse} (worst -{fVsE.WorstDelta}); total rooms "
+                              + $"{tf.Total} vs {te.Total} ({tf.Total - te.Total:+0;-0;0})");
             var keys = new List<int>(deltaHist.Keys); keys.Sort();
             Console.Write("(c)-(b) delta histogram:");
             foreach (var k in keys) Console.Write($" {k:+0;-0;0}:{deltaHist[k]}");
@@ -155,8 +175,9 @@ namespace WorldGen.Generation
         {
             float m = FloorFootprint.ContourMargin;
             int contours = 0;
-            Tally ta = default, tb = default, tc = default, tcc = default, td = default, te = default;
-            Tally cVsB = default, cVsD = default, cVsE = default;
+            Tally ta = default, tb = default, tc = default, tcc = default, tcs = default, td = default,
+                  te = default, tf = default;
+            Tally cVsB = default, cVsD = default, cVsE = default, fVsE = default;
             var examples = new List<string>();
 
             for (int contourSeed = 1; contourSeed <= 120; contourSeed++)
@@ -165,33 +186,41 @@ namespace WorldGen.Generation
                     if (!TryGroundContour(contourSeed, groundRooms, out var ground, out var col)) continue;
                     float cx = col.X * T, cy = col.Y * T;
                     int budget = BuildingGenerator.MaxRoomsByArea(ground, col.SizeW, col.SizeH);
-                    int ca = 1, cb = 1, cc = 1, ccc = 1, cd = 1, ce = 1;
+                    int ca = 1, cb = 1, cc = 1, ccc = 1, ccs = 1, cd = 1, ce = 1, cf = 1;
                     for (int s = 0; s < 10; s++)
                     {
                         var fa = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fb = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fc = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fcc = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
+                        var fcs = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fd = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fe = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
+                        var ff = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         int na = LegacyPacker.Pack(fa, fa.Rooms[0].Id, cx, cy, ground, m, false);
                         int nb = SpreadOnlyLayout.PackAroundColumnWithinFootprint(fb, fb.Rooms[0].Id, cx, cy, ground, m);
                         int nc = CompactLayout.PackAroundColumnWithinFootprint(fc, fc.Rooms[0].Id, cx, cy, ground, m);
-                        int ncc = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
+                        int ncc = CompactNoSlideLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
+                        int ncs = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcs, fcs.Rooms[0].Id, cx, cy, ground, m);
                         int nd = MutNoLinkPref.PackAroundColumnWithinFootprint(fd, fd.Rooms[0].Id, cx, cy, ground, m);
                         int ne = PreSlideLayout.PackAroundColumnWithinFootprint(fe, fe.Rooms[0].Id, cx, cy, ground, m);
+                        int nf = NoPlainRunLayout.PackAroundColumnWithinFootprint(ff, ff.Rooms[0].Id, cx, cy, ground, m);
                         if (na > ca) ca = na;
                         if (nb > cb) cb = nb;
                         if (nc > cc) cc = nc;
                         if (ncc > ccc) ccc = ncc;
+                        if (ncs > ccs) ccs = ncs;
                         if (nd > cd) cd = nd;
                         if (ne > ce) ce = ne;
+                        if (nf > cf) cf = nf;
                     }
                     contours++;
-                    ta.Add(ca, ca); tb.Add(cb, ca); tc.Add(cc, ca); tcc.Add(ccc, ca); td.Add(cd, ca); te.Add(ce, ca);
+                    ta.Add(ca, ca); tb.Add(cb, ca); tc.Add(cc, ca); tcc.Add(ccc, ca); tcs.Add(ccs, ca);
+                    td.Add(cd, ca); te.Add(ce, ca); tf.Add(cf, ca);
                     cVsB.Add(cc, cb);
                     cVsD.Add(cc, cd);
                     cVsE.Add(cc, ce);
+                    fVsE.Add(cf, ce);
                     if (cc > cb && examples.Count < 6)
                         examples.Add($"contour {contourSeed}/{groundRooms}: cap (c) {cc} > (b) {cb} (old {ca}, compact-only {ccc}, no-link-pref {cd})");
                 }
@@ -201,9 +230,11 @@ namespace WorldGen.Generation
             Console.WriteLine(ta.Row("(a) old packer", contours));
             Console.WriteLine(tb.Row("(b) spread-only", contours));
             Console.WriteLine(tc.Row("(c) max(compact,spread)", contours));
-            Console.WriteLine(tcc.Row("(c') compact-only", contours));
+            Console.WriteLine(tcc.Row("(c') compact, no slide", contours));
+            Console.WriteLine(tcs.Row("(c'') compact+slide", contours));
             Console.WriteLine(td.Row("(d) no-link-pref (I2)", contours));
             Console.WriteLine(te.Row("(e) pre-F4 e409a9c", contours));
+            Console.WriteLine(tf.Row("(f) F4 runs 1+2 only", contours));
             Console.WriteLine($"(c) vs (b): better {cVsB.Better}, equal {cVsB.Equal}, worse {cVsB.Worse} (worst -{cVsB.WorstDelta}); "
                               + $"sum {tc.Total} vs {tb.Total} (+{tc.Total - tb.Total})");
             Console.WriteLine($"(c) vs (d) [I2 — the I6 linked-anchor-preference cost on the «из N» cap]: better {cVsD.Better}, "
@@ -212,6 +243,9 @@ namespace WorldGen.Generation
             Console.WriteLine($"(c) vs (e) [F4 — the lateral slide, on the «из N» cap]: better {cVsE.Better}, "
                               + $"equal {cVsE.Equal}, worse {cVsE.Worse} (worst -{cVsE.WorstDelta}); sum {tc.Total} vs {te.Total} "
                               + $"({tc.Total - te.Total:+0;-0;0})");
+            Console.WriteLine($"(f) vs (e) [run 3 DELETED — the «из N» caps F4's slid runs ALONE would ship]: better "
+                              + $"{fVsE.Better}, equal {fVsE.Equal}, worse {fVsE.Worse} (worst -{fVsE.WorstDelta}); "
+                              + $"sum {tf.Total} vs {te.Total} ({tf.Total - te.Total:+0;-0;0})");
             foreach (var s in examples) Console.WriteLine("  e.g. " + s);
         }
 

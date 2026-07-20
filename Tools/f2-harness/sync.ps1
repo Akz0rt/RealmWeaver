@@ -31,7 +31,11 @@ $layout = Get-Content (Join-Path $src 'CompactLayout.cs') -Raw -Encoding UTF8
 # packer changes. The tail guard below is load-bearing: when F4 added a third run, a rewrite that stopped at
 # "var chosen = ...;" silently left that run appended to every variant, so (b)/(c') stopped being single
 # pipelines and quietly scored as best-of-two.
-function New-Variant([string]$className, [string]$seedMaxDistance, [string]$slide, [string]$outFile) {
+#
+# $noCuts additionally DISABLES F4's two fill-sweep skips (see the optcheck section below), so the SAME
+# single pipeline can be run with and without them.
+function New-Variant([string]$className, [string]$seedMaxDistance, [string]$slide, [string]$outFile,
+                     [bool]$noCuts = $false) {
   $t = $layout -replace 'public static class CompactLayout', "public static class $className"
   $one = "var chosen = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds, seedMaxDistance: $seedMaxDistance, slide: $slide);"
   $t = $t -replace '(?s)var compact = RunPhases\(.*?if \(plain != null && plain\.Ids\.Count > chosen\.Ids\.Count\) chosen = plain;', $one
@@ -39,6 +43,16 @@ function New-Variant([string]$className, [string]$seedMaxDistance, [string]$slid
   if ($t -match '(?s)var compact = RunPhases\(') { throw "variant rewrite left the run-selection block in $className" }
   if ($t -match 'RunPhases\(' -and ([regex]::Matches($t, 'RunPhases\(')).Count -ne 2) {
     throw "variant $className should call RunPhases exactly twice (its declaration + the single run)"
+  }
+  if ($noCuts) {
+    # Cut 1 OFF: never skip the anchors this room has already been tried against — always start at anchor 0.
+    $cut1 = 'int minSeq;\r?\n\s*if \(!triedUpTo\.TryGetValue\(room\.Id, out minSeq\)\) minSeq = 0;'
+    if ($t -notmatch $cut1) { throw "no-cuts rewrite 1 (triedUpTo) did not match for $className" }
+    $t = $t -replace $cut1, 'int minSeq = 0;   // NO-CUTS variant: F4 cut 1 (per-room anchor high-water mark) disabled'
+    # Cut 2 OFF: phase 3 re-walks the whole d == 0 flush search phase 2 already took to a fixpoint.
+    $cut2 = 'flushDoneSeq: res\.Placed\.Count'
+    if ($t -notmatch $cut2) { throw "no-cuts rewrite 2 (flushDoneSeq) did not match for $className" }
+    $t = $t -replace $cut2, 'flushDoneSeq: 0'
   }
   Set-Content -Path (Join-Path $gen $outFile) -Value $t -Encoding UTF8
 }
@@ -48,6 +62,11 @@ New-Variant 'CompactOnlyLayout'    '0'                          'true'  'Compact
 # Slide-free single pipelines, for the F4 optimization check below: these must agree with the SAME single
 # pipelines cut out of the pre-F4 source, ROOM POSITION BY ROOM POSITION.
 New-Variant 'CompactNoSlideLayout' '0'                          'false' 'CompactNoSlideLayout.cs'
+# The SLIDE-ENABLED compact pipeline with both cuts REMOVED. This is the pair that actually exercises what the
+# cuts are for: in a slide-free pipeline `maxSlide` is 0 over the flush-filtered lists, so cut 2's "phase 3 skips
+# a d == 0 pass that would have been a SLID pass" case never even arises. Compared against CompactOnlyLayout
+# (the same pipeline WITH the cuts) by `optcheck`.
+New-Variant 'CompactSlideNoCuts'   '0'                          'true'  'CompactSlideNoCuts.cs' $true
 
 # The packer AS REVIEWED (commit dd6e3dc, before the review fixes) — the perf baseline for finding I5.
 $pre = git -C $repo show 'dd6e3dc:Assets/WorldGen/Generation/CompactLayout.cs'
@@ -77,11 +96,26 @@ function New-PreSlideVariant([string]$className, [string]$seedMaxDistance, [stri
   $one = "var chosen = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds, seedMaxDistance: $seedMaxDistance);"
   $t = $t -replace '(?s)var compact = RunPhases\(.*?var chosen = [^;]*;', $one
   if ($t -notmatch [regex]::Escape($one)) { throw "pre-slide variant rewrite failed for $className" }
+  # Same residue guard New-Variant carries, and for the same reason: a rewrite that silently leaves part of the
+  # run-selection block behind turns a "single pipeline" column into a best-of-N one without saying so.
+  if ($t -match '(?s)var compact = RunPhases\(') { throw "pre-slide variant rewrite left the run-selection block in $className" }
   Set-Content -Path (Join-Path $gen $outFile) -Value $t -Encoding UTF8
 }
 New-PreSlideVariant 'PreSlideSpreadOnly'  'DungeonLayout.TilesPerAxis' 'PreSlideSpreadOnly.cs'
 New-PreSlideVariant 'PreSlideCompactOnly' '0'                          'PreSlideCompactOnly.cs'
 Set-Content -Path (Join-Path $gen 'PreReviewLayout.cs') -Value $pre -Encoding UTF8
+
+# The shipped packer MINUS run 3 (the slide-free compact fallback) — i.e. F4's slid runs on their own. This is
+# what re-derives the "34 of 1200 contours end with a LOWER «из N»" figure that justifies run 3's existence and
+# is quoted in CompactLayout's class doc; the sweep reports it as column (f) with an "(f) vs (e)" tally.
+$noPlain = $layout -replace 'public static class CompactLayout', 'public static class NoPlainRunLayout'
+$dropRun3 = '(?s)\r?\n\s*// RUN 3 .*?if \(plain != null && plain\.Ids\.Count > chosen\.Ids\.Count\) chosen = plain;'
+if ($noPlain -notmatch $dropRun3) { throw 'NoPlainRunLayout rewrite failed: run-3 block not found' }
+$noPlain = $noPlain -replace $dropRun3, ''
+if (([regex]::Matches($noPlain, 'RunPhases\(')).Count -ne 3) {
+  throw 'NoPlainRunLayout should call RunPhases exactly three times (its declaration + runs 1 and 2)'
+}
+Set-Content -Path (Join-Path $gen 'NoPlainRunLayout.cs') -Value $noPlain -Encoding UTF8
 
 # ---- MUTANTS: each removes exactly one rule the new self-test assertions are supposed to pin down. -------
 # A new assertion is non-vacuous iff the corresponding mutant makes it FAIL (harness command: "mutants").
@@ -94,15 +128,27 @@ function New-Mutant([string]$className, [string]$pattern, [string]$replacement, 
 
 # M-AnchorOuter: swap SeatAgainstAnyPlaced's loops to anchor-outer / distance-inner (kills assertion 23). The
 # single-anchor TrySeatAtDistance still runs the full offset ladder, so this mutant changes ONLY the nesting.
+# Both F4 cost cuts are PRESERVED so it stays single-rule: cut 1 already lives in the linked/other split this
+# replacement reads (anchors below minSeq were never added), and cut 2 is restored explicitly by starting the
+# distance loop at 1 for anchors phase 2 already flush-tested — the earlier version of this mutant routed d == 0
+# through the UNFILTERED lists and so quietly removed cut 2 as well as inverting the nesting.
 New-Mutant 'MutAnchorOuter' `
-  '(?s)int maxSlide = slide \? Larger\(MaxSlideTiles.*?\r?\n            \}\r?\n            return null;' `
+  '(?s)int maxSlide = ctx\.Slide \? Larger\(MaxSlideTiles.*?\r?\n            \}\r?\n            return null;' `
   @'
-foreach (var anchor in linkedAnchors)
-                for (int d = 0; d <= limit; d++)
-                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds, slide)) return anchor;
-            foreach (var anchor in otherAnchors)
-                for (int d = 0; d <= limit; d++)
-                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds, slide)) return anchor;
+foreach (var anchor in ctx.LinkedAnchors)
+            {
+                int aSeq0;
+                if (!ctx.Seq.TryGetValue(anchor.Id, out aSeq0)) aSeq0 = 0;
+                for (int d = aSeq0 < ctx.FlushDoneSeq ? 1 : 0; d <= limit; d++)
+                    if (TrySeatAtDistance(room, anchor, d, ctx.Placed, ctx.ContourFloor, ctx.Margin, ctx.Bounds, ctx.Slide)) return anchor;
+            }
+            foreach (var anchor in ctx.OtherAnchors)
+            {
+                int aSeq1;
+                if (!ctx.Seq.TryGetValue(anchor.Id, out aSeq1)) aSeq1 = 0;
+                for (int d = aSeq1 < ctx.FlushDoneSeq ? 1 : 0; d <= limit; d++)
+                    if (TrySeatAtDistance(room, anchor, d, ctx.Placed, ctx.ContourFloor, ctx.Margin, ctx.Bounds, ctx.Slide)) return anchor;
+            }
             return null;
 '@ `
   'MutAnchorOuter.cs'
@@ -111,8 +157,8 @@ foreach (var anchor in linkedAnchors)
 # the "other" bucket, so the two preference groups collapse to one plain ascending-id list; the anchor filters
 # and the rest of the search are untouched.
 New-Mutant 'MutNoLinkPref' `
-  'if \(isLinked\) linked(Anchors|Flush)\.Add\(anchor\); else other(Anchors|Flush)\.Add\(anchor\);' `
-  'other$2.Add(anchor);' `
+  'if \(isLinked\) ctx\.Linked(Anchors|Flush)\.Add\(anchor\); else ctx\.Other(Anchors|Flush)\.Add\(anchor\);' `
+  'ctx.Other$2.Add(anchor);' `
   'MutNoLinkPref.cs'
 
 # ---- F4 mutants: one per rule the lateral slide introduced. ---------------------------------------------
@@ -209,5 +255,7 @@ foreach ($mn in @('MutAnchorOuter', 'MutNoLinkPref', 'MutTightBounds', 'MutTight
   Set-Content -Path (Join-Path $gen "SelfTests_$mn.cs") -Value $t -Encoding UTF8
 }
 
-Write-Host "synced $($files.Count) sources + 7 variants + 10 mutants + 2 traces + 14 rebound test copies into gen/"
+$variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
+              'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies into gen/"
 

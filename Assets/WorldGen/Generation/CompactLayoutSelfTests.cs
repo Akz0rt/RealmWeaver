@@ -647,10 +647,15 @@ namespace WorldGen.Rendering
             // room, i.e. literally the DM's «Комнаты: 2 из 2». Measured on this contour (harness `lobecap`):
             // 2 before the slide, 4 after. (4 rather than the 5 the all-4x4 fixture above packs, because the
             // probe rolls sides 4..6 and a 5/6-wide room cannot enter the 4-wide arm B at all.)
-            // CAVEAT (stated so this is not read as more than it is): BuildingGenerator.MaxRoomsPackable is
-            // hard-wired to CompactLayout, so this assertion is NOT rebound by the harness's mutant copies and
-            // cannot kill MutNoSlide — assertion 27 is what does that. Its own non-vacuity rests on the measured
-            // 2 -> 4 (the same probe loop re-run against the no-slide packer), quoted above.
+            // This assertion IS live and IS non-vacuous where it ships: in the Editor suite it binds the REAL
+            // CompactLayout, so deleting the slide from the shipped packer makes it FAIL (2 < 4). It is a genuine
+            // regression guard on the DM-facing number, not a self-declared no-op.
+            // The limitation is the HARNESS's, not the assertion's: BuildingGenerator.MaxRoomsPackable is
+            // hard-wired to CompactLayout, and sync.ps1's mutant test copies rebind by rewriting "CompactLayout."
+            // to "<mutant>." — which cannot reach inside BuildingGenerator. So in the `mutants` table this one
+            // line keeps probing the shipped packer and contributes no kill to the MutNoSlide row; assertion 27
+            // is what kills it there. The 2 -> 4 quoted above comes from `lobecap`, which swaps the packer
+            // explicitly (by delegate) instead of by textual rebinding.
             int lobeCap = BuildingGenerator.MaxRoomsPackable(54f, 62f, 4, 4, LobeContour());
             if (lobeCap < 4)
             { Debug.LogError($"FAIL pack-slide-cap: MaxRoomsPackable reports {lobeCap} on the L contour, want >= 4 (it was 2 before the slide)"); ok = false; }
@@ -708,9 +713,12 @@ namespace WorldGen.Rendering
                     + ", want 3 — a slide that leaves less than a door's worth of shared wall must be rejected");
                 ok = false;
             }
+            // Coarse "nothing crossed into the lobe" sweep. It tests room CENTRES, not footprints — a room whose
+            // centre stays above the line could still overhang it — so it is a backstop for the exact
+            // "room 4 is DROPPED" assertion above, not a containment proof. Named as such in the message.
             foreach (var r in dFar.Rooms)
                 if (r.Y * T > 65.5f)
-                { Debug.LogError($"FAIL pack-door-bound: room {r.Id} reached the lobe past the door-overlap bound"); ok = false; }
+                { Debug.LogError($"FAIL pack-door-bound: room {r.Id}'s CENTRE reached the lobe past the door-overlap bound"); ok = false; }
 
             // ---- 31. Determinism of the SLID placements under permuted room AND link insertion order --------
             // Same L fixture, with floor.Rooms AND floor.Links both built in REVERSE order. The slide adds no
