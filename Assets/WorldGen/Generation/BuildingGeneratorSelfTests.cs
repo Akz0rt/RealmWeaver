@@ -532,6 +532,97 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Building Floor Removal (F3): PASS" : "Self-Test Building Floor Removal (F3): FAIL");
         }
 
+        /// <summary>The ORDER of the two floor-0 drag corrections — the one thing a test that calls
+        /// RealignUpperFloorsToColumn directly CANNOT see. The anti-overlap nudge may MOVE the room it is
+        /// given, and on floor 0 that room can be the stairwell column itself (floor 0 is free-edit, the DM
+        /// can drag the Лестница). So a realign that runs BEFORE the nudge syncs the upper floors to the
+        /// DROPPED position and the nudge then slides the column out from under them — the shaft invariant is
+        /// broken AT REST, with nothing scheduled to re-run the realign.
+        ///
+        /// Structure: the SAME stimulus (drop the column dead on top of a neighbour) is run twice — once in
+        /// the WRONG order as a live negative control, once through
+        /// <see cref="BuildingGenerator.SettleDraggedRoom"/>. The control MUST fail the shaft check and the
+        /// real path MUST pass it; if a future edit reverses SettleDraggedRoom's two lines, the two swap and
+        /// both halves of this test fail.</summary>
+        [ContextMenu("Self-Test: Drag-Settle Ordering (shaft)")]
+        public void SelfTestDragSettleOrdering()
+        {
+            bool ok = true;
+            const string ShaftMsg = "не совпадает со столбом";
+
+            // ---- 1. The stimulus actually moves the column (guards the whole test from being vacuous) ----
+            // Drop floor 0's Лестница exactly onto a neighbour's centre: a full overlap, so the anti-overlap
+            // nudge is GUARANTEED to shove it clear. If it did not, both halves below would trivially pass.
+            {
+                var probe = DropColumnOnNeighbour(seed: 71, out var pCol, out float dropX, out float dropY);
+                CompactLayout.NudgeRoomOffOverlaps(probe.Floors[0], pCol.Id);
+                if (Mathf.Abs(pCol.X - dropX) < 1e-4f && Mathf.Abs(pCol.Y - dropY) < 1e-4f)
+                { Debug.LogError("FAIL drag-order: the fixture's dropped column was NOT moved by the nudge — the ordering test would be vacuous"); ok = false; }
+            }
+
+            // ---- 2. NEGATIVE CONTROL: realign BEFORE the nudge leaves the shaft broken ------------------
+            // This is the shipped bug, reproduced: DungeonEditorScreen.RevalidateAndRefresh used to realign
+            // and only THEN let BeginCascade nudge.
+            {
+                var bad = DropColumnOnNeighbour(seed: 71, out var badCol, out _, out _);
+                BuildingGenerator.RealignUpperFloorsToColumn(bad);            // stale-order step 1
+                CompactLayout.NudgeRoomOffOverlaps(bad.Floors[0], badCol.Id); // stale-order step 2 — moves the column
+                if (!HasMsg(DungeonValidator.Validate(bad), ShaftMsg))
+                { Debug.LogError("FAIL drag-order: the WRONG order (realign, then nudge) did NOT break the shaft — the control is not exercising the bug"); ok = false; }
+            }
+
+            // ---- 3. THE RULE: SettleDraggedRoom pins nudge-then-realign, so the shaft holds AT REST -----
+            {
+                var good = DropColumnOnNeighbour(seed: 71, out var goodCol, out _, out _);
+                BuildingGenerator.SettleDraggedRoom(good, good.Floors[0], goodCol.Id);
+                if (HasMsg(DungeonValidator.Validate(good), ShaftMsg))
+                { Debug.LogError("FAIL drag-order: the shaft is still misaligned after SettleDraggedRoom — the realign is not running after the nudge"); ok = false; }
+
+                // And directly, not only through the validator's message: every upper Лестница must sit on the
+                // column's FINAL (post-nudge) position, tighter than the validator's own 1e-3 tolerance.
+                for (int k = 1; k < good.Floors.Count; k++)
+                {
+                    Room colK = good.Floors[k].Rooms.Find(r => r.TypeId == 2);
+                    if (colK == null) continue;
+                    if (Mathf.Abs(colK.X - goodCol.X) > 1e-4f || Mathf.Abs(colK.Y - goodCol.Y) > 1e-4f)
+                    { Debug.LogError($"FAIL drag-order: floor {k}'s Лестница at ({colK.X:F4},{colK.Y:F4}) does not sit on the settled column ({goodCol.X:F4},{goodCol.Y:F4})"); ok = false; }
+                }
+            }
+
+            // ---- 4. A drag of an ORDINARY floor-0 room must not disturb the shaft either ----------------
+            // The column never moves here, so the realign is a no-op — this pins that SettleDraggedRoom did
+            // not become "always translate the upper floors" (which would pass 3 for the wrong reason).
+            {
+                var plain = BuildingGenerator.Generate(seed: 71, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+                Room col0 = plain.Floors[0].Rooms.Find(r => r.TypeId == 2);
+                Room other = plain.Floors[0].Rooms.Find(r => r.TypeId != 2 && r.Id != col0.Id);
+                Room up1 = plain.Floors[1].Rooms.Find(r => r.TypeId != 2);
+                float upBeforeX = up1 != null ? up1.X : 0f, upBeforeY = up1 != null ? up1.Y : 0f;
+                other.X = col0.X; other.Y = col0.Y;   // drop it on the column
+                BuildingGenerator.SettleDraggedRoom(plain, plain.Floors[0], other.Id);
+                if (HasMsg(DungeonValidator.Validate(plain), ShaftMsg))
+                { Debug.LogError("FAIL drag-order: dragging a NON-column room broke the shaft"); ok = false; }
+                if (up1 != null && (Mathf.Abs(up1.X - upBeforeX) > 1e-6f || Mathf.Abs(up1.Y - upBeforeY) > 1e-6f))
+                { Debug.LogError("FAIL drag-order: dragging a NON-column room moved an upper floor"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Drag-Settle Ordering: PASS" : "Self-Test Drag-Settle Ordering: FAIL");
+        }
+
+        // A 3-floor building whose floor-0 Лестница has been "dropped" dead on top of a neighbouring room —
+        // the stimulus for the drag-settle ordering test. Reports the column and the position it was dropped
+        // at, so the caller can assert the nudge really moved it.
+        static InteriorData DropColumnOnNeighbour(int seed, out Room column, out float dropX, out float dropY)
+        {
+            var d = BuildingGenerator.Generate(seed, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+            Room col = d.Floors[0].Rooms.Find(r => r.TypeId == 2);
+            Room neighbour = d.Floors[0].Rooms.Find(r => r.TypeId != 2 && r.Id != col.Id);
+            col.X = neighbour.X; col.Y = neighbour.Y;
+            column = col;
+            dropX = col.X; dropY = col.Y;
+            return d;
+        }
+
         static bool HasMsg(List<DungeonIssue> issues, string substr)
         {
             foreach (var i in issues) if (i.Message.Contains(substr)) return true;

@@ -70,7 +70,7 @@ namespace WorldGen.Generation
             if (floor == null || floor.Rooms.Count == 0) return;
 
             var root = PickEntrance(floor);
-            var placed = BfsPlaceCore(floor, root, recenterRoot: true);
+            var placed = BfsPlaceCore(floor, root);
 
             // Any room not reached over Links (unlinked, or a separate component): drop it at the nearest
             // free slot outward from the field centre so Arrange stays TOTAL (every room gets a non-overlapping
@@ -82,39 +82,6 @@ namespace WorldGen.Generation
                 PlaceOutwardFromPoint(r, ToTile(0.5f), ToTile(0.5f), placed);
                 placed.Add(r);
             }
-        }
-
-        // ---------------------------------------------------------------------------------------------
-        // Settle — compact relaxation with one room pinned.
-        // ---------------------------------------------------------------------------------------------
-
-        /// <summary>Compact re-pack primitive: re-pack the floor around a FIXED anchor (the anchor never
-        /// moves). Not wired to drag under the revised spec C4 (drag uses <see cref="NudgeRoomOffOverlaps"/>,
-        /// which moves only the dragged room); kept as a general "compact this floor" building block for a
-        /// future manual tidy / generation-time re-pack. It rebuilds
-        /// the flush adjacency tree by BFS from the anchor at its CURRENT position — this pulls every linked
-        /// room back toward flush adjacency with its neighbour and, because each room is placed only in a slot
-        /// that overlaps nothing already placed, resolves overlaps by construction using the SAME Chebyshev
-        /// test Separate uses. Rooms NOT reachable from the anchor over Links (orphans / a separate component)
-        /// are then nudged apart by an anchor-and-tree-pinned overlap pass that reuses Separate's
-        /// least-penetration push — only those loose rooms move, so the flush tree is never disturbed.
-        /// Bounded iterations, deterministic. Unlike Arrange, the anchor is NOT re-centred.</summary>
-        public static void Settle(InteriorFloor floor, int anchorRoomId)
-        {
-            if (floor == null || floor.Rooms.Count == 0) return;
-
-            var anchor = floor.GetRoom(anchorRoomId) ?? PickEntrance(floor);
-            if (anchor == null) return;
-
-            // Rebuild the adjacency tree with the anchor pinned where it is (recenterRoot: false).
-            var placed = BfsPlaceCore(floor, anchor, recenterRoot: false);
-
-            // Overlap safety net for rooms the BFS never reached. Only these are movable; the anchor and the
-            // whole flush tree stay put, so their shared walls survive.
-            var movable = new List<Room>();
-            foreach (var r in SortedById(floor.Rooms))
-                if (!Contains(placed, r)) movable.Add(r);
-            ResolveOverlapsMovableOnly(floor, movable);
         }
 
         // ---------------------------------------------------------------------------------------------
@@ -843,7 +810,13 @@ namespace WorldGen.Generation
         /// <summary>True iff the two footprints TOUCH along a shared wall: the Chebyshev edge gap is ≈ 0 on
         /// exactly one axis (|gap| &lt; TouchEps) AND their projections on the OTHER axis overlap by a positive
         /// span. Returns FALSE for any clear gap and FALSE for a corner-only kiss (both axes ≈ 0, neither with
-        /// a real overlapping span). Same tile-space Chebyshev measure as Separate / EdgeGapTiles.</summary>
+        /// a real overlapping span). Same tile-space Chebyshev measure as Separate / EdgeGapTiles.
+        ///
+        /// The RENDERER no longer calls this (doors come from RoomLinkGeometry), so its only remaining callers
+        /// are the self-tests — but it is deliberately KEPT: it is the DEFINITION of "flush" that ~15
+        /// assertions across Arrange / AttachNewRoom / the lateral slide / column packing pin, and deleting it
+        /// would mean re-deriving the same Chebyshev predicate inside the test file, where it could silently
+        /// drift from the TouchEps the packer actually uses.</summary>
         public static bool AdjacentAlongWall(Room a, Room b)
         {
             if (a == null || b == null) return false;
@@ -860,51 +833,11 @@ namespace WorldGen.Generation
         }
 
         // ---------------------------------------------------------------------------------------------
-        // DoorOnSharedWall — door position in TILE space.
-        // ---------------------------------------------------------------------------------------------
-
-        /// <summary>If the rooms are AdjacentAlongWall, output the door position in TILE space = the midpoint
-        /// of the overlapping span along the shared wall, sitting on the shared edge coordinate; return true.
-        /// Otherwise out = default and return false.</summary>
-        public static bool DoorOnSharedWall(Room a, Room b, out LayoutPoint doorTile)
-        {
-            doorTile = default;
-            if (!AdjacentAlongWall(a, b)) return false;
-
-            var (aw, ah) = DungeonProjection.EffectiveSize(a);
-            var (bw, bh) = DungeonProjection.EffectiveSize(b);
-            float axT = ToTile(a.X), ayT = ToTile(a.Y), bxT = ToTile(b.X), byT = ToTile(b.Y);
-            float gapX = System.Math.Abs(axT - bxT) - (aw + bw) * 0.5f;
-
-            if (System.Math.Abs(gapX) < TouchEps)
-            {
-                // Shared VERTICAL wall (touch on X): door runs along the overlapping Y span, at the wall's X.
-                float aFace = axT + (bxT >= axT ? aw * 0.5f : -aw * 0.5f);
-                float bFace = bxT + (bxT >= axT ? -bw * 0.5f : bw * 0.5f);
-                float edgeX = (aFace + bFace) * 0.5f;
-                float yLow = Max(ayT - ah * 0.5f, byT - bh * 0.5f);
-                float yHigh = Min(ayT + ah * 0.5f, byT + bh * 0.5f);
-                doorTile = new LayoutPoint { X = edgeX, Y = (yLow + yHigh) * 0.5f };
-            }
-            else
-            {
-                // Shared HORIZONTAL wall (touch on Y): door runs along the overlapping X span, at the wall's Y.
-                float aFace = ayT + (byT >= ayT ? ah * 0.5f : -ah * 0.5f);
-                float bFace = byT + (byT >= ayT ? -bh * 0.5f : bh * 0.5f);
-                float edgeY = (aFace + bFace) * 0.5f;
-                float xLow = Max(axT - aw * 0.5f, bxT - bw * 0.5f);
-                float xHigh = Min(axT + aw * 0.5f, bxT + bw * 0.5f);
-                doorTile = new LayoutPoint { X = (xLow + xHigh) * 0.5f, Y = edgeY };
-            }
-            return true;
-        }
-
-        // ---------------------------------------------------------------------------------------------
         // Internals
         // ---------------------------------------------------------------------------------------------
 
         /// <summary>Entrance = the TypeId==0 room with the lowest Id; if the floor has no entrance, the
-        /// lowest-Id room. Deterministic root for both Arrange and the Settle fallback.</summary>
+        /// lowest-Id room. Arrange's deterministic root.</summary>
         static Room PickEntrance(InteriorFloor f)
         {
             Room ent = null;
@@ -917,16 +850,17 @@ namespace WorldGen.Generation
         }
 
         /// <summary>BFS from <paramref name="root"/> over Links, placing each newly-reached room flush against
-        /// the room it was reached through. Returns the rooms placed (root first). If recenterRoot, the root
-        /// is moved to the field centre first (Arrange); otherwise it keeps its current position (Settle, so
-        /// the pinned anchor never moves). Neighbour expansion is ascending-id for determinism.</summary>
-        static List<Room> BfsPlaceCore(InteriorFloor f, Room root, bool recenterRoot)
+        /// the room it was reached through, with the root re-centred on the field first. Returns the rooms
+        /// placed (root first). Neighbour expansion is ascending-id for determinism. (It used to carry a
+        /// `recenterRoot: false` mode for the removed Settle primitive; Arrange is the only caller now, so the
+        /// re-centre is unconditional.)</summary>
+        static List<Room> BfsPlaceCore(InteriorFloor f, Room root)
         {
             var placed = new List<Room>();
             if (root == null) return placed;
 
             var adj = BuildAdjacency(f);
-            if (recenterRoot) { root.X = 0.5f; root.Y = 0.5f; }
+            root.X = 0.5f; root.Y = 0.5f;
             placed.Add(root);
             var placedIds = new HashSet<int> { root.Id };
 
@@ -1106,8 +1040,6 @@ namespace WorldGen.Generation
             return false;
         }
 
-        static float Min(float a, float b) => a < b ? a : b;
-        static float Max(float a, float b) => a > b ? a : b;
         static int Larger(int a, int b) => a > b ? a : b;
     }
 }

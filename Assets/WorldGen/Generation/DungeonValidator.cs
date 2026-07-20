@@ -23,6 +23,11 @@ namespace WorldGen.Generation
             // Boss rooms are a DUNGEON concept (a building has no boss). And a building's outside entrance is
             // ONLY on floor 0 — upper floors have a stairwell (Лестница), not a Вход — so the "exactly one
             // entrance" rule applies per-floor for dungeons but only to floor 0 for buildings.
+            //
+            // THE one source of truth for "does this interior have a boss rule". InteriorProfile used to carry
+            // a HasBossRule flag saying the same thing, consulted by nobody — it was deleted rather than wired
+            // in here, because this validator is HEADLESS and InteriorProfile lives in WorldGen.Rendering
+            // (ThemeRole → UnityEngine), so the profile can never be the source for this file.
             bool isBuilding = dungeon.Kind == InteriorKind.Building;
             bool bossRule = !isBuilding;
 
@@ -32,12 +37,14 @@ namespace WorldGen.Generation
                 int human = li + 1;
 
                 // TypeId 2 is the Boss for a DUNGEON but the Лестница (stairwell column) for a BUILDING — the two
-                // never coexist (Kind decides which rules below apply), so one counter serves both.
-                int entrances = 0, entranceId = 0, typeTwo = 0, bossId = 0;
+                // never coexist (Kind decides which rules below apply), so one counter serves both. The id is
+                // named for the TYPE, not for either meaning: calling it `bossId` read as a leaked dungeon
+                // concept at the BUILDING sites below (the orphan root upstairs is the Лестница, not a boss).
+                int entrances = 0, entranceId = 0, typeTwo = 0, typeTwoId = 0;
                 foreach (var r in lvl.Rooms)
                 {
                     if (r.TypeId == 0) { entrances++; entranceId = r.Id; }
-                    if (r.TypeId == BuildingGenerator.StairTypeId) { typeTwo++; bossId = r.Id; }
+                    if (r.TypeId == BuildingGenerator.StairTypeId) { typeTwo++; typeTwoId = r.Id; }
                 }
 
                 if ((!isBuilding || li == 0) && entrances != 1)
@@ -55,7 +62,7 @@ namespace WorldGen.Generation
                 // Boss distance (dungeon only, entrance present).
                 if (bossRule && typeTwo == 1 && entrances == 1)
                 {
-                    int d = Distance(entranceId, bossId, adj);
+                    int d = Distance(entranceId, typeTwoId, adj);
                     if (d >= 0 && d < minBossDistance)
                         Add(issues, IssueSeverity.Warning, li,
                             $"Этаж {human}: комната босса слишком близко ко входу ({d} шаг(ов), нужно ≥ {minBossDistance}).");
@@ -63,7 +70,7 @@ namespace WorldGen.Generation
                 // Orphans: rooms unreachable from the floor's ROOT via corridors. Dungeons and a building's floor 0
                 // root at the entrance; a building UPPER floor has no Вход, so it roots at the Лестница (the stair
                 // arrival) — otherwise deleting a corridor upstairs could strand a room with no warning.
-                int rootId = (isBuilding && li > 0) ? bossId : entranceId;
+                int rootId = (isBuilding && li > 0) ? typeTwoId : entranceId;
                 if (rootId != 0)
                 {
                     var reached = Reachable(rootId, adj);

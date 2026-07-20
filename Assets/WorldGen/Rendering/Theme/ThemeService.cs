@@ -8,7 +8,7 @@ namespace WorldGen.Rendering.Theme
     {
         Bg, Panel, Panel2, Elev, Border, Txt, Mut, Accent, AccentInk, AccentSoft,
         MapOcean, MapLand, MapCoast, Dot, Danger,
-        RoomCommon, RoomPrivate, RoomService, RoomSpecial
+        RoomCommon, RoomSpecial
     }
 
     public enum Theme { Dark, Light }
@@ -45,8 +45,6 @@ namespace WorldGen.Rendering.Theme
             { ThemeRole.Dot,        Hex("#2A2A33") },
             { ThemeRole.Danger,     Hex("#C9605A") },
             { ThemeRole.RoomCommon,  Hex("#3A3128") },
-            { ThemeRole.RoomPrivate, Hex("#2C3350") },
-            { ThemeRole.RoomService,Hex("#313A2B") },
             { ThemeRole.RoomSpecial,Hex("#3B2E48") },
         };
 
@@ -68,8 +66,6 @@ namespace WorldGen.Rendering.Theme
             { ThemeRole.Dot,        Hex("#D3CCBB") },
             { ThemeRole.Danger,     Hex("#C9605A") },
             { ThemeRole.RoomCommon,  Hex("#EDE3D0") },
-            { ThemeRole.RoomPrivate, Hex("#DBDFF1") },
-            { ThemeRole.RoomService,Hex("#DEE7D0") },
             { ThemeRole.RoomSpecial,Hex("#E9DEF2") },
         };
 

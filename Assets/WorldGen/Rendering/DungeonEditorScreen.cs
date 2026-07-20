@@ -85,6 +85,10 @@ namespace WorldGen.Rendering
             // otherwise a stale id could coincidentally match an unrelated room on the new level and the
             // inspector would show the wrong room while the canvas shows no selection.
             selectedRoomId = 0;
+            // The top-strip title is per-INTERIOR, not hard-coded: a building interior used to be labelled
+            // «Подземелье» on screen. Set here (not in BuildTopStrip) because the strip is built at Awake,
+            // long before Bind gives us an interior to read the profile from.
+            if (titleLabel != null) titleLabel.text = Profiles.ForRoom(current).TermInterior;
             RebuildLevelTabs();
             RefreshToolbar();   // free-edit vs generate-only, per the floor we just switched to
             RefreshBody();
@@ -101,22 +105,30 @@ namespace WorldGen.Rendering
                 // The column comes from floor 0 (user-placed; auto-designated if missing). The new floor's
                 // Лестница is joined to the PREVIOUS top floor's Лестница by a Stairs portal up the column.
                 var column = BuildingGenerator.EnsureFloorZeroColumn(current);
-                if (column == null) return;   // floor 0 has no room to host a stairwell — nothing to build on
+                if (column == null)
+                {
+                    // Floor 0 is empty or holds ONLY the entrance, so there is no room to designate as the
+                    // stairwell column and nothing to build the new floor around. This used to return in
+                    // silence, so «+ Этаж» simply did nothing and the DM had no way to know why.
+                    WorldGen.Notes.Rendering.ConfirmDialog.ShowInfo(font, "Нельзя добавить этаж",
+                        "На 1-м этаже нет комнаты под лестницу. Добавьте комнату на 1-й этаж и повторите.");
+                    return;
+                }
                 var floor0 = current.Floors[0];
                 int T = DungeonLayout.TilesPerAxis;
                 var floor = BuildingGenerator.GenerateFloorAroundColumn(
                     new System.Random(FreshSeed()), DefaultRooms,
-                    column.X * T, column.Y * T, column.SizeW, column.SizeH, floor0, out var newStair);
-
-                int lowerIdx = current.Floors.Count - 1;
-                var lower = current.Floors[lowerIdx];
-                Room lowerStair = null;
-                foreach (var r in lower.Rooms) if (r.TypeId == BuildingGenerator.StairTypeId) { lowerStair = r; break; }
-                if (lowerStair == null && lower.Rooms.Count > 0) lowerStair = lower.Rooms[0];   // malformed-floor fallback
+                    column.X * T, column.Y * T, column.SizeW, column.SizeH, floor0, out _);
 
                 current.Floors.Add(floor);
-                if (lowerStair != null)
-                    lowerStair.Portals.Add(BuildingGenerator.MakeStairPortal(lowerIdx + 1, newStair.Id));
+                // Wire the vertical chain through the ONE method that owns it, exactly as a floor REMOVAL
+                // does. This used to hand-add a single portal to the floor below, which had two ways to go
+                // wrong: (a) when that floor had no Лестница it fell back to `lower.Rooms[0]`, stamping a
+                // Stairs portal onto a NON-Лестница room that RewireStairChain could then never strip (it
+                // only strips from the floor's Лестница), so the bogus portal survived every later repair;
+                // and (b) an already-broken chain further down stayed broken. RewireStairChain rebuilds the
+                // whole chain from the current floors, so both cases self-heal.
+                BuildingGenerator.RewireStairChain(current);
             }
             else
                 current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), DefaultRooms));
@@ -151,7 +163,52 @@ namespace WorldGen.Rendering
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Floors.Count - 1));
         }
 
-        /// <summary>«× Этаж» handler: if the level has authored room content, confirm before discarding
+        /// <summary>Does this floor hold content a DM AUTHORED — i.e. content an irreversible, undo-less
+        /// destroy (× Этаж / Перегенерировать) would silently take away? Three sources, and the dialog text
+        /// promises all three («Все комнаты, СВЯЗИ и ЗАМЕТКИ этого этажа будут потеряны»):
+        ///   • a room Title or Body (the note layer);
+        ///   • ANY corridor — «Связать» is the only way a DM adds one, and a GENERATED floor also arrives
+        ///     with a spanning tree, so this makes the gate effectively always-on for a populated floor.
+        ///     That is the deliberate, safe direction: nothing marks a Link as hand-made vs generated, and
+        ///     there is no undo, so we cannot tell the DM's dozen «Связать» corridors from the generator's
+        ///     and must assume the worst rather than destroy them in silence;
+        ///   • any NON-Stairs portal (secret passage / dungeon exit) — the only portal kinds the inspector
+        ///     lets a DM create.
+        /// Stairs portals are excluded ON PURPOSE: they are 100% generator-owned (BuildingGenerator.
+        /// RewireStairChain builds and rebuilds them; the inspector cannot add one), so counting them would
+        /// make EVERY floor of EVERY multi-floor building prompt, which teaches the DM to click through the
+        /// dialog without reading it.</summary>
+        static bool HasAuthoredContent(InteriorFloor lvl)
+        {
+            if (lvl == null) return false;
+            if (lvl.Links.Count > 0) return true;
+            foreach (var r in lvl.Rooms)
+            {
+                if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
+                foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Secret passages ON OTHER FLOORS that point AT floor <paramref name="floorIndex"/> — they
+        /// do not live on that floor, so <see cref="HasAuthoredContent"/> cannot see them, yet destroying or
+        /// regenerating the floor takes them with it (their target room ceases to exist). Counted so the
+        /// confirm dialog can name the loss instead of letting it happen off-screen.</summary>
+        static int CountInboundSecrets(InteriorData d, int floorIndex)
+        {
+            int n = 0;
+            if (d == null) return 0;
+            for (int i = 0; i < d.Floors.Count; i++)
+            {
+                if (i == floorIndex) continue;
+                foreach (var r in d.Floors[i].Rooms)
+                    foreach (var p in r.Portals)
+                        if (p.Kind == PortalKind.SecretDoor && p.TargetFloorIndex == floorIndex) n++;
+            }
+            return n;
+        }
+
+        /// <summary>«× Этаж» handler: if the level has authored content, confirm before discarding
         /// it (deleting a floor loses all its rooms/corridors/notes — irreversible once the project is
         /// saved); otherwise remove directly. ConfirmDialog.Show's «Удалить» is the correct label here.</summary>
         void RequestRemoveCurrentLevel()
@@ -160,10 +217,14 @@ namespace WorldGen.Rendering
             int idx = FloorToRemove();
             if (idx < 0) return;   // guarded: a Building's floor 0 is never removable
             var lvl = current.Floors[idx];   // the floor that will actually be removed — the SELECTED one
-            bool annotated = lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
-            if (annotated)
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?",
-                    "Все комнаты, связи и заметки этого этажа будут потеряны.", ok => { if (ok) RemoveCurrentLevel(); });
+            int inbound = CountInboundSecrets(current, idx);
+            if (HasAuthoredContent(lvl) || inbound > 0)
+            {
+                string body = "Все комнаты, связи и заметки этого этажа будут потеряны.";
+                if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?", body,
+                    ok => { if (ok) RemoveCurrentLevel(); });
+            }
             else
                 RemoveCurrentLevel();
         }
@@ -190,10 +251,16 @@ namespace WorldGen.Rendering
         // Nothing else may call DungeonLayout.Separate directly — that would double-separate.
         void RevalidateAndRefresh()
         {
-            // Keep the vertical shaft aligned: if the DM moved/resized the column on floor 0, slide every upper
-            // floor so its Лестница re-lands on the column (auto-realign). Idempotent — a no-op when already aligned.
-            if (current != null && current.Kind == InteriorKind.Building)
-                BuildingGenerator.RealignUpperFloorsToColumn(current);
+            // The vertical-shaft auto-realign USED TO RUN HERE, and that was the bug: BeginCascade's building
+            // branch calls CompactLayout.NudgeRoomOffOverlaps on the room the DM just dropped, which on floor 0
+            // can be the stairwell column itself — so a realign at this point synced the upper floors to the
+            // DROPPED position and the nudge then slid the column out from under them by up to a neighbour's
+            // half-width (~1-3 tiles, 10-30x DungeonValidator's ShaftTol). Nothing re-ran it, so the invariant
+            // was violated at rest with no error shown (it self-healed only on the next SetLevel).
+            // It now lives INSIDE BuildingGenerator.SettleDraggedRoom, after the nudge, which is both the only
+            // correct order and the only place a headless test can pin that order (see
+            // BuildingGeneratorSelfTests.SelfTestDragSettleOrdering). Every caller of this method reaches it:
+            // BeginCascade below runs on every path, so the realign is not lost, only moved later.
             if (viewController != null) viewController.BeginCascade();
             if (inspectorPanel != null)
             {
@@ -252,7 +319,8 @@ namespace WorldGen.Rendering
             var backLbl = MakeText(backGO.transform, "← Назад", 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
             Stretch(backLbl.rectTransform); backLbl.raycastTarget = false;
 
-            titleLabel = MakeText(strip.transform, "Подземелье", 14, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleLeft);
+            // Placeholder text only — SetLevel replaces it with the bound interior's profile term.
+            titleLabel = MakeText(strip.transform, "", 14, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleLeft);
             var tr = titleLabel.rectTransform;
             tr.anchorMin = new Vector2(0f, 0.5f); tr.anchorMax = new Vector2(0f, 0.5f);
             tr.pivot = new Vector2(0f, 0.5f); tr.anchoredPosition = new Vector2(134f, 0f); tr.sizeDelta = new Vector2(200f, 28f);
@@ -306,14 +374,28 @@ namespace WorldGen.Rendering
             bool generateOnly = current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex > 0;
             if (generateOnly)
             {
-                currentUpperCap = UpperCap();   // probe once per floor switch; +/- clamps against this cached value
-                int cap = currentUpperCap;
-                upperRoomCount = Mathf.Clamp(CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms, 1, cap);
+                // Probe once per floor switch; +/- clamps against this cached value. With NO column on floor 0
+                // there is no contour to size against and NOTHING can be generated (RegenerateUpperFloor bails
+                // on the same condition), so we must not invent a number: the cap used to fall back to
+                // MaxUpperRooms and the toolbar read «Комнаты: N из 20» with a stepper that walked to 20, while
+                // every «Перегенерировать» bounced. Floor 0 is free-edit and its «Удалить» can remove the
+                // Лестница, so this is a state the DM can reach at will. Show a dash, drop the stepper
+                // entirely, and put the fix in the message line.
+                bool hasColumn = TryGetColumnAndCap(out _, out int cap);
+                currentUpperCap = hasColumn ? cap : 1;
                 AddToolbarLabel(toolbarBar, "Комнаты:", 76f);
-                AddToolbarButton(toolbarBar, "−", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(-1));
-                upperCountLabel = AddToolbarLabel(toolbarBar, upperRoomCount.ToString(), 30f);
-                AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
-                AddToolbarLabel(toolbarBar, $"из {cap}", 52f);   // the contour's deterministic area capacity
+                if (hasColumn)
+                {
+                    upperRoomCount = Mathf.Clamp(CurrentLevel != null ? CurrentLevel.Rooms.Count : DefaultRooms, 1, cap);
+                    AddToolbarButton(toolbarBar, "−", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(-1));
+                    upperCountLabel = AddToolbarLabel(toolbarBar, upperRoomCount.ToString(), 30f);
+                    AddToolbarButton(toolbarBar, "+", 32f, ThemeRole.Elev, () => AdjustUpperRoomCount(+1));
+                    AddToolbarLabel(toolbarBar, $"из {cap}", 52f);   // the contour's deterministic packable capacity
+                }
+                else
+                {
+                    upperCountLabel = AddToolbarLabel(toolbarBar, "—", 30f);
+                }
                 AddToolbarButton(toolbarBar, "Перегенерировать", 185f, ThemeRole.Accent, RegenerateUpperFloor);
                 // The layout is generate-only, but the DM may still author TRANSITIONS between rooms: «Связать»
                 // adds a corridor (click two rooms); removal is in the inspector. Links don't move rooms, so the
@@ -321,6 +403,7 @@ namespace WorldGen.Rendering
                 linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
                 regenMsgLabel = AddToolbarLabel(toolbarBar, "", 300f);
                 ThemeService.Tag(regenMsgLabel, ThemeRole.Danger);
+                if (!hasColumn) ShowRegenMsg("Добавьте лестницу на 1-м этаже");
             }
             else
             {
@@ -416,9 +499,6 @@ namespace WorldGen.Rendering
             return true;
         }
 
-        // The area cap for the current upper floor (ceiling when floor 0 has no column yet — nothing to size against).
-        int UpperCap() => TryGetColumnAndCap(out _, out int cap) ? cap : MaxUpperRooms;
-
         /// <summary>«Перегенерировать» for a building UPPER floor: rebuild it around the shared column with the
         /// requested room count. Atomic — if the count can't fit floor 0's contour, NOTHING changes and the DM
         /// is told the reason; otherwise the floor is replaced and its stairs re-linked up/down the column.</summary>
@@ -431,20 +511,33 @@ namespace WorldGen.Rendering
             if (BuildingGenerator.FindFloorZeroColumn(current) == null) { ShowRegenMsg("Добавьте лестницу на 1-м этаже"); return; }
             if (upperRoomCount > currentUpperCap) { ClampToCapWithMessage(currentUpperCap); return; }
 
-            // Regenerate REPLACES the whole floor, discarding any authored room content. Mirror the floor-removal
-            // safeguard: confirm first when the floor has named/annotated rooms (there is no undo).
+            // Regenerate REPLACES the whole floor, discarding EVERYTHING authored on it — not just room
+            // names/notes but the corridors «Связать» built and every secret passage, plus any secret passage
+            // on ANOTHER floor that pointed AT this one (ReplaceCurrentUpperFloor drops those, since the room
+            // they targeted stops existing). Mirror the floor-removal safeguard and confirm first; there is no
+            // undo. Same predicate as «× Этаж» — the two must not disagree about what "authored" means.
             var lvl = CurrentLevel;
-            bool annotated = lvl != null && lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
-            if (annotated)
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Перегенерировать этаж?",
-                    "Комнаты этого этажа, их названия и заметки будут заменены.", ok => { if (ok) DoRegenerateUpperFloor(); });
+            int inbound = CountInboundSecrets(current, CurrentLevelIndex);
+            if (HasAuthoredContent(lvl) || inbound > 0)
+            {
+                string body = "Комнаты этого этажа, их связи, названия и заметки будут заменены.";
+                if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Перегенерировать этаж?", body,
+                    ok => { if (ok) DoRegenerateUpperFloor(); });
+            }
             else
                 DoRegenerateUpperFloor();
         }
 
-        // Pin the stepper to the real limit and tell the DM. Called when the requested count exceeds the area cap.
+        // Pin the stepper to the real limit and tell the DM. Called when the requested count exceeds the cap.
+        // currentUpperCap is pinned TOO, not just upperRoomCount: it is what AdjustUpperRoomCount clamps
+        // against between floor switches, so leaving the stale (larger) value here would let the very next «+»
+        // walk straight back over the limit we just reported. Unreachable today (DoRegenerateUpperFloor's cap
+        // comes from the same memoized probe RefreshToolbar cached), but this path exists precisely for the
+        // case where those two disagree, and it should actually hold when it does.
         void ClampToCapWithMessage(int cap)
         {
+            currentUpperCap = cap;
             upperRoomCount = cap;
             if (upperCountLabel != null) upperCountLabel.text = upperRoomCount.ToString();
             ShowRegenMsg($"В контур помещается не более {cap} комнат");
@@ -463,36 +556,41 @@ namespace WorldGen.Rendering
             // so «Перегенерировать» always finds a valid arrangement instead of a "won't fit" dead end.
             int T = DungeonLayout.TilesPerAxis;
             bool ok = BuildingGenerator.TryBuildUpperFloorExact(upperRoomCount, FreshSeed(), RegenAttempts,
-                column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out var newFloor, out var newStair);
+                column.X * T, column.Y * T, column.SizeW, column.SizeH, current.Floors[0], out var newFloor, out _);
             if (!ok) { ShowRegenMsg($"Не удалось разместить {upperRoomCount} — уменьшите количество"); return; }
 
-            ReplaceCurrentUpperFloor(newFloor, newStair);
+            ReplaceCurrentUpperFloor(newFloor);
             selectedRoomId = 0;   // old room ids are gone — clear the mirror so the inspector doesn't show a stale room
             ShowRegenMsg("");
             RefreshBody();
             RevalidateAndRefresh();
         }
 
-        // Swap the current upper floor for a freshly generated one and re-link the stairwell: the floor BELOW
-        // now targets the new floor's Лестница, and (if a floor exists above) the new Лестница links up to it.
-        void ReplaceCurrentUpperFloor(InteriorFloor newFloor, Room newStair)
+        /// <summary>Swap the current upper floor for a freshly generated one, WITH referential integrity —
+        /// the same duty <see cref="DungeonOps.RemoveLevel"/> and <see cref="DungeonOps.RemoveRoom"/> carry,
+        /// and the one this method used to skip.
+        ///
+        /// Regeneration destroys every room on floor k just as surely as removing the floor would, so any
+        /// SecretDoor ANYWHERE in the interior that pointed at a room on floor k is now stale. It could not
+        /// even be caught later: BuildStairFloorGraph always issues ids 1..budget before trimming, so a
+        /// pre-existing {TargetFloorIndex = k, TargetRoomId = 5} usually still RESOLVES — onto a completely
+        /// unrelated new room — and DungeonValidator.TargetExists is satisfied, so nothing is ever reported.
+        /// About half the time it instead dangles and IS flagged. We drop them, matching RemoveLevel (which
+        /// removes inter-floor portals targeting the level it destroys) rather than leaving a portal silently
+        /// re-pointed at a room the DM never chose. The loss is not silent: RegenerateUpperFloor counts them
+        /// (CountInboundSecrets) and names them in the confirm dialog before we get here.
+        ///
+        /// The vertical Stairs chain is then rebuilt by the ONE method that owns it — floor k-1 re-targets the
+        /// new Лестница and floor k+1 is re-attached — instead of the hand-rolled portal this used to spell
+        /// out inline (a second copy of BuildingGenerator.MakeStairPortal's body, free to drift from it).</summary>
+        void ReplaceCurrentUpperFloor(InteriorFloor newFloor)
         {
             int k = CurrentLevelIndex;
             current.Floors[k] = newFloor;
-            foreach (var r in current.Floors[k - 1].Rooms)
-                foreach (var p in r.Portals)
-                    if (p.Kind == PortalKind.Stairs && p.TargetFloorIndex == k) p.TargetRoomId = newStair.Id;
-            if (k + 1 < current.Floors.Count)
-            {
-                Room above = null;
-                foreach (var r in current.Floors[k + 1].Rooms) if (r.TypeId == BuildingGenerator.StairTypeId) { above = r; break; }
-                if (above != null)
-                    newStair.Portals.Add(new Portal
-                    {
-                        Kind = PortalKind.Stairs, Hidden = false, TargetFloorIndex = k + 1,
-                        TargetRoomId = above.Id, Bidirectional = true, Label = "Лестница",
-                    });
-            }
+            foreach (var f in current.Floors)
+                foreach (var r in f.Rooms)
+                    r.Portals.RemoveAll(p => p.Kind == PortalKind.SecretDoor && p.TargetFloorIndex == k);
+            BuildingGenerator.RewireStairChain(current);
         }
 
         void ShowRegenMsg(string msg) { if (regenMsgLabel != null) regenMsgLabel.text = msg; }
@@ -544,6 +642,15 @@ namespace WorldGen.Rendering
             MapArea.offsetMin = new Vector2(12f, 12f); MapArea.offsetMax = new Vector2(-(sidebarWidth + 18f), -12f);
             var mapBg = mapGO.AddComponent<Image>();
             ThemeService.Tag(mapBg, ThemeRole.Panel2); mapBg.raycastTarget = true;
+            // Clip the graph canvas to its own panel. For a BUILDING the projection is fit to floor 0's
+            // CONTOUR bbox (DungeonViewController.FitBoundsFor), not to the current floor's content, so an
+            // upper-floor room parked OUTSIDE the contour — a state C6 deliberately permits and red-flags
+            // rather than auto-fixes — projects outside MapArea and used to draw over the sidebar. Nothing
+            // under MapArea is supposed to overflow it: its only children are the full-area invisible
+            // hit-plate and the renderer, whose room cards, corridors and badges are all meant to live inside
+            // the panel. Dialogs are unaffected (ConfirmDialog is a separate canvas at sortingOrder 30000+,
+            // not a descendant of this rect).
+            mapGO.AddComponent<RectMask2D>();
 
             // One interaction host stretched over MapArea; the renderer is its child. The controller carries
             // a full-area invisible hit-plate (it IS the raycast target) and hit-tests in TILE space, so the
@@ -590,7 +697,9 @@ namespace WorldGen.Rendering
             for (int i = 0; i < current.Floors.Count; i++)
             {
                 int idx = i;
-                AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
+                // Profile term, like the +/× buttons below — the tabs used to read "Ур.N" (уровень) while the
+                // two buttons beside them said «Этаж», so one strip disagreed with itself.
+                AddLevelTabButton($"{profile.TermFloor} {i + 1}", 58f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+ " + profile.TermFloor, 64f, false, AddLevel);
             // A building can lose any SELECTED floor except floor 0 (it defines the footprint and hosts the

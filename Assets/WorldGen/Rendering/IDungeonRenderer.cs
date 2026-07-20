@@ -29,9 +29,10 @@ namespace WorldGen.Rendering
         /// still {0,0} (not laid out) — the controller then retries next LateUpdate (rect gotcha).
         ///
         /// Takes bounds rather than a level (C2' revision) so the controller can fit to something other
-        /// than one floor's own content — a Building fits to the UNION of the current floor's bounds and
-        /// floor 0's contour bounds (spec C-render); a Dungeon passes the current floor's own bounds,
-        /// unchanged from before.</summary>
+        /// than one floor's own content — a Building fits to floor 0's contour bounds ALONE, the same on
+        /// every floor, so the column and every room render identically floor to floor (the current floor is
+        /// deliberately NOT unioned in; see DungeonViewController.FitBoundsFor for why). A Dungeon passes the
+        /// current floor's own bounds, unchanged from before.</summary>
         bool ResolveProjection(float minX, float minY, float maxX, float maxY);
 
         /// <summary>Tear down and rebuild every visual from scratch (structural change: add/delete/link,

@@ -3,10 +3,6 @@ using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
-    /// <summary>Layout strategy for the interior's node canvas. Spread (dungeon) lets rooms sprawl loosely;
-    /// Compact (building) packs rooms tighter (later sub-project wires the renderer to read this).</summary>
-    public enum LayoutMode { Spread = 0, Compact = 1 }
-
     /// <summary>How floors connect. ImplicitDescent (dungeon) links floors via descent/ascend badges derived
     /// from portals; ExplicitStairs (building) requires an authored Stairs/Ladder portal to move floors.</summary>
     public enum FloorLinkMode { ImplicitDescent = 0, ExplicitStairs = 1 }
@@ -33,19 +29,23 @@ namespace WorldGen.Rendering
     }
 
     /// <summary>Everything that differs between a dungeon interior and a building interior: room-type
-    /// palette, layout strategy, floor-linking convention, boss-room rule, and UI terminology. Convention:
-    /// RoomTypes[0] is always the entrance. TypeOf() never throws -- out-of-range ids clamp to index 0.</summary>
+    /// palette, floor-linking convention, and UI terminology. Convention: RoomTypes[0] is always the
+    /// entrance. TypeOf() never throws -- out-of-range ids clamp to index 0.
+    ///
+    /// EVERY field here is READ by shipped code -- kept that way on purpose. Four speculative ones
+    /// (Layout/LayoutMode, HasBossRule, TermGenerate, ShowTemplates) were dropped in the pre-merge cleanup:
+    /// nothing but InteriorProfileSelfTests ever read them, so they asserted only that the two Build()
+    /// methods still contained the literals they had been given. HasBossRule in particular was a SECOND
+    /// source of truth for a rule DungeonValidator already derives from InteriorData.Kind -- and could not
+    /// have been wired in there anyway, since the validator is headless and this file is not.</summary>
     public class InteriorProfile
     {
         public InteriorKind Kind;
         public RoomTypeDef[] RoomTypes;
-        public LayoutMode Layout;
         public FloorLinkMode FloorLinks;
-        public bool HasBossRule;
-        public string TermFloor;
-        public string TermRoom;
-        public string TermGenerate;
-        public bool ShowTemplates;
+        public string TermFloor;      // "Этаж"  -- the floor tabs and the +/x floor buttons
+        public string TermRoom;       // "Комната" -- the free-edit toolbar's «+ <room>»
+        public string TermInterior;   // "Подземелье" / "Здание" -- the editor's top-strip title
 
         public RoomTypeDef TypeOf(int id)
         {
@@ -70,13 +70,10 @@ namespace WorldGen.Rendering
                     new RoomTypeDef("Обычная", ThemeRole.Elev,   ThemeRole.Txt, cardLabel: "Комната"), // card shows "Комната", picker shows "Обычная" (pre-profile parity)
                     new RoomTypeDef("Босс",    ThemeRole.Danger, ThemeRole.AccentInk),
                 },
-                Layout = LayoutMode.Spread,
                 FloorLinks = FloorLinkMode.ImplicitDescent,
-                HasBossRule = true,
                 TermFloor = "Этаж",
                 TermRoom = "Комната",
-                TermGenerate = "Сгенерировать",
-                ShowTemplates = false,
+                TermInterior = "Подземелье",
             };
         }
     }
@@ -84,8 +81,8 @@ namespace WorldGen.Rendering
     /// <summary>Building interior profile (user 2026-07-19). Three types: an outside entrance, a plain room,
     /// and the stairwell that connects floors vertically. The stairwell column is user-placed on floor 0 and
     /// sits at the SAME (x,y) on every floor (<see cref="Generation.BuildingGenerator"/>). RoomCommon paints
-    /// the plain room; the stair reuses RoomSpecial provisionally (tunable). RoomPrivate/RoomService are unused
-    /// (kept in ThemeService for now). Legacy saves with the old TypeId 3/4 are collapsed by
+    /// the plain room; the stair reuses RoomSpecial provisionally (tunable). Legacy saves with the old
+    /// TypeId 3/4 are collapsed by
     /// <see cref="Generation.BuildingGenerator.NormalizeTypes"/> on load.</summary>
     public static class BuildingProfile
     {
@@ -100,13 +97,10 @@ namespace WorldGen.Rendering
                     new RoomTypeDef("Комната",  ThemeRole.RoomCommon,  ThemeRole.Txt),
                     new RoomTypeDef("Лестница", ThemeRole.RoomSpecial, ThemeRole.Txt),
                 },
-                Layout = LayoutMode.Compact,
                 FloorLinks = FloorLinkMode.ExplicitStairs,
-                HasBossRule = false,
                 TermFloor = "Этаж",
                 TermRoom = "Комната",
-                TermGenerate = "Сгенерировать",
-                ShowTemplates = true,
+                TermInterior = "Здание",
             };
         }
     }

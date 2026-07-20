@@ -161,8 +161,11 @@ namespace WorldGen.Generation
         }
 
         /// <summary>The generator's ONE stair-portal shape (non-hidden, bidirectional, Russian label) — the
-        /// single place "how a stair portal is built" lives, shared by <see cref="Generate"/>,
-        /// <see cref="RewireStairChain"/> and the editor's «+этаж» (DungeonEditorScreen.AddLevel).</summary>
+        /// single place "how a stair portal is built" lives. <see cref="RewireStairChain"/> is now its ONLY
+        /// caller, and that is the point: the editor's «+ Этаж» and «Перегенерировать» used to build their own
+        /// portals (one via this method, one by re-spelling its body inline), so "RewireStairChain is the
+        /// single source of truth for the chain" was a claim two callers quietly bypassed. Both now mutate
+        /// Floors and call RewireStairChain, so the chain has exactly one author.</summary>
         public static Portal MakeStairPortal(int targetFloorIndex, int targetRoomId) => new Portal
         {
             Kind = PortalKind.Stairs,
@@ -211,6 +214,27 @@ namespace WorldGen.Generation
                     foreach (var r in d.Floors[k].Rooms) { r.X += dx; r.Y += dy; }
                 colK.SizeW = col0.SizeW; colK.SizeH = col0.SizeH;
             }
+        }
+
+        /// <summary>The COMPLETE drag-settle for a building floor, in the ONE order that keeps the vertical
+        /// shaft aligned AT REST. The two steps are NOT independent: the anti-overlap correction
+        /// (<see cref="CompactLayout.NudgeRoomOffOverlaps"/>) may MOVE the room it is given, and on floor 0
+        /// that room can be the stairwell column itself (floor 0 is free-edit — the DM can drag the Лестница
+        /// onto a neighbour, and it is then shoved clear by up to the neighbour's half-width). So the realign
+        /// MUST run AFTER the nudge: a realign that runs first syncs the upper floors to the DROPPED position,
+        /// the nudge then slides the column off it, and the shaft is left off by the shove distance —
+        /// typically ~1-3 tiles, i.e. 10-30x <c>DungeonValidator</c>'s ShaftTol, with nothing scheduled to
+        /// re-run the realign (it self-heals only on the next floor switch, so the invariant is violated at
+        /// rest and the DM is never told).
+        ///
+        /// Kept HERE, headless, rather than as two calls at the Unity call site, precisely so the ordering is
+        /// self-testable: a test that calls <see cref="RealignUpperFloorsToColumn"/> directly exercises the
+        /// realign in isolation and cannot see the ordering at all. No-op pieces are safe — the nudge is a
+        /// no-op for an unknown/zero room id, the realign is idempotent. Headless.</summary>
+        public static void SettleDraggedRoom(InteriorData d, InteriorFloor floor, int movedRoomId)
+        {
+            CompactLayout.NudgeRoomOffOverlaps(floor, movedRoomId);
+            RealignUpperFloorsToColumn(d);
         }
 
         /// <summary>AREA UPPER BOUND on the total room count (INCLUDING the Лестница column) for

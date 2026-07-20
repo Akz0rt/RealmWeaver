@@ -43,7 +43,6 @@ static class Program
     {
         var t = new WorldGen.Rendering.CompactLayoutSelfTests();
         t.SelfTestCompact();
-        t.SelfTestCompactSettle();
         t.SelfTestNudgeOffOverlaps();
         t.SelfTestFloorFootprint();
         t.SelfTestNewRoomPlacement();
@@ -51,6 +50,7 @@ static class Program
         var b = new WorldGen.Rendering.BuildingGeneratorSelfTests();
         b.SelfTestBuilding();
         b.SelfTestFloorRemoval();
+        b.SelfTestDragSettleOrdering();
         new WorldGen.Rendering.DungeonGraphSelfTests().SelfTestDungeonUnaffectedByRewire();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"

@@ -52,26 +52,12 @@ namespace WorldGen.Rendering
                     if (Overlap(f.Rooms[i], f.Rooms[j]))
                     { Debug.LogError($"FAIL overlap: rooms {f.Rooms[i].Id} and {f.Rooms[j].Id} overlap after Arrange"); ok = false; }
 
-            // ---- 4. Door lies inside the shared-wall span --------------------------------------------
-            // Rooms 1 and 2 share a vertical wall (2 is flush-right of 1). The door must sit ON that wall (X)
-            // and BETWEEN the overlapping Y span — not merely non-zero, not the room centre.
-            if (!CompactLayout.DoorOnSharedWall(f.GetRoom(1), f.GetRoom(2), out var door))
-            { Debug.LogError("FAIL door: DoorOnSharedWall(1,2) false after Arrange"); ok = false; }
-            else
-            {
-                int T = DungeonLayout.TilesPerAxis;
-                var r1 = f.GetRoom(1); var r2 = f.GetRoom(2);
-                var (w1, h1) = DungeonProjection.EffectiveSize(r1);
-                var (w2, h2) = DungeonProjection.EffectiveSize(r2);
-                // The shared wall X = room1's right face (2 sits to its right); computed independently here.
-                float wallX = r1.X * T + w1 * 0.5f;
-                float yLow = Mathf.Max(r1.Y * T - h1 * 0.5f, r2.Y * T - h2 * 0.5f);
-                float yHigh = Mathf.Min(r1.Y * T + h1 * 0.5f, r2.Y * T + h2 * 0.5f);
-                if (Mathf.Abs(door.X - wallX) > 0.05f)
-                { Debug.LogError($"FAIL door: door.X {door.X:F3} not on the shared wall {wallX:F3}"); ok = false; }
-                if (door.Y < yLow - 0.05f || door.Y > yHigh + 0.05f)
-                { Debug.LogError($"FAIL door: door.Y {door.Y:F3} outside overlap span [{yLow:F3},{yHigh:F3}]"); ok = false; }
-            }
+            // ---- 4. (removed) door position on the shared wall ---------------------------------------
+            // CompactLayout.DoorOnSharedWall was deleted in the pre-merge cleanup: the renderer takes door
+            // positions from RoomLinkGeometry, so its only caller was this assertion, which pinned nothing
+            // that ships. Door GEOMETRY is still covered — RoomLinkGeometry owns it, and DoorGapTiles (the
+            // opening width both the packer's lateral slide and DungeonFlatRenderer read) is pinned by
+            // assertion 30 below.
 
             // ---- 5. Determinism (independent of Link insertion order) --------------------------------
             // SAME branching graph, but the two copies insert the identical Link SET in a DIFFERENT order.
@@ -89,69 +75,6 @@ namespace WorldGen.Rendering
             }
 
             Debug.Log(ok ? "Self-Test Compact Layout: PASS" : "Self-Test Compact Layout: FAIL");
-        }
-
-        [ContextMenu("Self-Test: Compact Layout Settle")]
-        public void SelfTestCompactSettle()
-        {
-            bool ok = true;
-
-            // ---- 6. Settle: anchor fixed, links re-adjacent, no overlaps, deterministic --------------
-            var f = Chain();
-            CompactLayout.Arrange(f);
-            float anchorX = f.GetRoom(1).X, anchorY = f.GetRoom(1).Y;
-
-            // Yank room 3 far away so its links (2-3, 3-4) are badly non-adjacent, then Settle around 1.
-            f.GetRoom(3).X = 0.95f; f.GetRoom(3).Y = 0.5f;
-            CompactLayout.Settle(f, anchorRoomId: 1);
-
-            // Anchor must not have moved AT ALL (exact).
-            if (f.GetRoom(1).X != anchorX || f.GetRoom(1).Y != anchorY)
-            { Debug.LogError($"FAIL settle: anchor moved to ({f.GetRoom(1).X},{f.GetRoom(1).Y})"); ok = false; }
-
-            // Every link pulled back to wall-adjacency (Settle rebuilds the flush tree — no fallback needed
-            // on a connected chain). Fails if Settle no-ops and leaves room 3 stranded at 0.95.
-            foreach (var l in f.Links)
-                if (!CompactLayout.AdjacentAlongWall(f.GetRoom(l.RoomA), f.GetRoom(l.RoomB)))
-                { Debug.LogError($"FAIL settle: link {l.RoomA}-{l.RoomB} not re-adjacent"); ok = false; }
-
-            // No overlaps after Settle.
-            for (int i = 0; i < f.Rooms.Count; i++)
-                for (int j = i + 1; j < f.Rooms.Count; j++)
-                    if (Overlap(f.Rooms[i], f.Rooms[j]))
-                    { Debug.LogError($"FAIL settle: rooms {f.Rooms[i].Id} and {f.Rooms[j].Id} overlap"); ok = false; }
-
-            // ---- 6b. Settle's overlap safety net moves a LOOSE (unlinked) room off the tree ----------
-            // An orphan dropped ON room 2 is not reachable from the anchor over Links; the anchor-pinned
-            // overlap pass must push it clear WITHOUT moving the anchor. Remove that pass → this overlap
-            // survives → fails.
-            var g = Chain();
-            CompactLayout.Arrange(g);
-            float gAnchorX = g.GetRoom(1).X, gAnchorY = g.GetRoom(1).Y;
-            var orphan = new Room { Id = 10, TypeId = 1, SizeW = 4, SizeH = 4, X = g.GetRoom(2).X, Y = g.GetRoom(2).Y };
-            g.Rooms.Add(orphan);   // NO link to it
-            CompactLayout.Settle(g, anchorRoomId: 1);
-            if (g.GetRoom(1).X != gAnchorX || g.GetRoom(1).Y != gAnchorY)
-            { Debug.LogError("FAIL settle: anchor moved while resolving an orphan overlap"); ok = false; }
-            for (int i = 0; i < g.Rooms.Count; i++)
-                for (int j = i + 1; j < g.Rooms.Count; j++)
-                    if (Overlap(g.Rooms[i], g.Rooms[j]))
-                    { Debug.LogError($"FAIL settle: orphan overlap {g.Rooms[i].Id}/{g.Rooms[j].Id} not resolved"); ok = false; }
-
-            // ---- 6c. Settle determinism (independent of Link insertion order) ------------------------
-            // Same branching hub, permuted Link order, one leaf perturbed identically in both; Settle both
-            // around anchor 1 → identical. Settle's re-pack shares BuildAdjacency, so removing the neighbour
-            // .Sort() makes the permuted copy diverge here too.
-            var c1 = BranchingSettleCase(false); CompactLayout.Settle(c1, 1);
-            var c2 = BranchingSettleCase(true);  CompactLayout.Settle(c2, 1);
-            for (int id = 1; id <= 4; id++)
-            {
-                var r1 = c1.GetRoom(id); var r2 = c2.GetRoom(id);
-                if (!Mathf.Approximately(r1.X, r2.X) || !Mathf.Approximately(r1.Y, r2.Y))
-                { Debug.LogError($"FAIL settle: not deterministic under permuted link order at room {id}"); ok = false; }
-            }
-
-            Debug.Log(ok ? "Self-Test Compact Layout Settle: PASS" : "Self-Test Compact Layout Settle: FAIL");
         }
 
         [ContextMenu("Self-Test: Nudge Off Overlaps")]
@@ -1145,16 +1068,6 @@ namespace WorldGen.Rendering
                 f.Links.Add(new Link { RoomA = 1, RoomB = 3 });
                 f.Links.Add(new Link { RoomA = 1, RoomB = 4 });
             }
-            return f;
-        }
-
-        // An arranged branching hub with one leaf yanked far away — the Settle determinism stimulus. The
-        // perturbation is identical regardless of `permuted`, so any divergence comes only from link order.
-        static InteriorFloor BranchingSettleCase(bool permuted)
-        {
-            var f = Branching(permuted);
-            CompactLayout.Arrange(f);
-            f.GetRoom(4).X = 0.95f; f.GetRoom(4).Y = 0.5f;
             return f;
         }
 

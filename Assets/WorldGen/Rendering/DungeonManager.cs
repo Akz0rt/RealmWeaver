@@ -41,8 +41,11 @@ namespace WorldGen.Rendering
             dungeons.Clear();
             if (loaded != null)
             {
-                // Collapse any legacy building room types (2/3/4) to the plain room so a save from before the
-                // 2-type simplification doesn't render random rooms as the entrance (user 2026-07-19). Then
+                // Collapse the DROPPED legacy building room types (3/4 — Служебная/Особая) to the plain room
+                // so a save from before the type simplification doesn't render random rooms as the entrance
+                // (user 2026-07-19). TypeId 2 is NOT collapsed: it is the Лестница in the current palette, and
+                // collapsing it would wipe every stairwell in the building (see BuildingGenerator.NormalizeTypes,
+                // which also documents the unreleased-dev-data caveat for old TypeId 2 = "Приватная"). Then
                 // re-wire the vertical Stairs chain (F3): a project saved while a middle-floor removal could
                 // still sever the shaft (pre-fix builds of this dev branch) must still load correctly, and
                 // RewireStairChain is both IDEMPOTENT (a no-op on an already-correct chain) and REPAIR-SHAPED

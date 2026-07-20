@@ -186,7 +186,17 @@ namespace WorldGen.Rendering
                 // snapshot→rollback→SmoothDamp path below animates only its small nudge (every other room has
                 // start==target and does not move). Floor 0 and upper floors behave identically now (no
                 // per-floor contour containment).
-                CompactLayout.NudgeRoomOffOverlaps(lvl, lastAnchorRoomId);
+                //
+                // The shaft auto-realign (commit e61473a) is PART of this step and lives inside
+                // SettleDraggedRoom, not at the RevalidateAndRefresh call site above it: the nudge can move
+                // floor 0's stairwell column (the DM may drag the Лестница itself), so a realign that ran
+                // BEFORE it would sync the upper floors to a position the column is about to leave. The
+                // ordering is pinned headlessly by BuildingGeneratorSelfTests.SelfTestDragSettleOrdering.
+                //
+                // Realigning here — before the target snapshot below — is also what makes it visible: any
+                // upper-floor translation it produces is captured as a cascade target, so the floors animate
+                // into alignment and the state the DM is left looking at IS the settled one.
+                BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
             }
             else
             {
@@ -313,19 +323,19 @@ namespace WorldGen.Rendering
             if (lvl == null) return null;
             var room = DungeonOps.AddRoom(lvl, 0.5f, 0.5f);
             // BUILDING (spec C6 / user 2026-07-19): a + room must become PART of the building, never float in
-            // empty space outside the contour. GROUND floor → attach it flush to the nearest room (the
-            // footprint grows to wrap it). UPPER floor → place it at the spot with the most free space INSIDE
-            // floor 0's contour (may poke out and get red-flagged if the interior is full, but its position is
-            // driven by where there's the most room). The placement is FINAL — we do NOT set lastAnchorRoomId,
-            // so BeginCascade's anti-overlap nudge does not drag the new room off its chosen spot. Dungeons
-            // keep their previous behaviour (Separate cascade handles a new room as before).
+            // empty space outside the contour — attach it flush to the nearest room, so the footprint grows to
+            // wrap it. The placement is FINAL — we do NOT set lastAnchorRoomId, so BeginCascade's anti-overlap
+            // nudge does not drag the new room off its chosen spot. Dungeons keep their previous behaviour
+            // (Separate cascade handles a new room as before).
+            //
+            // Only the GROUND floor is reachable here for a building: a building's UPPER floors are
+            // GENERATE-ONLY, and RefreshToolbar builds them a stepper + «Перегенерировать» toolbar with NO
+            // «+ Комната» button at all (DungeonEditorScreen.RefreshToolbar). The upper-floor branch this used
+            // to carry — CompactLayout.PlaceNewRoomInContour, placing the room at the freest spot inside floor
+            // 0's contour — was therefore dead, and its comment described a button that no longer exists. That
+            // primitive is still in CompactLayout, self-tested, for the day an upper-floor «+» comes back.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building)
-            {
-                if (levelIndex == 0)
-                    CompactLayout.AttachNewRoom(lvl, room.Id);
-                else
-                    CompactLayout.PlaceNewRoomInContour(lvl, room.Id, dungeon.Floors[0], FloorFootprint.ContourMargin);
-            }
+                CompactLayout.AttachNewRoom(lvl, room.Id);
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();

@@ -36,9 +36,12 @@ namespace WorldGen.Rendering
                 && dun.RoomTypes[1].CardLabel == "Комната"
                 && dun.RoomTypes[2].CardLabel == "Босс";
 
-            ok &= dun.Layout == LayoutMode.Spread && bld.Layout == LayoutMode.Compact;
-            ok &= dun.HasBossRule && !bld.HasBossRule;
+            // FloorLinks IS read (DungeonFlatRenderer -> DungeonBadgeStrip -> InteriorTransitions), so this
+            // pins a real branch. The former Layout/HasBossRule assertions on this line went with the fields:
+            // nothing read them, so they only re-stated the literals in Build().
             ok &= dun.FloorLinks == FloorLinkMode.ImplicitDescent && bld.FloorLinks == FloorLinkMode.ExplicitStairs;
+            // Screen title (DungeonEditorScreen's top strip) — the two interiors must NOT read the same.
+            ok &= dun.TermInterior == "Подземелье" && bld.TermInterior == "Здание";
             ok &= bld.TypeOf(99).Label == "Вход"; // out-of-range clamps to entrance, never throws
 
             Debug.Log(ok ? "Self-Test Interior Profiles: PASS" : "Self-Test Interior Profiles: FAIL");
