@@ -609,6 +609,79 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Drag-Settle Ordering: PASS" : "Self-Test Drag-Settle Ordering: FAIL");
         }
 
+        /// <summary>[F5] Link.Authored distinguishes a DM's hand-drawn «Связать» corridor from every
+        /// generator-made one, so DungeonOps.HasAuthoredContent — the predicate DungeonEditorScreen's «×
+        /// Этаж» / «Перегенерировать» confirm gates on — fires ONLY when the DM actually authored something,
+        /// not on every floor a fresh spanning tree happens to populate. Non-vacuous: asserts the
+        /// PREDICATE's result (not merely the flag) in both directions, so a regression that flips the
+        /// predicate back to "any Link" (the pre-fix bug) OR one that forgets to set Authored on the
+        /// «Связать» path is caught either way. Also pins that TrimToRoomCount — a filter that RemoveAlls
+        /// from the SAME list rather than rebuilding fresh Link objects — cannot silently lose the flag off
+        /// a surviving link.</summary>
+        [ContextMenu("Self-Test: Authored Link Flag (F5)")]
+        public void SelfTestAuthoredLinkFlag()
+        {
+            bool ok = true;
+
+            // ---- 1. A freshly generated building floor has links (BuildLinks' spanning tree + loops), but
+            //         NONE authored, and the predicate agrees: a bare regen must NOT prompt. -----------------
+            var gen = BuildingGenerator.Generate(seed: 42, ownerPoiId: "p", roomCount: 6, floorCount: 2);
+            var upper = gen.Floors[1];
+            if (upper.Links.Count == 0)
+            { Debug.LogError("FAIL authored: fixture premise broken — the generated upper floor has no links to test against"); ok = false; }
+            foreach (var l in upper.Links)
+                if (l.Authored)
+                { Debug.LogError($"FAIL authored: generator-made link {l.RoomA}-{l.RoomB} came out Authored==true"); ok = false; }
+            if (DungeonOps.HasAuthoredContent(upper))
+            { Debug.LogError("FAIL authored: HasAuthoredContent fired on a freshly generated floor with zero authored links"); ok = false; }
+
+            // ---- 2. The «Связать» path — DungeonOps.AddCorridor(authored: true), what DungeonViewController.
+            //         OnRoomActivated calls — marks its link Authored, and the SAME predicate now fires. ------
+            if (upper.Rooms.Count < 2)
+            { Debug.LogError("FAIL authored: fixture premise broken — the generated upper floor has under 2 rooms"); ok = false; }
+            else
+            {
+                var r1 = upper.Rooms[0]; var r2 = upper.Rooms[1];
+                DungeonOps.RemoveCorridor(upper, r1.Id, r2.Id);   // clear any pre-existing edge so AddCorridor cannot reject as a duplicate
+                string reason = DungeonOps.AddCorridor(upper, r1.Id, r2.Id, authored: true);
+                if (reason != null)
+                { Debug.LogError($"FAIL authored: AddCorridor(authored:true) rejected: {reason}"); ok = false; }
+                var made = upper.Links.Find(l => (l.RoomA == r1.Id && l.RoomB == r2.Id) || (l.RoomA == r2.Id && l.RoomB == r1.Id));
+                if (made == null || !made.Authored)
+                { Debug.LogError("FAIL authored: the «Связать»-path link was not created with Authored==true"); ok = false; }
+                if (!DungeonOps.HasAuthoredContent(upper))
+                { Debug.LogError("FAIL authored: HasAuthoredContent did not fire once an authored link exists"); ok = false; }
+            }
+
+            // ---- 3. TrimToRoomCount preserves Authored on a SURVIVING link — it removes entries from the
+            //         SAME list (RemoveAll), never rebuilds fresh Link objects; a rewrite that reconstructed
+            //         links from scratch would silently drop the flag here. -----------------------------------
+            {
+                int T = DungeonLayout.TilesPerAxis;
+                var big = new InteriorFloor();
+                big.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 16, SizeH = 16, X = 0.5f, Y = 0.5f });
+                float cx = 0.5f * T, cy = 0.5f * T;
+                int capBig = BuildingGenerator.MaxRoomsPackable(cx, cy, 4, 4, big);
+                if (capBig >= 3 && BuildingGenerator.TryBuildUpperFloorExact(capBig, 909, 8, cx, cy, 4, 4, big, out var full, out var st))
+                {
+                    var firstLink = full.Links.Find(l => l.RoomA == st.Id || l.RoomB == st.Id);
+                    if (firstLink == null)
+                    { Debug.LogError("FAIL authored-trim: fixture premise broken — the column has no link to mark"); ok = false; }
+                    else
+                    {
+                        firstLink.Authored = true;   // mark BEFORE trimming — the flag must not affect which link survives
+                        int otherId = firstLink.RoomA == st.Id ? firstLink.RoomB : firstLink.RoomA;
+                        BuildingGenerator.TrimToRoomCount(full, 2, st.Id);
+                        var survivor = full.Links.Find(l => (l.RoomA == st.Id && l.RoomB == otherId) || (l.RoomA == otherId && l.RoomB == st.Id));
+                        if (survivor == null || !survivor.Authored)
+                        { Debug.LogError("FAIL authored-trim: TrimToRoomCount dropped the Authored flag off a surviving link"); ok = false; }
+                    }
+                }
+            }
+
+            Debug.Log(ok ? "Self-Test Authored Link Flag (F5): PASS" : "Self-Test Authored Link Flag (F5): FAIL");
+        }
+
         // A 3-floor building whose floor-0 Лестница has been "dropped" dead on top of a neighbouring room —
         // the stimulus for the drag-settle ordering test. Reports the column and the position it was dropped
         // at, so the caller can assert the nudge really moved it.

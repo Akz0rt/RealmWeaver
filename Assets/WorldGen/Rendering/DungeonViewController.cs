@@ -456,7 +456,9 @@ namespace WorldGen.Rendering
 
             var lvl = BoundLevel;
             if (lvl == null) return;
-            string reason = DungeonOps.AddCorridor(lvl, a, id);
+            // authored: true — this IS the «Связать» action, the only path that hand-links two rooms
+            // (see DungeonOps.HasAuthoredContent, which the regen/floor-delete confirm gates on).
+            string reason = DungeonOps.AddCorridor(lvl, a, id, authored: true);
             if (reason != null)
             {
                 RefreshHighlights();

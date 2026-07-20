@@ -30,15 +30,19 @@ namespace WorldGen.Generation
                                              && s.TargetFloorIndex == levelIndex && s.TargetRoomId == roomId);
         }
 
-        /// <summary>Add a corridor a–b. Returns null on success, or a Russian reason on rejection.</summary>
-        public static string AddCorridor(InteriorFloor lvl, int a, int b)
+        /// <summary>Add a corridor a–b. Returns null on success, or a Russian reason on rejection.
+        /// <paramref name="authored"/> marks the link as hand-made by the DM — the ONLY caller that should
+        /// pass true is DungeonViewController.OnRoomActivated (the «Связать» action); every other caller
+        /// (generators, self-tests) leaves it false, the default, so a generated floor's links never count
+        /// as authored (see <see cref="HasAuthoredContent"/>).</summary>
+        public static string AddCorridor(InteriorFloor lvl, int a, int b, bool authored = false)
         {
             if (a == b) return "Нельзя связать комнату с собой.";
             if (lvl.GetRoom(a) == null || lvl.GetRoom(b) == null) return "Комната не найдена.";
             foreach (var c in lvl.Links)
                 if ((c.RoomA == a && c.RoomB == b) || (c.RoomA == b && c.RoomB == a))
                     return "Эти комнаты уже связаны.";
-            lvl.Links.Add(new Link { RoomA = a, RoomB = b });
+            lvl.Links.Add(new Link { RoomA = a, RoomB = b, Authored = authored });
             return null;
         }
 
@@ -91,6 +95,27 @@ namespace WorldGen.Generation
         // DungeonExit, which just leaves the dungeon.
         static bool IsInterFloor(PortalKind k) =>
             k == PortalKind.SecretDoor || k == PortalKind.Stairs || k == PortalKind.Ladder || k == PortalKind.Trapdoor;
+
+        /// <summary>Does this floor hold content a DM AUTHORED — i.e. content an irreversible, undo-less
+        /// destroy (DungeonEditorScreen's «× Этаж» / «Перегенерировать») would silently take away? Three
+        /// sources: a room Title/Body (the note layer); any Link with Authored==true (set ONLY by the
+        /// «Связать» action via <see cref="AddCorridor"/>'s authored parameter — every generator-made link
+        /// leaves this false, so a freshly generated floor's spanning tree does not trip this on its own);
+        /// and any non-Stairs portal (secret passage / dungeon exit — the only portal kinds the inspector
+        /// lets a DM create). Stairs portals are excluded on purpose: they are 100% generator-owned
+        /// (BuildingGenerator.RewireStairChain builds and rebuilds them; the inspector cannot add one), so
+        /// counting them would make every floor of every multi-floor building prompt.</summary>
+        public static bool HasAuthoredContent(InteriorFloor lvl)
+        {
+            if (lvl == null) return false;
+            foreach (var l in lvl.Links) if (l.Authored) return true;
+            foreach (var r in lvl.Rooms)
+            {
+                if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
+                foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
+            }
+            return false;
+        }
 
         public static Portal AddSecret(Room room)
         {

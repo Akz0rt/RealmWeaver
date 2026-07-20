@@ -48,6 +48,14 @@ namespace WorldGen.Generation
     {
         public int RoomA;
         public int RoomB;
+        /// <summary>True only for a link the DM hand-drew via «Связать» (DungeonViewController.
+        /// OnRoomActivated -> DungeonOps.AddCorridor(authored: true)). Every generator-made link
+        /// (BuildingGenerator.BuildLinks, DungeonGraphGenerator, CompactLayout's fill-phase
+        /// AddLinkIfAbsent) leaves this false, its default — same convention as Portal.Hidden above:
+        /// absent in an older save (no field before this) deserializes as false. Drives
+        /// DungeonOps.HasAuthoredContent, which gates DungeonEditorScreen's «× Этаж» / «Перегенерировать»
+        /// confirm so a freshly generated floor's spanning tree does not trip it on its own.</summary>
+        public bool Authored = false;
     }
 
     /// <summary>One floor as a graph: rooms + links. NextRoomId hands out stable ids.</summary>

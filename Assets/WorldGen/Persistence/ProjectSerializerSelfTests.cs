@@ -342,6 +342,58 @@ namespace WorldGen.Persistence
             Debug.Log(ok ? "Self-Test Dungeon Graph Round-Trip: PASS" : "Self-Test Dungeon Graph Round-Trip: FAIL");
         }
 
+        [ContextMenu("Self-Test: Link Authored Round-Trip")]
+        public void SelfTestLinkAuthoredRoundTrip()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "link_authored_roundtrip_test.dndproj");
+
+            // A mixed floor: one hand-drawn («Связать») link and one generator-made link, so the round-trip
+            // must tell them apart rather than round-tripping a single hardcoded value both ways.
+            var lvl = new InteriorFloor { NextRoomId = 4 };
+            lvl.Rooms.Add(new Room { Id = 1, TypeId = 1 });
+            lvl.Rooms.Add(new Room { Id = 2, TypeId = 1 });
+            lvl.Rooms.Add(new Room { Id = 3, TypeId = 1 });
+            lvl.Links.Add(new Link { RoomA = 1, RoomB = 2, Authored = true });
+            lvl.Links.Add(new Link { RoomA = 2, RoomB = 3, Authored = false });
+            var dungeon = new InteriorData { OwnerPoiId = "poi-auth", Floors = { lvl } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { dungeon });
+            var r = ProjectSerializer.Load(path);
+
+            bool ok = r.Success && r.Dungeons != null && r.Dungeons.Count == 1 && r.Dungeons[0].Floors.Count == 1;
+            var f = ok ? r.Dungeons[0].Floors[0] : null;
+            var link12 = f?.Links.Find(l => l.RoomA == 1 && l.RoomB == 2);
+            var link23 = f?.Links.Find(l => l.RoomA == 2 && l.RoomB == 3);
+            ok &= link12 != null && link12.Authored;
+            ok &= link23 != null && !link23.Authored;
+
+            // --- Legacy simulation: a file saved before Authored existed must load with Authored == false —
+            // NOT just "false because it round-tripped false", but "false because the property is genuinely
+            // absent". Same rename trick as SelfTestRegionLabelsRoundTrip/SelfTestLegacyRegionMigration above:
+            // renaming the JSON key means the deserializer finds no matching member for it and keeps the C#
+            // field initializer's default, exactly what an old file missing the property would produce. ---
+            string legacyJson = File.ReadAllText(path).Replace("\"Authored\"", "\"AuthoredRenamed\"");
+            string legacyPath = Path.Combine(Path.GetTempPath(), "link_authored_legacy_test.dndproj");
+            File.WriteAllText(legacyPath, legacyJson);
+            var legacyResult = ProjectSerializer.Load(legacyPath);
+            try { File.Delete(path); } catch { }
+            try { File.Delete(legacyPath); } catch { }
+
+            bool legacyOk = legacyResult.Success && legacyResult.Dungeons != null && legacyResult.Dungeons.Count == 1
+                && legacyResult.Dungeons[0].Floors.Count == 1;
+            var legacyFloor = legacyOk ? legacyResult.Dungeons[0].Floors[0] : null;
+            var legacyLink12 = legacyFloor?.Links.Find(l => l.RoomA == 1 && l.RoomB == 2);
+            // On disk this link was saved Authored:true, but with the property renamed away it must come
+            // back false — proving the field truly defaults rather than merely happening to match.
+            ok &= legacyOk && legacyLink12 != null && !legacyLink12.Authored;
+
+            Debug.Log(ok
+                ? "Self-Test Link Authored Round-Trip: PASS"
+                : "Self-Test Link Authored Round-Trip: FAIL — see field checks in SelfTestLinkAuthoredRoundTrip");
+        }
+
         [ContextMenu("Self-Test: Old-Format Dungeons Dropped")]
         public void SelfTestOldFormatDungeonsDropped()
         {

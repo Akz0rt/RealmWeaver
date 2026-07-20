@@ -163,35 +163,8 @@ namespace WorldGen.Rendering
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Floors.Count - 1));
         }
 
-        /// <summary>Does this floor hold content a DM AUTHORED — i.e. content an irreversible, undo-less
-        /// destroy (× Этаж / Перегенерировать) would silently take away? Three sources, and the dialog text
-        /// promises all three («Все комнаты, СВЯЗИ и ЗАМЕТКИ этого этажа будут потеряны»):
-        ///   • a room Title or Body (the note layer);
-        ///   • ANY corridor — «Связать» is the only way a DM adds one, and a GENERATED floor also arrives
-        ///     with a spanning tree, so this makes the gate effectively always-on for a populated floor.
-        ///     That is the deliberate, safe direction: nothing marks a Link as hand-made vs generated, and
-        ///     there is no undo, so we cannot tell the DM's dozen «Связать» corridors from the generator's
-        ///     and must assume the worst rather than destroy them in silence;
-        ///   • any NON-Stairs portal (secret passage / dungeon exit) — the only portal kinds the inspector
-        ///     lets a DM create.
-        /// Stairs portals are excluded ON PURPOSE: they are 100% generator-owned (BuildingGenerator.
-        /// RewireStairChain builds and rebuilds them; the inspector cannot add one), so counting them would
-        /// make EVERY floor of EVERY multi-floor building prompt, which teaches the DM to click through the
-        /// dialog without reading it.</summary>
-        static bool HasAuthoredContent(InteriorFloor lvl)
-        {
-            if (lvl == null) return false;
-            if (lvl.Links.Count > 0) return true;
-            foreach (var r in lvl.Rooms)
-            {
-                if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
-                foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
-            }
-            return false;
-        }
-
         /// <summary>Secret passages ON OTHER FLOORS that point AT floor <paramref name="floorIndex"/> — they
-        /// do not live on that floor, so <see cref="HasAuthoredContent"/> cannot see them, yet destroying or
+        /// do not live on that floor, so <see cref="DungeonOps.HasAuthoredContent"/> cannot see them, yet destroying or
         /// regenerating the floor takes them with it (their target room ceases to exist). Counted so the
         /// confirm dialog can name the loss instead of letting it happen off-screen.</summary>
         static int CountInboundSecrets(InteriorData d, int floorIndex)
@@ -218,7 +191,7 @@ namespace WorldGen.Rendering
             if (idx < 0) return;   // guarded: a Building's floor 0 is never removable
             var lvl = current.Floors[idx];   // the floor that will actually be removed — the SELECTED one
             int inbound = CountInboundSecrets(current, idx);
-            if (HasAuthoredContent(lvl) || inbound > 0)
+            if (DungeonOps.HasAuthoredContent(lvl) || inbound > 0)
             {
                 string body = "Все комнаты, связи и заметки этого этажа будут потеряны.";
                 if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";
@@ -518,7 +491,7 @@ namespace WorldGen.Rendering
             // undo. Same predicate as «× Этаж» — the two must not disagree about what "authored" means.
             var lvl = CurrentLevel;
             int inbound = CountInboundSecrets(current, CurrentLevelIndex);
-            if (HasAuthoredContent(lvl) || inbound > 0)
+            if (DungeonOps.HasAuthoredContent(lvl) || inbound > 0)
             {
                 string body = "Комнаты этого этажа, их связи, названия и заметки будут заменены.";
                 if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";

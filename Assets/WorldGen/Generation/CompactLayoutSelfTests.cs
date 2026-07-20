@@ -354,6 +354,15 @@ namespace WorldGen.Rendering
             // ignores ContainsRect/IsFree breaks containment/overlap; moving the column breaks the pin.
             var bigContour = BigContour();
             var g = OrphanSubtreeFloor();
+            // Mark the 1-4 link (both rooms survive the drop) Authored — the packer's drop step
+            // (CompactLayout.Apply) filters floor.Links with RemoveAll, which preserves object identity for
+            // survivors; a rewrite that rebuilt fresh Link objects when committing the kept set would
+            // silently lose this flag. Marking BEFORE packing also proves the flag cannot influence which
+            // link survives (assertion 19 below still expects the same kept set).
+            var link14 = g.Links.Find(l => (l.RoomA == 1 && l.RoomB == 4) || (l.RoomA == 4 && l.RoomB == 1));
+            if (link14 == null)
+            { Debug.LogError("FAIL authored-pack: fixture premise broken — no 1-4 link in OrphanSubtreeFloor"); ok = false; }
+            else link14.Authored = true;
             int keptG = CompactLayout.PackAroundColumnWithinFootprint(g, 1, 64f, 64f, bigContour, m);
             if (keptG != 4 || g.GetRoom(2) != null)
             { Debug.LogError($"FAIL pack-drop: kept {keptG} rooms (room 2 present: {g.GetRoom(2) != null}), want 4 with the oversized room 2 dropped"); ok = false; }
@@ -361,6 +370,9 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL pack-retry: room 3 (reachable only through the DROPPED room 2) was never placed"); ok = false; }
             else if (!CompactLayout.AdjacentAlongWall(g.GetRoom(1), g.GetRoom(3)))
             { Debug.LogError("FAIL pack-retry: room 3 was not seated flush against the column"); ok = false; }
+            var survivingLink14 = g.Links.Find(l => (l.RoomA == 1 && l.RoomB == 4) || (l.RoomA == 4 && l.RoomB == 1));
+            if (survivingLink14 == null || !survivingLink14.Authored)
+            { Debug.LogError("FAIL authored-pack: the surviving 1-4 link lost its Authored flag across the pack/drop filter"); ok = false; }
             foreach (var r in g.Rooms)
             {
                 var (w, h) = DungeonProjection.EffectiveSize(r);

@@ -51,6 +51,7 @@ static class Program
         b.SelfTestBuilding();
         b.SelfTestFloorRemoval();
         b.SelfTestDragSettleOrdering();
+        b.SelfTestAuthoredLinkFlag();
         new WorldGen.Rendering.DungeonGraphSelfTests().SelfTestDungeonUnaffectedByRewire();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
