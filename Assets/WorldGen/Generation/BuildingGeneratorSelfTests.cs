@@ -573,8 +573,19 @@ namespace WorldGen.Rendering
 
             // ---- 3. THE RULE: SettleDraggedRoom pins nudge-then-realign, so the shaft holds AT REST -----
             {
-                var good = DropColumnOnNeighbour(seed: 71, out var goodCol, out _, out _);
+                var good = DropColumnOnNeighbour(seed: 71, out var goodCol, out float gDropX, out float gDropY);
                 BuildingGenerator.SettleDraggedRoom(good, good.Floors[0], goodCol.Id);
+
+                // The NUDGE half of SettleDraggedRoom, asserted where it is actually composed. Without this the
+                // whole method could lose its CompactLayout.NudgeRoomOffOverlaps call and every assertion in
+                // this file would still pass: parts 1 and 2 call the primitives directly, part 4 has nothing
+                // that moves, and the shaft checks below compare the upper floors against goodCol — which in a
+                // nudge-free world simply equals the DROP position, so the realign aligns everything to it and
+                // the shaft reads as perfect while the column sits on top of its neighbour. Anchor the check to
+                // the DROP position instead: the column must have LEFT the overlap.
+                if (Mathf.Abs(goodCol.X - gDropX) < 1e-4f && Mathf.Abs(goodCol.Y - gDropY) < 1e-4f)
+                { Debug.LogError("FAIL drag-order: SettleDraggedRoom left the column exactly where it was dropped (on top of its neighbour) — the anti-overlap nudge is not running"); ok = false; }
+
                 if (HasMsg(DungeonValidator.Validate(good), ShaftMsg))
                 { Debug.LogError("FAIL drag-order: the shaft is still misaligned after SettleDraggedRoom — the realign is not running after the nudge"); ok = false; }
 
@@ -635,6 +646,22 @@ namespace WorldGen.Rendering
             if (DungeonOps.HasAuthoredContent(upper))
             { Debug.LogError("FAIL authored: HasAuthoredContent fired on a freshly generated floor with zero authored links"); ok = false; }
 
+            // …and the STAIRS-EXCLUSION clause, which `upper` alone cannot see: floor 1 is the TOP floor, and
+            // RewireStairChain wires portals DOWNWARD-from-below only, so it carries no portals at all. Floor 0
+            // DOES carry the generator's Stairs portal (up to floor 1) and nothing else authored — BuildingGenerator
+            // .Generate sets no Title/Body and marks no link Authored — so it is the fixture that pins
+            // `p.Kind != PortalKind.Stairs`. Drop that clause and every multi-floor building's non-top floors
+            // would prompt "content will be lost" on «× Этаж» / «Перегенерировать» for a portal the DM never made.
+            var ground = gen.Floors[0];
+            bool groundHasStairs = false;
+            foreach (var r in ground.Rooms)
+                foreach (var p in r.Portals)
+                    if (p.Kind == PortalKind.Stairs) groundHasStairs = true;
+            if (!groundHasStairs)
+            { Debug.LogError("FAIL authored: fixture premise broken — floor 0 of a 2-floor building has no Stairs portal, so the Stairs-exclusion clause is untested"); ok = false; }
+            if (DungeonOps.HasAuthoredContent(ground))
+            { Debug.LogError("FAIL authored: HasAuthoredContent fired on floor 0, whose only portal is the generator's Stairs — the Stairs exclusion is gone"); ok = false; }
+
             // ---- 2. The «Связать» path — DungeonOps.AddCorridor(authored: true), what DungeonViewController.
             //         OnRoomActivated calls — marks its link Authored, and the SAME predicate now fires. ------
             if (upper.Rooms.Count < 2)
@@ -676,6 +703,13 @@ namespace WorldGen.Rendering
                         if (survivor == null || !survivor.Authored)
                         { Debug.LogError("FAIL authored-trim: TrimToRoomCount dropped the Authored flag off a surviving link"); ok = false; }
                     }
+                }
+                else
+                {
+                    // Parts 1 and 2 shout when their fixture premise breaks; this block used to fall silently
+                    // through, so a packer change that dropped this contour below 3 rooms (or a build failure)
+                    // would DELETE the whole trim assertion while the suite still printed PASS.
+                    Debug.LogError($"FAIL authored-trim: fixture premise broken — cap {capBig} (need ≥ 3) or the exact upper-floor build failed, so the trim assertion never ran"); ok = false;
                 }
             }
 

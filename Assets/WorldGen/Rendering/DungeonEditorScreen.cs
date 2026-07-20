@@ -237,9 +237,39 @@ namespace WorldGen.Rendering
             if (viewController != null) viewController.BeginCascade();
             if (inspectorPanel != null)
             {
-                inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
+                // This pass would otherwise run MID-FLIGHT. BeginCascade above has, by design, rolled the
+                // VIEWED floor back to its pre-settle start so Update() can animate it — while the shaft
+                // realign inside the settle has ALREADY moved the upper floors (which are not in the viewed
+                // floor's snapshot and so are never rolled back) to their settled positions. For a BUILDING
+                // whose stairwell column just moved, validating in that window compares floor 0's DROP
+                // position against the upper floors' SETTLED one and reports «лестница не совпадает со
+                // столбом» — an error that is purely an artefact of the animation, and one that advises the
+                // DM to regenerate, which would destroy the upper floor's authored content.
+                //
+                // So for a building mid-cascade we hold the PREVIOUS validation on screen (stale for the
+                // ~0.2 s the animation runs, never wrong) and let OnCascadeSettled → RevalidateOnly publish
+                // the real result the moment the rooms land. Narrowed to Building on purpose: the shaft rule
+                // is the validator's ONLY position-dependent rule, so for a DUNGEON this pass is unaffected
+                // by the rollback and keeps its exact shipped timing — nothing about the dungeon path
+                // changes (its extra settle pass is idempotent).
+                bool midBuildingCascade = current != null && current.Kind == InteriorKind.Building
+                                          && viewController != null && viewController.Cascading;
+                if (!midBuildingCascade) inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
                 inspectorPanel.ShowRoom(selectedRoomId);
             }
+        }
+
+        /// <summary>Validation ONLY — no cascade, no rebind, no redraw. Wired as
+        /// DungeonViewController.OnCascadeSettled, which fires when the room positions have reached their
+        /// final resting values (end of the animation, or immediately when there was nothing to animate).
+        ///
+        /// This is deliberately NOT RevalidateAndRefresh: that method's first act is BeginCascade, which is
+        /// what raised this callback, so wiring it here would re-enter the cascade from its own completion
+        /// and loop. It is also deliberately not a redraw — Update() has just done a Clean reposition, and
+        /// the graph is already showing the settled state.</summary>
+        void RevalidateOnly()
+        {
+            if (inspectorPanel != null) inspectorPanel.ShowValidation(DungeonValidator.Validate(current));
         }
 
         int FreshSeed() => Random.Range(int.MinValue, int.MaxValue);
@@ -555,7 +585,21 @@ namespace WorldGen.Rendering
         ///
         /// The vertical Stairs chain is then rebuilt by the ONE method that owns it — floor k-1 re-targets the
         /// new Лестница and floor k+1 is re-attached — instead of the hand-rolled portal this used to spell
-        /// out inline (a second copy of BuildingGenerator.MakeStairPortal's body, free to drift from it).</summary>
+        /// out inline (a second copy of BuildingGenerator.MakeStairPortal's body, free to drift from it).
+        ///
+        /// WHY THE SWEEP BELOW IS NARROWER THAN RemoveLevel'S AND STILL EQUIVALENT. DungeonOps.RemoveLevel
+        /// drops every portal whose Kind is IsInterFloor (SecretDoor, Stairs, Ladder, Trapdoor) that targeted
+        /// the destroyed level; this drops only SecretDoor. That relies on two facts that hold today and are
+        /// worth writing down, because the equivalence silently breaks if either changes:
+        ///   (1) STAIRS need no sweep here — RewireStairChain on the very next line STRIPS every Лестница's
+        ///       Stairs portals interior-wide and rebuilds the whole chain from the current floors, so a
+        ///       stale one targeting k cannot survive this method whether we removed it or not. (Deleting
+        ///       that call, or narrowing it to a subset of floors, would make this sweep insufficient.)
+        ///   (2) LADDER and TRAPDOOR are never CONSTRUCTED anywhere under Assets/ — they exist in the
+        ///       PortalKind enum only. Neither generator emits one and the inspector cannot create one, so
+        ///       there is nothing of those kinds to sweep. The day a Ladder/Trapdoor authoring path lands,
+        ///       this predicate must widen to DungeonOps' IsInterFloor rule (which would have to be made
+        ///       public) — do not assume the narrow test is a deliberate exemption.</summary>
         void ReplaceCurrentUpperFloor(InteriorFloor newFloor)
         {
             int k = CurrentLevelIndex;
@@ -638,6 +682,15 @@ namespace WorldGen.Rendering
             viewController = viewGO.AddComponent<DungeonViewController>();
             viewController.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
             viewController.OnGraphMutated = RevalidateAndRefresh;
+            // Re-validate ONCE the settle has actually landed. RevalidateAndRefresh validates BEFORE the
+            // cascade animation finishes (it has to — it is the thing that starts it), and during that window
+            // the viewed floor is deliberately rolled back to its pre-settle drop position while the shaft
+            // realign has ALREADY moved the upper floors to the settled one. Validating there reports a
+            // «лестница не совпадает со столбом» error that is an artefact of the animation, and — since
+            // nothing else re-validates — it stays on screen advising a regeneration that would destroy the
+            // upper floor. Deliberately NOT wired to RevalidateAndRefresh: that would call BeginCascade again
+            // and re-enter from its own completion callback.
+            viewController.OnCascadeSettled = RevalidateOnly;
             viewController.OnJumpToLevel = SetLevel;
 
             var flatGO = new GameObject("FlatRenderer", typeof(RectTransform));

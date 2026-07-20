@@ -26,9 +26,20 @@ namespace WorldGen.Rendering
         public System.Action<int> OnRoomSelected;   // fires with a room id, or 0 when selection clears
         public System.Action OnGraphMutated;        // fires after add/delete/link/drag-end (structural change)
         public System.Action<int> OnJumpToLevel;    // fires with a target level index (badge click)
+        // Fires when the room positions have reached their FINAL resting values — either at the end of the
+        // animation (Update's completion branch) or immediately from BeginCascade's !anyMoved early return.
+        // The host uses it to re-run VALIDATION only: between BeginCascade and this callback the rooms are
+        // deliberately rolled back to their pre-settle start positions so they can be animated, so anything
+        // that inspects geometry in that window sees a state that is about to be thrown away. Must NOT be
+        // wired to anything that mutates the graph or calls BeginCascade again — that would re-enter and loop.
+        public System.Action OnCascadeSettled;
 
         public int SelectedRoomId { get; private set; }
         public bool LinkMode { get; private set; }
+        /// <summary>True between BeginCascade and OnCascadeSettled — i.e. while the rooms are animating and
+        /// their positions are deliberately NOT the settled ones. A host that reads room geometry (the shaft
+        /// check is the only such rule today) must wait for OnCascadeSettled instead of reading it now.</summary>
+        public bool Cascading => cascading;
 
         InteriorData dungeon;
         int levelIndex;
@@ -193,9 +204,17 @@ namespace WorldGen.Rendering
                 // BEFORE it would sync the upper floors to a position the column is about to leave. The
                 // ordering is pinned headlessly by BuildingGeneratorSelfTests.SelfTestDragSettleOrdering.
                 //
-                // Realigning here — before the target snapshot below — is also what makes it visible: any
-                // upper-floor translation it produces is captured as a cascade target, so the floors animate
-                // into alignment and the state the DM is left looking at IS the settled one.
+                // Realigning here — before the target snapshot below — puts the shaft back in sync as part of
+                // the same settle. NOTE what it does NOT do: the snapshot/rollback/animate machinery below
+                // only ever sees `lvl.Rooms`, i.e. the CURRENTLY VIEWED floor. When the viewed floor is floor
+                // 0 (the usual case — only floor 0 is draggable), the upper-floor rooms this realign
+                // translates are in NO snapshot: they are neither rolled back nor animated, they simply jump
+                // to their settled positions immediately. That is fine visually (they are off-screen) but it
+                // means the viewed floor and the rest of the building are momentarily inconsistent — floor 0
+                // sits at its rolled-back DROP position while the upper floors already sit at the SETTLED
+                // one. Any shaft check run in that window sees a mismatch of the nudge distance and reports a
+                // false «лестница не совпадает со столбом». Hence OnCascadeSettled: the host re-validates only
+                // once the animation has landed. Do not move validation back before the animation.
                 BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
             }
             else
@@ -233,6 +252,11 @@ namespace WorldGen.Rendering
                 cascadeTargets = null;
                 cascadeVel = null;
                 Refresh();
+                // Nothing to animate — the settled state IS the current state, so the "settled" moment is
+                // now. Fires here too so the host has ONE re-validation hook that covers every path out of
+                // BeginCascade (an upper floor can still have been realigned even when the viewed floor
+                // itself did not move).
+                OnCascadeSettled?.Invoke();
                 return;
             }
 
@@ -286,6 +310,10 @@ namespace WorldGen.Rendering
                 cascading = false;
                 cascadeTargets = null;
                 cascadeVel = null;
+                // Rooms are now EXACTLY on their targets — the first moment the whole interior is
+                // self-consistent again (see BeginCascade's building branch). Fire last, after the state is
+                // cleared, so a handler that somehow re-enters cannot see a half-torn-down cascade.
+                OnCascadeSettled?.Invoke();
             }
         }
 
