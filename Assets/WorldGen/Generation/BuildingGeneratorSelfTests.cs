@@ -421,19 +421,18 @@ namespace WorldGen.Rendering
             }
 
             // ---- 2. Floor 0 is protected from removal (task requirement 2) --------------------------------
-            // The refusal lives in DungeonEditorScreen.FloorToRemove (UI-level: `Kind==Building &&
-            // CurrentLevelIndex<=0` returns -1, which RemoveCurrentLevel/RequestRemoveCurrentLevel both check)
-            // — there's no headless BuildingGenerator/DungeonOps guard to call, so per the task brief this
-            // asserts the guard PREDICATE directly (kept in sync by hand with FloorToRemove's condition), PLUS
-            // the real consequence that predicate exists to prevent: a building missing floor 0 fails
-            // validation (no entrance anywhere), which is WHY the removal must be refused in the first place.
+            // The refusal lives in DungeonEditorScreen.FloorToRemove (UI-level: returns -1, which
+            // RemoveCurrentLevel/RequestRemoveCurrentLevel both check), and it now calls the SAME headless
+            // predicate this test asserts — BuildingGenerator.IsFloorZeroLocked — so the UI guard and this test
+            // can never drift apart (previously this was a hand copy of FloorToRemove's condition). PLUS the
+            // real consequence that predicate exists to prevent: a building missing floor 0 fails validation
+            // (no entrance anywhere), which is WHY the removal must be refused in the first place.
             {
-                bool Refuses(InteriorKind kind, int levelIndex) => kind == InteriorKind.Building && levelIndex <= 0;
-                if (!Refuses(InteriorKind.Building, 0))
+                if (!BuildingGenerator.IsFloorZeroLocked(InteriorKind.Building, 0))
                 { Debug.LogError("FAIL floor0-guard: a Building must refuse removing floor 0"); ok = false; }
-                if (Refuses(InteriorKind.Building, 1) || Refuses(InteriorKind.Building, 2))
+                if (BuildingGenerator.IsFloorZeroLocked(InteriorKind.Building, 1) || BuildingGenerator.IsFloorZeroLocked(InteriorKind.Building, 2))
                 { Debug.LogError("FAIL floor0-guard: a Building must NOT refuse removing floor 1+"); ok = false; }
-                if (Refuses(InteriorKind.Dungeon, 0))
+                if (BuildingGenerator.IsFloorZeroLocked(InteriorKind.Dungeon, 0))
                 { Debug.LogError("FAIL floor0-guard: a Dungeon has no floor-0 protection"); ok = false; }
 
                 var noFloor0 = BuildingGenerator.Generate(seed: 23, ownerPoiId: "p", roomCount: 6, floorCount: 3);

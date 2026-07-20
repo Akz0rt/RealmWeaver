@@ -173,6 +173,14 @@ namespace WorldGen.Generation
             Label = "Лестница",
         };
 
+        /// <summary>A Building's floor 0 defines the footprint and hosts the shared stairwell column — it can
+        /// never be removed (a building missing floor 0 fails validation: no entrance anywhere). The ONE place
+        /// this predicate lives — the editor's DungeonEditorScreen.FloorToRemove guards the actual removal with
+        /// it, and BuildingGeneratorSelfTests asserts against it directly, so the two can never drift apart.
+        /// Dungeons have no floor-0 protection (levelIndex 0 is removable like any other).</summary>
+        public static bool IsFloorZeroLocked(InteriorKind kind, int levelIndex) =>
+            kind == InteriorKind.Building && levelIndex <= 0;
+
         // The floor's Лестница (StairTypeId) room, or null if it has none — the one lookup every column-chain
         // operation (FindFloorZeroColumn, RewireStairChain) needs; kept in one place per-floor rather than
         // re-inlining the same scan.

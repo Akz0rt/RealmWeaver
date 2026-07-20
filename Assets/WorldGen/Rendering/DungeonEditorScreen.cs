@@ -133,7 +133,7 @@ namespace WorldGen.Rendering
         // flow. Dungeons remove the currently-selected floor, unrestricted, as before.
         int FloorToRemove()
         {
-            if (current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex <= 0) return -1;
+            if (current != null && BuildingGenerator.IsFloorZeroLocked(current.Kind, CurrentLevelIndex)) return -1;
             return CurrentLevelIndex;
         }
 
