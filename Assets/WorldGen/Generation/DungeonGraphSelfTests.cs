@@ -126,6 +126,42 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Dungeon Remove-Level Integrity: PASS" : "Self-Test Dungeon Remove-Level Integrity: FAIL");
         }
 
+        /// <summary>[F3] The dungeon path must be BEHAVIOURALLY UNCHANGED by the building floor-removal fix:
+        /// DungeonOps.RemoveLevel above already proves the removal integrity itself is untouched (this task
+        /// didn't modify DungeonOps at all); this proves BuildingGenerator.RewireStairChain — the ONLY new
+        /// piece of behaviour — is a hard no-op on a Dungeon, so DungeonEditorScreen's Kind-gated call
+        /// (`if (current.Kind == InteriorKind.Building) RewireStairChain(...)`) is safe even in principle.
+        /// Non-vacuous: a dungeon's Boss room uses TypeId 2 — the SAME int as a building's Лестница
+        /// (BuildingGenerator.StairTypeId) — so without the Kind gate, RewireStairChain would mistake the
+        /// Boss room for a stairwell column and strip/rewrite its portal; this seeds exactly that trap.</summary>
+        [ContextMenu("Self-Test: Dungeon Unaffected By Building Re-wire (F3)")]
+        public void SelfTestDungeonUnaffectedByRewire()
+        {
+            bool ok = true;
+
+            var dun = new InteriorData { Kind = InteriorKind.Dungeon };
+            var lvl0 = new InteriorFloor(); var lvl1 = new InteriorFloor();
+            dun.Floors.Add(lvl0); dun.Floors.Add(lvl1);
+            var boss = DungeonOps.AddRoom(lvl0, 0.5f, 0.5f);
+            boss.TypeId = 2;   // Boss for a dungeon — numerically identical to BuildingGenerator.StairTypeId
+            boss.Portals.Add(new Portal
+            {
+                Kind = PortalKind.Stairs, Hidden = false, TargetFloorIndex = 1, TargetRoomId = 999, Bidirectional = true, Label = "x",
+            });
+            int before = boss.Portals.Count;
+
+            BuildingGenerator.RewireStairChain(dun);
+
+            if (boss.Portals.Count != before)
+            { Debug.LogError($"FAIL dungeon-unaffected: RewireStairChain changed the Boss room's portal count ({before} -> {boss.Portals.Count}) — the Kind gate is not stopping it"); ok = false; }
+            if (boss.Portals.Count > 0 && (boss.Portals[0].Kind != PortalKind.Stairs || boss.Portals[0].TargetFloorIndex != 1 || boss.Portals[0].TargetRoomId != 999))
+            { Debug.LogError("FAIL dungeon-unaffected: RewireStairChain mutated the Boss room's portal instead of leaving it alone"); ok = false; }
+            if (dun.Floors.Count != 2)
+            { Debug.LogError("FAIL dungeon-unaffected: RewireStairChain must never add/remove floors on a Dungeon"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Dungeon Unaffected By Building Re-wire (F3): PASS" : "Self-Test Dungeon Unaffected By Building Re-wire (F3): FAIL");
+        }
+
         [ContextMenu("Self-test: DungeonProjection round-trip")]
         public void SelfTestProjectionRoundTrip()
         {

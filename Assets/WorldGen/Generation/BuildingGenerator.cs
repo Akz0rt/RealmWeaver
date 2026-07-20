@@ -71,25 +71,17 @@ namespace WorldGen.Generation
             int colW = column.SizeW, colH = column.SizeH;
 
             // --- Upper floors (1..): each a Лестница (the column footprint) at the column + Комнаты around it,
-            //     within floor 0's bbox; joined by a Stairs portal up the column. ----------------------------
-            Room lowerStair = column;
+            //     within floor 0's bbox. The vertical Stairs chain is wired in ONE pass at the end by
+            //     RewireStairChain — the SAME method a floor REMOVAL re-runs to repair the chain — so a fresh
+            //     build and a post-removal repair are guaranteed to produce byte-identical portal shapes. -------
             int budget = roomCount;
             for (int k = 1; k < floorCount; k++)
             {
                 budget = Math.Max(1, budget - rng.Next(1, 3));   // fewer rooms upstairs
-                var upper = GenerateFloorAroundColumn(rng, budget, colX, colY, colW, colH, ground, out var upperStair);
-                lowerStair.Portals.Add(new Portal
-                {
-                    Kind = PortalKind.Stairs,
-                    Hidden = false,
-                    TargetFloorIndex = k,
-                    TargetRoomId = upperStair.Id,
-                    Bidirectional = true,
-                    Label = "Лестница",
-                });
+                var upper = GenerateFloorAroundColumn(rng, budget, colX, colY, colW, colH, ground, out _);
                 data.Floors.Add(upper);
-                lowerStair = upperStair;
             }
+            RewireStairChain(data);
             return data;
         }
 
@@ -130,7 +122,64 @@ namespace WorldGen.Generation
         public static Room FindFloorZeroColumn(InteriorData d)
         {
             if (d == null || d.Floors == null || d.Floors.Count == 0) return null;
-            foreach (var r in d.Floors[0].Rooms) if (r.TypeId == StairTypeId) return r;
+            return FindStairRoom(d.Floors[0]);
+        }
+
+        /// <summary>Rebuild the vertical Stairs-portal chain along the shared column for a Building, from the
+        /// CURRENT floor list — the single source of truth after ANY structural edit (generation, +этаж, or a
+        /// floor removal at any index, not just the top). For every consecutive pair (i, i+1) whose Лестница
+        /// rooms BOTH exist, floor i's Лестница ends up with exactly ONE non-hidden Stairs portal targeting
+        /// floor i+1's Лестница; the TOP floor's Лестница — and any floor whose own or whose neighbour's
+        /// Лестница is missing (a hand-edited/degenerate floor, or a single-floor building) — ends with none.
+        ///
+        /// Stairs portals are entirely GENERATOR-owned: the shared room inspector only lets a DM add a
+        /// SecretDoor or a DungeonExit (see DungeonInspectorPanel), never a Stairs/Ladder/Trapdoor. That is
+        /// what makes a STRIP-then-REBUILD safe here — every existing Stairs portal on every floor's Лестница
+        /// is removed first, then exactly the required ones are re-added from the CURRENT room structure. The
+        /// result therefore depends only on which floors/Лестницы exist right now, never on what a previous
+        /// (possibly broken) portal said — which is what makes repeated calls idempotent and a broken chain
+        /// (e.g. RemoveLevel dropping a removed floor's neighbours' up/down portals) self-healing on the next
+        /// call. SecretDoor/DungeonExit portals and room positions are never touched. No-op for a null/empty
+        /// interior or a Dungeon (a dungeon's Boss room can share TypeId 2 with a building's Лестница, so the
+        /// Kind gate below is load-bearing, not decorative). Headless.</summary>
+        public static void RewireStairChain(InteriorData d)
+        {
+            if (d == null || d.Kind != InteriorKind.Building || d.Floors == null) return;
+
+            // Strip first: recomputing every Лестница's Stairs portals from scratch means stale, duplicate, or
+            // wrong-target ones (left behind by a removal, a floor swap, or a hand edit) can't survive.
+            for (int i = 0; i < d.Floors.Count; i++)
+                FindStairRoom(d.Floors[i])?.Portals.RemoveAll(p => p.Kind == PortalKind.Stairs);
+
+            for (int i = 0; i < d.Floors.Count - 1; i++)
+            {
+                var stairI = FindStairRoom(d.Floors[i]);
+                var stairNext = FindStairRoom(d.Floors[i + 1]);
+                if (stairI == null || stairNext == null) continue;   // degenerate: a floor missing its column can't be wired
+                stairI.Portals.Add(MakeStairPortal(i + 1, stairNext.Id));
+            }
+        }
+
+        /// <summary>The generator's ONE stair-portal shape (non-hidden, bidirectional, Russian label) — the
+        /// single place "how a stair portal is built" lives, shared by <see cref="Generate"/>,
+        /// <see cref="RewireStairChain"/> and the editor's «+этаж» (DungeonEditorScreen.AddLevel).</summary>
+        public static Portal MakeStairPortal(int targetFloorIndex, int targetRoomId) => new Portal
+        {
+            Kind = PortalKind.Stairs,
+            Hidden = false,
+            TargetFloorIndex = targetFloorIndex,
+            TargetRoomId = targetRoomId,
+            Bidirectional = true,
+            Label = "Лестница",
+        };
+
+        // The floor's Лестница (StairTypeId) room, or null if it has none — the one lookup every column-chain
+        // operation (FindFloorZeroColumn, RewireStairChain) needs; kept in one place per-floor rather than
+        // re-inlining the same scan.
+        static Room FindStairRoom(InteriorFloor floor)
+        {
+            if (floor == null) return null;
+            foreach (var r in floor.Rooms) if (r.TypeId == StairTypeId) return r;
             return null;
         }
 

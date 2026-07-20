@@ -42,8 +42,17 @@ namespace WorldGen.Rendering
             if (loaded != null)
             {
                 // Collapse any legacy building room types (2/3/4) to the plain room so a save from before the
-                // 2-type simplification doesn't render random rooms as the entrance (user 2026-07-19).
-                foreach (var d in loaded) BuildingGenerator.NormalizeTypes(d);
+                // 2-type simplification doesn't render random rooms as the entrance (user 2026-07-19). Then
+                // re-wire the vertical Stairs chain (F3): a project saved while a middle-floor removal could
+                // still sever the shaft (pre-fix builds of this dev branch) must still load correctly, and
+                // RewireStairChain is both IDEMPOTENT (a no-op on an already-correct chain) and REPAIR-SHAPED
+                // (it recomputes the chain from each floor's Лестница, never from a stale portal), so running
+                // it unconditionally here is safe — same pattern as NormalizeTypes. A no-op for a Dungeon.
+                foreach (var d in loaded)
+                {
+                    BuildingGenerator.NormalizeTypes(d);
+                    BuildingGenerator.RewireStairChain(d);
+                }
                 dungeons.AddRange(loaded);
             }
         }

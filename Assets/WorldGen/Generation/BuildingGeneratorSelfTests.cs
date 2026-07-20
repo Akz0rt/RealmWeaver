@@ -358,6 +358,181 @@ namespace WorldGen.Rendering
             Debug.Log(ok ? "Self-Test Building Generator: PASS" : "Self-Test Building Generator: FAIL");
         }
 
+        /// <summary>[F3] «× Этаж» must work for any Building floor except floor 0 — RewireStairChain must
+        /// repair the vertical Stairs chain after ANY removal (not just the previously-supported top-floor
+        /// case), floor 0 must stay protected, repeated calls must be idempotent, and SecretDoor portals must
+        /// survive untouched. See DungeonEditorScreen.RemoveCurrentLevel/FloorToRemove for the UI-side half.</summary>
+        [ContextMenu("Self-Test: Building Floor Removal (F3)")]
+        public void SelfTestFloorRemoval()
+        {
+            bool ok = true;
+
+            // ---- 1. THE FIX: removing a MIDDLE floor must not sever the shaft ---------------------------
+            // Build 4 floors (0..3), remove floor 1 (a middle floor — old floors 2,3 shift down to 1,2).
+            // FIRST assert the bug is real: DungeonOps.RemoveLevel alone drops floor 0's up-portal, because
+            // that portal's Kind==Stairs && TargetFloorIndex==1 (the removed index) matches RemoveLevel's own
+            // "drop any inter-floor portal that targeted the removed level" rule — the exact mechanism the
+            // task brief describes. WITHOUT RewireStairChain, floor 0 would stay stranded (0 Stairs portals)
+            // and the floors above unreachable from it. THEN call RewireStairChain and assert every
+            // consecutive floor pair carries exactly one correctly-targeted Stairs portal, the new top floor
+            // has none, and DungeonValidator reports no errors.
+            {
+                var mid = BuildingGenerator.Generate(seed: 99, ownerPoiId: "p", roomCount: 6, floorCount: 4);
+                Room col0 = null; foreach (var r in mid.Floors[0].Rooms) if (r.TypeId == 2) col0 = r;
+
+                DungeonOps.RemoveLevel(mid, 1);   // remove the middle floor
+
+                if (mid.Floors.Count != 3)
+                { Debug.LogError($"FAIL midremove: expected 3 floors after removal, got {mid.Floors.Count}"); ok = false; }
+
+                int brokenStairs = 0; if (col0 != null) foreach (var p in col0.Portals) if (p.Kind == PortalKind.Stairs) brokenStairs++;
+                if (brokenStairs != 0)
+                {
+                    Debug.LogError($"FAIL midremove: test premise broken — expected RemoveLevel ALONE to strand " +
+                        $"floor 0 (0 Stairs portals), found {brokenStairs}. If this fires, re-derive the test: the " +
+                        $"bug this task fixes may no longer reproduce this way.");
+                    ok = false;
+                }
+
+                BuildingGenerator.RewireStairChain(mid);
+
+                for (int f = 0; f < mid.Floors.Count - 1; f++)
+                {
+                    Room stairF = null; foreach (var r in mid.Floors[f].Rooms) if (r.TypeId == 2) stairF = r;
+                    Room stairNext = null; foreach (var r in mid.Floors[f + 1].Rooms) if (r.TypeId == 2) stairNext = r;
+                    if (stairF == null || stairNext == null)
+                    { Debug.LogError($"FAIL midremove: floor {f}/{f + 1} missing its Лестница"); ok = false; continue; }
+                    int n = 0, target = -1;
+                    foreach (var p in stairF.Portals) if (p.Kind == PortalKind.Stairs) { n++; target = p.TargetRoomId; }
+                    if (n != 1 || target != stairNext.Id)
+                    { Debug.LogError($"FAIL midremove: floor {f} has {n} Stairs portal(s) (want 1) targeting {target} (want {stairNext.Id})"); ok = false; }
+                }
+                Room topStair = null; foreach (var r in mid.Floors[mid.Floors.Count - 1].Rooms) if (r.TypeId == 2) topStair = r;
+                if (topStair != null)
+                {
+                    int nTop = 0; foreach (var p in topStair.Portals) if (p.Kind == PortalKind.Stairs) nTop++;
+                    if (nTop != 0)
+                    { Debug.LogError($"FAIL midremove: new top floor's Лестница has {nTop} Stairs portal(s), want 0"); ok = false; }
+                }
+
+                foreach (var iss in DungeonValidator.Validate(mid))
+                    if (iss.Severity == IssueSeverity.Error)
+                    { Debug.LogError($"FAIL midremove: validator reports an error after re-wire — {iss.Message}"); ok = false; }
+            }
+
+            // ---- 2. Floor 0 is protected from removal (task requirement 2) --------------------------------
+            // The refusal lives in DungeonEditorScreen.FloorToRemove (UI-level: `Kind==Building &&
+            // CurrentLevelIndex<=0` returns -1, which RemoveCurrentLevel/RequestRemoveCurrentLevel both check)
+            // — there's no headless BuildingGenerator/DungeonOps guard to call, so per the task brief this
+            // asserts the guard PREDICATE directly (kept in sync by hand with FloorToRemove's condition), PLUS
+            // the real consequence that predicate exists to prevent: a building missing floor 0 fails
+            // validation (no entrance anywhere), which is WHY the removal must be refused in the first place.
+            {
+                bool Refuses(InteriorKind kind, int levelIndex) => kind == InteriorKind.Building && levelIndex <= 0;
+                if (!Refuses(InteriorKind.Building, 0))
+                { Debug.LogError("FAIL floor0-guard: a Building must refuse removing floor 0"); ok = false; }
+                if (Refuses(InteriorKind.Building, 1) || Refuses(InteriorKind.Building, 2))
+                { Debug.LogError("FAIL floor0-guard: a Building must NOT refuse removing floor 1+"); ok = false; }
+                if (Refuses(InteriorKind.Dungeon, 0))
+                { Debug.LogError("FAIL floor0-guard: a Dungeon has no floor-0 protection"); ok = false; }
+
+                var noFloor0 = BuildingGenerator.Generate(seed: 23, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+                DungeonOps.RemoveLevel(noFloor0, 0);
+                BuildingGenerator.RewireStairChain(noFloor0);
+                bool entranceError = false;
+                foreach (var iss in DungeonValidator.Validate(noFloor0))
+                    if (iss.Severity == IssueSeverity.Error && iss.LevelIndex == 0 && iss.Message.Contains("вход")) entranceError = true;
+                if (!entranceError)
+                { Debug.LogError("FAIL floor0-guard: a building missing floor 0 must fail validation (no entrance) — this is WHY the UI refuses it"); ok = false; }
+            }
+
+            // ---- 3. Idempotence: a second RewireStairChain call changes nothing -----------------------------
+            // Compare each floor's Лестница Stairs-portal COUNT and TARGET (not a hash of the whole object,
+            // per the task brief) before and after a second call.
+            {
+                var idem = BuildingGenerator.Generate(seed: 61, ownerPoiId: "p", roomCount: 6, floorCount: 4);
+                DungeonOps.RemoveLevel(idem, 1);
+                BuildingGenerator.RewireStairChain(idem);   // first call repairs the chain (as test 1 established)
+
+                (int count, int targetFloor, int targetRoom) Snap(Room st)
+                {
+                    if (st == null) return (-1, -1, -1);
+                    int n = 0, tf = -1, tr = -1;
+                    foreach (var p in st.Portals) if (p.Kind == PortalKind.Stairs) { n++; tf = p.TargetFloorIndex; tr = p.TargetRoomId; }
+                    return (n, tf, tr);
+                }
+                var before = new (int count, int targetFloor, int targetRoom)[idem.Floors.Count];
+                for (int f = 0; f < idem.Floors.Count; f++)
+                {
+                    Room st = null; foreach (var r in idem.Floors[f].Rooms) if (r.TypeId == 2) st = r;
+                    before[f] = Snap(st);
+                }
+
+                BuildingGenerator.RewireStairChain(idem);   // second call — must be a no-op
+
+                for (int f = 0; f < idem.Floors.Count; f++)
+                {
+                    Room st = null; foreach (var r in idem.Floors[f].Rooms) if (r.TypeId == 2) st = r;
+                    var after = Snap(st);
+                    if (after.count != before[f].count || after.targetFloor != before[f].targetFloor || after.targetRoom != before[f].targetRoom)
+                    {
+                        Debug.LogError($"FAIL idempotence: floor {f} Stairs snapshot changed on the second call " +
+                            $"({before[f].count}/{before[f].targetFloor}/{before[f].targetRoom} -> {after.count}/{after.targetFloor}/{after.targetRoom})");
+                        ok = false;
+                    }
+                }
+            }
+
+            // ---- 4. Removing the TOP floor still works (the previously-supported case) --------------------
+            // The new top floor's Лестница must end with NO upward portal, both BEFORE and AFTER
+            // RewireStairChain — this case never broke (RemoveLevel's own drop rule already covers it), so a
+            // call here must be a true no-op, not merely "compatible".
+            {
+                var top = BuildingGenerator.Generate(seed: 17, ownerPoiId: "p", roomCount: 6, floorCount: 3);
+                DungeonOps.RemoveLevel(top, 2);   // remove the TOP floor
+                if (top.Floors.Count != 2)
+                { Debug.LogError($"FAIL topremove: expected 2 floors, got {top.Floors.Count}"); ok = false; }
+
+                Room col0 = null; foreach (var r in top.Floors[0].Rooms) if (r.TypeId == 2) col0 = r;
+                Room col1 = null; foreach (var r in top.Floors[1].Rooms) if (r.TypeId == 2) col1 = r;
+
+                void AssertChain(string when)
+                {
+                    if (col0 == null || col1 == null) { Debug.LogError($"FAIL topremove ({when}): missing Лестница"); ok = false; return; }
+                    int n0 = 0, target = -1; foreach (var p in col0.Portals) if (p.Kind == PortalKind.Stairs) { n0++; target = p.TargetRoomId; }
+                    if (n0 != 1 || target != col1.Id)
+                    { Debug.LogError($"FAIL topremove ({when}): floor 0 has {n0} Stairs portal(s) targeting {target}, want 1 targeting {col1.Id}"); ok = false; }
+                    int n1 = 0; foreach (var p in col1.Portals) if (p.Kind == PortalKind.Stairs) n1++;
+                    if (n1 != 0)
+                    { Debug.LogError($"FAIL topremove ({when}): new top floor's Лестница has {n1} Stairs portal(s), want 0"); ok = false; }
+                }
+                AssertChain("before re-wire");
+                BuildingGenerator.RewireStairChain(top);
+                AssertChain("after re-wire, must be a no-op");
+            }
+
+            // ---- 5. SecretDoor survival across a middle-floor removal + re-wire -----------------------------
+            // RemoveLevel's TargetFloorIndex decrement (untouched by this task) must still correctly shift a
+            // SecretDoor's target, and RewireStairChain must never touch it (it only rebuilds Kind==Stairs
+            // portals on Лестница rooms). Non-vacuous: clobber either and the portal's target is wrong or gone.
+            {
+                var sd = BuildingGenerator.Generate(seed: 55, ownerPoiId: "p", roomCount: 6, floorCount: 4);
+                Room col0 = null; foreach (var r in sd.Floors[0].Rooms) if (r.TypeId == 2) col0 = r;
+                col0.Portals.Add(new Portal { Kind = PortalKind.SecretDoor, Hidden = true, TargetFloorIndex = 3, TargetRoomId = 12345, Bidirectional = true, Label = "s" });
+
+                DungeonOps.RemoveLevel(sd, 1);   // remove the middle floor — old floor 3 target shifts 3->2
+                BuildingGenerator.RewireStairChain(sd);
+
+                bool found = false;
+                foreach (var p in col0.Portals)
+                    if (p.Kind == PortalKind.SecretDoor && p.TargetFloorIndex == 2 && p.TargetRoomId == 12345) found = true;
+                if (!found)
+                { Debug.LogError("FAIL secret-survival: SecretDoor target should shift 3→2 after removing floor 1, and survive the re-wire"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Building Floor Removal (F3): PASS" : "Self-Test Building Floor Removal (F3): FAIL");
+        }
+
         static bool HasMsg(List<DungeonIssue> issues, string substr)
         {
             foreach (var i in issues) if (i.Message.Contains(substr)) return true;

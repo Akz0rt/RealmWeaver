@@ -116,31 +116,38 @@ namespace WorldGen.Rendering
 
                 current.Floors.Add(floor);
                 if (lowerStair != null)
-                    lowerStair.Portals.Add(new Portal
-                    {
-                        Kind = PortalKind.Stairs,
-                        Hidden = false,
-                        TargetFloorIndex = lowerIdx + 1,
-                        TargetRoomId = newStair.Id,
-                        Bidirectional = true,
-                        Label = "Лестница",
-                    });
+                    lowerStair.Portals.Add(BuildingGenerator.MakeStairPortal(lowerIdx + 1, newStair.Id));
             }
             else
                 current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), DefaultRooms));
             SetLevel(current.Floors.Count - 1);
         }
 
-        // A building is a vertical stack on the stairwell column, so it only ever loses its TOP floor —
-        // removing a MIDDLE floor would sever the column (the stair down is dropped and the stair up dies with
-        // the floor, leaving disconnected floors). Dungeons remove the currently-selected floor as before.
-        int FloorToRemove() => (current != null && current.Kind == InteriorKind.Building)
-            ? current.Floors.Count - 1 : CurrentLevelIndex;
+        // A building can lose ANY floor except floor 0 (which defines the footprint and hosts the shared
+        // stairwell column — never removable). Removing any OTHER floor used to sever the column (the floor
+        // below loses its up-portal, since a Stairs portal targeting the removed floor is dropped), but
+        // RemoveCurrentLevel now re-wires the whole chain from the surviving floors right after the removal
+        // (BuildingGenerator.RewireStairChain), so the shaft never stays broken. Returns -1 — a value no
+        // Floors index can be — as a defensive guard so a Building can never remove floor 0 even from an
+        // unexpected call path; RebuildLevelTabs' canRemove already keeps the button off floor 0 in the normal
+        // flow. Dungeons remove the currently-selected floor, unrestricted, as before.
+        int FloorToRemove()
+        {
+            if (current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex <= 0) return -1;
+            return CurrentLevelIndex;
+        }
 
         public void RemoveCurrentLevel()
         {
             if (current == null || current.Floors.Count <= 1) return;
-            DungeonOps.RemoveLevel(current, FloorToRemove());
+            int idx = FloorToRemove();
+            if (idx < 0) return;   // guarded: a Building's floor 0 is never removable
+            DungeonOps.RemoveLevel(current, idx);
+            // Re-wire the vertical Stairs chain from the surviving floors — removing a MIDDLE floor drops the
+            // floor below's up-portal (RemoveLevel strips any Stairs portal that targeted the removed index),
+            // so without this the shaft above the removal point would be stranded. A no-op when the removal
+            // didn't touch the chain (e.g. the previously-supported top-floor case) or on a Dungeon.
+            if (current.Kind == InteriorKind.Building) BuildingGenerator.RewireStairChain(current);
             SetLevel(Mathf.Min(CurrentLevelIndex, current.Floors.Count - 1));
         }
 
@@ -150,7 +157,9 @@ namespace WorldGen.Rendering
         void RequestRemoveCurrentLevel()
         {
             if (current == null || current.Floors.Count <= 1) return;
-            var lvl = current.Floors[FloorToRemove()];   // the floor that will actually be removed (top, for buildings)
+            int idx = FloorToRemove();
+            if (idx < 0) return;   // guarded: a Building's floor 0 is never removable
+            var lvl = current.Floors[idx];   // the floor that will actually be removed — the SELECTED one
             bool annotated = lvl.Rooms.Exists(r => !string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body));
             if (annotated)
                 WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?",
@@ -521,11 +530,13 @@ namespace WorldGen.Rendering
                 AddLevelTabButton($"Ур.{i + 1}", 50f, idx == CurrentLevelIndex, () => SetLevel(idx));
             }
             AddLevelTabButton("+ " + profile.TermFloor, 64f, false, AddLevel);
-            // A building can only lose its TOP floor (removing a middle one would sever the shaft). Show the
-            // remove button only while the top floor is selected, so «× Этаж» always means "remove THIS floor"
-            // — no surprise removal of a different floor. Dungeons remove the current floor, so show it always.
-            bool canRemove = current.Floors.Count > 1
-                && (current.Kind != InteriorKind.Building || CurrentLevelIndex == current.Floors.Count - 1);
+            // A building can lose any SELECTED floor except floor 0 (it defines the footprint and hosts the
+            // shared stairwell column) — RewireStairChain re-rebuilds the vertical Stairs chain from the
+            // surviving floors right after a removal (see RemoveCurrentLevel), so removing a middle floor no
+            // longer severs the shaft the way it used to. Dungeons remove the current floor, so show it always.
+            bool canRemove = current.Kind == InteriorKind.Building
+                ? current.Floors.Count > 1 && CurrentLevelIndex > 0
+                : current.Floors.Count > 1;
             if (canRemove) AddLevelTabButton("× " + profile.TermFloor, 64f, false, RequestRemoveCurrentLevel);
         }
 
