@@ -37,6 +37,13 @@ namespace WorldGen.Generation
         //     shared-wall door never triggered, so a manually dropped room diverged from a generated one.
         const float ShoveClearance = 0.005f;
 
+        /// <summary>Width (tiles) of the opening the renderer carves out of a shared wall at a door — the ONE
+        /// place that number lives (DungeonFlatRenderer's DoorGapTiles reads this constant, so the drawn door and
+        /// the packer's idea of "enough wall for a door" can never drift apart). The lateral slide uses it as the
+        /// MINIMUM shared-wall span a flush pair may keep: slide a room further along the wall than that and the
+        /// door its Link renders as would no longer fit on the wall it is carved into.</summary>
+        public const float DoorGapTiles = 1.4f;
+
         // Slack (tiles) added to the footprint BOUNDING BOX used as the packer's cheap pre-rejection of candidate
         // slots (see FootprintBoundsTiles). Only has to swallow float round-off — the box is an over-approximation
         // of the footprint either way, and FloorFootprint.ContainsRect remains the real accept predicate.
@@ -280,25 +287,38 @@ namespace WorldGen.Generation
         ///      placed room. Its d loop starts at 0, so it subsumes phase 2's search; phase 2 still earns its keep
         ///      by running to a FIXPOINT first, so that when phase 3 starts NO unplaced room has a flush slot
         ///      against any placed room — a corridor slot is only ever handed out once flush packing is exhausted.
+        /// Every phase generates its candidates through the same slot generator (<see cref="TrySeatAtOffset"/>),
+        /// which offers each side of an anchor CENTRED first and then SLID along the shared wall by ±1, ±2 … tiles
+        /// while the pair still shares a <see cref="DoorGapTiles"/>-wide span (F4). Without the slide every
+        /// candidate keeps the anchor's other coordinate, so the reachable positions form a plus-shaped lattice
+        /// radiating from the column and a lobe of an L / T / stepped contour that can only be entered by a room
+        /// flush against its neighbour but SHIFTED along their shared wall is unreachable at every distance — the
+        /// reported "«Комнаты: 2 из 2»" with a whole empty lobe well inside the contour.
         /// Within phases 2 and 3, each distance tries the anchors the room is ALREADY LINKED to before any other
         /// anchor (see <see cref="SeatAgainstAnyPlaced"/>): a room's original links survive packing, so seating it
         /// next to an unrelated room leaves those links to render as long routed corridors — exactly the
         /// "detached rooms joined by corridors" look this packer exists to avoid.
-        /// The pipeline is run TWICE, and the run that keeps MORE rooms wins (ties → the first, compact one):
-        ///   • COMPACT run — phase 1 seats flush only (d == 0). Packs tighter, so it usually leaves one big
-        ///     contiguous pocket for phase 2 rather than several unusable slivers; this is what actually raises
-        ///     the cap.
+        /// The pipeline is run up to THREE times and the run that keeps MOST rooms wins (ties → the earliest, i.e.
+        /// the most compact-looking one):
+        ///   • COMPACT+SLIDE run — phase 1 seats flush only (d == 0), and every phase may slide. Packs tighter, so
+        ///     it usually leaves one big contiguous pocket for phase 2 rather than several unusable slivers; this
+        ///     is what actually raises the cap, and it is the run that reaches an L's far lobe.
         ///   • SPREAD run — phase 1 is the PRE-FIX search (increasing d against the BFS parent): the same BFS, the
         ///     same neighbour/side/distance orders and the same two accept predicates, PLUS the sound bounding-box
         ///     pre-rejection of <see cref="TrySeatAtDistance"/> (which never discards a slot ContainsRect would
-        ///     have accepted) — so it reproduces the old packer's placements exactly. Phases 2/3 only ADD rooms
-        ///     into free slots without moving anything, so this run can never keep fewer rooms than the old packer.
-        /// Taking the better of the two makes "never worse than before" a property of the CODE, not a hope, and it
-        /// is not free insurance either: measured over 2880 packs on real generated contours, the compact run alone
-        /// regressed against the old packer on 2.7% of them (worst −3), while best-of-two beat SPREAD-ONLY on 8.1%
-        /// of packs and on 12.3% of the probed «из N» caps (up to +2 rooms). Both runs earn their keep.
-        /// If the compact run already placed EVERY room the spread run cannot beat it, so it is skipped — a pure
-        /// speed-up that cannot change the result (ties go to compact anyway).
+        ///     have accepted), and NO lateral slide anywhere.
+        ///   • COMPACT run — flush-only seeding, NO slide anywhere.
+        /// The last two are exactly the two runs the pre-F4 packer took, so best-of-three is ≥ what the pre-F4
+        /// packer would have kept on ANY input — by construction, not by measurement. That guarantee has to be
+        /// bought this way: the slide only ever ADDS candidates (offset 0 is still tried first and still wins), but
+        /// a packer that seats rooms greedily is not monotone in its candidate set — one room taking a newly
+        /// reachable slot can split the space so that two later rooms no longer fit. Measured: with the slid runs
+        /// alone, 34 of 1200 corpus contours ended with a LOWER «из N» than before (worst −2) while 270 rose; with
+        /// the slide-free run in the mix, 0 fall and 270 rise (sum 10234 vs 9940). Older evidence for the first two
+        /// runs is unchanged: over 2880 packs the compact run alone regressed against the ORIGINAL packer on 2.7%
+        /// of them (worst −3), while best-of-two beat spread-only on 8.1% of packs and 12.3% of caps.
+        /// Each run after the first is SKIPPED once some run has placed every room — it could then only tie, and
+        /// ties go to the earlier run anyway, so this is a pure speed-up with a bit-identical result.
         /// Phases 2 and 3 ADD a Link between the room and the anchor it was seated against when the pair is not
         /// linked yet (deduplicated, either direction): flush ⇒ the shared wall renders as a DOOR, and every
         /// placed room stays connected to the column (the validator's orphan rule, and TrimToRoomCount's BFS
@@ -324,14 +344,23 @@ namespace WorldGen.Generation
             var ordered = SortedById(floor.Rooms);   // the fixed ascending-id sweep order of phases 2 and 3
             var adj = BuildAdjacency(floor);
 
-            var compact = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds, seedMaxDistance: 0);
-            // The spread run can at best MATCH a compact run that already placed everything, and ties go to
-            // compact — so skipping it there is a pure speed-up with a bit-identical result.
+            var compact = RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
+                seedMaxDistance: 0, slide: true);
+            // A later run can at best MATCH one that already placed everything, and ties go to the earlier run —
+            // so skipping it there is a pure speed-up with a bit-identical result.
             var spread = compact.Ids.Count >= ordered.Count
                 ? null
                 : RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
-                    seedMaxDistance: DungeonLayout.TilesPerAxis);
+                    seedMaxDistance: DungeonLayout.TilesPerAxis, slide: false);
             var chosen = spread != null && spread.Ids.Count > compact.Ids.Count ? spread : compact;
+            // The pre-F4 packer's OWN compact run, slide and all removed. With the spread run above it, the pair
+            // reproduces that packer exactly, which is what makes "F4 can never report a smaller «из N» than the
+            // build the DM has" structural (see the summary above for why the slide alone cannot promise it).
+            var plain = chosen.Ids.Count >= ordered.Count
+                ? null
+                : RunPhases(floor, column, ordered, adj, contourFloor, margin, bounds,
+                    seedMaxDistance: 0, slide: false);
+            if (plain != null && plain.Ids.Count > chosen.Ids.Count) chosen = plain;
             Apply(floor, chosen);
             return chosen.Ids.Count;
         }
@@ -350,11 +379,13 @@ namespace WorldGen.Generation
 
         /// <summary>One full run of phases 1-3. <paramref name="seedMaxDistance"/> is the BFS phase's outward
         /// search limit: 0 = flush-only (the compact run), TilesPerAxis = the pre-fix ray search (the spread run).
+        /// <paramref name="slide"/> enables F4's lateral slide for every phase of this run; false makes the whole
+        /// run bit-for-bit the pre-F4 pipeline, which is what the two fallback runs are for.
         /// Writes positions onto the rooms as it goes (the phases must measure real geometry) and snapshots them
         /// at the end; the caller keeps only the winning snapshot. Deterministic.</summary>
         static PackResult RunPhases(InteriorFloor floor, Room column, List<Room> ordered,
             Dictionary<int, List<int>> adj, InteriorFloor contourFloor, float margin,
-            (float minX, float minY, float maxX, float maxY) bounds, int seedMaxDistance)
+            (float minX, float minY, float maxX, float maxY) bounds, int seedMaxDistance, bool slide)
         {
             var res = new PackResult();
             res.Placed.Add(column);
@@ -374,7 +405,7 @@ namespace WorldGen.Generation
                     if (child == null) continue;
                     bool seated = false;
                     for (int d = 0; d <= seedMaxDistance && !seated; d++)
-                        seated = TrySeatAtDistance(child, cur, d, res.Placed, contourFloor, margin, bounds);
+                        seated = TrySeatAtDistance(child, cur, d, res.Placed, contourFloor, margin, bounds, slide);
                     if (!seated) continue;
                     res.Placed.Add(child);
                     res.Ids.Add(nb);
@@ -383,13 +414,20 @@ namespace WorldGen.Generation
             }
 
             // --- Phase 2: fill the space phase 1 left — flush against ANY placed room. --------------------
-            FillSweeps(res, ordered, adj, contourFloor, margin, bounds, maxDistance: 0);
+            FillSweeps(res, ordered, adj, contourFloor, margin, bounds, maxDistance: 0, flushDoneSeq: 0, slide: slide);
 
             // --- Phase 3: relaxed fallback — outward rays against any placed room. ------------------------
             // Skipped outright when phase 1+2 already placed everything: there is nothing left to seat, and this
             // is the phase whose 129-distance scan dominates the packer's cost.
+            // flushDoneSeq: phase 2 ran the FLUSH (d == 0) search to a fixpoint, so every room still unplaced has
+            // already been tried at d == 0 — centred AND slid — against every one of the res.Placed.Count anchors
+            // that exist right now, and none of those can start working (an anchor never moves, the contour never
+            // changes and IsFree only tightens). Phase 3 therefore skips d == 0 for exactly those anchors and
+            // spends its flush pass only on anchors IT places. That matters because d == 0 is the one distance the
+            // F4 slide widens, so re-walking it here would pay the slide's whole cost a second time for nothing.
             if (res.Ids.Count < ordered.Count)
-                FillSweeps(res, ordered, adj, contourFloor, margin, bounds, maxDistance: DungeonLayout.TilesPerAxis);
+                FillSweeps(res, ordered, adj, contourFloor, margin, bounds,
+                    maxDistance: DungeonLayout.TilesPerAxis, flushDoneSeq: res.Placed.Count, slide: slide);
 
             foreach (var r in res.Placed) res.Pos[r.Id] = (r.X, r.Y);
             return res;
@@ -415,15 +453,32 @@ namespace WorldGen.Generation
         /// 0 = flush only (phase 2); TilesPerAxis = the original outward-ray search (phase 3). Each placement
         /// records the room↔anchor Link. Terminates: every sweep either places a room (bounded by the room count)
         /// or ends the loop. The ascending-id anchor list is maintained here (inserted into on placement) instead
-        /// of being re-sorted for every room. Deterministic.</summary>
+        /// of being re-sorted for every room.
+        ///
+        /// A re-sweep only ever re-tries a room against the anchors placed SINCE its last attempt (each anchor
+        /// carries its placement index; <c>triedUpTo</c> remembers how many existed when the room was last
+        /// swept). That is EXACT, not a heuristic: within one run an anchor never moves and the contour never
+        /// changes, so a candidate's position, its bbox test and its ContainsRect test are all identical on a
+        /// later sweep, while <see cref="IsFree"/> can only get STRICTER (placed rooms are only ever added).
+        /// A room that failed against an anchor therefore still fails against it, and skipping it cannot change
+        /// which slot wins — only how long it takes to find it. It matters because the sweep is a fixpoint: a
+        /// room that fits nowhere used to be re-scanned against every anchor once per placement, and F4's slide
+        /// multiplied the cost of each of those scans by the width of the offset ladder. Deterministic.</summary>
         static void FillSweeps(PackResult res, List<Room> ordered, Dictionary<int, List<int>> adj,
             InteriorFloor contourFloor, float margin,
-            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
+            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance, int flushDoneSeq, bool slide)
         {
             if (res.Ids.Count >= ordered.Count) return;   // everything is already placed — nothing to sweep
             var anchors = SortedById(res.Placed);   // ascending id — the fixed anchor order, kept sorted below
             var linkedAnchors = new List<Room>();   // scratch, reused by every SeatAgainstAnyPlaced call below
             var otherAnchors = new List<Room>();
+            var linkedFlush = new List<Room>();     // the same split, minus the anchors already flush-tested
+            var otherFlush = new List<Room>();
+            // Placement index per anchor, and how many anchors each unplaced room has already been tried against.
+            // Both are local to this call: phase 3 widens the distance range, so it must re-try every anchor.
+            var seq = new Dictionary<int, int>();
+            for (int i = 0; i < res.Placed.Count; i++) seq[res.Placed[i].Id] = i;
+            var triedUpTo = new Dictionary<int, int>();
             bool progress = true;
             while (progress)
             {
@@ -431,9 +486,14 @@ namespace WorldGen.Generation
                 foreach (var room in ordered)   // ascending id
                 {
                     if (res.Ids.Contains(room.Id)) continue;
-                    var anchor = SeatAgainstAnyPlaced(room, anchors, linkedAnchors, otherAnchors, adj,
-                        res.Placed, contourFloor, margin, bounds, maxDistance);
+                    int minSeq;
+                    if (!triedUpTo.TryGetValue(room.Id, out minSeq)) minSeq = 0;
+                    triedUpTo[room.Id] = res.Placed.Count;   // recorded BEFORE this room can join the anchors
+                    var anchor = SeatAgainstAnyPlaced(room, anchors, seq, minSeq, flushDoneSeq,
+                        linkedAnchors, otherAnchors, linkedFlush, otherFlush, adj,
+                        res.Placed, contourFloor, margin, bounds, maxDistance, slide);
                     if (anchor == null) continue;
+                    seq[room.Id] = res.Placed.Count;
                     res.Placed.Add(room);
                     res.Ids.Add(room.Id);
                     InsertById(anchors, room);
@@ -445,44 +505,78 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Seat <paramref name="room"/> against the already-placed rooms, nearest distance first: for
-        /// each outward distance d (0 = flush), the anchors the room is ALREADY LINKED to (ascending id) and then
+        /// each outward distance d (0 = flush) and — at d == 0 — each lateral offset along the shared wall
+        /// (magnitude 0, then +1, −1, +2, −2 …), the anchors the room is ALREADY LINKED to (ascending id) and then
         /// every other placed room (ascending id), four sides each. Returns the anchor it was seated against (and
         /// writes room.X/Y), or null when no slot passes both predicates.
-        /// DISTANCE-outer so a flush (door) slot always wins over a pushed-out (corridor) one at ANY anchor.
+        /// DISTANCE-outer so a flush (door) slot always wins over a pushed-out (corridor) one at ANY anchor, and
+        /// OFFSET-outer inside d == 0 for the same reason one level down: a CENTRED slot at a later anchor beats a
+        /// slid one at an earlier anchor, so the whole pre-F4 d == 0 scan runs first and returns exactly what it
+        /// used to whenever it succeeded — the slid candidates are only ever reached once every centred one has
+        /// failed at every anchor.
         /// LINKED-anchor first because the room's own links survive packing: seating it next to an unrelated room
         /// leaves those links to route as long corridors across the floor, which is the look this packer exists to
         /// avoid. <paramref name="anchors"/> is <paramref name="placed"/> in ascending id, maintained by the
         /// caller; it is split ONCE per call into the two preference groups, using the caller's reusable
-        /// <paramref name="linkedAnchors"/>/<paramref name="otherAnchors"/> buffers. The distance loop
+        /// <paramref name="linkedAnchors"/>/<paramref name="otherAnchors"/> buffers — skipping, as that split is
+        /// made, every anchor whose placement index (<paramref name="seq"/>) is below <paramref name="minSeq"/>,
+        /// i.e. every anchor this room has already been tried against and provably still fails against (see
+        /// <see cref="FillSweeps"/> for why that is exact). The d == 0 pass narrows that further to the anchors
+        /// newer than <paramref name="flushDoneSeq"/> — phase 3's way of not re-walking the flush search phase 2
+        /// already ran to a fixpoint (same exactness argument; see the call site).
+        /// The distance loop
         /// stops at <see cref="MaxUsefulDistance"/> instead of the full TilesPerAxis: past it every candidate is
         /// outside the footprint's bounding box, so this only skips work that could not have succeeded — the same
         /// exactness the box pre-test in <see cref="TrySeatAtDistance"/> relies on. Deterministic.</summary>
-        static Room SeatAgainstAnyPlaced(Room room, List<Room> anchors,
-            List<Room> linkedAnchors, List<Room> otherAnchors, Dictionary<int, List<int>> adj,
+        static Room SeatAgainstAnyPlaced(Room room, List<Room> anchors, Dictionary<int, int> seq, int minSeq,
+            int flushDoneSeq, List<Room> linkedAnchors, List<Room> otherAnchors,
+            List<Room> linkedFlush, List<Room> otherFlush, Dictionary<int, List<int>> adj,
             List<Room> placed, InteriorFloor contourFloor, float margin,
-            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance)
+            (float minX, float minY, float maxX, float maxY) bounds, int maxDistance, bool slide)
         {
             List<int> linked = null;
             if (adj != null) adj.TryGetValue(room.Id, out linked);
 
-            linkedAnchors.Clear(); otherAnchors.Clear();   // caller-owned scratch; both keep the ascending-id order
+            linkedAnchors.Clear(); otherAnchors.Clear();   // caller-owned scratch; all four keep the ascending-id order
+            linkedFlush.Clear(); otherFlush.Clear();
             foreach (var anchor in anchors)
             {
-                if (linked != null && linked.Contains(anchor.Id)) linkedAnchors.Add(anchor);
-                else otherAnchors.Add(anchor);
+                int aSeq;
+                if (!seq.TryGetValue(anchor.Id, out aSeq)) aSeq = 0;
+                if (aSeq < minSeq) continue;
+                bool isLinked = linked != null && linked.Contains(anchor.Id);
+                if (isLinked) linkedAnchors.Add(anchor); else otherAnchors.Add(anchor);
+                if (aSeq < flushDoneSeq) continue;   // already searched at d == 0 (phase 2's fixpoint)
+                if (isLinked) linkedFlush.Add(anchor); else otherFlush.Add(anchor);
             }
+            if (linkedAnchors.Count == 0 && otherAnchors.Count == 0) return null;   // no anchor is new since last time
 
             // Phase 2 (maxDistance == 0) only ever clamps the result to 0 (or leaves it at -1 when even d == 0
             // is hopeless), so paying for the full four-side/every-anchor scan there is wasted work — skip
             // straight to 0 and let TrySeatAtDistance's own bbox pre-test reject the rare hopeless case cheaply.
-            int limit = maxDistance == 0 ? 0 : MaxUsefulDistance(room, anchors, bounds);
+            // Both bounds below are taken over the anchors ACTUALLY being tried: each is a max over its input, so
+            // narrowing the input can only drop distances/offsets that belong to skipped anchors.
+            int limit = maxDistance == 0 ? 0
+                : Larger(MaxUsefulDistance(room, linkedAnchors, bounds), MaxUsefulDistance(room, otherAnchors, bounds));
             if (limit > maxDistance) limit = maxDistance;
+            int maxSlide = slide ? Larger(MaxSlideTiles(room, linkedFlush), MaxSlideTiles(room, otherFlush)) : 0;
             for (int d = 0; d <= limit; d++)
             {
-                foreach (var anchor in linkedAnchors)
-                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds)) return anchor;
-                foreach (var anchor in otherAnchors)
-                    if (TrySeatAtDistance(room, anchor, d, placed, contourFloor, margin, bounds)) return anchor;
+                // d == 0 is the flush pass — the one the F4 offset ladder widens, and the one phase 2 may already
+                // have exhausted for the older anchors.
+                var linkedNow = d == 0 ? linkedFlush : linkedAnchors;
+                var otherNow = d == 0 ? otherFlush : otherAnchors;
+                int maxK = d == 0 ? maxSlide : 0;
+                for (int k = 0; k <= maxK; k++)
+                    for (int sign = 1; sign >= -1; sign -= 2)
+                    {
+                        int t = k * sign;
+                        foreach (var anchor in linkedNow)
+                            if (TrySeatAtOffset(room, anchor, d, t, placed, contourFloor, margin, bounds)) return anchor;
+                        foreach (var anchor in otherNow)
+                            if (TrySeatAtOffset(room, anchor, d, t, placed, contourFloor, margin, bounds)) return anchor;
+                        if (k == 0) break;   // +0 and −0 are the same candidate
+                    }
             }
             return null;
         }
@@ -492,7 +586,15 @@ namespace WorldGen.Generation
         /// <c>px + offX + d</c>, so it fits the box only while <c>d ≤ maxX − px − offX − w/2</c>; the other three
         /// sides give the mirrored bounds. Taking the best over the four sides and over every anchor is therefore
         /// an EXACT cut-off — every larger d is rejected by the box pre-test anyway. It matters because phase 3's
-        /// nominal range is 0..TilesPerAxis (129 distances) while a real floor-0 footprint spans ~20-30 tiles.</summary>
+        /// nominal range is 0..TilesPerAxis (129 distances) while a real floor-0 footprint spans ~20-30 tiles.
+        ///
+        /// UNCHANGED by F4's lateral slide, and it does not need re-deriving for the slid geometry: each of the
+        /// four terms constrains the candidate's ALONG-axis coordinate (cx for Right/Left, cy for Down/Up), while
+        /// a slide moves only the PERPENDICULAR one — so the largest d that can put a candidate inside the box is
+        /// the same slid or not. The one place the two could interact is the −1 ("even d = 0 is hopeless") result:
+        /// it means every side of every anchor already overshoots the box AT d = 0 on its along-axis face, e.g.
+        /// px + offX + cw/2 &gt; maxX on the Right, which a lateral slide cannot repair either — so skipping the
+        /// loop entirely still drops only candidates the box pre-test would have rejected.</summary>
         static int MaxUsefulDistance(Room room, List<Room> anchors,
             (float minX, float minY, float maxX, float maxY) bounds)
         {
@@ -526,28 +628,71 @@ namespace WorldGen.Generation
             sorted.Insert(i, room);
         }
 
-        /// <summary>Try the four sides (Right, Down, Left, Up) of <paramref name="anchor"/> at the FIXED outward
-        /// distance <paramref name="d"/> (0 = flush, so the pair shares a wall), taking the first candidate that
-        /// is free of overlap AND inside the footprint. Writes child.X/Y normalized+clamped and returns true on
-        /// success; leaves the child untouched otherwise. <paramref name="bounds"/> is the footprint's bounding
-        /// box: a candidate poking outside it can NEVER be inside the footprint union, so rejecting it there is
-        /// exact and skips the arrangement work for the far-out rays of phase 3. Deterministic.</summary>
+        /// <summary>Try every LATERAL OFFSET of <paramref name="anchor"/>'s four sides at the FIXED outward
+        /// distance <paramref name="d"/>, nearest-to-centred first, taking the first candidate that passes both
+        /// accept predicates. Offset magnitudes run 0, 1, 2, … and each magnitude k is tried as +k then −k, so
+        /// the CENTRED slot (the compact-looking one, and the only one the pre-F4 packer could produce) always
+        /// wins when it is valid: iteration k = 0 IS the old four-side switch, unchanged, and every slid
+        /// candidate comes strictly after it. <paramref name="slideFlush"/> false, or d &gt; 0, reduces this to
+        /// exactly that old switch (see <see cref="TrySeatAtOffset"/> for why the slide is flush-only).
+        /// Used by phase 1, which seats a child against ONE anchor. Deterministic.</summary>
         static bool TrySeatAtDistance(Room child, Room anchor, int d, List<Room> placed,
+            InteriorFloor contourFloor, float margin, (float minX, float minY, float maxX, float maxY) bounds,
+            bool slideFlush)
+        {
+            int maxK = slideFlush && d == 0 ? MaxSlideTiles(child, anchor) : 0;
+            for (int k = 0; k <= maxK; k++)
+                for (int sign = 1; sign >= -1; sign -= 2)
+                {
+                    if (TrySeatAtOffset(child, anchor, d, k * sign, placed, contourFloor, margin, bounds)) return true;
+                    if (k == 0) break;   // +0 and −0 are the same candidate
+                }
+            return false;
+        }
+
+        /// <summary>Try the four sides (Right, Down, Left, Up) of <paramref name="anchor"/> at the FIXED outward
+        /// distance <paramref name="d"/> (0 = flush, so the pair shares a wall) and the FIXED lateral offset
+        /// <paramref name="t"/> ALONG that shared wall (tiles; 0 = centred on the anchor's perpendicular axis,
+        /// which is the only candidate the packer had before F4), taking the first candidate that is free of
+        /// overlap AND inside the footprint. Writes child.X/Y normalized+clamped and returns true on success;
+        /// leaves the child untouched otherwise. <paramref name="bounds"/> is the footprint's bounding box: a
+        /// candidate poking outside it can NEVER be inside the footprint union, so rejecting it there is exact
+        /// and skips the arrangement work for the far-out rays of phase 3 — and it prunes an off-shape slid
+        /// candidate just as cheaply, since the slide moves the candidate's box too.
+        ///
+        /// The slide is what lets a floor turn the corner of an L / T / stepped contour: without it every
+        /// candidate keeps the anchor's OTHER coordinate (cy == py for Right/Left, cx == px for Down/Up), so the
+        /// reachable positions form a plus-shaped lattice radiating from the pinned column and a lobe that needs
+        /// a room flush against its neighbour but SHIFTED along their shared wall is unreachable at every
+        /// distance — the reported "MAX = 2 with an empty lobe" defect.
+        ///
+        /// A non-zero <paramref name="t"/> is only ever offered at d == 0 (the caller's gate) and only within
+        /// <see cref="MaxSlideTiles"/>: at d &gt; 0 the pair does not touch at all (that link renders as a
+        /// corridor, and a lateral offset there would just be a second, redundant way to spell the same free
+        /// slot), and past the slide bound the pair would share less wall than a door needs. Deterministic.</summary>
+        static bool TrySeatAtOffset(Room child, Room anchor, int d, int t, List<Room> placed,
             InteriorFloor contourFloor, float margin, (float minX, float minY, float maxX, float maxY) bounds)
         {
             var (cw, ch) = DungeonProjection.EffectiveSize(child);
             var (pw, ph) = DungeonProjection.EffectiveSize(anchor);
             float px = ToTile(anchor.X), py = ToTile(anchor.Y);
             float offX = (pw + cw) * 0.5f, offY = (ph + ch) * 0.5f;
+            // The pair's shared wall runs along Y on the Right/Left sides and along X on the Down/Up ones, so
+            // each pair of sides has its OWN slide bound (the extents that overlap differ). A magnitude that
+            // outruns one of them simply skips those sides.
+            int slideY = t == 0 ? 0 : MaxSlideAlong(ph, ch);
+            int slideX = t == 0 ? 0 : MaxSlideAlong(pw, cw);
+            int mag = t < 0 ? -t : t;
             for (int s = 0; s < 4; s++)
             {
+                if (mag > (s == 0 || s == 2 ? slideY : slideX)) continue;
                 float cx, cy;
                 switch (s)
                 {
-                    case 0: cx = px + offX + d; cy = py; break;   // Right
-                    case 1: cx = px; cy = py + offY + d; break;   // Down (+Y)
-                    case 2: cx = px - offX - d; cy = py; break;   // Left
-                    default: cx = px; cy = py - offY - d; break;  // Up
+                    case 0: cx = px + offX + d; cy = py + t; break;   // Right
+                    case 1: cx = px + t; cy = py + offY + d; break;   // Down (+Y)
+                    case 2: cx = px - offX - d; cy = py + t; break;   // Left
+                    default: cx = px + t; cy = py - offY - d; break;  // Up
                 }
                 if (cx - cw * 0.5f < bounds.minX || cx + cw * 0.5f > bounds.maxX
                     || cy - ch * 0.5f < bounds.minY || cy + ch * 0.5f > bounds.maxY) continue;
@@ -560,6 +705,46 @@ namespace WorldGen.Generation
                 }
             }
             return false;
+        }
+
+        /// <summary>Largest lateral slide (whole tiles) a flush pair of extents <paramref name="pExtent"/> and
+        /// <paramref name="cExtent"/> ALONG their shared wall may take and still leave a door's worth of shared
+        /// wall. Sliding by t leaves a shared span of <c>min(p,c) − max(0, |t| − |p−c| / 2)</c>, which is
+        /// ≥ <see cref="DoorGapTiles"/> exactly while <c>|t| ≤ (p + c) / 2 − DoorGapTiles</c> — the two forms
+        /// agree because <c>|p−c| / 2 + min(p,c) = (p + c) / 2</c>. Floor to whole tiles (the offsets are
+        /// integer tile steps); never negative, so the CENTRED candidate is never withdrawn — the bound may only
+        /// ever remove candidates the pre-F4 packer did not have. Round-off-safe: extents are integers, so
+        /// (p+c)/2 is a multiple of 0.5 and (p+c)/2 − 1.4 is never itself an integer.</summary>
+        static int MaxSlideAlong(float pExtent, float cExtent)
+        {
+            float lim = (pExtent + cExtent) * 0.5f - DoorGapTiles;
+            return lim < 0f ? 0 : (int)System.Math.Floor(lim);
+        }
+
+        /// <summary>The largest slide magnitude worth trying for this child/anchor pair — the looser of the two
+        /// per-side bounds (the Right/Left sides share a wall along Y, the Down/Up ones along X); the tighter
+        /// side is skipped per-candidate inside <see cref="TrySeatAtOffset"/>.</summary>
+        static int MaxSlideTiles(Room child, Room anchor)
+        {
+            var (cw, ch) = DungeonProjection.EffectiveSize(child);
+            var (pw, ph) = DungeonProjection.EffectiveSize(anchor);
+            int y = MaxSlideAlong(ph, ch), x = MaxSlideAlong(pw, cw);
+            return x > y ? x : y;
+        }
+
+        /// <summary>The largest slide magnitude worth trying for <paramref name="room"/> against ANY of the
+        /// anchors — the offset loop in <see cref="SeatAgainstAnyPlaced"/> is OUTSIDE the anchor loop (so a
+        /// centred slot at a later anchor still beats a slid one at an earlier anchor), which means it needs one
+        /// bound covering all of them; each anchor's own bound is re-applied per candidate.</summary>
+        static int MaxSlideTiles(Room room, List<Room> anchors)
+        {
+            int best = 0;
+            foreach (var anchor in anchors)
+            {
+                int k = MaxSlideTiles(room, anchor);
+                if (k > best) best = k;
+            }
+            return best;
         }
 
         /// <summary>Bounding box (tile space) of the drawn footprint = the contour rooms' content bounds grown by
@@ -858,5 +1043,6 @@ namespace WorldGen.Generation
 
         static float Min(float a, float b) => a < b ? a : b;
         static float Max(float a, float b) => a > b ? a : b;
+        static int Larger(int a, int b) => a > b ? a : b;
     }
 }

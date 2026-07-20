@@ -604,7 +604,169 @@ namespace WorldGen.Rendering
                 ok = false;
             }
 
+            // ---- 27. THE F4 FIX: a lobe reachable ONLY by a flush slot SLID along the shared wall -----------
+            // The DM-reported defect: on an L-shaped floor 0 the upper floor filled ONE lobe and reported a
+            // "real max" that left the other lobe — several rooms' worth of space well inside the blue contour —
+            // completely empty. Cause: every candidate was CENTRE-ALIGNED with its anchor on the perpendicular
+            // axis (cy == py for Right/Left, cx == px for Down/Up), so the reachable positions formed a plus-
+            // shaped lattice radiating from the column and no room could ever be placed beside a neighbour but
+            // OFFSET along their shared wall — which is exactly what turning an L's corner needs.
+            // Fixture (hand-derived, see LobeContour/LobeFloor): arm A = [50.5,61.5]x[58.5,65.5] holds the column
+            // pinned at (54,62) plus exactly ONE more room, at x = 58; arm B = [58,62]x[62.5,77.5] holds three
+            // 4x4 rooms at y in {66,70,74}, but only at x == 60. Every centre-aligned candidate into arm B keeps
+            // its anchor's x — 54 or 58, never 60 — at ANY distance, since Down/Up never change x and Right/Left
+            // never leave arm A's 7-tile band. So arm B is unreachable without the slide: the pre-F4 packer keeps
+            // the column and ONE room and leaves the whole lower lobe empty, which is the reported «2 из 2» with
+            // a lobe's worth of space inside the contour. With the slide, room 3 is seated Down of room 2 at
+            // offset +2 -> (60,66) — the first slid candidate the ladder reaches — and rooms 4 and 5 then stack
+            // centre-aligned below it. NON-VACUOUS: this fixture packs 2 rooms without the slide and 5 with it
+            // (harness `mutants` row MutNoSlide), and the assertions below are the slid slot itself, its two
+            // descendants and the actual shared wall it hangs off — not a derived metric.
+            var lobe = LobeFloor(reversed: false);
+            int keptLobe = CompactLayout.PackAroundColumnWithinFootprint(lobe, 1, 54f, 62f, LobeContour(), m);
+            if (keptLobe != 5)
+            { Debug.LogError($"FAIL pack-slide: kept {keptLobe} rooms, want 5 — the second lobe of the L was not filled"); ok = false; }
+            AssertAt(lobe, 3, 60f, 66f, "pack-slide", ref ok);   // the SLID slot (offset +2 along room 2's lower wall)
+            AssertAt(lobe, 4, 60f, 70f, "pack-slide", ref ok);   // stacked below it, centre-aligned
+            AssertAt(lobe, 5, 60f, 74f, "pack-slide", ref ok);
+            var lr2 = lobe.GetRoom(2); var lr3 = lobe.GetRoom(3);
+            if (lr2 != null && lr3 != null)
+            {
+                if (!CompactLayout.AdjacentAlongWall(lr2, lr3))
+                { Debug.LogError("FAIL pack-slide: the slid room 3 does not share a wall with the room 2 it was seated against"); ok = false; }
+                float lobeSpan = SharedWallSpan(lr2, lr3);
+                if (lobeSpan < CompactLayout.DoorGapTiles)
+                { Debug.LogError($"FAIL pack-slide: the slid pair 2-3 shares only {lobeSpan:F2} tiles of wall (want >= {CompactLayout.DoorGapTiles:F2})"); ok = false; }
+                if (LinkCount(lobe, 2, 3) != 1)
+                { Debug.LogError($"FAIL pack-slide: {LinkCount(lobe, 2, 3)} link(s) between the slid pair 2-3, want exactly 1 (the slid slot must render as a door)"); ok = false; }
+            }
+
+            // ---- 28. The DM-facing «из N» cap rises on that same contour ------------------------------------
+            // MaxRoomsPackable probes the SAME packer with 10 fixed seeds and rolled 4..6 room sizes, so the
+            // plus-shaped candidate lattice capped the reported max at what arm A alone holds: the column and one
+            // room, i.e. literally the DM's «Комнаты: 2 из 2». Measured on this contour (harness `lobecap`):
+            // 2 before the slide, 4 after. (4 rather than the 5 the all-4x4 fixture above packs, because the
+            // probe rolls sides 4..6 and a 5/6-wide room cannot enter the 4-wide arm B at all.)
+            // CAVEAT (stated so this is not read as more than it is): BuildingGenerator.MaxRoomsPackable is
+            // hard-wired to CompactLayout, so this assertion is NOT rebound by the harness's mutant copies and
+            // cannot kill MutNoSlide — assertion 27 is what does that. Its own non-vacuity rests on the measured
+            // 2 -> 4 (the same probe loop re-run against the no-slide packer), quoted above.
+            int lobeCap = BuildingGenerator.MaxRoomsPackable(54f, 62f, 4, 4, LobeContour());
+            if (lobeCap < 4)
+            { Debug.LogError($"FAIL pack-slide-cap: MaxRoomsPackable reports {lobeCap} on the L contour, want >= 4 (it was 2 before the slide)"); ok = false; }
+
+            // ---- 29. CENTRE-FIRST: a valid centred slot still beats every slid one --------------------------
+            // The slide is offset-OUTER (magnitude 0 first, then +1, -1, +2, -2 ... across all four sides and,
+            // in the fill phases, across all anchors), so the compact-looking centred slot wins whenever it is
+            // valid and every pre-F4 decision survives unchanged. Fixture: the roomy 19x19 square contour, the
+            // column pinned at (64,64) and ONE linked 4x4 room -> the centred Right slot (68,64).
+            // The two premise checks below are what make this non-vacuous rather than a restatement of the old
+            // behaviour: they prove a SLID slot (68,66) was genuinely available (inside the contour, overlapping
+            // nothing) and was passed over. NON-VACUOUS: run the offset loop farthest-magnitude-first (harness
+            // mutant MutSlideFarFirst) and room 2 lands at exactly that (68,66) instead.
+            var cf = CentreFirstFloor();
+            int keptCF = CompactLayout.PackAroundColumnWithinFootprint(cf, 1, 64f, 64f, BigContour(), m);
+            if (!FloorFootprint.ContainsRect(BigContour(), m, 68f, 66f, 4, 4))
+            { Debug.LogError("FAIL pack-centre-first: the fixture's premise is broken — the slid slot (68,66) is not inside the contour"); ok = false; }
+            if (cf.GetRoom(1) != null && Overlap(RoomAt(99, 68, 66, 4, 4), cf.GetRoom(1)))
+            { Debug.LogError("FAIL pack-centre-first: the fixture's premise is broken — the slid slot (68,66) is not free"); ok = false; }
+            if (keptCF != 2)
+            { Debug.LogError($"FAIL pack-centre-first: kept {keptCF} rooms, want 2"); ok = false; }
+            AssertAt(cf, 2, 68f, 64f, "pack-centre-first", ref ok);
+
+            // ---- 30. DOOR-OVERLAP BOUND: a slide may never outrun the door opening --------------------------
+            // A slid pair must still share enough wall to carve the door the Link renders as, so the slide stops
+            // at |t| <= (p + c)/2 - CompactLayout.DoorGapTiles (p, c = the two footprints' extents along the
+            // wall) — the exact |t| at which the shared span drops below one door opening. For the 4x4 pair
+            // below that is |t| <= 4 - 1.4 = 2.6, i.e. 2 whole tiles.
+            // The two fixtures straddle that boundary by ONE TILE and differ ONLY in the lower lobe's x:
+            //   OK  — lobe window is exactly x == 64, reachable from the room at x == 62 by t = +2 (span 2.0);
+            //   FAR — lobe window is exactly x == 65, which would need t = +3 (span 1.0 < 1.4) and no other
+            //         anchor is within reach, so the room must be DROPPED rather than hung off a 1-tile wall.
+            // NON-VACUOUS: drop the DoorGapTiles term from the bound (harness mutant MutNoDoorBound) and the FAR
+            // fixture seats room 4 at (65,66) on a 1-tile shared wall; remove the slide entirely (MutNoSlide)
+            // and the OK fixture drops it. The measured span assertion pins the actual door geometry, not a
+            // proxy for it.
+            var dOk = DoorBoundFloor();
+            int keptDOk = CompactLayout.PackAroundColumnWithinFootprint(dOk, 1, 54f, 62f, DoorBoundContour(64f), m);
+            if (keptDOk != 4)
+            { Debug.LogError($"FAIL pack-door-bound: kept {keptDOk} rooms on the reachable lobe, want 4"); ok = false; }
+            AssertAt(dOk, 4, 64f, 66f, "pack-door-bound", ref ok);
+            var dr3 = dOk.GetRoom(3); var dr4 = dOk.GetRoom(4);
+            if (dr3 != null && dr4 != null)
+            {
+                float span = SharedWallSpan(dr3, dr4);
+                if (span < CompactLayout.DoorGapTiles)
+                { Debug.LogError($"FAIL pack-door-bound: the slid pair 3-4 shares only {span:F2} tiles of wall, less than the {CompactLayout.DoorGapTiles:F2}-tile door opening"); ok = false; }
+            }
+            var dFar = DoorBoundFloor();
+            int keptDFar = CompactLayout.PackAroundColumnWithinFootprint(dFar, 1, 54f, 62f, DoorBoundContour(65f), m);
+            if (keptDFar != 3 || dFar.GetRoom(4) != null)
+            {
+                Debug.LogError($"FAIL pack-door-bound: kept {keptDFar} rooms with room 4 "
+                    + (dFar.GetRoom(4) == null ? "dropped" : $"at ({dFar.GetRoom(4).X * T:F2},{dFar.GetRoom(4).Y * T:F2})")
+                    + ", want 3 — a slide that leaves less than a door's worth of shared wall must be rejected");
+                ok = false;
+            }
+            foreach (var r in dFar.Rooms)
+                if (r.Y * T > 65.5f)
+                { Debug.LogError($"FAIL pack-door-bound: room {r.Id} reached the lobe past the door-overlap bound"); ok = false; }
+
+            // ---- 31. Determinism of the SLID placements under permuted room AND link insertion order --------
+            // Same L fixture, with floor.Rooms AND floor.Links both built in REVERSE order. The slide adds no
+            // RNG and no state-dependent order (magnitude 0,+1,-1,+2,-2 ..., sides Right/Down/Left/Up, anchors
+            // ascending id), so the result must be identical per room id — including the SLID room 3.
+            // Which stimulus is live here (stated rather than assumed): rooms 3 and 4 are UNLINKED, so they are
+            // seated by the fill sweeps and the reversed floor.Rooms order is what SortedById has to undo —
+            // sweep in list order instead and the reversed copy seats room 4 in the slid slot room 3 took. The
+            // reversed LINK order is live too: the column's neighbours are 2 and 5, so without BuildAdjacency's
+            // neighbour .Sort() phase 1 seats room 5 at (58,62) and room 2 is the one left to the fill sweeps.
+            var lobe2 = LobeFloor(reversed: true);
+            int keptLobe2 = CompactLayout.PackAroundColumnWithinFootprint(lobe2, 1, 54f, 62f, LobeContour(), m);
+            if (keptLobe2 != keptLobe)
+            { Debug.LogError($"FAIL pack-slide-determinism: permuted input kept {keptLobe2} rooms vs {keptLobe}"); ok = false; }
+            for (int id = 1; id <= 5; id++)
+            {
+                var ra = lobe.GetRoom(id); var rb = lobe2.GetRoom(id);
+                if ((ra == null) != (rb == null))
+                { Debug.LogError($"FAIL pack-slide-determinism: room {id} kept in one run and dropped in the other"); ok = false; continue; }
+                if (ra == null) continue;
+                if (ra.X != rb.X || ra.Y != rb.Y)
+                { Debug.LogError($"FAIL pack-slide-determinism: room {id} at ({ra.X * T:F2},{ra.Y * T:F2}) vs ({rb.X * T:F2},{rb.Y * T:F2}) under permuted room/link order"); ok = false; }
+            }
+
             Debug.Log(ok ? "Self-Test Column Packing: PASS" : "Self-Test Column Packing: FAIL");
+        }
+
+        // Assert one room sits at an exact TILE position (the packer's positions are exact multiples of 1/128).
+        static void AssertAt(InteriorFloor f, int id, float tileX, float tileY, string tag, ref bool ok)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var r = f.GetRoom(id);
+            if (r != null && Approx(r.X * T, tileX) && Approx(r.Y * T, tileY)) return;
+            Debug.LogError($"FAIL {tag}: room {id} at "
+                + (r == null ? "DROPPED" : $"({r.X * T:F2},{r.Y * T:F2})") + $", want ({tileX:F2},{tileY:F2})");
+            ok = false;
+        }
+
+        // Length (tiles) of the wall span the two footprints actually SHARE — the span a door has to fit into.
+        // Measured independently of CompactLayout: the overlap of their projections on the axis they touch
+        // ALONG. 0 when they do not touch at all. NOT the Chebyshev penetration AdjacentAlongWall measures
+        // (that equals the shared span only for equal extents), which is why it is computed here from the two
+        // footprints' faces.
+        static float SharedWallSpan(Room a, Room b)
+        {
+            int T = DungeonLayout.TilesPerAxis;
+            var (aw, ah) = DungeonProjection.EffectiveSize(a);
+            var (bw, bh) = DungeonProjection.EffectiveSize(b);
+            float ax = a.X * T, ay = a.Y * T, bx = b.X * T, by = b.Y * T;
+            float gapX = Mathf.Abs(ax - bx) - (aw + bw) * 0.5f;
+            float gapY = Mathf.Abs(ay - by) - (ah + bh) * 0.5f;
+            if (Mathf.Abs(gapX) < 0.02f && gapY < -0.02f)          // vertical wall -> the span runs along Y
+                return Mathf.Min(ay + ah * 0.5f, by + bh * 0.5f) - Mathf.Max(ay - ah * 0.5f, by - bh * 0.5f);
+            if (Mathf.Abs(gapY) < 0.02f && gapX < -0.02f)          // horizontal wall -> the span runs along X
+                return Mathf.Min(ax + aw * 0.5f, bx + bw * 0.5f) - Mathf.Max(ax - aw * 0.5f, bx - bw * 0.5f);
+            return 0f;
         }
 
         // Tile-space float compare for the packer fixtures (positions are exact multiples of 1/128).
@@ -827,6 +989,90 @@ namespace WorldGen.Rendering
             var f = new InteriorFloor { NextRoomId = 3 };
             f.Rooms.Add(RoomAt(1, 64, 64, 4, 4));
             f.Rooms.Add(RoomAt(2, 64, 64, 4, 4));
+            return f;
+        }
+
+        // ---- assertions 27/28/31: the reported L-shape, whose second lobe needs a SLID flush slot ---------
+        // Margin-inflated (ContourMargin = 1.5) the two contour rooms give
+        //   arm A (horizontal) 8x4  at (56,62) -> [50.5,61.5] x [58.5,65.5]
+        //   arm B (vertical)   1x12 at (60,70) -> [58,62]     x [62.5,77.5]
+        // Arm A is 7 tiles tall, so only ONE row fits it, and only 11 tiles wide, so with the column pinned at
+        // (54,62) it holds the column plus exactly ONE more room, whose centre lands at x = 58 (a 4-wide room),
+        // 58.5 (5-wide) or — poking out at [56,62] — nowhere at all (6-wide). Arm B is exactly 4 tiles wide, so
+        // ONLY a 4-wide room fits it and ONLY at x == 60.
+        // That 60 is the point of the fixture: BuildingGenerator rolls room sides 4..6, and every centre a flush
+        // chain from the pinned column can produce in arm A is 54, 58 or 58.5 — never 60. Down/Up candidates
+        // keep the anchor's x at EVERY distance and Right/Left candidates keep the anchor's y (which pins them
+        // inside arm A's 7-tile band), so arm B is unreachable — for ANY room size the generator can roll —
+        // unless a candidate may slide ALONG the shared wall. From x = 58 it takes a slide of exactly +2, which
+        // the door-overlap bound allows for a 4x4 pair (|t| <= (4+4)/2 - 1.4 = 2.6).
+        static InteriorFloor LobeContour()
+        {
+            var c = new InteriorFloor { NextRoomId = 3 };
+            c.Rooms.Add(RoomAt(1, 56, 62, 8, 4));
+            c.Rooms.Add(RoomAt(2, 60, 70, 1, 12));
+            return c;
+        }
+
+        // The upper floor packed into LobeContour: column 1 + four 4x4 rooms. Links are 1-2 and 1-5 ONLY, so
+        // phase 1 seats room 2 and rooms 3-4 fall to the ascending-id fill sweeps — which is what makes the
+        // `reversed` permutation (rooms AND links inserted the other way round) a live determinism stimulus on
+        // BOTH the sweep order and BuildAdjacency's neighbour sort (see assertion 31).
+        static InteriorFloor LobeFloor(bool reversed)
+        {
+            var f = new InteriorFloor { NextRoomId = 6 };
+            if (reversed) for (int id = 5; id >= 1; id--) f.Rooms.Add(RoomAt(id, 54, 62, 4, 4));
+            else for (int id = 1; id <= 5; id++) f.Rooms.Add(RoomAt(id, 54, 62, 4, 4));
+            if (reversed)
+            {
+                f.Links.Add(new Link { RoomA = 1, RoomB = 5 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            }
+            else
+            {
+                f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+                f.Links.Add(new Link { RoomA = 1, RoomB = 5 });
+            }
+            return f;
+        }
+
+        // ---- assertion 29: the column + ONE linked room in the roomy BigContour ---------------------------
+        // Every side of the column is free and well inside the contour, so the centred Right slot (68,64) AND
+        // its slid neighbours (68,63), (68,65), (68,62), (68,66) are all valid — the fixture exists to prove
+        // the centred one is still the one taken.
+        static InteriorFloor CentreFirstFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 3 };
+            f.Rooms.Add(RoomAt(1, 64, 64, 4, 4));
+            f.Rooms.Add(RoomAt(2, 64, 64, 4, 4));
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            return f;
+        }
+
+        // ---- assertion 30: the door-overlap bound, straddled by ONE TILE ----------------------------------
+        // Margin-inflated:
+        //   arm A 12x4 at (58,62)      -> [50.5,65.5] x [58.5,65.5]   (holds 4x4 rooms at x in {54,58,62})
+        //   arm B  1x12 at (lobeX,70)  -> [lobeX-2,lobeX+2] x [62.5,77.5]
+        // Arm B is exactly 4 tiles wide, so a 4x4 room fits it at the SINGLE x == lobeX. With lobeX = 64 the
+        // room at x = 62 reaches it by sliding t = +2 (shared span 2.0 >= DoorGapTiles); with lobeX = 65 it
+        // would need t = +3 (span 1.0), and no other placed room is within reach — so the bound decides.
+        static InteriorFloor DoorBoundContour(float lobeX)
+        {
+            var c = new InteriorFloor { NextRoomId = 3 };
+            c.Rooms.Add(RoomAt(1, 58, 62, 12, 4));
+            c.Rooms.Add(RoomAt(2, lobeX, 70, 1, 12));
+            return c;
+        }
+
+        // Column 1 + three 4x4 rooms in a chain 1-2-3-4: rooms 2 and 3 fill arm A, and room 4 has nowhere left
+        // to go except the lobe — reachable only across the door-overlap bound.
+        static InteriorFloor DoorBoundFloor()
+        {
+            var f = new InteriorFloor { NextRoomId = 5 };
+            for (int id = 1; id <= 4; id++) f.Rooms.Add(RoomAt(id, 54, 62, 4, 4));
+            f.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            f.Links.Add(new Link { RoomA = 2, RoomB = 3 });
+            f.Links.Add(new Link { RoomA = 3, RoomB = 4 });
             return f;
         }
 

@@ -62,7 +62,9 @@ namespace WorldGen.Rendering
         const float JunctionPx = 9f;
         const float ContourThickness = 3f;
         const float WallThickness = 5f;     // room-outline wall stroke (bold enough to read at a glance)
-        const float DoorGapTiles = 1.4f;    // opening carved out of a wall at each door, in tiles
+        // Opening carved out of a wall at each door, in tiles. Owned by CompactLayout because the PACKER has to
+        // read it too (its lateral slide may never leave a pair sharing less wall than the door it draws here).
+        const float DoorGapTiles = CompactLayout.DoorGapTiles;
         static readonly Color ContourColor = new Color(0.45f, 0.75f, 1f, 0.9f);     // provisional — user will tune
         static readonly Color ViolationColor = new Color(0.85f, 0.25f, 0.2f, 0.85f); // provisional — user will tune
         static readonly Color WallColor = new Color(0.04f, 0.04f, 0.06f, 1f);        // near-black, opaque — provisional

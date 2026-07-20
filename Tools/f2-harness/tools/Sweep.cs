@@ -82,8 +82,8 @@ namespace WorldGen.Generation
         {
             float m = FloorFootprint.ContourMargin;
             int cases = 0;
-            Tally ta = default, tb = default, tc = default, tcc = default, td = default;   // vs (a)
-            Tally cVsB = default, cVsD = default;
+            Tally ta = default, tb = default, tc = default, tcc = default, td = default, te = default;   // vs (a)
+            Tally cVsB = default, cVsD = default, cVsE = default;
             var deltaHist = new Dictionary<int, int>();
             int contoursWhereCBeatsB = 0;
             var exampleCBeatsB = new List<string>();
@@ -103,16 +103,19 @@ namespace WorldGen.Generation
                         var fc = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fcc = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         var fd = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
+                        var fe = StairGraph(new Random(packSeed), budget, col.SizeW, col.SizeH);
                         int na = LegacyPacker.Pack(fa, fa.Rooms[0].Id, cx, cy, ground, m, flushOnly: false);
                         int nb = SpreadOnlyLayout.PackAroundColumnWithinFootprint(fb, fb.Rooms[0].Id, cx, cy, ground, m);
                         int nc = CompactLayout.PackAroundColumnWithinFootprint(fc, fc.Rooms[0].Id, cx, cy, ground, m);
                         int ncc = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
                         int nd = MutNoLinkPref.PackAroundColumnWithinFootprint(fd, fd.Rooms[0].Id, cx, cy, ground, m);
+                        int ne = PreSlideLayout.PackAroundColumnWithinFootprint(fe, fe.Rooms[0].Id, cx, cy, ground, m);
 
                         cases++;
-                        ta.Add(na, na); tb.Add(nb, na); tc.Add(nc, na); tcc.Add(ncc, na); td.Add(nd, na);
+                        ta.Add(na, na); tb.Add(nb, na); tc.Add(nc, na); tcc.Add(ncc, na); td.Add(nd, na); te.Add(ne, na);
                         cVsB.Add(nc, nb);
                         cVsD.Add(nc, nd);
+                        cVsE.Add(nc, ne);
                         int d = nc - nb;
                         deltaHist.TryGetValue(d, out int n0); deltaHist[d] = n0 + 1;
                         if (d > 0 && !contourHit) { contourHit = true; contoursWhereCBeatsB++; }
@@ -130,12 +133,16 @@ namespace WorldGen.Generation
             Console.WriteLine(tc.Row("(c) max(compact,spread)", cases));
             Console.WriteLine(tcc.Row("(c') compact-only", cases));
             Console.WriteLine(td.Row("(d) no-link-pref (I2)", cases));
+            Console.WriteLine(te.Row("(e) pre-F4 e409a9c", cases));
             Console.WriteLine($"(c) vs (b): better {cVsB.Better}, equal {cVsB.Equal}, worse {cVsB.Worse} (worst -{cVsB.WorstDelta}); "
                               + $"total rooms {tc.Total} vs {tb.Total} (+{tc.Total - tb.Total}); "
                               + $"packs where (c)>(b): {cVsB.Better}/{cases} = {100.0 * cVsB.Better / cases:F2}%, "
                               + $"contours with at least one such pack: {contoursWhereCBeatsB}");
             Console.WriteLine($"(c) vs (d) [I2 — the I6 linked-anchor-preference cost]: better {cVsD.Better}, equal {cVsD.Equal}, "
                               + $"worse {cVsD.Worse} (worst -{cVsD.WorstDelta}); total rooms {tc.Total} vs {td.Total} ({tc.Total - td.Total:+0;-0;0})");
+            Console.WriteLine($"(c) vs (e) [F4 — the lateral slide]: better {cVsE.Better}, equal {cVsE.Equal}, "
+                              + $"worse {cVsE.Worse} (worst -{cVsE.WorstDelta}); total rooms {tc.Total} vs {te.Total} "
+                              + $"({tc.Total - te.Total:+0;-0;0})");
             var keys = new List<int>(deltaHist.Keys); keys.Sort();
             Console.Write("(c)-(b) delta histogram:");
             foreach (var k in keys) Console.Write($" {k:+0;-0;0}:{deltaHist[k]}");
@@ -148,8 +155,8 @@ namespace WorldGen.Generation
         {
             float m = FloorFootprint.ContourMargin;
             int contours = 0;
-            Tally ta = default, tb = default, tc = default, tcc = default, td = default;
-            Tally cVsB = default, cVsD = default;
+            Tally ta = default, tb = default, tc = default, tcc = default, td = default, te = default;
+            Tally cVsB = default, cVsD = default, cVsE = default;
             var examples = new List<string>();
 
             for (int contourSeed = 1; contourSeed <= 120; contourSeed++)
@@ -158,7 +165,7 @@ namespace WorldGen.Generation
                     if (!TryGroundContour(contourSeed, groundRooms, out var ground, out var col)) continue;
                     float cx = col.X * T, cy = col.Y * T;
                     int budget = BuildingGenerator.MaxRoomsByArea(ground, col.SizeW, col.SizeH);
-                    int ca = 1, cb = 1, cc = 1, ccc = 1, cd = 1;
+                    int ca = 1, cb = 1, cc = 1, ccc = 1, cd = 1, ce = 1;
                     for (int s = 0; s < 10; s++)
                     {
                         var fa = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
@@ -166,21 +173,25 @@ namespace WorldGen.Generation
                         var fc = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fcc = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         var fd = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
+                        var fe = StairGraph(new Random(s), budget, col.SizeW, col.SizeH);
                         int na = LegacyPacker.Pack(fa, fa.Rooms[0].Id, cx, cy, ground, m, false);
                         int nb = SpreadOnlyLayout.PackAroundColumnWithinFootprint(fb, fb.Rooms[0].Id, cx, cy, ground, m);
                         int nc = CompactLayout.PackAroundColumnWithinFootprint(fc, fc.Rooms[0].Id, cx, cy, ground, m);
                         int ncc = CompactOnlyLayout.PackAroundColumnWithinFootprint(fcc, fcc.Rooms[0].Id, cx, cy, ground, m);
                         int nd = MutNoLinkPref.PackAroundColumnWithinFootprint(fd, fd.Rooms[0].Id, cx, cy, ground, m);
+                        int ne = PreSlideLayout.PackAroundColumnWithinFootprint(fe, fe.Rooms[0].Id, cx, cy, ground, m);
                         if (na > ca) ca = na;
                         if (nb > cb) cb = nb;
                         if (nc > cc) cc = nc;
                         if (ncc > ccc) ccc = ncc;
                         if (nd > cd) cd = nd;
+                        if (ne > ce) ce = ne;
                     }
                     contours++;
-                    ta.Add(ca, ca); tb.Add(cb, ca); tc.Add(cc, ca); tcc.Add(ccc, ca); td.Add(cd, ca);
+                    ta.Add(ca, ca); tb.Add(cb, ca); tc.Add(cc, ca); tcc.Add(ccc, ca); td.Add(cd, ca); te.Add(ce, ca);
                     cVsB.Add(cc, cb);
                     cVsD.Add(cc, cd);
+                    cVsE.Add(cc, ce);
                     if (cc > cb && examples.Count < 6)
                         examples.Add($"contour {contourSeed}/{groundRooms}: cap (c) {cc} > (b) {cb} (old {ca}, compact-only {ccc}, no-link-pref {cd})");
                 }
@@ -192,11 +203,15 @@ namespace WorldGen.Generation
             Console.WriteLine(tc.Row("(c) max(compact,spread)", contours));
             Console.WriteLine(tcc.Row("(c') compact-only", contours));
             Console.WriteLine(td.Row("(d) no-link-pref (I2)", contours));
+            Console.WriteLine(te.Row("(e) pre-F4 e409a9c", contours));
             Console.WriteLine($"(c) vs (b): better {cVsB.Better}, equal {cVsB.Equal}, worse {cVsB.Worse} (worst -{cVsB.WorstDelta}); "
                               + $"sum {tc.Total} vs {tb.Total} (+{tc.Total - tb.Total})");
             Console.WriteLine($"(c) vs (d) [I2 — the I6 linked-anchor-preference cost on the «из N» cap]: better {cVsD.Better}, "
                               + $"equal {cVsD.Equal}, worse {cVsD.Worse} (worst -{cVsD.WorstDelta}); sum {tc.Total} vs {td.Total} "
                               + $"({tc.Total - td.Total:+0;-0;0})");
+            Console.WriteLine($"(c) vs (e) [F4 — the lateral slide, on the «из N» cap]: better {cVsE.Better}, "
+                              + $"equal {cVsE.Equal}, worse {cVsE.Worse} (worst -{cVsE.WorstDelta}); sum {tc.Total} vs {te.Total} "
+                              + $"({tc.Total - te.Total:+0;-0;0})");
             foreach (var s in examples) Console.WriteLine("  e.g. " + s);
         }
 

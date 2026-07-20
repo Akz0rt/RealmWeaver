@@ -19,12 +19,16 @@ static class Program
             case "hunt": Design.Hunt(); break;
             case "huntmut": Design.HuntMutant(args.Length > 1 ? args[1] : ""); break;
             case "mutants": Mutants.Run(); break;
+            case "lobecap": Lobe.Run(); break;
+            case "optcheck": OptCheck.Run(); break;
             default:
                 Console.WriteLine("usage: dotnet run -c Release -- <cmd>   where cmd is one of:");
                 Console.WriteLine("  selftests  the real Editor self-test suites, compiled from Assets/");
                 Console.WriteLine("  sweep      three-variant corpus sweep: old packer / spread-only / max (also: packs, caps)");
                 Console.WriteLine("  mutants    non-vacuity check: the suite re-run against each one-rule-removed packer");
                 Console.WriteLine("  perf       MaxRoomsPackable + regen timings on realistic floor-0 contours");
+                Console.WriteLine("  lobecap    the «из N» cap on F4's L-shaped contour, per packer variant");
+                Console.WriteLine("  optcheck   F4's two fill-sweep skips vs the same pipelines at e409a9c, position by position");
                 Console.WriteLine("  design     dump every self-test fixture under every variant and mutant");
                 Console.WriteLine("  hunt       search for fixtures where the compact and spread runs disagree");
                 Console.WriteLine("  huntmut <anchor-outer|link-pref|tight-bounds>   search for mutant-discriminating fixtures");

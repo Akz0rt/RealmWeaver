@@ -27,12 +27,20 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutNoDedupSelfTests().SelfTestColumnPacking()),
                 ("MutFwdDedupOnly",   "AddLinkIfAbsent keeps only the FORWARD half of the pair test",
                     () => new WorldGen.MutantTests.MutFwdDedupOnlySelfTests().SelfTestColumnPacking()),
+                ("MutNoSlide",        "F4's lateral slide removed (candidate offsets collapse to {0})",
+                    () => new WorldGen.MutantTests.MutNoSlideSelfTests().SelfTestColumnPacking()),
+                ("MutNoDoorBound",    "the slide's DoorGapTiles shared-wall bound removed (slides to a corner kiss)",
+                    () => new WorldGen.MutantTests.MutNoDoorBoundSelfTests().SelfTestColumnPacking()),
+                ("MutSlideFarFirst",  "the offset ladder runs largest-magnitude-first (centre no longer wins)",
+                    () => new WorldGen.MutantTests.MutSlideFarFirstSelfTests().SelfTestColumnPacking()),
                 ("SpreadOnlyLayout",  "the COMPACT run deleted (spread pipeline only)",
                     () => new WorldGen.MutantTests.SpreadOnlyLayoutSelfTests().SelfTestColumnPacking()),
                 ("CompactOnlyLayout", "the SPREAD run deleted (compact pipeline only)",
                     () => new WorldGen.MutantTests.CompactOnlyLayoutSelfTests().SelfTestColumnPacking()),
                 ("PreReviewLayout",   "the packer exactly as reviewed at dd6e3dc",
                     () => new WorldGen.MutantTests.PreReviewLayoutSelfTests().SelfTestColumnPacking()),
+                ("PreSlideLayout",    "the packer exactly as SHIPPED before F4 (e409a9c) — no lateral slide",
+                    () => new WorldGen.MutantTests.PreSlideLayoutSelfTests().SelfTestColumnPacking()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
