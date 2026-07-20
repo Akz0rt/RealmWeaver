@@ -212,39 +212,62 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL nudge-trap: a fixed room moved during the fallback relocation"); ok = false; }
 
             // ---- 10b. A REAL overlap resolves FLUSH, not with a gap (the ShoveClearance bug) -----------
-            // Room 2 penetrates room 1 deeper on X (dx=0, full X overlap) than on Y (dy=3, a shallow 1-tile
-            // Y overlap) — a genuine penetration, not a touch. The least-penetration rule must shove along Y
-            // (the shallower axis). Two independent assertions: (a) the overlap predicate itself reports
-            // clear (IsFree semantics), and (b) AdjacentAlongWall reports the pair as sharing a wall — i.e.
-            // the resulting Chebyshev edge gap is <= TouchEps, so a door will render. Before the fix, the
-            // shove added a hard-coded 0.1 tiles (5x TouchEps) of clearance: the resolved gap sat at ≈0.1,
-            // OUTSIDE TouchEps (0.02), so assertion (b) FAILED — the room cleared the overlap but landed with
-            // a visible gap instead of flush, which was exactly the reported bug (renders as a corridor, not
-            // a shared-wall door). This is the assertion that is vacuous under (a) alone, which is why (b) is
-            // required.
+            // Room 2 penetrates room 1 deeper on X (dx=0, full X overlap: overlapX=4) than on Y (dy=3, a
+            // shallow 1-tile Y overlap: overlapY=1) — a genuine penetration, not a touch. The least-penetration
+            // rule must shove along Y (the shallower axis, overlapY=1 < overlapX=4). Three assertions:
+            // (a) the overlap predicate itself reports clear (IsFree semantics); (b) AdjacentAlongWall reports
+            // the pair as sharing a wall, i.e. the resulting Chebyshev edge gap is <= TouchEps, so a door
+            // will render — before the ShoveClearance fix, the shove added a hard-coded 0.1 tiles (5x TouchEps)
+            // of clearance, so the resolved gap sat at ≈0.1, OUTSIDE TouchEps (0.02), and (b) FAILED; and
+            // (c) the axis that actually MOVED is Y (room 2's Y coordinate changed) and X did NOT move.
+            // (a) and (b) alone do NOT pin down which axis moved: shoving fully along EITHER axis by that
+            // axis's own (overlap + ShoveClearance) drives that axis's edge gap to ≈ShoveClearance (a touch)
+            // while the other axis keeps its full original overlap — and AdjacentAlongWall only checks "one
+            // axis touches, the other overlaps," which is equally true whichever axis was shoved (it just
+            // reports a vertical wall instead of a horizontal one, or vice versa). Hand-verified: with the
+            // branch flipped to `if (overlapX > overlapY)`, this fixture shoves X instead (mx += overlapX +
+            // ShoveClearance = 54.005, my stays 53) — room 2 lands at (54.005, 53) instead of (50, 54.005);
+            // (a) and (b) both STILL pass (AdjacentAlongWall now reports a vertical wall), but (c) catches it:
+            // X moved (50→54.005) when it must not, and Y never moved. (c) is what actually proves the axis
+            // choice; (a)+(b) alone are vacuous to it.
             var h = new InteriorFloor { NextRoomId = 3 };
             h.Rooms.Add(RoomAt(1, 50, 50, 4, 4));
             h.Rooms.Add(RoomAt(2, 50, 53, 4, 4));   // dx=0 (deep X overlap), dy=3 (shallow Y overlap)
+            float h2xBefore = h.GetRoom(2).X, h2yBefore = h.GetRoom(2).Y;
             CompactLayout.NudgeRoomOffOverlaps(h, 2);
             if (Overlap(h.GetRoom(2), h.GetRoom(1)))
             { Debug.LogError("FAIL nudge-flush: room 2 still overlaps room 1 after the shove"); ok = false; }
             if (!CompactLayout.AdjacentAlongWall(h.GetRoom(1), h.GetRoom(2)))
             { Debug.LogError("FAIL nudge-flush: shove left a gap wider than TouchEps — no door would render (this is the pre-fix bug: a hard-coded 0.1-tile clearance)"); ok = false; }
+            if (Mathf.Abs(h.GetRoom(2).X - h2xBefore) > 1e-4f)
+            { Debug.LogError("FAIL nudge-flush-axis: room 2's X moved — the least-penetration axis here is Y, X must stay put"); ok = false; }
+            if (Mathf.Abs(h.GetRoom(2).Y - h2yBefore) <= 1e-4f)
+            { Debug.LogError("FAIL nudge-flush-axis: room 2's Y did not move — the least-penetration axis (Y) must be the one shoved"); ok = false; }
 
             // ---- 10c. Least-penetration AXIS choice — mirror of 10b, deep/shallow axes swapped -----------
-            // Same pair, but now room 2 penetrates deeper on Y (dy=0) than on X (dx=3): the shove must go
-            // along X this time. An implementation that shoves the wrong axis (or always the same axis)
-            // still clears the overlap — assertion (a) alone would pass — but leaves either a corner-only
-            // kiss or a non-adjacent pair, so AdjacentAlongWall (b) fails independently of 10b. Together, 10b
-            // and 10c prove the fix cannot be "passed" by shoving the wrong way.
+            // Same pair, but now room 2 penetrates deeper on Y (dy=0, overlapY=4) than on X (dx=3, overlapX=1):
+            // the shove must go along X this time (overlapX=1 < overlapY=4). Mirrors 10b's three assertions
+            // with the moved/unmoved axes swapped: (a) no overlap; (b) AdjacentAlongWall; (c) X moved, Y did
+            // not. As in 10b, (a)+(b) alone are vacuous to axis choice — see 10b's comment for why. Hand-
+            // verified: with the branch flipped to `if (overlapX > overlapY)`, this fixture shoves Y instead
+            // (my += overlapY + ShoveClearance = 54.005, mx stays 53) — room 2 lands at (53, 54.005) instead
+            // of (54.005, 50); (a) and (b) both STILL pass (AdjacentAlongWall reports a horizontal wall
+            // instead of the correct vertical one), but (c) catches it: X never moved when it must, and Y
+            // moved (50→54.005) when it must not. Together, 10b and 10c's (c) assertions are what actually
+            // prove the fix cannot be "passed" by shoving the wrong axis — (a) and (b) cannot.
             var k = new InteriorFloor { NextRoomId = 3 };
             k.Rooms.Add(RoomAt(1, 50, 50, 4, 4));
             k.Rooms.Add(RoomAt(2, 53, 50, 4, 4));   // dy=0 (deep Y overlap), dx=3 (shallow X overlap)
+            float k2xBefore = k.GetRoom(2).X, k2yBefore = k.GetRoom(2).Y;
             CompactLayout.NudgeRoomOffOverlaps(k, 2);
             if (Overlap(k.GetRoom(2), k.GetRoom(1)))
             { Debug.LogError("FAIL nudge-flush-axis: room 2 still overlaps room 1 after the shove"); ok = false; }
             if (!CompactLayout.AdjacentAlongWall(k.GetRoom(1), k.GetRoom(2)))
             { Debug.LogError("FAIL nudge-flush-axis: shove along the wrong axis left a gap wider than TouchEps"); ok = false; }
+            if (Mathf.Abs(k.GetRoom(2).Y - k2yBefore) > 1e-4f)
+            { Debug.LogError("FAIL nudge-flush-axis: room 2's Y moved — the least-penetration axis here is X, Y must stay put"); ok = false; }
+            if (Mathf.Abs(k.GetRoom(2).X - k2xBefore) <= 1e-4f)
+            { Debug.LogError("FAIL nudge-flush-axis: room 2's X did not move — the least-penetration axis (X) must be the one shoved"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Nudge Off Overlaps: PASS" : "Self-Test Nudge Off Overlaps: FAIL");
         }
