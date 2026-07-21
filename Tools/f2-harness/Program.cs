@@ -53,6 +53,8 @@ static class Program
         b.SelfTestDragSettleOrdering();
         b.SelfTestAuthoredLinkFlag();
         new WorldGen.Rendering.DungeonGraphSelfTests().SelfTestDungeonUnaffectedByRewire();
+        var battle = new WorldGen.Rendering.BattleGridSelfTests();
+        battle.SelfTestCodec();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
