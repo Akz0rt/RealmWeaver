@@ -200,8 +200,12 @@ namespace WorldGen.Rendering
         void BuildBattleGridSection(Transform parent, Room room)
         {
             var sec = AddSection(parent, "BattleGridSection");
-            AddFullWidthButton(sec.transform, "Боевая карта", ThemeRole.Elev,
-                               () => OnOpenBattleGridRequested?.Invoke(room.Id));
+            // PRIMARY styling (accent fill, AccentInk label, taller, larger type): this is the one control
+            // in the inspector that opens a whole other screen, and as a plain Elev button it read as just
+            // another minor action. Same accent the toolbar's active tab uses, so both themes follow along.
+            AddFullWidthButton(sec.transform, "Боевая карта", ThemeRole.Accent,
+                               () => OnOpenBattleGridRequested?.Invoke(room.Id),
+                               labelRole: ThemeRole.AccentInk, height: 30f, fontSize: 13);
         }
 
         // ── Секретные ходы ───────────────────────────────────────────────────────
@@ -458,17 +462,22 @@ namespace WorldGen.Rendering
             Stretch(lbl.rectTransform); lbl.raycastTarget = false;
         }
 
-        void AddFullWidthButton(Transform parent, string label, ThemeRole bgRole, System.Action onClick)
+        /// <summary>A full-width button. The label role, height and font size are parameters so a PRIMARY
+        /// button can be built from the same recipe as a secondary one: an accent fill needs
+        /// ThemeRole.AccentInk text (dark on gold in the dark theme, white on indigo in the light one),
+        /// because the default Txt colour is unreadable on an accent background in both themes.</summary>
+        void AddFullWidthButton(Transform parent, string label, ThemeRole bgRole, System.Action onClick,
+                                ThemeRole labelRole = ThemeRole.Txt, float height = 24f, int fontSize = 11)
         {
             var go = new GameObject($"Btn_{label}");
             go.transform.SetParent(parent, false);
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, bgRole);
-            go.AddComponent<LayoutElement>().preferredHeight = 24f;
+            go.AddComponent<LayoutElement>().preferredHeight = height;
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => onClick());
-            var lbl = MakeText(go.transform, label, 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            var lbl = MakeText(go.transform, label, fontSize, labelRole, FontStyle.Bold, TextAnchor.MiddleCenter);
             Stretch(lbl.rectTransform); lbl.raycastTarget = false;
         }
 
