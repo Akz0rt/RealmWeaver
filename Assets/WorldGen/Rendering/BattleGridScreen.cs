@@ -422,9 +422,9 @@ namespace WorldGen.Rendering
         {
             var sec = AddSection(parent, "SizeSection");
             AddCaption(sec.transform, "РАЗМЕР СЕТКИ");
-            widthLabel = BuildSizeStepper(sec.transform, "Ширина", () => view.Buffer.Width,
+            widthLabel = BuildSizeStepper(sec.transform, "Ширина",
                 delta => RequestResize(view.Buffer.Width + delta, view.Buffer.Height));
-            heightLabel = BuildSizeStepper(sec.transform, "Высота", () => view.Buffer.Height,
+            heightLabel = BuildSizeStepper(sec.transform, "Высота",
                 delta => RequestResize(view.Buffer.Width, view.Buffer.Height + delta));
         }
 
@@ -491,17 +491,23 @@ namespace WorldGen.Rendering
         }
 
         // ◄ value ► stepper for the grid's width/height; returns the value Text so the caller can refresh
-        // it after a resize/regenerate (this toolbar is built once at Awake, not rebuilt per Bind, so the
-        // displayed number has to be pushed rather than recomputed on redraw). getValue/onStep read/act on
-        // view.Buffer live at click time, never a value captured when the stepper was built.
-        Text BuildSizeStepper(Transform parent, string caption, System.Func<int> getValue, System.Action<int> onStep)
+        // it after a resize/regenerate (this toolbar is built once, not rebuilt per Bind, so the displayed
+        // number has to be pushed rather than recomputed on redraw). onStep reads/acts on view.Buffer live
+        // at click time, never a value captured when the stepper was built.
+        //
+        // The initial label is a PLACEHOLDER, not view.Buffer.Width/Height: this is called from BuildUI,
+        // which EnsureBuilt() runs at the START of the screen's own Bind() — BEFORE view.Bind(...) has run,
+        // so view.Buffer is still null at this point and reading it here would NullReferenceException on
+        // the very first room the screen is ever opened for. RefreshSizeLabels() (called at the end of
+        // Bind(), and again on every view.OnChanged) overwrites this before the screen is ever shown.
+        Text BuildSizeStepper(Transform parent, string caption, System.Action<int> onStep)
         {
             var row = AddRow(parent, $"Step_{caption}", 22f, 4f);
             var cap = MakeText(row.transform, caption + ":", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
             cap.gameObject.AddComponent<LayoutElement>().preferredWidth = 60f;
             cap.raycastTarget = false;
             AddStepBtn(row.transform, "◄", () => onStep(-1));
-            var valTxt = MakeText(row.transform, getValue().ToString(), 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            var valTxt = MakeText(row.transform, "—", 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
             valTxt.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
             valTxt.raycastTarget = false;
             AddStepBtn(row.transform, "►", () => onStep(1));
