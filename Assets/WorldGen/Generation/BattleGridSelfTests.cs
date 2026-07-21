@@ -313,5 +313,74 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Battle Grid Ops: PASS");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Undo")]
+        public void SelfTestUndo()
+        {
+            bool ok = true;
+            var undo = new BattleGridUndo();
+
+            // ---- 1. Undoing a stroke restores EVERY touched cell to its pre-stroke value ---------------
+            var buf = new GridBuffer(6, 6);
+            buf.Set(2, 2, GridCell.Floor);
+            var stroke = new BattleGridStroke();
+            BattleGridOps.Stamp(buf, stroke, 2, 2, 3, GridCell.Wall);
+            undo.PushStroke(stroke);
+            if (!undo.TryUndo(ref buf))
+            { Debug.LogError("FAIL undo: TryUndo returned false with one stroke on the stack"); ok = false; }
+            if (buf.Get(2, 2) != GridCell.Floor)
+            { Debug.LogError($"FAIL undo: (2,2) came back as {buf.Get(2, 2)}, want the pre-stroke Floor"); ok = false; }
+            if (buf.Get(1, 1) != GridCell.Empty)
+            { Debug.LogError($"FAIL undo: (1,1) came back as {buf.Get(1, 1)}, want the pre-stroke Empty"); ok = false; }
+
+            // ---- 2. An empty stroke is never pushed ----------------------------------------------------
+            var before = undo.Count;
+            undo.PushStroke(new BattleGridStroke());
+            if (undo.Count != before)
+            { Debug.LogError($"FAIL undo: pushing an empty stroke changed the depth {before} -> {undo.Count}"); ok = false; }
+
+            // ---- 3. Undoing a SNAPSHOT restores the old SIZE as well as the content --------------------
+            // Store a delta for resize instead and the buffer comes back 8x8 with the old cells shifted.
+            var sized = new GridBuffer(5, 5);
+            sized.Set(4, 4, GridCell.Chasm);
+            var undo2 = new BattleGridUndo();
+            undo2.PushSnapshot(sized);
+            sized = BattleGridOps.Resize(sized, 8, 8);
+            if (!undo2.TryUndo(ref sized))
+            { Debug.LogError("FAIL undo: TryUndo returned false with one snapshot on the stack"); ok = false; }
+            if (sized.Width != 5 || sized.Height != 5)
+            { Debug.LogError($"FAIL undo: after undoing a resize the buffer is {sized.Width}x{sized.Height}, want 5x5"); ok = false; }
+            if (sized.Get(4, 4) != GridCell.Chasm)
+            { Debug.LogError($"FAIL undo: after undoing a resize (4,4) is {sized.Get(4, 4)}, want Chasm"); ok = false; }
+
+            // ---- 4. A snapshot is a COPY — mutating the live buffer afterwards must not alter it -------
+            var undo3 = new BattleGridUndo();
+            var live = new GridBuffer(4, 4);
+            undo3.PushSnapshot(live);
+            live.Set(0, 0, GridCell.Wall);
+            undo3.TryUndo(ref live);
+            if (live.Get(0, 0) != GridCell.Empty)
+            { Debug.LogError("FAIL undo: the snapshot aliased the live buffer — (0,0) survived the undo"); ok = false; }
+
+            // ---- 5. Depth is capped, and it is the OLDEST entry that is dropped ------------------------
+            var undo4 = new BattleGridUndo();
+            var deep = new GridBuffer(4, 4);
+            for (int i = 0; i < BattleGridUndo.MaxDepth + 10; i++)
+            {
+                var st = new BattleGridStroke();
+                st.Paint(deep, 0, 0, (GridCell)(1 + i % 6));
+                undo4.PushStroke(st);
+            }
+            if (undo4.Count != BattleGridUndo.MaxDepth)
+            { Debug.LogError($"FAIL undo: depth is {undo4.Count} after {BattleGridUndo.MaxDepth + 10} pushes, want the {BattleGridUndo.MaxDepth} cap"); ok = false; }
+            int steps = 0;
+            while (undo4.TryUndo(ref deep)) steps++;
+            if (steps != BattleGridUndo.MaxDepth)
+            { Debug.LogError($"FAIL undo: unwound {steps} steps, want {BattleGridUndo.MaxDepth}"); ok = false; }
+            if (undo4.TryUndo(ref deep))
+            { Debug.LogError("FAIL undo: TryUndo succeeded on an empty stack"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Undo: PASS");
+        }
     }
 }
