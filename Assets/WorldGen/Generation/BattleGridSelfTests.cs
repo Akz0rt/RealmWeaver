@@ -207,5 +207,111 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Battle Grid Doors: PASS");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Ops")]
+        public void SelfTestOps()
+        {
+            bool ok = true;
+
+            // ---- 1. A 3-wide stamp covers a 3x3 block CENTRED on the cursor cell ------------------------
+            // Use an even-sized offset (size/2 without centring) and (4,4) or (6,6) falls outside.
+            var buf = new GridBuffer(10, 10);
+            var s1 = new BattleGridStroke();
+            BattleGridOps.Stamp(buf, s1, 5, 5, 3, GridCell.Wall);
+            if (buf.Get(4, 4) != GridCell.Wall || buf.Get(6, 6) != GridCell.Wall || buf.Get(5, 5) != GridCell.Wall)
+            { Debug.LogError("FAIL ops: a size-3 stamp at (5,5) did not cover the corners (4,4)/(6,6)"); ok = false; }
+            if (buf.Get(3, 5) != GridCell.Empty || buf.Get(7, 5) != GridCell.Empty)
+            { Debug.LogError("FAIL ops: a size-3 stamp at (5,5) reached (3,5) or (7,5) — it is 5 wide, not 3"); ok = false; }
+
+            // ---- 2. The stamp records EVERY changed cell once, with its PREVIOUS value ------------------
+            if (s1.Indices.Count != 9)
+            { Debug.LogError($"FAIL ops: a 3x3 stamp recorded {s1.Indices.Count} cells, want 9"); ok = false; }
+            for (int i = 0; i < s1.Previous.Count; i++)
+                if (s1.Previous[i] != GridCell.Empty)
+                { Debug.LogError($"FAIL ops: recorded previous value {s1.Previous[i]} at slot {i}, want Empty"); ok = false; break; }
+
+            // ---- 3. First touch wins: repainting a cell in the SAME stroke keeps the ORIGINAL previous --
+            // Record on every touch instead and undo would restore Wall, not Empty.
+            BattleGridOps.Stamp(buf, s1, 5, 5, 1, GridCell.Chasm);
+            int centre = buf.Index(5, 5);
+            int slot = s1.Indices.IndexOf(centre);
+            if (s1.Indices.LastIndexOf(centre) != slot)
+            { Debug.LogError("FAIL ops: the centre cell was recorded twice in one stroke"); ok = false; }
+            if (s1.Previous[slot] != GridCell.Empty)
+            { Debug.LogError($"FAIL ops: after repainting, the centre's recorded previous is {s1.Previous[slot]}, want the ORIGINAL Empty"); ok = false; }
+
+            // ---- 4. Painting a cell with the value it already holds records NOTHING ---------------------
+            // Without this an idle click pushes an undo step that visibly does nothing.
+            var s2 = new BattleGridStroke();
+            BattleGridOps.Stamp(buf, s2, 5, 5, 1, GridCell.Chasm);
+            if (!s2.IsEmpty)
+            { Debug.LogError("FAIL ops: repainting a cell with its own value produced a non-empty stroke"); ok = false; }
+
+            // ---- 5. Line leaves NO GAP on a steep diagonal ----------------------------------------------
+            // Paint only the endpoints and (1,1)..(2,4) stay Empty; this names the first missing cell.
+            var lineBuf = new GridBuffer(10, 10);
+            BattleGridOps.Line(lineBuf, new BattleGridStroke(), 0, 0, 3, 9, 1, GridCell.Floor);
+            for (int y = 0; y <= 9; y++)
+            {
+                bool any = false;
+                for (int x = 0; x <= 3; x++) if (lineBuf.Get(x, y) == GridCell.Floor) { any = true; break; }
+                if (!any) { Debug.LogError($"FAIL ops: the line from (0,0) to (3,9) skipped row {y} entirely"); ok = false; break; }
+            }
+
+            // ---- 6. Rect fills its interior AND its border, and stops one cell short outside ------------
+            var rectBuf = new GridBuffer(10, 10);
+            BattleGridOps.Rect(rectBuf, new BattleGridStroke(), 6, 2, 2, 5, GridCell.Rough);   // reversed corners on purpose
+            if (rectBuf.Get(2, 2) != GridCell.Rough || rectBuf.Get(6, 5) != GridCell.Rough || rectBuf.Get(4, 3) != GridCell.Rough)
+            { Debug.LogError("FAIL ops: Rect did not normalise reversed corners — (2,2)/(6,5)/(4,3) should all be Rough"); ok = false; }
+            if (rectBuf.Get(1, 2) != GridCell.Empty || rectBuf.Get(7, 2) != GridCell.Empty || rectBuf.Get(2, 6) != GridCell.Empty)
+            { Debug.LogError("FAIL ops: Rect bled one cell past its corners"); ok = false; }
+
+            // ---- 7. Fill spreads by 4-neighbours only, and a diagonal-only gap STOPS it -----------------
+            // The pinch is built so 4- and 8-neighbour fills give DIFFERENT results: (0,0) touches (1,1)
+            // ONLY diagonally, because (1,0) and (0,1) are Wall. Add the diagonal neighbours and (1,1)
+            // floods; keep 4 neighbours and it must not. An open pocket would make this assertion vacuous.
+            var fillBuf = new GridBuffer(5, 5);
+            fillBuf.Set(1, 0, GridCell.Wall);
+            fillBuf.Set(0, 1, GridCell.Wall);
+            BattleGridOps.Fill(fillBuf, new BattleGridStroke(), 0, 0, GridCell.Liquid);
+            if (fillBuf.Get(0, 0) != GridCell.Liquid)
+            { Debug.LogError("FAIL ops: Fill did not even paint its own origin (0,0)"); ok = false; }
+            if (fillBuf.Get(1, 1) == GridCell.Liquid)
+            { Debug.LogError("FAIL ops: Fill leaked to (1,1) through a diagonal-only pinch — it must use 4 neighbours"); ok = false; }
+            if (fillBuf.Get(1, 0) != GridCell.Wall)
+            { Debug.LogError("FAIL ops: Fill overwrote the Wall at (1,0) — it must only spread across cells matching the origin"); ok = false; }
+
+            // ---- 7b. ...but it DOES cross an opening -----------------------------------------------------
+            // Without this, a fill that only ever paints one cell would satisfy 7 above.
+            var openBuf = new GridBuffer(5, 5);
+            openBuf.Set(1, 0, GridCell.Wall);
+            BattleGridOps.Fill(openBuf, new BattleGridStroke(), 0, 0, GridCell.Liquid);
+            if (openBuf.Get(4, 4) != GridCell.Liquid)
+            { Debug.LogError("FAIL ops: Fill stopped early — (4,4) is reachable by 4-neighbour steps and should be filled"); ok = false; }
+
+            // ---- 8. Resize anchors BOTTOM-LEFT: old content keeps its coordinates, new cells are Empty --
+            // Anchor anywhere else and the marker cell moves.
+            var small = new GridBuffer(5, 5);
+            small.Set(1, 1, GridCell.Chasm);
+            var grown = BattleGridOps.Resize(small, 8, 7);
+            if (grown.Width != 8 || grown.Height != 7)
+            { Debug.LogError($"FAIL ops: Resize produced {grown.Width}x{grown.Height}, want 8x7"); ok = false; }
+            if (grown.Get(1, 1) != GridCell.Chasm)
+            { Debug.LogError($"FAIL ops: after growing, the marker at (1,1) is {grown.Get(1, 1)} — content moved"); ok = false; }
+            if (grown.Get(7, 6) != GridCell.Empty)
+            { Debug.LogError("FAIL ops: a newly added cell (7,6) is not Empty"); ok = false; }
+
+            // ---- 9. Shrinking counts EXACTLY the non-empty cells that fall outside ----------------------
+            // Count every dropped cell (including Empty ones) and this reports 16 instead of 2.
+            var marked = new GridBuffer(6, 6);
+            marked.Set(5, 0, GridCell.Wall);
+            marked.Set(0, 5, GridCell.Wall);
+            marked.Set(1, 1, GridCell.Floor);        // stays inside — must NOT be counted
+            int lost = BattleGridOps.CountLostOnResize(marked, 4, 4);
+            if (lost != 2)
+            { Debug.LogError($"FAIL ops: shrinking 6x6 to 4x4 reported {lost} lost cells, want exactly 2"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Ops: PASS");
+        }
     }
 }
