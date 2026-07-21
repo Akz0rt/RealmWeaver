@@ -126,8 +126,19 @@ namespace WorldGen.Rendering
         public void OpenBattleGrid(int roomId)
         {
             if (editingDungeon == null || roomId == 0 || battleGridScreen == null) return;
+
+            // Resolve BEFORE touching battleGridRoomId: DesiredScreen() switches on that field alone, so
+            // setting it for a room that does not resolve would show the battle-grid screen with nothing
+            // bound — blank on a first open, or still showing the PREVIOUS room's map on a later one, with
+            // no error the DM can see in a standalone build. An id that cannot be resolved must leave the
+            // DM exactly where they are.
+            if (dungeonEditorScreen == null) return;
+            int floorIndex = dungeonEditorScreen.CurrentLevelIndex;
+            if (floorIndex < 0 || floorIndex >= editingDungeon.Floors.Count) return;
+            if (editingDungeon.Floors[floorIndex].GetRoom(roomId) == null) return;
+
             battleGridRoomId = roomId;
-            battleGridScreen.Bind(editingDungeon, dungeonEditorScreen.CurrentLevelIndex, roomId);
+            battleGridScreen.Bind(editingDungeon, floorIndex, roomId);
             RefreshScreenState();
         }
 
