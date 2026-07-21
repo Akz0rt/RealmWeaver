@@ -12,7 +12,10 @@ namespace WorldGen.Rendering
     /// Why one pixel per cell: at 40x40 the texture is ~6 KB, so re-uploading all of it per frame costs
     /// nothing and the dirty-rectangle machinery a bigger texture would need disappears. Why the overlay
     /// is UI rather than baked pixels: a 1-px line inside a texture scaled by a non-integer factor comes
-    /// out with uneven thickness.</summary>
+    /// out with uneven thickness.
+    ///
+    /// <see cref="Build"/> and <see cref="SetGrid"/> may be called in either order; <see cref="Repaint"/>
+    /// is a no-op until both have happened.</summary>
     public class BattleGridRenderer : MonoBehaviour
     {
         public const float LineThickness = 1f;
@@ -22,6 +25,10 @@ namespace WorldGen.Rendering
         AspectRatioFitter fitter;
         Texture2D texture;
         RectTransform overlay;
+        // Set when LayoutOverlay bails out on a not-yet-laid-out rect; cleared once a layout actually runs
+        // against a real rect. LateUpdate polls this to retry — see LayoutOverlay for why the rect can be
+        // degenerate on the same frame Build/SetGrid/Repaint run.
+        bool overlayPending;
 
         readonly List<Image> linePool = new List<Image>();
         readonly List<Image> doorPool = new List<Image>();
@@ -56,6 +63,12 @@ namespace WorldGen.Rendering
             var imgGo = new GameObject("Cells", typeof(RectTransform), typeof(RawImage), typeof(AspectRatioFitter));
             imgGo.transform.SetParent(host, false);
             cellsImage = imgGo.GetComponent<RawImage>();
+            // REQUIRED, not Unity's incidental default: BattleGridViewController's pointer handlers sit on
+            // an ANCESTOR of this rect, and Unity's event system bubbles a pointer event from the hit
+            // graphic up to the nearest ancestor that handles it. If this were ever set false, nothing
+            // under the cursor would be hit and dragging would silently stop working. Do not "tidy" this
+            // away — every other image in this file is explicitly false for the opposite reason.
+            cellsImage.raycastTarget = true;
             fitter = imgGo.GetComponent<AspectRatioFitter>();
             fitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
             var imgRt = imgGo.GetComponent<RectTransform>();
@@ -70,12 +83,25 @@ namespace WorldGen.Rendering
             overlay = ovGo.GetComponent<RectTransform>();
             overlay.anchorMin = Vector2.zero; overlay.anchorMax = Vector2.one;
             overlay.offsetMin = Vector2.zero; overlay.offsetMax = Vector2.zero;
+
+            // A grid supplied via SetGrid BEFORE Build had nothing to attach a texture to at the time — it
+            // only stored `grid`. Apply it now that cellsImage/fitter exist, so call order never matters.
+            if (grid != null) AttachTexture();
         }
 
         public void SetGrid(GridBuffer buffer)
         {
             grid = buffer;
             if (grid == null) return;
+            if (cellsImage == null) return;   // Build hasn't run yet; Build's own tail applies this grid when it does
+            AttachTexture();
+        }
+
+        /// <summary>Create/resize the cells texture for the current `grid` and hand it to `cellsImage`, and
+        /// set the fitter's aspect ratio. Shared by Build's tail (grid arrived first) and SetGrid (Build
+        /// already ran) so the two call orders end up in the identical state.</summary>
+        void AttachTexture()
+        {
             if (texture == null || texture.width != grid.Width || texture.height != grid.Height)
             {
                 if (texture != null) Destroy(texture);
@@ -109,6 +135,19 @@ namespace WorldGen.Rendering
         void LayoutOverlay()
         {
             var rect = ((RectTransform)cellsImage.transform).rect;
+            if (rect.width <= 0f || rect.height <= 0f)
+            {
+                // AspectRatioFitter is an ILayoutSelfController: it sizes this rect during Unity's canvas
+                // REBUILD phase, not synchronously when Build/SetGrid run. A host doing
+                // Build(); SetGrid(g); Repaint(); in one frame — the natural sequence — can call Repaint
+                // before that rebuild has happened, so the rect is still {0,0} (or stale) here. Bail and
+                // let LateUpdate retry, same precedent as DungeonFlatRenderer.ResolveProjection /
+                // DungeonViewController.LateUpdate.
+                overlayPending = true;
+                return;
+            }
+            overlayPending = false;
+
             float cw = rect.width / grid.Width;
             float ch = rect.height / grid.Height;
             float x0 = -rect.width * 0.5f;
@@ -121,8 +160,17 @@ namespace WorldGen.Rendering
                 PlaceLine(ref lineIdx, x0, y0 + y * ch - LineThickness * 0.5f, rect.width, LineThickness);
             for (int i = lineIdx; i < linePool.Count; i++) linePool[i].gameObject.SetActive(false);
 
-            SyncMarkers(doorPool, doors, DoorColor, cw, ch, x0, y0, 0.34f);
-            SyncMarkers(highlightPool, highlight, HighlightColor, cw, ch, x0, y0, 1f);
+            SyncDoorMarkers(doorPool, doors, DoorColor, cw, ch, x0, y0);
+            SyncHighlightMarkers(highlightPool, highlight, HighlightColor, cw, ch, x0, y0);
+        }
+
+        /// <summary>Retries a layout that <see cref="LayoutOverlay"/> deferred because the Cells rect was
+        /// not yet sized by AspectRatioFitter's canvas-rebuild pass. Self-terminating: LayoutOverlay clears
+        /// `overlayPending` the moment it runs against a real rect, so this stops calling Repaint the very
+        /// next frame after that — it does not repaint forever.</summary>
+        void LateUpdate()
+        {
+            if (overlayPending && grid != null) Repaint();
         }
 
         void PlaceLine(ref int idx, float x, float y, float w, float h)
@@ -134,16 +182,49 @@ namespace WorldGen.Rendering
             idx++;
         }
 
-        // A door mark is a bar across the wall cell (fraction of the cell's short side), so it never
-        // reads as a hand-painted GridCell.Door square.
-        void SyncMarkers(List<Image> pool, List<GridPoint> points, Color color,
-                         float cw, float ch, float x0, float y0, float fill)
+        // Fraction of the cell's across-the-wall dimension a door bar fills. Thin on purpose: a full-width
+        // bar would read the same as a hand-painted GridCell.Door square from a middle distance.
+        const float DoorBarFill = 0.42f;
+
+        // A derived door mark is a BAR across the wall cell, not a centred square — a hand-painted
+        // GridCell.Door cell already renders as a filled square (ColorFor), so a derived door must be
+        // visually distinct in SHAPE, not just a smaller copy of the same shape. GridPoint carries no wall
+        // orientation, but it doesn't need to: a derived door always sits on the grid's perimeter
+        // (BattleGridGenerator.ProjectDoors clamps the along-wall coordinate so a door never lands on a
+        // corner), so which wall it's on is implied by X/Y alone. A vertical wall's bar spans the cell's
+        // FULL height and is thin across; a horizontal wall's bar is the mirror image. Anything that
+        // somehow is not on the perimeter (defensive only — should not happen) falls back to the full cell.
+        void SyncDoorMarkers(List<Image> pool, List<GridPoint> points, Color color,
+                             float cw, float ch, float x0, float y0)
+        {
+            for (int i = 0; i < points.Count; i++)
+            {
+                var p = points[i];
+                var img = Take(pool, color, i);
+                var rt = (RectTransform)img.transform;
+                Vector2 size;
+                if (p.X == 0 || p.X == grid.Width - 1)
+                    size = new Vector2(cw * DoorBarFill, ch);
+                else if (p.Y == 0 || p.Y == grid.Height - 1)
+                    size = new Vector2(cw, ch * DoorBarFill);
+                else
+                    size = new Vector2(cw, ch);   // defensive fallback — not on the perimeter
+                rt.sizeDelta = size;
+                rt.anchoredPosition = new Vector2(x0 + (p.X + 0.5f) * cw, y0 + (p.Y + 0.5f) * ch);
+            }
+            for (int i = points.Count; i < pool.Count; i++) pool[i].gameObject.SetActive(false);
+        }
+
+        // The cursor/selection highlight fills the whole cell — unlike a door mark it has no shape
+        // constraint to satisfy, just visibility.
+        void SyncHighlightMarkers(List<Image> pool, List<GridPoint> points, Color color,
+                                  float cw, float ch, float x0, float y0)
         {
             for (int i = 0; i < points.Count; i++)
             {
                 var img = Take(pool, color, i);
                 var rt = (RectTransform)img.transform;
-                rt.sizeDelta = new Vector2(cw * fill, ch * fill);
+                rt.sizeDelta = new Vector2(cw, ch);
                 rt.anchoredPosition = new Vector2(x0 + (points[i].X + 0.5f) * cw,
                                                   y0 + (points[i].Y + 0.5f) * ch);
             }
@@ -169,8 +250,11 @@ namespace WorldGen.Rendering
             return img;
         }
 
-        /// <summary>Screen point → cell. Y is flipped here: UI local Y grows up and so does grid Y, so the
-        /// only correction needed is the origin shift. Returns false outside the grid.</summary>
+        /// <summary>Screen point → cell. No flip needed: grid y=0 is the bottom row (GridBuffer) and UI
+        /// local Y also grows up, so they already agree — the only work here is the origin shift from
+        /// centre-relative local coords to a 0-based cell index. Boundary convention is a consistent
+        /// half-open [0, W) / [0, H) range: the left/bottom edges of the rect map in-bounds, the right/top
+        /// edges map out-of-bounds. Returns false outside the grid.</summary>
         public bool TryPointerToCell(Vector2 screenPoint, Camera cam, out int cellX, out int cellY)
         {
             cellX = cellY = -1;
