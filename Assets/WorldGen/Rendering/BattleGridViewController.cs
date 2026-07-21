@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using WorldGen.Generation;
 
 namespace WorldGen.Rendering
@@ -51,8 +52,13 @@ namespace WorldGen.Rendering
 
         void Update()
         {
-            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (ctrl && Input.GetKeyDown(KeyCode.Z) && undo.TryUndo(ref buffer))
+            // The project's active input handling is the Input System package (ProjectSettings
+            // activeInputHandler: 1), where the legacy UnityEngine.Input class THROWS on first use.
+            // Same idiom as BrushToolController.HandleUndo, including the null guard: Keyboard.current
+            // is null when no keyboard is present.
+            if (Keyboard.current == null) return;
+            bool ctrl = Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed;
+            if (ctrl && Keyboard.current.zKey.wasPressedThisFrame && undo.TryUndo(ref buffer))
             {
                 renderer.SetGrid(buffer);
                 renderer.Repaint();

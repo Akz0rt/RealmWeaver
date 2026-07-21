@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Generation;
 using WorldGen.Rendering.Theme;
@@ -237,8 +238,8 @@ namespace WorldGen.Rendering
 
         // Disables `view` for the duration of a ConfirmDialog raised BY THIS SCREEN — see the class doc.
         // ConfirmDialog's own backdrop already swallows mouse clicks to whatever is beneath it, but a raw
-        // Input.GetKeyDown poll (view's own Ctrl+Z, and this screen's Escape below) is not routed through
-        // any raycast and so is NOT blocked by the backdrop on its own.
+        // keyboard poll (view's own Ctrl+Z, and this screen's Escape below) is not routed through any
+        // raycast and so is NOT blocked by the backdrop on its own.
         void BeginModal() { if (view != null) view.enabled = false; }
         void EndModal() { if (view != null) view.enabled = true; }
 
@@ -248,7 +249,11 @@ namespace WorldGen.Rendering
             // BeginModal/EndModal) — without this guard, Escape would close the whole screen out from
             // under an open «Уменьшить сетку?» / «Пересобрать боевую карту?» dialog, stranding it floating
             // over whatever screen we fall back to.
-            if (Input.GetKeyDown(KeyCode.Escape) && view != null && view.enabled) OnCloseRequested?.Invoke();
+            // Input System package, not legacy UnityEngine.Input — the latter throws under this project's
+            // activeInputHandler setting. Keyboard.current is null when no keyboard is present.
+            if (Keyboard.current == null) return;
+            if (Keyboard.current.escapeKey.wasPressedThisFrame && view != null && view.enabled)
+                OnCloseRequested?.Invoke();
         }
 
         // ── UI construction (mirrors DungeonEditorScreen's composition recipe) ──────────────────────────
