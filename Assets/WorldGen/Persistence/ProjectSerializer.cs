@@ -112,10 +112,19 @@ namespace WorldGen.Persistence
             if (data.FormatVersion > CurrentFormatVersion)
                 result.WarningMessage = "Файл сохранён более новой версией инструмента — часть данных может не загрузиться.";
 
-            // Legacy migration (v1): cells stored a per-cell BiomeOverride (now removed). Convert any land-biome
-            // override to the canonical climate levels that produce it; water/invalid values are ignored (the cell
-            // reclassifies from its stored climate). Best-effort — never fail the load over migration.
-            if (data.FormatVersion < CurrentFormatVersion)
+            // Legacy migration (v1 ONLY): cells stored a per-cell BiomeOverride, removed in v2. Convert any
+            // land-biome override to the canonical climate levels that produce it; water/invalid values are
+            // ignored (the cell reclassifies from its stored climate). Best-effort — never fail the load
+            // over migration.
+            //
+            // Guard on the literal 2, NOT CurrentFormatVersion: every line inside this block targets a field
+            // that has not existed since v2, so gating it on "older than today's format" makes EVERY v(N-1)
+            // file re-run a full second JObject.Parse of the whole (possibly multi-megabyte) save on every
+            // load, for a migration that then finds no BiomeOverride key and does nothing. That is exactly
+            // what happened once CurrentFormatVersion reached 8: every v7 file (i.e. every project any user
+            // had) paid the cost on every open. Do not "simplify" this back to CurrentFormatVersion — the
+            // cost returns the next time the format version is bumped.
+            if (data.FormatVersion < 2)
             {
                 try
                 {
