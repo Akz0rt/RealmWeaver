@@ -25,9 +25,10 @@ namespace WorldGen.Rendering
         AspectRatioFitter fitter;
         Texture2D texture;
         RectTransform overlay;
-        // Set when LayoutOverlay bails out on a not-yet-laid-out rect; cleared once a layout actually runs
-        // against a real rect. LateUpdate polls this to retry — see LayoutOverlay for why the rect can be
-        // degenerate on the same frame Build/SetGrid/Repaint run.
+        // Set when LayoutOverlay bails out on a rect that is not yet laid out OR still carries a previous
+        // grid's aspect; cleared once a layout actually runs against a rect matching the current grid's
+        // aspect. LateUpdate polls this to retry — see LayoutOverlay for why the rect can be zero or stale
+        // on the same frame Build/SetGrid/Repaint run.
         bool overlayPending;
 
         readonly List<Image> linePool = new List<Image>();
@@ -135,17 +136,17 @@ namespace WorldGen.Rendering
         void LayoutOverlay()
         {
             var rect = ((RectTransform)cellsImage.transform).rect;
-            if (rect.width <= 0f || rect.height <= 0f)
-            {
-                // AspectRatioFitter is an ILayoutSelfController: it sizes this rect during Unity's canvas
-                // REBUILD phase, not synchronously when Build/SetGrid run. A host doing
-                // Build(); SetGrid(g); Repaint(); in one frame — the natural sequence — can call Repaint
-                // before that rebuild has happened, so the rect is still {0,0} (or stale) here. Bail and
-                // let LateUpdate retry, same precedent as DungeonFlatRenderer.ResolveProjection /
-                // DungeonViewController.LateUpdate.
-                overlayPending = true;
-                return;
-            }
+
+            // The overlay's cell size comes from this rect, and AspectRatioFitter (an ILayoutSelfController)
+            // only resizes it during the canvas rebuild — never synchronously. So the rect can be either not
+            // laid out yet (zero) or still carrying the PREVIOUS grid's aspect after a dimension change. Both
+            // are caught by one test: the fitter's whole job is to make this rect's aspect equal the grid's,
+            // so an aspect that does not match yet means it has not caught up. Laying out anyway would divide
+            // a stale width by the new cell count and misalign every line, door and highlight.
+            float wantedAspect = (float)grid.Width / grid.Height;
+            bool ready = rect.width > 0f && rect.height > 0f
+                         && Mathf.Abs(rect.width / rect.height - wantedAspect) <= wantedAspect * 0.005f;
+            if (!ready) { overlayPending = true; return; }
             overlayPending = false;
 
             float cw = rect.width / grid.Width;
@@ -160,14 +161,17 @@ namespace WorldGen.Rendering
                 PlaceLine(ref lineIdx, x0, y0 + y * ch - LineThickness * 0.5f, rect.width, LineThickness);
             for (int i = lineIdx; i < linePool.Count; i++) linePool[i].gameObject.SetActive(false);
 
-            SyncDoorMarkers(doorPool, doors, DoorColor, cw, ch, x0, y0);
-            SyncHighlightMarkers(highlightPool, highlight, HighlightColor, cw, ch, x0, y0);
+            SyncMarkers(doorPool, doors, DoorColor, cw, ch, x0, y0, asDoorBar: true);
+            SyncMarkers(highlightPool, highlight, HighlightColor, cw, ch, x0, y0, asDoorBar: false);
         }
 
         /// <summary>Retries a layout that <see cref="LayoutOverlay"/> deferred because the Cells rect was
-        /// not yet sized by AspectRatioFitter's canvas-rebuild pass. Self-terminating: LayoutOverlay clears
-        /// `overlayPending` the moment it runs against a real rect, so this stops calling Repaint the very
-        /// next frame after that — it does not repaint forever.</summary>
+        /// not yet sized (or not yet re-sized) by AspectRatioFitter's canvas-rebuild pass. Self-terminating:
+        /// LayoutOverlay clears `overlayPending` the moment it runs against a rect whose aspect matches the
+        /// grid, so this stops calling Repaint once that happens — it does not repaint forever. That is NOT
+        /// the very next frame: AspectRatioFitter rebuilds on Canvas.willRenderCanvases, which runs after
+        /// every script's LateUpdate, so the earliest a real rect can be observed here is the FOLLOWING
+        /// LateUpdate — two ticks after the frame that triggered the resize.</summary>
         void LateUpdate()
         {
             if (overlayPending && grid != null) Repaint();
@@ -186,16 +190,22 @@ namespace WorldGen.Rendering
         // bar would read the same as a hand-painted GridCell.Door square from a middle distance.
         const float DoorBarFill = 0.42f;
 
-        // A derived door mark is a BAR across the wall cell, not a centred square — a hand-painted
-        // GridCell.Door cell already renders as a filled square (ColorFor), so a derived door must be
-        // visually distinct in SHAPE, not just a smaller copy of the same shape. GridPoint carries no wall
-        // orientation, but it doesn't need to: a derived door always sits on the grid's perimeter
-        // (BattleGridGenerator.ProjectDoors clamps the along-wall coordinate so a door never lands on a
-        // corner), so which wall it's on is implied by X/Y alone. A vertical wall's bar spans the cell's
-        // FULL height and is thin across; a horizontal wall's bar is the mirror image. Anything that
-        // somehow is not on the perimeter (defensive only — should not happen) falls back to the full cell.
-        void SyncDoorMarkers(List<Image> pool, List<GridPoint> points, Color color,
-                             float cw, float ch, float x0, float y0)
+        /// <summary>Positions `points.Count` pooled marks from `pool` and deactivates any trailing pool
+        /// entries beyond that count. `asDoorBar` selects the sizing rule:
+        ///
+        /// A derived door mark is a BAR across the wall cell, not a centred square — a hand-painted
+        /// GridCell.Door cell already renders as a filled square (ColorFor), so a derived door must be
+        /// visually distinct in SHAPE, not just a smaller copy of the same shape. GridPoint carries no wall
+        /// orientation, but it doesn't need to: a derived door always sits on the grid's perimeter
+        /// (BattleGridGenerator.ProjectDoors clamps the along-wall coordinate so a door never lands on a
+        /// corner), so which wall it's on is implied by X/Y alone. A vertical wall's bar spans the cell's
+        /// FULL height and is thin across; a horizontal wall's bar is the mirror image. Anything that
+        /// somehow is not on the perimeter (defensive only — should not happen) falls back to the full cell.
+        ///
+        /// The cursor/selection highlight (asDoorBar: false) fills the whole cell — unlike a door mark it
+        /// has no shape constraint to satisfy, just visibility.</summary>
+        void SyncMarkers(List<Image> pool, List<GridPoint> points, Color color,
+                         float cw, float ch, float x0, float y0, bool asDoorBar)
         {
             for (int i = 0; i < points.Count; i++)
             {
@@ -203,7 +213,9 @@ namespace WorldGen.Rendering
                 var img = Take(pool, color, i);
                 var rt = (RectTransform)img.transform;
                 Vector2 size;
-                if (p.X == 0 || p.X == grid.Width - 1)
+                if (!asDoorBar)
+                    size = new Vector2(cw, ch);
+                else if (p.X == 0 || p.X == grid.Width - 1)
                     size = new Vector2(cw * DoorBarFill, ch);
                 else if (p.Y == 0 || p.Y == grid.Height - 1)
                     size = new Vector2(cw, ch * DoorBarFill);
@@ -211,22 +223,6 @@ namespace WorldGen.Rendering
                     size = new Vector2(cw, ch);   // defensive fallback — not on the perimeter
                 rt.sizeDelta = size;
                 rt.anchoredPosition = new Vector2(x0 + (p.X + 0.5f) * cw, y0 + (p.Y + 0.5f) * ch);
-            }
-            for (int i = points.Count; i < pool.Count; i++) pool[i].gameObject.SetActive(false);
-        }
-
-        // The cursor/selection highlight fills the whole cell — unlike a door mark it has no shape
-        // constraint to satisfy, just visibility.
-        void SyncHighlightMarkers(List<Image> pool, List<GridPoint> points, Color color,
-                                  float cw, float ch, float x0, float y0)
-        {
-            for (int i = 0; i < points.Count; i++)
-            {
-                var img = Take(pool, color, i);
-                var rt = (RectTransform)img.transform;
-                rt.sizeDelta = new Vector2(cw, ch);
-                rt.anchoredPosition = new Vector2(x0 + (points[i].X + 0.5f) * cw,
-                                                  y0 + (points[i].Y + 0.5f) * ch);
             }
             for (int i = points.Count; i < pool.Count; i++) pool[i].gameObject.SetActive(false);
         }
