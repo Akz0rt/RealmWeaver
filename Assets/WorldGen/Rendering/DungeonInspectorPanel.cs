@@ -29,6 +29,7 @@ namespace WorldGen.Rendering
     public class DungeonInspectorPanel : MonoBehaviour
     {
         public System.Action OnChanged;   // fires after any edit; screen re-runs validation + view.BeginCascade()
+        public System.Action<int> OnOpenBattleGridRequested;   // room id
 
         InteriorData dungeon;
         System.Func<int> currentLevelIndex;
@@ -208,6 +209,8 @@ namespace WorldGen.Rendering
                 Rebuild();
                 OnChanged?.Invoke();
             });
+            AddFullWidthButton(sec.transform, "Боевая карта", ThemeRole.Elev,
+                               () => OnOpenBattleGridRequested?.Invoke(room.Id));
         }
 
         void BuildSecretRow(Transform parent, Room room, Portal s)

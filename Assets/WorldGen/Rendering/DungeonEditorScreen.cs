@@ -13,6 +13,7 @@ namespace WorldGen.Rendering
     public class DungeonEditorScreen : MonoBehaviour
     {
         public System.Action OnCloseRequested;      // wired to MapScreenController.CloseDungeonEditor
+        public System.Action<int> OnOpenBattleGridRequested;   // relayed from DungeonInspectorPanel; room id
 
         InteriorData current;
         public int CurrentLevelIndex { get; private set; }
@@ -713,6 +714,7 @@ namespace WorldGen.Rendering
             Stretch(inspGO.GetComponent<RectTransform>());
             inspectorPanel = inspGO.AddComponent<DungeonInspectorPanel>();
             inspectorPanel.OnChanged = RevalidateAndRefresh;
+            inspectorPanel.OnOpenBattleGridRequested = id => OnOpenBattleGridRequested?.Invoke(id);
         }
 
         void RebuildLevelTabs()

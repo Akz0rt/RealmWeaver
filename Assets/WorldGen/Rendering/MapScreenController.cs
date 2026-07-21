@@ -31,9 +31,14 @@ namespace WorldGen.Rendering
         public DungeonEditorScreen dungeonEditorScreen;
         public DungeonManager dungeonManager;
 
+        [Header("Battle grid screen")]
+        public GameObject battleGridScreenGO;
+        public BattleGridScreen battleGridScreen;
+
         Coroutine activeGeneration;
         PoiData editingPoi;
         InteriorData editingDungeon;
+        int battleGridRoomId;        // 0 = the battle grid screen is closed
         ScreenSwitcher switcher;
 
         void Awake()
@@ -54,6 +59,7 @@ namespace WorldGen.Rendering
                     { AppScreen.MapEditor,  new[] { mapEditorPanelGO, mapLegendUiGO } },
                     { AppScreen.PoiEditor,  new[] { poiEditorScreenGO } },
                     { AppScreen.Dungeon,   new[] { dungeonEditorScreenGO } },
+                    { AppScreen.BattleGrid, new[] { battleGridScreenGO } },
                 },
                 screen => { if (mapToolbar != null) mapToolbar.SetChromeVisible(screen == AppScreen.MapEditor); });
 
@@ -62,6 +68,8 @@ namespace WorldGen.Rendering
             if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
             if (poiEditorScreen != null) poiEditorScreen.OnOpenDungeonRequested = OpenDungeonEditor;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnCloseRequested = CloseDungeonEditor;
+            if (battleGridScreen != null) battleGridScreen.OnCloseRequested = CloseBattleGrid;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBattleGridRequested = OpenBattleGrid;
 
             RefreshScreenState();
         }
@@ -70,6 +78,7 @@ namespace WorldGen.Rendering
         {
             editingPoi = null; // a fresh world drops any open POI editor
             editingDungeon = null; // a fresh world drops any open dungeon editor
+            battleGridRoomId = 0;   // a fresh world drops the battle grid screen too
             RefreshScreenState();
         }
 
@@ -112,6 +121,22 @@ namespace WorldGen.Rendering
             if (editingPoi != null && poiEditorScreen != null) poiEditorScreen.RefreshMapSection();
         }
 
+        /// <summary>Opens the battle map of a room on the CURRENTLY open interior floor. Returns to the
+        /// interior screen on close (editingDungeon stays set), with the same room still selected.</summary>
+        public void OpenBattleGrid(int roomId)
+        {
+            if (editingDungeon == null || roomId == 0 || battleGridScreen == null) return;
+            battleGridRoomId = roomId;
+            battleGridScreen.Bind(editingDungeon, dungeonEditorScreen.CurrentLevelIndex, roomId);
+            RefreshScreenState();
+        }
+
+        public void CloseBattleGrid()
+        {
+            battleGridRoomId = 0;   // editingDungeon is still set → DesiredScreen returns Dungeon
+            RefreshScreenState();
+        }
+
         void RefreshScreenState()
         {
             switcher.Show(DesiredScreen());
@@ -127,6 +152,7 @@ namespace WorldGen.Rendering
             bool generating = activeGeneration != null;
             if (generating) return AppScreen.Progress;
             if (!hasMap) return AppScreen.Generation;
+            if (battleGridRoomId != 0) return AppScreen.BattleGrid;
             if (editingDungeon != null) return AppScreen.Dungeon;
             if (editingPoi != null) return AppScreen.PoiEditor;
             return AppScreen.MapEditor;
