@@ -17,6 +17,17 @@ namespace WorldGen.Generation
             return (BattleGridCodec.Clamp(fw + 2), BattleGridCodec.Clamp(fh + 2));
         }
 
+        /// <summary>How many rooms on this floor carry a saved battle map. Used by the confirm dialogs
+        /// of the two irreversible floor operations so the DM is told what a regenerate or a floor
+        /// removal actually costs.</summary>
+        public static int CountGrids(InteriorFloor floor)
+        {
+            if (floor == null) return 0;
+            int n = 0;
+            foreach (var r in floor.Rooms) if (r.Grid != null) n++;
+            return n;
+        }
+
         public static GridBuffer Generate(Room room)
         {
             var (w, h) = NaturalSize(room);

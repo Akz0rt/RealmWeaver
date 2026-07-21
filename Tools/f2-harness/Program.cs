@@ -60,6 +60,7 @@ static class Program
         battle.SelfTestOps();
         battle.SelfTestUndo();
         battle.SelfTestAuthored();
+        battle.SelfTestCount();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

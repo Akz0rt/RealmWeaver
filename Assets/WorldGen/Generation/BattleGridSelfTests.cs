@@ -391,6 +391,24 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Battle Grid Undo: PASS");
         }
 
+        [ContextMenu("Self-Test: Battle Grid Count")]
+        public void SelfTestCount()
+        {
+            bool ok = true;
+            var floor = new InteriorFloor { NextRoomId = 4 };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 1, Grid = new GridBuffer(4, 4).ToModel() });
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1 });
+            floor.Rooms.Add(new Room { Id = 3, TypeId = 1, Grid = new GridBuffer(5, 5).ToModel() });
+
+            int n = BattleGridGenerator.CountGrids(floor);
+            if (n != 2)
+            { Debug.LogError($"FAIL count: a floor with 2 painted maps out of 3 rooms reported {n}"); ok = false; }
+            if (BattleGridGenerator.CountGrids(null) != 0)
+            { Debug.LogError("FAIL count: a null floor did not report 0"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Count: PASS");
+        }
+
         [ContextMenu("Self-Test: Battle Grid Authored Content")]
         public void SelfTestAuthored()
         {

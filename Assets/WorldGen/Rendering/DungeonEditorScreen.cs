@@ -196,7 +196,9 @@ namespace WorldGen.Rendering
             {
                 string body = "Все комнаты, связи и заметки этого этажа будут потеряны.";
                 if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?", body,
+                int maps = BattleGridGenerator.CountGrids(lvl);
+                string mapWarning = maps > 0 ? $" Будет потеряно боевых карт: {maps}." : "";
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить этаж?", body + mapWarning,
                     ok => { if (ok) RemoveCurrentLevel(); });
             }
             else
@@ -526,7 +528,9 @@ namespace WorldGen.Rendering
             {
                 string body = "Комнаты этого этажа, их связи, названия и заметки будут заменены.";
                 if (inbound > 0) body += $"\nСекретные ходы с других этажей, ведущие сюда ({inbound}), будут удалены.";
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Перегенерировать этаж?", body,
+                int maps = BattleGridGenerator.CountGrids(lvl);
+                string mapWarning = maps > 0 ? $" Будет потеряно боевых карт: {maps}." : "";
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Перегенерировать этаж?", body + mapWarning,
                     ok => { if (ok) DoRegenerateUpperFloor(); });
             }
             else
