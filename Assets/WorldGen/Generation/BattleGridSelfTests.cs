@@ -56,16 +56,28 @@ namespace WorldGen.Rendering
             if (buf.InBounds(3, 0) || buf.InBounds(-1, 0) || buf.InBounds(0, 2))
             { Debug.LogError("FAIL buffer: InBounds accepted an out-of-range coordinate"); ok = false; }
 
-            // ---- 5. Model round-trip ------------------------------------------------------------------
-            var model = buf.ToModel();
+            // ---- 5. Model round-trip, at dimensions a SAVED grid is allowed to have -------------------
+            // 5x4 rather than the 3x2 above on purpose: FromModel rejects out-of-range dimensions, because
+            // they arrive from a file and TryDecode sizes an allocation from their product.
+            var storable = new GridBuffer(5, 4);
+            storable.Set(3, 2, GridCell.Chasm);
+            var model = storable.ToModel();
             var reborn = GridBuffer.FromModel(model);
-            if (reborn == null || reborn.Get(2, 1) != GridCell.Chasm || reborn.Width != 3 || reborn.Height != 2)
-            { Debug.LogError("FAIL buffer: ToModel/FromModel lost the (2,1) Chasm or the dimensions"); ok = false; }
+            if (reborn == null || reborn.Get(3, 2) != GridCell.Chasm || reborn.Width != 5 || reborn.Height != 4)
+            { Debug.LogError("FAIL buffer: ToModel/FromModel lost the (3,2) Chasm or the dimensions"); ok = false; }
 
             // ---- 6. Corrupt model → null (caller regenerates) ------------------------------------------
             var corrupt = new BattleGrid { Width = 3, Height = 2, Cells = "99F" };
             if (GridBuffer.FromModel(corrupt) != null)
             { Debug.LogError("FAIL buffer: FromModel returned a buffer for a corrupt string instead of null"); ok = false; }
+
+            // ---- 6b. Out-of-range stored dimensions are refused -----------------------------------------
+            // Delete the bounds check in FromModel and this returns a buffer, letting a corrupt file drive
+            // a huge allocation inside TryDecode.
+            if (GridBuffer.FromModel(new BattleGrid { Width = 3, Height = 4, Cells = "12F" }) != null)
+            { Debug.LogError("FAIL buffer: FromModel accepted a stored width of 3, below the 4 minimum"); ok = false; }
+            if (GridBuffer.FromModel(new BattleGrid { Width = 41, Height = 4, Cells = "164F" }) != null)
+            { Debug.LogError("FAIL buffer: FromModel accepted a stored width of 41, above the 40 maximum"); ok = false; }
 
             // ---- 7. Clamp ------------------------------------------------------------------------------
             if (BattleGridCodec.Clamp(1) != 4 || BattleGridCodec.Clamp(99) != 40 || BattleGridCodec.Clamp(12) != 12)

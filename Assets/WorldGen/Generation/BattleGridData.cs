@@ -61,6 +61,10 @@ namespace WorldGen.Generation
         {
             if (g == null) return null;
             if (g.Width <= 0 || g.Height <= 0) return null;
+            // Dimensions come from a file, and TryDecode sizes an allocation from their product.
+            // Reject oversized grids before TryDecode creates a multi-gigabyte List.
+            if (g.Width < BattleGridCodec.MinSide || g.Width > BattleGridCodec.MaxSide) return null;
+            if (g.Height < BattleGridCodec.MinSide || g.Height > BattleGridCodec.MaxSide) return null;
             if (!BattleGridCodec.TryDecode(g.Cells, g.Width, g.Height, out var cells)) return null;
             var buf = new GridBuffer(g.Width, g.Height);
             System.Array.Copy(cells, buf.Cells, cells.Length);
