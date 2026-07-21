@@ -377,6 +377,14 @@ namespace WorldGen.Rendering
             while (undo4.TryUndo(ref deep)) steps++;
             if (steps != BattleGridUndo.MaxDepth)
             { Debug.LogError($"FAIL undo: unwound {steps} steps, want {BattleGridUndo.MaxDepth}"); ok = false; }
+
+            // The counts above are identical under "drop oldest" and "drop newest" — only the RESTORED
+            // VALUE tells them apart. Entries 10..73 survive the cap, so the last undo restores what
+            // stroke 9 painted: 1 + 9 % 6 = 4 = Rough. Under drop-newest, entries 0..73 minus the
+            // rejected tail survive, the final restore yields entry 0's recorded Empty, and this fails.
+            if (deep.Get(0, 0) != GridCell.Rough)
+            { Debug.LogError($"FAIL undo: after unwinding a capped stack, (0,0) is {deep.Get(0, 0)}, want Rough — the OLDEST entries must be the ones dropped"); ok = false; }
+
             if (undo4.TryUndo(ref deep))
             { Debug.LogError("FAIL undo: TryUndo succeeded on an empty stack"); ok = false; }
 
