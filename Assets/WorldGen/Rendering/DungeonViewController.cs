@@ -24,6 +24,7 @@ namespace WorldGen.Rendering
         IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler
     {
         public System.Action<int> OnRoomSelected;   // fires with a room id, or 0 when selection clears
+        public System.Action<int> OnRoomDoubleClicked;  // fires with a room id — opens its battle map
         public System.Action OnGraphMutated;        // fires after add/delete/link/drag-end (structural change)
         public System.Action<int> OnJumpToLevel;    // fires with a target level index (badge click)
         // Fires when the room positions have reached their FINAL resting values — either at the end of the
@@ -423,6 +424,18 @@ namespace WorldGen.Rendering
             if (!TryPointerToTile(data, out float tx, out float ty)) return;
             int id = HitRoomId(lvl, tx, ty);
             if (id == 0) { SelectRoom(0); return; }                    // background → clear selection
+
+            // Double-click opens the room's battle map — the same shortcut a POI already has on the world
+            // map. clickCount == 2 matches Notes' DoubleClickHandler, the project's existing convention.
+            // Gated on !LinkMode on purpose: while «Связать» is armed both clicks are link picks, and
+            // hijacking the second one would silently swallow half of a linking gesture. The first click
+            // of the pair has already selected the room, so the inspector is on the right room either way.
+            if (data.clickCount == 2 && !LinkMode)
+            {
+                SelectRoom(id);
+                OnRoomDoubleClicked?.Invoke(id);
+                return;
+            }
             OnRoomActivated(id);
         }
 

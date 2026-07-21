@@ -705,6 +705,10 @@ namespace WorldGen.Rendering
             hitImg.raycastTarget = true;
             viewController = viewGO.AddComponent<DungeonViewController>();
             viewController.OnRoomSelected = id => { selectedRoomId = id; inspectorPanel?.ShowRoom(id); };
+            // Double-click on a room opens its battle map — the same relay the inspector's «Боевая карта»
+            // button uses, so both entry points go through MapScreenController.OpenBattleGrid and its
+            // room-resolves guard rather than duplicating the open logic.
+            viewController.OnRoomDoubleClicked = id => OnOpenBattleGridRequested?.Invoke(id);
             viewController.OnGraphMutated = RevalidateAndRefresh;
             // Re-validate ONCE the settle has actually landed. RevalidateAndRefresh validates BEFORE the
             // cascade animation finishes (it has to — it is the thing that starts it), and during that window
