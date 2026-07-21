@@ -148,6 +148,12 @@ namespace WorldGen.Rendering
         {
             newWidth = BattleGridCodec.Clamp(newWidth);
             newHeight = BattleGridCodec.Clamp(newHeight);
+            // A stepper click at the 4..40 boundary clamps back to the size we already have. Falling
+            // through would push an undo step, replace the buffer, and — via OnChanged -> Persist —
+            // materialise room.Grid, which is the predicate for "the DM authored a battle map". That
+            // would make «Пересобрать» start asking for confirmation forever without anything having
+            // been drawn (the failure Link.Authored exists to prevent elsewhere in this codebase).
+            if (newWidth == view.Buffer.Width && newHeight == view.Buffer.Height) return;
             int lost = BattleGridOps.CountLostOnResize(view.Buffer, newWidth, newHeight);
             if (lost > 0)
             {
