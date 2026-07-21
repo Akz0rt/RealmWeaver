@@ -454,5 +454,65 @@ namespace WorldGen.Persistence
                 && l.GetRoom(2).SizeW == 10 && l.GetRoom(2).SizeH == 10; // Boss default (RoomSizing.Default(2))
             Debug.Log(ok ? "Self-Test Dungeon v5 Size Migration: PASS" : "Self-Test Dungeon v5 Size Migration: FAIL");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Round-Trip")]
+        public void SelfTestBattleGridRoundTrip()
+        {
+            bool ok = true;
+            string path = Path.Combine(Path.GetTempPath(), "battle_grid_roundtrip_test.dndproj");
+
+            // ---- 1. A painted map survives save -> load, cell for cell ---------------------------------
+            var buf = new GridBuffer(5, 4);
+            buf.Set(3, 2, GridCell.Chasm);
+            var lvl = new InteriorFloor { NextRoomId = 3 };
+            lvl.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 6, SizeH = 6, Grid = buf.ToModel() });
+            lvl.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 6, SizeH = 6 });
+            var dungeon = new InteriorData { OwnerPoiId = "poi-grid", Floors = { lvl } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { dungeon });
+            var r = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!r.Success || r.Dungeons.Count != 1)
+            { Debug.LogError("FAIL grid save: the project did not load back with its one interior"); ok = false; }
+            else
+            {
+                var back = r.Dungeons[0].Floors[0];
+                var reborn = GridBuffer.FromModel(back.GetRoom(1).Grid);
+                if (reborn == null)
+                { Debug.LogError("FAIL grid save: room 1's Grid did not survive the round trip"); ok = false; }
+                else if (reborn.Get(3, 2) != GridCell.Chasm)
+                { Debug.LogError($"FAIL grid save: (3,2) came back as {reborn.Get(3, 2)}, want Chasm"); ok = false; }
+                else if (reborn.Width != 5 || reborn.Height != 4)
+                { Debug.LogError($"FAIL grid save: dimensions came back {reborn.Width}x{reborn.Height}, want 5x4"); ok = false; }
+
+                // ---- 2. A room WITHOUT a map comes back with none ---------------------------------------
+                // This is what keeps projects that never use battle maps from growing.
+                if (back.GetRoom(2).Grid != null)
+                { Debug.LogError("FAIL grid save: a room with no battle map loaded with a non-null Grid"); ok = false; }
+            }
+
+            // ---- 3. A v7 file (no Grid key anywhere) loads its rooms with Grid == null ------------------
+            // Reading v7 must need NO migration: the absent key deserializes to null on its own.
+            string legacyJson =
+                "{ \"FormatVersion\": 7, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [], \"Dungeons\": [ { \"OwnerPoiId\": \"p\", \"Levels\": [ { \"NextRoomId\": 2, " +
+                "\"Rooms\": [ { \"Id\": 1, \"Type\": 1, \"SizeW\": 6, \"SizeH\": 6 } ], \"Corridors\": [] } ] } ] }";
+            string legacyPath = Path.Combine(Path.GetTempPath(), "battle_grid_v7_test.dndproj");
+            File.WriteAllText(legacyPath, legacyJson);
+            var lr = ProjectSerializer.Load(legacyPath);
+            try { File.Delete(legacyPath); } catch { }
+
+            if (!lr.Success || lr.Dungeons.Count != 1)
+            { Debug.LogError("FAIL grid save: the v7 file did not load"); ok = false; }
+            else if (lr.Dungeons[0].Floors[0].GetRoom(1).Grid != null)
+            { Debug.LogError("FAIL grid save: a v7 room without the Grid key loaded with a non-null Grid"); ok = false; }
+            else if (!string.IsNullOrEmpty(lr.WarningMessage))
+            { Debug.LogError($"FAIL grid save: loading a v7 file warned '{lr.WarningMessage}' — only NEWER files may warn"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Round-Trip: PASS");
+        }
     }
 }

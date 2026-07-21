@@ -30,7 +30,11 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 7;
+        public const int CurrentFormatVersion = 8;   // 8: Room.Grid (battle maps). Reading v7 needs no
+                                                     // migration — the absent key deserializes to null.
+                                                     // Bumped anyway so a v0.3.6 build WARNS on open
+                                                     // instead of silently dropping every battle map on
+                                                     // its next save.
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {

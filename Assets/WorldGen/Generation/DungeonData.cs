@@ -41,6 +41,13 @@ namespace WorldGen.Generation
         public int SizeH = 0;   // footprint height in tiles
         [JsonProperty("Secrets")]                        // preserve v6 wire key
         public List<Portal> Portals = new List<Portal>();
+        /// <summary>The room's battle map, or null if the DM never edited one. Null is the norm: an
+        /// untouched map is regenerated deterministically by BattleGridGenerator, so storing it would
+        /// bloat every save for no information. Non-null therefore means AUTHORED content — which is
+        /// exactly what DungeonOps.HasAuthoredContent keys on. Holds world definition only: nothing about
+        /// tokens, initiative, fog or where the party stands ever goes in here (that is session state,
+        /// and it will live in its own top-level object).</summary>
+        public BattleGrid Grid = null;
     }
 
     /// <summary>A same-floor walkable link between two rooms. Always bidirectional.</summary>

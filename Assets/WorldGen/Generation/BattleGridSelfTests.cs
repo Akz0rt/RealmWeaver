@@ -390,5 +390,29 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Battle Grid Undo: PASS");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Authored Content")]
+        public void SelfTestAuthored()
+        {
+            bool ok = true;
+
+            // ---- 1. A generated floor with NO battle map is not "authored" ------------------------------
+            // This is the guard that keeps the regenerate confirm from firing on every press.
+            var floor = new InteriorFloor { NextRoomId = 3 };
+            var room = new Room { Id = 1, TypeId = 1, SizeW = 6, SizeH = 6 };
+            floor.Rooms.Add(room);
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 6, SizeH = 6 });
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });   // a generator-made link: Authored stays false
+            if (DungeonOps.HasAuthoredContent(floor))
+            { Debug.LogError("FAIL authored: a floor with no titles, no authored links and no grids counted as authored"); ok = false; }
+
+            // ---- 2. A room carrying a battle map IS authored --------------------------------------------
+            // Drop the Grid check and «Перегенерировать этаж» silently destroys painted maps.
+            room.Grid = new GridBuffer(4, 4).ToModel();
+            if (!DungeonOps.HasAuthoredContent(floor))
+            { Debug.LogError("FAIL authored: a room with Grid != null did not count as authored content"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Authored Content: PASS");
+        }
     }
 }

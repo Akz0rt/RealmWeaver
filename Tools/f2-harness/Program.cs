@@ -59,6 +59,7 @@ static class Program
         battle.SelfTestDoors();
         battle.SelfTestOps();
         battle.SelfTestUndo();
+        battle.SelfTestAuthored();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

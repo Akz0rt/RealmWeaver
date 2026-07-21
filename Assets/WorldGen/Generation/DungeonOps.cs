@@ -97,14 +97,16 @@ namespace WorldGen.Generation
             k == PortalKind.SecretDoor || k == PortalKind.Stairs || k == PortalKind.Ladder || k == PortalKind.Trapdoor;
 
         /// <summary>Does this floor hold content a DM AUTHORED — i.e. content an irreversible, undo-less
-        /// destroy (DungeonEditorScreen's «× Этаж» / «Перегенерировать») would silently take away? Three
+        /// destroy (DungeonEditorScreen's «× Этаж» / «Перегенерировать») would silently take away? Four
         /// sources: a room Title/Body (the note layer); any Link with Authored==true (set ONLY by the
         /// «Связать» action via <see cref="AddCorridor"/>'s authored parameter — every generator-made link
         /// leaves this false, so a freshly generated floor's spanning tree does not trip this on its own);
         /// and any non-Stairs portal (secret passage / dungeon exit — the only portal kinds the inspector
         /// lets a DM create). Stairs portals are excluded on purpose: they are 100% generator-owned
         /// (BuildingGenerator.RewireStairChain builds and rebuilds them; the inspector cannot add one), so
-        /// counting them would make every floor of every multi-floor building prompt.</summary>
+        /// counting them would make every floor of every multi-floor building prompt. And any room carrying
+        /// a battle map (Room.Grid != null — the field is null until the DM edits one, so a generated floor
+        /// never trips this on its own).</summary>
         public static bool HasAuthoredContent(InteriorFloor lvl)
         {
             if (lvl == null) return false;
@@ -112,6 +114,7 @@ namespace WorldGen.Generation
             foreach (var r in lvl.Rooms)
             {
                 if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
+                if (r.Grid != null) return true;
                 foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
             }
             return false;
