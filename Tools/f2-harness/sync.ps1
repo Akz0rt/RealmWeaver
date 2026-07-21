@@ -256,7 +256,97 @@ foreach ($mn in @('MutAnchorOuter', 'MutNoLinkPref', 'MutTightBounds', 'MutTight
   Set-Content -Path (Join-Path $gen "SelfTests_$mn.cs") -Value $t -Encoding UTF8
 }
 
+# ---- BATTLE GRID MUTANTS: same discipline, four rules pinned by BattleGridGenerator/BattleGridOps. --------
+# Mirrors New-Mutant's shape exactly: read straight from the real source, throw if the pattern is gone,
+# re-namespace, write to gen/. Each mutant re-reads its OWN source file fresh, so the two mutants that share
+# a source file (BattleGridGenerator.cs, or BattleGridOps.cs) never step on each other.
+function New-BattleMutant([string]$srcFile, [string]$className, [string]$from, [string]$to, [string]$outFile) {
+  $t = Get-Content (Join-Path $src $srcFile) -Raw -Encoding UTF8
+  if ($t -notmatch [regex]::Escape($from)) { throw "mutant $outFile : pattern not found: $from" }
+  $t = $t -replace [regex]::Escape($from), $to
+  $t = $t -replace 'namespace WorldGen.Generation', "namespace WorldGen.Generation.$className"
+  Set-Content (Join-Path $gen $outFile) $t -Encoding UTF8
+}
+
+# MutNoRing: Generate's wall-ring condition forced to false, so the buffer comes out solid Floor with no
+# ring at all. SelfTestGenerator's named-corner/named-wall Wall checks (assertion 2) must fail.
+New-BattleMutant 'BattleGridGenerator.cs' 'MutNoRing' `
+  '(x == 0 || y == 0 || x == w - 1 || y == h - 1)' 'false' 'MutNoRing.cs'
+
+# MutNoYFlip: AlongVertical's "distance down from the top" numerator flipped to "distance up from the
+# bottom", so a door point at the top of the tile rect (screen-top) lands on the wrong grid row.
+# SelfTestDoors assertion 3 pins the direction with a synthetic point, independent of which wall of the
+# fixture the router actually routed the door to.
+New-BattleMutant 'BattleGridGenerator.cs' 'MutNoYFlip' `
+  '(top - ty)' '(ty - bottom)' 'MutNoYFlip.cs'
+
+# MutFirstTouch: BattleGridStroke.Paint's "first touch wins" guard replaced with an unconditional record, so
+# repainting a cell mid-stroke records it a SECOND time instead of keeping only the stroke's ORIGINAL
+# previous value. SelfTestOps assertion 3 repaints the stamp's centre cell and checks the recorded previous
+# is still the very first value (Empty), not the intermediate Wall — exactly what this mutant breaks.
+New-BattleMutant 'BattleGridOps.cs' 'MutFirstTouch' `
+  'if (touched.Add(idx))' 'if (true)' 'MutFirstTouch.cs'
+
+# MutFillDiagonal: Fill's flood spread gains the four diagonal neighbours, so paint leaks across a
+# diagonal-only pinch. SelfTestOps assertion 7 builds exactly such a pinch — (1,1) reachable from (0,0) only
+# diagonally, because (1,0) and (0,1) are Wall — to catch this.
+New-BattleMutant 'BattleGridOps.cs' 'MutFillDiagonal' `
+  'Enqueue(px, py + 1); Enqueue(px, py - 1);' `
+  "Enqueue(px, py + 1); Enqueue(px, py - 1);`r`n                Enqueue(px + 1, py + 1); Enqueue(px + 1, py - 1); Enqueue(px - 1, py + 1); Enqueue(px - 1, py - 1);   // MUTANT: diagonal spread" `
+  'MutFillDiagonal.cs'
+
+# ---- BATTLE GRID MUTANT-BOUND SELF-TESTS -------------------------------------------------------------------
+# The real BattleGridSelfTests, rebound to each mutant. MutNoRing/MutNoYFlip only touch
+# BattleGridGenerator.cs, which defines BOTH BattleGridGenerator and GridPoint — but GridPoint is never named
+# explicitly in the test file (every call site captures it through `var`), so a blanket rebind of
+# "BattleGridGenerator." alone is sound across the WHOLE class, exactly like the CompactLayout loop above.
+$battleTests = Get-Content (Join-Path $src 'BattleGridSelfTests.cs') -Raw -Encoding UTF8
+foreach ($bm in @('MutNoRing', 'MutNoYFlip')) {
+  $t = $battleTests -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
+  $t = $t -replace 'class BattleGridSelfTests', "class ${bm}SelfTests"
+  # New-BattleMutant only nests the NAMESPACE (WorldGen.Generation.<mutant>) — unlike CompactLayout's
+  # mutants, it does NOT rename the class itself (BattleGridGenerator.cs defines two types, so renaming
+  # only one would collide with the pristine copy's untouched second type). So the rebind must PREPEND the
+  # namespace ahead of the class name, not replace the class name with the namespace.
+  if ($t -notmatch 'BattleGridGenerator\.') { throw "no BattleGridGenerator. call found while deriving SelfTests_$bm.cs" }
+  $t = $t -replace 'BattleGridGenerator\.', "WorldGen.Generation.$bm.BattleGridGenerator."
+  Set-Content -Path (Join-Path $gen "SelfTests_$bm.cs") -Value $t -Encoding UTF8
+}
+
+# MutFirstTouch/MutFillDiagonal mutate BattleGridOps.cs, which defines BOTH BattleGridStroke AND
+# BattleGridOps — re-namespacing it moves both. A blanket file-wide rebind would ALSO touch SelfTestUndo,
+# which calls BattleGridOps.Stamp too but then hands that same stroke to the REAL (unmutated)
+# BattleGridUndo.PushStroke (BattleGridUndo.cs is not one of the mutated files). One local variable cannot
+# be both the mutant's BattleGridStroke (what Stamp would require) and the real one (what PushStroke
+# requires) at once — that is exactly the type-identity trap the task brief warns about, and it would not
+# surface as a failing test, it would surface as a COMPILE ERROR. So the rebind here is scoped to ONLY the
+# SelfTestOps method body — the one method Mutants.cs actually runs for these two mutants. Every other
+# method, including SelfTestUndo, is left calling the real BattleGridOps/BattleGridStroke and still compiles.
+foreach ($bm in @('MutFirstTouch', 'MutFillDiagonal')) {
+  $t = $battleTests -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
+  $t = $t -replace 'class BattleGridSelfTests', "class ${bm}SelfTests"
+
+  $startIdx = $t.IndexOf('public void SelfTestOps()')
+  if ($startIdx -lt 0) { throw "SelfTestOps method not found while deriving SelfTests_$bm.cs" }
+  $endIdx = $t.IndexOf('[ContextMenu', $startIdx)
+  if ($endIdx -lt 0) { throw "no ContextMenu marker after SelfTestOps while deriving SelfTests_$bm.cs" }
+
+  $before = $t.Substring(0, $startIdx)
+  $method = $t.Substring($startIdx, $endIdx - $startIdx)
+  $after  = $t.Substring($endIdx)
+
+  # Same "prepend, don't replace" fix as BattleGridGenerator above — New-BattleMutant nests only the
+  # namespace, so the class name BattleGridOps (and the struct name BattleGridStroke, referenced bare)
+  # must both survive the rebind.
+  if ($method -notmatch 'BattleGridOps\.') { throw "SelfTestOps has no BattleGridOps. call to rebind for $bm" }
+  $method = $method -replace 'BattleGridOps\.', "WorldGen.Generation.$bm.BattleGridOps."
+  if ($method -notmatch '\bBattleGridStroke\b') { throw "SelfTestOps has no bare BattleGridStroke to rebind for $bm" }
+  $method = $method -replace '\bBattleGridStroke\b', "WorldGen.Generation.$bm.BattleGridStroke"
+
+  Set-Content -Path (Join-Path $gen "SelfTests_$bm.cs") -Value ($before + $method + $after) -Encoding UTF8
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies into gen/"
 

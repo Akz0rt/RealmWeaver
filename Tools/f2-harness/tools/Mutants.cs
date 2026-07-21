@@ -3,10 +3,11 @@ using System.Collections.Generic;
 
 namespace WorldGen.Generation
 {
-    /// <summary>NON-VACUITY harness: run the REAL Column Packing self-test suite against copies of itself that
-    /// are bound to a MUTANT packer (one rule removed each) or to an older/partial pipeline. Every assertion in
-    /// the suite claims to pin some rule down; a mutant that removes that rule must make the suite FAIL. A row
-    /// reading "0 errors" for a mutant means the suite does not actually test what that mutant broke.</summary>
+    /// <summary>NON-VACUITY harness: run the REAL self-test suites (Column Packing, and Battle Grid) against
+    /// copies of themselves that are bound to a MUTANT (one rule removed each) or to an older/partial
+    /// pipeline. Every assertion in a suite claims to pin some rule down; a mutant that removes that rule
+    /// must make the suite FAIL. A row reading "0 errors" for a mutant means the suite does not actually
+    /// test what that mutant broke.</summary>
     public static class Mutants
     {
         public static void Run()
@@ -41,6 +42,15 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.PreReviewLayoutSelfTests().SelfTestColumnPacking()),
                 ("PreSlideLayout",    "the packer exactly as SHIPPED before F4 (e409a9c) — no lateral slide",
                     () => new WorldGen.MutantTests.PreSlideLayoutSelfTests().SelfTestColumnPacking()),
+
+                ("MutNoRing",         "BattleGridGenerator.Generate's wall-ring condition forced to false (no ring at all)",
+                    () => new WorldGen.MutantTests.MutNoRingSelfTests().SelfTestGenerator()),
+                ("MutNoYFlip",        "BattleGridGenerator.AlongVertical's top-relative numerator flipped to bottom-relative",
+                    () => new WorldGen.MutantTests.MutNoYFlipSelfTests().SelfTestDoors()),
+                ("MutFirstTouch",     "BattleGridStroke.Paint's first-touch guard replaced with an unconditional record",
+                    () => new WorldGen.MutantTests.MutFirstTouchSelfTests().SelfTestOps()),
+                ("MutFillDiagonal",   "BattleGridOps.Fill gains the four diagonal Enqueue calls (leaks through a diagonal pinch)",
+                    () => new WorldGen.MutantTests.MutFillDiagonalSelfTests().SelfTestOps()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
