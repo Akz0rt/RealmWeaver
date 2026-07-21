@@ -54,13 +54,12 @@ namespace WorldGen.Generation
             return c;
         }
 
-        /// <summary>Decode a stored grid. Returns null if the model is missing or its
-        /// string does not decode EXACTLY — a corrupt map is regenerated whole by the caller, never
+        /// <summary>Decode a stored grid. Returns null if the model is missing, its dimensions are out of bounds,
+        /// or its string does not decode EXACTLY — a corrupt map is regenerated whole by the caller, never
         /// loaded half-way.</summary>
         public static GridBuffer FromModel(BattleGrid g)
         {
             if (g == null) return null;
-            if (g.Width <= 0 || g.Height <= 0) return null;
             // Dimensions come from a file, and TryDecode sizes an allocation from their product.
             // Reject oversized grids before TryDecode creates a multi-gigabyte List.
             if (g.Width < BattleGridCodec.MinSide || g.Width > BattleGridCodec.MaxSide) return null;

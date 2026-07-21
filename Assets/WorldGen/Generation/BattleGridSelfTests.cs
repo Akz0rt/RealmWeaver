@@ -14,7 +14,8 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // ---- 1. Round-trip preserves EVERY cell, not just the length -------------------------------
-            // Remove run merging, or mis-order the digits/letter, and a specific cell comes back wrong.
+            // Mis-order the digits/letter in a run, or map a cell to the wrong letter, and a specific cell
+            // comes back wrong. (Run MERGING is assertion 2's job — this sequence has no adjacent equals.)
             var cells = new GridCell[12];
             for (int i = 0; i < 12; i++) cells[i] = (GridCell)(i % 7);
             string s = BattleGridCodec.Encode(cells);
@@ -67,7 +68,10 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL buffer: ToModel/FromModel lost the (3,2) Chasm or the dimensions"); ok = false; }
 
             // ---- 6. Corrupt model → null (caller regenerates) ------------------------------------------
-            var corrupt = new BattleGrid { Width = 3, Height = 2, Cells = "99F" };
+            // Legal dimensions on purpose: 5x4 passes the bounds guard, so the ONLY thing that can reject
+            // this is the decode itself (99 cells declared, 20 required). With a sub-minimum width the
+            // guard would short-circuit first and this would prove nothing about TryDecode.
+            var corrupt = new BattleGrid { Width = 5, Height = 4, Cells = "99F" };
             if (GridBuffer.FromModel(corrupt) != null)
             { Debug.LogError("FAIL buffer: FromModel returned a buffer for a corrupt string instead of null"); ok = false; }
 
