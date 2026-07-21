@@ -39,6 +39,11 @@ namespace WorldGen.Rendering
         List<GridPoint> doors = new List<GridPoint>();
         List<GridPoint> highlight = new List<GridPoint>();
 
+        // Reused across Repaint() calls, reallocated only when the cell count changes — the controller
+        // calls Repaint() on every pointer MOVE (hover highlight only), and `new Color32[...]` there was
+        // kilobytes of garbage per frame for a buffer whose actual pixel data usually did not change.
+        Color32[] pixelBuffer;
+
         static readonly Color LineColor      = new Color(0f, 0f, 0f, 0.25f);
         static readonly Color DoorColor      = new Color32(0xC9, 0xA2, 0x4B, 0xFF);
         static readonly Color HighlightColor = new Color(1f, 1f, 1f, 0.35f);
@@ -125,9 +130,10 @@ namespace WorldGen.Rendering
         {
             if (grid == null || texture == null) return;
 
-            var px = new Color32[grid.Cells.Length];
-            for (int i = 0; i < grid.Cells.Length; i++) px[i] = ColorFor(grid.Cells[i]);
-            texture.SetPixels32(px);
+            if (pixelBuffer == null || pixelBuffer.Length != grid.Cells.Length)
+                pixelBuffer = new Color32[grid.Cells.Length];
+            for (int i = 0; i < grid.Cells.Length; i++) pixelBuffer[i] = ColorFor(grid.Cells[i]);
+            texture.SetPixels32(pixelBuffer);
             texture.Apply(false);
 
             LayoutOverlay();
