@@ -105,6 +105,7 @@ namespace WorldGen.Rendering
                 // DM authors which rooms connect. So corridors + secret passages are always shown; only
                 // BuildRoomSection hides the layout-affecting type/size controls when locked.
                 BuildRoomSection(content, lvl, room, StructureLocked);
+                BuildBattleGridSection(content, room);
                 BuildSecretsSection(content, room);
                 BuildCorridorsSection(content, lvl, room);
                 AddDivider(content);
@@ -189,6 +190,20 @@ namespace WorldGen.Rendering
             OnChanged?.Invoke();
         }
 
+        // ── Боевая карта ─────────────────────────────────────────────────────────
+
+        // Own section — it used to be appended to СЕКРЕТНЫЕ ХОДЫ below, where it rendered directly beneath
+        // «+ Секретный ход» and read as a secret-passage control. A battle map is a property of the ROOM
+        // itself. Deliberately NOT gated by `locked` the way BuildRoomSection's type/size controls are:
+        // battle maps are available on every floor, including a building's generated upper floors — unlike
+        // room type/size they are never machine-maintained, so the structure lock does not apply to them.
+        void BuildBattleGridSection(Transform parent, Room room)
+        {
+            var sec = AddSection(parent, "BattleGridSection");
+            AddFullWidthButton(sec.transform, "Боевая карта", ThemeRole.Elev,
+                               () => OnOpenBattleGridRequested?.Invoke(room.Id));
+        }
+
         // ── Секретные ходы ───────────────────────────────────────────────────────
 
         // No InteriorFloor param needed — secret targets are resolved against dungeon.Floors directly
@@ -209,8 +224,6 @@ namespace WorldGen.Rendering
                 Rebuild();
                 OnChanged?.Invoke();
             });
-            AddFullWidthButton(sec.transform, "Боевая карта", ThemeRole.Elev,
-                               () => OnOpenBattleGridRequested?.Invoke(room.Id));
         }
 
         void BuildSecretRow(Transform parent, Room room, Portal s)
