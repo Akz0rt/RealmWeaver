@@ -3,9 +3,12 @@ namespace WorldGen.Generation
     /// <summary>An integer cell coordinate in a GridBuffer.</summary>
     public struct GridPoint { public int X, Y; }
 
-    /// <summary>Builds a room's starting battle map. Pure and deterministic: the same room always yields
-    /// the same grid, which is why an untouched grid need not be persisted at all (Room.Grid stays null
-    /// until the DM edits it) and still looks identical in the next session.</summary>
+    /// <summary>Three responsibilities around a room's battle map: (1) build the starting grid — pure and
+    /// deterministic, so an untouched grid need not be persisted at all (Room.Grid stays null until the DM
+    /// edits it) and still looks identical in the next session; (2) project the doors a room's LINKS imply
+    /// onto that grid's walls, derived on demand and never written into the buffer; (3) count how many
+    /// rooms on a floor carry a saved (DM-authored) battle map, for the confirm dialogs that would destroy
+    /// them.</summary>
     public static class BattleGridGenerator
     {
         /// <summary>The grid size a room's CURRENT footprint calls for: the footprint plus a one-cell wall

@@ -98,15 +98,15 @@ namespace WorldGen.Generation
 
         /// <summary>Does this floor hold content a DM AUTHORED — i.e. content an irreversible, undo-less
         /// destroy (DungeonEditorScreen's «× Этаж» / «Перегенерировать») would silently take away? Four
-        /// sources: a room Title/Body (the note layer); any Link with Authored==true (set ONLY by the
-        /// «Связать» action via <see cref="AddCorridor"/>'s authored parameter — every generator-made link
-        /// leaves this false, so a freshly generated floor's spanning tree does not trip this on its own);
-        /// and any non-Stairs portal (secret passage / dungeon exit — the only portal kinds the inspector
-        /// lets a DM create). Stairs portals are excluded on purpose: they are 100% generator-owned
-        /// (BuildingGenerator.RewireStairChain builds and rebuilds them; the inspector cannot add one), so
-        /// counting them would make every floor of every multi-floor building prompt. And any room carrying
-        /// a battle map (Room.Grid != null — the field is null until the DM edits one, so a generated floor
-        /// never trips this on its own).</summary>
+        /// sources: (1) a room Title/Body (the note layer); (2) any Link with Authored==true (set ONLY by
+        /// the «Связать» action via <see cref="AddCorridor"/>'s authored parameter — every generator-made
+        /// link leaves this false, so a freshly generated floor's spanning tree does not trip this on its
+        /// own); (3) any non-Stairs portal (secret passage / dungeon exit — the only portal kinds the
+        /// inspector lets a DM create; Stairs portals are excluded because they are 100% generator-owned —
+        /// BuildingGenerator.RewireStairChain builds and rebuilds them and the inspector cannot add one —
+        /// so counting them would make every floor of every multi-floor building prompt); and (4) any room
+        /// carrying a battle map (Room.Grid != null — the field is null until the DM edits one, so a
+        /// generated floor never trips this on its own).</summary>
         public static bool HasAuthoredContent(InteriorFloor lvl)
         {
             if (lvl == null) return false;

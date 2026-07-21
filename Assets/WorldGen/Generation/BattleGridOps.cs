@@ -61,10 +61,10 @@ namespace WorldGen.Generation
         /// <summary>Filled rectangle between two corners in any order.</summary>
         public static void Rect(GridBuffer buf, BattleGridStroke stroke, int x0, int y0, int x1, int y1, GridCell value)
         {
-            int lo_x = x0 < x1 ? x0 : x1, hi_x = x0 < x1 ? x1 : x0;
-            int lo_y = y0 < y1 ? y0 : y1, hi_y = y0 < y1 ? y1 : y0;
-            for (int y = lo_y; y <= hi_y; y++)
-                for (int x = lo_x; x <= hi_x; x++)
+            int loX = x0 < x1 ? x0 : x1, hiX = x0 < x1 ? x1 : x0;
+            int loY = y0 < y1 ? y0 : y1, hiY = y0 < y1 ? y1 : y0;
+            for (int y = loY; y <= hiY; y++)
+                for (int x = loX; x <= hiX; x++)
                     stroke.Paint(buf, x, y, value);
         }
 

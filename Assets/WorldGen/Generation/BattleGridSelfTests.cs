@@ -302,7 +302,8 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL ops: a newly added cell (7,6) is not Empty"); ok = false; }
 
             // ---- 9. Shrinking counts EXACTLY the non-empty cells that fall outside ----------------------
-            // Count every dropped cell (including Empty ones) and this reports 16 instead of 2.
+            // Count every dropped cell (including Empty ones) and this reports 20 instead of 2 (36 total
+            // cells in the 6x6 source minus the 16 that stay inside the 4x4 kept region).
             var marked = new GridBuffer(6, 6);
             marked.Set(5, 0, GridCell.Wall);
             marked.Set(0, 5, GridCell.Wall);
