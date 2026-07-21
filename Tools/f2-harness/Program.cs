@@ -56,6 +56,7 @@ static class Program
         var battle = new WorldGen.Rendering.BattleGridSelfTests();
         battle.SelfTestCodec();
         battle.SelfTestGenerator();
+        battle.SelfTestDoors();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

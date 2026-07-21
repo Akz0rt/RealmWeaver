@@ -141,5 +141,71 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Battle Grid Generator: PASS");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Doors")]
+        public void SelfTestDoors()
+        {
+            bool ok = true;
+
+            // Two rooms side by side on one floor, linked. A is 6x4 at tile (32,64); B sits to its RIGHT,
+            // so the link leaves A through its RIGHT wall. Positions are normalized (tile / TilesPerAxis).
+            const float T = DungeonLayout.TilesPerAxis;
+            var floor = new InteriorFloor { NextRoomId = 3 };
+            var a = new Room { Id = 1, TypeId = 1, SizeW = 6, SizeH = 4, X = 32f / T, Y = 64f / T };
+            var b = new Room { Id = 2, TypeId = 1, SizeW = 6, SizeH = 4, X = 52f / T, Y = 64f / T };
+            floor.Rooms.Add(a); floor.Rooms.Add(b);
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+
+            var buf = BattleGridGenerator.Generate(a);          // 8x6
+            var doors = BattleGridGenerator.ProjectDoors(floor, a, buf);
+
+            // ---- 1. A's door is on A's RIGHT wall column, and nowhere else ------------------------------
+            // Drop the wall-attribution branch and B's own door (on B's left wall) leaks in at x==0.
+            if (doors.Count == 0)
+            { Debug.LogError("FAIL doors: a linked room produced no door at all"); ok = false; }
+            foreach (var d in doors)
+                if (d.X != buf.Width - 1)
+                { Debug.LogError($"FAIL doors: door at ({d.X},{d.Y}) is not on A's right wall column x={buf.Width - 1}"); ok = false; }
+
+            // ---- 2. A door never lands on a corner — corners are not walls you can walk through ---------
+            foreach (var d in doors)
+                if (d.Y <= 0 || d.Y >= buf.Height - 1)
+                { Debug.LogError($"FAIL doors: door at ({d.X},{d.Y}) sits on the ring corner row"); ok = false; }
+
+            // ---- 3. Y FLIPS: tile-space Y grows DOWN the screen, grid Y grows UP ------------------------
+            // A door at the tile rect's TOP edge (max tile-Y, drawn at the BOTTOM of the schematic) must
+            // land on grid row 0. Feed the formula a synthetic point to pin the direction with no
+            // dependence on which wall the router happened to choose.
+            // A spans tile Y 62..66 (centre 64, height 4). Inner rows are 1..4.
+            var lowY  = BattleGridGenerator.ProjectDoorPoint(a, buf, 35f, 62.0f);   // tile top-of-screen
+            var highY = BattleGridGenerator.ProjectDoorPoint(a, buf, 35f, 65.9f);   // tile bottom-of-screen
+            if (lowY.Y != 4)
+            { Debug.LogError($"FAIL doors: tile Y 62 (screen-top) mapped to grid row {lowY.Y}, want 4 (grid top)"); ok = false; }
+            if (highY.Y != 1)
+            { Debug.LogError($"FAIL doors: tile Y 65.9 (screen-bottom) mapped to grid row {highY.Y}, want 1 (grid bottom)"); ok = false; }
+
+            // ---- 4. Natural-size grid maps 1:1 — a one-tile step moves the door exactly one row ---------
+            // Remove the +2 ring compensation and consecutive tiles collapse onto one row.
+            var r1 = BattleGridGenerator.ProjectDoorPoint(a, buf, 35f, 63.5f);
+            var r2 = BattleGridGenerator.ProjectDoorPoint(a, buf, 35f, 64.5f);
+            if (System.Math.Abs(r1.Y - r2.Y) != 1)
+            { Debug.LogError($"FAIL doors: one tile apart mapped to rows {r1.Y} and {r2.Y}, want a 1-row step"); ok = false; }
+
+            // ---- 5. A hand-resized grid maps PROPORTIONALLY along the same wall -------------------------
+            // Inner height doubles from 4 to 8, so the same two tile positions must now be 2 rows apart.
+            var wide = new GridBuffer(8, 10);
+            var w1 = BattleGridGenerator.ProjectDoorPoint(a, wide, 35f, 63.5f);
+            var w2 = BattleGridGenerator.ProjectDoorPoint(a, wide, 35f, 64.5f);
+            if (System.Math.Abs(w1.Y - w2.Y) != 2)
+            { Debug.LogError($"FAIL doors: on a 10-tall grid the same one-tile step gave rows {w1.Y} and {w2.Y}, want 2 apart"); ok = false; }
+
+            // ---- 6. Nothing was written INTO the buffer ------------------------------------------------
+            // This is the whole safety argument: the derived layer must not mutate the DM's cells.
+            for (int i = 0; i < buf.Cells.Length; i++)
+                if (buf.Cells[i] == GridCell.Door)
+                { Debug.LogError($"FAIL doors: ProjectDoors wrote a Door cell into the buffer at index {i}"); ok = false; break; }
+
+            if (ok) Debug.Log("Battle Grid Doors: PASS");
+        }
     }
 }
