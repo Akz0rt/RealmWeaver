@@ -89,5 +89,57 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Battle Grid Codec: PASS");
         }
+
+        [ContextMenu("Self-Test: Battle Grid Generator")]
+        public void SelfTestGenerator()
+        {
+            bool ok = true;
+
+            // ---- 1. Size = footprint + a one-cell wall ring on EACH side -------------------------------
+            // Drop the "+2" and this becomes 6x4; put the ring INSIDE and the usable floor shrinks (checked below).
+            var room = new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f, SizeW = 6, SizeH = 4 };
+            var buf = BattleGridGenerator.Generate(room);
+            if (buf.Width != 8 || buf.Height != 6)
+            { Debug.LogError($"FAIL gen: a 6x4 room produced a {buf.Width}x{buf.Height} grid, want 8x6"); ok = false; }
+
+            // ---- 2. The ring is Wall on all four sides, checked at named cells --------------------------
+            // Remove any single side of the ring and the matching assertion below names it.
+            if (buf.Get(0, 0) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: corner (0,0) is {buf.Get(0, 0)}, want Wall"); ok = false; }
+            if (buf.Get(7, 5) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: corner (7,5) is {buf.Get(7, 5)}, want Wall"); ok = false; }
+            if (buf.Get(3, 0) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: bottom wall (3,0) is {buf.Get(3, 0)}, want Wall"); ok = false; }
+            if (buf.Get(3, 5) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: top wall (3,5) is {buf.Get(3, 5)}, want Wall"); ok = false; }
+            if (buf.Get(0, 3) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: left wall (0,3) is {buf.Get(0, 3)}, want Wall"); ok = false; }
+            if (buf.Get(7, 3) != GridCell.Wall)
+            { Debug.LogError($"FAIL gen: right wall (7,3) is {buf.Get(7, 3)}, want Wall"); ok = false; }
+
+            // ---- 3. Everything inside the ring is Floor, INCLUDING the cells adjacent to it -------------
+            // A ring drawn two cells thick, or an off-by-one interior loop, flips (1,1) or (6,4).
+            if (buf.Get(1, 1) != GridCell.Floor)
+            { Debug.LogError($"FAIL gen: inner corner (1,1) is {buf.Get(1, 1)}, want Floor"); ok = false; }
+            if (buf.Get(6, 4) != GridCell.Floor)
+            { Debug.LogError($"FAIL gen: inner corner (6,4) is {buf.Get(6, 4)}, want Floor"); ok = false; }
+
+            // ---- 4. A tiny room still yields a legal grid, and the clamp is what makes it legal ---------
+            // SizeW=1 -> 1+2 = 3, below MinSide 4. Without the clamp this constructs a 3-wide grid.
+            var tiny = new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f, SizeW = 1, SizeH = 1 };
+            var tb = BattleGridGenerator.Generate(tiny);
+            if (tb.Width != 4 || tb.Height != 4)
+            { Debug.LogError($"FAIL gen: a 1x1 room produced {tb.Width}x{tb.Height}, want the 4x4 minimum"); ok = false; }
+
+            // ---- 5. Size comes from EffectiveSize, not the raw fields -----------------------------------
+            // SizeW=0 means "unset"; EffectiveSize substitutes the type default (6,6 for Normal) -> 8x8.
+            // Read room.SizeW directly instead and this collapses to the 4x4 minimum.
+            var unset = new Room { Id = 3, TypeId = 1, X = 0.5f, Y = 0.5f, SizeW = 0, SizeH = 0 };
+            var ub = BattleGridGenerator.Generate(unset);
+            if (ub.Width != 8 || ub.Height != 8)
+            { Debug.LogError($"FAIL gen: an unsized Normal room produced {ub.Width}x{ub.Height}, want 8x8 from the type default"); ok = false; }
+
+            if (ok) Debug.Log("Battle Grid Generator: PASS");
+        }
     }
 }

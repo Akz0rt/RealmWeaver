@@ -55,6 +55,7 @@ static class Program
         new WorldGen.Rendering.DungeonGraphSelfTests().SelfTestDungeonUnaffectedByRewire();
         var battle = new WorldGen.Rendering.BattleGridSelfTests();
         battle.SelfTestCodec();
+        battle.SelfTestGenerator();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
