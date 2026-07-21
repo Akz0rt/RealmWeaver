@@ -416,8 +416,27 @@ namespace WorldGen.Rendering
                 var profile = current != null ? Profiles.ForRoom(current) : Profiles.For(InteriorKind.Dungeon);
                 AddToolbarButton(toolbarBar, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
                 linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
-                AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, () => viewController?.DeleteSelected());
+                AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, RequestDeleteSelected);
             }
+        }
+
+        /// <summary>«Удалить» handler: DungeonViewController.DeleteSelected removes the room with no
+        /// confirmation of its own (referential integrity only — corridors/secrets). Rooms can now carry an
+        /// expensive hand-painted battle map, and the spec's rule is explicit that painted work must never
+        /// be lost silently — the same rule the floor-level «× Этаж» / «Перегенерировать» confirms already
+        /// enforce for a whole floor's worth of maps. A room with no battle map deletes immediately; this
+        /// must not add friction to the common (nothing to lose) case.</summary>
+        void RequestDeleteSelected()
+        {
+            var room = CurrentLevel?.GetRoom(selectedRoomId);   // same mirror RevalidateAndRefresh reads — single source of truth
+            if (room != null && room.Grid != null)
+            {
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить комнату?",
+                    "Боевая карта этой комнаты будет потеряна.",
+                    ok => { if (ok) viewController?.DeleteSelected(); });
+            }
+            else
+                viewController?.DeleteSelected();
         }
 
         void AdjustUpperRoomCount(int delta)
