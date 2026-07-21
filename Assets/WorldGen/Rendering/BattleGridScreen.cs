@@ -33,6 +33,10 @@ namespace WorldGen.Rendering
         Text widthLabel;
         Text heightLabel;
 
+        // GridBuffer dimensions RefreshDoors last ran the corridor router for (see RefreshDoorsIfResized).
+        // -1 so the very first call (from Bind) never matches by accident and always projects.
+        int doorsForWidth = -1, doorsForHeight = -1;
+
         readonly List<(GridCell cell, Image img, Text lbl)> materialButtons = new List<(GridCell, Image, Text)>();
         readonly List<(GridTool tool, Image img, Text lbl)> toolButtons = new List<(GridTool, Image, Text)>();
         readonly List<(int size, Image img, Text lbl)> brushSizeButtons = new List<(int, Image, Text)>();
@@ -83,12 +87,32 @@ namespace WorldGen.Rendering
         public void Bind(InteriorData interior, int floorIndex, int roomId)
         {
             EnsureBuilt();
+
+            // Re-arm the modal guard on every bind, defensively. BeginModal/EndModal (see class doc) leave
+            // `view` disabled for the duration of a ConfirmDialog THIS screen raised; EndModal is only ever
+            // reached through that dialog's onResult callback. ConfirmDialog.BuildBase destroys a
+            // superseded dialog WITHOUT invoking its callback, so if that path is ever hit, EndModal never
+            // runs and `view` would stay disabled — unpaintable and Escape-deaf — for every room this
+            // screen opens from then on, since nothing else ever resets it. Bind is the one call every
+            // room's open goes through, so re-enabling here bounds the damage to at most one stranded
+            // dialog instead of the rest of the session.
+            if (view != null) view.enabled = true;
+
+            // Guard against a stale/out-of-range id: MapScreenController.OpenBattleGrid only checks
+            // roomId != 0, not that the room still resolves on the given floor. Degrade to a no-op rather
+            // than NREing on room.Grid below.
+            var floor = (interior != null && floorIndex >= 0 && floorIndex < interior.Floors.Count)
+                ? interior.Floors[floorIndex] : null;
+            var room = floor?.GetRoom(roomId);
+            if (room == null)
+            {
+                Debug.LogWarning($"BattleGridScreen.Bind: комната {roomId} не найдена на этаже {floorIndex}.");
+                return;
+            }
+
             this.interior = interior;
             this.floorIndex = floorIndex;
             this.roomId = roomId;
-
-            var floor = interior.Floors[floorIndex];
-            var room = floor.GetRoom(roomId);
 
             var buf = GridBuffer.FromModel(room.Grid);
             if (buf == null)
@@ -109,12 +133,29 @@ namespace WorldGen.Rendering
             RefreshSizeLabels();
         }
 
+        // Unconditional — Bind always needs a fresh projection (the room changed), and any future caller
+        // that genuinely must re-project can still call this directly. Records the buffer size it ran for
+        // so RefreshDoorsIfResized can skip a redundant re-route.
         void RefreshDoors()
         {
             var floor = interior.Floors[floorIndex];
             var room = floor.GetRoom(roomId);
             gridRenderer.SetDoors(BattleGridGenerator.ProjectDoors(floor, room, view.Buffer));
             gridRenderer.Repaint();
+            doorsForWidth = view.Buffer.Width;
+            doorsForHeight = view.Buffer.Height;
+        }
+
+        // view.OnChanged fires on every completed paint stroke, every Ctrl+Z and every resize —
+        // BattleGridGenerator.ProjectDoors runs DungeonLayout.BuildRenderGraph(floor, RoutingMode.Clean),
+        // the full orthogonal A* corridor router over the WHOLE floor, one A* per link. The floor's
+        // schematic cannot change while this screen is open, and ProjectDoors depends on the live buffer
+        // only through its Width/Height — so a stroke that didn't change the size needs no re-routing at
+        // all. This is the ONLY thing OnChanged should call; RefreshDoors itself stays unconditional.
+        void RefreshDoorsIfResized()
+        {
+            if (view.Buffer.Width == doorsForWidth && view.Buffer.Height == doorsForHeight) return;
+            RefreshDoors();
         }
 
         // Any edit materialises the grid on the room — this is the single site where an in-memory map
@@ -173,9 +214,14 @@ namespace WorldGen.Rendering
         void RequestRegenerate()
         {
             var room = interior.Floors[floorIndex].GetRoom(roomId);
-            // Confirm only when the map has actually been edited: room.Grid is null until the first edit,
-            // exactly like Link.Authored gates the floor-regeneration confirm.
-            if (room.Grid == null) { Regenerate(room); return; }
+            // room.Grid == null means untouched — and an untouched live buffer is, BY CONSTRUCTION, already
+            // exactly BattleGridGenerator.Generate(room): Bind generated it, and every path that mutates
+            // the buffer persists (which would have made Grid non-null). So Regenerate here would replace
+            // the buffer with an identical one — nothing on screen would change — while still driving
+            // OnChanged -> Persist -> room.Grid = ..., making the room look authored forever after. Same
+            // guard, same reasoning, as RequestResize's early-out above (the two must agree on what
+            // "nothing to do" means); return instead of calling Regenerate.
+            if (room.Grid == null) return;
             BeginModal();
             WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Пересобрать боевую карту?",
                 "Карта будет создана заново. Всё нарисованное пропадёт.",
@@ -184,8 +230,9 @@ namespace WorldGen.Rendering
 
         void Regenerate(Room room)
         {
+            // ReplaceBuffer already fires OnChanged -> RefreshDoorsIfResized; no separate RefreshDoors call
+            // here (that used to run the full corridor router a second time on every press).
             view.ReplaceBuffer(BattleGridGenerator.Generate(room));
-            RefreshDoors();
         }
 
         // Disables `view` for the duration of a ConfirmDialog raised BY THIS SCREEN — see the class doc.
@@ -295,7 +342,7 @@ namespace WorldGen.Rendering
             view = hostGO.AddComponent<BattleGridViewController>();
             gridRenderer = hostGO.AddComponent<BattleGridRenderer>();
             gridRenderer.Build(hostRect);
-            view.OnChanged = () => { Persist(); RefreshDoors(); RefreshSizeLabels(); };
+            view.OnChanged = () => { Persist(); RefreshDoorsIfResized(); RefreshSizeLabels(); };
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);
