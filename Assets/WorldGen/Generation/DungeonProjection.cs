@@ -69,6 +69,27 @@ namespace WorldGen.Generation
             return (minX, minY, maxX, maxY);
         }
 
+        /// <summary>Tile-space AABB over a settlement wall's vertices (Wall.Points × TilesPerAxis). A
+        /// settlement's wall extends past its inner buildings, so Fit — which uses room footprints only —
+        /// clips it; unioning this with ContentBoundsTiles keeps the whole walled town on screen. Returns a
+        /// degenerate box at the canvas centre for a null/empty wall (a wall-less village adds nothing).</summary>
+        public static (float minX, float minY, float maxX, float maxY) WallBoundsTiles(WallContour wall)
+        {
+            if (wall == null || wall.Points == null || wall.Points.Count == 0)
+            {
+                float c = DungeonLayout.TilesPerAxis * 0.5f;
+                return (c, c, c, c);
+            }
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var p in wall.Points)
+            {
+                float tx = p.X * DungeonLayout.TilesPerAxis, ty = p.Y * DungeonLayout.TilesPerAxis;
+                if (tx < minX) minX = tx; if (tx > maxX) maxX = tx;
+                if (ty < minY) minY = ty; if (ty > maxY) maxY = ty;
+            }
+            return (minX, minY, maxX, maxY);
+        }
+
         /// <summary>Resolve PxPerTile + Pan so the level's occupied bounds fill the host rect (uniform
         /// scale, centred, FitPadding margin). Call ONCE per level bind — NEVER during drag/cascade, or
         /// the map rescales under the cursor (spec R6). Safe with rectW/rectH == 0 (returns PxPerTile=1);

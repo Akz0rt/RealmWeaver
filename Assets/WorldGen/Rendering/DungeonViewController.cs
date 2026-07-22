@@ -84,8 +84,12 @@ namespace WorldGen.Rendering
         /// floor renders at the IDENTICAL scale and position, and the stairwell column (and every room) looks
         /// absolutely the same on every floor (user 2026-07-19). The current floor is NOT unioned in: upper
         /// floors are generated within this outline (nothing is clipped), and floor 0's own rooms ARE the
-        /// outline, so a per-floor union would only make the fit jitter between floors. Dungeons: the current
-        /// floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
+        /// outline, so a per-floor union would only make the fit jitter between floors. For a walled
+        /// SETTLEMENT (Task 3, Ц1.5): the wall extends past its inner buildings, so a room-only fit clips the
+        /// wall's corners off-screen — fit the UNION of the rooms' bounds and the wall's own bounds instead,
+        /// the same "union with a second shape's bounds" precedent as the Building case just above. A
+        /// wall-less settlement (village/camp) falls through to the plain room bounds below. Dungeons: the
+        /// current floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
         (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
@@ -93,6 +97,13 @@ namespace WorldGen.Rendering
                 var c = DungeonProjection.ContentBoundsTiles(dungeon.Floors[0]);
                 float pad = FloorFootprint.ContourMargin + ContourViewPad;
                 return (c.minX - pad, c.minY - pad, c.maxX + pad, c.maxY + pad);
+            }
+            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl.Wall != null)
+            {
+                var (rMinX, rMinY, rMaxX, rMaxY) = DungeonProjection.ContentBoundsTiles(lvl);
+                var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(lvl.Wall);
+                return (System.Math.Min(rMinX, wMinX), System.Math.Min(rMinY, wMinY),
+                        System.Math.Max(rMaxX, wMaxX), System.Math.Max(rMaxY, wMaxY));
             }
             return DungeonProjection.ContentBoundsTiles(lvl);
         }

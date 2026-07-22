@@ -450,6 +450,35 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Active/Dummy: PASS");
         }
 
+        [ContextMenu("Self-Test: Settlement Wall Bounds")]
+        public void SelfTestWallBounds()
+        {
+            bool ok = true;
+            // A jitter-free octagon radius 0.3 at (0.5,0.5): vertex 0 at angle 0 is (0.8,0.5) → max X 0.8;
+            // the opposite vertex is (0.2,0.5) → min X 0.2. In tiles that is ×TilesPerAxis.
+            var wall = WallContour.Rounded(seed: 1, cx: 0.5f, cy: 0.5f, radius: 0.3f, sides: 8, jitter: 0f);
+            var (minX, minY, maxX, maxY) = DungeonProjection.WallBoundsTiles(wall);
+            float expMax = 0.8f * DungeonLayout.TilesPerAxis, expMin = 0.2f * DungeonLayout.TilesPerAxis;
+            if (System.Math.Abs(maxX - expMax) > 0.5f)
+            { Debug.LogError($"FAIL wallbounds: maxX {maxX:F1}, want ~{expMax:F1}"); ok = false; }
+            if (System.Math.Abs(minX - expMin) > 0.5f)
+            { Debug.LogError($"FAIL wallbounds: minX {minX:F1}, want ~{expMin:F1}"); ok = false; }
+
+            // The union of room bounds and wall bounds must extend past the ROOMS alone (the clip the fix
+            // repairs): a real city's wall reaches past its inner buildings on at least one side.
+            var floor = SettlementGenerator.Generate(
+                new SettlementConfig { Seed = 8, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true }, "poi-city").Floors[0];
+            var (rMinX, rMinY, rMaxX, rMaxY) = DungeonProjection.ContentBoundsTiles(floor);
+            var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(floor.Wall);
+            float uMinX = System.Math.Min(rMinX, wMinX), uMaxX = System.Math.Max(rMaxX, wMaxX);
+            float uMinY = System.Math.Min(rMinY, wMinY), uMaxY = System.Math.Max(rMaxY, wMaxY);
+            bool grew = uMinX < rMinX - 0.01f || uMaxX > rMaxX + 0.01f || uMinY < rMinY - 0.01f || uMaxY > rMaxY + 0.01f;
+            if (!grew)
+            { Debug.LogError($"FAIL wallbounds: wall AABB [{wMinX:F1},{wMinY:F1}]-[{wMaxX:F1},{wMaxY:F1}] does not extend past rooms [{rMinX:F1},{rMinY:F1}]-[{rMaxX:F1},{rMaxY:F1}] — the union would not fix the clip"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Wall Bounds: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {
