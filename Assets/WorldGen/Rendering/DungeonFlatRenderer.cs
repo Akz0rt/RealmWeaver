@@ -419,8 +419,21 @@ namespace WorldGen.Rendering
             rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);   // centre-anchored; position via anchoredPosition
             rt.pivot = new Vector2(0.5f, 0.5f);
 
+            // Dummy building (Ц1.5, Task 5): a settlement building placed purely as decorative filler
+            // (SettlementGenerator marks the tail of its building list IsDummy once ActiveBuildings is
+            // exhausted). Gated on Kind==Settlement (isSettlement) so dungeon/building cards — where
+            // IsDummy is never set — are byte-for-byte unaffected; TypeId==1 excludes a gate (TypeId 0 is
+            // never a dummy per Room.IsDummy's own doc comment, but the check costs nothing extra here).
+            bool isDummyBuilding = isSettlement && r.IsDummy && r.TypeId == 1;
+
             var img = go.AddComponent<Image>();
-            ThemeService.Tag(img, TypeRole(r.TypeId));
+            // ThemeRole.Dot — the SAME "free, neutral" role BuildPreviewIndicator uses below, and the
+            // dimmest neutral role in the palette that still reads dimmer than RoomCommon in BOTH themes
+            // (checked against Bg/Panel/Panel2/Elev/Border/Mut: several of those actually paint BRIGHTER
+            // than RoomCommon in the Light palette, e.g. Panel2 #FBF8F1 vs RoomCommon #EDE3D0). Dot sits
+            // low-luminance under RoomCommon in Dark (#2A2A33 vs #3A3128) and Light (#D3CCBB vs #EDE3D0)
+            // alike, so a dummy recedes into the backdrop instead of reading as a place, regardless of theme.
+            ThemeService.Tag(img, isDummyBuilding ? ThemeRole.Dot : TypeRole(r.TypeId));
             img.raycastTarget = false;   // the CONTROLLER hit-tests in tile space — cards must not eat clicks
 
             // Gate shape cue (Ц1, Task 10): TypeId 0 already paints via profile.TypeOf(0).Role == Accent —
@@ -448,10 +461,17 @@ namespace WorldGen.Rendering
                 violationOutlines[r.Id] = violationOutline;
             }
 
-            var lbl = DungeonUiKit.MakeText(go.transform, font, NodeLabel(r), 11, LabelRole(r.TypeId),
-                                            FontStyle.Bold, TextAnchor.MiddleCenter);
-            DungeonUiKit.Stretch(lbl.rectTransform);
-            lbl.raycastTarget = false;
+            // No number/name label for a dummy — it is unlabelled filler, not an addressable place (brief's
+            // "leave the label empty / skip the label build for this card"). Skip the Text object entirely
+            // rather than building it with empty content: `lbl` isn't referenced past this block (nothing
+            // caches it per-room like `cards`/`outlines` do), so there is nothing else to keep in sync.
+            if (!isDummyBuilding)
+            {
+                var lbl = DungeonUiKit.MakeText(go.transform, font, NodeLabel(r), 11, LabelRole(r.TypeId),
+                                                FontStyle.Bold, TextAnchor.MiddleCenter);
+                DungeonUiKit.Stretch(lbl.rectTransform);
+                lbl.raycastTarget = false;
+            }
 
             DungeonBadgeStrip.Build(go.transform, dungeon, profile.FloorLinks, levelIndex, r, font, onJumpToLevel);
 
@@ -466,7 +486,10 @@ namespace WorldGen.Rendering
             // violationOutlines already use: added once per card, then only .enabled/SetActive toggles — and
             // it is destroyed with the rest of the card on the next RebuildView's ClearLayer(nodesLayer), so
             // switching settlements can never leave a ghost indicator behind.
-            if (isSettlement && r.TypeId == 1)
+            // !isDummyBuilding is redundant with r.Preview being always-null on a dummy (SettlementGenerator
+            // never assigns one), but the brief calls for an explicit skip here for clarity/robustness —
+            // a dummy must never grow the indicator even if something upstream ever stamped a stray preview.
+            if (isSettlement && r.TypeId == 1 && !isDummyBuilding)
             {
                 var indicator = BuildPreviewIndicator(go.transform);
                 indicator.SetActive(r.Preview != null);
@@ -478,8 +501,10 @@ namespace WorldGen.Rendering
         const float PreviewIndicatorPx = 8f;   // a few-pixel corner mark — deliberately small, not a thumbnail
 
         /// <summary>Small filled square pinned to a building card's top-right corner, flagging "this room has
-        /// an authored preview image". ThemeRole.Dot is otherwise unused by any WorldGen.Rendering caller — a
-        /// free, neutral role for a marker that means neither "selected" (Accent) nor "problem" (Danger).</summary>
+        /// an authored preview image". ThemeRole.Dot was a free, neutral role meaning neither "selected"
+        /// (Accent) nor "problem" (Danger) when this indicator claimed it — Task 5 reuses it for the dummy-
+        /// building fill above (same "neutral, de-emphasized" intent, just a card fill instead of a marker),
+        /// so it is no longer this method's alone but the two never collide (a dummy never gets an indicator).</summary>
         GameObject BuildPreviewIndicator(Transform parent)
         {
             var go = new GameObject("PreviewIndicator", typeof(RectTransform));
