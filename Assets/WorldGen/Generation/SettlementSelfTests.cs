@@ -255,13 +255,38 @@ namespace WorldGen.Rendering
             if (buildNodes < 20)
             { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥20 for a 40-target town"); ok = false; }
 
-            // ---- 4. Links reference real rooms and every building room is reachable from a gate room ---
-            // (Assembly must map StreetEdge indices to the SAME Room ids it created, in order.)
-            var byId = new System.Collections.Generic.Dictionary<int, Room>();
-            foreach (var r in floor.Rooms) byId[r.Id] = r;
-            foreach (var l in floor.Links)
-                if (!byId.ContainsKey(l.RoomA) || !byId.ContainsKey(l.RoomB))
-                { Debug.LogError($"FAIL assembly: link ({l.RoomA},{l.RoomB}) references a missing room"); ok = false; break; }
+            // ---- 4. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
+            // Reconstruct the exact gates/buildings/edges BuildFloor used (all deterministic from floor.Wall +
+            // seed), then verify (a) rooms were created in gates-then-buildings order — the room at combined
+            // index i carries node i's position and type — and (b) every street edge {A,B} became a link
+            // between room ids A+1 and B+1. A reversed or scrambled index→id mapping (the "every street links
+            // the wrong pair" bug) fails here; a ContainsKey check could not, because idByIndex is a bijection.
+            var exGates = SettlementGenerator.PlaceGates(floor.Wall, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
+            var exBuildings = SettlementGenerator.PlaceBuildings(floor.Wall, cfg.Seed, cfg.TargetBuildings);
+            var exEdges = SettlementStreets.GenerateStreets(floor.Wall, exBuildings, exGates, cfg.Seed);
+            int nG = exGates.Count;
+            // (a) creation order == gates-then-buildings, by position/type at each combined index.
+            for (int i = 0; i < nG && ok; i++)
+                if (floor.Rooms[i].TypeId != 0 || floor.Rooms[i].X != exGates[i].X || floor.Rooms[i].Y != exGates[i].Y)
+                { Debug.LogError($"FAIL assembly: room index {i} (id {floor.Rooms[i].Id}) is not gate {i} at ({exGates[i].X:F3},{exGates[i].Y:F3})"); ok = false; }
+            for (int i = 0; i < exBuildings.Count && ok; i++)
+            {
+                var rm = floor.Rooms[nG + i];
+                if (rm.TypeId != 1 || rm.X != exBuildings[i].X || rm.Y != exBuildings[i].Y)
+                { Debug.LogError($"FAIL assembly: room index {nG + i} (id {rm.Id}) is not building {i} at ({exBuildings[i].X:F3},{exBuildings[i].Y:F3})"); ok = false; }
+            }
+            // (b) each street edge {A,B} → a link between room ids A+1 and B+1 (order-insensitive).
+            foreach (var e in exEdges)
+            {
+                int idA = e.A + 1, idB = e.B + 1;
+                bool found = false;
+                foreach (var l in floor.Links)
+                    if ((l.RoomA == idA && l.RoomB == idB) || (l.RoomA == idB && l.RoomB == idA)) { found = true; break; }
+                if (!found)
+                { Debug.LogError($"FAIL assembly: street edge ({e.A},{e.B}) has no link between room ids {idA} and {idB}"); ok = false; break; }
+            }
+            if (floor.Links.Count != exEdges.Count)
+            { Debug.LogError($"FAIL assembly: {floor.Links.Count} links vs {exEdges.Count} street edges"); ok = false; }
 
             // ---- 5. NextRoomId is past every id, so the editor's «add» never collides -----------------
             int maxId = 0; foreach (var r in floor.Rooms) if (r.Id > maxId) maxId = r.Id;
@@ -272,7 +297,7 @@ namespace WorldGen.Rendering
             var data2 = SettlementGenerator.Generate(cfg, "poi-town");
             if (data2.Floors[0].Rooms.Count != floor.Rooms.Count ||
                 data2.Floors[0].Rooms[0].X != floor.Rooms[0].X)
-            { Debug.LogError("FAIL assembly: two seed-2 settlements differ — not deterministic"); ok = false; }
+            { Debug.LogError($"FAIL assembly: seed-2 rerun has {data2.Floors[0].Rooms.Count} rooms / first X {data2.Floors[0].Rooms[0].X} vs {floor.Rooms.Count} / {floor.Rooms[0].X} — not deterministic"); ok = false; }
 
             if (ok) Debug.Log("Settlement Assembly: PASS");
         }
@@ -288,13 +313,13 @@ namespace WorldGen.Rendering
 
             // ---- 1. A freshly generated settlement is NOT authored -------------------------------------
             if (DungeonOps.HasAuthoredContent(floor))
-            { Debug.LogError("FAIL authored: a plain generated settlement floor counts as authored"); ok = false; }
+            { Debug.LogError("FAIL authored: a plain generated settlement floor (rooms 1,2) counts as authored"); ok = false; }
 
             // ---- 2. A building carrying a Preview image IS authored ------------------------------------
             // Drop the Preview check and «Сгенерировать заново» silently destroys images.
             floor.Rooms[0].Preview = new byte[] { 1, 2, 3 };
             if (!DungeonOps.HasAuthoredContent(floor))
-            { Debug.LogError("FAIL authored: a building with a Preview did not count as authored"); ok = false; }
+            { Debug.LogError($"FAIL authored: room {floor.Rooms[0].Id} with a Preview did not count as authored"); ok = false; }
 
             if (ok) Debug.Log("Settlement Authored Content: PASS");
         }
