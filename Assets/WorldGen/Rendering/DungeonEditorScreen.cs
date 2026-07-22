@@ -40,6 +40,8 @@ namespace WorldGen.Rendering
         Text regenMsgLabel;
         int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
         int currentUpperCap = DefaultRooms;  // probed packable max for the current upper floor (set in RefreshToolbar)
+        int regenCounter = 0;   // DoRegenerateSettlement: bumped every press so a repeated press on the SAME
+                                 // POI still yields a different seed than last time (see baseHash*101+regenCounter)
 
         Font font;
         bool built;
@@ -417,6 +419,11 @@ namespace WorldGen.Rendering
                 AddToolbarButton(toolbarBar, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
                 linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
                 AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, RequestDeleteSelected);
+                // Settlement-only regenerate (spec §7): re-roll the WHOLE town from a new seed. A settlement
+                // has no per-floor «Перегенерировать» (it is always free-edit, never generate-only), so this
+                // is its equivalent — shown only when current is a settlement.
+                if (current != null && current.Kind == InteriorKind.Settlement)
+                    AddToolbarButton(toolbarBar, "Сгенерировать заново", 190f, ThemeRole.Accent, RegenerateSettlement);
             }
         }
 
@@ -634,6 +641,46 @@ namespace WorldGen.Rendering
             BuildingGenerator.RewireStairChain(current);
         }
 
+        /// <summary>«Сгенерировать заново» handler (spec §7): re-roll the whole town from a new seed. A
+        /// settlement is a single floor with no vertical structure, so — unlike a building's per-floor
+        /// «Перегенерировать» — there is nothing to select first; this always replaces Floors[0]. Mirrors
+        /// RegenerateUpperFloor's confirm gate: HasAuthoredContent decides whether to ask first, same rule
+        /// («Связать»-made links, room titles/notes, portals, battle-grid maps, building preview images) that
+        /// already protects a floor from a silent «× Этаж» / «Перегенерировать».</summary>
+        void RegenerateSettlement()
+        {
+            if (current == null || current.Kind != InteriorKind.Settlement) return;
+            var floor = current.Floors.Count > 0 ? current.Floors[0] : null;
+            bool authored = floor != null && DungeonOps.HasAuthoredContent(floor);
+            if (authored)
+            {
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Сгенерировать заново?",
+                    "Весь город будет создан заново. Все правки, названия и изображения пропадут.",
+                    ok => { if (ok) DoRegenerateSettlement(); });
+                return;
+            }
+            DoRegenerateSettlement();
+        }
+
+        void DoRegenerateSettlement()
+        {
+            // New seed each press so the DM gets a DIFFERENT town. A stable char-hash of the POI id (NOT
+            // string.GetHashCode, which is randomized per process in modern .NET) plus a per-press counter:
+            // varied between presses, and reproducible if the same counter is reached again in a session.
+            int baseHash = 17;
+            foreach (char c in current.OwnerPoiId) baseHash = unchecked(baseHash * 31 + c);
+            int newSeed = unchecked(baseHash * 101 + regenCounter++);
+            var cfg = new SettlementConfig { Seed = newSeed, TargetBuildings = 40, HasWall = HasWallForCurrent() };
+            var gen = SettlementGenerator.Generate(cfg, current.OwnerPoiId);
+            current.Floors.Clear();
+            current.Floors.AddRange(gen.Floors);
+            SetLevel(0);   // re-bind the view (RebuildLevelTabs/RefreshToolbar/RefreshBody/RevalidateAndRefresh) to the new floor
+        }
+
+        /// <summary>Whether the CURRENT town has a wall, so a regenerate preserves that choice (a City stays
+        /// walled, a Village stays open) instead of re-deriving it from the POI type this screen doesn't see.</summary>
+        bool HasWallForCurrent() => current.Floors.Count > 0 && current.Floors[0].Wall != null;
+
         void ShowRegenMsg(string msg) { if (regenMsgLabel != null) regenMsgLabel.text = msg; }
 
         Text AddToolbarLabel(Transform parent, string text, float width)
@@ -747,8 +794,13 @@ namespace WorldGen.Rendering
         void RebuildLevelTabs()
         {
             if (levelTabsRow == null || current == null) return;
-            var profile = Profiles.ForRoom(current);
             for (int i = levelTabsRow.childCount - 1; i >= 0; i--) Destroy(levelTabsRow.GetChild(i).gameObject);
+            // Floor-machinery gate for settlements (spec §7): a settlement has exactly one floor and no
+            // vertical structure, so the per-floor tabs and the «+ Этаж» / «× Этаж» buttons all have nothing
+            // to operate on — leave the row empty. Mirrors the Kind-based gating already used elsewhere in
+            // this file (e.g. RefreshToolbar's `generateOnly`, RemoveCurrentLevel's Kind == Building check).
+            if (current.Kind == InteriorKind.Settlement) return;
+            var profile = Profiles.ForRoom(current);
             for (int i = 0; i < current.Floors.Count; i++)
             {
                 int idx = i;
