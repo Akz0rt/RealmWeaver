@@ -347,7 +347,131 @@ foreach ($bm in @('MutFirstTouch', 'MutFillDiagonal')) {
   Set-Content -Path (Join-Path $gen "SelfTests_$bm.cs") -Value ($before + $method + $after) -Encoding UTF8
 }
 
+# ---- SETTLEMENT MUTANTS: four rules pinned by SettlementGenerator/SettlementStreets. -----------------------
+# Same discipline as New-BattleMutant: read straight from the real source, throw if the pattern is gone,
+# re-namespace (class name unchanged, only nested), write to gen/.
+function New-SettlementMutant([string]$srcFile, [string]$className, [string]$from, [string]$to, [string]$outFile) {
+  $t = Get-Content (Join-Path $src $srcFile) -Raw -Encoding UTF8
+  if ($t -notmatch [regex]::Escape($from)) { throw "mutant $outFile : pattern not found: $from" }
+  $t = $t -replace [regex]::Escape($from), $to
+  $t = $t -replace 'namespace WorldGen.Generation', "namespace WorldGen.Generation.$className"
+  Set-Content (Join-Path $gen $outFile) $t -Encoding UTF8
+}
+
+# MutNoInsideFilter: PlaceBuildings' keep condition drops the wall.Contains(cx, cy) term, so bbox-corner
+# cells outside the rounded contour — but still >= half a cell from the nearest edge line, since a rounded
+# nonagon's corners sit well clear of the circle — leak into the kept set. SelfTestBuildings case 1 (every
+# building inside the wall) must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutNoInsideFilter' `
+  'if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)' `
+  'if (wall.DistanceToEdge(cx, cy) >= half)' `
+  'MutNoInsideFilter.cs'
+
+# MutNoWallClearance: PlaceBuildings' keep condition drops the wall.DistanceToEdge(...) >= half term, so
+# cells hugging the wall line from the inside (closer than half a cell) are kept. SelfTestBuildings case 3
+# (every building >= half a cell from the wall line) must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutNoWallClearance' `
+  'if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)' `
+  'if (wall.Contains(cx, cy))' `
+  'MutNoWallClearance.cs'
+
+# MutNoInsideFilter/MutNoWallClearance/MutGateAtCentre all nest the WHOLE of SettlementGenerator.cs — including
+# its own BuildFloor/Generate methods, which internally call SettlementStreets.GenerateStreets(wall, buildings,
+# gates, cfg.Seed). SettlementStreets.cs is NOT mutated for these three, so that call's parameter types
+# (PlacedBuilding/GatePoint) still mean the REAL, top-level WorldGen.Generation ones — but BuildFloor's local
+# `buildings`/`gates` are now the NESTED PlacedBuilding/GatePoint (PlaceBuildings/PlaceGates are declared in the
+# SAME file, so they return the nested types once the file is renamespaced). IReadOnlyList<T> does not covary
+# over a struct T, so this is a hard COMPILE ERROR baked into the mutant source itself, unrelated to whichever
+# rule the mutant actually changes. None of the three catching tests (SelfTestBuildings x2, SelfTestGates) call
+# BuildFloor/Generate at all, so the fix stubs out that one dead call rather than touching the rule under test.
+function Repair-SettlementGeneratorCrossFileCall([string]$outFile) {
+  $p = Join-Path $gen $outFile
+  $t = Get-Content $p -Raw -Encoding UTF8
+  $from = 'var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);'
+  if ($t -notmatch [regex]::Escape($from)) { throw "cross-file repair pattern not found in $outFile" }
+  $stub = 'var edges = new List<StreetEdge>();   // MUTANT-NEST STUB: BuildFloor/Generate are dead code for this mutants catching test, and SettlementStreets.cs is unmutated here so its GenerateStreets cannot accept this nested PlacedBuilding/GatePoint'
+  $t = $t -replace [regex]::Escape($from), $stub
+  Set-Content -Path $p -Value $t -Encoding UTF8
+}
+
+# MutGateAtCentre: PointAtArcLength returns the wall centre (0.5,0.5) — every BuildWall call in the self-tests
+# centres its contour there — instead of the arc-length-interpolated point, so every gate collapses onto the
+# same spot in the middle of town. SelfTestGates case 4 (every gate lies ON the wall line) must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutGateAtCentre' `
+  'return new GatePoint { X = a.X + t * (b.X - a.X), Y = a.Y + t * (b.Y - a.Y) };' `
+  'return new GatePoint { X = 0.5f, Y = 0.5f };   // MUTANT: gate at wall centre' `
+  'MutGateAtCentre.cs'
+
+foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs')) {
+  Repair-SettlementGeneratorCrossFileCall $outFile
+}
+
+# MutStreetsNoGrowth: GenerateStreets' Prim-style spanning-growth loop is disabled (its while condition forced
+# false), leaving only the gate-to-farthest-building trunks — most buildings never get an edge at all.
+# SelfTestStreets case 2 (every building reachable from some gate) must fail.
+New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoGrowth' `
+  'while (remaining > 0)' `
+  'while (false)   // MUTANT: Prim growth disabled, trunks only' `
+  'MutStreetsNoGrowth.cs'
+
+# ---- SETTLEMENT MUTANT-BOUND SELF-TESTS ---------------------------------------------------------------------
+# SettlementGenerator.cs bundles FOUR types into one file: SettlementConfig, GatePoint, PlacedBuilding AND
+# SettlementGenerator. Re-namespacing it for a mutant moves all four together. SelfTestGates/SelfTestBuildings
+# both name SettlementConfig explicitly (GatePoint/PlacedBuilding never are — every call site captures them
+# through `var`, exactly like BattleGridGenerator's GridPoint above), so their rebind must cover both
+# SettlementGenerator. and SettlementConfig — but ONLY within the one method Mutants.cs actually runs. A
+# blanket file-wide rebind would ALSO retype SelfTestStreets/SelfTestAssembly, which hand the (now-mutant)
+# GatePoint/PlacedBuilding lists to SettlementStreets.GenerateStreets — a method whose parameter types stay
+# the REAL WorldGen.Generation.GatePoint/PlacedBuilding when SettlementStreets.cs is not itself mutated.
+# IReadOnlyList<T> does not covary over a struct T, so that mismatch would surface as a COMPILE ERROR, not a
+# failing assertion — the same trap BattleGridOps's SelfTestOps scoping (above) exists to dodge.
+$settlementTests = Get-Content (Join-Path $src 'SettlementSelfTests.cs') -Raw -Encoding UTF8
+
+function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
+  $t = $settlementTests -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
+  $t = $t -replace 'class SettlementSelfTests', "class ${mutantClass}SelfTests"
+
+  $marker = "public void $methodName()"
+  $startIdx = $t.IndexOf($marker)
+  if ($startIdx -lt 0) { throw "$methodName not found while deriving SelfTests_$mutantClass.cs" }
+  $endIdx = $t.IndexOf('[ContextMenu', $startIdx)
+  if ($endIdx -lt 0) { throw "no ContextMenu marker after $methodName while deriving SelfTests_$mutantClass.cs" }
+
+  $before = $t.Substring(0, $startIdx)
+  $method = $t.Substring($startIdx, $endIdx - $startIdx)
+  $after  = $t.Substring($endIdx)
+
+  for ($i = 0; $i -lt $rebindPatterns.Count; $i++) {
+    if ($method -notmatch $rebindPatterns[$i]) { throw "$methodName has no match for '$($rebindPatterns[$i])' to rebind for $mutantClass" }
+    $method = $method -replace $rebindPatterns[$i], $rebindTo[$i]
+  }
+
+  Set-Content -Path (Join-Path $gen "SelfTests_$mutantClass.cs") -Value ($before + $method + $after) -Encoding UTF8
+}
+
+# MutNoInsideFilter / MutNoWallClearance both mutate PlaceBuildings and are caught by SelfTestBuildings, which
+# never touches SettlementStreets — safe to rebind SettlementGenerator./SettlementConfig within just this method.
+foreach ($mc in @('MutNoInsideFilter', 'MutNoWallClearance')) {
+  New-SettlementRebind 'SelfTestBuildings' $mc `
+    @('SettlementGenerator\.', '\bSettlementConfig\b') `
+    @("WorldGen.Generation.$mc.SettlementGenerator.", "WorldGen.Generation.$mc.SettlementConfig")
+}
+
+# MutGateAtCentre mutates PointAtArcLength and is caught by SelfTestGates, which likewise never touches
+# SettlementStreets.
+New-SettlementRebind 'SelfTestGates' 'MutGateAtCentre' `
+  @('SettlementGenerator\.', '\bSettlementConfig\b') `
+  @('WorldGen.Generation.MutGateAtCentre.SettlementGenerator.', 'WorldGen.Generation.MutGateAtCentre.SettlementConfig')
+
+# MutStreetsNoGrowth mutates GenerateStreets (SettlementStreets.cs, which does NOT bundle SettlementConfig/
+# GatePoint/PlacedBuilding/SettlementGenerator — those stay real). Caught by SelfTestStreets: its wall/gates/
+# buildings must keep coming from the REAL SettlementGenerator (so PlaceBuildings/PlaceGates still run), but
+# its edges must come from the MUTATED SettlementStreets — so ONLY "SettlementStreets." is rebound here.
+New-SettlementRebind 'SelfTestStreets' 'MutStreetsNoGrowth' `
+  @('SettlementStreets\.') `
+  @('WorldGen.Generation.MutStreetsNoGrowth.SettlementStreets.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 4 settlement mutants + 4 settlement rebound test copies into gen/"
 

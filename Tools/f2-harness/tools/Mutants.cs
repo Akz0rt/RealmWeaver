@@ -51,6 +51,15 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutFirstTouchSelfTests().SelfTestOps()),
                 ("MutFillDiagonal",   "BattleGridOps.Fill gains the four diagonal Enqueue calls (leaks through a diagonal pinch)",
                     () => new WorldGen.MutantTests.MutFillDiagonalSelfTests().SelfTestOps()),
+
+                ("MutNoInsideFilter",  "SettlementGenerator.PlaceBuildings drops the wall.Contains(cx, cy) term from the keep condition",
+                    () => new WorldGen.MutantTests.MutNoInsideFilterSelfTests().SelfTestBuildings()),
+                ("MutNoWallClearance", "SettlementGenerator.PlaceBuildings drops the wall.DistanceToEdge(...) >= half term",
+                    () => new WorldGen.MutantTests.MutNoWallClearanceSelfTests().SelfTestBuildings()),
+                ("MutGateAtCentre",    "SettlementGenerator.PointAtArcLength returns the wall centre (0.5,0.5) instead of the interpolated point",
+                    () => new WorldGen.MutantTests.MutGateAtCentreSelfTests().SelfTestGates()),
+                ("MutStreetsNoGrowth", "SettlementStreets.GenerateStreets' Prim-style growth loop skipped (trunks only)",
+                    () => new WorldGen.MutantTests.MutStreetsNoGrowthSelfTests().SelfTestStreets()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
