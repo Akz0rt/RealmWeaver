@@ -197,10 +197,12 @@ namespace WorldGen.Rendering
 
             // ---- 3. Determinism ------------------------------------------------------------------------
             var edges2 = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
-            bool same = edges2.Count == edges.Count;
-            for (int i = 0; same && i < edges.Count; i++) same = edges2[i].A == edges[i].A && edges2[i].B == edges[i].B;
-            if (!same)
-            { Debug.LogError("FAIL streets: two seed-5 street layouts differ — not deterministic"); ok = false; }
+            if (edges2.Count != edges.Count)
+            { Debug.LogError($"FAIL streets: seed-5 rerun produced {edges2.Count} edges vs {edges.Count} — not deterministic"); ok = false; }
+            else
+                for (int i = 0; i < edges.Count; i++)
+                    if (edges2[i].A != edges[i].A || edges2[i].B != edges[i].B)
+                    { Debug.LogError($"FAIL streets: seed-5 rerun edge {i} is ({edges2[i].A},{edges2[i].B}) vs ({edges[i].A},{edges[i].B}) — not deterministic"); ok = false; break; }
 
             // ---- 4. Perf threshold: 80 buildings route in well under a frame ----------------------------
             // The whole reason this stage exists instead of BuildRenderGraph(Clean), which took 20–34 s at 60.

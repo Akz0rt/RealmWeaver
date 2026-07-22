@@ -13,7 +13,10 @@ namespace WorldGen.Generation
     ///
     /// Variant A: grow a spanning structure from the gates (each unconnected building joins via its nearest
     /// connected node), then add a few gate→far-building trunks so the town has through-routes, not a pure
-    /// tree. O(N²) — microseconds at N=80, unlike BuildRenderGraph(Clean) which was 20–34 s at N=60.</summary>
+    /// tree. The growth rescans all connected×unconnected pairs per step, so cost is ~O(nBuild²·nNodes) —
+    /// still well under a millisecond at the Ц1 town cap (≤80 buildings; the &lt;50 ms self-test confirms
+    /// it), and this file is the isolated swap point if far larger settlements ever need a faster router.
+    /// Contrast BuildRenderGraph(Clean), which was 20–34 s at N=60.</summary>
     public static class SettlementStreets
     {
         public static IReadOnlyList<StreetEdge> GenerateStreets(
@@ -57,8 +60,9 @@ namespace WorldGen.Generation
                 remaining--;
             }
 
-            // A few extra trunks: connect each gate to the farthest building, so the town has cross-routes
-            // rather than one minimal tree. Seeded pick keeps it deterministic and varied.
+            // A few extra trunks (1..nGates of them): each connects a randomly chosen gate to its farthest
+            // building, so the town has cross-routes rather than one minimal tree. Seeded pick keeps it
+            // deterministic and varied.
             var rng = new System.Random(seed * 977 + 13);
             int trunks = 1 + rng.Next(nGates);
             for (int t = 0; t < trunks; t++)
