@@ -62,6 +62,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutStreetsNoGrowthSelfTests().SelfTestStreets()),
                 ("MutStreetsNoHub",    "SettlementStreets.GenerateStreets' gate-less hub is never marked connected (growth seeds from nothing)",
                     () => new WorldGen.MutantTests.MutStreetsNoHubSelfTests().SelfTestVillage()),
+                ("MutNoActiveMark",    "SettlementGenerator.BuildFloor's active/dummy marking neutered (IsDummy = false, every building stays active)",
+                    () => new WorldGen.MutantTests.MutNoActiveMarkSelfTests().SelfTestActiveBuildings()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

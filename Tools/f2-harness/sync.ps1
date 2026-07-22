@@ -403,7 +403,15 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutGateAtCentre' `
   'return new GatePoint { X = 0.5f, Y = 0.5f };   // MUTANT: gate at wall centre' `
   'MutGateAtCentre.cs'
 
-foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs')) {
+# MutNoActiveMark: BuildFloor's active/dummy marking neutered — every building stays active (IsDummy always
+# false) regardless of ActiveBuildings/placed count. SelfTestActiveBuildings' exact active/dummy split
+# (assertion 1, plus the wall-less-camp check in part 4) must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutNoActiveMark' `
+  'IsDummy = i >= activeCount' `
+  'IsDummy = false' `
+  'MutNoActiveMark.cs'
+
+foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs')) {
   Repair-SettlementGeneratorCrossFileCall $outFile
 }
 
@@ -492,7 +500,17 @@ New-SettlementRebind 'SelfTestVillage' 'MutStreetsNoHub' `
   @('SettlementStreets\.') `
   @('WorldGen.Generation.MutStreetsNoHub.SettlementStreets.')
 
+# MutNoActiveMark mutates BuildFloor's active/dummy marking directly and is caught by SelfTestActiveBuildings,
+# which calls SettlementGenerator.Generate()/BuildFloor (so the same cross-file-call stub as MutNoInsideFilter/
+# MutNoWallClearance/MutGateAtCentre above applies — BuildFloor's GenerateStreets call is stubbed to an empty
+# edge list, which is harmless here: SelfTestActiveBuildings reads only floor.Rooms and floor.SettlementParams,
+# never floor.Links) and never touches SettlementStreets directly — safe to rebind SettlementGenerator./
+# SettlementConfig within just this method, exactly like MutNoInsideFilter/MutNoWallClearance above.
+New-SettlementRebind 'SelfTestActiveBuildings' 'MutNoActiveMark' `
+  @('SettlementGenerator\.', '\bSettlementConfig\b') `
+  @('WorldGen.Generation.MutNoActiveMark.SettlementGenerator.', 'WorldGen.Generation.MutNoActiveMark.SettlementConfig')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 5 settlement mutants + 5 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 6 settlement mutants + 6 settlement rebound test copies into gen/"
 

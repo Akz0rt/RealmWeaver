@@ -585,5 +585,75 @@ namespace WorldGen.Persistence
 
             Debug.Log(ok ? "Settlement Round-Trip: PASS" : "Settlement Round-Trip: FAIL");
         }
+
+        [ContextMenu("Self-Test: Settlement Fields Round-Trip")]
+        public void SelfTestSettlementFieldsRoundTrip()
+        {
+            bool ok = true;
+            string path = Path.Combine(Path.GetTempPath(), "settlement_fields_roundtrip_test.dndproj");
+
+            // ---- 1. A mix of active/dummy buildings + SettlementParams survive the round trip ------------
+            var floor = new InteriorFloor { NextRoomId = 4 };
+            floor.SettlementParams = new SettlementParams { TargetBuildings = 20, ActiveBuildings = 5 };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.8f, Y = 0.5f });                    // gate
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f });                    // active (IsDummy default false)
+            floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.45f, Y = 0.55f, IsDummy = true });  // dummy
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            var town = new InteriorData { OwnerPoiId = "poi-town-fields", Kind = InteriorKind.Settlement, Floors = { floor } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { town });
+            var r = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!r.Success || r.Dungeons.Count != 1)
+            { Debug.LogError("FAIL settlement fields: the town did not load back"); ok = false; }
+            else
+            {
+                var f = r.Dungeons[0].Floors[0];
+                var active = f.Rooms.Find(x => x.Id == 2);
+                var dummy = f.Rooms.Find(x => x.Id == 3);
+                if (active == null)
+                { Debug.LogError("FAIL settlement fields: active building (room id 2) did not load back"); ok = false; }
+                else if (active.IsDummy)
+                { Debug.LogError("FAIL settlement fields: room 2 (saved active) loaded IsDummy=true, want false"); ok = false; }
+                if (dummy == null)
+                { Debug.LogError("FAIL settlement fields: dummy building (room id 3) did not load back"); ok = false; }
+                else if (!dummy.IsDummy)
+                { Debug.LogError("FAIL settlement fields: room 3 (saved dummy) loaded IsDummy=false, want true"); ok = false; }
+
+                if (f.SettlementParams == null)
+                { Debug.LogError("FAIL settlement fields: floor.SettlementParams did not survive the round trip (null)"); ok = false; }
+                else if (f.SettlementParams.TargetBuildings != 20 || f.SettlementParams.ActiveBuildings != 5)
+                { Debug.LogError($"FAIL settlement fields: SettlementParams came back {f.SettlementParams.TargetBuildings}/{f.SettlementParams.ActiveBuildings}, want 20/5"); ok = false; }
+            }
+
+            // ---- 2. Reusing the settlement round-trip's null-key text scenario: a floor whose only building
+            // is active (IsDummy == false, the default) and whose SettlementParams is null must OMIT BOTH keys
+            // from the JSON text entirely — the DefaultValueHandling.Ignore (IsDummy) / NullValueHandling.Ignore
+            // (SettlementParams) proof, not merely "loads back correctly either way". Same idiom and same
+            // reasoning as SelfTestSettlementRoundTrip's Wall/Preview check above: PascalCase keys, no global
+            // NullValueHandling/DefaultValueHandling on ProjectSerializer.BuildSettings, so a literal
+            // "\"IsDummy\""/"\"SettlementParams\"" substring check is exactly what a leaked key looks like. -----
+            string minPath = Path.Combine(Path.GetTempPath(), "settlement_fields_nullkeys_selftest.json");
+            var minFloor = new InteriorFloor { NextRoomId = 2 };
+            minFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // active; IsDummy stays false (default)
+            // minFloor.SettlementParams is left null.
+            var village = new InteriorData { OwnerPoiId = "poi-village-fields", Kind = InteriorKind.Settlement, Floors = { minFloor } };
+
+            ProjectSerializer.Save(minPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { village });
+            string minJson = File.ReadAllText(minPath);
+            try { File.Delete(minPath); } catch { }
+
+            if (minJson.Contains("\"IsDummy\""))
+            { Debug.LogError("FAIL settlement fields: an active (IsDummy==false) building wrote the IsDummy key — DefaultValueHandling.Ignore is not taking effect"); ok = false; }
+            if (minJson.Contains("\"SettlementParams\""))
+            { Debug.LogError("FAIL settlement fields: a null SettlementParams was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+
+            Debug.Log(ok ? "Settlement Fields Round-Trip: PASS" : "Settlement Fields Round-Trip: FAIL");
+        }
     }
 }
