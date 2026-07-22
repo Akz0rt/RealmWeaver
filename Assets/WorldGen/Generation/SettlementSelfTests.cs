@@ -118,5 +118,50 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Gates: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Buildings")]
+        public void SelfTestBuildings()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 11, TargetBuildings = 40, HasWall = true };
+            var wall = SettlementGenerator.BuildWall(cfg);
+            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+
+            // ---- 1. EVERY building centre is inside the wall -------------------------------------------
+            // Drop the Contains filter and cells outside the rounded contour leak in at the bbox corners.
+            foreach (var b in buildings)
+                if (!wall.Contains(b.X, b.Y))
+                { Debug.LogError($"FAIL buildings: building at ({b.X:F3},{b.Y:F3}) is OUTSIDE the wall"); ok = false; break; }
+
+            // ---- 2. NO two buildings are closer than one cell — the anti-overlap guarantee -------------
+            // This is the exact defect that disqualified the dungeon packer (18–48 overlapping pairs at 40).
+            for (int i = 0; i < buildings.Count && ok; i++)
+                for (int j = i + 1; j < buildings.Count; j++)
+                {
+                    float dx = buildings[i].X - buildings[j].X, dy = buildings[i].Y - buildings[j].Y;
+                    if (dx * dx + dy * dy < SettlementGenerator.BuildingCell * SettlementGenerator.BuildingCell * 0.9f)
+                    { Debug.LogError($"FAIL buildings: buildings {i} and {j} overlap (closer than a cell)"); ok = false; break; }
+                }
+
+            // ---- 3. Every building sits at least half a cell from the wall (card doesn't straddle it) ---
+            foreach (var b in buildings)
+                if (wall.DistanceToEdge(b.X, b.Y) < SettlementGenerator.BuildingCell * 0.5f * 0.9f)
+                { Debug.LogError($"FAIL buildings: building at ({b.X:F3},{b.Y:F3}) hugs the wall line"); ok = false; break; }
+
+            // ---- 4. A big town gets as many buildings as the grid holds, up to the target --------------
+            // We do not require EXACTLY target (a small wall may not fit 40), but a 40-target radius-0.34
+            // wall must fit a substantial fraction; catch a placement that silently yields near-zero.
+            if (buildings.Count < 20)
+            { Debug.LogError($"FAIL buildings: a 40-target town produced only {buildings.Count} buildings"); ok = false; }
+            if (buildings.Count > cfg.TargetBuildings)
+            { Debug.LogError($"FAIL buildings: produced {buildings.Count}, more than the {cfg.TargetBuildings} target"); ok = false; }
+
+            // ---- 5. Determinism ------------------------------------------------------------------------
+            var b2 = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            if (b2.Count != buildings.Count || (buildings.Count > 0 && (b2[0].X != buildings[0].X || b2[0].Y != buildings[0].Y)))
+            { Debug.LogError("FAIL buildings: two seed-11 placements differ — not deterministic"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Buildings: PASS");
+        }
     }
 }

@@ -14,6 +14,9 @@ namespace WorldGen.Generation
     /// <summary>A gate position on the wall, in normalized space. Becomes a Room node (TypeId 0) at assembly.</summary>
     public struct GatePoint { public float X, Y; }
 
+    /// <summary>A placed building's centre, normalized. Becomes a Room node (TypeId 1) at assembly.</summary>
+    public struct PlacedBuilding { public float X, Y; }
+
     /// <summary>Deterministic settlement geometry: wall, gates, building placement (Tasks 2–3), and assembly
     /// into an InteriorData (Task 5). Pure, no Unity — the whole point is headless testability, since the
     /// dungeon packer measured 18–48 overlapping pairs at 40 nodes and cannot be reused.</summary>
@@ -88,6 +91,41 @@ namespace WorldGen.Generation
                 }
             }
             return new GatePoint { X = wall.Points[0].X, Y = wall.Points[0].Y };
+        }
+
+        /// <summary>Normalized pitch of the building grid. One building per cell, so no two are closer than
+        /// this — the anti-overlap guarantee that replaces the dungeon packer.</summary>
+        public const float BuildingCell = 0.07f;
+
+        public static List<PlacedBuilding> PlaceBuildings(WallContour wall, int seed, int targetCount)
+        {
+            var kept = new List<PlacedBuilding>();
+            if (wall == null || !wall.IsClosedSane()) return kept;
+
+            // Bounding box of the wall.
+            float minX = 1f, minY = 1f, maxX = 0f, maxY = 0f;
+            foreach (var p in wall.Points)
+            {
+                if (p.X < minX) minX = p.X; if (p.X > maxX) maxX = p.X;
+                if (p.Y < minY) minY = p.Y; if (p.Y > maxY) maxY = p.Y;
+            }
+
+            float half = BuildingCell * 0.5f;
+            // Cell centres on a regular grid; keep those inside the wall and clear of the line.
+            for (float cy = minY + half; cy <= maxY - half + 1e-6f; cy += BuildingCell)
+                for (float cx = minX + half; cx <= maxX - half + 1e-6f; cx += BuildingCell)
+                    if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)
+                        kept.Add(new PlacedBuilding { X = cx, Y = cy });
+
+            // Deterministic Fisher–Yates shuffle so the kept-but-dropped buildings vary by seed, then trim.
+            var rng = new System.Random(seed * 131 + 71);
+            for (int i = kept.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                (kept[i], kept[j]) = (kept[j], kept[i]);
+            }
+            if (kept.Count > targetCount) kept.RemoveRange(targetCount, kept.Count - targetCount);
+            return kept;
         }
     }
 }
