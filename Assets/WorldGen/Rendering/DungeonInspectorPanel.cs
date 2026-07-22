@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using SFB;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
@@ -105,6 +106,8 @@ namespace WorldGen.Rendering
                 // DM authors which rooms connect. So corridors + secret passages are always shown; only
                 // BuildRoomSection hides the layout-affecting type/size controls when locked.
                 BuildRoomSection(content, lvl, room, StructureLocked);
+                if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && room.TypeId == 1)
+                    BuildPreviewSection(content, room);
                 BuildBattleGridSection(content, room);
                 BuildSecretsSection(content, room);
                 BuildCorridorsSection(content, lvl, room);
@@ -186,6 +189,70 @@ namespace WorldGen.Rendering
         {
             if (dw != 0) room.SizeW = RoomSizing.Clamp(room.SizeW + dw);
             if (dh != 0) room.SizeH = RoomSizing.Clamp(room.SizeH + dh);
+            Rebuild();
+            OnChanged?.Invoke();
+        }
+
+        // ── Превью здания ────────────────────────────────────────────────────────
+
+        // Same image-extension filters PoiEditorScreen.IconFilters uses — this is the same "pick a
+        // picture file" gesture, just landing in Room.Preview instead of PoiData.CustomIconBytes.
+        static readonly ExtensionFilter[] PreviewImageFilters =
+        {
+            new ExtensionFilter("Images", "png", "jpg", "jpeg", "gif"),
+        };
+
+        // Settlement-building-only section (Task 11 of the settlements arc): an optional picture the DM
+        // attaches to a building room, modelled on PoiEditorScreen's icon controls (OnPickIconClicked /
+        // BuildIconRow, :246-255 / :578-609) — pick a file, shrink it, assign, notify. Callers gate this
+        // on dungeon.Kind == Settlement && room.TypeId == 1 (buildings only; never gates or dungeons/
+        // stand-alone buildings). Both edits below call Rebuild() (so the thumbnail/«Убрать» button
+        // appear or disappear immediately in THIS panel) and OnChanged?.Invoke() (so the room-graph view's
+        // per-card has-image indicator — Task 10 — gets rebuilt too; see DungeonEditorScreen.
+        // RevalidateAndRefresh -> DungeonViewController.BeginCascade -> Refresh -> renderer.RebuildView).
+        void BuildPreviewSection(Transform parent, Room room)
+        {
+            var sec = AddSection(parent, "PreviewSection");
+            AddInfoText(sec.transform, "ПРЕВЬЮ ЗДАНИЯ", 10, ThemeRole.Mut, FontStyle.Bold);
+
+            if (room.Preview != null)
+            {
+                var tex = new Texture2D(2, 2);
+                if (tex.LoadImage(room.Preview))
+                {
+                    var thumbGO = new GameObject("Thumb", typeof(RectTransform));
+                    thumbGO.transform.SetParent(sec.transform, false);
+                    var img = thumbGO.AddComponent<Image>();
+                    img.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                    img.preserveAspect = true;
+                    img.raycastTarget = false;
+                    thumbGO.AddComponent<LayoutElement>().preferredHeight = 100f;
+                }
+            }
+
+            AddFullWidthButton(sec.transform, "Добавить изображение", ThemeRole.Elev, () => PickPreviewImage(room));
+
+            if (room.Preview != null)
+                AddFullWidthButton(sec.transform, "Убрать", ThemeRole.Danger, () =>
+                {
+                    room.Preview = null;
+                    Rebuild();
+                    OnChanged?.Invoke();
+                });
+        }
+
+        // StandaloneFileBrowser.OpenFilePanel -> ImageImport.LoadAndShrink(path, 512) -> Room.Preview.
+        // LoadAndShrink bounds the longest side to 512px so a 60-building town's saved images stay small
+        // (spec §9) and re-encodes to PNG regardless of the source format. A null result (unreadable file,
+        // undecodable image) is silently ignored per the brief — no assignment, no Rebuild/OnChanged, same
+        // as a cancelled file-picker.
+        void PickPreviewImage(Room room)
+        {
+            var paths = StandaloneFileBrowser.OpenFilePanel("Выбрать изображение", "", PreviewImageFilters, false);
+            if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0])) return;
+            byte[] shrunk = ImageImport.LoadAndShrink(paths[0], 512);
+            if (shrunk == null) return;
+            room.Preview = shrunk;
             Rebuild();
             OnChanged?.Invoke();
         }

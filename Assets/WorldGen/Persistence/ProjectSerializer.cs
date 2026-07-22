@@ -30,11 +30,13 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 8;   // 8: Room.Grid (battle maps). Reading v7 needs no
-                                                     // migration — the absent key deserializes to null.
-                                                     // Bumped anyway so a v0.3.6 build WARNS on open
-                                                     // instead of silently dropping every battle map on
-                                                     // its next save.
+        public const int CurrentFormatVersion = 9;   // 9: Room.Preview (settlement building preview image)
+                                                     // + InteriorFloor.Wall (settlement wall contour).
+                                                     // Reading v8 needs no migration — both keys are
+                                                     // absent in a v8 file and deserialize to null.
+                                                     // Bumped anyway so a v0.3.7 build WARNS on open
+                                                     // instead of silently dropping every settlement wall
+                                                     // and preview image on its next save.
 
         static JsonSerializerSettings BuildSettings() => new JsonSerializerSettings
         {

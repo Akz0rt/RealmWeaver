@@ -514,5 +514,46 @@ namespace WorldGen.Persistence
 
             if (ok) Debug.Log("Battle Grid Round-Trip: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Round-Trip")]
+        public void SelfTestSettlementRoundTrip()
+        {
+            bool ok = true;
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "settlement_roundtrip_test.dndproj");
+
+            var floor = new InteriorFloor { NextRoomId = 4 };
+            floor.Wall = WallContour.Rounded(1, 0.5f, 0.5f, 0.3f, 8, 0.1f);
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.8f, Y = 0.5f });                          // gate
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f, Preview = new byte[]{9,8,7} }); // building w/ image
+            floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.45f, Y = 0.55f });                        // building no image
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            var town = new InteriorData { OwnerPoiId = "poi-town", Kind = InteriorKind.Settlement, Floors = { floor } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new System.Collections.Generic.List<VoronoiCell>(), new System.Collections.Generic.List<PoiData>(),
+                new NotesDocument(), new System.Collections.Generic.List<RegionLabelData>(),
+                new System.Collections.Generic.List<RegionData>(),
+                new System.Collections.Generic.List<InteriorData> { town });
+            var r = ProjectSerializer.Load(path);
+            try { System.IO.File.Delete(path); } catch { }
+
+            if (!r.Success || r.Dungeons.Count != 1)
+            { Debug.LogError("FAIL settlement save: the town did not load back"); ok = false; }
+            else
+            {
+                var f = r.Dungeons[0].Floors[0];
+                if (r.Dungeons[0].Kind != InteriorKind.Settlement)
+                { Debug.LogError($"FAIL settlement save: Kind came back {r.Dungeons[0].Kind}, want Settlement"); ok = false; }
+                if (f.Wall == null || !f.Wall.IsClosedSane())
+                { Debug.LogError("FAIL settlement save: the wall did not survive the round trip"); ok = false; }
+                var b2 = f.Rooms.Find(x => x.Id == 2);
+                var b3 = f.Rooms.Find(x => x.Id == 3);
+                if (b2 == null || b2.Preview == null || b2.Preview.Length != 3 || b2.Preview[0] != 9)
+                { Debug.LogError("FAIL settlement save: building 2's Preview bytes were lost"); ok = false; }
+                if (b3 != null && b3.Preview != null)
+                { Debug.LogError("FAIL settlement save: building 3 (no image) loaded with a non-null Preview"); ok = false; }
+            }
+            Debug.Log(ok ? "Settlement Round-Trip: PASS" : "Settlement Round-Trip: FAIL");
+        }
     }
 }
