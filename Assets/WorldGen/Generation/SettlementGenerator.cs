@@ -44,12 +44,13 @@ namespace WorldGen.Generation
             return WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
         }
 
-        /// <summary>Gates spread around the wall: sample the contour at evenly-spaced parameter positions
-        /// (offset by a seeded phase so towns differ), each landing exactly on a wall segment.</summary>
-        public static List<GatePoint> PlaceGates(WallContour wall, int seed)
+        /// <summary>Place `gateCount` gates spread around the wall by ARC LENGTH (offset by a seeded phase so
+        /// towns differ), each landing exactly on a wall segment. `gateCount` is supplied by the caller (via
+        /// GateCountFor), so there is ONE source of truth for the count — PlaceGates never re-derives it.</summary>
+        public static List<GatePoint> PlaceGates(WallContour wall, int gateCount, int seed)
         {
             var gates = new List<GatePoint>();
-            if (wall == null || !wall.IsClosedSane()) return gates;
+            if (wall == null || !wall.IsClosedSane() || gateCount <= 0) return gates;
 
             // Perimeter length so gates are spread by ARC LENGTH, not by vertex index (a jittered polygon has
             // uneven sides; index-spacing would cluster gates on the short sides).
@@ -64,7 +65,6 @@ namespace WorldGen.Generation
             float total = cum[n];
 
             var rng = new System.Random(seed * 31 + 17);
-            int gateCount = GateCountForRadiusSafe(wall);
             float phase = (float)rng.NextDouble() * total;
             for (int g = 0; g < gateCount; g++)
             {
@@ -72,19 +72,6 @@ namespace WorldGen.Generation
                 gates.Add(PointAtArcLength(wall, cum, target));
             }
             return gates;
-        }
-
-        // Gate count is a property of the TOWN, but PlaceGates only sees the wall. It is re-derived from the
-        // wall's own size class so PlaceGates stays a pure (wall, seed) function; the assembly path (Task 5)
-        // passes the config-derived count where it matters. Keep both in sync via GateCountFor.
-        static int GateCountForRadiusSafe(WallContour wall)
-        {
-            // Approximate building count back out of the radius bucket used by WallRadiusFor.
-            float r = 0f;
-            foreach (var p in wall.Points) { float dx = p.X - 0.5f, dy = p.Y - 0.5f; float d = (float)System.Math.Sqrt(dx*dx+dy*dy); if (d > r) r = d; }
-            if (r >= 0.40f) return 4;
-            if (r >= 0.30f) return 3;
-            return 2;
         }
 
         static GatePoint PointAtArcLength(WallContour wall, float[] cum, float target)

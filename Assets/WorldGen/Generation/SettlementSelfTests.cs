@@ -85,11 +85,11 @@ namespace WorldGen.Rendering
             if (SettlementGenerator.BuildWall(villageCfg) != null)
             { Debug.LogError("FAIL gates: BuildWall returned a contour for HasWall=false"); ok = false; }
 
-            // ---- 3. Gate count matches GateCountFor, and is in 2..4 -------------------------------------
-            var gates = SettlementGenerator.PlaceGates(wall, cfg.Seed);
+            // ---- 3. PlaceGates honours the requested count, and GateCountFor is in 2..4 ----------------
             int want = SettlementGenerator.GateCountFor(cfg.TargetBuildings);
+            var gates = SettlementGenerator.PlaceGates(wall, want, cfg.Seed);
             if (gates.Count != want)
-            { Debug.LogError($"FAIL gates: placed {gates.Count} gates, GateCountFor says {want}"); ok = false; }
+            { Debug.LogError($"FAIL gates: asked for {want} gates, placed {gates.Count}"); ok = false; }
             if (want < 2 || want > 4)
             { Debug.LogError($"FAIL gates: GateCountFor({cfg.TargetBuildings}) = {want}, want 2..4"); ok = false; }
 
@@ -112,7 +112,7 @@ namespace WorldGen.Rendering
                 }
 
             // ---- 6. Determinism ------------------------------------------------------------------------
-            var gates2 = SettlementGenerator.PlaceGates(wall, cfg.Seed);
+            var gates2 = SettlementGenerator.PlaceGates(wall, want, cfg.Seed);
             if (gates2.Count != gates.Count || (gates.Count > 0 && (gates2[0].X != gates[0].X || gates2[0].Y != gates[0].Y)))
             { Debug.LogError("FAIL gates: two seed-3 gate placements differ — not deterministic"); ok = false; }
 
