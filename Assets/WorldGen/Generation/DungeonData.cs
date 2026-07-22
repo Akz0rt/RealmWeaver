@@ -56,6 +56,12 @@ namespace WorldGen.Generation
         /// keeps the key out of every save when absent (the Room.Grid precedent). World definition only.</summary>
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public byte[] Preview = null;
+        /// <summary>A settlement building's status: false = active (a real place — number/name/description/
+        /// image/interior), true = a decorative dummy the player can't interact with. Orthogonal to TypeId
+        /// (a gate is never a dummy). DefaultValueHandling.Ignore: only the true (dummy) values serialize;
+        /// an absent key loads as false (active), the default. World definition only.</summary>
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public bool IsDummy = false;
         [JsonProperty("Secrets")]                        // preserve v6 wire key
         public List<Portal> Portals = new List<Portal>();
     }
@@ -75,6 +81,14 @@ namespace WorldGen.Generation
         public bool Authored = false;
     }
 
+    /// <summary>A settlement's authored composition knobs, stored on its single floor so the editor's
+    /// steppers and «Сгенерировать заново» read them and they survive reload. Null for dungeons/buildings.</summary>
+    public class SettlementParams
+    {
+        public int TargetBuildings;
+        public int ActiveBuildings;
+    }
+
     /// <summary>One floor as a graph: rooms + links. NextRoomId hands out stable ids.</summary>
     public class InteriorFloor
     {
@@ -86,6 +100,10 @@ namespace WorldGen.Generation
         /// authored FIRST and buildings are packed inside it, so it must be stored, not derived.</summary>
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public WallContour Wall = null;
+        /// <summary>A settlement's composition parameters, or null (dungeons/buildings). Stored so the DM's
+        /// total/active counts persist and «Сгенерировать заново» re-applies them.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public SettlementParams SettlementParams = null;
 
         public Room GetRoom(int id) => Rooms.Find(r => r.Id == id);
     }

@@ -405,5 +405,49 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Authored Content: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Active/Dummy")]
+        public void SelfTestActiveBuildings()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 6, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var floor = SettlementGenerator.Generate(cfg, "poi-city").Floors[0];
+
+            // ---- 1. Exactly min(Active, placed) buildings active; rest dummy; gates never dummy ----------
+            int placed = 0, active = 0, dummy = 0, gateDummies = 0;
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId == 0) { if (r.IsDummy) gateDummies++; continue; }
+                placed++;
+                if (r.IsDummy) dummy++; else active++;
+            }
+            int wantActive = System.Math.Min(cfg.ActiveBuildings, placed);
+            if (active != wantActive)
+            { Debug.LogError($"FAIL active: {active} active buildings, want min({cfg.ActiveBuildings},{placed})={wantActive}"); ok = false; }
+            if (dummy != placed - wantActive)
+            { Debug.LogError($"FAIL active: {dummy} dummies, want {placed - wantActive}"); ok = false; }
+            if (gateDummies != 0)
+            { Debug.LogError($"FAIL active: {gateDummies} gate(s) marked dummy — a gate is never a dummy"); ok = false; }
+
+            // ---- 2. The stored params carry the config ------------------------------------------------
+            if (floor.SettlementParams == null || floor.SettlementParams.TargetBuildings != cfg.TargetBuildings
+                || floor.SettlementParams.ActiveBuildings != cfg.ActiveBuildings)
+            { Debug.LogError("FAIL active: floor.SettlementParams did not store the config's Target/Active"); ok = false; }
+
+            // ---- 3. Determinism: same seed → identical IsDummy per room ---------------------------------
+            var f2 = SettlementGenerator.Generate(cfg, "poi-city").Floors[0];
+            for (int i = 0; i < floor.Rooms.Count && i < f2.Rooms.Count; i++)
+                if (floor.Rooms[i].IsDummy != f2.Rooms[i].IsDummy)
+                { Debug.LogError($"FAIL active: room index {i} (id {floor.Rooms[i].Id}) IsDummy differs between two seed-6 runs"); ok = false; break; }
+
+            // ---- 4. A wall-less camp with a tiny active count marks correctly too -----------------------
+            var camp = SettlementGenerator.Generate(new SettlementConfig { Seed = 6, TargetBuildings = 5, ActiveBuildings = 2, HasWall = false }, "poi-camp").Floors[0];
+            int campPlaced = 0, campActive = 0;
+            foreach (var r in camp.Rooms) if (r.TypeId == 1) { campPlaced++; if (!r.IsDummy) campActive++; }
+            if (campActive != System.Math.Min(2, campPlaced))
+            { Debug.LogError($"FAIL active: camp has {campActive} active, want min(2,{campPlaced})"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Active/Dummy: PASS");
+        }
     }
 }

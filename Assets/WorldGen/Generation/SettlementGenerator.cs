@@ -8,6 +8,7 @@ namespace WorldGen.Generation
     {
         public int Seed;
         public int TargetBuildings = 40;
+        public int ActiveBuildings = 10;
         public bool HasWall = true;
     }
 
@@ -154,15 +155,17 @@ namespace WorldGen.Generation
                 floor.Rooms.Add(new Room { Id = next, TypeId = 0, X = gates[i].X, Y = gates[i].Y });
                 next++;
             }
+            int activeCount = cfg.ActiveBuildings < 0 ? 0 : cfg.ActiveBuildings;
             for (int i = 0; i < buildings.Count; i++)
             {
                 idByIndex[gates.Count + i] = next;
-                floor.Rooms.Add(new Room { Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y });
+                floor.Rooms.Add(new Room { Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y, IsDummy = i >= activeCount });
                 next++;
             }
             floor.NextRoomId = next;
             foreach (var e in edges)
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
+            floor.SettlementParams = new SettlementParams { TargetBuildings = cfg.TargetBuildings, ActiveBuildings = cfg.ActiveBuildings };
             return floor;
         }
 
