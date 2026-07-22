@@ -163,5 +163,58 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Buildings: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Streets")]
+        public void SelfTestStreets()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 5, TargetBuildings = 40, HasWall = true };
+            var wall = SettlementGenerator.BuildWall(cfg);
+            var gates = SettlementGenerator.PlaceGates(wall, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
+            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
+
+            int nGates = gates.Count, nNodes = gates.Count + buildings.Count;
+
+            // ---- 1. Edges reference valid, distinct node indices ---------------------------------------
+            foreach (var e in edges)
+                if (e.A < 0 || e.B < 0 || e.A >= nNodes || e.B >= nNodes || e.A == e.B)
+                { Debug.LogError($"FAIL streets: edge ({e.A},{e.B}) is out of range or a self-loop (nNodes={nNodes})"); ok = false; break; }
+
+            // ---- 2. EVERY building is reachable from SOME gate (connected graph) ------------------------
+            // Drop the spanning growth and isolated buildings appear; this BFS from all gates names the
+            // first unreachable building.
+            var adj = new System.Collections.Generic.List<int>[nNodes];
+            for (int i = 0; i < nNodes; i++) adj[i] = new System.Collections.Generic.List<int>();
+            foreach (var e in edges) { adj[e.A].Add(e.B); adj[e.B].Add(e.A); }
+            var seen = new bool[nNodes];
+            var q = new System.Collections.Generic.Queue<int>();
+            for (int g = 0; g < nGates; g++) { seen[g] = true; q.Enqueue(g); }
+            while (q.Count > 0) { int u = q.Dequeue(); foreach (int v in adj[u]) if (!seen[v]) { seen[v] = true; q.Enqueue(v); } }
+            for (int b = 0; b < buildings.Count; b++)
+                if (!seen[nGates + b])
+                { Debug.LogError($"FAIL streets: building index {b} (node {nGates + b}) is unreachable from any gate"); ok = false; break; }
+
+            // ---- 3. Determinism ------------------------------------------------------------------------
+            var edges2 = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
+            bool same = edges2.Count == edges.Count;
+            for (int i = 0; same && i < edges.Count; i++) same = edges2[i].A == edges[i].A && edges2[i].B == edges[i].B;
+            if (!same)
+            { Debug.LogError("FAIL streets: two seed-5 street layouts differ — not deterministic"); ok = false; }
+
+            // ---- 4. Perf threshold: 80 buildings route in well under a frame ----------------------------
+            // The whole reason this stage exists instead of BuildRenderGraph(Clean), which took 20–34 s at 60.
+            var bigCfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, HasWall = true };
+            var bw = SettlementGenerator.BuildWall(bigCfg);
+            var bg = SettlementGenerator.PlaceGates(bw, SettlementGenerator.GateCountFor(bigCfg.TargetBuildings), bigCfg.Seed);
+            var bb = SettlementGenerator.PlaceBuildings(bw, bigCfg.Seed, bigCfg.TargetBuildings);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            SettlementStreets.GenerateStreets(bw, bb, bg, bigCfg.Seed);
+            sw.Stop();
+            if (sw.ElapsedMilliseconds > 50)
+            { Debug.LogError($"FAIL streets: routing 80 buildings took {sw.ElapsedMilliseconds} ms, want <50"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Streets: PASS");
+        }
     }
 }
