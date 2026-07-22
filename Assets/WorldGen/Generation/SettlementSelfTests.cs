@@ -302,6 +302,88 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Assembly: PASS");
         }
 
+        [ContextMenu("Self-Test: Settlement Village")]
+        public void SelfTestVillage()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 4, TargetBuildings = 40, HasWall = false };
+            var data = SettlementGenerator.Generate(cfg, "poi-village");
+            var floor = data.Floors[0];
+
+            // ---- 1. A wall-less village stores NO wall --------------------------------------------------
+            // Store the notional placement contour here and a village would render an unwanted perimeter.
+            if (floor.Wall != null)
+            { Debug.LogError("FAIL village: floor.Wall is non-null for a HasWall=false village"); ok = false; }
+
+            // ---- 2. NO gate rooms; a substantial building count is STILL placed ------------------------
+            // This is the bug under fix: today BuildFloor derives placement from the (null) wall, so a
+            // village yields 0 buildings, 0 gates, 0 streets — a completely empty map.
+            int gateNodes = 0, buildNodes = 0;
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId == 0) gateNodes++;
+                else if (r.TypeId == 1) buildNodes++;
+                else
+                { Debug.LogError($"FAIL village: room {r.Id} has TypeId {r.TypeId}, want 0 (gate) or 1 (building)"); ok = false; }
+            }
+            if (gateNodes != 0)
+            { Debug.LogError($"FAIL village: {gateNodes} gate rooms in a wall-less village, want 0"); ok = false; }
+            if (buildNodes < 20)
+            { Debug.LogError($"FAIL village: a village produced only {buildNodes} buildings, want >=20"); ok = false; }
+
+            // ---- 3. Hub connectivity: every building is reachable from the hub, and floor.Links agrees ---
+            // Re-derive the SAME notional placement contour BuildFloor now falls back to when HasWall=false
+            // (identical seed/radius formula, never stored), then call SettlementStreets.GenerateStreets
+            // DIRECTLY — this is what makes a hub-seeding regression (MutStreetsNoHub) observable through
+            // this self-test, exactly like SelfTestStreets does for the gated path (Generate/BuildFloor's
+            // OWN internal call always binds to the real, un-rebound SettlementStreets, so only a direct
+            // call here is mutant-observable). BFS from building 0 must reach every other building; then
+            // floor.Links (built by the real BuildFloor) must carry that identical edge set, one-to-one by
+            // room id (id = node index + 1 for a gate-less town, since gates.Count == 0).
+            var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
+                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var exBuildings = SettlementGenerator.PlaceBuildings(exPlacement, cfg.Seed, cfg.TargetBuildings);
+            var exGates = new System.Collections.Generic.List<GatePoint>();
+            var exEdges = SettlementStreets.GenerateStreets(exPlacement, exBuildings, exGates, cfg.Seed);
+
+            if (exBuildings.Count > 0)
+            {
+                var adj = new System.Collections.Generic.List<int>[exBuildings.Count];
+                for (int i = 0; i < adj.Length; i++) adj[i] = new System.Collections.Generic.List<int>();
+                foreach (var e in exEdges) { adj[e.A].Add(e.B); adj[e.B].Add(e.A); }
+                var seen = new bool[exBuildings.Count];
+                var q = new System.Collections.Generic.Queue<int>();
+                seen[0] = true; q.Enqueue(0);
+                while (q.Count > 0) { int u = q.Dequeue(); foreach (int v in adj[u]) if (!seen[v]) { seen[v] = true; q.Enqueue(v); } }
+                for (int i = 0; i < exBuildings.Count; i++)
+                    if (!seen[i])
+                    { Debug.LogError($"FAIL village: building index {i} (room id {i + 1}) is unreachable from the hub"); ok = false; break; }
+            }
+
+            // floor.Links must carry the SAME edges (mapped to room ids i+1, order-insensitive) — proves
+            // BuildFloor actually wires this GenerateStreets output into the floor for the gate-less path.
+            if (floor.Links.Count != exEdges.Count)
+            { Debug.LogError($"FAIL village: floor.Links has {floor.Links.Count} links vs {exEdges.Count} street edges"); ok = false; }
+            foreach (var e in exEdges)
+            {
+                int idA = e.A + 1, idB = e.B + 1;
+                bool found = false;
+                foreach (var l in floor.Links)
+                    if ((l.RoomA == idA && l.RoomB == idB) || (l.RoomA == idB && l.RoomB == idA)) { found = true; break; }
+                if (!found)
+                { Debug.LogError($"FAIL village: street edge ({e.A},{e.B}) has no link between room ids {idA} and {idB}"); ok = false; break; }
+            }
+
+            // ---- 4. Determinism: two seed-4 villages have identical room count and first-room position ---
+            var data2 = SettlementGenerator.Generate(cfg, "poi-village");
+            var floor2 = data2.Floors[0];
+            if (floor2.Rooms.Count != floor.Rooms.Count ||
+                (floor.Rooms.Count > 0 && (floor2.Rooms[0].X != floor.Rooms[0].X || floor2.Rooms[0].Y != floor.Rooms[0].Y)))
+            { Debug.LogError($"FAIL village: seed-4 rerun has {floor2.Rooms.Count} rooms vs {floor.Rooms.Count} — not deterministic"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Village: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Authored Content")]
         public void SelfTestSettlementAuthored()
         {

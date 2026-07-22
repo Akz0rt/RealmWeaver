@@ -376,18 +376,19 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutNoWallClearance' `
   'MutNoWallClearance.cs'
 
 # MutNoInsideFilter/MutNoWallClearance/MutGateAtCentre all nest the WHOLE of SettlementGenerator.cs — including
-# its own BuildFloor/Generate methods, which internally call SettlementStreets.GenerateStreets(wall, buildings,
-# gates, cfg.Seed). SettlementStreets.cs is NOT mutated for these three, so that call's parameter types
-# (PlacedBuilding/GatePoint) still mean the REAL, top-level WorldGen.Generation ones — but BuildFloor's local
-# `buildings`/`gates` are now the NESTED PlacedBuilding/GatePoint (PlaceBuildings/PlaceGates are declared in the
-# SAME file, so they return the nested types once the file is renamespaced). IReadOnlyList<T> does not covary
-# over a struct T, so this is a hard COMPILE ERROR baked into the mutant source itself, unrelated to whichever
-# rule the mutant actually changes. None of the three catching tests (SelfTestBuildings x2, SelfTestGates) call
-# BuildFloor/Generate at all, so the fix stubs out that one dead call rather than touching the rule under test.
+# its own BuildFloor/Generate methods, which internally call SettlementStreets.GenerateStreets(placement,
+# buildings, gates, cfg.Seed). SettlementStreets.cs is NOT mutated for these three, so that call's parameter
+# types (PlacedBuilding/GatePoint) still mean the REAL, top-level WorldGen.Generation ones — but BuildFloor's
+# local `buildings`/`gates` are now the NESTED PlacedBuilding/GatePoint (PlaceBuildings/PlaceGates are declared
+# in the SAME file, so they return the nested types once the file is renamespaced). IReadOnlyList<T> does not
+# covary over a struct T, so this is a hard COMPILE ERROR baked into the mutant source itself, unrelated to
+# whichever rule the mutant actually changes. None of the three catching tests (SelfTestBuildings x2,
+# SelfTestGates) call BuildFloor/Generate at all, so the fix stubs out that one dead call rather than touching
+# the rule under test.
 function Repair-SettlementGeneratorCrossFileCall([string]$outFile) {
   $p = Join-Path $gen $outFile
   $t = Get-Content $p -Raw -Encoding UTF8
-  $from = 'var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);'
+  $from = 'var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);'
   if ($t -notmatch [regex]::Escape($from)) { throw "cross-file repair pattern not found in $outFile" }
   $stub = 'var edges = new List<StreetEdge>();   // MUTANT-NEST STUB: BuildFloor/Generate are dead code for this mutants catching test, and SettlementStreets.cs is unmutated here so its GenerateStreets cannot accept this nested PlacedBuilding/GatePoint'
   $t = $t -replace [regex]::Escape($from), $stub
@@ -413,6 +414,15 @@ New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoGrowth' `
   'while (remaining > 0)' `
   'while (false)   // MUTANT: Prim growth disabled, trunks only' `
   'MutStreetsNoGrowth.cs'
+
+# MutStreetsNoHub: in the gate-less (nGates == 0) branch, the hub building is never marked connected —
+# `remaining` is still set to nBuild - 1, but the growth loop's outer scan finds no connected node to grow
+# from, so it breaks on its first iteration and every building stays isolated. SelfTestVillage assertion 3
+# (hub connectivity) must fail.
+New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoHub' `
+  'connected[hub] = true;' `
+  '// MUTANT: hub never marked connected — gate-less growth seeds from nothing' `
+  'MutStreetsNoHub.cs'
 
 # ---- SETTLEMENT MUTANT-BOUND SELF-TESTS ---------------------------------------------------------------------
 # SettlementGenerator.cs bundles FOUR types into one file: SettlementConfig, GatePoint, PlacedBuilding AND
@@ -471,7 +481,18 @@ New-SettlementRebind 'SelfTestStreets' 'MutStreetsNoGrowth' `
   @('SettlementStreets\.') `
   @('WorldGen.Generation.MutStreetsNoGrowth.SettlementStreets.')
 
+# MutStreetsNoHub mutates GenerateStreets' gate-less branch. SelfTestVillage's assertions 1/2/4 go through
+# SettlementGenerator.Generate()/BuildFloor — which lives in the PRISTINE, never-rebound SettlementGenerator.cs
+# copy and so always calls the REAL SettlementStreets — so a mutant of SettlementStreets.cs alone can only be
+# observed through a call SelfTestVillage makes to SettlementStreets DIRECTLY (its assertion-3 reconstruction:
+# exPlacement/exBuildings via the real SettlementGenerator, exEdges via SettlementStreets.GenerateStreets).
+# That is exactly the same shape as SelfTestStreets/MutStreetsNoGrowth above — so ONLY "SettlementStreets." is
+# rebound here too; SettlementConfig/SettlementGenerator stay real.
+New-SettlementRebind 'SelfTestVillage' 'MutStreetsNoHub' `
+  @('SettlementStreets\.') `
+  @('WorldGen.Generation.MutStreetsNoHub.SettlementStreets.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 4 settlement mutants + 4 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 5 settlement mutants + 5 settlement rebound test copies into gen/"
 

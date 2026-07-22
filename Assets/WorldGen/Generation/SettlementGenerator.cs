@@ -102,8 +102,10 @@ namespace WorldGen.Generation
             var kept = new List<PlacedBuilding>();
             if (wall == null || !wall.IsClosedSane()) return kept;
 
-            // Bounding box of the wall.
-            float minX = 1f, minY = 1f, maxX = 0f, maxY = 0f;
+            // Bounding box of the wall. Seeded from the first point (domain-agnostic — no assumption that
+            // the contour lies within 0..1) rather than from 1f/0f sentinels, matching the same hardening
+            // WallContour.IsClosedSane applies. IsClosedSane above guarantees Points.Count >= 3.
+            float minX = wall.Points[0].X, minY = wall.Points[0].Y, maxX = wall.Points[0].X, maxY = wall.Points[0].Y;
             foreach (var p in wall.Points)
             {
                 if (p.X < minX) minX = p.X; if (p.X > maxX) maxX = p.X;
@@ -133,10 +135,14 @@ namespace WorldGen.Generation
         /// floor. Room ids are assigned 1..N in that order so a StreetEdge index i maps to room id i+1.</summary>
         public static InteriorFloor BuildFloor(SettlementConfig cfg)
         {
-            var wall = BuildWall(cfg);
-            var gates = PlaceGates(wall, GateCountFor(cfg.TargetBuildings), cfg.Seed);
-            var buildings = PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
-            var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
+            var wall = BuildWall(cfg);   // null for a wall-less village
+            // Placement region: the stored wall for a walled town, else a NOTIONAL contour (identical
+            // Rounded call, same seed) used only to place buildings and route streets — NOT stored, so a
+            // village renders no wall (floor.Wall stays null below).
+            var placement = wall ?? WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
+            var gates = wall != null ? PlaceGates(wall, GateCountFor(cfg.TargetBuildings), cfg.Seed) : new List<GatePoint>();
+            var buildings = PlaceBuildings(placement, cfg.Seed, cfg.TargetBuildings);
+            var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);
 
             var floor = new InteriorFloor { Wall = wall };
             // Node index i (gates first, then buildings) → room id (i+1). Ids are stable and dense.

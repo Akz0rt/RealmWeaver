@@ -60,6 +60,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutGateAtCentreSelfTests().SelfTestGates()),
                 ("MutStreetsNoGrowth", "SettlementStreets.GenerateStreets' Prim-style growth loop skipped (trunks only)",
                     () => new WorldGen.MutantTests.MutStreetsNoGrowthSelfTests().SelfTestStreets()),
+                ("MutStreetsNoHub",    "SettlementStreets.GenerateStreets' gate-less hub is never marked connected (growth seeds from nothing)",
+                    () => new WorldGen.MutantTests.MutStreetsNoHubSelfTests().SelfTestVillage()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
