@@ -156,7 +156,7 @@ namespace WorldGen.Rendering
                 if (renderer.ResolveProjection(fminX, fminY, fmaxX, fmaxY)) needsProjectionFit = false;
             }
 
-            var rg = DungeonLayout.BuildRenderGraph(lvl);
+            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean));
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
             renderer.RebuildView(dungeon, levelIndex, lvl, rg, font, OnJumpToLevel);
             RefreshHighlights();
@@ -321,8 +321,16 @@ namespace WorldGen.Rendering
         void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, mode));
+            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode)));
         }
+
+        // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
+        // at 60 nodes (see .superpowers/sdd/town-scale-measurement.md), so a settlement ALWAYS routes Fast
+        // (6 ms). Dungeons/buildings keep their requested mode.
+        RoomLinkGeometry.RoutingMode RouteMode(RoomLinkGeometry.RoutingMode requested)
+            => dungeon != null && dungeon.Kind == InteriorKind.Settlement
+                 ? RoomLinkGeometry.RoutingMode.Fast
+                 : requested;
 
         // ── Commands ─────────────────────────────────────────────────────────────
 
