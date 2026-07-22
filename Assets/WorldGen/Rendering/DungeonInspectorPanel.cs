@@ -102,21 +102,38 @@ namespace WorldGen.Rendering
                 AddInfoText(content, "Выберите комнату", 12, ThemeRole.Mut, FontStyle.Italic);
             else
             {
-                // On a generated upper floor the ROOM (type/size) is locked, but TRANSITIONS stay editable — the
-                // DM authors which rooms connect. So corridors + secret passages are always shown; only
-                // BuildRoomSection hides the layout-affecting type/size controls when locked.
-                BuildRoomSection(content, lvl, room, StructureLocked);
-                if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && room.TypeId == 1)
-                    BuildPreviewSection(content, room);
-                // Final-review fix C2: a settlement building gets no direct battle map — its interior comes
-                // via building-interior recursion (Ц2), not a room-level grid over the WHOLE town's ~40-node
-                // graph (BattleGridGenerator.ProjectDoors routes RoutingMode.Clean, a multi-second hang at
-                // settlement scale). Gate at the room-graph level (Kind), not room.TypeId, so it also covers
-                // non-building rooms on a settlement floor (e.g. the gate room).
-                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
-                    BuildBattleGridSection(content, room);
-                BuildSecretsSection(content, room);
-                BuildCorridorsSection(content, lvl, room);
+                // Settlement building (Ц1.5 Task 6): a dummy is decorative filler, not authorable — it gets
+                // ONLY the minimal BuildDummySection (info line + toggle button) and NOTHING else: no room/
+                // name/description, no preview, no battle-map/secrets/corridors controls either (a dummy has
+                // no gameplay content to route to). Gated on Kind == Settlement && TypeId == 1 so gates
+                // (TypeId 0) and every dungeon/building room fall through to the unchanged else-branch below,
+                // byte-identical to pre-Task-6 behaviour.
+                bool isSettlementBuilding = dungeon != null && dungeon.Kind == InteriorKind.Settlement && room.TypeId == 1;
+                if (isSettlementBuilding && room.IsDummy)
+                {
+                    BuildDummySection(content, room);
+                }
+                else
+                {
+                    // On a generated upper floor the ROOM (type/size) is locked, but TRANSITIONS stay editable — the
+                    // DM authors which rooms connect. So corridors + secret passages are always shown; only
+                    // BuildRoomSection hides the layout-affecting type/size controls when locked.
+                    BuildRoomSection(content, lvl, room, StructureLocked);
+                    if (isSettlementBuilding)
+                    {
+                        BuildPreviewSection(content, room);
+                        BuildDummyToggleSection(content, room);
+                    }
+                    // Final-review fix C2: a settlement building gets no direct battle map — its interior comes
+                    // via building-interior recursion (Ц2), not a room-level grid over the WHOLE town's ~40-node
+                    // graph (BattleGridGenerator.ProjectDoors routes RoutingMode.Clean, a multi-second hang at
+                    // settlement scale). Gate at the room-graph level (Kind), not room.TypeId, so it also covers
+                    // non-building rooms on a settlement floor (e.g. the gate room).
+                    if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
+                        BuildBattleGridSection(content, room);
+                    BuildSecretsSection(content, room);
+                    BuildCorridorsSection(content, lvl, room);
+                }
                 AddDivider(content);
             }
             BuildValidationSection(content);
@@ -261,6 +278,38 @@ namespace WorldGen.Rendering
             room.Preview = shrunk;
             Rebuild();
             OnChanged?.Invoke();
+        }
+
+        // ── Пустышка (активно/пустышка) ─────────────────────────────────────────
+
+        // Active-state addendum (Ц1.5 Task 6): appended after BuildPreviewSection for an active settlement
+        // building. The handler ONLY flips IsDummy and calls OnChanged — same minimal shape as the
+        // Title/Body onEndEdit handlers above (no local Rebuild(): OnChanged already reaches
+        // RevalidateAndRefresh -> inspectorPanel.ShowRoom(selectedRoomId) -> Rebuild(), which redraws this
+        // panel into the dummy's minimal view). Non-destructive: Title/Body/Preview are left untouched,
+        // just hidden while the room is a dummy — toggling back restores them unchanged.
+        void BuildDummyToggleSection(Transform parent, Room room)
+        {
+            var sec = AddSection(parent, "DummyToggleSection");
+            AddFullWidthButton(sec.transform, "Сделать пустышкой", ThemeRole.Elev, () =>
+            {
+                room.IsDummy = true;
+                OnChanged?.Invoke();
+            });
+        }
+
+        // Dummy-state minimal panel (Ц1.5 Task 6): a dummy is decorative filler, not authorable — callers
+        // build ONLY this section instead of BuildRoomSection/BuildPreviewSection (no name/description/
+        // preview controls). The toggle-back handler mirrors BuildDummyToggleSection's shape exactly.
+        void BuildDummySection(Transform parent, Room room)
+        {
+            var sec = AddSection(parent, "DummySection");
+            AddInfoText(sec.transform, "Пустышка — декоративное здание, игрок не взаимодействует", 11, ThemeRole.Mut, FontStyle.Italic);
+            AddFullWidthButton(sec.transform, "Сделать активным", ThemeRole.Elev, () =>
+            {
+                room.IsDummy = false;
+                OnChanged?.Invoke();
+            });
         }
 
         // ── Боевая карта ─────────────────────────────────────────────────────────
