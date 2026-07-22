@@ -113,10 +113,12 @@ namespace WorldGen.Rendering
             // so AddRange carries the wall across — no separate wall assignment.
             if (editingDungeon.Kind == InteriorKind.Settlement && editingDungeon.Floors.Count == 0)
             {
+                var (total, activeN) = SettlementDefaults(poi.Type);
                 var cfg = new WorldGen.Generation.SettlementConfig
                 {
                     Seed = SettlementSeed(poi),
-                    TargetBuildings = 40,
+                    TargetBuildings = total,
+                    ActiveBuildings = activeN,
                     HasWall = poi.Type == PoiType.City,
                 };
                 editingDungeon.Floors.AddRange(WorldGen.Generation.SettlementGenerator.Generate(cfg, poi.Id).Floors);
@@ -135,6 +137,19 @@ namespace WorldGen.Rendering
                 int h = 17;
                 foreach (char c in poi.Id) h = h * 31 + c;
                 return h;
+            }
+        }
+
+        // Ц1.5 per-type composition defaults: a City is a walled town, a Village an open one, a Camp a tiny
+        // open cluster. (total buildings, of which active.) Halved from the Ц1 draft per DM feedback.
+        static (int total, int active) SettlementDefaults(PoiType type)
+        {
+            switch (type)
+            {
+                case PoiType.City:    return (20, 5);
+                case PoiType.Village: return (10, 3);
+                case PoiType.Camp:    return (5, 2);
+                default:              return (10, 3);
             }
         }
 
