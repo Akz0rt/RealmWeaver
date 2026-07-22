@@ -1,0 +1,56 @@
+using UnityEngine;
+using WorldGen.Generation;
+
+namespace WorldGen.Rendering
+{
+    /// <summary>[ContextMenu] self-tests for the settlement primitive. Every assertion names the exact
+    /// point/building/edge the rule changes — never a bare count (the project's #1 past failure mode was a
+    /// test that passes whether or not the rule holds; see CompactLayoutSelfTests for the discipline).</summary>
+    public class SettlementSelfTests : MonoBehaviour
+    {
+        [ContextMenu("Self-Test: Wall Contour")]
+        public void SelfTestWallContour()
+        {
+            bool ok = true;
+
+            // ---- 1. A rounded contour is closed, non-degenerate, and has the requested vertex count -----
+            var wall = WallContour.Rounded(seed: 7, cx: 0.5f, cy: 0.5f, radius: 0.4f, sides: 8, jitter: 0.1f);
+            if (wall.Points.Count != 8)
+            { Debug.LogError($"FAIL wall: asked for 8 sides, got {wall.Points.Count} points"); ok = false; }
+            if (!wall.IsClosedSane())
+            { Debug.LogError("FAIL wall: IsClosedSane false for a fresh rounded contour"); ok = false; }
+
+            // ---- 2. Contains: the centre is inside, a far point is outside ------------------------------
+            // Flip the ray-cast parity and the centre reads as outside.
+            if (!wall.Contains(0.5f, 0.5f))
+            { Debug.LogError("FAIL wall: the centre (0.5,0.5) is not Contains-inside a radius-0.4 contour"); ok = false; }
+            if (wall.Contains(0.99f, 0.99f))
+            { Debug.LogError("FAIL wall: far corner (0.99,0.99) reads as inside a radius-0.4 contour"); ok = false; }
+
+            // ---- 3. DistanceToEdge is ~0 on the wall line, large at the centre -------------------------
+            // A point exactly on the first vertex must have edge-distance 0; the centre must be ~radius away.
+            var p0 = wall.Points[0];
+            if (wall.DistanceToEdge(p0.X, p0.Y) > 1e-4f)
+            { Debug.LogError($"FAIL wall: a vertex reports edge-distance {wall.DistanceToEdge(p0.X, p0.Y)}, want ~0"); ok = false; }
+            if (wall.DistanceToEdge(0.5f, 0.5f) < 0.2f)
+            { Debug.LogError($"FAIL wall: the centre reports edge-distance {wall.DistanceToEdge(0.5f, 0.5f)}, want ≥0.2 for radius 0.4"); ok = false; }
+
+            // ---- 4. Determinism: same seed → identical points ------------------------------------------
+            var wallB = WallContour.Rounded(seed: 7, cx: 0.5f, cy: 0.5f, radius: 0.4f, sides: 8, jitter: 0.1f);
+            for (int i = 0; i < wall.Points.Count; i++)
+                if (wall.Points[i].X != wallB.Points[i].X || wall.Points[i].Y != wallB.Points[i].Y)
+                { Debug.LogError($"FAIL wall: point {i} differs between two seed-7 contours — not deterministic"); ok = false; break; }
+
+            // ---- 5. Jitter actually perturbs: a different seed moves at least one point -----------------
+            // Drop the jitter term and every seed yields the same regular polygon; this catches that.
+            var wallC = WallContour.Rounded(seed: 8, cx: 0.5f, cy: 0.5f, radius: 0.4f, sides: 8, jitter: 0.1f);
+            bool anyMoved = false;
+            for (int i = 0; i < wall.Points.Count; i++)
+                if (wall.Points[i].X != wallC.Points[i].X || wall.Points[i].Y != wallC.Points[i].Y) { anyMoved = true; break; }
+            if (!anyMoved)
+            { Debug.LogError("FAIL wall: seed 7 and seed 8 produced identical contours — jitter is inert"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Wall Contour: PASS");
+        }
+    }
+}

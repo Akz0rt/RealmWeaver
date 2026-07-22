@@ -61,6 +61,8 @@ static class Program
         battle.SelfTestUndo();
         battle.SelfTestAuthored();
         battle.SelfTestCount();
+        var settlement = new WorldGen.Rendering.SettlementSelfTests();
+        settlement.SelfTestWallContour();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

@@ -3,7 +3,7 @@ using Newtonsoft.Json;
 
 namespace WorldGen.Generation
 {
-    public enum InteriorKind { Dungeon = 0, Building = 1 }
+    public enum InteriorKind { Dungeon = 0, Building = 1, Settlement = 2 }
 
     // Ordered so legacy SecretPassage.Kind ints map straight across:
     // old SecretTargetKind.Room(0)→SecretDoor(0), DungeonExit(1)→DungeonExit(1).
@@ -51,6 +51,11 @@ namespace WorldGen.Generation
         /// does not change size, and undercuts the "null costs nothing" claim above.</summary>
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public BattleGrid Grid = null;
+        /// <summary>A settlement building's preview image (PNG bytes), or null. Optional and null until the
+        /// DM adds one — a town of 60 buildings must not carry 60 images by default. NullValueHandling.Ignore
+        /// keeps the key out of every save when absent (the Room.Grid precedent). World definition only.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public byte[] Preview = null;
         [JsonProperty("Secrets")]                        // preserve v6 wire key
         public List<Portal> Portals = new List<Portal>();
     }
@@ -76,6 +81,11 @@ namespace WorldGen.Generation
         [JsonProperty("Rooms")] public List<Room> Rooms = new List<Room>();
         [JsonProperty("Corridors")] public List<Link> Links = new List<Link>();
         public int NextRoomId = 1;
+        /// <summary>A settlement's stored wall, or null (dungeons/buildings/wall-less villages). Unlike a
+        /// building's floor contour, which is DERIVED from its rooms (FloorFootprint), a settlement's wall is
+        /// authored FIRST and buildings are packed inside it, so it must be stored, not derived.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public WallContour Wall = null;
 
         public Room GetRoom(int id) => Rooms.Find(r => r.Id == id);
     }
