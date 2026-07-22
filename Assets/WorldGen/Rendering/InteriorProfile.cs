@@ -105,22 +105,47 @@ namespace WorldGen.Rendering
         }
     }
 
+    /// <summary>Settlement profile (Ц1). Two node types: a Gate on the wall and a Building. No floors — the
+    /// editor's floor machinery is Kind-gated off. Terminology reads as a town, not a dungeon.</summary>
+    public static class SettlementProfile
+    {
+        public static InteriorProfile Build()
+        {
+            return new InteriorProfile
+            {
+                Kind = InteriorKind.Settlement,
+                RoomTypes = new[]
+                {
+                    new RoomTypeDef("Ворота", ThemeRole.Accent,     ThemeRole.AccentInk),
+                    new RoomTypeDef("Здание", ThemeRole.RoomCommon,  ThemeRole.Txt),
+                },
+                FloorLinks = FloorLinkMode.ImplicitDescent,   // unused — settlements have one floor
+                TermFloor = "Этаж",                            // unused — floor UI is Kind-gated off
+                TermRoom = "Здание",
+                TermInterior = "Поселение",
+            };
+        }
+    }
+
     /// <summary>Per-kind singleton profiles, built once.</summary>
     public static class Profiles
     {
         static readonly InteriorProfile Dungeon = DungeonProfile.Build();
         static readonly InteriorProfile Building = BuildingProfile.Build();
+        static readonly InteriorProfile Settlement = SettlementProfile.Build();
 
         public static InteriorProfile For(InteriorKind k)
         {
-            return k == InteriorKind.Building ? Building : Dungeon;
+            if (k == InteriorKind.Building) return Building;
+            if (k == InteriorKind.Settlement) return Settlement;
+            return Dungeon;
         }
 
         public static InteriorProfile ForRoom(InteriorData d) => For(d.Kind);
 
         /// <summary>Maps a POI type to the interior kind it opens (Task 6): Dungeon POIs get a dungeon;
-        /// Tower/Temple/Fortress/Ruin get a building; everything else (City/Village/Camp/Port/Encounter/
-        /// Unknown) has no interior in this sub-project.</summary>
+        /// Tower/Temple/Fortress/Ruin get a building; City/Village get a settlement; everything else
+        /// (Camp/Port/Encounter/Unknown) has no interior in this sub-project.</summary>
         public static InteriorKind? InteriorKindForPoiType(PoiType t)
         {
             switch (t)
@@ -130,7 +155,9 @@ namespace WorldGen.Rendering
                 case PoiType.Temple:
                 case PoiType.Fortress:
                 case PoiType.Ruin: return InteriorKind.Building;
-                default: return null;   // City/Village/Camp/Port/Encounter/Unknown → no interior (this sub-project)
+                case PoiType.City:
+                case PoiType.Village: return InteriorKind.Settlement;
+                default: return null;   // Camp/Port/Encounter/Unknown → no interior (this sub-project)
             }
         }
     }

@@ -551,7 +551,9 @@ namespace WorldGen.Rendering
             bool conflict = existing != null && newKind != existing.Kind;
             if (conflict)
             {
-                string mapWord = existing.Kind == InteriorKind.Building ? "здания" : "подземелья";
+                string mapWord = existing.Kind == InteriorKind.Building ? "здания"
+                               : existing.Kind == InteriorKind.Settlement ? "поселения"
+                               : "подземелья";
                 ConfirmDialog.Show(font, "Сменить тип точки?",
                     $"У этой точки есть карта {mapWord}, которая не подойдёт новому типу. Сбросить карту?",
                     ok =>
@@ -690,7 +692,9 @@ namespace WorldGen.Rendering
 
             mapSectionLabel.text = kind == InteriorKind.Building
                 ? (floors > 0 ? $"Открыть карту здания ({floors} эт.)" : "Создать карту здания")
-                : (floors > 0 ? $"Открыть карту подземелья ({floors} ур.)" : "Создать карту подземелья");
+                : kind == InteriorKind.Settlement
+                    ? (floors > 0 ? "Открыть карту поселения" : "Создать карту поселения")
+                    : (floors > 0 ? $"Открыть карту подземелья ({floors} ур.)" : "Создать карту подземелья");
         }
 
         void BuildDeleteRow(Transform t)
