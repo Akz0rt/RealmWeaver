@@ -67,5 +67,56 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Wall Contour: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Gates")]
+        public void SelfTestGates()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
+            var wall = SettlementGenerator.BuildWall(cfg);
+
+            // ---- 1. A walled settlement has a non-null, sane contour ------------------------------------
+            if (wall == null || !wall.IsClosedSane())
+            { Debug.LogError("FAIL gates: BuildWall returned null/insane for HasWall=true"); ok = false; }
+
+            // ---- 2. A wall-less village has NO contour --------------------------------------------------
+            // Return a wall anyway and a village would render an unwanted perimeter.
+            var villageCfg = new SettlementConfig { Seed = 3, TargetBuildings = 8, HasWall = false };
+            if (SettlementGenerator.BuildWall(villageCfg) != null)
+            { Debug.LogError("FAIL gates: BuildWall returned a contour for HasWall=false"); ok = false; }
+
+            // ---- 3. Gate count matches GateCountFor, and is in 2..4 -------------------------------------
+            var gates = SettlementGenerator.PlaceGates(wall, cfg.Seed);
+            int want = SettlementGenerator.GateCountFor(cfg.TargetBuildings);
+            if (gates.Count != want)
+            { Debug.LogError($"FAIL gates: placed {gates.Count} gates, GateCountFor says {want}"); ok = false; }
+            if (want < 2 || want > 4)
+            { Debug.LogError($"FAIL gates: GateCountFor({cfg.TargetBuildings}) = {want}, want 2..4"); ok = false; }
+
+            // ---- 4. EVERY gate lies ON the wall line ----------------------------------------------------
+            // Place gates at the centre instead of on the wall and each of these fires with its distance.
+            foreach (var g in gates)
+            {
+                float d = wall.DistanceToEdge(g.X, g.Y);
+                if (d > 1e-3f)
+                { Debug.LogError($"FAIL gates: gate at ({g.X:F3},{g.Y:F3}) is {d:F3} off the wall line, want ~0"); ok = false; }
+            }
+
+            // ---- 5. Gates are SPREAD, not clustered: no two share a position ---------------------------
+            for (int i = 0; i < gates.Count; i++)
+                for (int j = i + 1; j < gates.Count; j++)
+                {
+                    float dx = gates[i].X - gates[j].X, dy = gates[i].Y - gates[j].Y;
+                    if (dx * dx + dy * dy < 1e-4f)
+                    { Debug.LogError($"FAIL gates: gates {i} and {j} sit on top of each other"); ok = false; }
+                }
+
+            // ---- 6. Determinism ------------------------------------------------------------------------
+            var gates2 = SettlementGenerator.PlaceGates(wall, cfg.Seed);
+            if (gates2.Count != gates.Count || (gates.Count > 0 && (gates2[0].X != gates[0].X || gates2[0].Y != gates[0].Y)))
+            { Debug.LogError("FAIL gates: two seed-3 gate placements differ — not deterministic"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Gates: PASS");
+        }
     }
 }

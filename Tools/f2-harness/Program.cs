@@ -63,6 +63,7 @@ static class Program
         battle.SelfTestCount();
         var settlement = new WorldGen.Rendering.SettlementSelfTests();
         settlement.SelfTestWallContour();
+        settlement.SelfTestGates();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
