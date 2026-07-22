@@ -99,7 +99,15 @@ namespace WorldGen.Rendering
             if (room == null) roomId = 0;
 
             if (room == null)
+            {
                 AddInfoText(content, "Выберите комнату", 12, ThemeRole.Mut, FontStyle.Italic);
+                // Ц1.5 Task 7: the composition steppers only make sense with nothing selected (they act on
+                // the WHOLE town, not a room) and only for a settlement that actually has a floor to store
+                // params on (a freshly created settlement is generated immediately by MapScreenController,
+                // but this guard keeps the section from throwing on a still-empty one).
+                if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl != null)
+                    BuildSettlementCompositionSection(content, lvl);
+            }
             else
             {
                 // Settlement building (Ц1.5 Task 6): a dummy is decorative filler, not authorable — it gets
@@ -443,6 +451,68 @@ namespace WorldGen.Rendering
                 AddRemoveButton(row.transform, () => { DungeonOps.RemoveCorridor(lvl, room.Id, otherId); Rebuild(); OnChanged?.Invoke(); });
             }
             if (!any) AddInfoText(sec.transform, "Нет коридоров", 11, ThemeRole.Mut, FontStyle.Italic);
+        }
+
+        // ── Поселение (композиция) ──────────────────────────────────────────────
+
+        // Ц1.5 Task 7: the DM's total/active building counts for a settlement, edited with nothing
+        // selected (the section acts on the whole town, not a room) and only shown for Kind==Settlement
+        // (see the isSettlementBuilding-style gate in Rebuild()). Writes ONLY floor.SettlementParams —
+        // no Rebuild-triggering regeneration and no Authored flag (DungeonOps.HasAuthoredContent never
+        // looks at SettlementParams), matching BuildDummyToggleSection's "OnChanged only" shape above.
+        // «Сгенерировать заново» (DungeonEditorScreen.DoRegenerateSettlement) reads these same stored
+        // values, so a DM who dials in a count before regenerating gets it honoured.
+        void BuildSettlementCompositionSection(Transform parent, InteriorFloor lvl)
+        {
+            if (lvl.SettlementParams == null)
+                lvl.SettlementParams = new SettlementParams { TargetBuildings = 10, ActiveBuildings = 3 };
+            var sp = lvl.SettlementParams;
+
+            var sec = AddSection(parent, "SettlementSection");
+            AddInfoText(sec.transform, "ПОСЕЛЕНИЕ", 10, ThemeRole.Mut, FontStyle.Bold);
+
+            BuildCompositionStepperRow(sec.transform, "Всего зданий", sp.TargetBuildings,
+                () => StepTargetBuildings(sp, -1), () => StepTargetBuildings(sp, 1));
+            BuildCompositionStepperRow(sec.transform, "Из них активных", sp.ActiveBuildings,
+                () => StepActiveBuildings(sp, -1), () => StepActiveBuildings(sp, 1));
+        }
+
+        // A labelled ◄ value ► row for a full-word caption, unlike BuildStepper's short "W"/"Эт." tags
+        // (which assume a fixed 24px caption column that would clip a full Russian phrase) — the caption
+        // gets flexibleWidth like the corridor rows' "↔ Комната N" label, and the stepper controls sit at
+        // the row's end. Mirrors BuildStepper's own AddStepBtn/MakeText recipe otherwise.
+        void BuildCompositionStepperRow(Transform parent, string caption, int value, System.Action onPrev, System.Action onNext)
+        {
+            var row = AddRow(parent, $"Comp_{caption}", 22f, 4f);
+            var capLbl = MakeText(row.transform, caption, 11, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleLeft);
+            capLbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            capLbl.raycastTarget = false;
+            AddStepBtn(row.transform, "◄", onPrev, true);
+            var valTxt = MakeText(row.transform, value.ToString(), 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            valTxt.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
+            valTxt.raycastTarget = false;
+            AddStepBtn(row.transform, "►", onNext, true);
+        }
+
+        // Min 1 (a town cannot target zero buildings). Lowering the total below the current active count
+        // also lowers active — mirrors the brief's "lowering total below active also lowers active" rule
+        // (an active count above the total it belongs to would be a silently-inconsistent stored state).
+        void StepTargetBuildings(SettlementParams sp, int dir)
+        {
+            sp.TargetBuildings = Mathf.Max(1, sp.TargetBuildings + dir);
+            if (sp.ActiveBuildings > sp.TargetBuildings) sp.ActiveBuildings = sp.TargetBuildings;
+            Rebuild();
+            OnChanged?.Invoke();
+        }
+
+        // Clamped 0..TargetBuildings — an active count can't exceed the town's own total, and can't go
+        // negative (SettlementGenerator already floors a negative ActiveBuildings to 0 defensively, but
+        // the stepper itself should never author an out-of-range value in the first place).
+        void StepActiveBuildings(SettlementParams sp, int dir)
+        {
+            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, sp.TargetBuildings);
+            Rebuild();
+            OnChanged?.Invoke();
         }
 
         // ── Проверки ─────────────────────────────────────────────────────────────
