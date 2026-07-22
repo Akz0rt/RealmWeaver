@@ -26,7 +26,7 @@ namespace WorldGen.Rendering
 
         InteriorProfile profile;
 
-        RectTransform linesLayer, junctionsLayer, nodesLayer, contourLayer, wallsLayer;
+        RectTransform linesLayer, junctionsLayer, nodesLayer, contourLayer, wallsLayer, townWallLayer;
         readonly Dictionary<int, Outline> outlines = new Dictionary<int, Outline>();
         // Out-of-contour red flag (C2' — Building only). Separate from `outlines` (selection highlight):
         // a room can be selected AND flagged at once, and the two must toggle independently.
@@ -38,6 +38,14 @@ namespace WorldGen.Rendering
         readonly List<RectTransform> wallRects = new List<RectTransform>();
         readonly List<(Vector2 a, Vector2 b)> wallSegBuf = new List<(Vector2, Vector2)>();
         readonly List<float> wallGapBuf = new List<float>();
+        // Settlement wall (Ц1, Task 10) — its OWN pool, independent of wallRects (Building room-outline
+        // walls) above. Gates are draggable (DungeonViewController.OnDrag has no TypeId/Kind guard for a
+        // settlement), so the gap position shifts live; RebuildTownWall recomputes every reposition and
+        // SyncPool reconciles the segment count, same cadence as RebuildWalls.
+        readonly List<RectTransform> townWallRects = new List<RectTransform>();
+        readonly List<(Vector2 a, Vector2 b)> townWallSegBuf = new List<(Vector2, Vector2)>();
+        readonly List<float> townWallGapBuf = new List<float>();
+        readonly List<Vector2> gateTileBuf = new List<Vector2>();
         bool built;
 
         // Last drawn level+graph, cached so SetProjection (pan/zoom) can repaint without the controller
@@ -57,6 +65,11 @@ namespace WorldGen.Rendering
         InteriorFloor contourFloor;
         readonly List<(float x0, float y0, float x1, float y1)> contourSegs = new List<(float, float, float, float)>();
 
+        // Settlement-only (Ц1, Task 10): true iff the bound interior is Kind==Settlement. Gates the wall
+        // layer entirely so dungeon/building rendering is byte-for-byte unaffected — see hasContour above
+        // for the same "cheap bool gate, set false before the null-lvl guard" idiom.
+        bool isSettlement;
+
         const float MinCardPx = 20f;      // a 1-tile room must stay a usable click target
         const float LineThickness = 3f;
         const float JunctionPx = 9f;
@@ -65,6 +78,11 @@ namespace WorldGen.Rendering
         // Opening carved out of a wall at each door, in tiles. Owned by CompactLayout because the PACKER has to
         // read it too (its lateral slide may never leave a pair sharing less wall than the door it draws here).
         const float DoorGapTiles = CompactLayout.DoorGapTiles;
+        // Half-width (tiles) of the opening cut into the settlement wall at each gate — one BuildingCell
+        // pitch, the same clearance PlaceBuildings already keeps between a building and the wall, so the
+        // gap reads as "one building-cell wide" rather than a magic literal. Both operands are const, so
+        // this folds to a compile-time constant like DoorGapTiles above.
+        const float GateGapHalfTiles = SettlementGenerator.BuildingCell * DungeonLayout.TilesPerAxis * 0.5f;
         static readonly Color ContourColor = new Color(0.45f, 0.75f, 1f, 0.9f);     // provisional — user will tune
         static readonly Color ViolationColor = new Color(0.85f, 0.25f, 0.2f, 0.85f); // provisional — user will tune
         static readonly Color WallColor = new Color(0.04f, 0.04f, 0.06f, 1f);        // near-black, opaque — provisional
@@ -77,6 +95,7 @@ namespace WorldGen.Rendering
             if (transform.childCount > 0) { built = true; return; }   // hot-reload guard
 
             contourLayer = MakeLayer("ContourLayer");       // FIRST → the building outline sits behind everything
+            townWallLayer = MakeLayer("TownWallLayer");     // settlement wall — same "backdrop" role as the contour
             linesLayer = MakeLayer("LinesLayer");
             junctionsLayer = MakeLayer("JunctionsLayer");   // AFTER lines → draws on top of segments
             nodesLayer = MakeLayer("NodesLayer");           // AFTER junctions → draws on top
@@ -117,11 +136,14 @@ namespace WorldGen.Rendering
             DungeonUiKit.ClearLayer(junctionsLayer);
             DungeonUiKit.ClearLayer(contourLayer);
             DungeonUiKit.ClearLayer(wallsLayer);
+            DungeonUiKit.ClearLayer(townWallLayer);
             outlines.Clear(); violationOutlines.Clear(); cards.Clear();
             lineRects.Clear(); junctionRects.Clear(); contourEdges.Clear(); wallRects.Clear();
+            townWallRects.Clear();
             contourSegs.Clear(); contourFloor = null;
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             hasContour = false;
+            isSettlement = false;
             if (lvl == null) return;
 
             // C6 — Building coherence overlay: the floor-0 FOOTPRINT SHAPE (not a bbox) is the SAME reference
@@ -134,6 +156,11 @@ namespace WorldGen.Rendering
                 contourSegs.AddRange(FloorFootprint.OutlineSegments(contourFloor, FloorFootprint.ContourMargin));
                 for (int i = 0; i < contourSegs.Count; i++) contourEdges.Add(BuildContourEdgeRect());
             }
+
+            // Settlement wall layer (Ц1, Task 10) — mutually exclusive with hasContour (Building): only one
+            // of Kind==Building / Kind==Settlement is ever true for a given bind, so the two layers never
+            // fight over the same frame.
+            isSettlement = dungeon != null && dungeon.Kind == InteriorKind.Settlement;
 
             foreach (var seg in lastRg.Segments) lineRects.Add(BuildLineRect());
             foreach (var j in lastRg.Junctions) junctionRects.Add(BuildJunctionRect());
@@ -188,6 +215,13 @@ namespace WorldGen.Rendering
             // openings track a live drag/regen. Building only (flush rooms need boundary clarity); dungeons keep
             // their spread-card look untouched.
             if (hasContour) RebuildWalls(lvl, rg);
+
+            // Settlement wall with gate gaps — Settlement only. Recomputed every reposition (gates are
+            // draggable rooms, same as any other room) so a gap tracks a live drag, matching RebuildWalls'
+            // cadence above. lvl.Wall is null for a HasWall==false config (a wall-less village); skip
+            // cleanly rather than throwing — the pool then simply stays at whatever RebuildView left it
+            // (empty, since townWallRects.Clear() runs there).
+            if (isSettlement && lvl.Wall != null) RebuildTownWall(lvl);
         }
 
         /// <summary>Draw each room's 4 walls as thin strokes, leaving a <see cref="DoorGapTiles"/>-wide gap where a
@@ -257,6 +291,91 @@ namespace WorldGen.Rendering
             return (RectTransform)go.transform;
         }
 
+        /// <summary>Settlement wall (Ц1, Task 10): draw <see cref="InteriorFloor.Wall"/> as a closed polyline
+        /// (last point connects to first — WallContour's own convention, see Contains/DistanceToEdge), with a
+        /// GateGapHalfTiles-wide opening cut wherever a gate room (TypeId 0) sits on it. Same "collect gaps →
+        /// sort → emit the remaining runs" shape as AddWall/EmitWallSeg above, generalized to an
+        /// arbitrary-direction edge (the wall polygon is not axis-aligned like a room's rectangle) via
+        /// dot-product projection instead of raw X/Y comparison. Reuses WallColor/WallThickness — a wall
+        /// reads the same regardless of which kind of interior it belongs to.</summary>
+        void RebuildTownWall(InteriorFloor lvl)
+        {
+            townWallSegBuf.Clear();
+            var wall = lvl.Wall;
+            int n = wall.Points == null ? 0 : wall.Points.Count;
+            if (n < 2) { SyncPool(townWallRects, 0, BuildTownWallRect); return; }
+            int T = DungeonLayout.TilesPerAxis;
+
+            // Gate positions in TILE space — the gap centres. TypeId 0 is a gate ONLY on a settlement floor,
+            // and this method only runs when isSettlement is true.
+            gateTileBuf.Clear();
+            foreach (var r in lvl.Rooms)
+                if (r.TypeId == 0) gateTileBuf.Add(new Vector2(r.X * T, r.Y * T));
+
+            for (int i = 0; i < n; i++)
+            {
+                var pa = wall.Points[i];
+                var pb = wall.Points[(i + 1) % n];   // closes last→first
+                AddTownWallEdge(pa.X * T, pa.Y * T, pb.X * T, pb.Y * T);
+            }
+            SyncPool(townWallRects, townWallSegBuf.Count, BuildTownWallRect);
+            for (int i = 0; i < townWallSegBuf.Count; i++)
+                PlaceLine(townWallRects[i], townWallSegBuf[i].a, townWallSegBuf[i].b, WallThickness);
+        }
+
+        // One edge of the wall polygon (tile space, A→B). Projects every gate onto the edge's own direction
+        // (t = 0..1 fraction along it); a gate whose perpendicular distance to the line is ~0 and whose t
+        // falls within the edge (with a little slack for float rounding at a shared vertex) opens a gap
+        // there. Two adjacent edges meeting exactly at a gate vertex each cut their own half-gap — the two
+        // halves sum to one full-width opening centred on the vertex, so the vertex case self-resolves.
+        void AddTownWallEdge(float ax, float ay, float bx, float by)
+        {
+            float dx = bx - ax, dy = by - ay;
+            float len2 = dx * dx + dy * dy;
+            float len = Mathf.Sqrt(len2);
+            if (len < 1e-4f) return;   // degenerate edge (two coincident wall points) — nothing to draw
+
+            townWallGapBuf.Clear();
+            foreach (var g in gateTileBuf)
+            {
+                float t = ((g.x - ax) * dx + (g.y - ay) * dy) / len2;
+                float px = ax + t * dx, py = ay + t * dy;
+                float perpDist = Mathf.Sqrt((g.x - px) * (g.x - px) + (g.y - py) * (g.y - py));
+                if (perpDist > 0.5f) continue;            // not on this edge's line
+                if (t < -0.02f || t > 1.02f) continue;    // outside this edge's extent
+                townWallGapBuf.Add(Mathf.Clamp01(t) * len);   // arc-length position along the edge
+            }
+            townWallGapBuf.Sort();
+
+            float cursor = 0f;
+            foreach (var gAlong in townWallGapBuf)
+            {
+                float gStart = Mathf.Max(0f, gAlong - GateGapHalfTiles), gEnd = Mathf.Min(len, gAlong + GateGapHalfTiles);
+                if (gStart > cursor) EmitTownWallSeg(ax, ay, dx, dy, len, cursor, gStart);
+                cursor = Mathf.Max(cursor, gEnd);
+            }
+            if (cursor < len) EmitTownWallSeg(ax, ay, dx, dy, len, cursor, len);
+        }
+
+        void EmitTownWallSeg(float ax, float ay, float dx, float dy, float len, float from, float to)
+        {
+            if (to - from < 0.05f) return;   // opening ate the whole run
+            float invLen = 1f / len;
+            Vector2 p0 = Local(ax + dx * (from * invLen), ay + dy * (from * invLen));
+            Vector2 p1 = Local(ax + dx * (to * invLen), ay + dy * (to * invLen));
+            townWallSegBuf.Add((p0, p1));
+        }
+
+        RectTransform BuildTownWallRect()
+        {
+            var go = new GameObject("TownWall", typeof(RectTransform));
+            go.transform.SetParent(townWallLayer, false);
+            var img = go.AddComponent<Image>();
+            img.color = WallColor;
+            img.raycastTarget = false;
+            return (RectTransform)go.transform;
+        }
+
         /// <summary>Grow `pool` to at least `want` rects (via `make`) and hide any surplus, so exactly the
         /// current `want` rects are visible. The pool only grows — a full RebuildView resets it.</summary>
         static void SyncPool(List<RectTransform> pool, int want, System.Func<RectTransform> make)
@@ -304,6 +423,12 @@ namespace WorldGen.Rendering
             ThemeService.Tag(img, TypeRole(r.TypeId));
             img.raycastTarget = false;   // the CONTROLLER hit-tests in tile space — cards must not eat clicks
 
+            // Gate shape cue (Ц1, Task 10): TypeId 0 already paints via profile.TypeOf(0).Role == Accent —
+            // SettlementProfile wired the "Ворота" role in Task 6, generically, through the SAME TypeRole()
+            // call every other room type goes through. That colour alone is the distinguishing cue; no extra
+            // notch/marker shape was added (the brief allows it, and a plain accent card is the cheaper option
+            // for Ц1 — revisit only if the DM checkpoint finds gates hard to spot among buildings).
+
             var outline = go.AddComponent<Outline>();
             outline.effectColor = ThemeService.Get(ThemeRole.Accent);
             outline.effectDistance = new Vector2(2f, -2f);
@@ -329,7 +454,46 @@ namespace WorldGen.Rendering
             lbl.raycastTarget = false;
 
             DungeonBadgeStrip.Build(go.transform, dungeon, profile.FloorLinks, levelIndex, r, font, onJumpToLevel);
+
+            // Has-image indicator (Ц1, Task 10): a building card whose Room.Preview is non-null gets a tiny
+            // corner marker — NOT the image itself (a 512px preview per building is exactly the bloat the
+            // size-bounded import was designed to avoid; it opens full-size in Ц2). Built as a CHILD of the
+            // card, like the label/badge strip above, so it inherits the card's position/lifecycle for free
+            // and needs no separate SyncPool-style bookkeeping: Room.Preview is read-only world definition
+            // that cannot change mid-drag/cascade, so unlike the corridor/wall pools (whose element COUNT is
+            // re-derived from live routing every reposition) this is a one-time decision made when the card
+            // is built. It is "pooled and deactivated" in exactly the sense the file's own outlines/
+            // violationOutlines already use: added once per card, then only .enabled/SetActive toggles — and
+            // it is destroyed with the rest of the card on the next RebuildView's ClearLayer(nodesLayer), so
+            // switching settlements can never leave a ghost indicator behind.
+            if (isSettlement && r.TypeId == 1)
+            {
+                var indicator = BuildPreviewIndicator(go.transform);
+                indicator.SetActive(r.Preview != null);
+            }
+
             cards[r.Id] = rt;
+        }
+
+        const float PreviewIndicatorPx = 8f;   // a few-pixel corner mark — deliberately small, not a thumbnail
+
+        /// <summary>Small filled square pinned to a building card's top-right corner, flagging "this room has
+        /// an authored preview image". ThemeRole.Dot is otherwise unused by any WorldGen.Rendering caller — a
+        /// free, neutral role for a marker that means neither "selected" (Accent) nor "problem" (Danger).</summary>
+        GameObject BuildPreviewIndicator(Transform parent)
+        {
+            var go = new GameObject("PreviewIndicator", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(1f, 1f);
+            rt.sizeDelta = new Vector2(PreviewIndicatorPx, PreviewIndicatorPx);
+            rt.anchoredPosition = new Vector2(-2f, -2f);
+
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Dot);
+            img.raycastTarget = false;
+            return go;
         }
 
         RectTransform BuildLineRect()
