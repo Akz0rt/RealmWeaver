@@ -106,7 +106,9 @@ namespace WorldGen.Generation
         /// BuildingGenerator.RewireStairChain builds and rebuilds them and the inspector cannot add one —
         /// so counting them would make every floor of every multi-floor building prompt); and (4) any room
         /// carrying a battle map (Room.Grid != null — the field is null until the DM edits one, so a
-        /// generated floor never trips this on its own).</summary>
+        /// generated floor never trips this on its own); and (5) a settlement building carrying a Preview
+        /// image (Room.Preview != null — null until the DM adds one, so a freshly generated settlement of
+        /// any size never trips this on its own).</summary>
         public static bool HasAuthoredContent(InteriorFloor lvl)
         {
             if (lvl == null) return false;
@@ -115,6 +117,7 @@ namespace WorldGen.Generation
             {
                 if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
                 if (r.Grid != null) return true;
+                if (r.Preview != null) return true;
                 foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
             }
             return false;

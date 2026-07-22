@@ -218,5 +218,85 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Streets: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Assembly")]
+        public void SelfTestAssembly()
+        {
+            bool ok = true;
+            var cfg = new SettlementConfig { Seed = 2, TargetBuildings = 40, HasWall = true };
+            var data = SettlementGenerator.Generate(cfg, "poi-town");
+
+            // ---- 1. Shape: one floor, Kind Settlement, owner set --------------------------------------
+            if (data.Kind != InteriorKind.Settlement || data.OwnerPoiId != "poi-town")
+            { Debug.LogError("FAIL assembly: Kind/OwnerPoiId not set from Generate's arguments"); ok = false; }
+            if (data.Floors.Count != 1)
+            { Debug.LogError($"FAIL assembly: expected 1 floor, got {data.Floors.Count}"); ok = false; }
+            var floor = data.Floors[0];
+
+            // ---- 2. The wall is stored on the floor ----------------------------------------------------
+            if (floor.Wall == null || !floor.Wall.IsClosedSane())
+            { Debug.LogError("FAIL assembly: floor.Wall is null/insane"); ok = false; }
+
+            // ---- 3. Gate nodes are TypeId 0 and sit on the wall; building nodes are TypeId 1 -----------
+            int gateNodes = 0, buildNodes = 0;
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId == 0) { gateNodes++;
+                    if (floor.Wall.DistanceToEdge(r.X, r.Y) > 1e-3f)
+                    { Debug.LogError($"FAIL assembly: gate room {r.Id} at ({r.X:F3},{r.Y:F3}) is off the wall"); ok = false; } }
+                else if (r.TypeId == 1) { buildNodes++;
+                    if (!floor.Wall.Contains(r.X, r.Y))
+                    { Debug.LogError($"FAIL assembly: building room {r.Id} at ({r.X:F3},{r.Y:F3}) is outside the wall"); ok = false; } }
+                else
+                { Debug.LogError($"FAIL assembly: room {r.Id} has TypeId {r.TypeId}, want 0 (gate) or 1 (building)"); ok = false; }
+            }
+            if (gateNodes < 2)
+            { Debug.LogError($"FAIL assembly: {gateNodes} gate nodes, want ≥2"); ok = false; }
+            if (buildNodes < 20)
+            { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥20 for a 40-target town"); ok = false; }
+
+            // ---- 4. Links reference real rooms and every building room is reachable from a gate room ---
+            // (Assembly must map StreetEdge indices to the SAME Room ids it created, in order.)
+            var byId = new System.Collections.Generic.Dictionary<int, Room>();
+            foreach (var r in floor.Rooms) byId[r.Id] = r;
+            foreach (var l in floor.Links)
+                if (!byId.ContainsKey(l.RoomA) || !byId.ContainsKey(l.RoomB))
+                { Debug.LogError($"FAIL assembly: link ({l.RoomA},{l.RoomB}) references a missing room"); ok = false; break; }
+
+            // ---- 5. NextRoomId is past every id, so the editor's «add» never collides -----------------
+            int maxId = 0; foreach (var r in floor.Rooms) if (r.Id > maxId) maxId = r.Id;
+            if (floor.NextRoomId <= maxId)
+            { Debug.LogError($"FAIL assembly: NextRoomId {floor.NextRoomId} is not past maxId {maxId}"); ok = false; }
+
+            // ---- 6. Determinism: same seed → same room count and first room position ------------------
+            var data2 = SettlementGenerator.Generate(cfg, "poi-town");
+            if (data2.Floors[0].Rooms.Count != floor.Rooms.Count ||
+                data2.Floors[0].Rooms[0].X != floor.Rooms[0].X)
+            { Debug.LogError("FAIL assembly: two seed-2 settlements differ — not deterministic"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Assembly: PASS");
+        }
+
+        [ContextMenu("Self-Test: Settlement Authored Content")]
+        public void SelfTestSettlementAuthored()
+        {
+            bool ok = true;
+            var floor = new InteriorFloor { NextRoomId = 3 };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 1 });
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1 });
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });   // generator link: Authored stays false
+
+            // ---- 1. A freshly generated settlement is NOT authored -------------------------------------
+            if (DungeonOps.HasAuthoredContent(floor))
+            { Debug.LogError("FAIL authored: a plain generated settlement floor counts as authored"); ok = false; }
+
+            // ---- 2. A building carrying a Preview image IS authored ------------------------------------
+            // Drop the Preview check and «Сгенерировать заново» silently destroys images.
+            floor.Rooms[0].Preview = new byte[] { 1, 2, 3 };
+            if (!DungeonOps.HasAuthoredContent(floor))
+            { Debug.LogError("FAIL authored: a building with a Preview did not count as authored"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Authored Content: PASS");
+        }
     }
 }

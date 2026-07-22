@@ -127,5 +127,44 @@ namespace WorldGen.Generation
             if (kept.Count > targetCount) kept.RemoveRange(targetCount, kept.Count - targetCount);
             return kept;
         }
+
+        /// <summary>Assemble one settlement floor: gate rooms (TypeId 0) then building rooms (TypeId 1) in
+        /// the SAME order the street stage indexes them (gates first), streets → links, wall stored on the
+        /// floor. Room ids are assigned 1..N in that order so a StreetEdge index i maps to room id i+1.</summary>
+        public static InteriorFloor BuildFloor(SettlementConfig cfg)
+        {
+            var wall = BuildWall(cfg);
+            var gates = PlaceGates(wall, GateCountFor(cfg.TargetBuildings), cfg.Seed);
+            var buildings = PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
+
+            var floor = new InteriorFloor { Wall = wall };
+            // Node index i (gates first, then buildings) → room id (i+1). Ids are stable and dense.
+            var idByIndex = new int[gates.Count + buildings.Count];
+            int next = 1;
+            for (int i = 0; i < gates.Count; i++)
+            {
+                idByIndex[i] = next;
+                floor.Rooms.Add(new Room { Id = next, TypeId = 0, X = gates[i].X, Y = gates[i].Y });
+                next++;
+            }
+            for (int i = 0; i < buildings.Count; i++)
+            {
+                idByIndex[gates.Count + i] = next;
+                floor.Rooms.Add(new Room { Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y });
+                next++;
+            }
+            floor.NextRoomId = next;
+            foreach (var e in edges)
+                floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
+            return floor;
+        }
+
+        public static InteriorData Generate(SettlementConfig cfg, string ownerPoiId)
+        {
+            var data = new InteriorData { OwnerPoiId = ownerPoiId, Kind = InteriorKind.Settlement };
+            data.Floors.Add(BuildFloor(cfg));
+            return data;
+        }
     }
 }
