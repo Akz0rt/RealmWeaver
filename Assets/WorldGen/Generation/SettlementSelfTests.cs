@@ -449,5 +449,22 @@ namespace WorldGen.Rendering
 
             if (ok) Debug.Log("Settlement Active/Dummy: PASS");
         }
+
+        [ContextMenu("Self-Test: Settlement Validation")]
+        public void SelfTestSettlementValidation()
+        {
+            bool ok = true;
+            // A walled city has 2-4 gates and no boss room — under the dungeon rules that WRONGLY yields
+            // "должен быть ровно один вход" + "нет комнаты босса". A settlement must yield NO issues.
+            var city = SettlementGenerator.Generate(
+                new WorldGen.Generation.SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true }, "poi-city");
+            var issues = DungeonValidator.Validate(city);
+            if (issues.Count != 0)
+            {
+                foreach (var iss in issues) Debug.LogError($"FAIL settlement-validation: settlement produced dungeon issue '{iss.Message}'");
+                ok = false;
+            }
+            if (ok) Debug.Log("Settlement Validation: PASS");
+        }
     }
 }

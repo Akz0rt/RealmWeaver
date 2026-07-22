@@ -70,6 +70,7 @@ static class Program
         settlement.SelfTestVillage();
         settlement.SelfTestSettlementAuthored();
         settlement.SelfTestActiveBuildings();
+        settlement.SelfTestSettlementValidation();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

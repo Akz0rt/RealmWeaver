@@ -29,7 +29,12 @@ namespace WorldGen.Generation
             // in here, because this validator is HEADLESS and InteriorProfile lives in WorldGen.Rendering
             // (ThemeRole → UnityEngine), so the profile can never be the source for this file.
             bool isBuilding = dungeon.Kind == InteriorKind.Building;
-            bool bossRule = !isBuilding;
+
+            // A SETTLEMENT reuses this graph but none of these dungeon rules apply: its gates are not "the one
+            // entrance", it has no boss, no stairwell. Settlement-specific rules are deferred (Ц1) — until then
+            // a settlement is always valid. Gate every dungeon check below off for it.
+            bool isSettlement = dungeon.Kind == InteriorKind.Settlement;
+            bool bossRule = !isBuilding && !isSettlement;
 
             for (int li = 0; li < dungeon.Floors.Count; li++)
             {
@@ -47,7 +52,7 @@ namespace WorldGen.Generation
                     if (r.TypeId == BuildingGenerator.StairTypeId) { typeTwo++; typeTwoId = r.Id; }
                 }
 
-                if ((!isBuilding || li == 0) && entrances != 1)
+                if ((!isBuilding || li == 0) && !isSettlement && entrances != 1)
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: должен быть ровно один вход (сейчас {entrances}).");
                 if (bossRule && typeTwo > 1)
                     Add(issues, IssueSeverity.Error, li, $"Этаж {human}: не более одной комнаты босса (сейчас {typeTwo}).");
@@ -71,7 +76,7 @@ namespace WorldGen.Generation
                 // root at the entrance; a building UPPER floor has no Вход, so it roots at the Лестница (the stair
                 // arrival) — otherwise deleting a corridor upstairs could strand a room with no warning.
                 int rootId = (isBuilding && li > 0) ? typeTwoId : entranceId;
-                if (rootId != 0)
+                if (rootId != 0 && !isSettlement)
                 {
                     var reached = Reachable(rootId, adj);
                     int orphans = 0;
