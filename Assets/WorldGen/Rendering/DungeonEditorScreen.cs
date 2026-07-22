@@ -755,7 +755,16 @@ namespace WorldGen.Rendering
             // Double-click on a room opens its battle map — the same relay the inspector's «Боевая карта»
             // button uses, so both entry points go through MapScreenController.OpenBattleGrid and its
             // room-resolves guard rather than duplicating the open logic.
-            viewController.OnRoomDoubleClicked = id => OnOpenBattleGridRequested?.Invoke(id);
+            // Final-review fix C2: a settlement building has no direct battle map (see
+            // DungeonInspectorPanel.Rebuild's matching gate) — its interior comes via building-interior
+            // recursion, not a room-level grid over the whole town. SelectRoom(id) already ran inside
+            // DungeonViewController.OnPointerClick before this callback fires, so the room is still
+            // selected; only the battle-grid open itself is skipped.
+            viewController.OnRoomDoubleClicked = id =>
+            {
+                if (current != null && current.Kind == InteriorKind.Settlement) return;
+                OnOpenBattleGridRequested?.Invoke(id);
+            };
             viewController.OnGraphMutated = RevalidateAndRefresh;
             // Re-validate ONCE the settle has actually landed. RevalidateAndRefresh validates BEFORE the
             // cascade animation finishes (it has to — it is the thing that starts it), and during that window

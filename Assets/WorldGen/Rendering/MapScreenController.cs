@@ -154,6 +154,16 @@ namespace WorldGen.Rendering
         {
             if (editingDungeon == null || roomId == 0 || battleGridScreen == null) return;
 
+            // Final-review fix C2 (belt-and-suspenders): a settlement building has no direct battle map — its
+            // interior comes via building-interior recursion, not a room-level grid over the whole town's
+            // ~40-node graph (BattleGridGenerator.ProjectDoors routes RoutingMode.Clean, a multi-second hang
+            // at settlement scale). The inspector hides its «Боевая карта» button and the graph's
+            // double-click is a no-op for a settlement (DungeonInspectorPanel.Rebuild / DungeonEditorScreen's
+            // OnRoomDoubleClicked), so this path should be unreachable already; this defensive return backs
+            // both of those up so no future entry point can reach BattleGridScreen.Bind -> ProjectDoors for a
+            // settlement.
+            if (editingDungeon.Kind == InteriorKind.Settlement) return;
+
             // Resolve BEFORE touching battleGridRoomId: DesiredScreen() switches on that field alone, so
             // setting it for a room that does not resolve would show the battle-grid screen with nothing
             // bound — blank on a first open, or still showing the PREVIOUS room's map on a later one, with

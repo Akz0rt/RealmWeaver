@@ -108,7 +108,13 @@ namespace WorldGen.Rendering
                 BuildRoomSection(content, lvl, room, StructureLocked);
                 if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && room.TypeId == 1)
                     BuildPreviewSection(content, room);
-                BuildBattleGridSection(content, room);
+                // Final-review fix C2: a settlement building gets no direct battle map — its interior comes
+                // via building-interior recursion (Ц2), not a room-level grid over the WHOLE town's ~40-node
+                // graph (BattleGridGenerator.ProjectDoors routes RoutingMode.Clean, a multi-second hang at
+                // settlement scale). Gate at the room-graph level (Kind), not room.TypeId, so it also covers
+                // non-building rooms on a settlement floor (e.g. the gate room).
+                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
+                    BuildBattleGridSection(content, room);
                 BuildSecretsSection(content, room);
                 BuildCorridorsSection(content, lvl, room);
                 AddDivider(content);

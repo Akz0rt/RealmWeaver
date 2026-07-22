@@ -553,6 +553,36 @@ namespace WorldGen.Persistence
                 if (b3 != null && b3.Preview != null)
                 { Debug.LogError("FAIL settlement save: building 3 (no image) loaded with a non-null Preview"); ok = false; }
             }
+
+            // ---- 2. Null keys are OMITTED from the file, not merely null-safe on load -------------------
+            // The assertions above pass with or WITHOUT [JsonProperty(NullValueHandling.Ignore)] on Wall/
+            // Preview: a serialized "Wall": null / "Preview": null round-trips to null just as well as an
+            // absent key, and the town above always has a non-null Wall, so neither Ignore attribute is
+            // actually exercised by scenario 1. This proves the "a project with no settlements/images does
+            // not grow in size" contract directly: a minimal, wall-less (open village — commit 7ec6185) town
+            // whose only building has no Preview must not write EITHER key at all. Confirmed no global
+            // NullValueHandling on ProjectSerializer.BuildSettings and no camelCase contract resolver
+            // (PascalCase keys, same as every other self-test's json.Contains/Replace checks in this file),
+            // so a literal "\"Wall\"" / "\"Preview\"" substring check is exactly what a leaked key looks like.
+            string minPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "settlement_nullkeys_selftest.json");
+            var minFloor = new InteriorFloor { NextRoomId = 2 };
+            minFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });   // building, Preview stays null
+            // minFloor.Wall is left null — a legitimate wall-less village, not an omission.
+            var village = new InteriorData { OwnerPoiId = "poi-village", Kind = InteriorKind.Settlement, Floors = { minFloor } };
+
+            ProjectSerializer.Save(minPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new System.Collections.Generic.List<VoronoiCell>(), new System.Collections.Generic.List<PoiData>(),
+                new NotesDocument(), new System.Collections.Generic.List<RegionLabelData>(),
+                new System.Collections.Generic.List<RegionData>(),
+                new System.Collections.Generic.List<InteriorData> { village });
+            string minJson = System.IO.File.ReadAllText(minPath);
+            try { System.IO.File.Delete(minPath); } catch { }
+
+            if (minJson.Contains("\"Wall\""))
+            { Debug.LogError("FAIL settlement save: a null Wall was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+            if (minJson.Contains("\"Preview\""))
+            { Debug.LogError("FAIL settlement save: a null Preview was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+
             Debug.Log(ok ? "Settlement Round-Trip: PASS" : "Settlement Round-Trip: FAIL");
         }
     }

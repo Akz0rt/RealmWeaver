@@ -187,7 +187,7 @@ namespace WorldGen.Rendering
             var start = new Dictionary<int, (float x, float y)>();
             foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
 
-            if (dungeon != null && dungeon.Kind == InteriorKind.Building)
+            if (dungeon != null && (dungeon.Kind == InteriorKind.Building || dungeon.Kind == InteriorKind.Settlement))
             {
                 // BUILDING (spec C4, revised 2026-07-19): a dragged room STAYS exactly where the DM dropped
                 // it — NO floor re-pack, NO cascade of other rooms (the user's hard rule: dragging a room
@@ -198,6 +198,22 @@ namespace WorldGen.Rendering
                 // snapshot→rollback→SmoothDamp path below animates only its small nudge (every other room has
                 // start==target and does not move). Floor 0 and upper floors behave identically now (no
                 // per-floor contour containment).
+                //
+                // SETTLEMENT (final-review fix I3): a settlement's buildings are placed non-overlapping BY
+                // CONSTRUCTION (PlaceBuildings) and its "corridors" are trunk/branch streets spanning up to
+                // ~80 tiles — far past DungeonLayout.MaxCorridorTiles (8). Falling into the DUNGEON branch
+                // below (Separate → EnforceCorridorLeash → Separate) violently yanked every linked building
+                // toward the dragged one and collapsed the whole town on the FIRST BeginCascade, which fires
+                // on drag-end AND on any OnChanged edit (e.g. attaching a building preview image) — so this
+                // could fire before the DM ever dragged anything. A settlement wants exactly the BUILDING
+                // treatment: stays put, anti-overlap only, never leashed. This is safe to share verbatim:
+                // SettleDraggedRoom → RealignUpperFloorsToColumn early-returns on Floors.Count <= 1 (a
+                // settlement has exactly one floor), so it is a no-op for a settlement, and
+                // NudgeRoomOffOverlaps early-returns for an unresolved/zero room id (e.g. a non-drag edit,
+                // where lastAnchorRoomId is stale or 0) — so a pure OnChanged edit with no drag moves nothing
+                // and this branch redraws statically, exactly fixing the "adding a preview image collapses
+                // the town" symptom. NudgeRoomOffOverlaps is O(n) over the floor's own room list (a plain
+                // overlap scan, not a routing pass), so this introduces no new cost even at 40-80 buildings.
                 //
                 // The shaft auto-realign (commit e61473a) is PART of this step and lives inside
                 // SettleDraggedRoom, not at the RevalidateAndRefresh call site above it: the nudge can move
@@ -477,7 +493,11 @@ namespace WorldGen.Rendering
             // this room drags its linked rooms along, and they drag theirs. Runs per drag sample (live),
             // unlike the cascade — the pull must be felt while moving, not on release. The dragged room is the
             // anchor and never yields.
-            if (dungeon == null || dungeon.Kind != InteriorKind.Building)
+            // Settlements skip the leash too (final-review fix I3, same rationale as BeginCascade's Building
+            // branch above): a settlement's streets can be far longer than MaxCorridorTiles, so leashing this
+            // LIVE per-drag-sample pull would yank the whole town toward the cursor while dragging, not just
+            // on release.
+            if (dungeon == null || (dungeon.Kind != InteriorKind.Building && dungeon.Kind != InteriorKind.Settlement))
                 DungeonLayout.EnforceCorridorLeash(lvl, draggingRoomId);
             RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
         }
