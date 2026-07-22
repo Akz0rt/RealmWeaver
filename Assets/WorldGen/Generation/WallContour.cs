@@ -21,7 +21,7 @@ namespace WorldGen.Generation
         public bool IsClosedSane()
         {
             if (Points == null || Points.Count < 3) return false;
-            float minX = 1f, minY = 1f, maxX = 0f, maxY = 0f;
+            float minX = Points[0].X, minY = Points[0].Y, maxX = Points[0].X, maxY = Points[0].Y;
             foreach (var p in Points)
             {
                 if (p.X < minX) minX = p.X; if (p.X > maxX) maxX = p.X;

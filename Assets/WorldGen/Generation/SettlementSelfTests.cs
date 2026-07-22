@@ -50,6 +50,21 @@ namespace WorldGen.Rendering
             if (!anyMoved)
             { Debug.LogError("FAIL wall: seed 7 and seed 8 produced identical contours — jitter is inert"); ok = false; }
 
+            // ---- 6. IsClosedSane negative cases: degenerate contours must read as NOT sane --------------
+            // A stub that always returns true would pass every assertion above; these two catch that.
+            var twoPoint = new WallContour();
+            twoPoint.Points.Add(new WallPoint { X = 0.2f, Y = 0.2f });
+            twoPoint.Points.Add(new WallPoint { X = 0.8f, Y = 0.8f });
+            if (twoPoint.IsClosedSane())
+            { Debug.LogError("FAIL wall: a 2-point contour (Points.Count < 3) reports IsClosedSane true"); ok = false; }
+
+            var zeroSpan = new WallContour();
+            zeroSpan.Points.Add(new WallPoint { X = 0.5f, Y = 0.5f });
+            zeroSpan.Points.Add(new WallPoint { X = 0.5f, Y = 0.5f });
+            zeroSpan.Points.Add(new WallPoint { X = 0.5f, Y = 0.5f });
+            if (zeroSpan.IsClosedSane())
+            { Debug.LogError("FAIL wall: a 3-point contour with all points at (0.5,0.5) (zero bbox span) reports IsClosedSane true"); ok = false; }
+
             if (ok) Debug.Log("Settlement Wall Contour: PASS");
         }
     }
