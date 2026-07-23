@@ -174,7 +174,6 @@ namespace WorldGen.Rendering
                 case PoiType.Ruin:      Ruin(b); break;
                 case PoiType.Dungeon:   Dungeon(b); break;
                 case PoiType.Encounter: Encounter(b); break;
-                case PoiType.Camp:      Camp(b); break;
                 case PoiType.Port:      Port(b); break;
                 default:                Unknown(b); break;
             }
@@ -252,15 +251,6 @@ namespace WorldGen.Rendering
             Stroke(b, M - 30, M - 18, M - 18, M - 30, 6, Acc);                  // guard
             Stroke(b, M + 18, M - 30, M + 30, M - 18, 6, Acc);                  // guard
             Disc(b, M - 28, M - 28, 5, Acc); Disc(b, M + 28, M - 28, 5, Acc);   // pommels
-        }
-
-        static void Camp(Color32[] b) // tent + crossed apex poles
-        {
-            TriUp(b, M, M - 26, M + 26, 34, IcoLight);
-            VBar(b, M, M - 26, M + 30, 4, IcoShade);                            // seam
-            FillRect(b, M - 10, M - 26, M + 10, M - 18, IcoShade);              // entrance
-            Stroke(b, M - 10, M + 22, M + 10, M + 34, 4, IcoLight);
-            Stroke(b, M + 10, M + 22, M - 10, M + 34, 4, IcoLight);
         }
 
         static void Port(Color32[] b) // anchor

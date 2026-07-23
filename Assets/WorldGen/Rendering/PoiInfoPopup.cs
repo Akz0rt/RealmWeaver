@@ -143,7 +143,6 @@ namespace WorldGen.Rendering
             PoiType.Ruin => "Руины",
             PoiType.Dungeon => "Подземелье",
             PoiType.Encounter => "Встреча",
-            PoiType.Camp => "Лагерь",
             PoiType.Port => "Порт",
             _ => "Точка",
         };

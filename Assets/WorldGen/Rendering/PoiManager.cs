@@ -372,7 +372,6 @@ namespace WorldGen.Rendering
                 case PoiType.Tower:    return "Башня";
                 case PoiType.Temple:   return "Храм";
                 case PoiType.Encounter: return "Встреча";
-                case PoiType.Camp:     return "Лагерь";
                 case PoiType.Port:     return "Порт";
                 default: return type.ToString();
             }

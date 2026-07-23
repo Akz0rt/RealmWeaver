@@ -195,7 +195,7 @@ namespace WorldGen.Rendering
             {
                 (PoiType.City, "Город"), (PoiType.Fortress, "Креп."), (PoiType.Village, "Дер."),
                 (PoiType.Tower, "Башня"), (PoiType.Temple, "Храм"), (PoiType.Ruin, "Руины"),
-                (PoiType.Dungeon, "Подзем."), (PoiType.Encounter, "Встр."), (PoiType.Camp, "Лагерь"),
+                (PoiType.Dungeon, "Подзем."), (PoiType.Encounter, "Встр."),
                 (PoiType.Port, "Порт"),
             };
             foreach (var (type, label) in pickTypes) AddTypeButton(rowGO.transform, type, label);

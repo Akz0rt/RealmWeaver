@@ -140,15 +140,14 @@ namespace WorldGen.Rendering
             }
         }
 
-        // Ц1.5 per-type composition defaults: a City is a walled town, a Village an open one, a Camp a tiny
-        // open cluster. (total buildings, of which active.) Halved from the Ц1 draft per DM feedback.
+        // Ц1.5 per-type composition defaults: a City is a walled town, a Village an open one.
+        // (total buildings, of which active.) Halved from the Ц1 draft per DM feedback.
         static (int total, int active) SettlementDefaults(PoiType type)
         {
             switch (type)
             {
                 case PoiType.City:    return (20, 5);
                 case PoiType.Village: return (10, 3);
-                case PoiType.Camp:    return (5, 2);
                 default:              return (10, 3);
             }
         }

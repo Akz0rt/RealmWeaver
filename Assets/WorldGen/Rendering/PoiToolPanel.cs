@@ -372,7 +372,6 @@ namespace WorldGen.Rendering
             AddChip(row3, "Встречи", PoiType.Encounter);
 
             var row4 = MakeChipRow(t);
-            AddChip(row4, "Лагеря", PoiType.Camp);
             AddChip(row4, "Порты", PoiType.Port);
 
             OnFilterChanged(null); // подсветить "Все"
@@ -628,7 +627,6 @@ namespace WorldGen.Rendering
                 case PoiType.Tower: return "Башня";
                 case PoiType.Temple: return "Храм";
                 case PoiType.Encounter: return "Встреча";
-                case PoiType.Camp: return "Лагерь";
                 case PoiType.Port: return "Порт";
                 default: return "Точка";
             }
