@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using Newtonsoft.Json;
 
 namespace WorldGen.Generation
 {
@@ -15,6 +16,12 @@ namespace WorldGen.Generation
         public Vector2 WorldPosition;       // visual position in map XZ (draggable)
         public string CustomSpritePath;     // null = type placeholder; kept only for display (filename shown in the edit panel) once CustomIconBytes is set
         public byte[] CustomIconBytes;      // null = use type placeholder; the authoritative, self-contained icon (survives save/load, unlike a path)
+        /// <summary>A POI's preview image (PNG bytes), or null. Optional and null until the DM adds one —
+        /// a map of dozens of POIs must not carry dozens of images by default. NullValueHandling.Ignore
+        /// keeps the key out of every save when absent (the Room.Preview precedent in DungeonData.cs).
+        /// World definition only.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public byte[] Preview = null;
         public float IconScale = 1f;        // multiplier on PoiManager.iconWorldSize, DM-tunable per POI
         public float LabelScale = 1f;       // multiplier on PoiManager.labelCharacterSize, DM-tunable per POI
     }

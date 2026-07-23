@@ -165,6 +165,61 @@ namespace WorldGen.Persistence
                 : "Self-Test POI Type Backward Compat: FAIL — see field checks in SelfTestPoiTypeBackwardCompat");
         }
 
+        [ContextMenu("Self-Test: POI Preview Round-Trip")]
+        public void SelfTestPoiPreviewRoundTrip()
+        {
+            bool ok = true;
+            var genParams = new GenerationParams { Seed = 1, Width = 10f, Height = 10f };
+            var notes = new NotesDocument();
+
+            // ---- 1. Byte-integrity: a POI WITH a Preview round-trips it intact; a POI WITHOUT one loads
+            // null. Both share one file, so this checks VALUES only — the JSON-text omission check (part 2
+            // below) needs a narrower file, since this POI A here legitimately writes a "Preview" key. -------
+            var poiWithPreview = new PoiData { Type = PoiType.City, Name = "Город с превью", OwnerCellId = 0, Preview = new byte[] { 9, 8, 7 } };
+            var poiNoPreview = new PoiData { Type = PoiType.Village, Name = "Деревня без превью", OwnerCellId = 1 };
+            var pois = new List<PoiData> { poiWithPreview, poiNoPreview };
+
+            string path = Path.Combine(Application.temporaryCachePath, "poi_preview_roundtrip_selftest.json");
+            ProjectSerializer.Save(path, genParams, new List<VoronoiCell>(), pois, notes,
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
+            var result = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!result.Success || result.Pois.Count != 2)
+            { Debug.LogError("FAIL poi preview: the project did not load back with its two POIs"); ok = false; }
+            else
+            {
+                var loadedWith = result.Pois.FirstOrDefault(p => p.Name == "Город с превью");
+                var loadedWithout = result.Pois.FirstOrDefault(p => p.Name == "Деревня без превью");
+                if (loadedWith == null || loadedWith.Preview == null || !loadedWith.Preview.SequenceEqual(new byte[] { 9, 8, 7 }))
+                { Debug.LogError("FAIL poi preview: POI A's Preview bytes were lost or corrupted"); ok = false; }
+                if (loadedWithout == null || loadedWithout.Preview != null)
+                { Debug.LogError("FAIL poi preview: POI B (no image) loaded with a non-null Preview"); ok = false; }
+            }
+
+            // ---- 2. Omit-on-null, scoped to dodge the Room.Preview key collision: the settlement round-trip
+            // test above (line ~583) already proves NullValueHandling.Ignore for the settlement building's
+            // "Preview" key, and POI A above legitimately writes the SAME key name for its own image — so
+            // neither that file nor this method's part-1 file can be used to prove the OMIT case for a POI
+            // without one; a bare json.Contains("\"Preview\"") on either would be a false failure (A) or an
+            // ambiguous pass (which "Preview" omitted?). This save is scoped to ONLY POI B — no image, no
+            // interiors/settlements, no other POI — so the only field in the whole file that could possibly
+            // write a "Preview" key is POI B's own (null) one, making a plain substring check unambiguous. ---
+            string minPath = Path.Combine(Application.temporaryCachePath, "poi_preview_nullkey_selftest.json");
+            var minPois = new List<PoiData> { new PoiData { Type = PoiType.Village, Name = "Деревня без превью", OwnerCellId = 1 } };
+            ProjectSerializer.Save(minPath, genParams, new List<VoronoiCell>(), minPois, notes,
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
+            string minJson = File.ReadAllText(minPath);
+            try { File.Delete(minPath); } catch { }
+
+            if (minJson.Contains("\"Preview\""))
+            { Debug.LogError("FAIL poi preview: a null POI Preview was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+
+            Debug.Log(ok
+                ? "Self-Test POI Preview Round-Trip: PASS"
+                : "Self-Test POI Preview Round-Trip: FAIL — see field checks in SelfTestPoiPreviewRoundTrip");
+        }
+
         [ContextMenu("Self-Test: Project Corrupt File Handling")]
         public void SelfTestCorruptFile()
         {
