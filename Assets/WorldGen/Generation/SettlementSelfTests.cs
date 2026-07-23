@@ -512,7 +512,14 @@ namespace WorldGen.Rendering
             bool ok = true;
             // Field names verified against SettlementConfig (Seed / TargetBuildings / ActiveBuildings /
             // HasWall) and the initializer shape the other settlement tests use.
-            var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            // Seed pinned to 1, not 7 (Task 2 / Ц1.7): on seed 7 assertion 5's wall check reads clean even
+            // with the wall obstacle DISABLED (MutRoadsNoWallBlock, gen AND dragged) — the shortcut outside
+            // the wall never wins there, so the assertion was vacuous. Seed 1 is the FIRST of a scan over
+            // 1..200 (proxy: Build with wallTiles=null, which has the identical effect on the mask as the
+            // mutant's `if (false)`) where a routed cell actually lands outside the wall/gate rects once the
+            // wall stops blocking, in BOTH the generated and dragged cases, while the real wall-respecting
+            // Build stays clean — same seed-pinning precedent as SelfTestRoadJunctions/SelfTestStreets.
+            var cfg = new SettlementConfig { Seed = 1, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
 
             void AssertClean(InteriorFloor lvl, string label)

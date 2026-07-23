@@ -447,6 +447,14 @@ New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoReuse' `
   'float step = 1f;   // MUTANT: no reuse discount' `
   'MutRoadsNoReuse.cs'
 
+# MutRoadsNoWallBlock: the wall's obstacle-marking condition forced to false — the wall never blocks a
+# road, so A* is free to route outside the wall (or hug it from the inside, inside the clearance ring).
+# SelfTestRoads assertion 5 (every routed cell lands inside the wall, or inside a gate's own rect) must fail.
+New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoWallBlock' `
+  'if (!wallTiles.Contains(x, y) || wallTiles.DistanceToEdge(x, y) < RoadClearanceTiles)' `
+  'if (false)   // MUTANT: wall never blocks' `
+  'MutRoadsNoWallBlock.cs'
+
 # MutRoadsNoArterials: SettlementStreets' gate-gate arterial pass skipped — gates fall back to being
 # mere seed points. SelfTestStreets' arterial-net span assertion must fail.
 New-SettlementMutant 'SettlementStreets.cs' 'MutRoadsNoArterials' `
@@ -540,6 +548,12 @@ New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoAvoid' `
   @('SettlementRoads\.') `
   @('WorldGen.Generation.MutRoadsNoAvoid.SettlementRoads.')
 
+# A SECOND rebind of SelfTestRoads (separate SelfTests_<class>.cs output) — MutRoadsNoWallBlock is caught
+# by the SAME method's wall assertion (5), not by a different one.
+New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoWallBlock' `
+  @('SettlementRoads\.') `
+  @('WorldGen.Generation.MutRoadsNoWallBlock.SettlementRoads.')
+
 New-SettlementRebind 'SelfTestRoadJunctions' 'MutRoadsNoReuse' `
   @('SettlementRoads\.') `
   @('WorldGen.Generation.MutRoadsNoReuse.SettlementRoads.')
@@ -551,5 +565,5 @@ New-SettlementRebind 'SelfTestStreets' 'MutRoadsNoArterials' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 9 settlement mutants + 9 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 10 settlement mutants + 10 settlement rebound test copies into gen/"
 
