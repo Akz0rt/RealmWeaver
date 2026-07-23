@@ -36,6 +36,17 @@ namespace WorldGen.Rendering
             return d;
         }
 
+        /// <summary>Appends a new interior to the project list (Ц2: a building interior opened from an
+        /// active settlement building — a SECOND interior for the same OwnerPoiId, distinguished by a
+        /// non-zero OwnerRoomId). GetByPoiId/GetOrCreateForPoi cannot serve this: both resolve the FIRST
+        /// interior for a poiId, which is always the town (created before any building interior can
+        /// exist). No existence check here — the caller (MapScreenController.OpenBuildingInterior) already
+        /// probes via InteriorOps.FindBuildingInterior before calling this.</summary>
+        public void AddInterior(InteriorData interior)
+        {
+            if (interior != null) dungeons.Add(interior);
+        }
+
         public void LoadDungeons(List<InteriorData> loaded)
         {
             dungeons.Clear();

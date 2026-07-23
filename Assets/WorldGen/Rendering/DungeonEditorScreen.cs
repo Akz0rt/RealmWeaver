@@ -14,8 +14,16 @@ namespace WorldGen.Rendering
     {
         public System.Action OnCloseRequested;      // wired to MapScreenController.CloseDungeonEditor
         public System.Action<int> OnOpenBattleGridRequested;   // relayed from DungeonInspectorPanel; room id
+        public System.Action<int> OnOpenBuildingRequested;     // relayed from a settlement double-click + the
+                                                                 // inspector's «Карта здания» button; room id
 
         InteriorData current;
+        // Set only when Bind is called for a building interior opened FROM an active settlement building
+        // (MapScreenController.OpenBuildingInterior) — never for a plain top-level interior (dungeon,
+        // stand-alone building, settlement town), where it stays null and the strip keeps its unchanged
+        // profile-term title + «← Назад» label. Non-null is always non-empty (the caller falls back to
+        // "Здание N" when the town room has no Title), so string.IsNullOrEmpty alone gates both.
+        string headerOverride;
         public int CurrentLevelIndex { get; private set; }
         public InteriorFloor CurrentLevel =>
             current != null && CurrentLevelIndex >= 0 && CurrentLevelIndex < current.Floors.Count
@@ -25,6 +33,7 @@ namespace WorldGen.Rendering
         public RectTransform Sidebar { get; private set; }     // inspector host (Task 5)
         Transform levelTabsRow;
         Text titleLabel;
+        Text backLabel;   // "← Назад", or "← Город" while headerOverride is set (Ц2 building-from-town)
 
         DungeonViewController viewController;
         DungeonFlatRenderer flatRenderer;
@@ -48,8 +57,11 @@ namespace WorldGen.Rendering
 
         const float StripHeight = 44f;
         const float ToolbarHeight = 36f;
-        const int DefaultBuildingFloors = 2;
-        const int DefaultRooms = 6;
+        // Public so MapScreenController.OpenBuildingInterior can reuse the EXACT same generation config a
+        // fresh building shell gets from Bind's Floors.Count==0 path (BuildingGenerator.Generate call
+        // below), just with a deterministic InteriorOps.BuildingSeed instead of FreshSeed().
+        public const int DefaultBuildingFloors = 2;
+        public const int DefaultRooms = 6;
         const int MaxUpperRooms = 20;    // hard ceiling for the generate-only stepper (below the area cap when it's tighter)
         const int RegenAttempts = 24;    // seeds tried per «Перегенерировать»: with the conservative area cap, one press reliably packs
 
@@ -64,11 +76,18 @@ namespace WorldGen.Rendering
             built = true;
         }
 
-        /// <summary>Bind a dungeon; ensure it has at least one level; show level 0.</summary>
-        public void Bind(InteriorData dungeon)
+        /// <summary>Bind a dungeon; ensure it has at least one level; show level 0. <paramref
+        /// name="headerOverride"/> is set only for a building interior opened from an active settlement
+        /// building (MapScreenController.OpenBuildingInterior passes the town room's Title, or a
+        /// "Здание N" fallback) — it replaces the strip's profile-term title AND switches the back button
+        /// to «← Город» for as long as this interior stays bound. Omitted (null) for every other Bind call
+        /// site (a top-level dungeon/building/settlement, or the "back to town" rebind), which keeps the
+        /// pre-Ц2 title + «← Назад» behaviour unchanged.</summary>
+        public void Bind(InteriorData dungeon, string headerOverride = null)
         {
             EnsureBuilt();
             current = dungeon;
+            this.headerOverride = headerOverride;
             if (current.Floors.Count == 0)
             {
                 if (current.Kind == InteriorKind.Building)
@@ -90,8 +109,14 @@ namespace WorldGen.Rendering
             selectedRoomId = 0;
             // The top-strip title is per-INTERIOR, not hard-coded: a building interior used to be labelled
             // «Подземелье» on screen. Set here (not in BuildTopStrip) because the strip is built at Awake,
-            // long before Bind gives us an interior to read the profile from.
-            if (titleLabel != null) titleLabel.text = Profiles.ForRoom(current).TermInterior;
+            // long before Bind gives us an interior to read the profile from. A building-from-town
+            // (headerOverride set by Bind) shows the town room's own name instead of the generic profile
+            // term; both it and the back-button label are re-applied on every SetLevel (not just Bind) so
+            // they survive a floor-tab switch within the SAME building.
+            if (titleLabel != null)
+                titleLabel.text = !string.IsNullOrEmpty(headerOverride) ? headerOverride : Profiles.ForRoom(current).TermInterior;
+            if (backLabel != null)
+                backLabel.text = !string.IsNullOrEmpty(headerOverride) ? "← Город" : "← Назад";
             RebuildLevelTabs();
             RefreshToolbar();   // free-edit vs generate-only, per the floor we just switched to
             RefreshBody();
@@ -324,8 +349,8 @@ namespace WorldGen.Rendering
             var backRect = backGO.GetComponent<RectTransform>();
             backRect.anchorMin = new Vector2(0f, 0.5f); backRect.anchorMax = new Vector2(0f, 0.5f);
             backRect.pivot = new Vector2(0f, 0.5f); backRect.sizeDelta = new Vector2(110f, 28f); backRect.anchoredPosition = new Vector2(12f, 0f);
-            var backLbl = MakeText(backGO.transform, "← Назад", 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
-            Stretch(backLbl.rectTransform); backLbl.raycastTarget = false;
+            backLabel = MakeText(backGO.transform, "← Назад", 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(backLabel.rectTransform); backLabel.raycastTarget = false;
 
             // Placeholder text only — SetLevel replaces it with the bound interior's profile term.
             titleLabel = MakeText(strip.transform, "", 14, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleLeft);
@@ -768,7 +793,18 @@ namespace WorldGen.Rendering
             // selected; only the battle-grid open itself is skipped.
             viewController.OnRoomDoubleClicked = id =>
             {
-                if (current != null && current.Kind == InteriorKind.Settlement) return;
+                if (current != null && current.Kind == InteriorKind.Settlement)
+                {
+                    // Ц2: a settlement's double-click no longer just no-ops. An ACTIVE building (the
+                    // player-facing kind — TypeId 1, not a dummy) opens its own full building interior
+                    // instead of a battle map; a gate (TypeId 0) or a dummy building stays a no-op exactly
+                    // as before. SelectRoom(id) already ran inside DungeonViewController.OnPointerClick
+                    // before this callback fires, same as the battle-grid path below.
+                    var room = CurrentLevel?.GetRoom(id);
+                    if (room != null && room.TypeId == 1 && !room.IsDummy)
+                        OnOpenBuildingRequested?.Invoke(id);
+                    return;
+                }
                 OnOpenBattleGridRequested?.Invoke(id);
             };
             viewController.OnGraphMutated = RevalidateAndRefresh;
@@ -804,6 +840,7 @@ namespace WorldGen.Rendering
             inspectorPanel = inspGO.AddComponent<DungeonInspectorPanel>();
             inspectorPanel.OnChanged = RevalidateAndRefresh;
             inspectorPanel.OnOpenBattleGridRequested = id => OnOpenBattleGridRequested?.Invoke(id);
+            inspectorPanel.OnOpenBuildingRequested = id => OnOpenBuildingRequested?.Invoke(id);
         }
 
         void RebuildLevelTabs()

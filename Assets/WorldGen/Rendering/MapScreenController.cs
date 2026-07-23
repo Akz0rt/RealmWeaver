@@ -38,6 +38,12 @@ namespace WorldGen.Rendering
         Coroutine activeGeneration;
         PoiData editingPoi;
         InteriorData editingDungeon;
+        // Ц2: the TOWN interior a currently-open BUILDING interior was drilled into from, or null when
+        // editingDungeon is not a building-from-town (a top-level dungeon/building/settlement). Set only by
+        // OpenBuildingInterior and cleared only by the back-to-town branch of CloseDungeonEditor (or by any
+        // reset that also clears editingDungeon — OnWorldRegenerated, OpenDungeonEditor's stale-parent
+        // guard). editingDungeon itself still drives DesiredScreen(); this is pure "where does back go" memory.
+        InteriorData parentTown;
         int battleGridRoomId;        // 0 = the battle grid screen is closed
         ScreenSwitcher switcher;
 
@@ -70,6 +76,7 @@ namespace WorldGen.Rendering
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnCloseRequested = CloseDungeonEditor;
             if (battleGridScreen != null) battleGridScreen.OnCloseRequested = CloseBattleGrid;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBattleGridRequested = OpenBattleGrid;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBuildingRequested = OpenBuildingInterior;
 
             RefreshScreenState();
         }
@@ -78,6 +85,7 @@ namespace WorldGen.Rendering
         {
             editingPoi = null; // a fresh world drops any open POI editor
             editingDungeon = null; // a fresh world drops any open dungeon editor
+            parentTown = null;   // ...and any building-from-town back-target it was carrying
             battleGridRoomId = 0;   // a fresh world drops the battle grid screen too
             RefreshScreenState();
         }
@@ -105,6 +113,10 @@ namespace WorldGen.Rendering
         public void OpenDungeonEditor(PoiData poi)
         {
             if (poi == null || dungeonManager == null) return;
+            // Stale-parent guard (Ц2): every entry into the editor FROM THE MAP is a top-level interior —
+            // clear any building-from-town back-target a PREVIOUS session inside a different (or the same)
+            // POI's building left behind. Only OpenBuildingInterior below is allowed to set parentTown.
+            parentTown = null;
             var kind = Profiles.InteriorKindForPoiType(poi.Type) ?? InteriorKind.Dungeon;
             editingDungeon = dungeonManager.GetOrCreateForPoi(poi.Id, kind);
             // A freshly created settlement is an empty shell — generate its map once, deterministically from
@@ -152,14 +164,72 @@ namespace WorldGen.Rendering
             }
         }
 
+        /// <summary>Wired to DungeonEditorScreen.OnCloseRequested (the top-strip back button) — the SAME
+        /// single handler for both of its meanings. When a building interior is open (parentTown != null),
+        /// «← Город» rebinds the town interior in place and stays on AppScreen.Dungeon — it must NOT fall
+        /// through to the editingDungeon=null branch below, which would instead drop to the POI editor.
+        /// Otherwise («← Назад» on a top-level dungeon/building/settlement) behaviour is unchanged.</summary>
         public void CloseDungeonEditor()
         {
+            if (parentTown != null)
+            {
+                editingDungeon = parentTown;
+                parentTown = null;
+                if (dungeonEditorScreen != null) dungeonEditorScreen.Bind(editingDungeon);
+                RefreshScreenState();
+                return;
+            }
+
             editingDungeon = null;   // editingPoi is still set → DesiredScreen returns PoiEditor
             RefreshScreenState();
             // The POI editor is re-SHOWN (SetActive), not re-Bound, so its «Карта локации» label would
             // keep its pre-dungeon "Создать" text. Refresh it here to reflect a dungeon just created —
             // Bind is otherwise the only place that computes it.
             if (editingPoi != null && poiEditorScreen != null) poiEditorScreen.RefreshMapSection();
+        }
+
+        /// <summary>Opens an ACTIVE settlement building's own full building interior (Ц2 recursion), one
+        /// level down from the currently-open town. Mirrors OpenBattleGrid's resolve-before-mutate
+        /// discipline: the bound editor's Kind, the room, its TypeId and IsDummy are all checked BEFORE any
+        /// field is touched, so an id that cannot resolve to an openable building leaves the DM exactly
+        /// where they are (same room still selected, same screen shown) — no partial navigation, no error
+        /// visible in a standalone build.</summary>
+        public void OpenBuildingInterior(int roomId)
+        {
+            if (editingDungeon == null || roomId == 0 || dungeonManager == null || dungeonEditorScreen == null) return;
+            if (editingDungeon.Kind != InteriorKind.Settlement) return;
+
+            int floorIndex = dungeonEditorScreen.CurrentLevelIndex;
+            if (floorIndex < 0 || floorIndex >= editingDungeon.Floors.Count) return;
+            var room = editingDungeon.Floors[floorIndex].GetRoom(roomId);
+            if (room == null || room.TypeId != 1 || room.IsDummy) return;
+
+            string poiId = editingDungeon.OwnerPoiId;
+            // GetByPoiId/GetOrCreateForPoi cannot serve this lookup — both resolve the FIRST interior for a
+            // poiId, which is the town (see DungeonManager.AddInterior's doc). A building interior is a
+            // SECOND interior for the same poiId, distinguished only by OwnerRoomId.
+            var building = InteriorOps.FindBuildingInterior(dungeonManager.GetAll(), poiId, roomId);
+            if (building == null)
+            {
+                // Deterministic seed (InteriorOps.BuildingSeed), NOT DungeonEditorScreen.FreshSeed — the SAME
+                // node's interior must generate identically every time it's (re-)opened, across sessions and
+                // save/load, not just within one. Reuses the exact room/floor counts a fresh top-level
+                // building shell gets (DungeonEditorScreen.Bind's Floors.Count==0 path) so the two code paths
+                // can never disagree about what a "default" building looks like.
+                int seed = InteriorOps.BuildingSeed(poiId, roomId);
+                building = BuildingGenerator.Generate(seed, poiId, DungeonEditorScreen.DefaultRooms, DungeonEditorScreen.DefaultBuildingFloors);
+                building.OwnerRoomId = roomId;   // Generate() already sets OwnerPoiId + Kind=Building
+                // Added NON-empty (Generate always returns floor 0 populated): Bind's Floors.Count==0 path
+                // exists precisely to lazily seed an EMPTY interior with FreshSeed(), which would silently
+                // overwrite this deterministic seed the very first time the building is opened.
+                dungeonManager.AddInterior(building);
+            }
+
+            parentTown = editingDungeon;
+            editingDungeon = building;
+            string header = !string.IsNullOrEmpty(room.Title) ? room.Title : $"Здание {roomId}";
+            dungeonEditorScreen.Bind(editingDungeon, header);
+            RefreshScreenState();
         }
 
         /// <summary>Opens the battle map of a room on the CURRENTLY open interior floor. Returns to the

@@ -31,6 +31,7 @@ namespace WorldGen.Rendering
     {
         public System.Action OnChanged;   // fires after any edit; screen re-runs validation + view.BeginCascade()
         public System.Action<int> OnOpenBattleGridRequested;   // room id
+        public System.Action<int> OnOpenBuildingRequested;     // room id — «Карта здания» (Ц2)
 
         InteriorData dungeon;
         System.Func<int> currentLevelIndex;
@@ -306,6 +307,13 @@ namespace WorldGen.Rendering
         void BuildDummyToggleSection(Transform parent, Room room)
         {
             var sec = AddSection(parent, "DummyToggleSection");
+            // Ц2: an active building's own full interior, one level down. Same PRIMARY styling as
+            // BuildBattleGridSection's «Боевая карта» below — the one other control in this panel that
+            // opens a whole other screen — placed first/above the dummy toggle per the task brief
+            // ("beside the Ц1.5 dummy toggle").
+            AddFullWidthButton(sec.transform, "Карта здания", ThemeRole.Accent,
+                               () => OnOpenBuildingRequested?.Invoke(room.Id),
+                               labelRole: ThemeRole.AccentInk, height: 30f, fontSize: 13);
             AddFullWidthButton(sec.transform, "Сделать пустышкой", ThemeRole.Elev, () =>
             {
                 room.IsDummy = true;
