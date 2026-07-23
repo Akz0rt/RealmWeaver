@@ -72,6 +72,9 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutRoadsNoWallBlockSelfTests().SelfTestRoads()),
                 ("MutRoadsNoArterials", "SettlementStreets' gate-gate arterial pass skipped (gates fall back to seed points)",
                     () => new WorldGen.MutantTests.MutRoadsNoArterialsSelfTests().SelfTestStreets()),
+
+                ("MutNoOwnedCleanup",  "InteriorOps' single-node RemoveOwnedInteriors(all, poiId, roomId) overload always returns 0 (node deletion never cleans the owned interior)",
+                    () => new WorldGen.MutantTests.MutNoOwnedCleanupSelfTests().SelfTestInteriorOps()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

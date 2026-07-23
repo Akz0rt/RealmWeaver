@@ -475,12 +475,24 @@ New-SettlementMutant 'SettlementStreets.cs' 'MutRoadsNoArterials' `
 # IReadOnlyList<T> does not covary over a struct T, so that mismatch would surface as a COMPILE ERROR, not a
 # failing assertion — the same trap BattleGridOps's SelfTestOps scoping (above) exists to dodge.
 $settlementTests = Get-Content (Join-Path $src 'SettlementSelfTests.cs') -Raw -Encoding UTF8
+# Same rebind shape, second source: InteriorOps' mutant (below) is caught via SelfTestInteriorOps, which lives
+# in InteriorOpsSelfTests.cs, not SettlementSelfTests.cs.
+$interiorTests = Get-Content (Join-Path $src 'InteriorOpsSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
-  $t = $settlementTests -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
-  $t = $t -replace 'class SettlementSelfTests', "class ${mutantClass}SelfTests"
-
   $marker = "public void $methodName()"
+  # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
+  # lives in $settlementTests, so this stays a no-op for them; only SelfTestInteriorOps falls through to
+  # $interiorTests.
+  $srcText = $settlementTests
+  $origClass = 'SettlementSelfTests'
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $interiorTests
+    $origClass = 'InteriorOpsSelfTests'
+  }
+  $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
+  $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
+
   $startIdx = $t.IndexOf($marker)
   if ($startIdx -lt 0) { throw "$methodName not found while deriving SelfTests_$mutantClass.cs" }
   $endIdx = $t.IndexOf('[ContextMenu', $startIdx)
@@ -564,7 +576,21 @@ New-SettlementRebind 'SelfTestStreets' 'MutRoadsNoArterials' `
   @('SettlementStreets\.') `
   @('WorldGen.Generation.MutRoadsNoArterials.SettlementStreets.')
 
+# MutNoOwnedCleanup: InteriorOps' single-node RemoveOwnedInteriors(all, poiId, roomId) overload always returns
+# 0 — a building node's deleted interior is never cleaned up. SelfTestInteriorOps' exact-1-removed assertion
+# (and its town/sibling/foreign-interior survivor checks) must fail.
+New-SettlementMutant 'InteriorOps.cs' 'MutNoOwnedCleanup' `
+  'return all.RemoveAll(d => d != null && d.OwnerPoiId == poiId && d.OwnerRoomId == roomId);' `
+  'return 0;   // MUTANT: node deletion never cleans the owned interior' `
+  'MutNoOwnedCleanup.cs'
+
+# InteriorOps.cs defines ONE class and no data types (InteriorData lives in DungeonData.cs, unmutated) — the
+# same sound-rebind shape as SettlementRoads, so a rebind of just "InteriorOps." is sound.
+New-SettlementRebind 'SelfTestInteriorOps' 'MutNoOwnedCleanup' `
+  @('InteriorOps\.') `
+  @('WorldGen.Generation.MutNoOwnedCleanup.InteriorOps.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 10 settlement mutants + 10 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 11 settlement mutants + 11 settlement rebound test copies into gen/"
 
