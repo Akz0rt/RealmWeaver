@@ -47,6 +47,7 @@ namespace WorldGen.Rendering
         Image iconThumb;
         Slider iconScaleSlider;
         Slider labelScaleSlider;
+        Transform previewImageSection;   // children rebuilt by RefreshPreviewImageSection() after every change
         Text notesLabel;
         Text mapSectionLabel;
         GameObject mapCaptionGO;
@@ -95,6 +96,7 @@ namespace WorldGen.Rendering
             iconScaleSlider.SetValueWithoutNotify(poi.IconScale);
             labelScaleSlider.SetValueWithoutNotify(poi.LabelScale);
             UpdateIconThumb(poi);
+            RefreshPreviewImageSection();
             UpdateNotesLabel(poi);
             RefreshPreview();
             RefreshMapSectionLabel();
@@ -262,6 +264,64 @@ namespace WorldGen.Rendering
             RefreshPreview();
         }
 
+        // Preview image (Ц1.7 Task 4): mirrors DungeonInspectorPanel.BuildPreviewSection/PickPreviewImage
+        // (Room.Preview) but for PoiData.Preview — the container is built once (EnsureBuilt/BuildColumns)
+        // and its children are torn down + rebuilt here on every change, so the thumbnail/button labels
+        // stay in sync without this screen needing a whole-panel Rebuild() like DungeonInspectorPanel has.
+        void RefreshPreviewImageSection()
+        {
+            if (previewImageSection == null || current == null) return;
+            for (int i = previewImageSection.childCount - 1; i >= 0; i--)
+                Destroy(previewImageSection.GetChild(i).gameObject);
+
+            if (current.Preview != null)
+            {
+                var tex = new Texture2D(2, 2);
+                if (tex.LoadImage(current.Preview))
+                {
+                    var thumbGO = new GameObject("Thumb", typeof(RectTransform));
+                    thumbGO.transform.SetParent(previewImageSection, false);
+                    var img = thumbGO.AddComponent<Image>();
+                    img.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                    img.preserveAspect = true;
+                    img.raycastTarget = false;
+                    thumbGO.AddComponent<LayoutElement>().preferredHeight = 140f;
+                }
+            }
+
+            AddFullWidthButton(previewImageSection,
+                current.Preview != null ? "Заменить изображение" : "Добавить изображение",
+                ThemeRole.Elev, OnPickPreviewImageClicked);
+
+            if (current.Preview != null)
+                AddFullWidthButton(previewImageSection, "Убрать изображение", ThemeRole.Danger, RemovePreviewImage);
+        }
+
+        // StandaloneFileBrowser.OpenFilePanel -> ImageImport.LoadAndShrink(path, 512) -> PoiData.Preview.
+        // Same IconFilters extension list DungeonInspectorPanel.PreviewImageFilters uses (png/jpg/jpeg/gif).
+        // LoadAndShrink bounds the longest side to 512px and re-encodes to PNG regardless of source format.
+        // A null result (unreadable/undecodable file) or a cancelled picker is a silent no-op, matching the
+        // PickPreviewImage precedent. current.Preview is the SAME PoiData reference PoiManager holds in its
+        // list (Bind() never copies), so this direct field write is the write-through — same convention as
+        // UpdatePoiDescription (also a bare field set, no marker refresh/OnPoisChanged needed for text-only data).
+        void OnPickPreviewImageClicked()
+        {
+            if (current == null) return;
+            var paths = StandaloneFileBrowser.OpenFilePanel("Выбрать изображение", "", IconFilters, false);
+            if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0])) return;
+            byte[] shrunk = ImageImport.LoadAndShrink(paths[0], 512);
+            if (shrunk == null) return;
+            current.Preview = shrunk;
+            RefreshPreviewImageSection();
+        }
+
+        void RemovePreviewImage()
+        {
+            if (current == null) return;
+            current.Preview = null;
+            RefreshPreviewImageSection();
+        }
+
         void OnOpenPagesClicked()
         {
             if (current == null || notesRoot == null) return;
@@ -427,6 +487,9 @@ namespace WorldGen.Rendering
             descField = BuildInputField(t, multiline: true);
             descField.onEndEdit.AddListener(v => { if (current != null) poiManager.UpdatePoiDescription(current.Id, v); });
 
+            AddCaption(t, "ИЗОБРАЖЕНИЕ");
+            previewImageSection = BuildPreviewImageSection(t);
+
             AddCaption(t, "ИКОНКА НА КАРТЕ");
             BuildIconRow(t);
             iconScaleSlider = AddScaleSliderRow(t, "Иконка", 1f, v => { if (current != null) { poiManager.UpdatePoiIconScale(current.Id, v); RefreshPreview(); } });
@@ -573,6 +636,25 @@ namespace WorldGen.Rendering
             ApplyTypeHighlight(type);
             RefreshPreview();
             RefreshMapSectionLabel();   // #3: refresh the map row visibility + label immediately on type change
+        }
+
+        // Persistent container for the «ИЗОБРАЖЕНИЕ» section — its contents are (re)built by
+        // RefreshPreviewImageSection, which is called once from Bind() and again after every add/
+        // replace/remove so the thumbnail and button labels stay in sync with current.Preview.
+        Transform BuildPreviewImageSection(Transform t)
+        {
+            var container = new GameObject("PreviewImageSection", typeof(RectTransform));
+            container.transform.SetParent(t, false);
+            var vlg = container.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = 6f;
+            vlg.childControlWidth = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
+            // No ContentSizeFitter here: a VerticalLayoutGroup already reports its own preferred height
+            // via ILayoutElement, computed from its children — adding a ContentSizeFitter on top would
+            // fight the outer content VLG (childControlHeight=true) for the same axis (Unity anti-pattern).
+            return container.transform;
         }
 
         void BuildIconRow(Transform t)
@@ -841,6 +923,22 @@ namespace WorldGen.Rendering
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
             return text;
+        }
+
+        // Mirrors DungeonInspectorPanel.AddFullWidthButton — a full-width, fixed-height action button.
+        void AddFullWidthButton(Transform parent, string label, ThemeRole bgRole, System.Action onClick)
+        {
+            var go = new GameObject($"Btn_{label}");
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, bgRole);
+            go.AddComponent<LayoutElement>().preferredHeight = 24f;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick());
+            var lbl = MakeText(go.transform, label, 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            Stretch(lbl.rectTransform);
+            lbl.raycastTarget = false;
         }
 
         static void Stretch(RectTransform r)

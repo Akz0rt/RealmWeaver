@@ -38,6 +38,9 @@ namespace WorldGen.Rendering
         Text typeText;
         Text regionText;
         GameObject regionRowGO;
+        Image previewImage;
+        GameObject previewImageGO;
+        LayoutElement previewImageLE;
         Text descText;
         Font font;
         PoiData current;
@@ -84,7 +87,26 @@ namespace WorldGen.Rendering
             regionRowGO.SetActive(!string.IsNullOrEmpty(region));
             regionText.text = region;
 
+            ApplyPreviewImage(poi);
+
             descText.text = Truncate(poi.Description, 160);
+        }
+
+        // Content-driven layout gotcha (this card's height comes from ContentSizeFitter summing every
+        // child's preferred height — see BuildUI): the image row's LayoutElement.preferredHeight must be
+        // computed from the texture's own aspect at the card's content width (cardWidth minus the VLG's
+        // left+right padding), or the block over/under-reports its size and the layout overlaps the
+        // description below it. Texture2D created fresh per Populate — no caching, same convention as
+        // IconSpriteFor above.
+        void ApplyPreviewImage(PoiData poi)
+        {
+            if (poi.Preview == null) { previewImageGO.SetActive(false); return; }
+            var tex = new Texture2D(2, 2);
+            if (!tex.LoadImage(poi.Preview)) { previewImageGO.SetActive(false); return; }
+            previewImage.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+            float contentWidth = cardWidth - 20f; // vlg.padding = (10, 10, 8, 8) in BuildUI — left+right = 20
+            previewImageLE.preferredHeight = contentWidth * tex.height / (float)tex.width;
+            previewImageGO.SetActive(true);
         }
 
         string ResolveRegion(PoiData poi)
@@ -183,6 +205,7 @@ namespace WorldGen.Rendering
             var t = cardGO.transform;
             BuildHeader(t);
             BuildRegionRow(t);
+            BuildPreviewImageRow(t);
             descText = BuildBodyText(t, wrap: true, size: 11, role: ThemeRole.Mut);
             BuildEditButton(t);
         }
@@ -234,6 +257,20 @@ namespace WorldGen.Rendering
             regionText.alignment = TextAnchor.MiddleLeft;
             regionText.horizontalOverflow = HorizontalWrapMode.Overflow;
             regionRowGO.SetActive(false);
+        }
+
+        // Aspect-fit image between the header and the description (only when the POI has one — see
+        // ApplyPreviewImage for the height computation). Starts hidden; SetActive(false) here is a plain
+        // toggle so ContentSizeFitter simply excludes it while there's no preview to show.
+        void BuildPreviewImageRow(Transform t)
+        {
+            previewImageGO = new GameObject("PreviewImage");
+            previewImageGO.transform.SetParent(t, false);
+            previewImage = previewImageGO.AddComponent<Image>();
+            previewImage.preserveAspect = true;
+            previewImage.raycastTarget = false;
+            previewImageLE = previewImageGO.AddComponent<LayoutElement>();
+            previewImageGO.SetActive(false);
         }
 
         Text BuildBodyText(Transform t, bool wrap, int size, ThemeRole role)
