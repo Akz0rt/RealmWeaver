@@ -167,7 +167,7 @@ namespace WorldGen.Rendering
                 if (renderer.ResolveProjection(fminX, fminY, fmaxX, fmaxY)) needsProjectionFit = false;
             }
 
-            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean));
+            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
             renderer.RebuildView(dungeon, levelIndex, lvl, rg, font, OnJumpToLevel);
             RefreshHighlights();
@@ -348,7 +348,7 @@ namespace WorldGen.Rendering
         void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode)));
+            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), SettlementRoadsFor(mode)));
         }
 
         // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
@@ -358,6 +358,17 @@ namespace WorldGen.Rendering
             => dungeon != null && dungeon.Kind == InteriorKind.Settlement
                  ? RoomLinkGeometry.RoutingMode.Fast
                  : requested;
+
+        // Ц1.6: settlements route ROADS on the settle path (bind + cascade-settle, the Clean-requests)
+        // ALWAYS; during live drag/cascade frames (the Fast-requests) only if the perf spike cleared the
+        // frame budget (.superpowers/sdd/roads-perf-spike.md). When false, drag frames keep the cheap
+        // L/Z scorer — roads may transiently cross houses WHILE DRAGGING and snap clean on settle,
+        // exactly the dungeon's own Fast[drag]/Clean[settle] pattern.
+        const bool RoadsDuringDrag = false;
+
+        bool SettlementRoadsFor(RoomLinkGeometry.RoutingMode requested)
+            => dungeon != null && dungeon.Kind == InteriorKind.Settlement
+               && (RoadsDuringDrag || requested == RoomLinkGeometry.RoutingMode.Clean);
 
         // ── Commands ─────────────────────────────────────────────────────────────
 

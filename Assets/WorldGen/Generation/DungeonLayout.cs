@@ -192,7 +192,7 @@ namespace WorldGen.Generation
         /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
         /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.
         /// DERIVED — not stored. Only DM corridors are crossed (no recursion on the split sub-segments).</summary>
-        public static RenderGraph BuildRenderGraph(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
+        public static RenderGraph BuildRenderGraph(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean, bool settlementRoads = false)
         {
             var g = new RenderGraph();
             if (lvl == null) return g;
@@ -217,7 +217,13 @@ namespace WorldGen.Generation
             var linkEdges = new List<LinkEdge>(lvl.Links.Count);
             foreach (var c in lvl.Links) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
-            var routed = RoomLinkGeometry.Build(nodes, linkEdges, mode);
+            // Ц1.6: a settlement routes ROADS (SettlementRoads' fixed-grid A*) — RoomLinkGeometry's
+            // Clean is non-scaling at town size (20–34 s @60) and Fast may cross houses. The flag comes
+            // only from DungeonViewController (the seam that knows Kind); default false keeps dungeons,
+            // buildings, battle-grid projection and the self-tests byte-identical.
+            var routed = settlementRoads
+                ? SettlementRoads.Build(nodes, linkEdges)
+                : RoomLinkGeometry.Build(nodes, linkEdges, mode);
             foreach (var d in routed.Doors) g.Doors.Add(ToLayout(d));   // door points → renderer's wall gaps
 
             var segs = new List<(LayoutPoint a, LayoutPoint b)>();
