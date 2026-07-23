@@ -506,6 +506,97 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Wall Bounds: PASS");
         }
 
+        [ContextMenu("Self-Test: Settlement Roads")]
+        public void SelfTestRoads()
+        {
+            bool ok = true;
+            // Field names verified against SettlementConfig (Seed / TargetBuildings / ActiveBuildings /
+            // HasWall) and the initializer shape the other settlement tests use.
+            var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var floor = SettlementGenerator.BuildFloor(cfg);
+
+            // Adapter identical to DungeonLayout.BuildRenderGraph's: rooms → tile-space LinkNodes, links → LinkEdges (ids).
+            System.Collections.Generic.List<LinkNode> Nodes(InteriorFloor lvl)
+            {
+                var ns = new System.Collections.Generic.List<LinkNode>();
+                foreach (var r in lvl.Rooms)
+                {
+                    var (w, h) = DungeonProjection.EffectiveSize(r);
+                    ns.Add(new LinkNode { Id = r.Id, CX = r.X * DungeonLayout.TilesPerAxis, CY = r.Y * DungeonLayout.TilesPerAxis, W = w, H = h });
+                }
+                return ns;
+            }
+            System.Collections.Generic.List<LinkEdge> Edges(InteriorFloor lvl)
+            {
+                var es = new System.Collections.Generic.List<LinkEdge>();
+                foreach (var c in lvl.Links) es.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+                return es;
+            }
+
+            void AssertClean(InteriorFloor lvl, string label)
+            {
+                var nodes = Nodes(lvl); var edges = Edges(lvl);
+                var g = SettlementRoads.Build(nodes, edges);
+                var byId = new System.Collections.Generic.Dictionary<int, LinkNode>();
+                foreach (var n in nodes) byId[n.Id] = n;
+
+                // 1. Every segment is axis-aligned (a diagonal = the straight-line fallback fired — on a
+                //    freshly generated town that means routing FAILED somewhere).
+                foreach (var s in g.Segments)
+                    if (System.Math.Abs(s.A.X - s.B.X) > 1e-3f && System.Math.Abs(s.A.Y - s.B.Y) > 1e-3f)
+                    { Debug.LogError($"FAIL roads[{label}]: segment ({s.A.X:F1},{s.A.Y:F1})→({s.B.X:F1},{s.B.Y:F1}) is diagonal (fallback fired)"); ok = false; break; }
+
+                // 2. No segment enters ANY building/gate rect interior (shrunk by 0.05), except the two
+                //    rects of its OWN edge (the door stubs). THE §2 acceptance: roads go around houses.
+                foreach (var s in g.Segments)
+                {
+                    var link = lvl.Links[s.EdgeIndex];
+                    foreach (var n in nodes)
+                    {
+                        if (n.Id == link.RoomA || n.Id == link.RoomB) continue;
+                        float hw = n.W * 0.5f - 0.05f, hh = n.H * 0.5f - 0.05f;
+                        // axis-aligned segment vs rect: interval overlap on both axes.
+                        float sMinX = System.Math.Min(s.A.X, s.B.X), sMaxX = System.Math.Max(s.A.X, s.B.X);
+                        float sMinY = System.Math.Min(s.A.Y, s.B.Y), sMaxY = System.Math.Max(s.A.Y, s.B.Y);
+                        if (sMaxX > n.CX - hw && sMinX < n.CX + hw && sMaxY > n.CY - hh && sMinY < n.CY + hh)
+                        { Debug.LogError($"FAIL roads[{label}]: edge {s.EdgeIndex} segment crosses node {n.Id} at ({n.CX:F1},{n.CY:F1})"); ok = false; }
+                    }
+                }
+
+                // 3. Every node has at least one door on its rect boundary («дорога к каждому дому»).
+                foreach (var n in nodes)
+                {
+                    bool has = false;
+                    float hw = n.W * 0.5f, hh = n.H * 0.5f;
+                    foreach (var d in g.Doors)
+                        if (System.Math.Abs(d.X - n.CX) <= hw + 0.1f && System.Math.Abs(d.Y - n.CY) <= hh + 0.1f) { has = true; break; }
+                    if (!has) { Debug.LogError($"FAIL roads[{label}]: node {n.Id} has no door — no road reaches it"); ok = false; }
+                }
+
+                // 4. Deterministic: an identical re-Build yields identical segments.
+                var g2 = SettlementRoads.Build(nodes, edges);
+                if (g2.Segments.Count != g.Segments.Count)
+                { Debug.LogError($"FAIL roads[{label}]: re-Build produced {g2.Segments.Count} segments vs {g.Segments.Count}"); ok = false; }
+                else
+                    for (int i = 0; i < g.Segments.Count; i++)
+                        if (System.Math.Abs(g.Segments[i].A.X - g2.Segments[i].A.X) > 1e-4f || System.Math.Abs(g.Segments[i].B.Y - g2.Segments[i].B.Y) > 1e-4f)
+                        { Debug.LogError($"FAIL roads[{label}]: re-Build segment {i} differs — not deterministic"); ok = false; break; }
+            }
+
+            AssertClean(floor, "generated");
+
+            // 5. THE DRAG CASE: a building dragged off the BuildingCell grid must still be routed AROUND.
+            //    +1.3/+0.7 tiles is a non-multiple of the pitch and small enough (< half the ~3-tile free
+            //    gap) to never create a room overlap.
+            Room moved = null;
+            foreach (var r in floor.Rooms) if (r.TypeId == 1) { moved = r; break; }
+            moved.X += 1.3f / DungeonLayout.TilesPerAxis;
+            moved.Y += 0.7f / DungeonLayout.TilesPerAxis;
+            AssertClean(floor, "dragged");
+
+            if (ok) Debug.Log("Settlement Roads: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {

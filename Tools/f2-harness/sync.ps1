@@ -18,7 +18,7 @@ $files = @(
   'DungeonValidator.cs', 'DungeonData.cs', 'DungeonOps.cs', 'CompactLayoutSelfTests.cs',
   'BuildingGeneratorSelfTests.cs', 'DungeonGraphSelfTests.cs',
   'BattleGridData.cs', 'BattleGridGenerator.cs', 'BattleGridOps.cs', 'BattleGridUndo.cs', 'BattleGridSelfTests.cs',
-  'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementSelfTests.cs'
+  'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementRoads.cs', 'SettlementSelfTests.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
