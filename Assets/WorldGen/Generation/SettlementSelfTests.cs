@@ -515,27 +515,9 @@ namespace WorldGen.Rendering
             var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
 
-            // Adapter identical to DungeonLayout.BuildRenderGraph's: rooms → tile-space LinkNodes, links → LinkEdges (ids).
-            System.Collections.Generic.List<LinkNode> Nodes(InteriorFloor lvl)
-            {
-                var ns = new System.Collections.Generic.List<LinkNode>();
-                foreach (var r in lvl.Rooms)
-                {
-                    var (w, h) = DungeonProjection.EffectiveSize(r);
-                    ns.Add(new LinkNode { Id = r.Id, CX = r.X * DungeonLayout.TilesPerAxis, CY = r.Y * DungeonLayout.TilesPerAxis, W = w, H = h });
-                }
-                return ns;
-            }
-            System.Collections.Generic.List<LinkEdge> Edges(InteriorFloor lvl)
-            {
-                var es = new System.Collections.Generic.List<LinkEdge>();
-                foreach (var c in lvl.Links) es.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
-                return es;
-            }
-
             void AssertClean(InteriorFloor lvl, string label)
             {
-                var nodes = Nodes(lvl); var edges = Edges(lvl);
+                var nodes = RoadNodes(lvl); var edges = RoadEdges(lvl);
                 var g = SettlementRoads.Build(nodes, edges);
                 var byId = new System.Collections.Generic.Dictionary<int, LinkNode>();
                 foreach (var n in nodes) byId[n.Id] = n;
@@ -595,6 +577,93 @@ namespace WorldGen.Rendering
             AssertClean(floor, "dragged");
 
             if (ok) Debug.Log("Settlement Roads: PASS");
+        }
+
+        // Adapter identical to DungeonLayout.BuildRenderGraph's: rooms → tile-space LinkNodes, links → LinkEdges
+        // (ids). Hoisted out of SelfTestRoads (Task 7) so SelfTestRoadJunctions/SelfTestRoadsPerf share them too.
+        private System.Collections.Generic.List<LinkNode> RoadNodes(InteriorFloor lvl)
+        {
+            var ns = new System.Collections.Generic.List<LinkNode>();
+            foreach (var r in lvl.Rooms)
+            {
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                ns.Add(new LinkNode { Id = r.Id, CX = r.X * DungeonLayout.TilesPerAxis, CY = r.Y * DungeonLayout.TilesPerAxis, W = w, H = h });
+            }
+            return ns;
+        }
+        private System.Collections.Generic.List<LinkEdge> RoadEdges(InteriorFloor lvl)
+        {
+            var es = new System.Collections.Generic.List<LinkEdge>();
+            foreach (var c in lvl.Links) es.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+            return es;
+        }
+
+        [ContextMenu("Self-Test: Settlement Road Junctions")]
+        public void SelfTestRoadJunctions()
+        {
+            bool ok = true;
+            // Walled city, ≥2 gates → arterials exist. Seed pinned: the assertion is fixture-specific
+            // (like the other pinned fixtures in this file); if a code change legitimately re-routes the
+            // town, re-pin the seed — but FIRST convince yourself the merge behaviour is still there.
+            var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var floor = SettlementGenerator.BuildFloor(cfg);
+            var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
+            var g = SettlementRoads.Build(nodes, edges);
+
+            // Rebuild each edge's routed CELLS from its segments (integer walk along axis-aligned runs).
+            var gateIds = new System.Collections.Generic.HashSet<int>();
+            foreach (var r in floor.Rooms) if (r.TypeId == 0) gateIds.Add(r.Id);
+            var cellsByEdge = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.HashSet<(int, int)>>();
+            foreach (var s in g.Segments)
+            {
+                if (!cellsByEdge.TryGetValue(s.EdgeIndex, out var set))
+                    cellsByEdge[s.EdgeIndex] = set = new System.Collections.Generic.HashSet<(int, int)>();
+                int ax = (int)System.Math.Round(s.A.X), ay = (int)System.Math.Round(s.A.Y);
+                int bx = (int)System.Math.Round(s.B.X), by = (int)System.Math.Round(s.B.Y);
+                int steps = System.Math.Max(System.Math.Abs(bx - ax), System.Math.Abs(by - ay));
+                for (int i = 0; i <= steps; i++)
+                    set.Add((ax + System.Math.Sign(bx - ax) * i, ay + System.Math.Sign(by - ay) * i));
+            }
+
+            // A branch must MERGE into an arterial lane: ≥3 shared cells with one arterial edge — a lane
+            // stretch, NOT a single crossing cell (a plain perpendicular crossing shares exactly 1 cell,
+            // which the no-discount mutant would still produce; 3+ in one pair = riding the lane).
+            bool merged = false;
+            foreach (var kvB in cellsByEdge)
+            {
+                var lb = floor.Links[kvB.Key];
+                if (gateIds.Contains(lb.RoomA) && gateIds.Contains(lb.RoomB)) continue;   // arterial itself
+                foreach (var kvA in cellsByEdge)
+                {
+                    var la = floor.Links[kvA.Key];
+                    if (!gateIds.Contains(la.RoomA) || !gateIds.Contains(la.RoomB)) continue;
+                    int shared = 0;
+                    foreach (var c in kvB.Value) if (kvA.Value.Contains(c)) shared++;
+                    if (shared >= 3) { merged = true; break; }
+                }
+                if (merged) break;
+            }
+            if (!merged) { Debug.LogError("FAIL road junctions: no branch shares a >=3-cell lane stretch with any arterial — branches never merge (T-junctions lost)"); ok = false; }
+            if (ok) Debug.Log("Settlement Road Junctions: PASS");
+        }
+
+        [ContextMenu("Self-Test: Settlement Roads Perf")]
+        public void SelfTestRoadsPerf()
+        {
+            // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the 80-building cap
+            // must stay under the settle-path budget. 50 ms mirrors SelfTestStreets' bound; the per-frame
+            // budget (if RoadsDuringDrag) was measured separately by the spike.
+            var cfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
+            var floor = SettlementGenerator.BuildFloor(cfg);
+            var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
+            SettlementRoads.Build(nodes, edges);                       // warm-up
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            SettlementRoads.Build(nodes, edges);
+            sw.Stop();
+            if (sw.ElapsedMilliseconds >= 50)
+                Debug.LogError($"FAIL roads perf: Build at 80 buildings took {sw.ElapsedMilliseconds} ms, want <50");
+            else
+                Debug.Log($"Settlement Roads Perf: PASS ({sw.ElapsedMilliseconds} ms)");
         }
 
         [ContextMenu("Self-Test: Settlement Validation")]
