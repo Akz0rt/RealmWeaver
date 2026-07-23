@@ -432,6 +432,28 @@ New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoHub' `
   '// MUTANT: hub never marked connected — gate-less growth seeds from nothing' `
   'MutStreetsNoHub.cs'
 
+# MutRoadsNoAvoid: SettlementRoads' obstacle mask never marks a cell — A* routes straight through
+# houses. SelfTestRoads assertion 2 (no segment enters a foreign rect) must fail.
+New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoAvoid' `
+  'blocked[(y - minY) * gw + (x - minX)] = true;' `
+  'blocked[(y - minY) * gw + (x - minX)] = false;   // MUTANT: mask never set' `
+  'MutRoadsNoAvoid.cs'
+
+# MutRoadsNoReuse: the reuse discount removed — every road pays full price everywhere, so branches
+# take their own parallel lanes instead of merging into arterials. SelfTestRoadJunctions' >=3-shared-
+# cell lane stretch must fail.
+New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoReuse' `
+  'float step = roads.Contains(nc) ? RoadReuseFactor : 1f;' `
+  'float step = 1f;   // MUTANT: no reuse discount' `
+  'MutRoadsNoReuse.cs'
+
+# MutRoadsNoArterials: SettlementStreets' gate-gate arterial pass skipped — gates fall back to being
+# mere seed points. SelfTestStreets' arterial-net span assertion must fail.
+New-SettlementMutant 'SettlementStreets.cs' 'MutRoadsNoArterials' `
+  'if (nGates > 1)' `
+  'if (false)   // MUTANT: no gate-gate arterials' `
+  'MutRoadsNoArterials.cs'
+
 # ---- SETTLEMENT MUTANT-BOUND SELF-TESTS ---------------------------------------------------------------------
 # SettlementGenerator.cs bundles FOUR types into one file: SettlementConfig, GatePoint, PlacedBuilding AND
 # SettlementGenerator. Re-namespacing it for a mutant moves all four together. SelfTestGates/SelfTestBuildings
@@ -510,7 +532,24 @@ New-SettlementRebind 'SelfTestActiveBuildings' 'MutNoActiveMark' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutNoActiveMark.SettlementGenerator.', 'WorldGen.Generation.MutNoActiveMark.SettlementConfig')
 
+# SettlementRoads.cs defines ONE class and no data types — its LinkNode/LinkEdge/LinkGeometry
+# parameters resolve outward to the REAL WorldGen.Generation types after re-namespacing, so a rebind
+# of just "SettlementRoads." is sound (no IReadOnlyList<T> struct-covariance trap here; the fixture
+# still comes from the real SettlementGenerator).
+New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoAvoid' `
+  @('SettlementRoads\.') `
+  @('WorldGen.Generation.MutRoadsNoAvoid.SettlementRoads.')
+
+New-SettlementRebind 'SelfTestRoadJunctions' 'MutRoadsNoReuse' `
+  @('SettlementRoads\.') `
+  @('WorldGen.Generation.MutRoadsNoReuse.SettlementRoads.')
+
+# Same shape as MutStreetsNoGrowth: only SettlementStreets. is rebound; the generator stays real.
+New-SettlementRebind 'SelfTestStreets' 'MutRoadsNoArterials' `
+  @('SettlementStreets\.') `
+  @('WorldGen.Generation.MutRoadsNoArterials.SettlementStreets.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 6 settlement mutants + 6 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 9 settlement mutants + 9 settlement rebound test copies into gen/"
 

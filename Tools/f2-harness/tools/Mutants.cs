@@ -64,6 +64,12 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutStreetsNoHubSelfTests().SelfTestVillage()),
                 ("MutNoActiveMark",    "SettlementGenerator.BuildFloor's active/dummy marking neutered (IsDummy = false, every building stays active)",
                     () => new WorldGen.MutantTests.MutNoActiveMarkSelfTests().SelfTestActiveBuildings()),
+                ("MutRoadsNoAvoid",     "SettlementRoads' obstacle mask never marks a cell (roads route through houses)",
+                    () => new WorldGen.MutantTests.MutRoadsNoAvoidSelfTests().SelfTestRoads()),
+                ("MutRoadsNoReuse",     "SettlementRoads' reuse discount removed (branches never merge into arterial lanes)",
+                    () => new WorldGen.MutantTests.MutRoadsNoReuseSelfTests().SelfTestRoadJunctions()),
+                ("MutRoadsNoArterials", "SettlementStreets' gate-gate arterial pass skipped (gates fall back to seed points)",
+                    () => new WorldGen.MutantTests.MutRoadsNoArterialsSelfTests().SelfTestStreets()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
