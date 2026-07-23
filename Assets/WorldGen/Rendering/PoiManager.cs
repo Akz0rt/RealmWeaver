@@ -47,6 +47,11 @@ namespace WorldGen.Rendering
         public event Action<PoiData> OnSelectionChanged;
         public event Action OnPoisChanged;
         public event Action<bool> OnPlacementArmedChanged;
+        // Ц2 Task 6: fired at the end of DeletePoi, BEFORE OnPoisChanged, with the deleted POI's id —
+        // DungeonManager self-subscribes (see its own doc) so a building/town interior tree never outlives
+        // the POI it belongs to, regardless of which UI called DeletePoi (PoiEditPanel, PoiEditorScreen —
+        // both call sites stay untouched, this is the single shared seam).
+        public event Action<string> OnPoiDeleted;
 
         /// <summary>true — «+ Добавить точку» взведён: следующий клик по пустой клетке карты создаст точку.</summary>
         public bool PlacementArmed { get; private set; }
@@ -165,6 +170,7 @@ namespace WorldGen.Rendering
             pois.Remove(poi);
             DestroyMarker(id);
             if (selectedPoiId == id) { selectedPoiId = null; OnSelectionChanged?.Invoke(null); }
+            OnPoiDeleted?.Invoke(id);
             OnPoisChanged?.Invoke();
         }
 

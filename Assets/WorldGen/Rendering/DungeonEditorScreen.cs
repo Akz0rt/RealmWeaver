@@ -18,6 +18,23 @@ namespace WorldGen.Rendering
         public System.Action<int> OnOpenBuildingRequested;     // relayed from a settlement double-click + the
                                                                  // inspector's «Карта здания» button; room id
 
+        // Ц2 Task 6 (building-interior integrity): this screen has no DungeonManager reference (see
+        // OnOpenBuildingRequested's doc for the same constraint), so the existence-check + cleanup for a
+        // settlement building's own interior is routed through MapScreenController via these callbacks,
+        // set in MapScreenController.Start() exactly like OnOpenBattleGridRequested/OnOpenBuildingRequested
+        // above. All four are settlement-only in practice (MapScreenController's implementations return the
+        // no-op default when editingDungeon isn't a settlement) — RequestDeleteSelected/RegenerateSettlement
+        // still guard on current.Kind themselves so a null callback (an unwired screen, e.g. a future test)
+        // degrades to "no interior, nothing to clean" rather than throwing.
+        public System.Func<int, bool> SettlementBuildingHasInterior;   // roomId -> does it own an interior?
+        public System.Action<int> RemoveBuildingInterior;              // roomId -> remove ONLY its interior
+        public System.Func<bool> SettlementHasBuildingInteriors;       // does the OPEN town own any building interior?
+        // Removes EVERY building interior of the open town and returns the fresh has-interior mark (always
+        // empty right after, but recomputed through the same RoomsWithInteriorFor path Bind uses, rather
+        // than this screen assuming that shape itself) — folds cleanup + DungeonFlatRenderer.RoomsWithInterior
+        // refresh into one callback so DoRegenerateSettlement can apply it before SetLevel(0) rebuilds.
+        public System.Func<HashSet<int>> RemoveAllBuildingInteriors;
+
         InteriorData current;
         // Set only when Bind is called for a building interior opened FROM an active settlement building
         // (MapScreenController.OpenBuildingInterior) — never for a plain top-level interior (dungeon,
@@ -468,15 +485,34 @@ namespace WorldGen.Rendering
         /// expensive hand-painted battle map, and the spec's rule is explicit that painted work must never
         /// be lost silently — the same rule the floor-level «× Этаж» / «Перегенерировать» confirms already
         /// enforce for a whole floor's worth of maps. A room with no battle map deletes immediately; this
-        /// must not add friction to the common (nothing to lose) case.</summary>
+        /// must not add friction to the common (nothing to lose) case.
+        ///
+        /// Ц2 Task 6: an ACTIVE settlement building (TypeId==1) can ALSO own a full building interior one
+        /// level down (MapScreenController.OpenBuildingInterior) — deleting the node must take that with
+        /// it, same rule, composed into the SAME dialog as the battle-map warning rather than stacking a
+        /// second confirm.</summary>
         void RequestDeleteSelected()
         {
             var room = CurrentLevel?.GetRoom(selectedRoomId);   // same mirror RevalidateAndRefresh reads — single source of truth
-            if (room != null && room.Grid != null)
+            bool hasMap = room != null && room.Grid != null;
+            bool hasInterior = current != null && current.Kind == InteriorKind.Settlement
+                && room != null && room.TypeId == 1
+                && (SettlementBuildingHasInterior?.Invoke(selectedRoomId) ?? false);
+            if (hasMap || hasInterior)
             {
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить комнату?",
-                    "Боевая карта этой комнаты будет потеряна.",
-                    ok => { if (ok) viewController?.DeleteSelected(); });
+                string body = hasMap ? "Боевая карта этой комнаты будет потеряна." : "";
+                if (hasInterior)
+                    body = string.IsNullOrEmpty(body)
+                        ? "У здания есть карта — она будет удалена."
+                        : body + "\nУ здания есть карта — она будет удалена.";
+                int roomId = selectedRoomId;   // snapshot — the confirm's onResult fires later, after this frame
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Удалить комнату?", body,
+                    ok =>
+                    {
+                        if (!ok) return;
+                        if (hasInterior) RemoveBuildingInterior?.Invoke(roomId);
+                        viewController?.DeleteSelected();
+                    });
             }
             else
                 viewController?.DeleteSelected();
@@ -682,16 +718,23 @@ namespace WorldGen.Rendering
         /// «Перегенерировать» — there is nothing to select first; this always replaces Floors[0]. Mirrors
         /// RegenerateUpperFloor's confirm gate: HasAuthoredContent decides whether to ask first, same rule
         /// («Связать»-made links, room titles/notes, portals, battle-grid maps, building preview images) that
-        /// already protects a floor from a silent «× Этаж» / «Перегенерировать».</summary>
+        /// already protects a floor from a silent «× Этаж» / «Перегенерировать».
+        ///
+        /// Ц2 Task 6: a building interior opened FROM one of this town's active buildings dies with the
+        /// town too, so the gate now ALSO fires when the town owns at least one building interior — even on
+        /// an otherwise un-authored floor — and the dialog names that loss alongside the existing one
+        /// (composed into the SAME dialog, never a second one).</summary>
         void RegenerateSettlement()
         {
             if (current == null || current.Kind != InteriorKind.Settlement) return;
             var floor = current.Floors.Count > 0 ? current.Floors[0] : null;
             bool authored = floor != null && DungeonOps.HasAuthoredContent(floor);
-            if (authored)
+            bool hasInteriors = SettlementHasBuildingInteriors?.Invoke() ?? false;
+            if (authored || hasInteriors)
             {
-                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Сгенерировать заново?",
-                    "Весь город будет создан заново. Все правки, названия и изображения пропадут.",
+                string body = "Весь город будет создан заново. Все правки, названия и изображения пропадут.";
+                if (hasInteriors) body += "\nКарты зданий будут удалены.";
+                WorldGen.Notes.Rendering.ConfirmDialog.Show(font, "Сгенерировать заново?", body,
                     ok => { if (ok) DoRegenerateSettlement(); });
                 return;
             }
@@ -700,6 +743,16 @@ namespace WorldGen.Rendering
 
         void DoRegenerateSettlement()
         {
+            // Ц2 Task 6: the town's building interiors die WITH it — remove them before the new floor
+            // replaces the old one (the new floor's room ids can otherwise coincidentally collide with a
+            // stale mark) and refresh flatRenderer.RoomsWithInterior from the SAME callback's return value.
+            // This MUST run before SetLevel(0) below: Bind's own doc on RoomsWithInterior says the field is
+            // set "BEFORE SetLevel(0) ... so that first rebuild already sees it" — SetLevel -> RefreshBody
+            // is the rebuild that reads it, so refreshing AFTER SetLevel(0) would draw one frame of stale
+            // marks that nothing then redraws.
+            if (flatRenderer != null)
+                flatRenderer.RoomsWithInterior = RemoveAllBuildingInteriors?.Invoke() ?? new HashSet<int>();
+
             // New seed each press so the DM gets a DIFFERENT town. A stable char-hash of the POI id (NOT
             // string.GetHashCode, which is randomized per process in modern .NET) plus a per-press counter:
             // varied between presses, and reproducible if the same counter is reached again in a session.

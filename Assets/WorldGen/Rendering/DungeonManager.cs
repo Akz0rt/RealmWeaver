@@ -11,16 +11,25 @@ namespace WorldGen.Rendering
     {
         [Header("Dependencies")]
         public WorldMapRenderer mapRenderer;
+        // Ц2 Task 6: self-discovered if left unassigned (mirrors PoiManager.cameraController's own
+        // FindObjectOfType fallback) — DungeonManager subscribes to PoiManager.OnPoiDeleted so a deleted
+        // POI's interiors (town + every building) are cleaned up wherever DeletePoi is called from,
+        // without either caller (PoiEditPanel, PoiEditorScreen) needing a DungeonManager reference of its
+        // own. In SampleScene, PoiManager and DungeonManager are sibling GameObjects, so discovery is safe.
+        public PoiManager poiManager;
 
         readonly List<InteriorData> dungeons = new List<InteriorData>();
 
         void Awake()
         {
             if (mapRenderer != null) mapRenderer.OnWorldRegenerated += ClearAll;
+            if (poiManager == null) poiManager = FindObjectOfType<PoiManager>();
+            if (poiManager != null) poiManager.OnPoiDeleted += RemoveForPoi;
         }
         void OnDestroy()
         {
             if (mapRenderer != null) mapRenderer.OnWorldRegenerated -= ClearAll;
+            if (poiManager != null) poiManager.OnPoiDeleted -= RemoveForPoi;
         }
 
         public IReadOnlyList<InteriorData> GetAll() => dungeons;
@@ -73,8 +82,23 @@ namespace WorldGen.Rendering
 
         public void ClearAll() => dungeons.Clear();
 
-        /// <summary>Discards the interior owned by a POI (used when a type change makes the saved
-        /// interior's Kind no longer match the POI's new type — see PoiEditorScreen.OnTypePicked).</summary>
-        public void RemoveForPoi(string poiId) => dungeons.RemoveAll(d => d.OwnerPoiId == poiId);
+        /// <summary>Discards EVERY interior owned by a POI — the town AND every building interior under
+        /// it (used when a type change makes the saved interior's Kind no longer match the POI's new type,
+        /// see PoiEditorScreen.OnTypePicked; and Ц2 Task 6: self-wired to PoiManager.OnPoiDeleted above, so
+        /// deleting the POI itself takes its whole interior tree with it). InteriorOps passthrough —
+        /// GetAll() returns a read-only view, and InteriorOps' mutators need the real backing List.</summary>
+        public void RemoveForPoi(string poiId) => InteriorOps.RemoveOwnedInteriors(dungeons, poiId);
+
+        /// <summary>Ц2 Task 6: one settlement building node's own interior (node deletion) — the town and
+        /// every OTHER building's interior are untouched.</summary>
+        public int RemoveOwnedInterior(string poiId, int roomId) => InteriorOps.RemoveOwnedInteriors(dungeons, poiId, roomId);
+
+        /// <summary>Ц2 Task 6: every BUILDING interior of a town, town kept («Сгенерировать заново» replaces
+        /// the town's own floor in place; its buildings' interiors die with their nodes).</summary>
+        public int RemoveBuildingInteriors(string poiId) => InteriorOps.RemoveBuildingInteriors(dungeons, poiId);
+
+        /// <summary>Ц2 Task 6: feeds the «Сгенерировать заново» confirm gate — does this town own at least
+        /// one building interior?</summary>
+        public bool HasBuildingInteriors(string poiId) => InteriorOps.HasBuildingInteriors(dungeons, poiId);
     }
 }

@@ -77,6 +77,12 @@ namespace WorldGen.Rendering
             if (battleGridScreen != null) battleGridScreen.OnCloseRequested = CloseBattleGrid;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBattleGridRequested = OpenBattleGrid;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBuildingRequested = OpenBuildingInterior;
+            // Ц2 Task 6: building-interior integrity at the node-delete/regenerate seams — DungeonEditorScreen
+            // has no DungeonManager reference of its own, see its own doc on these four fields.
+            if (dungeonEditorScreen != null) dungeonEditorScreen.SettlementBuildingHasInterior = SettlementBuildingHasInterior;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.RemoveBuildingInterior = RemoveBuildingInterior;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.SettlementHasBuildingInteriors = SettlementHasBuildingInteriors;
+            if (dungeonEditorScreen != null) dungeonEditorScreen.RemoveAllBuildingInteriors = RemoveAllBuildingInteriors;
 
             RefreshScreenState();
         }
@@ -148,6 +154,48 @@ namespace WorldGen.Rendering
             town != null && town.Kind == InteriorKind.Settlement && dungeonManager != null
                 ? InteriorOps.RoomsWithInterior(dungeonManager.GetAll(), town.OwnerPoiId)
                 : null;
+
+        // ── Ц2 Task 6: building-interior integrity, wired to DungeonEditorScreen's four callbacks above.
+        // All four resolve against `editingDungeon` (the currently-open town) — the same interior
+        // DungeonEditorScreen itself is bound to, so there is nothing for the callback to be passed that
+        // this screen doesn't already agree on.
+
+        /// <summary>RequestDeleteSelected's confirm gate: does settlement building `roomId` (of the OPEN
+        /// town) already own an interior on file?</summary>
+        bool SettlementBuildingHasInterior(int roomId) =>
+            editingDungeon != null && editingDungeon.Kind == InteriorKind.Settlement && dungeonManager != null
+            && InteriorOps.FindBuildingInterior(dungeonManager.GetAll(), editingDungeon.OwnerPoiId, roomId) != null;
+
+        /// <summary>Node deletion: removes ONLY `roomId`'s own interior — the town and every sibling
+        /// building's interior are untouched.</summary>
+        void RemoveBuildingInterior(int roomId)
+        {
+            if (editingDungeon == null || dungeonManager == null) return;
+            dungeonManager.RemoveOwnedInterior(editingDungeon.OwnerPoiId, roomId);
+        }
+
+        /// <summary>RegenerateSettlement's confirm gate: does the OPEN town own at least one building
+        /// interior?</summary>
+        bool SettlementHasBuildingInteriors() =>
+            editingDungeon != null && editingDungeon.Kind == InteriorKind.Settlement && dungeonManager != null
+            && dungeonManager.HasBuildingInteriors(editingDungeon.OwnerPoiId);
+
+        /// <summary>«Сгенерировать заново»: removes EVERY building interior of the OPEN town (the town's
+        /// own interior is untouched — DoRegenerateSettlement replaces its floor in place) and returns the
+        /// fresh has-interior mark via the SAME RoomsWithInteriorFor path Bind uses — always empty right
+        /// after a full building-interior sweep, but recomputed rather than assumed, so the screen never has
+        /// to know the cleanup's shape itself.</summary>
+        HashSet<int> RemoveAllBuildingInteriors()
+        {
+            if (editingDungeon == null || dungeonManager == null) return new HashSet<int>();
+            dungeonManager.RemoveBuildingInteriors(editingDungeon.OwnerPoiId);
+            // RoomsWithInteriorFor returns null for a non-settlement Kind — can't happen for editingDungeon
+            // here (this callback is only ever meaningful mid-DoRegenerateSettlement, which is itself
+            // Kind==Settlement-gated), but the null-coalesce keeps this callback's contract exactly
+            // "never null" regardless, since the caller's own `?? new HashSet<int>()` only guards a null
+            // DELEGATE, not a null RETURN VALUE.
+            return RoomsWithInteriorFor(editingDungeon) ?? new HashSet<int>();
+        }
 
         /// <summary>Stable seed for a settlement's first generation, derived from the POI's GUID id. NOT
         /// string.GetHashCode — that is randomized per process in modern .NET, so a town would regenerate
