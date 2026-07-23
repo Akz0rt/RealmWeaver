@@ -19,7 +19,13 @@ namespace WorldGen.Generation
     ///
     /// Cost: the mask is O(grid); each A* is bounded by the fixed grid (≤ ~10k cells at the 80-building
     /// cap), so a full Build is linear in edge count — contrast BuildRenderGraph(Clean)'s per-link Hanan
-    /// grid over all rooms, which measured 20–34 s at 60 nodes.</summary>
+    /// grid over all rooms, which measured 20–34 s at 60 nodes.
+    ///
+    /// Ц1.7: the WALL is a hard obstacle too — an optional `wallTiles` (already scaled to TILE space by
+    /// the caller) blocks every cell outside it plus a RoadClearanceTiles ring along its inside, so a road
+    /// never crosses or hugs the wall line. Gates need no extra code: a gate's rect straddles the wall
+    /// line, and the existing own-endpoint carve (InsideInflated) already lets an arterial leave through
+    /// its own gate rect. null (villages, every pre-Ц1.7 caller) = no wall constraint, unchanged behavior.</summary>
     public static class SettlementRoads
     {
         /// <summary>How far a road keeps clear of a wall, in tiles. The inter-building free gap is
@@ -40,7 +46,7 @@ namespace WorldGen.Generation
         static readonly int[] Dxs = { 1, -1, 0, 0 };
         static readonly int[] Dys = { 0, 0, 1, -1 };
 
-        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges)
+        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges, WallContour wallTiles = null)
         {
             var g = new LinkGeometry();
             if (nodes == null || edges == null || nodes.Count == 0 || edges.Count == 0) return g;
@@ -74,6 +80,20 @@ namespace WorldGen.Generation
                     for (int x = x0; x <= x1; x++)
                         blocked[(y - minY) * gw + (x - minX)] = true;
             }
+
+            // Ц1.7: the WALL is a hard obstacle too — block every cell OUTSIDE it plus the clearance ring
+            // along its inside. Gates keep working with no new code: a gate's rect straddles the wall
+            // line, and the own-endpoint carve (InsideInflated, below) already overrides `blocked` for
+            // that edge's cells — an arterial leaves through its own gate rect.
+            if (wallTiles != null && wallTiles.IsClosedSane())
+                for (int y = minY; y <= maxY; y++)
+                    for (int x = minX; x <= maxX; x++)
+                    {
+                        int c = (y - minY) * gw + (x - minX);
+                        if (blocked[c]) continue;
+                        if (!wallTiles.Contains(x, y) || wallTiles.DistanceToEdge(x, y) < RoadClearanceTiles)
+                            blocked[c] = true;
+                    }
 
             // A* state = cell × incoming direction (0..3; 4 = start, no direction yet).
             var best = new float[gw * gh * 5];

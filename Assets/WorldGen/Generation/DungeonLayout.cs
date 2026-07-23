@@ -221,8 +221,19 @@ namespace WorldGen.Generation
             // Clean is non-scaling at town size (20–34 s @60) and Fast may cross houses. The flag comes
             // only from DungeonViewController (the seam that knows Kind); default false keeps dungeons,
             // buildings, battle-grid projection and the self-tests byte-identical.
+            //
+            // Ц1.7: the wall is a hard obstacle for roads too — build a TILE-space copy of lvl.Wall (the
+            // same scaling SettlementRoads' own self-tests use) and hand it to Build. Villages
+            // (Wall == null) pass null through unchanged.
+            WallContour wallTiles = null;
+            if (settlementRoads && lvl.Wall != null)
+            {
+                wallTiles = new WallContour();
+                foreach (var p in lvl.Wall.Points)
+                    wallTiles.Points.Add(new WallPoint { X = ToTile(p.X), Y = ToTile(p.Y) });
+            }
             var routed = settlementRoads
-                ? SettlementRoads.Build(nodes, linkEdges)
+                ? SettlementRoads.Build(nodes, linkEdges, wallTiles)
                 : RoomLinkGeometry.Build(nodes, linkEdges, mode);
             foreach (var d in routed.Doors) g.Doors.Add(ToLayout(d));   // door points → renderer's wall gaps
 

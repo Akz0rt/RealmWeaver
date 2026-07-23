@@ -518,7 +518,18 @@ namespace WorldGen.Rendering
             void AssertClean(InteriorFloor lvl, string label)
             {
                 var nodes = RoadNodes(lvl); var edges = RoadEdges(lvl);
-                var g = SettlementRoads.Build(nodes, edges);
+
+                // Tile-space wall copy, built EXACTLY the way DungeonLayout.BuildRenderGraph's adapter
+                // will (floor.Wall points × TilesPerAxis) — villages (Wall == null) skip it.
+                WallContour wallTiles = null;
+                if (lvl.Wall != null)
+                {
+                    wallTiles = new WallContour();
+                    foreach (var p in lvl.Wall.Points)
+                        wallTiles.Points.Add(new WallPoint { X = p.X * DungeonLayout.TilesPerAxis, Y = p.Y * DungeonLayout.TilesPerAxis });
+                }
+
+                var g = SettlementRoads.Build(nodes, edges, wallTiles);
                 var byId = new System.Collections.Generic.Dictionary<int, LinkNode>();
                 foreach (var n in nodes) byId[n.Id] = n;
 
@@ -556,13 +567,45 @@ namespace WorldGen.Rendering
                 }
 
                 // 4. Deterministic: an identical re-Build yields identical segments.
-                var g2 = SettlementRoads.Build(nodes, edges);
+                var g2 = SettlementRoads.Build(nodes, edges, wallTiles);
                 if (g2.Segments.Count != g.Segments.Count)
                 { Debug.LogError($"FAIL roads[{label}]: re-Build produced {g2.Segments.Count} segments vs {g.Segments.Count}"); ok = false; }
                 else
                     for (int i = 0; i < g.Segments.Count; i++)
                         if (System.Math.Abs(g.Segments[i].A.X - g2.Segments[i].A.X) > 1e-4f || System.Math.Abs(g.Segments[i].B.Y - g2.Segments[i].B.Y) > 1e-4f)
                         { Debug.LogError($"FAIL roads[{label}]: re-Build segment {i} differs — not deterministic"); ok = false; break; }
+
+                // 5. Ц1.7 THE WALL: every routed cell must land inside the wall, or inside some GATE
+                //    node's inflated rect (the gate-crossing exemption — an arterial straddles its own
+                //    gate). Cell-walk technique borrowed from SelfTestRoadJunctions. Skipped for villages.
+                if (lvl.Wall != null)
+                {
+                    var gateIds = new System.Collections.Generic.HashSet<int>();
+                    foreach (var r in lvl.Rooms) if (r.TypeId == 0) gateIds.Add(r.Id);
+
+                    foreach (var s in g.Segments)
+                    {
+                        int ax = (int)System.Math.Round(s.A.X), ay = (int)System.Math.Round(s.A.Y);
+                        int bx = (int)System.Math.Round(s.B.X), by = (int)System.Math.Round(s.B.Y);
+                        int steps = System.Math.Max(System.Math.Abs(bx - ax), System.Math.Abs(by - ay));
+                        for (int i = 0; i <= steps; i++)
+                        {
+                            int cx = ax + System.Math.Sign(bx - ax) * i, cy = ay + System.Math.Sign(by - ay) * i;
+                            if (wallTiles.Contains(cx, cy)) continue;
+
+                            bool inGateRect = false;
+                            foreach (var gid in gateIds)
+                            {
+                                if (!byId.TryGetValue(gid, out var gn)) continue;
+                                if (System.Math.Abs(cx - gn.CX) <= gn.W * 0.5f + SettlementRoads.RoadClearanceTiles
+                                    && System.Math.Abs(cy - gn.CY) <= gn.H * 0.5f + SettlementRoads.RoadClearanceTiles)
+                                { inGateRect = true; break; }
+                            }
+                            if (!inGateRect)
+                            { Debug.LogError($"FAIL roads[{label}]: edge {s.EdgeIndex} cell ({cx},{cy}) is outside the wall and not inside any gate's rect"); ok = false; }
+                        }
+                    }
+                }
             }
 
             AssertClean(floor, "generated");
@@ -656,9 +699,21 @@ namespace WorldGen.Rendering
             var cfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
-            SettlementRoads.Build(nodes, edges);                       // warm-up
+
+            // Ц1.7: the wall check's cost (O(grid × wall segments)) must be paid HERE too — the 50 ms
+            // gate is supposed to absorb it, so the timed Build must actually run the wall sweep, at the
+            // largest grid (80-building cap) where it costs the most. Same tile-space copy as AssertClean.
+            WallContour wallTiles = null;
+            if (floor.Wall != null)
+            {
+                wallTiles = new WallContour();
+                foreach (var p in floor.Wall.Points)
+                    wallTiles.Points.Add(new WallPoint { X = p.X * DungeonLayout.TilesPerAxis, Y = p.Y * DungeonLayout.TilesPerAxis });
+            }
+
+            SettlementRoads.Build(nodes, edges, wallTiles);             // warm-up
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            SettlementRoads.Build(nodes, edges);
+            SettlementRoads.Build(nodes, edges, wallTiles);
             sw.Stop();
             if (sw.ElapsedMilliseconds >= 50)
                 Debug.LogError($"FAIL roads perf: Build at 80 buildings took {sw.ElapsedMilliseconds} ms, want <50");
