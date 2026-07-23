@@ -47,6 +47,20 @@ namespace WorldGen.Generation
             return false;
         }
 
+        /// <summary>Every building-node room id under the POI that already has its own interior on file —
+        /// feeds DungeonFlatRenderer's has-interior corner mark (Ц2 Task 5). Same OwnerRoomId != 0 filter
+        /// as HasBuildingInteriors above, just collected into a set instead of short-circuited into a
+        /// bool. OwnerRoomId 0 (the town itself) is excluded by construction: no interior is ever added
+        /// with OwnerRoomId 0 for a building (see AddInterior's doc).</summary>
+        public static HashSet<int> RoomsWithInterior(IReadOnlyList<InteriorData> all, string poiId)
+        {
+            var result = new HashSet<int>();
+            if (all == null || string.IsNullOrEmpty(poiId)) return result;
+            foreach (var d in all)
+                if (d != null && d.OwnerPoiId == poiId && d.OwnerRoomId != 0) result.Add(d.OwnerRoomId);
+            return result;
+        }
+
         /// <summary>Deterministic building-interior seed from its owner pair. Explicit FNV-1a over the
         /// poi-id chars, then the room id — string.GetHashCode is NOT stable across runtimes and must
         /// never feed persisted content.</summary>

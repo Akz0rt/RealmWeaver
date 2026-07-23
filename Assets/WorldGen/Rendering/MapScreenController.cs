@@ -135,9 +135,19 @@ namespace WorldGen.Rendering
                 };
                 editingDungeon.Floors.AddRange(WorldGen.Generation.SettlementGenerator.Generate(cfg, poi.Id).Floors);
             }
-            if (dungeonEditorScreen != null) dungeonEditorScreen.Bind(editingDungeon);
+            if (dungeonEditorScreen != null)
+                dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
             RefreshScreenState();
         }
+
+        /// <summary>Ц2, Task 5: room ids of `town`'s own buildings that already have their own interior on
+        /// file — feeds DungeonFlatRenderer's has-interior corner mark. Settlement-only (null for a
+        /// dungeon/building bind, same "omitted = no mark" contract DungeonEditorScreen.Bind documents) so
+        /// callers can pass this unconditionally without their own Kind check.</summary>
+        HashSet<int> RoomsWithInteriorFor(InteriorData town) =>
+            town != null && town.Kind == InteriorKind.Settlement && dungeonManager != null
+                ? InteriorOps.RoomsWithInterior(dungeonManager.GetAll(), town.OwnerPoiId)
+                : null;
 
         /// <summary>Stable seed for a settlement's first generation, derived from the POI's GUID id. NOT
         /// string.GetHashCode — that is randomized per process in modern .NET, so a town would regenerate
@@ -175,7 +185,12 @@ namespace WorldGen.Rendering
             {
                 editingDungeon = parentTown;
                 parentTown = null;
-                if (dungeonEditorScreen != null) dungeonEditorScreen.Bind(editingDungeon);
+                // Recomputed here, not carried over from the original OpenDungeonEditor bind — the DM may
+                // just have opened a building interior for the FIRST time (OpenBuildingInterior generates
+                // and persists it on demand), which grows the set between the town's original bind and this
+                // return trip.
+                if (dungeonEditorScreen != null)
+                    dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
                 RefreshScreenState();
                 return;
             }

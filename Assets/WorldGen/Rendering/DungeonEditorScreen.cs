@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Generation;
@@ -82,12 +83,22 @@ namespace WorldGen.Rendering
         /// "Здание N" fallback) — it replaces the strip's profile-term title AND switches the back button
         /// to «← Город» for as long as this interior stays bound. Omitted (null) for every other Bind call
         /// site (a top-level dungeon/building/settlement, or the "back to town" rebind), which keeps the
-        /// pre-Ц2 title + «← Назад» behaviour unchanged.</summary>
-        public void Bind(InteriorData dungeon, string headerOverride = null)
+        /// pre-Ц2 title + «← Назад» behaviour unchanged.
+        ///
+        /// <paramref name="roomsWithInterior"/> (Ц2, Task 5): the settlement building room ids that already
+        /// have their own interior on file — MapScreenController computes it (InteriorOps.RoomsWithInterior
+        /// over dungeonManager.GetAll()) on every settlement bind AND on the «← Город» rebind (the set may
+        /// have grown while a building was open), so it is always fresh here, never a field left stale from
+        /// a previous bind. Null for every non-settlement Bind call, same "omitted = old behaviour" shape as
+        /// headerOverride — forwarded straight to the renderer (not threaded through RebuildView's fixed
+        /// signature; see DungeonFlatRenderer.RoomsWithInterior's own doc) BEFORE SetLevel(0) below fires
+        /// the first rebuild, so that first rebuild already sees it.</summary>
+        public void Bind(InteriorData dungeon, string headerOverride = null, HashSet<int> roomsWithInterior = null)
         {
             EnsureBuilt();
             current = dungeon;
             this.headerOverride = headerOverride;
+            if (flatRenderer != null) flatRenderer.RoomsWithInterior = roomsWithInterior ?? new HashSet<int>();
             if (current.Floors.Count == 0)
             {
                 if (current.Kind == InteriorKind.Building)

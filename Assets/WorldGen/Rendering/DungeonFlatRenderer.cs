@@ -70,6 +70,16 @@ namespace WorldGen.Rendering
         // for the same "cheap bool gate, set false before the null-lvl guard" idiom.
         bool isSettlement;
 
+        // Has-interior mark (Ц2, Task 5): room ids (settlement BUILDING nodes only) whose own interior
+        // already exists on file, e.g. { InteriorOps.RoomsWithInterior(dungeonManager.GetAll(), poiId) }.
+        // This is EXTERNAL state — unlike hasContour/isSettlement above (both re-derived from `dungeon`
+        // every RebuildView) it cannot be read off anything RebuildView's own parameters carry, so
+        // DungeonEditorScreen.Bind sets it directly on this field BEFORE the RebuildView chain fires, the
+        // same "settable property held by the renderer" role Projection plays for pan/zoom (SetProjection).
+        // Deliberately NOT reset inside RebuildView (Projection isn't either) — it must survive until the
+        // next external set. Defaults to an empty set so an unset/non-settlement bind never shows the mark.
+        public HashSet<int> RoomsWithInterior { get; set; } = new HashSet<int>();
+
         const float MinCardPx = 20f;      // a 1-tile room must stay a usable click target
         const float LineThickness = 3f;
         const float JunctionPx = 9f;
@@ -495,6 +505,19 @@ namespace WorldGen.Rendering
                 indicator.SetActive(r.Preview != null);
             }
 
+            // Has-interior mark (Ц2, Task 5): a SECOND, independently-toggled corner mark — top-LEFT so it
+            // can never be mistaken for the has-image indicator above (top-right), and ThemeRole.Accent (not
+            // Dot) so it reads as "has content" rather than "neutral/free" like Dot's own doc-comment says
+            // of itself. Same gate shape as the indicator above (isSettlement/TypeId==1/!isDummyBuilding);
+            // the extra, independent condition is membership in the externally-fed RoomsWithInterior set
+            // rather than a field read straight off `r`. Built/toggled with the exact same "always add the
+            // child, SetActive the visibility" idiom, so it shares the card's lifecycle for free too.
+            if (isSettlement && r.TypeId == 1 && !isDummyBuilding)
+            {
+                var interiorMark = BuildInteriorMark(go.transform);
+                interiorMark.SetActive(RoomsWithInterior.Contains(r.Id));
+            }
+
             cards[r.Id] = rt;
         }
 
@@ -517,6 +540,31 @@ namespace WorldGen.Rendering
 
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, ThemeRole.Dot);
+            img.raycastTarget = false;
+            return go;
+        }
+
+        /// <summary>Small filled square pinned to a building card's top-LEFT corner, flagging "this room's
+        /// own interior already exists on file" (Ц2, Task 5) — deliberately the OPPOSITE corner from
+        /// BuildPreviewIndicator above so the two marks can never be mistaken for one another when both show
+        /// at once. ThemeRole.Accent, not Dot: Dot is this file's "neutral/free" role (already claimed by
+        /// the has-image indicator and the dummy-building fill); Accent is the file's own "this is notable"
+        /// role (already used for the selection outline and the TypeId==0 Gate fill) and reads with strong
+        /// contrast against RoomCommon in BOTH themes, which AccentSoft does not (near-invisible against
+        /// RoomCommon in Dark — #2B2617 on #3A3128). No collision with the Gate fill: this mark only ever
+        /// shows on a TypeId==1 Building card, never on a TypeId==0 Gate card.</summary>
+        GameObject BuildInteriorMark(Transform parent)
+        {
+            var go = new GameObject("InteriorMark", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.sizeDelta = new Vector2(PreviewIndicatorPx, PreviewIndicatorPx);
+            rt.anchoredPosition = new Vector2(2f, -2f);
+
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Accent);
             img.raycastTarget = false;
             return go;
         }

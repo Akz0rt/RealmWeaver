@@ -21,6 +21,15 @@ namespace WorldGen.Rendering
             var foreign = new InteriorData { OwnerPoiId = "p2", OwnerRoomId = 3 };
             var list = new System.Collections.Generic.List<InteriorData> { town, bld3, bld5, foreign };
 
+            // ---- 0. RoomsWithInterior: (p1) == {3,5}, never the town's own id (0); (p2) == {3} only — must
+            // not leak p1's building room id 5 across the poiId scope. --------------------------------------
+            var p1Rooms = InteriorOps.RoomsWithInterior(list, "p1");
+            if (p1Rooms.Count != 2 || !p1Rooms.Contains(3) || !p1Rooms.Contains(5) || p1Rooms.Contains(0))
+            { Debug.LogError($"FAIL rooms-with-interior: RoomsWithInterior(\"p1\") = {{{string.Join(",", p1Rooms)}}}, want {{3,5}} (never 0 — that's the town)"); ok = false; }
+            var p2Rooms = InteriorOps.RoomsWithInterior(list, "p2");
+            if (p2Rooms.Count != 1 || !p2Rooms.Contains(3) || p2Rooms.Contains(5))
+            { Debug.LogError($"FAIL rooms-with-interior: RoomsWithInterior(\"p2\") = {{{string.Join(",", p2Rooms)}}}, want {{3}} — must not leak p1's building room id 5"); ok = false; }
+
             // ---- 1. FindBuildingInterior: hits (p1,3), misses (p1,7)/(p2,5)/roomId 0 --------------------
             if (InteriorOps.FindBuildingInterior(list, "p1", 3) != bld3)
             { Debug.LogError("FAIL find: FindBuildingInterior(\"p1\",3) did not return the (p1,3) building"); ok = false; }
