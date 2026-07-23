@@ -710,5 +710,74 @@ namespace WorldGen.Persistence
 
             Debug.Log(ok ? "Settlement Fields Round-Trip: PASS" : "Settlement Fields Round-Trip: FAIL");
         }
+
+        [ContextMenu("Self-Test: Interior OwnerRoomId Round-Trip")]
+        public void SelfTestInteriorOwnerRoomIdRoundTrip()
+        {
+            bool ok = true;
+            string path = Path.Combine(Path.GetTempPath(), "interior_ownerroomid_roundtrip_test.dndproj");
+
+            // ---- 1. Byte-integrity: an interior hierarchy with both a town (OwnerRoomId = 0, unset) and
+            // a building interior (OwnerRoomId = 4) round-trips both values intact. The same file carries
+            // both values, so this proves VALUES only — the JSON-text omission check (part 2 below) needs
+            // a narrower file to prove the key is truly omitted when default. -------
+            var townFloor = new InteriorFloor { NextRoomId = 3 };
+            townFloor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.5f, Y = 0.5f });     // gate
+            townFloor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.6f, Y = 0.5f });     // building node
+            townFloor.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+            var town = new InteriorData { OwnerPoiId = "poi-settlement", Kind = InteriorKind.Settlement, Floors = { townFloor } };
+
+            var bldFloor = new InteriorFloor { NextRoomId = 2 };
+            bldFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });
+            var building = new InteriorData { OwnerPoiId = "poi-settlement", OwnerRoomId = 4, Kind = InteriorKind.Building, Floors = { bldFloor } };
+
+            var interiors = new List<InteriorData> { town, building };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), interiors);
+            var result = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!result.Success || result.Dungeons.Count != 2)
+            { Debug.LogError("FAIL interior ownerroomid: the project did not load back with both interiors"); ok = false; }
+            else
+            {
+                var loadedTown = result.Dungeons.FirstOrDefault(d => d.OwnerRoomId == 0);
+                var loadedBldg = result.Dungeons.FirstOrDefault(d => d.OwnerRoomId == 4);
+                if (loadedTown == null || loadedTown.OwnerPoiId != "poi-settlement" || loadedTown.Kind != InteriorKind.Settlement)
+                { Debug.LogError("FAIL interior ownerroomid: town (OwnerRoomId=0) did not load back correctly"); ok = false; }
+                if (loadedBldg == null || loadedBldg.OwnerPoiId != "poi-settlement" || loadedBldg.Kind != InteriorKind.Building)
+                { Debug.LogError("FAIL interior ownerroomid: building (OwnerRoomId=4) did not load back correctly"); ok = false; }
+            }
+
+            // ---- 2. Omit-on-zero, scoped to dodge any other interior's OwnerRoomId in the file:
+            // the round-trip above proves NullValueHandling for the hierarchy, but this interior also has
+            // Kind and other fields. To prove the OMIT case unambiguously (that a 0/default OwnerRoomId
+            // is truly absent from JSON, not merely null-safe on load), this save is scoped to ONLY a town
+            // with OwnerRoomId unset (default 0) — no other interiors with non-zero OwnerRoomId, so the
+            // only field in the whole file that could possibly write an "OwnerRoomId" key is the town's
+            // own (default 0) one, making a plain substring check unambiguous. DefaultValueHandling.Ignore
+            // means the default value (0) should not serialize at all. Confirmed no global DefaultValueHandling
+            // on ProjectSerializer.BuildSettings and PascalCase keys, so a literal "\"OwnerRoomId\"" check
+            // is exactly what a leaked key looks like. -------
+            string minPath = Path.Combine(Path.GetTempPath(), "interior_ownerroomid_default_selftest.json");
+            var minFloor = new InteriorFloor { NextRoomId = 2 };
+            minFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });
+            var minTown = new InteriorData { OwnerPoiId = "poi-solo", Kind = InteriorKind.Settlement, Floors = { minFloor } };
+
+            ProjectSerializer.Save(minPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { minTown });
+            string minJson = File.ReadAllText(minPath);
+            try { File.Delete(minPath); } catch { }
+
+            if (minJson.Contains("\"OwnerRoomId\""))
+            { Debug.LogError("FAIL interior ownerroomid: a default (0) OwnerRoomId was written as a key — DefaultValueHandling.Ignore is not taking effect"); ok = false; }
+
+            Debug.Log(ok
+                ? "Self-Test Interior OwnerRoomId Round-Trip: PASS"
+                : "Self-Test Interior OwnerRoomId Round-Trip: FAIL — see field checks in SelfTestInteriorOwnerRoomIdRoundTrip");
+        }
     }
 }
