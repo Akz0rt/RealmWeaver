@@ -184,6 +184,7 @@ GameObject:
   - component: {fileID: 43947997}
   - component: {fileID: 43947996}
   - component: {fileID: 43947998}
+  - component: {fileID: 43947999}
   m_Layer: 0
   m_Name: Test&Debug
   m_TagString: Untagged
@@ -341,6 +342,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d210c37fe23e7624d9c573d867842961, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.BattleGridSelfTests
+--- !u!114 &43947999
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 43947986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: de6c0f80798b0f8448cf44f1085a5f86, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.SettlementSelfTests
 --- !u!1 &71450242
 GameObject:
   m_ObjectHideFlags: 0
