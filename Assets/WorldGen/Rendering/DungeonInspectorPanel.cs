@@ -171,12 +171,19 @@ namespace WorldGen.Rendering
             }
             else
             {
-                var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
-                var profile = Profiles.ForRoom(dungeon);
-                for (int i = 0; i < profile.RoomTypes.Length; i++)
+                // Ц1.6 (spec §1): a settlement's node types are GENERATED-ONLY — Ворота come from the
+                // generator, everything else is Здание — so the picker is not built at all. Building it
+                // let the DM retype a building→Ворота, and DungeonOps.SetRoomType's dungeon singleton
+                // rule (TypeId 0 = the ONE entrance) then silently demoted another gate to Здание.
+                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
                 {
-                    int typeId = i;   // capture for the closure
-                    AddChoiceButton(typeRow.transform, profile.RoomTypes[i].Label, room.TypeId == typeId, () => SetType(lvl, room, typeId));
+                    var typeRow = AddRow(sec.transform, "TypeRow", 26f, 4f);
+                    var profile = Profiles.ForRoom(dungeon);
+                    for (int i = 0; i < profile.RoomTypes.Length; i++)
+                    {
+                        int typeId = i;   // capture for the closure
+                        AddChoiceButton(typeRow.transform, profile.RoomTypes[i].Label, room.TypeId == typeId, () => SetType(lvl, room, typeId));
+                    }
                 }
 
                 // Размер: [W-] W [W+]  ×  [H-] H [H+] — two nested BuildStepper rows inside one outer row,
