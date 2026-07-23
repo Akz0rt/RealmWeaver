@@ -113,6 +113,15 @@ namespace WorldGen.Generation
     public class InteriorData
     {
         public string OwnerPoiId;
+        /// <summary>Which node within OwnerPoiId's interior this interior belongs to (Ц2, building
+        /// recursion): 0, the default, means the interior is owned by the POI directly — every interior
+        /// before Ц2, plus a settlement/dungeon/plain building's own interior. A non-zero value is the
+        /// room id of the BUILDING node inside OwnerPoiId's settlement whose own interior this is.
+        /// DefaultValueHandling.Ignore: only non-zero values serialize, so every pre-Ц2 save (and every
+        /// non-building interior) round-trips with no new key at all — mirrors Room.IsDummy's convention
+        /// above.</summary>
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int OwnerRoomId;
         public InteriorKind Kind = InteriorKind.Dungeon; // absent in v6 → Dungeon
         [JsonProperty("Levels")] public List<InteriorFloor> Floors = new List<InteriorFloor>();
     }
