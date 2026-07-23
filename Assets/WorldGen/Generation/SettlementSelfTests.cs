@@ -216,6 +216,33 @@ namespace WorldGen.Rendering
             if (sw.ElapsedMilliseconds > 50)
             { Debug.LogError($"FAIL streets: routing 80 buildings took {sw.ElapsedMilliseconds} ms, want <50"); ok = false; }
 
+            // ---- Ц1.6: gate-gate arterials — every gate on one connected arterial net, emitted FIRST --
+            // (a) Collect gate-gate edges and where they sit in the list.
+            int lastArterial = -1, firstBranch = int.MaxValue;
+            var gateAdj = new System.Collections.Generic.List<int>[nGates];
+            for (int i = 0; i < nGates; i++) gateAdj[i] = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < edges.Count; i++)
+            {
+                bool arterial = edges[i].A < nGates && edges[i].B < nGates;
+                if (arterial) { lastArterial = i; gateAdj[edges[i].A].Add(edges[i].B); gateAdj[edges[i].B].Add(edges[i].A); }
+                else if (i < firstBranch) firstBranch = i;
+            }
+            // (b) Ordering contract: arterials strictly precede branches (the road router routes in input
+            // order; a branch routed before an arterial would claim the lane the arterial should own).
+            if (lastArterial >= 0 && firstBranch < lastArterial)
+            { Debug.LogError($"FAIL streets: arterial at index {lastArterial} comes after branch at {firstBranch} — ordering contract broken"); ok = false; }
+            // (c) The arterial subgraph spans ALL gates (connected, every gate in it) when nGates > 1.
+            if (nGates > 1)
+            {
+                var seenGate = new bool[nGates];
+                var stack = new System.Collections.Generic.Stack<int>(); stack.Push(0); seenGate[0] = true; int seenCount = 1;
+                while (stack.Count > 0)
+                    foreach (int nb in gateAdj[stack.Pop()])
+                        if (!seenGate[nb]) { seenGate[nb] = true; seenCount++; stack.Push(nb); }
+                if (seenCount != nGates)
+                { Debug.LogError($"FAIL streets: arterial net spans {seenCount} of {nGates} gates — some gate has no арterial"); ok = false; }
+            }
+
             if (ok) Debug.Log("Settlement Streets: PASS");
         }
 
