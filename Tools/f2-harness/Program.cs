@@ -72,6 +72,7 @@ static class Program
         settlement.SelfTestActiveBuildings();
         settlement.SelfTestSettlementValidation();
         settlement.SelfTestWallBounds();
+        settlement.SelfTestFence();
         settlement.SelfTestRoads();
         settlement.SelfTestRoadJunctions();
         settlement.SelfTestRoadsPerf();

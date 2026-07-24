@@ -728,6 +728,115 @@ namespace WorldGen.Rendering
                 Debug.Log($"Settlement Roads Perf: PASS ({sw.ElapsedMilliseconds} ms)");
         }
 
+        [ContextMenu("Self-Test: Settlement Fence")]
+        public void SelfTestFence()
+        {
+            bool ok = true;
+
+            // Fixture A: a compact 3x3 block of buildings (tile space), no gates.
+            var block = new System.Collections.Generic.List<LinkNode>();
+            int id = 1;
+            for (int gy = 0; gy < 3; gy++)
+                for (int gx = 0; gx < 3; gx++)
+                    block.Add(new LinkNode { Id = id++, CX = 20 + gx * 6, CY = 20 + gy * 6, W = 5, H = 5 });
+            var noGates = new System.Collections.Generic.List<LinkNode>();
+
+            var fenceA = SettlementFence.Derive(block, noGates, SettlementFence.FenceMarginTiles);
+            if (fenceA == null || !fenceA.IsClosedSane())
+            { Debug.LogError("FAIL fence[A]: derive returned null or not-sane for a compact block"); ok = false; }
+            else
+            {
+                // 1. every building RECT CORNER is strictly inside the fence (spec #1 — stronger than centre).
+                foreach (var b in block)
+                {
+                    float hw = b.W * 0.5f, hh = b.H * 0.5f;
+                    var corners = new (float x, float y)[] {
+                        (b.CX - hw, b.CY - hh), (b.CX + hw, b.CY - hh),
+                        (b.CX - hw, b.CY + hh), (b.CX + hw, b.CY + hh) };
+                    foreach (var (cxp, cyp) in corners)
+                        if (!fenceA.Contains(cxp, cyp))
+                        { Debug.LogError($"FAIL fence[A]: building {b.Id} corner ({cxp},{cyp}) is NOT inside the fence"); ok = false; }
+                }
+                // margin: the fence clears the outermost building rect by ~FenceMarginTiles (within 1 tile of quantization).
+                var far = block[8]; // CX=32,CY=32, top-right
+                float d = fenceA.DistanceToEdge(far.CX + far.W * 0.5f, far.CY + far.H * 0.5f);
+                if (d < SettlementFence.FenceMarginTiles - 1.5f)
+                { Debug.LogError($"FAIL fence[A]: fence hugs building 9 too tight, edge-dist {d} < margin {SettlementFence.FenceMarginTiles}"); ok = false; }
+            }
+
+            // Fixture B: a DONUT — a ring of buildings with an empty centre. Rule 1: no hole.
+            var ring = new System.Collections.Generic.List<LinkNode>();
+            id = 1;
+            int[,] rc = { {0,0},{1,0},{2,0},{0,1},{2,1},{0,2},{1,2},{2,2} }; // centre (1,1) omitted
+            for (int k = 0; k < rc.GetLength(0); k++)
+                ring.Add(new LinkNode { Id = id++, CX = 20 + rc[k,0] * 8, CY = 20 + rc[k,1] * 8, W = 6, H = 6 });
+            var fenceB = SettlementFence.Derive(ring, noGates, SettlementFence.FenceMarginTiles);
+            if (fenceB == null || !fenceB.IsClosedSane())
+            { Debug.LogError("FAIL fence[B]: donut derive null/not-sane"); ok = false; }
+            else if (!fenceB.Contains(20 + 8, 20 + 8)) // the empty centre (1,1) must read as INSIDE — filled, not a hole.
+            { Debug.LogError("FAIL fence[B]: the donut centre (28,28) is OUTSIDE the fence — a hole leaked (Rule 1 broken)"); ok = false; }
+
+            // Fixture C: buildings + a gate 3 tiles outside the block. Rule 2/3: the gate sits ~on the fence.
+            var gate = new System.Collections.Generic.List<LinkNode> {
+                new LinkNode { Id = 100, CX = 32 + 5, CY = 26, W = 1, H = 1 } };  // just outside building 9's right edge
+            var fenceC = SettlementFence.Derive(block, gate, SettlementFence.FenceMarginTiles);
+            if (fenceC == null || !fenceC.IsClosedSane())
+            { Debug.LogError("FAIL fence[C]: gate fixture null/not-sane"); ok = false; }
+            else
+            {
+                float gd = fenceC.DistanceToEdge(gate[0].CX, gate[0].CY);
+                if (gd > 1.5f)
+                { Debug.LogError($"FAIL fence[C]: gate centre ({gate[0].CX},{gate[0].CY}) is {gd} tiles from the fence — must be ~0 so the render gap opens"); ok = false; }
+                if (!fenceC.Contains(20, 20))
+                { Debug.LogError("FAIL fence[C]: interior building no longer inside after adding a gate"); ok = false; }
+            }
+
+            // Fixture D: one building dragged 20 tiles away — the stray-bridge must yield ONE closed loop containing it.
+            var stray = new System.Collections.Generic.List<LinkNode>(block) {
+                new LinkNode { Id = 200, CX = 60, CY = 60, W = 5, H = 5 } };
+            var fenceD = SettlementFence.Derive(stray, noGates, SettlementFence.FenceMarginTiles);
+            if (fenceD == null || !fenceD.IsClosedSane())
+            { Debug.LogError("FAIL fence[D]: stray-building derive null/not-sane"); ok = false; }
+            else if (!fenceD.Contains(60, 60) || !fenceD.Contains(20, 20))
+            { Debug.LogError("FAIL fence[D]: stray building 200 and the main block are not BOTH inside one fence — bridge failed"); ok = false; }
+
+            // Fixture E: a gate DRAGGED ~6 tiles outward (spec self-test #4). Re-derive; the fence must still
+            // pass through the gate (bridge wraps its tip) and stay ONE sane loop. (At the DM checkpoint this
+            // renders as a ~3-tile spike to the gate tip — eyeball it there; smoother "bend" is a later polish.)
+            var gateNear = new System.Collections.Generic.List<LinkNode> {
+                new LinkNode { Id = 300, CX = 32 + 5, CY = 26, W = 1, H = 1 } };
+            var gateFar = new System.Collections.Generic.List<LinkNode> {
+                new LinkNode { Id = 300, CX = 32 + 11, CY = 26, W = 1, H = 1 } };   // +6 tiles further out
+            var fenceE0 = SettlementFence.Derive(block, gateNear, SettlementFence.FenceMarginTiles);
+            var fenceE1 = SettlementFence.Derive(block, gateFar, SettlementFence.FenceMarginTiles);
+            if (fenceE1 == null || !fenceE1.IsClosedSane())
+            { Debug.LogError("FAIL fence[E]: dragged-gate derive null/not-sane (not one loop)"); ok = false; }
+            else
+            {
+                float ge = fenceE1.DistanceToEdge(gateFar[0].CX, gateFar[0].CY);
+                if (ge > 1.5f)
+                { Debug.LogError($"FAIL fence[E]: dragged gate ({gateFar[0].CX},{gateFar[0].CY}) is {ge} tiles from the fence — the fence did not bend through it"); ok = false; }
+                // the fence MOVED with the gate: its edge must now sit farther right than before the drag.
+                if (fenceE0 != null && fenceE1.DistanceToEdge(gateNear[0].CX, gateNear[0].CY) <= fenceE0.DistanceToEdge(gateNear[0].CX, gateNear[0].CY))
+                { Debug.LogError("FAIL fence[E]: dragging the gate outward did not push the fence outward at the old gate spot"); ok = false; }
+            }
+
+            // 6. determinism: same inputs → identical point list.
+            var again = SettlementFence.Derive(block, noGates, SettlementFence.FenceMarginTiles);
+            if (fenceA != null && again != null)
+            {
+                if (again.Points.Count != fenceA.Points.Count)
+                { Debug.LogError($"FAIL fence[det]: point count {again.Points.Count} != {fenceA.Points.Count}"); ok = false; }
+                else
+                    for (int i = 0; i < again.Points.Count; i++)
+                        if (System.Math.Abs(again.Points[i].X - fenceA.Points[i].X) > 1e-4f ||
+                            System.Math.Abs(again.Points[i].Y - fenceA.Points[i].Y) > 1e-4f)
+                        { Debug.LogError($"FAIL fence[det]: point {i} differs across identical derives"); ok = false; break; }
+            }
+
+            if (ok) Debug.Log("Settlement Fence: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {
