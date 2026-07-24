@@ -26,6 +26,17 @@ namespace WorldGen.Generation
         public const int WallSides = 9;
         public const float WallJitter = 0.12f;
 
+        /// <summary>Nominal footprint (tiles, both axes) a placed building projects as when the preliminary
+        /// fence is derived from it (Ц2.6: gates are spaced on a fence traced around the ACTUAL buildings, not
+        /// the raw notional wall). Pinned to <see cref="DungeonProjection.EffectiveSize"/>'s default for a
+        /// fresh <see cref="Room"/>: TypeId defaults to 1 ("Normal" — the same TypeId BuildFloor assigns every
+        /// building room below), SizeW/H default to 0 ("unset"), so EffectiveSize falls through to
+        /// RoomSizing.Default(1)'s default case — (6,6), both sides already inside RoomSizing.Clamp's 1..16
+        /// range unchanged. 6 is therefore the exact size a building room would render/pack at if it ever
+        /// went through the normal room-sizing path, so the preliminary fence hugs buildings at the same
+        /// nominal scale the rest of the codebase already assumes for a TypeId-1 room.</summary>
+        public const float NominalBuildingTiles = 6f;
+
         /// <summary>Wall radius (normalized) for a building count: bigger towns need more room. Clamped so a
         /// wall always fits inside the 0..1 canvas with margin.</summary>
         public static float WallRadiusFor(int buildingCount)
@@ -132,20 +143,41 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Assemble one settlement floor: gate rooms (TypeId 0) then building rooms (TypeId 1) in
-        /// the SAME order the street stage indexes them (gates first), streets → links, wall stored on the
-        /// floor. Room ids are assigned 1..N in that order so a StreetEdge index i maps to room id i+1.</summary>
+        /// the SAME order the street stage indexes them (gates first), streets → links. Ц2.6: no wall is
+        /// stored — a walled town's gates are spaced on a PRELIMINARY fence derived from the buildings
+        /// actually placed (SettlementFence.Derive), never on the raw notional wall; the FINAL fence (which
+        /// also wraps routed roads) is re-derived by the renderer/fit (Task 7). Room ids are assigned 1..N in
+        /// gates-then-buildings order so a StreetEdge index i maps to room id i+1.</summary>
         public static InteriorFloor BuildFloor(SettlementConfig cfg)
         {
-            var wall = BuildWall(cfg);   // null for a wall-less village
-            // Placement region: the stored wall for a walled town, else a NOTIONAL contour (identical
-            // Rounded call, same seed) used only to place buildings and route streets — NOT stored, so a
-            // village renders no wall (floor.Wall stays null below).
-            var placement = wall ?? WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
-            var gates = wall != null ? PlaceGates(wall, GateCountFor(cfg.TargetBuildings), cfg.Seed) : new List<GatePoint>();
+            // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) used only
+            // to seed the building grid and route streets — never stored, so nothing renders it directly.
+            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
             var buildings = PlaceBuildings(placement, cfg.Seed, cfg.TargetBuildings);
+
+            // Gates: derived from a preliminary fence traced around the placed buildings (tile space), then
+            // spaced on it (normalized). A wall-less village, or a walled town that placed zero buildings,
+            // gets none.
+            var gates = new List<GatePoint>();
+            if (cfg.HasWall && buildings.Count > 0)
+            {
+                const float T = DungeonLayout.TilesPerAxis;
+                var bNodes = new List<LinkNode>(buildings.Count);
+                for (int i = 0; i < buildings.Count; i++)
+                    bNodes.Add(new LinkNode { Id = i, CX = buildings[i].X * T, CY = buildings[i].Y * T, W = NominalBuildingTiles, H = NominalBuildingTiles });
+                var prelimTile = SettlementFence.Derive(bNodes, new List<LinkNode>(), new List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+                if (prelimTile != null)
+                {
+                    var prelimNorm = new WallContour();
+                    foreach (var p in prelimTile.Points)
+                        prelimNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
+                    gates = PlaceGates(prelimNorm, GateCountFor(cfg.TargetBuildings), cfg.Seed);
+                }
+            }
+
             var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);
 
-            var floor = new InteriorFloor { Wall = wall };
+            var floor = new InteriorFloor();
             // Node index i (gates first, then buildings) → room id (i+1). Ids are stable and dense.
             var idByIndex = new int[gates.Count + buildings.Count];
             int next = 1;

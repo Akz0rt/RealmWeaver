@@ -116,6 +116,36 @@ namespace WorldGen.Rendering
             if (gates2.Count != gates.Count || (gates.Count > 0 && (gates2[0].X != gates[0].X || gates2[0].Y != gates[0].Y)))
             { Debug.LogError("FAIL gates: two seed-3 gate placements differ — not deterministic"); ok = false; }
 
+            // ---- 7. In an ACTUAL generated floor, gates hug the PRELIMINARY fence derived from its OWN
+            // buildings (Ц2.6: BuildFloor no longer places gates on the raw notional wall above — it derives
+            // a fence from the placed buildings first, then spaces gates on THAT). Independently re-derive
+            // the same building fence from the floor's TypeId-1 rooms and assert every TypeId-0 gate sits
+            // within ~1.5 normalized tiles (converted via ÷T) of it. MutGateAtCentre collapses every gate to
+            // the town centre, which sits far from this fence's boundary — caught here.
+            var floor = SettlementGenerator.BuildFloor(cfg);
+            const float T = DungeonLayout.TilesPerAxis;
+            var bNodes = new System.Collections.Generic.List<LinkNode>();
+            foreach (var r in floor.Rooms)
+                if (r.TypeId == 1)
+                    bNodes.Add(new LinkNode { Id = r.Id, CX = r.X * T, CY = r.Y * T, W = SettlementGenerator.NominalBuildingTiles, H = SettlementGenerator.NominalBuildingTiles });
+            var fenceTile = SettlementFence.Derive(bNodes, new System.Collections.Generic.List<LinkNode>(), new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+            if (fenceTile == null || !fenceTile.IsClosedSane())
+            { Debug.LogError("FAIL gates: the building fence re-derived from the generated floor's rooms is null/insane"); ok = false; }
+            else
+            {
+                var fenceNorm = new WallContour();
+                foreach (var p in fenceTile.Points)
+                    fenceNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
+                float tol = 1.5f / T;
+                foreach (var r in floor.Rooms)
+                    if (r.TypeId == 0)
+                    {
+                        float d = fenceNorm.DistanceToEdge(r.X, r.Y);
+                        if (d > tol)
+                        { Debug.LogError($"FAIL gates: gate room {r.Id} at ({r.X:F3},{r.Y:F3}) is {d * T:F2} tiles from the derived building fence, want <=1.5"); ok = false; }
+                    }
+            }
+
             if (ok) Debug.Log("Settlement Gates: PASS");
         }
 
@@ -260,20 +290,14 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL assembly: expected 1 floor, got {data.Floors.Count}"); ok = false; }
             var floor = data.Floors[0];
 
-            // ---- 2. The wall is stored on the floor ----------------------------------------------------
-            if (floor.Wall == null || !floor.Wall.IsClosedSane())
-            { Debug.LogError("FAIL assembly: floor.Wall is null/insane"); ok = false; }
-
-            // ---- 3. Gate nodes are TypeId 0 and sit on the wall; building nodes are TypeId 1 -----------
+            // ---- 2. Gate nodes are TypeId 0; building nodes are TypeId 1 (Ц2.6: no wall is stored on the
+            // floor any more — floor.Wall stays permanently null; gate/fence geometry is covered separately
+            // by SelfTestGates, which re-derives the preliminary building fence and checks gate proximity) --
             int gateNodes = 0, buildNodes = 0;
             foreach (var r in floor.Rooms)
             {
-                if (r.TypeId == 0) { gateNodes++;
-                    if (floor.Wall.DistanceToEdge(r.X, r.Y) > 1e-3f)
-                    { Debug.LogError($"FAIL assembly: gate room {r.Id} at ({r.X:F3},{r.Y:F3}) is off the wall"); ok = false; } }
-                else if (r.TypeId == 1) { buildNodes++;
-                    if (!floor.Wall.Contains(r.X, r.Y))
-                    { Debug.LogError($"FAIL assembly: building room {r.Id} at ({r.X:F3},{r.Y:F3}) is outside the wall"); ok = false; } }
+                if (r.TypeId == 0) gateNodes++;
+                else if (r.TypeId == 1) buildNodes++;
                 else
                 { Debug.LogError($"FAIL assembly: room {r.Id} has TypeId {r.TypeId}, want 0 (gate) or 1 (building)"); ok = false; }
             }
@@ -282,15 +306,36 @@ namespace WorldGen.Rendering
             if (buildNodes < 20)
             { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥20 for a 40-target town"); ok = false; }
 
-            // ---- 4. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
-            // Reconstruct the exact gates/buildings/edges BuildFloor used (all deterministic from floor.Wall +
-            // seed), then verify (a) rooms were created in gates-then-buildings order — the room at combined
-            // index i carries node i's position and type — and (b) every street edge {A,B} became a link
-            // between room ids A+1 and B+1. A reversed or scrambled index→id mapping (the "every street links
-            // the wrong pair" bug) fails here; a ContainsKey check could not, because idByIndex is a bijection.
-            var exGates = SettlementGenerator.PlaceGates(floor.Wall, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
-            var exBuildings = SettlementGenerator.PlaceBuildings(floor.Wall, cfg.Seed, cfg.TargetBuildings);
-            var exEdges = SettlementStreets.GenerateStreets(floor.Wall, exBuildings, exGates, cfg.Seed);
+            // ---- 3. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
+            // Reconstruct the exact placement/buildings/gates/edges BuildFloor used (all deterministic from
+            // cfg alone — nothing reads floor.Wall any more), then verify (a) rooms were created in
+            // gates-then-buildings order — the room at combined index i carries node i's position and type —
+            // and (b) every street edge {A,B} became a link between room ids A+1 and B+1. A reversed or
+            // scrambled index→id mapping (the "every street links the wrong pair" bug) fails here; a
+            // ContainsKey check could not, because idByIndex is a bijection. Gates are re-derived by the SAME
+            // preliminary-fence-then-space steps BuildFloor itself runs (byte-identical: same NominalBuildingTiles,
+            // empty gates/roads, FenceMarginTiles, ÷T, GateCountFor, seed) — recomputed from primitives here,
+            // never read back off `floor`, so this stays an independent check of the assembly wiring.
+            var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
+                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var exBuildings = SettlementGenerator.PlaceBuildings(exPlacement, cfg.Seed, cfg.TargetBuildings);
+            var exGates = new System.Collections.Generic.List<GatePoint>();
+            if (exBuildings.Count > 0)
+            {
+                const float T = DungeonLayout.TilesPerAxis;
+                var bNodes = new System.Collections.Generic.List<LinkNode>(exBuildings.Count);
+                for (int i = 0; i < exBuildings.Count; i++)
+                    bNodes.Add(new LinkNode { Id = i, CX = exBuildings[i].X * T, CY = exBuildings[i].Y * T, W = SettlementGenerator.NominalBuildingTiles, H = SettlementGenerator.NominalBuildingTiles });
+                var prelimTile = SettlementFence.Derive(bNodes, new System.Collections.Generic.List<LinkNode>(), new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+                if (prelimTile != null)
+                {
+                    var prelimNorm = new WallContour();
+                    foreach (var p in prelimTile.Points)
+                        prelimNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
+                    exGates = SettlementGenerator.PlaceGates(prelimNorm, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
+                }
+            }
+            var exEdges = SettlementStreets.GenerateStreets(exPlacement, exBuildings, exGates, cfg.Seed);
             int nG = exGates.Count;
             // (a) creation order == gates-then-buildings, by position/type at each combined index.
             for (int i = 0; i < nG && ok; i++)
@@ -315,12 +360,12 @@ namespace WorldGen.Rendering
             if (floor.Links.Count != exEdges.Count)
             { Debug.LogError($"FAIL assembly: {floor.Links.Count} links vs {exEdges.Count} street edges"); ok = false; }
 
-            // ---- 5. NextRoomId is past every id, so the editor's «add» never collides -----------------
+            // ---- 4. NextRoomId is past every id, so the editor's «add» never collides -----------------
             int maxId = 0; foreach (var r in floor.Rooms) if (r.Id > maxId) maxId = r.Id;
             if (floor.NextRoomId <= maxId)
             { Debug.LogError($"FAIL assembly: NextRoomId {floor.NextRoomId} is not past maxId {maxId}"); ok = false; }
 
-            // ---- 6. Determinism: same seed → same room count and first room position ------------------
+            // ---- 5. Determinism: same seed → same room count and first room position ------------------
             var data2 = SettlementGenerator.Generate(cfg, "poi-town");
             if (data2.Floors[0].Rooms.Count != floor.Rooms.Count ||
                 data2.Floors[0].Rooms[0].X != floor.Rooms[0].X)
@@ -491,17 +536,12 @@ namespace WorldGen.Rendering
             if (System.Math.Abs(minX - expMin) > 0.5f)
             { Debug.LogError($"FAIL wallbounds: minX {minX:F1}, want ~{expMin:F1}"); ok = false; }
 
-            // The union of room bounds and wall bounds must extend past the ROOMS alone (the clip the fix
-            // repairs): a real city's wall reaches past its inner buildings on at least one side.
-            var floor = SettlementGenerator.Generate(
-                new SettlementConfig { Seed = 8, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true }, "poi-city").Floors[0];
-            var (rMinX, rMinY, rMaxX, rMaxY) = DungeonProjection.ContentBoundsTiles(floor);
-            var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(floor.Wall);
-            float uMinX = System.Math.Min(rMinX, wMinX), uMaxX = System.Math.Max(rMaxX, wMaxX);
-            float uMinY = System.Math.Min(rMinY, wMinY), uMaxY = System.Math.Max(rMaxY, wMaxY);
-            bool grew = uMinX < rMinX - 0.01f || uMaxX > rMaxX + 0.01f || uMinY < rMinY - 0.01f || uMaxY > rMaxY + 0.01f;
-            if (!grew)
-            { Debug.LogError($"FAIL wallbounds: wall AABB [{wMinX:F1},{wMinY:F1}]-[{wMaxX:F1},{wMaxY:F1}] does not extend past rooms [{rMinX:F1},{rMinY:F1}]-[{rMaxX:F1},{rMaxY:F1}] — the union would not fix the clip"); ok = false; }
+            // The "union of room bounds and wall bounds extends past the rooms alone" assertion that used to
+            // live here read floor.Wall from a generated city — removed out-of-brief for THIS task (Ц2.6
+            // Task 6: floor.Wall is no longer stored, so it is permanently null and WallBoundsTiles(null)
+            // degenerates to a single point at the canvas centre, which sits inside a centred town's own room
+            // bounds — the assertion would false-fail, not exercise anything real). Task 7 retargets this to
+            // the derived fence's bounds (DungeonLayout.DeriveTownFence), per the settlement-fence plan.
 
             if (ok) Debug.Log("Settlement Wall Bounds: PASS");
         }
@@ -662,7 +702,14 @@ namespace WorldGen.Rendering
             // Walled city, ≥2 gates → arterials exist. Seed pinned: the assertion is fixture-specific
             // (like the other pinned fixtures in this file); if a code change legitimately re-routes the
             // town, re-pin the seed — but FIRST convince yourself the merge behaviour is still there.
-            var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            // Re-pinned 7->2 (Ц2.6 Task 6): gates now come off the derived building fence instead of the
+            // raw notional wall, which shifts every gate position and re-routes seed 7's town such that no
+            // branch merges into an arterial lane at 20 buildings/2 gates any more. Proxy-scanned seeds
+            // 1..200 with the SAME fixture shape first (gates=2 throughout) — merges are still common
+            // (2,3,6,9,12,15,17,19,22,25,... ~40% of seeds), confirming the reuse-discount merge behaviour
+            // itself is intact and this is a fixture ripple, not a regression; seed 2 is the first that
+            // merges and is otherwise unremarkable.
+            var cfg = new SettlementConfig { Seed = 2, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
             var g = SettlementRoads.Build(nodes, edges);
