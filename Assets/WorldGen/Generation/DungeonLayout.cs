@@ -222,18 +222,10 @@ namespace WorldGen.Generation
             // only from DungeonViewController (the seam that knows Kind); default false keeps dungeons,
             // buildings, battle-grid projection and the self-tests byte-identical.
             //
-            // Ц1.7: the wall is a hard obstacle for roads too — build a TILE-space copy of lvl.Wall (the
-            // same scaling SettlementRoads' own self-tests use) and hand it to Build. Villages
-            // (Wall == null) pass null through unchanged.
-            WallContour wallTiles = null;
-            if (settlementRoads && lvl.Wall != null)
-            {
-                wallTiles = new WallContour();
-                foreach (var p in lvl.Wall.Points)
-                    wallTiles.Points.Add(new WallPoint { X = ToTile(p.X), Y = ToTile(p.Y) });
-            }
+            // Ц2.6: the fence is DERIVED FROM the roads (SettlementFence.Derive), so it is no longer a
+            // road obstacle — roads route avoiding ONLY buildings, and Build takes no wall parameter.
             var routed = settlementRoads
-                ? SettlementRoads.Build(nodes, linkEdges, wallTiles)
+                ? SettlementRoads.Build(nodes, linkEdges)
                 : RoomLinkGeometry.Build(nodes, linkEdges, mode);
             foreach (var d in routed.Doors) g.Doors.Add(ToLayout(d));   // door points → renderer's wall gaps
 

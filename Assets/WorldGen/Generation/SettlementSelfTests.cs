@@ -512,13 +512,8 @@ namespace WorldGen.Rendering
             bool ok = true;
             // Field names verified against SettlementConfig (Seed / TargetBuildings / ActiveBuildings /
             // HasWall) and the initializer shape the other settlement tests use.
-            // Seed pinned to 1, not 7 (Task 2 / Ц1.7): on seed 7 assertion 5's wall check reads clean even
-            // with the wall obstacle DISABLED (MutRoadsNoWallBlock, gen AND dragged) — the shortcut outside
-            // the wall never wins there, so the assertion was vacuous. Seed 1 is the FIRST of a scan over
-            // 1..200 (proxy: Build with wallTiles=null, which has the identical effect on the mask as the
-            // mutant's `if (false)`) where a routed cell actually lands outside the wall/gate rects once the
-            // wall stops blocking, in BOTH the generated and dragged cases, while the real wall-respecting
-            // Build stays clean — same seed-pinning precedent as SelfTestRoadJunctions/SelfTestStreets.
+            // Seed pinned to 1 (kept from the Ц1.7 fixture — still a normal generated+dragged town, no
+            // reason to re-pin now the wall obstacle is gone).
             var cfg = new SettlementConfig { Seed = 1, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
 
@@ -526,17 +521,7 @@ namespace WorldGen.Rendering
             {
                 var nodes = RoadNodes(lvl); var edges = RoadEdges(lvl);
 
-                // Tile-space wall copy, built EXACTLY the way DungeonLayout.BuildRenderGraph's adapter
-                // will (floor.Wall points × TilesPerAxis) — villages (Wall == null) skip it.
-                WallContour wallTiles = null;
-                if (lvl.Wall != null)
-                {
-                    wallTiles = new WallContour();
-                    foreach (var p in lvl.Wall.Points)
-                        wallTiles.Points.Add(new WallPoint { X = p.X * DungeonLayout.TilesPerAxis, Y = p.Y * DungeonLayout.TilesPerAxis });
-                }
-
-                var g = SettlementRoads.Build(nodes, edges, wallTiles);
+                var g = SettlementRoads.Build(nodes, edges);
                 var byId = new System.Collections.Generic.Dictionary<int, LinkNode>();
                 foreach (var n in nodes) byId[n.Id] = n;
 
@@ -574,7 +559,7 @@ namespace WorldGen.Rendering
                 }
 
                 // 4. Deterministic: an identical re-Build yields identical segments.
-                var g2 = SettlementRoads.Build(nodes, edges, wallTiles);
+                var g2 = SettlementRoads.Build(nodes, edges);
                 if (g2.Segments.Count != g.Segments.Count)
                 { Debug.LogError($"FAIL roads[{label}]: re-Build produced {g2.Segments.Count} segments vs {g.Segments.Count}"); ok = false; }
                 else
@@ -582,14 +567,47 @@ namespace WorldGen.Rendering
                         if (System.Math.Abs(g.Segments[i].A.X - g2.Segments[i].A.X) > 1e-4f || System.Math.Abs(g.Segments[i].B.Y - g2.Segments[i].B.Y) > 1e-4f)
                         { Debug.LogError($"FAIL roads[{label}]: re-Build segment {i} differs — not deterministic"); ok = false; break; }
 
-                // 5. Ц1.7 THE WALL: every routed cell must land inside the wall, or inside some GATE
-                //    node's inflated rect (the gate-crossing exemption — an arterial straddles its own
-                //    gate). Cell-walk technique borrowed from SelfTestRoadJunctions. Skipped for villages.
-                if (lvl.Wall != null)
+                // Buildings vs gates, split by TypeId — shared by assertions 5 and 6 below.
+                var buildingIds = new System.Collections.Generic.HashSet<int>();
+                var buildingNodes = new System.Collections.Generic.List<LinkNode>();
+                var gateNodes = new System.Collections.Generic.List<LinkNode>();
+                foreach (var r in lvl.Rooms) if (r.TypeId == 1) buildingIds.Add(r.Id);
+                foreach (var n in nodes)
                 {
-                    var gateIds = new System.Collections.Generic.HashSet<int>();
-                    foreach (var r in lvl.Rooms) if (r.TypeId == 0) gateIds.Add(r.Id);
+                    if (buildingIds.Contains(n.Id)) buildingNodes.Add(n); else gateNodes.Add(n);
+                }
 
+                // 5. Ц2.6: every routed CELL keeps >= RoadClearanceTiles (Chebyshev, matching the square
+                //    obstacle-mask inflation) from every BUILDING rect other than its own edge's two
+                //    endpoints (which get the own-endpoint carve down to the door on the rect boundary —
+                //    a legitimate 0-distance approach). Cell-walk technique borrowed from SelfTestRoadJunctions.
+                foreach (var s in g.Segments)
+                {
+                    var link = lvl.Links[s.EdgeIndex];
+                    int ax = (int)System.Math.Round(s.A.X), ay = (int)System.Math.Round(s.A.Y);
+                    int bx = (int)System.Math.Round(s.B.X), by = (int)System.Math.Round(s.B.Y);
+                    int steps = System.Math.Max(System.Math.Abs(bx - ax), System.Math.Abs(by - ay));
+                    for (int i = 0; i <= steps; i++)
+                    {
+                        int cx = ax + System.Math.Sign(bx - ax) * i, cy = ay + System.Math.Sign(by - ay) * i;
+                        foreach (var n in buildingNodes)
+                        {
+                            if (n.Id == link.RoomA || n.Id == link.RoomB) continue;
+                            float dx = System.Math.Max(0f, System.Math.Abs(cx - n.CX) - n.W * 0.5f);
+                            float dy = System.Math.Max(0f, System.Math.Abs(cy - n.CY) - n.H * 0.5f);
+                            float dist = System.Math.Max(dx, dy);
+                            if (dist < SettlementRoads.RoadClearanceTiles - 1e-3f)
+                            { Debug.LogError($"FAIL roads[{label}]: edge {s.EdgeIndex} cell ({cx},{cy}) is {dist:F2} tiles from building {n.Id} — want >= {SettlementRoads.RoadClearanceTiles}"); ok = false; }
+                        }
+                    }
+                }
+
+                // 6. Ц2.6 THE FENCE FOLLOWS THE ROADS: the derived fence (from these very buildings/gates/
+                //    roads) must enclose every routed road cell — the enclosure the fence is FOR.
+                var fence = SettlementFence.Derive(buildingNodes, gateNodes, g.Segments, SettlementFence.FenceMarginTiles);
+                if (fence == null || !fence.IsClosedSane())
+                { Debug.LogError($"FAIL roads[{label}]: derived fence is null or not-sane"); ok = false; }
+                else
                     foreach (var s in g.Segments)
                     {
                         int ax = (int)System.Math.Round(s.A.X), ay = (int)System.Math.Round(s.A.Y);
@@ -598,26 +616,15 @@ namespace WorldGen.Rendering
                         for (int i = 0; i <= steps; i++)
                         {
                             int cx = ax + System.Math.Sign(bx - ax) * i, cy = ay + System.Math.Sign(by - ay) * i;
-                            if (wallTiles.Contains(cx, cy)) continue;
-
-                            bool inGateRect = false;
-                            foreach (var gid in gateIds)
-                            {
-                                if (!byId.TryGetValue(gid, out var gn)) continue;
-                                if (System.Math.Abs(cx - gn.CX) <= gn.W * 0.5f + SettlementRoads.RoadClearanceTiles
-                                    && System.Math.Abs(cy - gn.CY) <= gn.H * 0.5f + SettlementRoads.RoadClearanceTiles)
-                                { inGateRect = true; break; }
-                            }
-                            if (!inGateRect)
-                            { Debug.LogError($"FAIL roads[{label}]: edge {s.EdgeIndex} cell ({cx},{cy}) is outside the wall and not inside any gate's rect"); ok = false; }
+                            if (!fence.Contains(cx, cy))
+                            { Debug.LogError($"FAIL roads[{label}]: edge {s.EdgeIndex} cell ({cx},{cy}) is outside the derived fence"); ok = false; }
                         }
                     }
-                }
             }
 
             AssertClean(floor, "generated");
 
-            // 5. THE DRAG CASE: a building dragged off the BuildingCell grid must still be routed AROUND.
+            // THE DRAG CASE: a building dragged off the BuildingCell grid must still be routed AROUND.
             //    +1.3/+0.7 tiles is a non-multiple of the pitch and small enough (< half the ~3-tile free
             //    gap) to never create a room overlap.
             Room moved = null;
@@ -707,20 +714,11 @@ namespace WorldGen.Rendering
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
 
-            // Ц1.7: the wall check's cost (O(grid × wall segments)) must be paid HERE too — the 50 ms
-            // gate is supposed to absorb it, so the timed Build must actually run the wall sweep, at the
-            // largest grid (80-building cap) where it costs the most. Same tile-space copy as AssertClean.
-            WallContour wallTiles = null;
-            if (floor.Wall != null)
-            {
-                wallTiles = new WallContour();
-                foreach (var p in floor.Wall.Points)
-                    wallTiles.Points.Add(new WallPoint { X = p.X * DungeonLayout.TilesPerAxis, Y = p.Y * DungeonLayout.TilesPerAxis });
-            }
-
-            SettlementRoads.Build(nodes, edges, wallTiles);             // warm-up
+            // Ц2.6: the wall is no longer a road obstacle, so there is no wall sweep cost left to pay here —
+            // the gate now times the plain building-obstacle Build at the largest grid (80-building cap).
+            SettlementRoads.Build(nodes, edges);             // warm-up
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            SettlementRoads.Build(nodes, edges, wallTiles);
+            SettlementRoads.Build(nodes, edges);
             sw.Stop();
             if (sw.ElapsedMilliseconds >= 50)
                 Debug.LogError($"FAIL roads perf: Build at 80 buildings took {sw.ElapsedMilliseconds} ms, want <50");

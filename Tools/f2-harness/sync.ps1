@@ -448,13 +448,13 @@ New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoReuse' `
   'float step = 1f;   // MUTANT: no reuse discount' `
   'MutRoadsNoReuse.cs'
 
-# MutRoadsNoWallBlock: the wall's obstacle-marking condition forced to false — the wall never blocks a
-# road, so A* is free to route outside the wall (or hug it from the inside, inside the clearance ring).
-# SelfTestRoads assertion 5 (every routed cell lands inside the wall, or inside a gate's own rect) must fail.
-New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoWallBlock' `
-  'if (!wallTiles.Contains(x, y) || wallTiles.DistanceToEdge(x, y) < RoadClearanceTiles)' `
-  'if (false)   // MUTANT: wall never blocks' `
-  'MutRoadsNoWallBlock.cs'
+# MutRoadsNoClearance: the obstacle-mask inflation drops its + RoadClearanceTiles term, so a road may hug
+# a building right up to its bare rect (0 clearance) instead of keeping RoadClearanceTiles away.
+# SelfTestRoads assertion 5 (every routed cell keeps >= RoadClearanceTiles from every building) must fail.
+New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoClearance' `
+  'float hw = n.W * 0.5f + RoadClearanceTiles, hh = n.H * 0.5f + RoadClearanceTiles;' `
+  'float hw = n.W * 0.5f, hh = n.H * 0.5f;   // MUTANT: no clearance inflation' `
+  'MutRoadsNoClearance.cs'
 
 # MutRoadsNoArterials: SettlementStreets' gate-gate arterial pass skipped — gates fall back to being
 # mere seed points. SelfTestStreets' arterial-net span assertion must fail.
@@ -561,11 +561,11 @@ New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoAvoid' `
   @('SettlementRoads\.') `
   @('WorldGen.Generation.MutRoadsNoAvoid.SettlementRoads.')
 
-# A SECOND rebind of SelfTestRoads (separate SelfTests_<class>.cs output) — MutRoadsNoWallBlock is caught
-# by the SAME method's wall assertion (5), not by a different one.
-New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoWallBlock' `
+# A SECOND rebind of SelfTestRoads (separate SelfTests_<class>.cs output) — MutRoadsNoClearance is caught
+# by the SAME method's building-clearance assertion (5), not by a different one.
+New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoClearance' `
   @('SettlementRoads\.') `
-  @('WorldGen.Generation.MutRoadsNoWallBlock.SettlementRoads.')
+  @('WorldGen.Generation.MutRoadsNoClearance.SettlementRoads.')
 
 New-SettlementRebind 'SelfTestRoadJunctions' 'MutRoadsNoReuse' `
   @('SettlementRoads\.') `

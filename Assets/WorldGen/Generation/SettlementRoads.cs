@@ -21,17 +21,16 @@ namespace WorldGen.Generation
     /// cap), so a full Build is linear in edge count — contrast BuildRenderGraph(Clean)'s per-link Hanan
     /// grid over all rooms, which measured 20–34 s at 60 nodes.
     ///
-    /// Ц1.7: the WALL is a hard obstacle too — an optional `wallTiles` (already scaled to TILE space by
-    /// the caller) blocks every cell outside it plus a RoadClearanceTiles ring along its inside, so a road
-    /// never crosses or hugs the wall line. Gates need no extra code: a gate's rect straddles the wall
-    /// line, and the existing own-endpoint carve (InsideInflated) already lets an arterial leave through
-    /// its own gate rect. null (villages, every pre-Ц1.7 caller) = no wall constraint, unchanged behavior.</summary>
+    /// Ц2.6: the fence is DERIVED FROM the roads (SettlementFence.Derive wraps whatever the roads do), so
+    /// the wall is no longer a road obstacle — the Ц1.7 wall-blocking rule this class used to enforce is
+    /// REMOVED. Roads route avoiding ONLY buildings; Build takes no wall parameter any more.</summary>
     public static class SettlementRoads
     {
-        /// <summary>How far a road keeps clear of a wall, in tiles. The inter-building free gap is
-        /// ~2.96 tiles (pitch 8.96 − footprint 6), so 0.5 leaves a ~2-tile lane; 1.0 would leave ~1 tile
-        /// and a rasterized cell centre may not land inside it. TUNABLE — the user eyeballs it.</summary>
-        public const float RoadClearanceTiles = 0.5f;
+        /// <summary>How far a road keeps clear of a building, in tiles. The inter-building free gap is
+        /// ~2.96 tiles (pitch 8.96 − footprint 6), so 1.0 leaves a ~1-tile lane on each side. Ц2.6 bumped
+        /// this from 0.5 (tuned back when it also doubled as the wall clearance, before the wall stopped
+        /// being a road obstacle). TUNABLE — the user eyeballs it.</summary>
+        public const float RoadClearanceTiles = 1.0f;
 
         /// <summary>A* pays this many tiles per 90° turn — straight, readable roads. TUNABLE.</summary>
         public const float RoadTurnPenalty = 2f;
@@ -46,7 +45,7 @@ namespace WorldGen.Generation
         static readonly int[] Dxs = { 1, -1, 0, 0 };
         static readonly int[] Dys = { 0, 0, 1, -1 };
 
-        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges, WallContour wallTiles = null)
+        public static LinkGeometry Build(IReadOnlyList<LinkNode> nodes, IReadOnlyList<LinkEdge> edges)
         {
             var g = new LinkGeometry();
             if (nodes == null || edges == null || nodes.Count == 0 || edges.Count == 0) return g;
@@ -80,20 +79,6 @@ namespace WorldGen.Generation
                     for (int x = x0; x <= x1; x++)
                         blocked[(y - minY) * gw + (x - minX)] = true;
             }
-
-            // Ц1.7: the WALL is a hard obstacle too — block every cell OUTSIDE it plus the clearance ring
-            // along its inside. Gates keep working with no new code: a gate's rect straddles the wall
-            // line, and the own-endpoint carve (InsideInflated, below) already overrides `blocked` for
-            // that edge's cells — an arterial leaves through its own gate rect.
-            if (wallTiles != null && wallTiles.IsClosedSane())
-                for (int y = minY; y <= maxY; y++)
-                    for (int x = minX; x <= maxX; x++)
-                    {
-                        int c = (y - minY) * gw + (x - minX);
-                        if (blocked[c]) continue;
-                        if (!wallTiles.Contains(x, y) || wallTiles.DistanceToEdge(x, y) < RoadClearanceTiles)
-                            blocked[c] = true;
-                    }
 
             // A* state = cell × incoming direction (0..3; 4 = start, no direction yet).
             var best = new float[gw * gh * 5];

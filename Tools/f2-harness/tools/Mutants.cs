@@ -68,8 +68,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutRoadsNoAvoidSelfTests().SelfTestRoads()),
                 ("MutRoadsNoReuse",     "SettlementRoads' reuse discount removed (branches never merge into arterial lanes)",
                     () => new WorldGen.MutantTests.MutRoadsNoReuseSelfTests().SelfTestRoadJunctions()),
-                ("MutRoadsNoWallBlock", "SettlementRoads' wall-blocking condition forced to false (the wall never blocks a road)",
-                    () => new WorldGen.MutantTests.MutRoadsNoWallBlockSelfTests().SelfTestRoads()),
+                ("MutRoadsNoClearance", "SettlementRoads' obstacle-mask inflation drops its + RoadClearanceTiles term (roads may hug buildings)",
+                    () => new WorldGen.MutantTests.MutRoadsNoClearanceSelfTests().SelfTestRoads()),
                 ("MutRoadsNoArterials", "SettlementStreets' gate-gate arterial pass skipped (gates fall back to seed points)",
                     () => new WorldGen.MutantTests.MutRoadsNoArterialsSelfTests().SelfTestStreets()),
 
