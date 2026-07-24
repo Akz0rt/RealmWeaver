@@ -75,11 +75,13 @@ namespace WorldGen.Generation
         /// centre for a null/empty wall (a wall-less village adds nothing).
         ///
         /// <paramref name="tileSpace"/> selects the input frame: DERIVED fences (DungeonLayout.DeriveTownFence,
-        /// SettlementFence.Derive) already carry TILE-space points, so pass true and the points are used as-is.
-        /// The default (false) multiplies by TilesPerAxis for a NORMALIZED 0..1 contour — now a test-only path,
-        /// since nothing stores a normalized wall any more (InteriorFloor.Wall was removed); a normalized fence
-        /// passed as tile-space (or vice-versa) is a silent ×128 mis-scale, so every call site states it.</summary>
-        public static (float minX, float minY, float maxX, float maxY) WallBoundsTiles(WallContour wall, bool tileSpace = false)
+        /// SettlementFence.Derive) already carry TILE-space points, so the DEFAULT (true) uses the points as-is —
+        /// this is the ONLY production frame now that nothing stores a normalized wall (InteriorFloor.Wall was
+        /// removed). Pass false ONLY for a NORMALIZED 0..1 contour (a test-only path), which multiplies by
+        /// TilesPerAxis; a normalized fence passed as tile-space (or vice-versa) is a silent ×128 mis-scale, so
+        /// every call site still states it. The default was flipped from false→true so a future caller who
+        /// forgets the flag gets the correct production scaling instead of a ×128 blow-up.</summary>
+        public static (float minX, float minY, float maxX, float maxY) WallBoundsTiles(WallContour wall, bool tileSpace = true)
         {
             if (wall == null || wall.Points == null || wall.Points.Count == 0)
             {

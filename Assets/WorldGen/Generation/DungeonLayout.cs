@@ -282,8 +282,17 @@ namespace WorldGen.Generation
         /// TILE space, links → edges), then traces the fence around the inflated union of buildings + gates +
         /// those roads (SettlementFence.Derive). Because the roads here are built the identical way the renderer
         /// builds them, the fence wraps exactly the roads the map draws. TILE space out (SettlementFence's
-        /// convention), UNLIKE the old normalized stored wall — so a caller must NOT re-scale by TilesPerAxis.</summary>
-        public static WallContour DeriveTownFence(InteriorFloor lvl)
+        /// convention), UNLIKE the old normalized stored wall — so a caller must NOT re-scale by TilesPerAxis.
+        ///
+        /// <paramref name="includeRoads"/> two-tiers the fence exactly like the road router (RoadsDuringDrag /
+        /// SettlementRoadsFor, see .superpowers/sdd/roads-perf-spike.md): the roads are a grid-A* build measured
+        /// at ~12.5 ms median / 17.5 ms max at the 80-building cap, far too costly to pay on every drag frame.
+        /// Pass FALSE on Fast/drag frames — the fence then rasterizes buildings + gates only (both cheap) with
+        /// NO SettlementRoads.Build, so the wall still follows the dragged buildings live but skips the A*. Pass
+        /// TRUE on bind + settle, where the fence wraps the routed roads too, matching what the map draws there.
+        /// Because includeRoads is fed the SAME SettlementRoadsFor(mode) the render graph uses, the fence never
+        /// disagrees with the map about whether the roads are enclosed.</summary>
+        public static WallContour DeriveTownFence(InteriorFloor lvl, bool includeRoads)
         {
             if (lvl == null || lvl.SettlementParams == null || !lvl.SettlementParams.HasWall) return null;
 
@@ -297,10 +306,16 @@ namespace WorldGen.Generation
                 nodes.Add(node);
                 if (r.TypeId == 1) buildings.Add(node); else gates.Add(node);   // gate = TypeId 0 (rasterized as a point)
             }
-            var edges = new List<LinkEdge>(lvl.Links.Count);
-            foreach (var c in lvl.Links) edges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
-            var roads = SettlementRoads.Build(nodes, edges).Segments;
+            // Drag frames (includeRoads == false) skip the grid A* entirely — no edges built, no roads routed.
+            // The fence still hugs the live building/gate rects (their rasterization is the cheap part).
+            IReadOnlyList<LinkSegment> roads = System.Array.Empty<LinkSegment>();
+            if (includeRoads)
+            {
+                var edges = new List<LinkEdge>(lvl.Links.Count);
+                foreach (var c in lvl.Links) edges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+                roads = SettlementRoads.Build(nodes, edges).Segments;
+            }
             return SettlementFence.Derive(buildings, gates, roads, SettlementFence.FenceMarginTiles);
         }
 

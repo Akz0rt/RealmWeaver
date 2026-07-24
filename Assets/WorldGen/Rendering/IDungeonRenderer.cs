@@ -46,8 +46,14 @@ namespace WorldGen.Rendering
                          System.Action<int> onJumpToLevel);
 
         /// <summary>Cheap per-frame reposition of existing visuals from current Room.X/Y — NO allocation,
-        /// NO destroy/create. Called every cascade frame and every drag sample.</summary>
-        void RepositionRooms(InteriorFloor lvl, RenderGraph rg);
+        /// NO destroy/create. Called every cascade frame and every drag sample.
+        ///
+        /// <paramref name="includeRoadsInFence"/> two-tiers the derived settlement fence exactly like the road
+        /// router: pass the SAME value the controller feeds SettlementRoadsFor(mode) to BuildRenderGraph — false
+        /// on Fast/drag frames (fence skips the ~12.5 ms road A*, still follows the live building/gate rects),
+        /// true on bind + settle (fence wraps the routed roads, matching the map). Ignored for non-settlement
+        /// views (they have no fence).</summary>
+        void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence);
 
         /// <summary>Turn the selection/link highlight on or off for one room. `roomId` 0 = clear all.</summary>
         void SetHighlight(int roomId, bool on);

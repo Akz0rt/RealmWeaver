@@ -542,7 +542,7 @@ namespace WorldGen.Rendering
             // field, so the explicit magnitude guard below pins the tile-space path. ----
             var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
-            var fence = DungeonLayout.DeriveTownFence(floor);
+            var fence = DungeonLayout.DeriveTownFence(floor, includeRoads: true);
             if (fence == null || !fence.IsClosedSane())
             { Debug.LogError("FAIL wallbounds: DeriveTownFence returned null/insane for a walled city"); ok = false; }
             else

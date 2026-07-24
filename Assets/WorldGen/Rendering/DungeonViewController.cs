@@ -105,7 +105,9 @@ namespace WorldGen.Rendering
                 // The fence is DERIVED here (no stored Wall) and is ALREADY tile space, so read its bounds with
                 // tileSpace: true — a ×T here would double-scale the union far off-screen. A null derive
                 // (degenerate trace) yields WallBoundsTiles' degenerate centre box, which the min/max absorbs.
-                var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(DungeonLayout.DeriveTownFence(lvl), tileSpace: true);
+                // FitBoundsFor runs ONLY on bind / renderer-swap (needsProjectionFit is set at SetRenderer and
+                // Bind, never in the drag path), so it is a one-shot — include roads for the accurate fence bounds.
+                var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(DungeonLayout.DeriveTownFence(lvl, includeRoads: true), tileSpace: true);
                 return (System.Math.Min(rMinX, wMinX), System.Math.Min(rMinY, wMinY),
                         System.Math.Max(rMaxX, wMaxX), System.Math.Max(rMaxY, wMaxY));
             }
@@ -352,7 +354,11 @@ namespace WorldGen.Rendering
         void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), SettlementRoadsFor(mode)));
+            // ONE signal drives both the map's roads and the fence's roads, so they can never disagree: false on
+            // Fast/drag frames (fence skips the road A*, per .superpowers/sdd/roads-perf-spike.md), true on the
+            // Clean settle. This is what keeps an 80-building walled-city drag off the 12.5 ms road router.
+            bool includeRoads = SettlementRoadsFor(mode);
+            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), includeRoads), includeRoads);
         }
 
         // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
