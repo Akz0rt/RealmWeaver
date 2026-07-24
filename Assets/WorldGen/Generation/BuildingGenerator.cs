@@ -29,6 +29,18 @@ namespace WorldGen.Generation
         const int RoomTypeId = 1;
         public const int StairTypeId = 2;   // Лестница — the stairwell column (the editor's +этаж reads this)
 
+        // How far INSIDE the drawn floor-0 contour an upper floor's packer must stay (tiles). The contour is
+        // drawn (DungeonFlatRenderer) at FloorFootprint.ContourMargin around floor 0's rooms — that margin is
+        // what makes floor-0 rooms sit visibly inside the wall. An upper floor has no rooms of its own to
+        // measure the contour from — it packs directly against contourFloor (floor 0) — so if its packer were
+        // allowed all the way out to that SAME margin, a room could land flush on the drawn line (zero gap),
+        // while floor 0's own rooms never do. Subtracting this from ContourMargin gives the upper-floor packer
+        // (and the MAX estimate that sizes it — MaxRoomsByArea) a strictly smaller bound, so upper rooms keep
+        // a visible gap from the wall too. Does not touch the contour's own drawing margin (unchanged at
+        // ContourMargin) or floor 0 (never packed — it is the user-edited reference every upper floor packs
+        // against, not a packer input itself).
+        public const float UpperFloorWallGapTiles = 1.0f;
+
         // AREA is only an UPPER BOUND on the room count — it can't predict whether the flush pack around the fixed
         // column will actually realize that many on a given contour SHAPE. So the displayed cap comes from a real
         // packing PROBE (MaxRoomsPackable); MaxRoomsByArea just sizes that probe. It is therefore GENEROUS: usable
@@ -243,7 +255,10 @@ namespace WorldGen.Generation
         /// probe (<see cref="MaxRoomsPackable"/>); the real achievable max is measured, not estimated. Always ≥ 1.</summary>
         public static int MaxRoomsByArea(InteriorFloor contourFloor, int colW, int colH)
         {
-            float usable = FloorFootprint.UsableAreaTiles(contourFloor, FloorFootprint.ContourMargin);
+            // Same reduced margin the packer itself is bounded to (see GenerateFloorAroundColumn) — the MAX
+            // estimate must size the probe against exactly what the packer can reach, not the wider drawn
+            // contour, or the displayed cap could over-promise a count the gap-respecting packer can't place.
+            float usable = FloorFootprint.UsableAreaTiles(contourFloor, FloorFootprint.ContourMargin - UpperFloorWallGapTiles);
             float avail = usable - colW * colH;
             int extra = avail > 0f ? (int)(avail / MinRoomArea) : 0;
             return Math.Min(MaxProbeBudget, 1 + Math.Max(0, extra));
@@ -349,7 +364,10 @@ namespace WorldGen.Generation
         {
             var floor = BuildStairFloorGraph(rng, Math.Max(1, roomBudget), colW, colH);
             var column = floor.Rooms[0];   // the Лестница (never dropped — it IS the column)
-            CompactLayout.PackAroundColumnWithinFootprint(floor, column.Id, colX, colY, contourFloor, FloorFootprint.ContourMargin);
+            // Bounded to UpperFloorWallGapTiles INSIDE the drawn contour margin, not the full margin itself —
+            // otherwise a room can land flush on the wall the contour draws (floor 0's own rooms never do,
+            // because they define that margin rather than packing up to it).
+            CompactLayout.PackAroundColumnWithinFootprint(floor, column.Id, colX, colY, contourFloor, FloorFootprint.ContourMargin - UpperFloorWallGapTiles);
             stair = column;
             return floor;
         }

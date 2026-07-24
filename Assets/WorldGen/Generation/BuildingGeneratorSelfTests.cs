@@ -149,6 +149,39 @@ namespace WorldGen.Rendering
                 { Debug.LogError("FAIL packing: Лестница not pinned exactly on the column"); ok = false; }
             }
 
+            // ---- 14. Upper-floor rooms keep a WALL GAP from the drawn contour (UpperFloorWallGapTiles) -----
+            // The drawn wall is floor 0's contour at the FULL FloorFootprint.ContourMargin (DungeonFlatRenderer
+            // draws OutlineSegments at that exact margin, unchanged by this fix). The upper-floor PACKER must
+            // stay UpperFloorWallGapTiles further in than that line — checked here by inflating each placed
+            // room by the gap on every side and requiring the inflated box STILL fit inside the full-margin
+            // contour: a room sitting exactly on (or within the gap of) the wall fails once inflated, while a
+            // room correctly inset by >= the gap still clears it. Tiny epsilon (Eps2) absorbs the ToNorm/ToTile
+            // round-trip, far below the 1-tile gap itself. Non-vacuous: reverting the packer's bound back to
+            // the full ContourMargin (MutUpperFloorNoGap — the flush pre-fix behaviour) packs rooms flush
+            // against the boundary, which this inflated check must then catch.
+            {
+                const float Eps2 = 0.05f;
+                int T4 = DungeonLayout.TilesPerAxis;
+                var wg = BuildingGenerator.Generate(seed: 501, ownerPoiId: "p", roomCount: 12, floorCount: 3);
+                var contour0 = wg.Floors[0];
+                int checkedRooms = 0;
+                for (int f = 1; f < wg.Floors.Count; f++)
+                    foreach (var r in wg.Floors[f].Rooms)
+                    {
+                        checkedRooms++;
+                        var (w, h) = DungeonProjection.EffectiveSize(r);
+                        float cx = r.X * T4, cy = r.Y * T4;
+                        float infl = 2f * (BuildingGenerator.UpperFloorWallGapTiles - Eps2);
+                        if (!FloorFootprint.ContainsRect(contour0, FloorFootprint.ContourMargin, cx, cy, w + infl, h + infl))
+                        {
+                            Debug.LogError($"FAIL wall-gap: floor {f} room {r.Id} at ({cx:F1},{cy:F1}) {w}x{h} sits within {BuildingGenerator.UpperFloorWallGapTiles} tile(s) of the drawn contour — flush against the wall");
+                            ok = false;
+                        }
+                    }
+                if (checkedRooms < 4)
+                { Debug.LogError($"FAIL wall-gap: fixture premise broken — only {checkedRooms} upper-floor room(s) to check, want several so the gap is actually exercised"); ok = false; }
+            }
+
             // ---- 6. Determinism: same seed -> identical structure AND identical positions/bboxes ---------
             // Per-floor room/link counts, each room's TypeId, size AND X/Y, each floor pair's stair target,
             // and every floor's bbox must match between two independent runs of the same seed. Adding the X/Y

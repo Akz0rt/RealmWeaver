@@ -479,17 +479,24 @@ $settlementTests = Get-Content (Join-Path $src 'SettlementSelfTests.cs') -Raw -E
 # Same rebind shape, second source: InteriorOps' mutant (below) is caught via SelfTestInteriorOps, which lives
 # in InteriorOpsSelfTests.cs, not SettlementSelfTests.cs.
 $interiorTests = Get-Content (Join-Path $src 'InteriorOpsSelfTests.cs') -Raw -Encoding UTF8
+# Third source: the upper-floor-wall-gap mutant (below) is caught via SelfTestBuilding, which lives in
+# BuildingGeneratorSelfTests.cs, not SettlementSelfTests.cs or InteriorOpsSelfTests.cs.
+$buildingTests = Get-Content (Join-Path $src 'BuildingGeneratorSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
   # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
-  # lives in $settlementTests, so this stays a no-op for them; only SelfTestInteriorOps falls through to
-  # $interiorTests.
+  # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
+  # $interiorTests, and SelfTestBuilding falls through to $buildingTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $interiorTests
     $origClass = 'InteriorOpsSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $buildingTests
+    $origClass = 'BuildingGeneratorSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -654,7 +661,27 @@ New-SettlementRebind 'SelfTestBuildingFootprintCorridors' 'MutFootprintNoCorrido
   @('FloorFootprint\.') `
   @('WorldGen.Generation.MutFootprintNoCorridors.FloorFootprint.')
 
+# ---- UPPER-FLOOR WALL-GAP MUTANT: an upper floor's packer must stay UpperFloorWallGapTiles inside the drawn
+# contour, not flush against it. -----------------------------------------------------------------------------
+# MutUpperFloorNoGap: both BuildingGenerator call sites that size/bound the upper-floor packer
+# (MaxRoomsByArea's usable-area call and GenerateFloorAroundColumn's PackAroundColumnWithinFootprint call)
+# reverted from the reduced margin back to the FULL FloorFootprint.ContourMargin — the pre-fix flush bug. Both
+# sites spell the reduced margin with the SAME literal expression, so one pattern/replacement reverts both at
+# once (PowerShell -replace is global by default). Caught by BuildingGeneratorSelfTests' wall-gap assertion
+# (SelfTestBuilding, section 14): a flush-packed upper-floor room, inflated by the gap, pokes past the
+# full-margin contour. BuildingGenerator.cs defines ONE class and no data types, so the single-class
+# New-SettlementMutant / rebind-only-"BuildingGenerator." shape (SettlementRoads/InteriorOps/FloorFootprint) is
+# sound.
+New-SettlementMutant 'BuildingGenerator.cs' 'MutUpperFloorNoGap' `
+  'FloorFootprint.ContourMargin - UpperFloorWallGapTiles' `
+  'FloorFootprint.ContourMargin' `
+  'MutUpperFloorNoGap.cs'
+
+New-SettlementRebind 'SelfTestBuilding' 'MutUpperFloorNoGap' `
+  @('BuildingGenerator\.') `
+  @('WorldGen.Generation.MutUpperFloorNoGap.BuildingGenerator.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 15 settlement mutants + 15 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 16 settlement mutants + 16 settlement rebound test copies into gen/"
 

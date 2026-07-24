@@ -79,6 +79,9 @@ namespace WorldGen.Generation
                 ("MutFootprintNoCorridors", "FloorFootprint.ExpandedRects never folds the routed corridor legs into the arrangement (the building contour ignores corridors)",
                     () => new WorldGen.MutantTests.MutFootprintNoCorridorsSelfTests().SelfTestBuildingFootprintCorridors()),
 
+                ("MutUpperFloorNoGap", "BuildingGenerator's upper-floor pack bound reverted to the full drawn-contour margin (rooms pack flush against the wall again)",
+                    () => new WorldGen.MutantTests.MutUpperFloorNoGapSelfTests().SelfTestBuilding()),
+
                 ("MutFenceNoFill",  "SettlementFence.InsideFromOutsideFill's final classification collapsed to the raw pre-fill town raster (an enclosed pocket stays a literal hole)",
                     () => new WorldGen.MutantTests.MutFenceNoFillSelfTests().SelfTestFence()),
                 ("MutFenceNoGates", "SettlementFence's gate-cell rasterization write neutered (a gate's centre cell is never marked town)",

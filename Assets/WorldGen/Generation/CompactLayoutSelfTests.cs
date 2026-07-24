@@ -576,24 +576,26 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL pack-slide: {LinkCount(lobe, 2, 3)} link(s) between the slid pair 2-3, want exactly 1 (the slid slot must render as a door)"); ok = false; }
             }
 
-            // ---- 28. The DM-facing «из N» cap rises on that same contour ------------------------------------
-            // MaxRoomsPackable probes the SAME packer with 10 fixed seeds and rolled 4..6 room sizes, so the
-            // plus-shaped candidate lattice capped the reported max at what arm A alone holds: the column and one
-            // room, i.e. literally the DM's «Комнаты: 2 из 2». Measured on this contour (harness `lobecap`):
-            // 2 before the slide, 4 after. (4 rather than the 5 the all-4x4 fixture above packs, because the
-            // probe rolls sides 4..6 and a 5/6-wide room cannot enter the 4-wide arm B at all.)
-            // This assertion IS live and IS non-vacuous where it ships: in the Editor suite it binds the REAL
-            // CompactLayout, so deleting the slide from the shipped packer makes it FAIL (2 < 4). It is a genuine
-            // regression guard on the DM-facing number, not a self-declared no-op.
-            // The limitation is the HARNESS's, not the assertion's: BuildingGenerator.MaxRoomsPackable is
-            // hard-wired to CompactLayout, and sync.ps1's mutant test copies rebind by rewriting "CompactLayout."
-            // to "<mutant>." — which cannot reach inside BuildingGenerator. So in the `mutants` table this one
-            // line keeps probing the shipped packer and contributes no kill to the MutNoSlide row; assertion 27
-            // is what kills it there. The 2 -> 4 quoted above comes from `lobecap`, which swaps the packer
-            // explicitly (by delegate) instead of by textual rebinding.
+            // ---- 28. The DM-facing «из N» cap on that same contour, at BuildingGenerator's REAL bound ---------
+            // MaxRoomsPackable probes the SAME packer with 10 fixed seeds and rolled 4..6 room sizes — but,
+            // since the upper-floor-wall-gap fix, at BuildingGenerator.UpperFloorWallGapTiles LESS margin than
+            // this file's own `m` (FloorFootprint.ContourMargin): BuildingGenerator packs upper floors inset
+            // from the drawn contour, not flush against it (see BuildingGenerator.GenerateFloorAroundColumn).
+            // On THIS deliberately tight fixture (arm B only 4 tiles wide AT margin 1.5) that inset genuinely
+            // shrinks the achievable cap: measured via the RED run of the wall-gap fix's own test (pre-fix
+            // code, which is byte-for-byte what MutUpperFloorNoGap reproduces) this fixture packs 4 rooms
+            // flush; post-fix, at the reduced margin, it packs 2 — arm B no longer fits a room at all once the
+            // packer is bounded a tile inside the contour. That is NOT a slide regression: this assertion no
+            // longer isolates the slide (assertion 27, which packs the SAME contour at the full margin `m` via
+            // CompactLayout directly, is what kills MutNoSlide — see its comment). This one instead pins
+            // BuildingGenerator's OWN margin choice on its own worst-case fixture: reverting BuildingGenerator's
+            // packer/MAX-estimate margin back to the full FloorFootprint.ContourMargin (Tools/f2-harness's
+            // MutUpperFloorNoGap does exactly that, caught via BuildingGeneratorSelfTests' own gap assertion,
+            // not through this method) packs this contour back up past 2, so this exact-value pin is a live
+            // regression guard on BuildingGenerator's margin, even though it is not itself mutant-rebound here.
             int lobeCap = BuildingGenerator.MaxRoomsPackable(54f, 62f, 4, 4, LobeContour());
-            if (lobeCap < 4)
-            { Debug.LogError($"FAIL pack-slide-cap: MaxRoomsPackable reports {lobeCap} on the L contour, want >= 4 (it was 2 before the slide)"); ok = false; }
+            if (lobeCap != 2)
+            { Debug.LogError($"FAIL pack-slide-cap: MaxRoomsPackable reports {lobeCap} on the L contour at BuildingGenerator's gapped margin, want exactly 2"); ok = false; }
 
             // ---- 29. CENTRE-FIRST: a valid centred slot still beats every slid one --------------------------
             // The slide is offset-OUTER (magnitude 0 first, then +1, -1, +2, -2 ... across all four sides and,
