@@ -166,7 +166,13 @@ namespace WorldGen.Rendering
             if (hasContour)
             {
                 contourFloor = dungeon.Floors[0];
-                contourSegs.AddRange(FloorFootprint.OutlineSegments(contourFloor, FloorFootprint.ContourMargin));
+                // The wall wraps the building's SHAPE — its rooms AND the corridors between them, which route
+                // freely and can bow outside the room union (without this the contour cuts across such a
+                // corridor). Route FLOOR 0's corridors — not `rg`, which is the CURRENT level's graph and on
+                // an upper-floor view would wrap the wrong floor. Clean matches this once-per-RebuildView
+                // cadence. Route-then-derive: building corridors ignore the contour, so no circularity.
+                var contourCorridors = DungeonLayout.BuildBuildingCorridors(contourFloor);
+                contourSegs.AddRange(FloorFootprint.OutlineSegments(contourFloor, FloorFootprint.ContourMargin, contourCorridors));
                 for (int i = 0; i < contourSegs.Count; i++) contourEdges.Add(BuildContourEdgeRect());
             }
 

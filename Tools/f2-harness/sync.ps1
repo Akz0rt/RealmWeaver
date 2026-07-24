@@ -637,7 +637,23 @@ New-SettlementRebind 'SelfTestInteriorOps' 'MutNoOwnedCleanup' `
   @('InteriorOps\.') `
   @('WorldGen.Generation.MutNoOwnedCleanup.InteriorOps.')
 
+# ---- FLOOR FOOTPRINT MUTANT: the building wall must wrap corridors, not just rooms. -------------------------
+# MutFootprintNoCorridors: ExpandedRects' corridor guard forced false, so the routed corridor legs are never
+# folded into the footprint arrangement — the contour reverts to the room-union shape and cuts across a
+# corridor that bows outside it. Caught by SelfTestBuildingFootprintCorridors' midpoint-inside assertion (the
+# corridor midpoint, which sits in the open gap, now reads OUTSIDE the rooms+corridor footprint). FloorFootprint.cs
+# defines ONE class and no data types (InteriorFloor/LinkSegment live elsewhere, unmutated and resolved outward),
+# so the single-class New-SettlementMutant / rebind-only-"FloorFootprint." shape (SettlementRoads/InteriorOps) is sound.
+New-SettlementMutant 'FloorFootprint.cs' 'MutFootprintNoCorridors' `
+  'if (corridors != null)' `
+  'if (false)   // MUTANT: routed corridor legs never folded into the footprint arrangement' `
+  'MutFootprintNoCorridors.cs'
+
+New-SettlementRebind 'SelfTestBuildingFootprintCorridors' 'MutFootprintNoCorridors' `
+  @('FloorFootprint\.') `
+  @('WorldGen.Generation.MutFootprintNoCorridors.FloorFootprint.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 14 settlement mutants + 14 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 15 settlement mutants + 15 settlement rebound test copies into gen/"
 

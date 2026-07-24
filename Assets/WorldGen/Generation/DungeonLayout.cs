@@ -272,6 +272,28 @@ namespace WorldGen.Generation
             return g;
         }
 
+        /// <summary>The routed corridor legs for a building floor, in TILE space (RoomLinkGeometry's
+        /// LinkGeometry.Segments — no junction-splitting; the union is the same either way). Built with the
+        /// SAME rooms→LinkNodes / links→LinkEdges adapter BuildRenderGraph feeds the router, so the floor-0
+        /// contour (FloorFootprint) wraps exactly the corridors the map draws. Clean by default — a settled-
+        /// layout derive, matching the contour's once-per-RebuildView cadence; a building never routes roads,
+        /// so there is no settlementRoads path here. Empty for a null/empty floor. Never stored (boxes move
+        /// every frame); route, then derive — no circularity, since building corridors ignore the contour.</summary>
+        public static IReadOnlyList<LinkSegment> BuildBuildingCorridors(InteriorFloor lvl,
+            RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
+        {
+            if (lvl == null) return System.Array.Empty<LinkSegment>();
+            var nodes = new List<LinkNode>(lvl.Rooms.Count);
+            foreach (var r in lvl.Rooms)
+            {
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                nodes.Add(new LinkNode { Id = r.Id, CX = ToTile(r.X), CY = ToTile(r.Y), W = w, H = h });
+            }
+            var edges = new List<LinkEdge>(lvl.Links.Count);
+            foreach (var c in lvl.Links) edges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+            return RoomLinkGeometry.Build(nodes, edges, mode).Segments;
+        }
+
         /// <summary>THE settlement fence, DERIVED (never stored — the field was removed): the ONE place the
         /// renderer (RebuildTownWall), the fit (FitBoundsFor) and the wall-bounds self-test get the fence, so
         /// they can never disagree about where it is. Returns null unless this floor is a walled settlement

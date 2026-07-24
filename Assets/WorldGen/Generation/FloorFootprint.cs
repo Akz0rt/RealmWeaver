@@ -2,8 +2,11 @@ using System.Collections.Generic;
 
 namespace WorldGen.Generation
 {
-    /// <summary>Pure, headless geometry for a building floor's FOOTPRINT — the union of its room rectangles,
-    /// each expanded by a small outward margin, in TILE space. Used to draw the floor-0 contour as the
+    /// <summary>Pure, headless geometry for a building floor's FOOTPRINT — the union of its room rectangles
+    /// (and, when the caller passes them, its routed corridor legs — optional, default null → rooms only, so
+    /// every non-building caller stays byte-identical), each expanded by a small outward margin, in TILE
+    /// space. A building's wall must wrap the corridors between its rooms too — they route freely and can bow
+    /// outside the room union. Used to draw the floor-0 contour as the
     /// building's actual SHAPE (L / T / …), not a bounding rectangle (spec C6), to test whether a room sits
     /// inside that shape (out-of-contour red flag), and to test whether a candidate point is inside it (new-
     /// room placement).
@@ -26,21 +29,35 @@ namespace WorldGen.Generation
 
         static float ToTile(float norm) => norm * DungeonLayout.TilesPerAxis;
 
-        static List<Box> ExpandedRects(InteriorFloor floor, float margin)
+        static List<Box> ExpandedRects(InteriorFloor floor, float margin, IReadOnlyList<LinkSegment> corridors = null)
         {
             var rects = new List<Box>();
-            if (floor == null) return rects;
-            foreach (var r in floor.Rooms)
-            {
-                var (w, h) = DungeonProjection.EffectiveSize(r);
-                if (w <= 0 || h <= 0) continue;
-                float cx = ToTile(r.X), cy = ToTile(r.Y);
-                rects.Add(new Box
+            if (floor != null)
+                foreach (var r in floor.Rooms)
                 {
-                    x0 = cx - w * 0.5f - margin, y0 = cy - h * 0.5f - margin,
-                    x1 = cx + w * 0.5f + margin, y1 = cy + h * 0.5f + margin
-                });
-            }
+                    var (w, h) = DungeonProjection.EffectiveSize(r);
+                    if (w <= 0 || h <= 0) continue;
+                    float cx = ToTile(r.X), cy = ToTile(r.Y);
+                    rects.Add(new Box
+                    {
+                        x0 = cx - w * 0.5f - margin, y0 = cy - h * 0.5f - margin,
+                        x1 = cx + w * 0.5f + margin, y1 = cy + h * 0.5f + margin
+                    });
+                }
+            // A building's corridors route FREELY (never against this contour) and can bow OUTSIDE the room
+            // union, so the wall would cut across one. Fold each routed leg (TILE space) in as a thin rect
+            // inflated by the SAME margin, so the outline — and every sibling arrangement consumer given the
+            // same corridors — wraps rooms + corridors as ONE shape. A corridor cell then reads INSIDE the
+            // building, which is correct; rooms stay inside, so ContainsRect's out-of-contour flag never
+            // regresses. Default null = rooms only (every non-building caller), byte-identical to before.
+            if (corridors != null)
+                foreach (var s in corridors)
+                {
+                    if (s == null) continue;
+                    float cx0 = s.A.X < s.B.X ? s.A.X : s.B.X, cx1 = s.A.X < s.B.X ? s.B.X : s.A.X;
+                    float cy0 = s.A.Y < s.B.Y ? s.A.Y : s.B.Y, cy1 = s.A.Y < s.B.Y ? s.B.Y : s.A.Y;
+                    rects.Add(new Box { x0 = cx0 - margin, y0 = cy0 - margin, x1 = cx1 + margin, y1 = cy1 + margin });
+                }
             return rects;
         }
 
@@ -53,17 +70,19 @@ namespace WorldGen.Generation
 
         /// <summary>True iff tile-space point (xTiles,yTiles) lies inside the floor footprint (any expanded
         /// room rect). The "inside the drawn contour" test for new-room placement.</summary>
-        public static bool CoversPoint(InteriorFloor floor, float margin, float xTiles, float yTiles)
-            => CoveredByAny(ExpandedRects(floor, margin), xTiles, yTiles);
+        public static bool CoversPoint(InteriorFloor floor, float margin, float xTiles, float yTiles,
+            IReadOnlyList<LinkSegment> corridors = null)
+            => CoveredByAny(ExpandedRects(floor, margin, corridors), xTiles, yTiles);
 
         /// <summary>True iff the tile-space footprint rect centred at (cx,cy) with size (w,h) lies ENTIRELY
         /// inside the floor footprint — i.e. it does NOT poke outside the drawn contour. Exact: builds the
         /// arrangement of the union rects' edges clipped to the query rect and checks every cell centre is
         /// covered. A room is red-flagged when this is FALSE.</summary>
-        public static bool ContainsRect(InteriorFloor floor, float margin, float cx, float cy, float w, float h)
+        public static bool ContainsRect(InteriorFloor floor, float margin, float cx, float cy, float w, float h,
+            IReadOnlyList<LinkSegment> corridors = null)
         {
             if (w <= 0 || h <= 0) return true;
-            var rects = ExpandedRects(floor, margin);
+            var rects = ExpandedRects(floor, margin, corridors);
             if (rects.Count == 0) return false;
             float qx0 = cx - w * 0.5f, qx1 = cx + w * 0.5f, qy0 = cy - h * 0.5f, qy1 = cy + h * 0.5f;
 
@@ -81,10 +100,11 @@ namespace WorldGen.Generation
         /// rectangle arrangement, so together they trace the building's SHAPE (concave notches of an L/T
         /// footprint and any interior hole included). Order is unspecified; the renderer draws each segment
         /// independently. Empty for an empty floor.</summary>
-        public static List<(float x0, float y0, float x1, float y1)> OutlineSegments(InteriorFloor floor, float margin)
+        public static List<(float x0, float y0, float x1, float y1)> OutlineSegments(InteriorFloor floor, float margin,
+            IReadOnlyList<LinkSegment> corridors = null)
         {
             var segs = new List<(float, float, float, float)>();
-            var rects = ExpandedRects(floor, margin);
+            var rects = ExpandedRects(floor, margin, corridors);
             if (rects.Count == 0) return segs;
 
             var xs = AllEdges(rects, true);
@@ -119,9 +139,10 @@ namespace WorldGen.Generation
         /// arrangement the outline uses, so "area inside the contour" means exactly what the contour shows (an
         /// L/T notch removes its area). 0 for an empty floor. Used to decide, deterministically, how many rooms
         /// can fit a floor by area (unlike a single seed-dependent pack attempt).</summary>
-        public static float UsableAreaTiles(InteriorFloor floor, float margin)
+        public static float UsableAreaTiles(InteriorFloor floor, float margin,
+            IReadOnlyList<LinkSegment> corridors = null)
         {
-            var rects = ExpandedRects(floor, margin);
+            var rects = ExpandedRects(floor, margin, corridors);
             if (rects.Count == 0) return 0f;
             var xs = AllEdges(rects, true);
             var ys = AllEdges(rects, false);

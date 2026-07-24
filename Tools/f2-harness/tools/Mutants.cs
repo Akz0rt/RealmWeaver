@@ -76,6 +76,9 @@ namespace WorldGen.Generation
                 ("MutNoOwnedCleanup",  "InteriorOps' single-node RemoveOwnedInteriors(all, poiId, roomId) overload always returns 0 (node deletion never cleans the owned interior)",
                     () => new WorldGen.MutantTests.MutNoOwnedCleanupSelfTests().SelfTestInteriorOps()),
 
+                ("MutFootprintNoCorridors", "FloorFootprint.ExpandedRects never folds the routed corridor legs into the arrangement (the building contour ignores corridors)",
+                    () => new WorldGen.MutantTests.MutFootprintNoCorridorsSelfTests().SelfTestBuildingFootprintCorridors()),
+
                 ("MutFenceNoFill",  "SettlementFence.InsideFromOutsideFill's final classification collapsed to the raw pre-fill town raster (an enclosed pocket stays a literal hole)",
                     () => new WorldGen.MutantTests.MutFenceNoFillSelfTests().SelfTestFence()),
                 ("MutFenceNoGates", "SettlementFence's gate-cell rasterization write neutered (a gate's centre cell is never marked town)",

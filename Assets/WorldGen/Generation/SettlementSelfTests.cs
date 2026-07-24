@@ -562,6 +562,92 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Wall Bounds: PASS");
         }
 
+        [ContextMenu("Self-Test: Building Footprint Corridors")]
+        public void SelfTestBuildingFootprintCorridors()
+        {
+            bool ok = true;
+            float m = FloorFootprint.ContourMargin;
+            int T = DungeonLayout.TilesPerAxis;
+
+            // Two 8×8 rooms far apart on one row, one link. Their connecting corridor runs straight door-to-
+            // door through the OPEN GAP between them — outside the union of the two room rects (the "bow
+            // outside the room-union outline" the building wall must wrap). Far enough apart that the whole
+            // middle of the corridor sits clear of both inflated room rects.
+            var floor = new InteriorFloor { NextRoomId = 3 };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 1, SizeW = 8, SizeH = 8, X = 32f / T, Y = 64f / T });
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, SizeW = 8, SizeH = 8, X = 96f / T, Y = 64f / T });
+            floor.Links.Add(new Link { RoomA = 1, RoomB = 2 });
+
+            // Route with the SAME Generation router the building renderer runs for the contour (TILE space).
+            var corridors = DungeonLayout.BuildBuildingCorridors(floor);
+            if (corridors.Count == 0)
+            {
+                Debug.LogError("FAIL building-footprint: the router produced no corridor — the fixture proves nothing");
+                Debug.Log("Self-Test Building Footprint Corridors: FAIL");
+                return;
+            }
+
+            // Arc-length midpoint of the whole routed polyline — any point on it lies in the wide gap, so
+            // this is robust to however many legs the router returns.
+            float Dist(LinkPoint a, LinkPoint b) => (float)System.Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+            float total = 0f;
+            foreach (var s in corridors) total += Dist(s.A, s.B);
+            float half = total * 0.5f, acc = 0f, mx = corridors[0].A.X, my = corridors[0].A.Y;
+            foreach (var s in corridors)
+            {
+                float len = Dist(s.A, s.B);
+                if (acc + len >= half)
+                {
+                    float t = len > 1e-6f ? (half - acc) / len : 0f;
+                    mx = s.A.X + (s.B.X - s.A.X) * t; my = s.A.Y + (s.B.Y - s.A.Y) * t;
+                    break;
+                }
+                acc += len;
+            }
+
+            // LOAD-BEARING. The midpoint reads OUTSIDE the ROOMS-ONLY footprint (proof the corridor genuinely
+            // bows out — else this test passes vacuously) and INSIDE once the corridor is folded in. The
+            // MutFootprintNoCorridors mutant, which never adds the corridor rects, makes the second read
+            // false and is caught right here.
+            if (FloorFootprint.CoversPoint(floor, m, mx, my))
+            { Debug.LogError($"FAIL building-footprint: corridor midpoint ({mx:F1},{my:F1}) is already inside the ROOMS-ONLY footprint — the corridor does not bow outside, so the test proves nothing"); ok = false; }
+            if (!FloorFootprint.CoversPoint(floor, m, mx, my, corridors))
+            { Debug.LogError($"FAIL building-footprint: corridor midpoint ({mx:F1},{my:F1}) reads OUTSIDE the rooms+corridor footprint — the wall does not wrap the corridor"); ok = false; }
+
+            // Sanity: every routed corridor cell keeps >= ClearanceTiles from every room, EXCEPT the door
+            // approaches (a corridor legitimately meets its rooms AT the wall — those cells sit within a door
+            // band of an endpoint). Mirrors SelfTestRoads' assertion 5. The fixture is well-separated, so the
+            // router's zero-clearance retry never fires; a corridor tunnelling a room would register interior
+            // cells far from any door with distance ~0 → caught. Names the offending value.
+            float doorBand = RoomLinkGeometry.ClearanceTiles + RoomLinkGeometry.DoorMargin;
+            var ends = new[] { corridors[0].A, corridors[corridors.Count - 1].B };
+            foreach (var s in corridors)
+            {
+                int ax = (int)System.Math.Round(s.A.X), ay = (int)System.Math.Round(s.A.Y);
+                int bx = (int)System.Math.Round(s.B.X), by = (int)System.Math.Round(s.B.Y);
+                int steps = System.Math.Max(System.Math.Abs(bx - ax), System.Math.Abs(by - ay));
+                for (int i = 0; i <= steps; i++)
+                {
+                    int cx = ax + System.Math.Sign(bx - ax) * i, cy = ay + System.Math.Sign(by - ay) * i;
+                    bool nearDoor = false;
+                    foreach (var e in ends)
+                        if (System.Math.Max(System.Math.Abs(cx - e.X), System.Math.Abs(cy - e.Y)) <= doorBand) { nearDoor = true; break; }
+                    if (nearDoor) continue;
+                    foreach (var r in floor.Rooms)
+                    {
+                        var (w, h) = DungeonProjection.EffectiveSize(r);
+                        float dx = System.Math.Max(0f, System.Math.Abs(cx - r.X * T) - w * 0.5f);
+                        float dy = System.Math.Max(0f, System.Math.Abs(cy - r.Y * T) - h * 0.5f);
+                        float dist = System.Math.Max(dx, dy);
+                        if (dist < RoomLinkGeometry.ClearanceTiles - 1e-3f)
+                        { Debug.LogError($"FAIL building-footprint: corridor cell ({cx},{cy}) is {dist:F2} tiles from room {r.Id} — want >= {RoomLinkGeometry.ClearanceTiles}"); ok = false; }
+                    }
+                }
+            }
+
+            Debug.Log(ok ? "Self-Test Building Footprint Corridors: PASS" : "Self-Test Building Footprint Corridors: FAIL");
+        }
+
         [ContextMenu("Self-Test: Settlement Roads")]
         public void SelfTestRoads()
         {
