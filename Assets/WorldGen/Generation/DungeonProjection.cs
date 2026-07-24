@@ -69,21 +69,28 @@ namespace WorldGen.Generation
             return (minX, minY, maxX, maxY);
         }
 
-        /// <summary>Tile-space AABB over a settlement wall's vertices (Wall.Points × TilesPerAxis). A
-        /// settlement's wall extends past its inner buildings, so Fit — which uses room footprints only —
-        /// clips it; unioning this with ContentBoundsTiles keeps the whole walled town on screen. Returns a
-        /// degenerate box at the canvas centre for a null/empty wall (a wall-less village adds nothing).</summary>
-        public static (float minX, float minY, float maxX, float maxY) WallBoundsTiles(WallContour wall)
+        /// <summary>Tile-space AABB over a settlement wall's vertices. A settlement's wall extends past its
+        /// inner buildings, so Fit — which uses room footprints only — clips it; unioning this with
+        /// ContentBoundsTiles keeps the whole walled town on screen. Returns a degenerate box at the canvas
+        /// centre for a null/empty wall (a wall-less village adds nothing).
+        ///
+        /// <paramref name="tileSpace"/> selects the input frame: DERIVED fences (DungeonLayout.DeriveTownFence,
+        /// SettlementFence.Derive) already carry TILE-space points, so pass true and the points are used as-is.
+        /// The default (false) multiplies by TilesPerAxis for a NORMALIZED 0..1 contour — now a test-only path,
+        /// since nothing stores a normalized wall any more (InteriorFloor.Wall was removed); a normalized fence
+        /// passed as tile-space (or vice-versa) is a silent ×128 mis-scale, so every call site states it.</summary>
+        public static (float minX, float minY, float maxX, float maxY) WallBoundsTiles(WallContour wall, bool tileSpace = false)
         {
             if (wall == null || wall.Points == null || wall.Points.Count == 0)
             {
                 float c = DungeonLayout.TilesPerAxis * 0.5f;
                 return (c, c, c, c);
             }
+            float scale = tileSpace ? 1f : DungeonLayout.TilesPerAxis;
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
             foreach (var p in wall.Points)
             {
-                float tx = p.X * DungeonLayout.TilesPerAxis, ty = p.Y * DungeonLayout.TilesPerAxis;
+                float tx = p.X * scale, ty = p.Y * scale;
                 if (tx < minX) minX = tx; if (tx > maxX) maxX = tx;
                 if (ty < minY) minY = ty; if (ty > maxY) maxY = ty;
             }

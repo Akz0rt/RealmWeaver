@@ -577,7 +577,6 @@ namespace WorldGen.Persistence
             string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "settlement_roundtrip_test.dndproj");
 
             var floor = new InteriorFloor { NextRoomId = 4 };
-            floor.Wall = WallContour.Rounded(1, 0.5f, 0.5f, 0.3f, 8, 0.1f);
             floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.8f, Y = 0.5f });                          // gate
             floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f, Preview = new byte[]{9,8,7} }); // building w/ image
             floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.45f, Y = 0.55f });                        // building no image
@@ -599,8 +598,6 @@ namespace WorldGen.Persistence
                 var f = r.Dungeons[0].Floors[0];
                 if (r.Dungeons[0].Kind != InteriorKind.Settlement)
                 { Debug.LogError($"FAIL settlement save: Kind came back {r.Dungeons[0].Kind}, want Settlement"); ok = false; }
-                if (f.Wall == null || !f.Wall.IsClosedSane())
-                { Debug.LogError("FAIL settlement save: the wall did not survive the round trip"); ok = false; }
                 var b2 = f.Rooms.Find(x => x.Id == 2);
                 var b3 = f.Rooms.Find(x => x.Id == 3);
                 if (b2 == null || b2.Preview == null || b2.Preview.Length != 3 || b2.Preview[0] != 9)
@@ -609,20 +606,19 @@ namespace WorldGen.Persistence
                 { Debug.LogError("FAIL settlement save: building 3 (no image) loaded with a non-null Preview"); ok = false; }
             }
 
-            // ---- 2. Null keys are OMITTED from the file, not merely null-safe on load -------------------
-            // The assertions above pass with or WITHOUT [JsonProperty(NullValueHandling.Ignore)] on Wall/
-            // Preview: a serialized "Wall": null / "Preview": null round-trips to null just as well as an
-            // absent key, and the town above always has a non-null Wall, so neither Ignore attribute is
-            // actually exercised by scenario 1. This proves the "a project with no settlements/images does
-            // not grow in size" contract directly: a minimal, wall-less (open village — commit 7ec6185) town
-            // whose only building has no Preview must not write EITHER key at all. Confirmed no global
-            // NullValueHandling on ProjectSerializer.BuildSettings and no camelCase contract resolver
+            // ---- 2. A null Preview key is OMITTED from the file, not merely null-safe on load -----------
+            // Scenario 1's assertions pass with or WITHOUT [JsonProperty(NullValueHandling.Ignore)] on
+            // Preview: a serialized "Preview": null round-trips to null just as well as an absent key. This
+            // proves the "a project with no building images does not grow in size" contract directly: a
+            // minimal town whose only building has no Preview must not write the key at all. Confirmed no
+            // global NullValueHandling on ProjectSerializer.BuildSettings and no camelCase contract resolver
             // (PascalCase keys, same as every other self-test's json.Contains/Replace checks in this file),
-            // so a literal "\"Wall\"" / "\"Preview\"" substring check is exactly what a leaked key looks like.
+            // so a literal "\"Preview\"" substring check is exactly what a leaked key looks like. (The old
+            // companion "Wall"-key omission check went away with the InteriorFloor.Wall field — the fence is
+            // derived now, so nothing serializes a wall at all.)
             string minPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "settlement_nullkeys_selftest.json");
             var minFloor = new InteriorFloor { NextRoomId = 2 };
             minFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });   // building, Preview stays null
-            // minFloor.Wall is left null — a legitimate wall-less village, not an omission.
             var village = new InteriorData { OwnerPoiId = "poi-village", Kind = InteriorKind.Settlement, Floors = { minFloor } };
 
             ProjectSerializer.Save(minPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
@@ -633,8 +629,6 @@ namespace WorldGen.Persistence
             string minJson = System.IO.File.ReadAllText(minPath);
             try { System.IO.File.Delete(minPath); } catch { }
 
-            if (minJson.Contains("\"Wall\""))
-            { Debug.LogError("FAIL settlement save: a null Wall was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
             if (minJson.Contains("\"Preview\""))
             { Debug.LogError("FAIL settlement save: a null Preview was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
 

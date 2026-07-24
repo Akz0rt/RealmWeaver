@@ -272,6 +272,38 @@ namespace WorldGen.Generation
             return g;
         }
 
+        /// <summary>THE settlement fence, DERIVED (never stored — the field was removed): the ONE place the
+        /// renderer (RebuildTownWall), the fit (FitBoundsFor) and the wall-bounds self-test get the fence, so
+        /// they can never disagree about where it is. Returns null unless this floor is a walled settlement
+        /// (SettlementParams?.HasWall == true) — a wall-less village/camp, a dungeon or a building has no fence.
+        ///
+        /// Splits the floor's rooms into buildings (TypeId 1) and gates (TypeId 0), routes the streets as ROADS
+        /// with the SAME node/edge adapter BuildRenderGraph feeds SettlementRoads (EffectiveSize footprints in
+        /// TILE space, links → edges), then traces the fence around the inflated union of buildings + gates +
+        /// those roads (SettlementFence.Derive). Because the roads here are built the identical way the renderer
+        /// builds them, the fence wraps exactly the roads the map draws. TILE space out (SettlementFence's
+        /// convention), UNLIKE the old normalized stored wall — so a caller must NOT re-scale by TilesPerAxis.</summary>
+        public static WallContour DeriveTownFence(InteriorFloor lvl)
+        {
+            if (lvl == null || lvl.SettlementParams == null || !lvl.SettlementParams.HasWall) return null;
+
+            var nodes = new List<LinkNode>(lvl.Rooms.Count);
+            var buildings = new List<LinkNode>();
+            var gates = new List<LinkNode>();
+            foreach (var r in lvl.Rooms)
+            {
+                var (w, h) = DungeonProjection.EffectiveSize(r);
+                var node = new LinkNode { Id = r.Id, CX = ToTile(r.X), CY = ToTile(r.Y), W = w, H = h };
+                nodes.Add(node);
+                if (r.TypeId == 1) buildings.Add(node); else gates.Add(node);   // gate = TypeId 0 (rasterized as a point)
+            }
+            var edges = new List<LinkEdge>(lvl.Links.Count);
+            foreach (var c in lvl.Links) edges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
+
+            var roads = SettlementRoads.Build(nodes, edges).Segments;
+            return SettlementFence.Derive(buildings, gates, roads, SettlementFence.FenceMarginTiles);
+        }
+
         /// <summary>Proper crossing of open segments p1p2 × p3p4 (shared endpoints / collinear touches don't
         /// count). Outputs the intersection point and its parameter t along p1p2 in (0,1).</summary>
         static bool SegmentIntersect(LayoutPoint p1, LayoutPoint p2, LayoutPoint p3, LayoutPoint p4, out LayoutPoint ip, out float t)

@@ -773,8 +773,11 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Whether the CURRENT town has a wall, so a regenerate preserves that choice (a City stays
-        /// walled, a Village stays open) instead of re-deriving it from the POI type this screen doesn't see.</summary>
-        bool HasWallForCurrent() => current.Floors.Count > 0 && current.Floors[0].Wall != null;
+        /// walled, a Village stays open) instead of re-deriving it from the POI type this screen doesn't see.
+        /// Reads the stored SettlementParams.HasWall flag: the wall itself is no longer stored (InteriorFloor.
+        /// Wall was removed — the fence is derived), and the old `Floors[0].Wall != null` test this replaced
+        /// was in fact ALWAYS false since nothing ever wrote that field.</summary>
+        bool HasWallForCurrent() => current.Floors.Count > 0 && current.Floors[0].SettlementParams?.HasWall == true;
 
         void ShowRegenMsg(string msg) { if (regenMsgLabel != null) regenMsgLabel.text = msg; }
 

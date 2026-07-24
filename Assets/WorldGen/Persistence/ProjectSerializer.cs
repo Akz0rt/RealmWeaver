@@ -31,7 +31,11 @@ namespace WorldGen.Persistence
     public static class ProjectSerializer
     {
         public const int CurrentFormatVersion = 9;   // 9: Room.Preview (settlement building preview image)
-                                                     // + InteriorFloor.Wall (settlement wall contour).
+                                                     // + InteriorFloor.Wall (settlement wall contour — that
+                                                     // field was LATER removed in the fence rework; the fence
+                                                     // is now derived, and any "Wall" key in an existing v9
+                                                     // file is simply ignored on load, MissingMemberHandling
+                                                     // being Ignore by default).
                                                      // Reading v8 needs no migration — both keys are
                                                      // absent in a v8 file and deserialize to null.
                                                      // Bumped anyway so a v0.3.7 build WARNS on open

@@ -97,11 +97,6 @@ namespace WorldGen.Generation
         [JsonProperty("Rooms")] public List<Room> Rooms = new List<Room>();
         [JsonProperty("Corridors")] public List<Link> Links = new List<Link>();
         public int NextRoomId = 1;
-        /// <summary>A settlement's stored wall, or null (dungeons/buildings/wall-less villages). Unlike a
-        /// building's floor contour, which is DERIVED from its rooms (FloorFootprint), a settlement's wall is
-        /// authored FIRST and buildings are packed inside it, so it must be stored, not derived.</summary>
-        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
-        public WallContour Wall = null;
         /// <summary>A settlement's composition parameters, or null (dungeons/buildings). Stored so the DM's
         /// total/active counts persist and «Сгенерировать заново» re-applies them.</summary>
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]

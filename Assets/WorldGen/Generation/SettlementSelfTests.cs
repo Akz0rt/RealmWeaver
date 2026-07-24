@@ -290,9 +290,9 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL assembly: expected 1 floor, got {data.Floors.Count}"); ok = false; }
             var floor = data.Floors[0];
 
-            // ---- 2. Gate nodes are TypeId 0; building nodes are TypeId 1 (Ц2.6: no wall is stored on the
-            // floor any more — floor.Wall stays permanently null; gate/fence geometry is covered separately
-            // by SelfTestGates, which re-derives the preliminary building fence and checks gate proximity) --
+            // ---- 2. Gate nodes are TypeId 0; building nodes are TypeId 1 (Ц2.6+Task 7: no wall is stored on
+            // the floor — InteriorFloor.Wall was removed; gate/fence geometry is covered separately by
+            // SelfTestGates, which re-derives the preliminary building fence and checks gate proximity) --
             int gateNodes = 0, buildNodes = 0;
             foreach (var r in floor.Rooms)
             {
@@ -308,7 +308,7 @@ namespace WorldGen.Rendering
 
             // ---- 3. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
             // Reconstruct the exact placement/buildings/gates/edges BuildFloor used (all deterministic from
-            // cfg alone — nothing reads floor.Wall any more), then verify (a) rooms were created in
+            // cfg alone — there is no stored wall), then verify (a) rooms were created in
             // gates-then-buildings order — the room at combined index i carries node i's position and type —
             // and (b) every street edge {A,B} became a link between room ids A+1 and B+1. A reversed or
             // scrambled index→id mapping (the "every street links the wrong pair" bug) fails here; a
@@ -382,12 +382,9 @@ namespace WorldGen.Rendering
             var data = SettlementGenerator.Generate(cfg, "poi-village");
             var floor = data.Floors[0];
 
-            // ---- 1. A wall-less village stores NO wall --------------------------------------------------
-            // Store the notional placement contour here and a village would render an unwanted perimeter.
-            if (floor.Wall != null)
-            { Debug.LogError("FAIL village: floor.Wall is non-null for a HasWall=false village"); ok = false; }
-
-            // ---- 2. NO gate rooms; a substantial building count is STILL placed ------------------------
+            // ---- 1. NO gate rooms; a substantial building count is STILL placed ------------------------
+            // (InteriorFloor.Wall was removed — a wall-less village has no perimeter to store; "no wall" is now
+            // structural, so what remains to check is that a HasWall=false town produces zero gate rooms below.)
             // This is the bug under fix: today BuildFloor derives placement from the (null) wall, so a
             // village yields 0 buildings, 0 gates, 0 streets — a completely empty map.
             int gateNodes = 0, buildNodes = 0;
@@ -526,22 +523,41 @@ namespace WorldGen.Rendering
         public void SelfTestWallBounds()
         {
             bool ok = true;
-            // A jitter-free octagon radius 0.3 at (0.5,0.5): vertex 0 at angle 0 is (0.8,0.5) → max X 0.8;
-            // the opposite vertex is (0.2,0.5) → min X 0.2. In tiles that is ×TilesPerAxis.
+            // ---- 1. WallBoundsTiles' NORMALIZED path (test-only since InteriorFloor.Wall was removed): a
+            // jitter-free octagon radius 0.3 at (0.5,0.5): vertex 0 at angle 0 is (0.8,0.5) → max X 0.8; the
+            // opposite vertex is (0.2,0.5) → min X 0.2. In tiles that is ×TilesPerAxis (tileSpace: false). ----
             var wall = WallContour.Rounded(seed: 1, cx: 0.5f, cy: 0.5f, radius: 0.3f, sides: 8, jitter: 0f);
-            var (minX, minY, maxX, maxY) = DungeonProjection.WallBoundsTiles(wall);
+            var (minX, minY, maxX, maxY) = DungeonProjection.WallBoundsTiles(wall, tileSpace: false);
             float expMax = 0.8f * DungeonLayout.TilesPerAxis, expMin = 0.2f * DungeonLayout.TilesPerAxis;
             if (System.Math.Abs(maxX - expMax) > 0.5f)
             { Debug.LogError($"FAIL wallbounds: maxX {maxX:F1}, want ~{expMax:F1}"); ok = false; }
             if (System.Math.Abs(minX - expMin) > 0.5f)
             { Debug.LogError($"FAIL wallbounds: minX {minX:F1}, want ~{expMin:F1}"); ok = false; }
 
-            // The "union of room bounds and wall bounds extends past the rooms alone" assertion that used to
-            // live here read floor.Wall from a generated city — removed out-of-brief for THIS task (Ц2.6
-            // Task 6: floor.Wall is no longer stored, so it is permanently null and WallBoundsTiles(null)
-            // degenerates to a single point at the canvas centre, which sits inside a centred town's own room
-            // bounds — the assertion would false-fail, not exercise anything real). Task 7 retargets this to
-            // the derived fence's bounds (DungeonLayout.DeriveTownFence), per the settlement-fence plan.
+            // ---- 2. The DERIVED fence's bounds extend past the rooms alone (retargeted Task 7 from the removed
+            // floor.Wall assertion): DeriveTownFence clears the outermost buildings by FenceMarginTiles, so its
+            // AABB pokes past the footprint-only ContentBoundsTiles — unioning them keeps the whole walled town
+            // on screen (exactly what FitBoundsFor does). The fence is TILE space already, so read it with
+            // tileSpace: true (no ×T); a double-scale would both falsely satisfy "extends past" AND blow the
+            // field, so the explicit magnitude guard below pins the tile-space path. ----
+            var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
+            var floor = SettlementGenerator.BuildFloor(cfg);
+            var fence = DungeonLayout.DeriveTownFence(floor);
+            if (fence == null || !fence.IsClosedSane())
+            { Debug.LogError("FAIL wallbounds: DeriveTownFence returned null/insane for a walled city"); ok = false; }
+            else
+            {
+                var (rMinX, rMinY, rMaxX, rMaxY) = DungeonProjection.ContentBoundsTiles(floor);
+                var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(fence, tileSpace: true);
+                bool pokesPast = wMinX < rMinX - 0.5f || wMinY < rMinY - 0.5f
+                              || wMaxX > rMaxX + 0.5f || wMaxY > rMaxY + 0.5f;
+                if (!pokesPast)
+                { Debug.LogError($"FAIL wallbounds: derived-fence bounds ({wMinX:F0}..{wMaxX:F0},{wMinY:F0}..{wMaxY:F0}) do not extend past the room bounds ({rMinX:F0}..{rMaxX:F0},{rMinY:F0}..{rMaxY:F0}) on any side"); ok = false; }
+                // A silent ×T mix-up (tile-space fence read as normalized) would multiply every point by ~128,
+                // pushing maxX far past the field — this pins tileSpace: true actually skips the scale.
+                if (wMaxX > DungeonLayout.TilesPerAxis * 2f)
+                { Debug.LogError($"FAIL wallbounds: fence maxX {wMaxX:F0} exceeds the tile field — WallBoundsTiles double-scaled a tile-space fence"); ok = false; }
+            }
 
             if (ok) Debug.Log("Settlement Wall Bounds: PASS");
         }

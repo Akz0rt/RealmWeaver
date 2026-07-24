@@ -228,10 +228,11 @@ namespace WorldGen.Rendering
 
             // Settlement wall with gate gaps — Settlement only. Recomputed every reposition (gates are
             // draggable rooms, same as any other room) so a gap tracks a live drag, matching RebuildWalls'
-            // cadence above. lvl.Wall is null for a HasWall==false config (a wall-less village); skip
+            // cadence above. DeriveTownFence returns null for a HasWall==false config (a wall-less village);
+            // dispatch on the stored HasWall flag and let RebuildTownWall handle a null/degenerate fence
             // cleanly rather than throwing — the pool then simply stays at whatever RebuildView left it
             // (empty, since townWallRects.Clear() runs there).
-            if (isSettlement && lvl.Wall != null) RebuildTownWall(lvl);
+            if (isSettlement && lvl.SettlementParams?.HasWall == true) RebuildTownWall(lvl);
         }
 
         /// <summary>Draw each room's 4 walls as thin strokes, leaving a <see cref="DoorGapTiles"/>-wide gap where a
@@ -301,23 +302,29 @@ namespace WorldGen.Rendering
             return (RectTransform)go.transform;
         }
 
-        /// <summary>Settlement wall (Ц1, Task 10): draw <see cref="InteriorFloor.Wall"/> as a closed polyline
-        /// (last point connects to first — WallContour's own convention, see Contains/DistanceToEdge), with a
-        /// GateGapHalfTiles-wide opening cut wherever a gate room (TypeId 0) sits on it. Same "collect gaps →
-        /// sort → emit the remaining runs" shape as AddWall/EmitWallSeg above, generalized to an
-        /// arbitrary-direction edge (the wall polygon is not axis-aligned like a room's rectangle) via
-        /// dot-product projection instead of raw X/Y comparison. Reuses WallColor/WallThickness — a wall
-        /// reads the same regardless of which kind of interior it belongs to.</summary>
+        /// <summary>Settlement fence (Ц2.5, derived): draw <see cref="DungeonLayout.DeriveTownFence"/> as a
+        /// closed polyline (last point connects to first — WallContour's own convention, see Contains/
+        /// DistanceToEdge), with a GateGapHalfTiles-wide opening cut wherever a gate room (TypeId 0) sits on it.
+        /// Same "collect gaps → sort → emit the remaining runs" shape as AddWall/EmitWallSeg above, generalized
+        /// to an arbitrary-direction edge (the fence polygon is not axis-aligned like a room's rectangle) via
+        /// dot-product projection instead of raw X/Y comparison. Reuses WallColor/WallThickness — a wall reads
+        /// the same regardless of which kind of interior it belongs to.
+        ///
+        /// The fence is DERIVED here every reposition (no stored InteriorFloor.Wall any more): it is already in
+        /// TILE space (unlike the old normalized wall), so its points feed AddTownWallEdge WITHOUT the ×T the
+        /// gate positions still need. Derive can return null (a wall-less config that slipped past the dispatch
+        /// guard, zero buildings, or a degenerate trace) — n falls to 0 and the pool empties, no throw.</summary>
         void RebuildTownWall(InteriorFloor lvl)
         {
             townWallSegBuf.Clear();
-            var wall = lvl.Wall;
-            int n = wall.Points == null ? 0 : wall.Points.Count;
+            var wall = DungeonLayout.DeriveTownFence(lvl);
+            int n = wall?.Points?.Count ?? 0;
             if (n < 2) { SyncPool(townWallRects, 0, BuildTownWallRect); return; }
             int T = DungeonLayout.TilesPerAxis;
 
             // Gate positions in TILE space — the gap centres. TypeId 0 is a gate ONLY on a settlement floor,
-            // and this method only runs when isSettlement is true.
+            // and this method only runs when isSettlement is true. Rooms are normalized, so ×T here; the fence
+            // points below are ALREADY tile space and take no ×T.
             gateTileBuf.Clear();
             foreach (var r in lvl.Rooms)
                 if (r.TypeId == 0) gateTileBuf.Add(new Vector2(r.X * T, r.Y * T));
@@ -326,7 +333,7 @@ namespace WorldGen.Rendering
             {
                 var pa = wall.Points[i];
                 var pb = wall.Points[(i + 1) % n];   // closes last→first
-                AddTownWallEdge(pa.X * T, pa.Y * T, pb.X * T, pb.Y * T);
+                AddTownWallEdge(pa.X, pa.Y, pb.X, pb.Y);   // fence is tile space — no ×T
             }
             SyncPool(townWallRects, townWallSegBuf.Count, BuildTownWallRect);
             for (int i = 0; i < townWallSegBuf.Count; i++)
@@ -351,7 +358,9 @@ namespace WorldGen.Rendering
                 float t = ((g.x - ax) * dx + (g.y - ay) * dy) / len2;
                 float px = ax + t * dx, py = ay + t * dy;
                 float perpDist = Mathf.Sqrt((g.x - px) * (g.x - px) + (g.y - py) * (g.y - py));
-                if (perpDist > 0.5f) continue;            // not on this edge's line
+                if (perpDist > 1.5f) continue;            // not on this edge's line — 1.5 (was 0.5): the
+                                                          // grid-quantized derived fence sits up to ~1 tile
+                                                          // off a gate centre, unlike the old exact-on-line wall
                 if (t < -0.02f || t > 1.02f) continue;    // outside this edge's extent
                 townWallGapBuf.Add(Mathf.Clamp01(t) * len);   // arc-length position along the edge
             }
