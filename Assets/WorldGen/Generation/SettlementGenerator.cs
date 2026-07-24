@@ -53,12 +53,6 @@ namespace WorldGen.Generation
             return 2;
         }
 
-        public static WallContour BuildWall(SettlementConfig cfg)
-        {
-            if (!cfg.HasWall) return null;
-            return WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
-        }
-
         /// <summary>Place `gateCount` gates spread around the wall by ARC LENGTH (offset by a seeded phase so
         /// towns differ), each landing exactly on a wall segment. `gateCount` is supplied by the caller (via
         /// GateCountFor), so there is ONE source of truth for the count — PlaceGates never re-derives it.</summary>

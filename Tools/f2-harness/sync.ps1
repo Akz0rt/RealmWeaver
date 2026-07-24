@@ -396,9 +396,10 @@ function Repair-SettlementGeneratorCrossFileCall([string]$outFile) {
   Set-Content -Path $p -Value $t -Encoding UTF8
 }
 
-# MutGateAtCentre: PointAtArcLength returns the wall centre (0.5,0.5) — every BuildWall call in the self-tests
-# centres its contour there — instead of the arc-length-interpolated point, so every gate collapses onto the
-# same spot in the middle of town. SelfTestGates case 4 (every gate lies ON the wall line) must fail.
+# MutGateAtCentre: PointAtArcLength returns the wall centre (0.5,0.5) — every wall contour the self-tests
+# build (WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, ...) — BuildWall itself was removed in Task 9, this was its
+# exact formula) centres there — instead of the arc-length-interpolated point, so every gate collapses onto
+# the same spot in the middle of town. SelfTestGates case 4 (every gate lies ON the wall line) must fail.
 New-SettlementMutant 'SettlementGenerator.cs' 'MutGateAtCentre' `
   'return new GatePoint { X = a.X + t * (b.X - a.X), Y = a.Y + t * (b.Y - a.Y) };' `
   'return new GatePoint { X = 0.5f, Y = 0.5f };   // MUTANT: gate at wall centre' `

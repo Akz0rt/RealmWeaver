@@ -73,17 +73,11 @@ namespace WorldGen.Rendering
         {
             bool ok = true;
             var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
-            var wall = SettlementGenerator.BuildWall(cfg);
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
 
-            // ---- 1. A walled settlement has a non-null, sane contour ------------------------------------
+            // ---- 1. The notional wall contour is a non-null, sane contour --------------------------------
             if (wall == null || !wall.IsClosedSane())
-            { Debug.LogError("FAIL gates: BuildWall returned null/insane for HasWall=true"); ok = false; }
-
-            // ---- 2. A wall-less village has NO contour --------------------------------------------------
-            // Return a wall anyway and a village would render an unwanted perimeter.
-            var villageCfg = new SettlementConfig { Seed = 3, TargetBuildings = 8, HasWall = false };
-            if (SettlementGenerator.BuildWall(villageCfg) != null)
-            { Debug.LogError("FAIL gates: BuildWall returned a contour for HasWall=false"); ok = false; }
+            { Debug.LogError("FAIL gates: notional wall contour null/insane"); ok = false; }
 
             // ---- 3. PlaceGates honours the requested count, and GateCountFor is in 2..4 ----------------
             int want = SettlementGenerator.GateCountFor(cfg.TargetBuildings);
@@ -154,7 +148,7 @@ namespace WorldGen.Rendering
         {
             bool ok = true;
             var cfg = new SettlementConfig { Seed = 11, TargetBuildings = 40, HasWall = true };
-            var wall = SettlementGenerator.BuildWall(cfg);
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
 
             // ---- 1. EVERY building centre is inside the wall -------------------------------------------
@@ -199,7 +193,7 @@ namespace WorldGen.Rendering
         {
             bool ok = true;
             var cfg = new SettlementConfig { Seed = 5, TargetBuildings = 40, HasWall = true };
-            var wall = SettlementGenerator.BuildWall(cfg);
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var gates = SettlementGenerator.PlaceGates(wall, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
             var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
             var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
@@ -237,7 +231,7 @@ namespace WorldGen.Rendering
             // ---- 4. Perf threshold: 80 buildings route in well under a frame ----------------------------
             // The whole reason this stage exists instead of BuildRenderGraph(Clean), which took 20–34 s at 60.
             var bigCfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, HasWall = true };
-            var bw = SettlementGenerator.BuildWall(bigCfg);
+            var bw = WallContour.Rounded(bigCfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(bigCfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var bg = SettlementGenerator.PlaceGates(bw, SettlementGenerator.GateCountFor(bigCfg.TargetBuildings), bigCfg.Seed);
             var bb = SettlementGenerator.PlaceBuildings(bw, bigCfg.Seed, bigCfg.TargetBuildings);
             var sw = System.Diagnostics.Stopwatch.StartNew();
