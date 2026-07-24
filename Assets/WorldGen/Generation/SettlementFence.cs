@@ -3,18 +3,20 @@ using System.Collections.Generic;
 namespace WorldGen.Generation
 {
     /// <summary>THE ISOLATED, SWAPPABLE SETTLEMENT FENCE STAGE (Ц2.5). Derives a town's fence as the traced
-    /// boundary of the rasterized, inflated union of its node rects — like a building's floor contour is
-    /// derived from its rooms (FloorFootprint precedent), never stored. References only LinkNode / WallContour /
-    /// WallPoint and System.* — never InteriorData, Room, SettlementGenerator or UnityEngine. TILE space in and
-    /// out. Rules: no holes (outside flood-fill), one closed loop (stray-bridge + de-saddle), passes through
-    /// gates (gates rasterized as points so the fence hugs them). When the fence approach changes, ONLY this
-    /// file changes.
+    /// boundary of the rasterized, inflated union of its node rects and routed roads — like a building's floor
+    /// contour is derived from its rooms (FloorFootprint precedent), never stored. References only LinkNode /
+    /// LinkSegment / LinkPoint / WallContour / WallPoint and System.* — never InteriorData, Room,
+    /// SettlementGenerator or UnityEngine. TILE space in and out. Rules: no holes (outside flood-fill), one
+    /// closed loop (stray-bridge + de-saddle), passes through gates (gates rasterized as points so the fence
+    /// hugs them), wraps routed roads too (so a road crossing an otherwise-empty gap between building clusters
+    /// pulls that gap inside the fence). When the fence approach changes, ONLY this file changes.
     ///
-    /// Pipeline: rasterize buildings (inflated rects) + gates (single centre cell) into a boolean grid →
-    /// bridge stray components into one 4-connected region → de-saddle diagonal pinches → flood-fill the
-    /// OUTSIDE from the border so enclosed pockets stay inside (no holes) → trace the single boundary loop
-    /// with inside-kept-on-the-right directed unit edges, then collapse collinear runs. Fully deterministic
-    /// from its inputs (no RNG), so a re-derive with identical nodes yields an identical point list.</summary>
+    /// Pipeline: rasterize buildings (inflated rects) + gates (single centre cell) + roads (margin-wide swept
+    /// ribbon) into a boolean grid → bridge stray components into one 4-connected region → de-saddle diagonal
+    /// pinches → flood-fill the OUTSIDE from the border so enclosed pockets stay inside (no holes) → trace the
+    /// single boundary loop with inside-kept-on-the-right directed unit edges, then collapse collinear runs.
+    /// Fully deterministic from its inputs (no RNG), so a re-derive with identical nodes yields an identical
+    /// point list.</summary>
     public static class SettlementFence
     {
         /// <summary>How far the fence clears each building rect, in tiles (buildings inflated by this; gates
@@ -28,11 +30,18 @@ namespace WorldGen.Generation
         /// <summary>Half-width of the straight stray bridge, in tiles: 1 → a 3-tile-wide bridge.</summary>
         const int BridgeHalfWidth = 1;
 
-        public static WallContour Derive(IReadOnlyList<LinkNode> buildings, IReadOnlyList<LinkNode> gates, float marginTiles)
+        /// <summary>Spacing between road-sweep samples, in tiles — ≤0.5 so no gap in the inflated ribbon
+        /// ever falls between two samples' margin discs.</summary>
+        const float RoadStepTiles = 0.5f;
+
+        public static WallContour Derive(IReadOnlyList<LinkNode> buildings, IReadOnlyList<LinkNode> gates,
+            IReadOnlyList<LinkSegment> roads, float marginTiles)
         {
             if (buildings == null || buildings.Count == 0) return null;   // no town → no fence
 
-            // 1. Grid AABB over inflated building rects + gate centres, expanded by GridMargin on all sides.
+            // 1. Grid AABB over inflated building rects + gate centres + road endpoints (±margin — the
+            // capsule's bounding box is the segment's AABB inflated by the margin on every side), expanded
+            // by GridMargin on all sides.
             float fMinX = float.MaxValue, fMinY = float.MaxValue, fMaxX = float.MinValue, fMaxY = float.MinValue;
             foreach (var b in buildings)
             {
@@ -49,6 +58,16 @@ namespace WorldGen.Generation
                     if (gp.CX > fMaxX) fMaxX = gp.CX;
                     if (gp.CY < fMinY) fMinY = gp.CY;
                     if (gp.CY > fMaxY) fMaxY = gp.CY;
+                }
+            if (roads != null)
+                foreach (var rd in roads)
+                {
+                    float rx0 = System.Math.Min(rd.A.X, rd.B.X) - marginTiles, rx1 = System.Math.Max(rd.A.X, rd.B.X) + marginTiles;
+                    float ry0 = System.Math.Min(rd.A.Y, rd.B.Y) - marginTiles, ry1 = System.Math.Max(rd.A.Y, rd.B.Y) + marginTiles;
+                    if (rx0 < fMinX) fMinX = rx0;
+                    if (rx1 > fMaxX) fMaxX = rx1;
+                    if (ry0 < fMinY) fMinY = ry0;
+                    if (ry1 > fMaxY) fMaxY = ry1;
                 }
             int minX = (int)System.Math.Floor(fMinX) - GridMargin, minY = (int)System.Math.Floor(fMinY) - GridMargin;
             int maxX = (int)System.Math.Ceiling(fMaxX) + GridMargin, maxY = (int)System.Math.Ceiling(fMaxY) + GridMargin;
@@ -75,6 +94,9 @@ namespace WorldGen.Generation
                     int gx = (int)System.Math.Floor(gp.CX), gy = (int)System.Math.Floor(gp.CY);
                     town[(gy - minY) * gw + (gx - minX)] = true;   // a POINT, no inflation (see class doc)
                 }
+            if (roads != null)
+                foreach (var rd in roads)
+                    RasterizeRoad(town, gw, gh, minX, minY, rd.A, rd.B, marginTiles);
 
             // 3. Bridge stray components into one connected region.
             BridgeStrays(town, gw, gh);
@@ -87,6 +109,41 @@ namespace WorldGen.Generation
         }
 
         // ---- helpers (all deterministic, grid-space except TraceBoundary, which emits tile space) ----
+
+        /// <summary>Rasterize a road segment as a margin-wide ribbon: step from A to B at ≤RoadStepTiles
+        /// spacing and mark every cell whose CENTRE lies within marginTiles of that sample — a swept-disc
+        /// (capsule) rasterization, same cell-centre-in test the buildings use. Sampling this densely along
+        /// the segment (rather than testing distance-to-segment once per candidate cell) is what the brief
+        /// asks for; it costs nothing extra here since the fence is derived at most once per settle, never
+        /// per frame.</summary>
+        static void RasterizeRoad(bool[] town, int gw, int gh, int minX, int minY, LinkPoint a, LinkPoint b, float marginTiles)
+        {
+            float dx = b.X - a.X, dy = b.Y - a.Y;
+            float len = (float)System.Math.Sqrt(dx * dx + dy * dy);
+            int steps = (int)System.Math.Ceiling(len / RoadStepTiles);
+            if (steps < 1) steps = 1;
+            for (int i = 0; i <= steps; i++)
+            {
+                float t = (float)i / steps;
+                float sx = a.X + dx * t, sy = a.Y + dy * t;
+                int x0 = (int)System.Math.Floor(sx - marginTiles), x1 = (int)System.Math.Ceiling(sx + marginTiles);
+                int y0 = (int)System.Math.Floor(sy - marginTiles), y1 = (int)System.Math.Ceiling(sy + marginTiles);
+                for (int y = y0; y <= y1; y++)
+                {
+                    int gy = y - minY;
+                    if (gy < 0 || gy >= gh) continue;
+                    for (int x = x0; x <= x1; x++)
+                    {
+                        int gx = x - minX;
+                        if (gx < 0 || gx >= gw) continue;
+                        float ccx = x + 0.5f, ccy = y + 0.5f;
+                        float ex = ccx - sx, ey = ccy - sy;
+                        if (ex * ex + ey * ey > marginTiles * marginTiles) continue;
+                        town[gy * gw + gx] = true;
+                    }
+                }
+            }
+        }
 
         /// <summary>Rasterize a straight 3-tile-wide (BridgeHalfWidth on each side) bridge from every stray
         /// 4-connected component to the MAIN (largest) one, so the whole town is one connected region — a

@@ -741,7 +741,7 @@ namespace WorldGen.Rendering
                     block.Add(new LinkNode { Id = id++, CX = 20 + gx * 6, CY = 20 + gy * 6, W = 5, H = 5 });
             var noGates = new System.Collections.Generic.List<LinkNode>();
 
-            var fenceA = SettlementFence.Derive(block, noGates, SettlementFence.FenceMarginTiles);
+            var fenceA = SettlementFence.Derive(block, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceA == null || !fenceA.IsClosedSane())
             { Debug.LogError("FAIL fence[A]: derive returned null or not-sane for a compact block"); ok = false; }
             else
@@ -770,7 +770,7 @@ namespace WorldGen.Rendering
             int[,] rc = { {0,0},{1,0},{2,0},{0,1},{2,1},{0,2},{1,2},{2,2} }; // centre (1,1) omitted
             for (int k = 0; k < rc.GetLength(0); k++)
                 ring.Add(new LinkNode { Id = id++, CX = 20 + rc[k,0] * 8, CY = 20 + rc[k,1] * 8, W = 6, H = 6 });
-            var fenceB = SettlementFence.Derive(ring, noGates, SettlementFence.FenceMarginTiles);
+            var fenceB = SettlementFence.Derive(ring, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceB == null || !fenceB.IsClosedSane())
             { Debug.LogError("FAIL fence[B]: donut derive null/not-sane"); ok = false; }
             else if (!fenceB.Contains(20 + 8, 20 + 8)) // the empty centre (1,1) must read as INSIDE — filled, not a hole.
@@ -779,7 +779,7 @@ namespace WorldGen.Rendering
             // Fixture C: buildings + a gate 3 tiles outside the block. Rule 2/3: the gate sits ~on the fence.
             var gate = new System.Collections.Generic.List<LinkNode> {
                 new LinkNode { Id = 100, CX = 32 + 5, CY = 26, W = 1, H = 1 } };  // just outside building 9's right edge
-            var fenceC = SettlementFence.Derive(block, gate, SettlementFence.FenceMarginTiles);
+            var fenceC = SettlementFence.Derive(block, gate, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceC == null || !fenceC.IsClosedSane())
             { Debug.LogError("FAIL fence[C]: gate fixture null/not-sane"); ok = false; }
             else
@@ -794,7 +794,7 @@ namespace WorldGen.Rendering
             // Fixture D: one building dragged 20 tiles away — the stray-bridge must yield ONE closed loop containing it.
             var stray = new System.Collections.Generic.List<LinkNode>(block) {
                 new LinkNode { Id = 200, CX = 60, CY = 60, W = 5, H = 5 } };
-            var fenceD = SettlementFence.Derive(stray, noGates, SettlementFence.FenceMarginTiles);
+            var fenceD = SettlementFence.Derive(stray, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceD == null || !fenceD.IsClosedSane())
             { Debug.LogError("FAIL fence[D]: stray-building derive null/not-sane"); ok = false; }
             else if (!fenceD.Contains(60, 60) || !fenceD.Contains(20, 20))
@@ -807,8 +807,8 @@ namespace WorldGen.Rendering
                 new LinkNode { Id = 300, CX = 32 + 5, CY = 26, W = 1, H = 1 } };
             var gateFar = new System.Collections.Generic.List<LinkNode> {
                 new LinkNode { Id = 300, CX = 32 + 11, CY = 26, W = 1, H = 1 } };   // +6 tiles further out
-            var fenceE0 = SettlementFence.Derive(block, gateNear, SettlementFence.FenceMarginTiles);
-            var fenceE1 = SettlementFence.Derive(block, gateFar, SettlementFence.FenceMarginTiles);
+            var fenceE0 = SettlementFence.Derive(block, gateNear, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+            var fenceE1 = SettlementFence.Derive(block, gateFar, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceE1 == null || !fenceE1.IsClosedSane())
             { Debug.LogError("FAIL fence[E]: dragged-gate derive null/not-sane (not one loop)"); ok = false; }
             else
@@ -821,8 +821,37 @@ namespace WorldGen.Rendering
                 { Debug.LogError("FAIL fence[E]: dragging the gate outward did not push the fence outward at the old gate spot"); ok = false; }
             }
 
+            // Fixture F: two clusters with an empty bay between them; a road crosses the bay.
+            var left = new System.Collections.Generic.List<LinkNode> {
+                new LinkNode { Id = 1, CX = 20, CY = 30, W = 5, H = 5 } };
+            var right = new System.Collections.Generic.List<LinkNode> {
+                new LinkNode { Id = 2, CX = 44, CY = 30, W = 5, H = 5 } };
+            var both = new System.Collections.Generic.List<LinkNode>(left); both.AddRange(right);
+            var noRoads = new System.Collections.Generic.List<LinkSegment>();
+            var bayRoad = new System.Collections.Generic.List<LinkSegment> {
+                new LinkSegment { A = new LinkPoint { X = 24, Y = 30 }, B = new LinkPoint { X = 40, Y = 30 }, EdgeIndex = 0 } };
+            // Bay midpoint, off the clusters' shared centreline (Y=30): Task 1's OWN stray-bridge
+            // (BridgeStrays) already spans a straight 3-tile band centred on Y=30 between any two disjoint
+            // clusters (confirmed by direct measurement: at X=32 it covers Y=28..30 with or without a road),
+            // so probing exactly on Y=30 would pass "inside" from that pre-existing bridge alone and never
+            // exercise the road input at all. Y=31.5 sits just outside the bridge's 3-tile reach but well
+            // inside the road's margin-wide ribbon (measured: noRoad is OUTSIDE at Y=31..31.5, withRoad is
+            // INSIDE) — the zone where only the road being present flips the verdict.
+            float bx = 32, by = 31.5f;
+            var noRoad = SettlementFence.Derive(both, new System.Collections.Generic.List<LinkNode>(), noRoads, SettlementFence.FenceMarginTiles);
+            var withRoad = SettlementFence.Derive(both, new System.Collections.Generic.List<LinkNode>(), bayRoad, SettlementFence.FenceMarginTiles);
+            if (withRoad == null || !withRoad.IsClosedSane())
+            { Debug.LogError("FAIL fence[F]: road-crossing derive null/not-sane"); ok = false; }
+            else
+            {
+                if (!withRoad.Contains(bx, by))
+                { Debug.LogError($"FAIL fence[F]: bay midpoint ({bx},{by}) NOT inside the fence though a road crosses it"); ok = false; }
+                if (noRoad != null && noRoad.Contains(bx, by))
+                { Debug.LogError($"FAIL fence[F]: bay midpoint is inside even WITHOUT the road — the road input is not load-bearing (vacuous)"); ok = false; }
+            }
+
             // 6. determinism: same inputs → identical point list.
-            var again = SettlementFence.Derive(block, noGates, SettlementFence.FenceMarginTiles);
+            var again = SettlementFence.Derive(block, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceA != null && again != null)
             {
                 if (again.Points.Count != fenceA.Points.Count)
