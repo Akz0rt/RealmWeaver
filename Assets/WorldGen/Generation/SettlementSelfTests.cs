@@ -760,8 +760,8 @@ namespace WorldGen.Rendering
                 // margin: the fence clears the outermost building rect by ~FenceMarginTiles (within 1 tile of quantization).
                 var far = block[8]; // CX=32,CY=32, top-right
                 float d = fenceA.DistanceToEdge(far.CX + far.W * 0.5f, far.CY + far.H * 0.5f);
-                if (d < SettlementFence.FenceMarginTiles - 1.5f)
-                { Debug.LogError($"FAIL fence[A]: fence hugs building 9 too tight, edge-dist {d} < margin {SettlementFence.FenceMarginTiles}"); ok = false; }
+                if (System.Math.Abs(d - SettlementFence.FenceMarginTiles) > 1.0f)
+                { Debug.LogError($"FAIL fence[A]: fence margin off — edge-dist {d} vs expected {SettlementFence.FenceMarginTiles}"); ok = false; }
             }
 
             // Fixture B: a DONUT — a ring of buildings with an empty centre. Rule 1: no hole.

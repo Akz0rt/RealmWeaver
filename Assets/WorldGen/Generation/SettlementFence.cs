@@ -296,6 +296,11 @@ namespace WorldGen.Generation
                 guard--;
             } while (cur != start && guard > 0);
 
+            // Single-loop guard: the walk must have consumed every directed edge. If it didn't, a hole loop or
+            // a disconnected boundary component exists (BridgeStrays/DeSaddle/InsideFromOutsideFill failed to
+            // guarantee one connected inside region with no holes) — refuse to silently drop it.
+            if (corners.Count != next.Count) return null;
+
             // Collapse collinear runs → the turn corners only.
             var contour = new WallContour();
             int n = corners.Count;
