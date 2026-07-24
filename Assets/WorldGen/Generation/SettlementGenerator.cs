@@ -165,7 +165,7 @@ namespace WorldGen.Generation
             floor.NextRoomId = next;
             foreach (var e in edges)
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
-            floor.SettlementParams = new SettlementParams { TargetBuildings = cfg.TargetBuildings, ActiveBuildings = cfg.ActiveBuildings };
+            floor.SettlementParams = new SettlementParams { TargetBuildings = cfg.TargetBuildings, ActiveBuildings = cfg.ActiveBuildings, HasWall = cfg.HasWall };
             return floor;
         }
 

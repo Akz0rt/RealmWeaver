@@ -87,6 +87,8 @@ namespace WorldGen.Generation
     {
         public int TargetBuildings;
         public int ActiveBuildings;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public bool HasWall = false;
     }
 
     /// <summary>One floor as a graph: rooms + links. NextRoomId hands out stable ids.</summary>

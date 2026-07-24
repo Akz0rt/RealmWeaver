@@ -649,7 +649,7 @@ namespace WorldGen.Persistence
 
             // ---- 1. A mix of active/dummy buildings + SettlementParams survive the round trip ------------
             var floor = new InteriorFloor { NextRoomId = 4 };
-            floor.SettlementParams = new SettlementParams { TargetBuildings = 20, ActiveBuildings = 5 };
+            floor.SettlementParams = new SettlementParams { TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.8f, Y = 0.5f });                    // gate
             floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f });                    // active (IsDummy default false)
             floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.45f, Y = 0.55f, IsDummy = true });  // dummy
@@ -682,6 +682,8 @@ namespace WorldGen.Persistence
                 { Debug.LogError("FAIL settlement fields: floor.SettlementParams did not survive the round trip (null)"); ok = false; }
                 else if (f.SettlementParams.TargetBuildings != 20 || f.SettlementParams.ActiveBuildings != 5)
                 { Debug.LogError($"FAIL settlement fields: SettlementParams came back {f.SettlementParams.TargetBuildings}/{f.SettlementParams.ActiveBuildings}, want 20/5"); ok = false; }
+                else if (f.SettlementParams.HasWall != true)
+                { Debug.LogError($"FAIL settlement fields: SettlementParams.HasWall came back {f.SettlementParams.HasWall}, want true"); ok = false; }
             }
 
             // ---- 2. Reusing the settlement round-trip's null-key text scenario: a floor whose only building
@@ -707,6 +709,27 @@ namespace WorldGen.Persistence
             { Debug.LogError("FAIL settlement fields: an active (IsDummy==false) building wrote the IsDummy key — DefaultValueHandling.Ignore is not taking effect"); ok = false; }
             if (minJson.Contains("\"SettlementParams\""))
             { Debug.LogError("FAIL settlement fields: a null SettlementParams was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+
+            // ---- 3. HasWall omit-on-false, scoped so SettlementParams itself IS present (unlike part 2's
+            // null SettlementParams, which trivially omits every nested key including HasWall) — this is the
+            // only way to prove DefaultValueHandling.Ignore on HasWall specifically. Repo-grep
+            // ('"HasWall"\|HasWall' under Assets/WorldGen, see task-4-report.md) found only
+            // SettlementConfig.HasWall (a Generation-side, non-serialized runtime knob) sharing the name, so
+            // a literal "\"HasWall\"" substring check is exactly what a leaked key looks like. -------
+            string wallPath = Path.Combine(Path.GetTempPath(), "settlement_fields_haswall_default_selftest.json");
+            var wallFloor = new InteriorFloor { NextRoomId = 2 };
+            wallFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // active
+            wallFloor.SettlementParams = new SettlementParams { TargetBuildings = 8, ActiveBuildings = 8 };  // HasWall left false (default)
+            var openTown = new InteriorData { OwnerPoiId = "poi-open-fields", Kind = InteriorKind.Settlement, Floors = { wallFloor } };
+
+            ProjectSerializer.Save(wallPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { openTown });
+            string wallJson = File.ReadAllText(wallPath);
+            try { File.Delete(wallPath); } catch { }
+
+            if (wallJson.Contains("\"HasWall\""))
+            { Debug.LogError("FAIL settlement fields: a default (false) HasWall was written as a key — DefaultValueHandling.Ignore is not taking effect"); ok = false; }
 
             Debug.Log(ok ? "Settlement Fields Round-Trip: PASS" : "Settlement Fields Round-Trip: FAIL");
         }
