@@ -75,6 +75,13 @@ namespace WorldGen.Generation
 
                 ("MutNoOwnedCleanup",  "InteriorOps' single-node RemoveOwnedInteriors(all, poiId, roomId) overload always returns 0 (node deletion never cleans the owned interior)",
                     () => new WorldGen.MutantTests.MutNoOwnedCleanupSelfTests().SelfTestInteriorOps()),
+
+                ("MutFenceNoFill",  "SettlementFence.InsideFromOutsideFill's final classification collapsed to the raw pre-fill town raster (an enclosed pocket stays a literal hole)",
+                    () => new WorldGen.MutantTests.MutFenceNoFillSelfTests().SelfTestFence()),
+                ("MutFenceNoGates", "SettlementFence's gate-cell rasterization write neutered (a gate's centre cell is never marked town)",
+                    () => new WorldGen.MutantTests.MutFenceNoGatesSelfTests().SelfTestFence()),
+                ("MutFenceNoRoads", "SettlementFence's road-ribbon rasterization call skipped (a routed road never marks a cell)",
+                    () => new WorldGen.MutantTests.MutFenceNoRoadsSelfTests().SelfTestFence()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

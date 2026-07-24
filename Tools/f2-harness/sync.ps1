@@ -576,6 +576,53 @@ New-SettlementRebind 'SelfTestStreets' 'MutRoadsNoArterials' `
   @('SettlementStreets\.') `
   @('WorldGen.Generation.MutRoadsNoArterials.SettlementStreets.')
 
+# ---- SETTLEMENT FENCE MUTANTS: three rules pinned by SettlementFence.Derive (the three fence mutants). -----
+# Same discipline as New-SettlementMutant. SettlementFence.cs defines ONE class and no data types
+# (LinkNode/LinkSegment/LinkPoint live in RoomLinkGeometry.cs, WallContour/WallPoint in WallContour.cs,
+# neither mutated here), so re-namespacing it and rebinding just "SettlementFence." is sound — the same
+# single-class shape SettlementRoads/InteriorOps use above.
+
+# MutFenceNoFill: InsideFromOutsideFill's final classification collapsed to the raw pre-fill town raster —
+# the outside BFS still runs but its result is discarded, so any enclosed empty pocket (never itself
+# rasterized as town) stays a literal hole instead of being kept inside (Rule 1). Every OTHER fixture
+# (A/C/D/E/F) has NO enclosed pocket at all, so town == inside already for them and this mutant is silent
+# there — only fixture B's donut centre diverges: it now traces as a SEPARATE inner loop, which
+# TraceBoundary's single-loop guard refuses (corners.Count != next.Count), so Derive returns null and
+# fixture B's null/not-sane check fires.
+New-SettlementMutant 'SettlementFence.cs' 'MutFenceNoFill' `
+  'inside[i] = !outside[i];' `
+  'inside[i] = town[i];   // MUTANT: no-op flood fill — inside collapses to the raw town raster, so an enclosed pocket stays a hole' `
+  'MutFenceNoFill.cs'
+
+# MutFenceNoGates: the gate-cell rasterization write neutered — a gate's centre cell is never marked town, so
+# the fence no longer hugs it. SelfTestFence fixture C's gate-distance assertion (a gate must sit within 1.5
+# tiles of the fence) must fail.
+New-SettlementMutant 'SettlementFence.cs' 'MutFenceNoGates' `
+  'town[(gy - minY) * gw + (gx - minX)] = true;   // a POINT, no inflation (see class doc)' `
+  ';   // MUTANT: gate cell never rasterized' `
+  'MutFenceNoGates.cs'
+
+# MutFenceNoRoads: the road-ribbon rasterization call skipped — a routed road never marks any cell, so it can
+# no longer pull an otherwise-empty gap inside the fence. Caught by the hardened fixture F: its far spur point
+# is inside ONLY via the road (one connected building cluster, so BridgeStrays never runs); with this mutant
+# it reverts to OUTSIDE even with the road present.
+New-SettlementMutant 'SettlementFence.cs' 'MutFenceNoRoads' `
+  'RasterizeRoad(town, gw, gh, minX, minY, rd.A, rd.B, marginTiles);' `
+  ';   // MUTANT: road never rasterized' `
+  'MutFenceNoRoads.cs'
+
+New-SettlementRebind 'SelfTestFence' 'MutFenceNoFill' `
+  @('SettlementFence\.') `
+  @('WorldGen.Generation.MutFenceNoFill.SettlementFence.')
+
+New-SettlementRebind 'SelfTestFence' 'MutFenceNoGates' `
+  @('SettlementFence\.') `
+  @('WorldGen.Generation.MutFenceNoGates.SettlementFence.')
+
+New-SettlementRebind 'SelfTestFence' 'MutFenceNoRoads' `
+  @('SettlementFence\.') `
+  @('WorldGen.Generation.MutFenceNoRoads.SettlementFence.')
+
 # MutNoOwnedCleanup: InteriorOps' single-node RemoveOwnedInteriors(all, poiId, roomId) overload always returns
 # 0 — a building node's deleted interior is never cleaned up. SelfTestInteriorOps' exact-1-removed assertion
 # (and its town/sibling/foreign-interior survivor checks) must fail.
@@ -592,5 +639,5 @@ New-SettlementRebind 'SelfTestInteriorOps' 'MutNoOwnedCleanup' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 11 settlement mutants + 11 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 14 settlement mutants + 14 settlement rebound test copies into gen/"
 

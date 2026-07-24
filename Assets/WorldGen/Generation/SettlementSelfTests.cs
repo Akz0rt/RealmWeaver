@@ -821,33 +821,35 @@ namespace WorldGen.Rendering
                 { Debug.LogError("FAIL fence[E]: dragging the gate outward did not push the fence outward at the old gate spot"); ok = false; }
             }
 
-            // Fixture F: two clusters with an empty bay between them; a road crosses the bay.
-            var left = new System.Collections.Generic.List<LinkNode> {
-                new LinkNode { Id = 1, CX = 20, CY = 30, W = 5, H = 5 } };
-            var right = new System.Collections.Generic.List<LinkNode> {
-                new LinkNode { Id = 2, CX = 44, CY = 30, W = 5, H = 5 } };
-            var both = new System.Collections.Generic.List<LinkNode>(left); both.AddRange(right);
-            var noRoads = new System.Collections.Generic.List<LinkSegment>();
-            var bayRoad = new System.Collections.Generic.List<LinkSegment> {
-                new LinkSegment { A = new LinkPoint { X = 24, Y = 30 }, B = new LinkPoint { X = 40, Y = 30 }, EdgeIndex = 0 } };
-            // Bay midpoint, off the clusters' shared centreline (Y=30): Task 1's OWN stray-bridge
-            // (BridgeStrays) already spans a straight 3-tile band centred on Y=30 between any two disjoint
-            // clusters (confirmed by direct measurement: at X=32 it covers Y=28..30 with or without a road),
-            // so probing exactly on Y=30 would pass "inside" from that pre-existing bridge alone and never
-            // exercise the road input at all. Y=31.5 sits just outside the bridge's 3-tile reach but well
-            // inside the road's margin-wide ribbon (measured: noRoad is OUTSIDE at Y=31..31.5, withRoad is
-            // INSIDE) — the zone where only the road being present flips the verdict.
-            float bx = 32, by = 31.5f;
-            var noRoad = SettlementFence.Derive(both, new System.Collections.Generic.List<LinkNode>(), noRoads, SettlementFence.FenceMarginTiles);
-            var withRoad = SettlementFence.Derive(both, new System.Collections.Generic.List<LinkNode>(), bayRoad, SettlementFence.FenceMarginTiles);
-            if (withRoad == null || !withRoad.IsClosedSane())
-            { Debug.LogError("FAIL fence[F]: road-crossing derive null/not-sane"); ok = false; }
+            // Fixture F: ONE connected cluster (fixture A's 3x3 block) + a road SPUR reaching a far EMPTY
+            // point. Task 2's ORIGINAL fixture F used two DISCONNECTED clusters, so Task 1's BridgeStrays —
+            // which spans ANY two disjoint town components with its own straight bridge, road or no road —
+            // filled part of the gap between them regardless of the road, confounding the road's effect (and
+            // its query point sat on a fragile 1-tile fringe of that pre-existing bridge). Here there is only
+            // ONE building component (`block`, from fixture A) and no other stray building, so BridgeStrays
+            // never runs either way (components.Count <= 1, road present or not) — the far point can be
+            // pulled inside ONLY by the road's own rasterized ribbon.
+            var spurRoad = new System.Collections.Generic.List<LinkSegment> {
+                new LinkSegment { A = new LinkPoint { X = 30, Y = 20 }, B = new LinkPoint { X = 45, Y = 20 }, EdgeIndex = 0 } };
+            // Spur start (30,20) sits deep inside building 3's own inflated rect (CX=32,CY=20; half-extent
+            // 2.5+margin=4.5 -> covers X 27.5..36.5, Y 15.5..24.5), so the ribbon merges into the block's
+            // raster from its very first sample — no bridge needed. Its far end (45,20) IS the query point,
+            // deep in the ribbon's own end-cap (marginTiles=2 clearance in every direction from the sample
+            // point itself, not a fringe cell) and ~10 tiles clear of the block's own inflated edge (34.5),
+            // so it reads OUTSIDE with no road at all.
+            float fx = 45, fy = 20;
+            var noSpurFence = SettlementFence.Derive(block, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+            var withSpurFence = SettlementFence.Derive(block, noGates, spurRoad, SettlementFence.FenceMarginTiles);
+            if (withSpurFence == null || !withSpurFence.IsClosedSane())
+            { Debug.LogError("FAIL fence[F]: road-spur derive null/not-sane"); ok = false; }
+            else if (noSpurFence == null || !noSpurFence.IsClosedSane())
+            { Debug.LogError("FAIL fence[F]: no-road derive null/not-sane"); ok = false; }
             else
             {
-                if (!withRoad.Contains(bx, by))
-                { Debug.LogError($"FAIL fence[F]: bay midpoint ({bx},{by}) NOT inside the fence though a road crosses it"); ok = false; }
-                if (noRoad != null && noRoad.Contains(bx, by))
-                { Debug.LogError($"FAIL fence[F]: bay midpoint is inside even WITHOUT the road — the road input is not load-bearing (vacuous)"); ok = false; }
+                if (!withSpurFence.Contains(fx, fy))
+                { Debug.LogError($"FAIL fence[F]: far spur point ({fx},{fy}) NOT inside the fence though a road reaches it"); ok = false; }
+                if (noSpurFence.Contains(fx, fy))
+                { Debug.LogError($"FAIL fence[F]: far point is inside even WITHOUT the road — the road input is not load-bearing (vacuous)"); ok = false; }
             }
 
             // 6. determinism: same inputs → identical point list.
