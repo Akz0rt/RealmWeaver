@@ -507,10 +507,27 @@ namespace WorldGen.Rendering
         // ── Placement preview (Task 8b) ──────────────────────────────────────────────────────────────────
 
         /// <summary>Can a new building stand on a cell of this type? The rule, pinned by the task brief:
-        /// everything EXCEPT Building, Wall and Gate is placeable. In particular <see cref="TileType.None"/>
-        /// — a cell outside the current built-up area — IS placeable: placing out there is how the town grows,
-        /// and the wall ring and the streets simply re-derive around the new building on the next rebuild.
-        /// Void (courtyard) and Road are placeable for the same reason.
+        /// everything EXCEPT Building, Wall and Gate is placeable. Void (courtyard) and Road are placeable, and
+        /// so — the interesting case — is <see cref="TileType.None"/>, a cell outside the current built-up
+        /// area: placing out there is how the town grows.
+        ///
+        /// WHAT ACTUALLY MAKES A None CELL SAFE (corrected at final review — this comment used to claim "the
+        /// wall ring and the streets simply re-derive around the new building on the next rebuild", which is
+        /// only half of it and the wrong half). Re-deriving is not enough on its own:
+        /// SettlementTileGrid.BuildWallRing dilates the occupied seed by CourtyardCells + 1 = 2 cells and
+        /// flood-fills the outside, so two clusters whose nearest cells are >= 6 apart on one axis, or >= 5 on
+        /// BOTH, never 4-connect — the fill runs between them and EACH grows its own independent wall ring
+        /// (that pass has no SettlementFence.BridgeStrays equivalent; see this grid's class doc). On a large
+        /// walled city the diagonal corners of Allocate's 3-cell margin band are already that far from the
+        /// nearest building, and they pass every test here.
+        ///
+        /// The thing that closes it is on the COMMIT side, not here: DungeonViewController.PlaceHoveredBuilding
+        /// AUTO-LINKS the new room to the nearest existing building. SettlementRoads then routes a street along
+        /// that link, the street rasterizes into cells, those cells join BuildWallRing's dilation seed, and the
+        /// two clusters merge into ONE ring — with a street to the new house as the same side effect. Without
+        /// the link there is no road (DungeonOps.AddRoom creates a room with no links at all), so nothing would
+        /// ever bridge the gap and the lone house would stay sealed in its own wall, permanently. Placement
+        /// therefore stays permissive HERE and is made whole THERE; do not "simplify" either half alone.
         ///
         /// Static and type-only on purpose: the caller (DungeonViewController) must never make its own
         /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are

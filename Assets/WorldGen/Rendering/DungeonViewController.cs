@@ -43,6 +43,10 @@ namespace WorldGen.Rendering
         // deliberately rolled back to their pre-settle start positions so they can be animated, so anything
         // that inspects geometry in that window sees a state that is about to be thrown away. Must NOT be
         // wired to anything that mutates the graph or calls BeginCascade again — that would re-enter and loop.
+        // BeginCascade's `if (cascading) LandRunningCascade` guard does NOT cover that case and is not meant
+        // to: both paths that raise this callback clear `cascading` BEFORE invoking it, so a BeginCascade from
+        // here sees no running cascade, starts a fresh one, and raises this callback again. The guard covers
+        // the OTHER re-entry — an ordinary edit landing mid-animation (see BeginCascade's own doc).
         public System.Action OnCascadeSettled;
         // Fires whenever «+ Здание» placement mode arms/disarms (Task 8b). The host uses it ONLY to repaint
         // the toolbar button (active look + «Отмена (Esc)» label) — exactly PoiManager.OnPlacementArmedChanged's
@@ -100,9 +104,10 @@ namespace WorldGen.Rendering
         // now-disarmed mode, hitting the just-created room with clickCount == 2 — which would immediately fire
         // OnRoomDoubleClicked and open the new building's interior, navigating away from the town the DM only
         // just clicked into. Set the moment a building is placed; the clickCount == 2 branch in OnPointerClick
-        // swallows exactly that one pairing when the id matches, and the plain (non-double-click) fallthrough
-        // clears it — so a LATER, deliberate double-click on the same room (necessarily preceded by its own
-        // single click, which reaches that fallthrough first) still opens it normally. Transient only.
+        // swallows exactly that one pairing when the id matches, and EVERY non-double-click click clears it —
+        // the plain fallthrough for a click that hit a room, the id == 0 branch for a click on empty space — so
+        // a LATER, deliberate double-click on the same room (necessarily preceded by its own single click,
+        // which reaches one of those two first) still opens it normally. Transient only.
         int lastPlacedRoomId;
 
         // Animated cascade state — moved verbatim from DungeonGraphView (Checkpoint-B tuning, user-approved
@@ -371,14 +376,35 @@ namespace WorldGen.Rendering
         /// <summary>Entry point for the room-cascade separation. Snapshots current positions, resolves the
         /// target layout via Separate (which mutates rooms to their end positions), then either self-skips
         /// (nothing moved — a link/delete edit that never overlapped) with one static redraw, or restores
-        /// the start positions and animates to the captured targets in Update() via SmoothDamp.</summary>
+        /// the start positions and animates to the captured targets in Update() via SmoothDamp.
+        ///
+        /// RE-ENTRANT DURING AN ANIMATION (final-review fix). This is genuinely reachable — the cascade runs
+        /// ~0.18 s and any OnChanged edit in that window (an inspector field, a size stepper) routes through
+        /// DungeonEditorScreen.RevalidateAndRefresh straight back to here. Room X/Y are then MID-FLIGHT
+        /// SmoothDamp values, which used to be snapshotted as both `start` and (via Separate, which mostly
+        /// no-ops on an already-separated floor) `targets` — freezing the rooms wherever the animation happened
+        /// to be. Worse for a settlement: LatticeFor would be anchored on a min-X/min-Y building that is itself
+        /// off-lattice mid-flight, and SnapToLattice would then be an exact no-op against a shifted lattice —
+        /// the precise hazard LatticeFor's own doc warns about, leaving a room permanently between cells and
+        /// sliding the whole town's cell indices by up to half a cell.</summary>
         public void BeginCascade()
         {
             var lvl = BoundLevel;
             if (lvl == null) return;
 
+            // Snapshot FIRST, land SECOND — the order is the whole point. `start` keeps the mid-flight
+            // positions, so the animation resumes visually from where it is instead of jumping; the landing
+            // below then puts the ROOM DATA on the settled positions the in-flight run was converging to, so
+            // everything the resolve step reads (Separate's overlaps, LatticeFor's anchor) sees settled,
+            // on-lattice geometry.
             var start = new Dictionary<int, (float x, float y)>();
             foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
+
+            // RESTART, NOT IGNORE. Ignoring a re-entrant call would silently drop the new edit's settle (its
+            // anti-overlap nudge above all) and leave the old cascade converging on targets computed before
+            // that edit existed. Restarting from the landed state costs one extra resolve and keeps the
+            // invariant that every BeginCascade produces a settle for the state it was called on.
+            if (cascading) LandRunningCascade(lvl);
 
             if (dungeon != null && (dungeon.Kind == InteriorKind.Building || dungeon.Kind == InteriorKind.Settlement))
             {
@@ -498,6 +524,26 @@ namespace WorldGen.Rendering
             cascading = true;
 
             Refresh();   // draw the restored start state now; Update() takes over from here
+        }
+
+        /// <summary>End an in-flight cascade IMMEDIATELY by writing every room onto the target it was
+        /// converging to, then clearing the cascade state. Exactly Update()'s completion branch minus the two
+        /// things that would be wrong here: no redraw (the BeginCascade this serves ends in a Refresh of its
+        /// own either way) and NO OnCascadeSettled — that callback means "the rooms have reached their final
+        /// resting values", which is not true yet, since the caller is about to resolve a new layout. The new
+        /// cascade fires it on its own completion (or straight away via the !anyMoved path), so every
+        /// BeginCascade still ends in exactly one settled signal.
+        ///
+        /// A room ADDED since the cascade began has no entry in cascadeTargets and simply keeps its position —
+        /// it was never animating.</summary>
+        void LandRunningCascade(InteriorFloor lvl)
+        {
+            if (cascadeTargets != null)
+                foreach (var r in lvl.Rooms)
+                    if (cascadeTargets.TryGetValue(r.Id, out var target)) { r.X = target.x; r.Y = target.y; }
+            cascading = false;
+            cascadeTargets = null;
+            cascadeVel = null;
         }
 
         void Update()
@@ -693,8 +739,27 @@ namespace WorldGen.Rendering
         /// branch passes it to BuildingGenerator.SettleDraggedRoom → CompactLayout.NudgeRoomOffOverlaps, which
         /// early-returns for a room id that resolves to no room (floor.GetRoom(0) == null). SnapToLattice in the
         /// same branch is likewise handed that null room and no-ops. So nothing moves the new building after it
-        /// is written, and nothing re-fits the projection either (needsProjectionFit stays false) — the view
-        /// does not rescale under the DM the instant they place.
+        /// is written — the DM's cell is final.
+        ///
+        /// THE AUTO-LINK, AND WHY IT IS NOT OPTIONAL (final-review fix). DungeonOps.AddRoom creates a room with
+        /// NO links. A settlement's streets are routed from lvl.Links (SettlementRoads.Build over
+        /// BuildRenderGraph's edge list), so a linkless building gets no street — and, worse, no ROAD CELLS.
+        /// SettlementTileGrid.BuildWallRing dilates the occupied seed (buildings ∪ road cells) by
+        /// CourtyardCells + 1 = 2 and flood-fills the outside: two clusters whose nearest cells are ≥ 6 apart on
+        /// one axis, or ≥ 5 apart on BOTH, stay disconnected, and each grows its OWN wall ring (that pass has no
+        /// equivalent of SettlementFence.BridgeStrays — a documented limitation). The placeable region reaches
+        /// that far: SettlementVolumeRenderer.TryPlacementCell accepts any on-field cell that is not
+        /// Building/Wall/Gate, which on a big walled city includes the diagonal corners of Allocate's 3-cell
+        /// margin band. So a linkless placement out there would be a lone house sealed in its own little wall
+        /// with no street, and NOTHING would ever repair it — the Clean tier can only fold a road into the seed
+        /// if a road exists. Linking the new building to the nearest existing one restores the generator's own
+        /// invariant (every building hangs off the street tree, SettlementStreets), and the road that link
+        /// produces rasterizes into the seed and merges the two clusters back into one ring.
+        ///
+        /// The link is the GENERATOR's shape, not the DM's: authored stays false (AddCorridor's default), the
+        /// same as every SettlementStreets edge, so DungeonOps.HasAuthoredContent — and therefore the
+        /// «Перегенерировать» / «× Этаж» confirm — behaves exactly as it did before. Dummy buildings are
+        /// candidates like any other: generated streets connect them too.
         ///
         /// The write itself is already on the lattice: nx/ny are SettlementTileGrid.CenterX/CenterY of the
         /// target cell. The lattice cannot shift under it either — Allocate anchors on the min-X/min-Y
@@ -705,15 +770,50 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null || !hoverValid || !hoverPlaceable) return;   // stay armed, change nothing
 
+            // Nearest neighbour resolved BEFORE the add, against the hovered cell centre — which is where the
+            // new room is about to be written. Taking it first is what makes "the new room is never its own
+            // neighbour" structural rather than a filter that could be dropped later.
+            int neighbourId = NearestBuildingId(lvl, hoverNx, hoverNy);
             var room = DungeonOps.AddRoom(lvl, hoverNx, hoverNy);
+            // 0 = this is the floor's FIRST building: a one-building town needs no street, and there is
+            // nothing to be walled off from.
+            if (neighbourId != 0) DungeonOps.AddCorridor(lvl, room.Id, neighbourId);
             lastAnchorRoomId = 0;
             lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
+            // REFIT (final-review fix). The grid just grew — by the new building's own cell, by its street, and
+            // by the 2-cell ring re-derived around both — and FitBoundsFor reads that extent straight off
+            // SettlementTileGrid.Allocate, so without this the new house (or its stretch of wall) can land
+            // outside the fitted panel. Set BEFORE Refresh deliberately: Refresh resolves a pending fit itself,
+            // so the rebuild below already draws at the new scale instead of drawing once at the old one and
+            // being rebuilt again by LateUpdate. PLACEMENT ONLY — drag and drag-end must NOT refit (the spec
+            // forbids rescaling under the cursor), which is why this lives here and not in OnDrag/OnEndDrag.
+            needsProjectionFit = true;
             // Same order AddRoomAtCenter uses, and it matters: RebuildView clears the renderer's highlight set,
             // so SelectRoom must come AFTER Refresh or the new building would be created unselected.
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
+        }
+
+        /// <summary>The building (TypeId 1) room nearest the normalized point (nx, ny), or 0 when the floor
+        /// holds no building at all. Plain squared Euclidean distance with ties broken by the LOWER room id —
+        /// the same "pure distance, ties by lower index" rule SettlementStreets' growth pass uses, so the edge
+        /// this picks is the one the street generator would have picked. Gates (TypeId 0) are deliberately not
+        /// candidates: a gate is not a street tree node a building hangs off, and its own cell is not a
+        /// Building cell, so linking to one would not seed the dilation blob the way a building does.</summary>
+        static int NearestBuildingId(InteriorFloor lvl, float nx, float ny)
+        {
+            int best = 0;
+            float bestD2 = float.MaxValue;
+            foreach (var r in lvl.Rooms)
+            {
+                if (r.TypeId != 1) continue;
+                float dx = r.X - nx, dy = r.Y - ny;
+                float d2 = dx * dx + dy * dy;
+                if (d2 < bestD2 || (d2 == bestD2 && r.Id < best)) { bestD2 = d2; best = r.Id; }
+            }
+            return best;
         }
 
         /// <summary>Removes the selected room (DungeonOps also strips its corridors and any secrets
@@ -837,7 +937,11 @@ namespace WorldGen.Rendering
 
             if (!TryPointerToAreaLocal(data, out var local)) return;
             int id = renderer.HitRoomId(local, lvl);
-            if (id == 0) { SelectRoom(0); return; }                    // background → clear selection
+            // Background → clear selection. Clears lastPlacedRoomId too (final-review fix): this branch
+            // returns before the plain fallthrough at the bottom, so without it the field's doc ("the plain
+            // fallthrough clears it") would be true only for clicks that hit a room. Harmless either way —
+            // the guard below also requires an id MATCH — but code and comment now say the same thing.
+            if (id == 0) { lastPlacedRoomId = 0; SelectRoom(0); return; }
 
             // Double-click opens the room's battle map — the same shortcut a POI already has on the world
             // map. clickCount == 2 matches Notes' DoubleClickHandler, the project's existing convention.
@@ -865,6 +969,16 @@ namespace WorldGen.Rendering
         {
             var lvl = BoundLevel;
             if (lvl == null) return;
+            // «+ Здание» ARMED = no dragging (final-review fix). OnPointerClick already routes the whole click
+            // into placement, so a press-and-drag while armed used to place nothing yet still pick up and MOVE
+            // a house — with the green preview quad tracking the cursor over it. Confusing, and the DM will hit
+            // it: "press on the cell I want" and "press and slide a little" are the same gesture on a trackpad.
+            // Leaving draggingRoomId at 0 is the whole suppression — OnDrag and OnEndDrag both early-return on
+            // it, so no house moves and no settle fires. The gesture places NOTHING either, exactly as before
+            // this fix: OnPointerClick's `data.dragging` gate swallows any drag-release. The mode stays armed
+            // with the preview live, so the DM just clicks again — a drag is deliberately not a placement
+            // gesture, and turning it into one would mean reordering that gate ahead of the shipped drag path.
+            if (PlacementArmed) return;
             // Building UPPER floors are GENERATE-ONLY (spec stairwell stage B): rooms can't be dragged — the
             // floor is (re)generated around the column. Leaving draggingRoomId at 0 makes OnDrag a no-op.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && levelIndex > 0) return;
@@ -875,6 +989,11 @@ namespace WorldGen.Rendering
         public void OnDrag(PointerEventData data)
         {
             if (draggingRoomId == 0) return;
+            // Second half of the "armed = no dragging" rule above. OnBeginDrag is the LIVE gate (nothing can
+            // arm placement mid-gesture today — TogglePlacement is only reachable from the toolbar button);
+            // this one keeps the rule true if a drag ever does survive into an armed mode, rather than letting
+            // a half-suppressed gesture move a house.
+            if (PlacementArmed) return;
             var lvl = BoundLevel;
             var room = lvl?.GetRoom(draggingRoomId);
             if (room == null) return;
