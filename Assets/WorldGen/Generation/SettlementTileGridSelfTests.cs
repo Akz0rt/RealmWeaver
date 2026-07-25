@@ -378,8 +378,12 @@ namespace WorldGen.Rendering
             // must sit exactly at BuildingHeightMax — any slack here (e.g. "- 0.01f") tolerates a real
             // violation (a WallHeight only 0.005 below BuildingHeightMax would then read the wall as SHORTER
             // than the tallest house and still pass).
-            if (SettlementTileGrid.WallHeight <= SettlementTileGrid.BuildingHeightMax)
-            { Debug.LogError($"FAIL height: WallHeight {SettlementTileGrid.WallHeight} not above the tallest house {SettlementTileGrid.BuildingHeightMax}"); ok = false; }
+            // Read both consts into locals first: comparing them directly folds at compile time, which makes
+            // the LogError body unreachable and raises CS0162 in the Unity build (the harness NoWarns it, the
+            // Editor does not). The locals keep the check a real runtime assertion and the console clean.
+            float wallH = SettlementTileGrid.WallHeight, tallestHouse = SettlementTileGrid.BuildingHeightMax;
+            if (wallH <= tallestHouse)
+            { Debug.LogError($"FAIL height: WallHeight {wallH} not above the tallest house {tallestHouse}"); ok = false; }
 
             if (ok) Debug.Log("Settlement Height: PASS");
         }
