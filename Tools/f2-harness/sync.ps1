@@ -772,9 +772,8 @@ foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding')) {
 
 # MutDepthKeyNoRowSort: DepthKey rewritten COLUMN-major (i primary, j only a tie-break) instead of row-major —
 # drops the "further south always draws later, regardless of column" invariant entirely. Caught by
-# SelfTestDepth's NearOccludesFar sweep (a same-row-later-column cell can now sort before an earlier-row cell)
-# and its WallOccludesBuildingBehind assertion (the front wall (1,3) and the building behind it (1,1) differ
-# in i, not just j, so column-major sorting can place the wall before the building).
+# SelfTestDepth's NearOccludesFar sweep, and by its cross-column WallOccludesBuildingBehind pair — see that
+# test's comments for why the same-column pair alone does not discriminate this mutant.
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutDepthKeyNoRowSort' `
   'public static long DepthKey(int i, int j) => (long)j * 1_000_000 + i;' `
   'public static long DepthKey(int i, int j) => (long)i * 1_000_000 + j;   // MUTANT: column-major, drops row-major sort' `

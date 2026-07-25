@@ -186,11 +186,15 @@ namespace WorldGen.Generation
         // same order) since sorting is a function of each cell's own (i,j), not of any external state.
         public System.Collections.Generic.List<(int i, int j)> DrawOrder()
         {
-            var order = new System.Collections.Generic.List<(int i, int j)>();
+            var order = new System.Collections.Generic.List<(int i, int j)>(W * H);
             for (int a = 0; a < W; a++)
                 for (int b = 0; b < H; b++)
                     if (Cells[a, b] != TileType.None)
                         order.Add((a + OriginI, b + OriginJ));
+            // Sort MUST stay keyed on DepthKey, even though this a-outer/b-outer emission order happens to come
+            // out row-sorted already for the current a/b loop nesting: a future cleanup that "simplifies away"
+            // this Sort as redundant would silently make MutDepthKeyNoRowSort undetectable (DepthKey would then
+            // have no caller left at all, so a broken key could never surface through DrawOrder's output).
             order.Sort((p, q) => DepthKey(p.i, p.j).CompareTo(DepthKey(q.i, q.j)));
             return order;
         }

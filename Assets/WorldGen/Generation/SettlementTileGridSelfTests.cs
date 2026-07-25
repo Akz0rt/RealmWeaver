@@ -224,13 +224,28 @@ namespace WorldGen.Rendering
             // a wall cell directly in front (south, larger row) of a building behind it
             var f = Floor(true, (0,0),(1,0),(0,1),(1,1));
             var g = SettlementTileGrid.Build(f, null);
+            // Cloned BEFORE the first DrawOrder() call (not after) so SpillIsVisualOnly's mutation check below
+            // catches a first-call mutation too — a first-call mutation that happens to be idempotent and
+            // None-preserving would otherwise escape both that diff check and the idempotency check.
+            var before = (TileType[,])g.Cells.Clone();
+            int occupied = 0;
+            for (int a = 0; a < g.W; a++) for (int b = 0; b < g.H; b++) if (before[a,b] != TileType.None) occupied++;
             var order = g.DrawOrder();
             int Idx(int i, int j) => order.FindIndex(t => t.i == i && t.j == j);
+
+            // OccupiedCellsOnly: DrawOrder's contract is "every occupied (non-None) cell, nothing else" — the
+            // count pins over- AND under-inclusion (e.g. dropping the `!= TileType.None` filter, or skipping
+            // Void cells), and the None sweep pins the array->world coordinate conversion (OriginI/OriginJ)
+            // directly rather than incidentally via the row-sort/fixture checks below.
+            if (order.Count != occupied)
+            { Debug.LogError($"FAIL depth: DrawOrder returned {order.Count} cells, grid has {occupied} occupied"); ok = false; }
+            foreach (var t in order) if (g.At(t.i,t.j) == TileType.None)
+            { Debug.LogError($"FAIL depth: DrawOrder returned None cell ({t.i},{t.j})"); ok = false; }
 
             // NearOccludesFar: for any two occupied cells, larger row => larger draw index
             for (int m = 0; m < order.Count; m++) for (int n = 0; n < order.Count; n++)
                 if (order[m].j < order[n].j && !(m < n))
-                { Debug.LogError($"FAIL depth: cell {order[m]} (row {order[m].j}) must draw before {order[n]} (row {order[n].j})"); ok = false; }
+                { Debug.LogError($"FAIL depth: cell {order[m]} (row {order[m].j}) idx {m} must draw before {order[n]} (row {order[n].j}) idx {n}"); ok = false; }
 
             // WallOccludesBuildingBehind: front wall (row j) after building (row j-1), same column.
             // Verified against the ACTUAL grid this fixture produces (hand-derived and confirmed by this very
@@ -280,8 +295,8 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL depth: cross-column front wall ({wi2},{wj2}) idx {Idx(wi2,wj2)} does not draw AFTER building behind ({bi2},{bj2}) idx {Idx(bi2,bj2)}"); ok = false; }
 
             // SpillIsVisualOnly: DrawOrder must not mutate the grid, and must be PURE (idempotent — calling it
-            // twice returns an equal list, not just "some list of the same length").
-            var before = (TileType[,])g.Cells.Clone();
+            // twice returns an equal list, not just "some list of the same length"). `before` was cloned above,
+            // BEFORE the first DrawOrder() call, so this diff check spans both calls.
             var order2 = g.DrawOrder();
             for (int a=0;a<g.W;a++) for (int b=0;b<g.H;b++) if (before[a,b] != g.Cells[a,b])
             { Debug.LogError($"FAIL depth: DrawOrder mutated cell [{a},{b}] {before[a,b]}→{g.Cells[a,b]}"); ok = false; }
