@@ -360,21 +360,21 @@ function New-SettlementMutant([string]$srcFile, [string]$className, [string]$fro
   Set-Content (Join-Path $gen $outFile) $t -Encoding UTF8
 }
 
-# MutNoInsideFilter: PlaceBuildings' keep condition drops the wall.Contains(cx, cy) term, so bbox-corner
+# MutNoInsideFilter: PlaceBuildings' skip condition drops the !wall.Contains(cx, cy) term, so bbox-corner
 # cells outside the rounded contour — but still >= half a cell from the nearest edge line, since a rounded
 # nonagon's corners sit well clear of the circle — leak into the kept set. SelfTestBuildings case 1 (every
 # building inside the wall) must fail.
 New-SettlementMutant 'SettlementGenerator.cs' 'MutNoInsideFilter' `
-  'if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)' `
-  'if (wall.DistanceToEdge(cx, cy) >= half)' `
+  'if (!wall.Contains(cx, cy) || wall.DistanceToEdge(cx, cy) < half) continue;' `
+  'if (wall.DistanceToEdge(cx, cy) < half) continue;' `
   'MutNoInsideFilter.cs'
 
-# MutNoWallClearance: PlaceBuildings' keep condition drops the wall.DistanceToEdge(...) >= half term, so
+# MutNoWallClearance: PlaceBuildings' skip condition drops the wall.DistanceToEdge(...) < half term, so
 # cells hugging the wall line from the inside (closer than half a cell) are kept. SelfTestBuildings case 3
 # (every building >= half a cell from the wall line) must fail.
 New-SettlementMutant 'SettlementGenerator.cs' 'MutNoWallClearance' `
-  'if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)' `
-  'if (wall.Contains(cx, cy))' `
+  'if (!wall.Contains(cx, cy) || wall.DistanceToEdge(cx, cy) < half) continue;' `
+  'if (!wall.Contains(cx, cy)) continue;' `
   'MutNoWallClearance.cs'
 
 # MutNoInsideFilter/MutNoWallClearance/MutGateAtCentre all nest the WHOLE of SettlementGenerator.cs — including
@@ -414,7 +414,38 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutNoActiveMark' `
   'IsDummy = false' `
   'MutNoActiveMark.cs'
 
-foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs')) {
+# MutSpacingNoParity: PlaceBuildings' checkerboard split degenerates — every candidate lands in `even`
+# regardless of (ix+iy) parity, so the even-tier loop (which takes without a neighbour test, since no two
+# same-parity cells are ever 4-adjacent) now takes 4-adjacent cells too. Buildings immediately share edges.
+# SelfTestBuildingSpacing's touching-pair assertions must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutSpacingNoParity' `
+  'if (((ix + iy) & 1) == 0) even.Add((ix, iy)); else odd.Add((ix, iy));' `
+  'even.Add((ix, iy));   // MUTANT: parity split removed, every candidate treated as even' `
+  'MutSpacingNoParity.cs'
+
+# MutSpacingNoAdjacencyCheck: the odd-tier top-up's neighbour guard is neutered, so it takes odd cells next
+# to an already-placed building. SelfTestBuildingSpacing's touching-pair assertions must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutSpacingNoAdjacencyCheck' `
+  'if (!NoNeighbour(cell.ix, cell.iy)) continue;' `
+  'if (false) continue;   // MUTANT: adjacency check removed' `
+  'MutSpacingNoAdjacencyCheck.cs'
+
+# MutRadiusLinear: WallRadiusFor reverts to the old linear law, which under-provisions a 40-building town's
+# contour for the no-shared-edge rule (measured, seed 7: sqrt law places 40, linear law places only 26).
+# SelfTestBuildingSpacing's headroom-fixture count assertion (40 placed) must fail.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutRadiusLinear' `
+  'float r = 0.018f + 0.0644f * (float)System.Math.Sqrt(buildingCount);   // ~0.20 at 8, ~0.425 at 40, =0.45 (clamp) at 45' `
+  'float r = 0.16f + 0.0045f * buildingCount;   // MUTANT: old linear law restored' `
+  'MutRadiusLinear.cs'
+
+# All seven mutants above nest the WHOLE of SettlementGenerator.cs (same trap as MutNoInsideFilter/
+# MutNoWallClearance/MutGateAtCentre/MutNoActiveMark documented above): BuildFloor's internal call to
+# SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed) would otherwise hand the nested
+# PlacedBuilding/GatePoint to a method whose signature still means the real, unmutated ones — a compile
+# error unrelated to any rule under test. SelfTestBuildingSpacing (like SelfTestBuildings/SelfTestGates/
+# SelfTestActiveBuildings) reads only floor.Rooms, never floor.Links, so the stubbed empty edge list is
+# harmless for the three new mutants too.
+foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs', 'MutSpacingNoParity.cs', 'MutSpacingNoAdjacencyCheck.cs', 'MutRadiusLinear.cs')) {
   Repair-SettlementGeneratorCrossFileCall $outFile
 }
 
@@ -548,6 +579,18 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
 # never touches SettlementStreets — safe to rebind SettlementGenerator./SettlementConfig within just this method.
 foreach ($mc in @('MutNoInsideFilter', 'MutNoWallClearance')) {
   New-SettlementRebind 'SelfTestBuildings' $mc `
+    @('SettlementGenerator\.', '\bSettlementConfig\b') `
+    @("WorldGen.Generation.$mc.SettlementGenerator.", "WorldGen.Generation.$mc.SettlementConfig")
+}
+
+# MutSpacingNoParity / MutSpacingNoAdjacencyCheck / MutRadiusLinear all mutate PlaceBuildings/WallRadiusFor and
+# are caught by SelfTestBuildingSpacing, which (like SelfTestBuildings/SelfTestGates above) calls BuildFloor but
+# never references SettlementStreets by name — safe to rebind SettlementGenerator./SettlementConfig within just
+# this method; BuildFloor's internal SettlementStreets.GenerateStreets call is stubbed by the same cross-file
+# repair as the four mutants above (SelfTestBuildingSpacing reads only floor.Rooms, never floor.Links, so the
+# stubbed edge list is harmless).
+foreach ($mc in @('MutSpacingNoParity', 'MutSpacingNoAdjacencyCheck', 'MutRadiusLinear')) {
+  New-SettlementRebind 'SelfTestBuildingSpacing' $mc `
     @('SettlementGenerator\.', '\bSettlementConfig\b') `
     @("WorldGen.Generation.$mc.SettlementGenerator.", "WorldGen.Generation.$mc.SettlementConfig")
 }
@@ -823,5 +866,5 @@ New-SettlementRebind 'SelfTestHeight' 'MutHeightConstant' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 23 settlement mutants + 23 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 26 settlement mutants + 26 settlement rebound test copies into gen/"
 

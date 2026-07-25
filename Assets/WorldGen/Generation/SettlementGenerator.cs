@@ -37,11 +37,19 @@ namespace WorldGen.Generation
         /// nominal scale the rest of the codebase already assumes for a TypeId-1 room.</summary>
         public const float NominalBuildingTiles = 6f;
 
-        /// <summary>Wall radius (normalized) for a building count: bigger towns need more room. Clamped so a
-        /// wall always fits inside the 0..1 canvas with margin.</summary>
+        /// <summary>Wall radius (normalized) for a building count. Area scales with the count, so the radius
+        /// scales with its SQUARE ROOT — the old linear law under-provisioned big towns, which is what forced
+        /// buildings to touch. Tuned so the curve reaches the 0.45 clamp exactly AT the cap (MaxBuildings):
+        /// r(8)~0.200, r(20)~0.306, r(40)~0.425, r(45)=0.45 (clamped) — this is deliberate, not incidental,
+        /// since measurement showed the cap needs the full clamp radius to be reachable for nearly every seed
+        /// (a two-anchor law that undershot r(45) left ~58% of seeds short of 45 buildings). Clamped at 0.45:
+        /// beyond it buildings sit outside the normalized field, which makes the editor's settle animation
+        /// non-terminating (its remaining-distance measure plateaus above the done-epsilon because positions
+        /// are clamped while targets are not).</summary>
         public static float WallRadiusFor(int buildingCount)
         {
-            float r = 0.16f + 0.0045f * buildingCount;   // ~0.2 at 8, ~0.34 at 40, ~0.43 at 60
+            if (buildingCount < 1) buildingCount = 1;
+            float r = 0.018f + 0.0644f * (float)System.Math.Sqrt(buildingCount);   // ~0.20 at 8, ~0.425 at 40, =0.45 (clamp) at 45
             return r > 0.45f ? 0.45f : r;
         }
 
@@ -103,6 +111,21 @@ namespace WorldGen.Generation
         /// this — the anti-overlap guarantee that replaces the dungeon packer.</summary>
         public const float BuildingCell = 0.07f;
 
+        /// <summary>Hard ceiling on a settlement's building count. Placement forbids two buildings sharing an
+        /// edge, so capacity is the size of the checkerboard sublattice inside the placement contour — about
+        /// 55 cells at the clamped 0.45 radius. 45 leaves headroom; the inspector's stepper clamps to the
+        /// same constant so the UI never promises a town the generator cannot build.</summary>
+        public const int MaxBuildings = 45;
+
+        static void ShuffleCells(List<(int ix, int iy)> list, System.Random rng)
+        {
+            for (int i = list.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                (list[i], list[j]) = (list[j], list[i]);
+            }
+        }
+
         public static List<PlacedBuilding> PlaceBuildings(WallContour wall, int seed, int targetCount)
         {
             var kept = new List<PlacedBuilding>();
@@ -119,20 +142,51 @@ namespace WorldGen.Generation
             }
 
             float half = BuildingCell * 0.5f;
-            // Cell centres on a regular grid; keep those inside the wall and clear of the line.
-            for (float cy = minY + half; cy <= maxY - half + 1e-6f; cy += BuildingCell)
-                for (float cx = minX + half; cx <= maxX - half + 1e-6f; cx += BuildingCell)
-                    if (wall.Contains(cx, cy) && wall.DistanceToEdge(cx, cy) >= half)
-                        kept.Add(new PlacedBuilding { X = cx, Y = cy });
+            float x0 = minX + half, y0 = minY + half;
+            int nx = (int)System.Math.Floor((maxX - half - x0) / BuildingCell + 1e-6) + 1;
+            int ny = (int)System.Math.Floor((maxY - half - y0) / BuildingCell + 1e-6) + 1;
 
-            // Deterministic Fisher–Yates shuffle so the kept-but-dropped buildings vary by seed, then trim.
+            // Candidates carry INTEGER lattice indices, not accumulated floats: the parity below must be
+            // exact, and an accumulating `cy += BuildingCell` drifts across a wide bbox.
+            // Split by checkerboard parity — two cells of the same parity can never share an edge.
+            var even = new List<(int ix, int iy)>();
+            var odd = new List<(int ix, int iy)>();
+            for (int iy = 0; iy < ny; iy++)
+                for (int ix = 0; ix < nx; ix++)
+                {
+                    float cx = x0 + ix * BuildingCell, cy = y0 + iy * BuildingCell;
+                    if (!wall.Contains(cx, cy) || wall.DistanceToEdge(cx, cy) < half) continue;
+                    if (((ix + iy) & 1) == 0) even.Add((ix, iy)); else odd.Add((ix, iy));
+                }
+
             var rng = new System.Random(seed * 131 + 71);
-            for (int i = kept.Count - 1; i > 0; i--)
+            ShuffleCells(even, rng);
+            ShuffleCells(odd, rng);
+
+            var taken = new HashSet<(int, int)>();
+            bool NoNeighbour(int ix, int iy) =>
+                !taken.Contains((ix - 1, iy)) && !taken.Contains((ix + 1, iy)) &&
+                !taken.Contains((ix, iy - 1)) && !taken.Contains((ix, iy + 1));
+
+            // Even sublattice FIRST: no two of its cells are 4-adjacent, so every draw is legal BY
+            // CONSTRUCTION at any occupancy and the loop can never stall. Naive rejection sampling would
+            // jam near 36% coverage — far short of the target at this lattice.
+            foreach (var cell in even)
             {
-                int j = rng.Next(i + 1);
-                (kept[i], kept[j]) = (kept[j], kept[i]);
+                if (kept.Count >= targetCount) break;
+                taken.Add(cell);
+                kept.Add(new PlacedBuilding { X = x0 + cell.ix * BuildingCell, Y = y0 + cell.iy * BuildingCell });
             }
-            if (kept.Count > targetCount) kept.RemoveRange(targetCount, kept.Count - targetCount);
+            // Top up from the odd sublattice where the rule allows — this is what breaks the layout out of a
+            // literal checkerboard. Only these candidates need the neighbour test.
+            foreach (var cell in odd)
+            {
+                if (kept.Count >= targetCount) break;
+                if (!NoNeighbour(cell.ix, cell.iy)) continue;
+                taken.Add(cell);
+                kept.Add(new PlacedBuilding { X = x0 + cell.ix * BuildingCell, Y = y0 + cell.iy * BuildingCell });
+            }
+            // Short-placed is valid, not an error: a jittered contour can be tighter than the nominal circle.
             return kept;
         }
 
@@ -146,8 +200,12 @@ namespace WorldGen.Generation
         {
             // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) used only
             // to seed the building grid and route streets — never stored, so nothing renders it directly.
-            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
-            var buildings = PlaceBuildings(placement, cfg.Seed, cfg.TargetBuildings);
+            // Clamped once here and reused for both the contour and the placement (and the stored
+            // SettlementParams below) so a request above MaxBuildings never quietly asks the contour for a
+            // town it cannot legally fill under the no-shared-edge rule.
+            int target = cfg.TargetBuildings > MaxBuildings ? MaxBuildings : cfg.TargetBuildings;
+            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(target), WallSides, WallJitter);
+            var buildings = PlaceBuildings(placement, cfg.Seed, target);
 
             // Gates: derived from a preliminary fence traced around the placed buildings (tile space), then
             // spaced on it (normalized). A wall-less village, or a walled town that placed zero buildings,
@@ -165,7 +223,7 @@ namespace WorldGen.Generation
                     var prelimNorm = new WallContour();
                     foreach (var p in prelimTile.Points)
                         prelimNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
-                    gates = PlaceGates(prelimNorm, GateCountFor(cfg.TargetBuildings), cfg.Seed);
+                    gates = PlaceGates(prelimNorm, GateCountFor(target), cfg.Seed);
                 }
             }
 
@@ -191,7 +249,7 @@ namespace WorldGen.Generation
             floor.NextRoomId = next;
             foreach (var e in edges)
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
-            floor.SettlementParams = new SettlementParams { TargetBuildings = cfg.TargetBuildings, ActiveBuildings = cfg.ActiveBuildings, HasWall = cfg.HasWall };
+            floor.SettlementParams = new SettlementParams { TargetBuildings = target, ActiveBuildings = cfg.ActiveBuildings, HasWall = cfg.HasWall };
             return floor;
         }
 
