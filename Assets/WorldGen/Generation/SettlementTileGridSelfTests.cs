@@ -41,10 +41,26 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL tilemap: extent {g.W}x{g.H}, expected {expW}x{expH}"); ok = false; }
             if (g.OriginI != -SettlementTileGrid.MarginCells || g.OriginJ != -SettlementTileGrid.MarginCells)
             { Debug.LogError($"FAIL tilemap: origin ({g.OriginI},{g.OriginJ}) not (-margin,-margin)"); ok = false; }
-            // snap is idempotent and pulls an off-lattice point back to a center
-            float snapped = g.SnapX(ax + 0.3f * c);
-            if (System.Math.Abs(snapped - g.SnapX(snapped)) > 1e-5f)
-            { Debug.LogError($"FAIL tilemap: SnapX not idempotent ({snapped} vs {g.SnapX(snapped)})"); ok = false; }
+            // snap picks the NEAREST cell centre, not floor/ceiling: an offset of 0.3*Cell above a lattice
+            // point must snap DOWN to that point's centre; an offset of 0.7*Cell must snap UP to the next
+            // cell's centre. Floor gets the 0.7 case wrong (stays at the lower centre); Ceiling gets the 0.3
+            // case wrong (jumps to the upper centre) — so together these pin Round specifically. (The old
+            // idempotency check — SnapX(SnapX(x)) — held for Floor/Ceiling/Round alike, since the second call
+            // always receives an exact lattice value; it could not tell them apart.)
+            float snapDownX = g.SnapX(ax + 0.3f * c);
+            if (System.Math.Abs(snapDownX - ax) > 1e-4f)
+            { Debug.LogError($"FAIL tilemap: SnapX(ax+0.3*Cell) = {snapDownX}, want {ax} (snap DOWN to the lattice point)"); ok = false; }
+            float snapUpX = g.SnapX(ax + 0.7f * c);
+            float expSnapUpX = ax + c;
+            if (System.Math.Abs(snapUpX - expSnapUpX) > 1e-4f)
+            { Debug.LogError($"FAIL tilemap: SnapX(ax+0.7*Cell) = {snapUpX}, want {expSnapUpX} (snap UP to the next cell)"); ok = false; }
+            float snapDownY = g.SnapY(ay + 0.3f * c);
+            if (System.Math.Abs(snapDownY - ay) > 1e-4f)
+            { Debug.LogError($"FAIL tilemap: SnapY(ay+0.3*Cell) = {snapDownY}, want {ay} (snap DOWN to the lattice point)"); ok = false; }
+            float snapUpY = g.SnapY(ay + 0.7f * c);
+            float expSnapUpY = ay + c;
+            if (System.Math.Abs(snapUpY - expSnapUpY) > 1e-4f)
+            { Debug.LogError($"FAIL tilemap: SnapY(ay+0.7*Cell) = {snapUpY}, want {expSnapUpY} (snap UP to the next cell)"); ok = false; }
 
             if (ok) Debug.Log("Settlement TileGrid Mapping: PASS");
         }
@@ -53,9 +69,14 @@ namespace WorldGen.Rendering
         public void SelfTestTileGridSanity()
         {
             // Trailing non-reboundable sentinel: a plain smoke check so mutant-reboundable tests are never last.
+            bool ok = true;
             var g = SettlementTileGrid.Allocate(new System.Collections.Generic.List<Room>());
-            if (g == null || g.W < 1 || g.H < 1) Debug.LogError("FAIL tilegrid-sanity: empty Allocate did not yield a 1x1 grid");
-            else Debug.Log("Settlement TileGrid Sanity: PASS");
+            if (g == null)
+            { Debug.LogError("FAIL tilegrid-sanity: empty Allocate returned null"); ok = false; }
+            else if (g.W != 1 || g.H != 1)
+            { Debug.LogError($"FAIL tilegrid-sanity: empty Allocate yielded {g.W}x{g.H}, want 1x1"); ok = false; }
+
+            if (ok) Debug.Log("Settlement TileGrid Sanity: PASS");
         }
     }
 }
