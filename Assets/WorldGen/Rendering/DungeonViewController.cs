@@ -11,10 +11,12 @@ namespace WorldGen.Rendering
     /// animated cascade. Draws NOTHING — it delegates every visual to an IDungeonRenderer and swaps that
     /// renderer when the Граф/Изо toggle flips (sub-project 3 revision, spec R5).
     ///
-    /// The key move: pointer input is converted into TILE space via the active renderer's
-    /// DungeonProjection, and hit-testing runs against room footprints IN TILES. Since Граф and Изо share
-    /// one projection type differing only by SquashY, this single code path drives editing in BOTH views —
-    /// editing in Изо (spec R4) required no second implementation.
+    /// The key move: pointer input is resolved down to an AREA-LOCAL point against the active renderer's
+    /// own RectTransform; the renderer maps that point to a room id / normalized position in its own
+    /// coordinate space (IDungeonRenderer.HitRoomId / TryAreaToNorm — Task 6). The flat renderer still does
+    /// that via DungeonProjection + TILE space, so Граф and Изо (which share one projection type differing
+    /// only by SquashY) drive editing through the SAME renderer-side logic — editing in Изо (spec R4)
+    /// required no second implementation. A non-projection renderer is now free to hit-test differently.
     ///
     /// Sits on the same GameObject hierarchy as before (a child of DungeonEditorScreen.MapArea) and
     /// carries the same rect gotcha: never read a rect at Bind time (it is {0,0} pre-activation) —
@@ -427,13 +429,15 @@ namespace WorldGen.Rendering
             return room;
         }
 
-        // ── Input → tile space → hit-test (renderer-agnostic; the point of the split) ──
+        // ── Input → area-local point; hit-test and screen→norm now live on the active renderer (Task 6) ──
 
-        /// <summary>Pointer screen position → this renderer's local px → TILE space. False if the renderer
-        /// is missing or its rect has not laid out (never act on a garbage sample).</summary>
-        bool TryPointerToTile(PointerEventData data, out float tx, out float ty)
+        /// <summary>Pointer screen position → this renderer's local px. False if the renderer is missing or
+        /// its rect has not laid out (never act on a garbage sample). Everything past this point — local →
+        /// tile, tile → room id / tile → normalized — is the renderer's own job (HitRoomId,
+        /// TryAreaToNorm), so a non-projection renderer (Task 7) can hit-test and map in its own space.</summary>
+        bool TryPointerToAreaLocal(PointerEventData data, out Vector2 local)
         {
-            tx = ty = 0f;
+            local = default;
             if (renderer == null || renderer.Area == null) return false;
             // An unfitted projection (PxPerTile == 0, before the first ResolveProjection) makes
             // LocalToTile return (0,0) by design. Acting on that would clamp a dragged room to the
@@ -441,28 +445,10 @@ namespace WorldGen.Rendering
             if (renderer.Projection.PxPerTile <= 0f) return false;
             var area = renderer.Area;
             if (area.rect.width <= 0f || area.rect.height <= 0f) return false;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(area, data.position, null, out var local))
-                return false;
             // ScreenPointToLocalPointInRectangle returns pivot-relative coords; the projection's local
             // space is CENTRE-relative. area is stretched with a 0.5 pivot, so they already coincide —
             // this is the same assumption DungeonGraphView.PointCenter made.
-            (tx, ty) = renderer.Projection.LocalToTile(local.x, local.y);
-            return true;
-        }
-
-        /// <summary>Topmost room whose FOOTPRINT contains the tile point. "Topmost" = drawn last = largest
-        /// tile Y (painter's order is by Y — see DungeonIsoRenderer.DepthOf), so overlapping rooms resolve
-        /// the same way they LOOK stacked. Returns 0 for a miss (background).</summary>
-        int HitRoomId(InteriorFloor lvl, float tx, float ty)
-        {
-            int best = 0;
-            float bestY = float.MinValue;
-            foreach (var r in lvl.Rooms)
-            {
-                if (!DungeonProjection.HitTest(r, tx, ty)) continue;
-                if (r.Y > bestY) { bestY = r.Y; best = r.Id; }
-            }
-            return best;
+            return RectTransformUtility.ScreenPointToLocalPointInRectangle(area, data.position, null, out local);
         }
 
         public void OnPointerClick(PointerEventData data)
@@ -477,8 +463,8 @@ namespace WorldGen.Rendering
             // eligibleForClick is never cleared, so this click DOES fire on every in-place release.
             // data.dragging is still true here; the input module clears it only after endDrag.
             if (data.dragging) return;
-            if (!TryPointerToTile(data, out float tx, out float ty)) return;
-            int id = HitRoomId(lvl, tx, ty);
+            if (!TryPointerToAreaLocal(data, out var local)) return;
+            int id = renderer.HitRoomId(local, lvl);
             if (id == 0) { SelectRoom(0); return; }                    // background → clear selection
 
             // Double-click opens the room's battle map — the same shortcut a POI already has on the world
@@ -502,8 +488,8 @@ namespace WorldGen.Rendering
             // Building UPPER floors are GENERATE-ONLY (spec stairwell stage B): rooms can't be dragged — the
             // floor is (re)generated around the column. Leaving draggingRoomId at 0 makes OnDrag a no-op.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && levelIndex > 0) return;
-            if (!TryPointerToTile(data, out float tx, out float ty)) return;
-            draggingRoomId = HitRoomId(lvl, tx, ty);
+            if (!TryPointerToAreaLocal(data, out var local)) return;
+            draggingRoomId = renderer.HitRoomId(local, lvl);
         }
 
         public void OnDrag(PointerEventData data)
@@ -512,10 +498,11 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             var room = lvl?.GetRoom(draggingRoomId);
             if (room == null) return;
-            if (!TryPointerToTile(data, out float tx, out float ty)) return;
+            if (!TryPointerToAreaLocal(data, out var local)) return;
+            if (!renderer.TryAreaToNorm(local, out float nx, out float ny)) return;
 
-            room.X = Mathf.Clamp(tx / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
-            room.Y = Mathf.Clamp(ty / DungeonLayout.TilesPerAxis, DragClampMin, DragClampMax);
+            room.X = Mathf.Clamp(nx, DragClampMin, DragClampMax);
+            room.Y = Mathf.Clamp(ny, DragClampMin, DragClampMax);
 
             // BUILDING (spec C4): the room moves FREELY with the cursor — NO corridor leash — so the DM can
             // pull it right out of the contour and watch C2' flag it live (RepositionRooms re-tests the

@@ -425,6 +425,38 @@ namespace WorldGen.Rendering
             if (outlines.TryGetValue(roomId, out var outline) && outline != null) outline.enabled = on;
         }
 
+        // ── Hit-test and screen→norm (Task 6, moved verbatim from DungeonViewController) ──
+
+        /// <summary>Topmost room whose FOOTPRINT contains the tile point. "Topmost" = drawn last = largest
+        /// tile Y (painter's order is by Y — see DungeonIsoRenderer.DepthOf), so overlapping rooms resolve
+        /// the same way they LOOK stacked. Returns 0 for a miss (background). Moved verbatim from
+        /// DungeonViewController.HitRoomId — only the tx/ty source changed, from a controller-supplied tile
+        /// point to this renderer's own Projection.LocalToTile of the caller's area-local point.</summary>
+        public int HitRoomId(Vector2 areaLocalPoint, InteriorFloor lvl)
+        {
+            var (tx, ty) = Projection.LocalToTile(areaLocalPoint.x, areaLocalPoint.y);
+            int best = 0;
+            float bestY = float.MinValue;
+            foreach (var r in lvl.Rooms)
+            {
+                if (!DungeonProjection.HitTest(r, tx, ty)) continue;
+                if (r.Y > bestY) { bestY = r.Y; best = r.Id; }
+            }
+            return best;
+        }
+
+        /// <summary>Area-local point → normalized 0..1 room position, via the same tile-space map
+        /// DungeonViewController.OnDrag used to compute inline (tile ÷ TilesPerAxis). Always succeeds here:
+        /// the controller's TryPointerToAreaLocal already rejects an unfit projection (PxPerTile <= 0)
+        /// before a point ever reaches this renderer, so there is nothing left for this map to reject.</summary>
+        public bool TryAreaToNorm(Vector2 areaLocalPoint, out float nx, out float ny)
+        {
+            var (tx, ty) = Projection.LocalToTile(areaLocalPoint.x, areaLocalPoint.y);
+            nx = tx / DungeonLayout.TilesPerAxis;
+            ny = ty / DungeonLayout.TilesPerAxis;
+            return true;
+        }
+
         Vector2 Local(float tx, float ty)
         {
             var (lx, ly) = Projection.TileToLocal(tx, ty);

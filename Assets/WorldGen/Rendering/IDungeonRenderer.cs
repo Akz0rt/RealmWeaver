@@ -4,9 +4,12 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Draw-only contract for one dungeon-floor view (sub-project 3 revision). A renderer NEVER handles
-    /// input, mutates the model, or knows about selection semantics — DungeonViewController owns all of
-    /// that and hit-tests in TILE space via this renderer's Projection.
+    /// Draw-only contract for one dungeon-floor view (sub-project 3 revision). A renderer NEVER receives
+    /// raw input, mutates the model, or knows about selection semantics — DungeonViewController owns all of
+    /// that and resolves PointerEventData down to an AREA-LOCAL point. From there, hit-testing and
+    /// area-local→normalized mapping are THIS renderer's own coordinate space (Task 6: HitRoomId /
+    /// TryAreaToNorm) — the flat renderer still does it via Projection + TILE space, but a non-projection
+    /// renderer (Task 7) is free to hit-test and map in its own space instead.
     ///
     /// That inversion is the entire point of the split: because Граф and Изо differ only by
     /// DungeonProjection.SquashY, one controller drives both, and editing in Изо is structural rather
@@ -14,12 +17,30 @@ namespace WorldGen.Rendering
     /// </summary>
     public interface IDungeonRenderer
     {
-        /// <summary>Tile↔pixel mapping for THIS view. The controller reads it for hit-testing and drag;
-        /// it is resolved by ResolveProjection and then held (spec R6 — no rescaling mid-drag).</summary>
+        /// <summary>Tile↔pixel mapping for THIS view. The flat renderer uses it for its own hit-testing and
+        /// drag mapping; it is resolved by ResolveProjection and then held (spec R6 — no rescaling
+        /// mid-drag). The controller ALSO still reads Projection.PxPerTile directly, as its own
+        /// pointer-input readiness gate (TryPointerToAreaLocal) — a future renderer without a meaningful
+        /// PxPerTile needs that gate revisited, not just HitRoomId/TryAreaToNorm implemented (Task 7).</summary>
         DungeonProjection Projection { get; }
 
         /// <summary>The RectTransform pointer coordinates are resolved against (this renderer's own root).</summary>
         RectTransform Area { get; }
+
+        // Renderer owns hit-testing and screen→world so a non-projection renderer can supply its own
+        // (Task 6). The controller resolves screen → AREA-LOCAL point (it owns PointerEventData) and hands
+        // that in; everything past that — local → tile, tile → room / tile → normalized — is the
+        // renderer's own coordinate space and stays here.
+
+        /// <summary>Topmost room whose footprint contains areaLocalPoint (mapped into this renderer's own
+        /// space). "Topmost" = drawn last, so overlapping rooms resolve the same way they LOOK stacked.
+        /// Returns 0 for a miss (background).</summary>
+        int HitRoomId(Vector2 areaLocalPoint, InteriorFloor lvl);
+
+        /// <summary>areaLocalPoint → normalized 0..1 room position, via this renderer's own coordinate map.
+        /// False if this renderer cannot place the point (e.g. an unresolved projection) — the caller must
+        /// not act on out/out params when this returns false.</summary>
+        bool TryAreaToNorm(Vector2 areaLocalPoint, out float nx, out float ny);
 
         /// <summary>The GameObject the controller activates/deactivates when the Граф/Изо toggle flips.</summary>
         GameObject Host { get; }
