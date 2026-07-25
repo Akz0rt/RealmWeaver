@@ -116,6 +116,80 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Wall Ring: PASS");
         }
 
+        [ContextMenu("Self-Test: Roads and Gates")]
+        public void SelfTestRoadsAndGates()
+        {
+            bool ok = true;
+            float c = SettlementGenerator.BuildingCell, ax = 0.3f, ay = 0.3f;
+            float T = DungeonLayout.TilesPerAxis;
+
+            // buildings leave the centre (1,1) empty; a road runs along row j=1 across it.
+            var f = Floor(true, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
+
+            // OVERRIDE 2: the brief's original fixture placed the gate exactly ON the ring cell (-2,1) —
+            // that never exercises "find the NEAREST ring cell", since the gate WAS the ring cell already. A
+            // real gate sits on the fine fence, ~1.5 fine tiles from the built-up edge (SettlementGenerator
+            // places gates on a fence traced tight around the actual buildings) — ~0.0117 normalized, an
+            // order of magnitude closer than the coarse ring (2 cells = 0.14 normalized out). The whole west
+            // ring column (i=-2) is Wall at every j from -2..4 (this fixture's dilation makes it one solid
+            // block, see the class doc), so placing the gate at that realistic distance and offset to row j=1
+            // forces the nearest-cell search to actually discriminate the target (-2,1) — 0.1283 normalized
+            // away — from its column neighbours (-2,0)/(-2,2) — 0.1462 away each — rather than trivially
+            // matching a cell the gate already sits on.
+            float gateOffset = 1.5f / T;                 // ~0.0117 normalized: realistic fine-fence clearance
+            f.Rooms.Add(new Room { Id = 99, TypeId = 0, X = ax + 0 * c - gateOffset, Y = ay + 1 * c });
+
+            var roads = new System.Collections.Generic.List<LinkSegment> {
+                // crossing road: west building row -> east building row, straight through the courtyard gap
+                new LinkSegment { A = new LinkPoint { X = (ax + 0*c)*T, Y = (ay + 1*c)*T },
+                                   B = new LinkPoint { X = (ax + 2*c)*T, Y = (ay + 1*c)*T }, EdgeIndex = 0 },
+                // OVERRIDE 1: a spur leaving the buildings' bbox entirely. Its far tip sits 10 cells south of
+                // the building block; MarginCells (3) alone would only ever reach 5 cells out from the
+                // buildings, so representing this tip REQUIRES the allocation to fold in the road extent, not
+                // just the buildings' bbox. Starts at the courtyard cell the crossing road already occupies,
+                // so the whole road network stays one connected blob (no stray-bridge machinery needed here).
+                new LinkSegment { A = new LinkPoint { X = (ax + 1*c)*T, Y = (ay + 1*c)*T },
+                                   B = new LinkPoint { X = (ax + 1*c)*T, Y = (ay + 10*c)*T }, EdgeIndex = 1 },
+            };
+
+            var clean = SettlementTileGrid.Build(f, roads);
+
+            // ---- roads: rasterized, and precedence-guarded (Building > ... > Road) ----
+            if (clean.At(1,1) != TileType.Road)
+            { Debug.LogError($"FAIL roads: courtyard cell (1,1) is {clean.At(1,1)}, expected Road (a road crosses it)"); ok = false; }
+            if (clean.At(0,1) != TileType.Building)
+            { Debug.LogError($"FAIL roads: cell (0,1) is {clean.At(0,1)}, expected Building — road overwrote a building (precedence broken)"); ok = false; }
+
+            // ---- OVERRIDE 1: the spur's far tip is REPRESENTED (grid extent folded past the buildings' own
+            // bbox) and ENCLOSED (the wall wraps it — not left as a silently-dropped/Outside cell) ----
+            if (!clean.InBounds(1, 10))
+            { Debug.LogError("FAIL roads: far spur cell (1,10) is OUT of bounds — the grid extent was not folded over the routed road (OVERRIDE 1)"); ok = false; }
+            else if (clean.At(1, 10) != TileType.Road)
+            { Debug.LogError($"FAIL roads: far spur cell (1,10) is {clean.At(1, 10)}, expected Road (present but misclassified)"); ok = false; }
+            if (clean.At(1, 12) != TileType.Wall)
+            { Debug.LogError($"FAIL roads: cell (1,12), two cells beyond the spur's tip, is {clean.At(1, 12)}, expected Wall — the wall must wrap the spur, not just the buildings"); ok = false; }
+
+            // ---- OVERRIDE 2: the gate reclassifies the NEAREST ring cell, on the correct side — not just
+            // "some ring cell somewhere" (the opposite wall must stay Wall) ----
+            if (clean.At(-2, 1) != TileType.Gate)
+            { Debug.LogError($"FAIL roads: west wall cell (-2,1) is {clean.At(-2,1)}, expected Gate (nearest ring cell to the realistic-distance gate)"); ok = false; }
+            if (clean.At(4, 1) != TileType.Wall)
+            { Debug.LogError($"FAIL roads: opposite (east) wall cell (4,1) is {clean.At(4,1)}, expected Wall — only the nearest ring cell should reclassify"); ok = false; }
+
+            // ---- Fast tier: null roads -> no Road cells, and no folded extent (wall/void/gates still
+            // present — gates don't depend on roads) ----
+            var fast = SettlementTileGrid.Build(f, null);
+            if (fast.InBounds(1, 10))
+            { Debug.LogError("FAIL roads: Fast tier (buildings-only extent) already covers the far spur cell (1,10) — the OVERRIDE 1 extent-fold assertion above is not load-bearing"); ok = false; }
+            int roadCells = 0; for (int a=0;a<fast.W;a++) for (int b=0;b<fast.H;b++) if (fast.Cells[a,b]==TileType.Road) roadCells++;
+            if (roadCells != 0)
+            { Debug.LogError($"FAIL roads: Fast tier (null roads) produced {roadCells} Road cells, expected 0"); ok = false; }
+            if (fast.At(-2, 1) != TileType.Gate)
+            { Debug.LogError($"FAIL roads: Fast tier gate reclassify missing — (-2,1) is {fast.At(-2,1)}, expected Gate"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Roads and Gates: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

@@ -737,7 +737,32 @@ foreach ($mc in @('MutTileGridNoFloodFill', 'MutTileGridNoWallRing', 'MutTileGri
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# ---- TILE GRID ROADS/GATES MUTANTS (Task 3): two rules pinned by SettlementTileGrid.Build's road/gate pass. --
+# Same bundling as the three wall-ring mutants above (TileType + SettlementTileGrid share the file), so the
+# rebind needs the same two patterns.
+
+# MutTileGridNoGates: the gate-reclassify write neutered — a gate room's nearest Wall ring cell never becomes
+# TileType.Gate. Caught by SelfTestRoadsAndGates' west-wall-cell-is-Gate assertion (OVERRIDE 2).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoGates' `
+  'g.Cells[bestA, bestB] = TileType.Gate;' `
+  ';   // MUTANT: gate reclassify never applied' `
+  'MutTileGridNoGates.cs'
+
+# MutTileGridRoadIgnoresWall: road marking's Building/Wall precedence guard dropped — a road cell overwrites
+# whatever tile (even Building or Wall) already occupies that cell. Caught by SelfTestRoadsAndGates' building-
+# precedence assertion (cell (0,1), the crossing road's own start sample, must stay Building).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridRoadIgnoresWall' `
+  'if (g.Cells[a, b] == TileType.Building || g.Cells[a, b] == TileType.Wall) continue;' `
+  '' `
+  'MutTileGridRoadIgnoresWall.cs'
+
+foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresWall')) {
+  New-SettlementRebind 'SelfTestRoadsAndGates' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 19 settlement mutants + 19 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 21 settlement mutants + 21 settlement rebound test copies into gen/"
 

@@ -83,6 +83,7 @@ static class Program
         var tileGrid = new WorldGen.Rendering.SettlementTileGridSelfTests();
         tileGrid.SelfTestTileMapping();
         tileGrid.SelfTestWallRing();
+        tileGrid.SelfTestRoadsAndGates();
         tileGrid.SelfTestTileGridSanity();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"

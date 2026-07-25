@@ -95,6 +95,10 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutTileGridNoWallRingSelfTests().SelfTestWallRing()),
                 ("MutTileGridNoVoid", "SettlementTileGrid.Build's Void assignment neutered (courtyard cells stay None)",
                     () => new WorldGen.MutantTests.MutTileGridNoVoidSelfTests().SelfTestWallRing()),
+                ("MutTileGridNoGates", "SettlementTileGrid.Build's gate-reclassify write neutered (a gate never turns its nearest Wall cell into Gate)",
+                    () => new WorldGen.MutantTests.MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()),
+                ("MutTileGridRoadIgnoresWall", "SettlementTileGrid.Build's road marking drops the Building/Wall precedence guard (a road overwrites whatever tile is already there)",
+                    () => new WorldGen.MutantTests.MutTileGridRoadIgnoresWallSelfTests().SelfTestRoadsAndGates()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");
