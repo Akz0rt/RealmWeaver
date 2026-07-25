@@ -112,9 +112,18 @@ namespace WorldGen.Generation
         public const float BuildingCell = 0.07f;
 
         /// <summary>Hard ceiling on a settlement's building count. Placement forbids two buildings sharing an
-        /// edge, so capacity is the size of the checkerboard sublattice inside the placement contour — about
-        /// 55 cells at the clamped 0.45 radius. 45 leaves headroom; the inspector's stepper clamps to the
-        /// same constant so the UI never promises a town the generator cannot build.</summary>
+        /// edge, so capacity is the EVEN sublattice alone, not the checkerboard as a whole: the odd tier
+        /// cannot contribute in practice (see PlaceBuildings) — when the even sublattice already covers the
+        /// target the odd loop breaks before its first iteration, and when it falls short every remaining odd
+        /// cell has at least one even neighbour already taken (WallContour.DistanceToEdge is unsigned
+        /// distance-to-nearest-segment, so stepping inward along a near-straight nonagon edge can only
+        /// increase clearance, never create a gap), so it is always rejected. A 1000-seed sweep of PLACED
+        /// count at target 45 (clamped 0.45 radius) found a floor of 39 (956/1000 seeds reach exactly 45);
+        /// two seeds sampled directly for the raw (uncapped) even-sublattice size gave 49 (seed 9) and 50
+        /// (seed 7) — both consistent with review's broader per-seed range of ~39–58. 45 therefore sits NEAR
+        /// THE CEILING, not in headroom — a small tail of seeds (~4.4%) legitimately falls short of it,
+        /// which is valid, not a bug (see PlaceBuildings). The inspector's stepper clamps to the same
+        /// constant so the UI never promises a town the generator cannot build.</summary>
         public const int MaxBuildings = 45;
 
         static void ShuffleCells(List<(int ix, int iy)> list, System.Random rng)
@@ -177,8 +186,14 @@ namespace WorldGen.Generation
                 taken.Add(cell);
                 kept.Add(new PlacedBuilding { X = x0 + cell.ix * BuildingCell, Y = y0 + cell.iy * BuildingCell });
             }
-            // Top up from the odd sublattice where the rule allows — this is what breaks the layout out of a
-            // literal checkerboard. Only these candidates need the neighbour test.
+            // Top up from the odd sublattice where the rule allows. In practice this NEVER contributes: when
+            // the even sublattice already covers the target the loop below breaks before its first iteration;
+            // when it falls short, every remaining odd cell already has an even neighbour taken (an unsigned
+            // distance-to-edge means stepping inward can only increase clearance, never open a gap), so
+            // NoNeighbour always rejects it. The delivered layout is therefore a random SUBSET of the even
+            // sublattice, a literal checkerboard — not broken out of one. Kept anyway as correct defensive
+            // code (mutant-covered by MutSpacingNoAdjacencyCheck), and a strict checkerboard subset is
+            // arguably the better outcome for readability. Only these candidates need the neighbour test.
             foreach (var cell in odd)
             {
                 if (kept.Count >= targetCount) break;
@@ -249,7 +264,7 @@ namespace WorldGen.Generation
             floor.NextRoomId = next;
             foreach (var e in edges)
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
-            floor.SettlementParams = new SettlementParams { TargetBuildings = target, ActiveBuildings = cfg.ActiveBuildings, HasWall = cfg.HasWall };
+            floor.SettlementParams = new SettlementParams { TargetBuildings = target, ActiveBuildings = cfg.ActiveBuildings > target ? target : cfg.ActiveBuildings, HasWall = cfg.HasWall };
             return floor;
         }
 
