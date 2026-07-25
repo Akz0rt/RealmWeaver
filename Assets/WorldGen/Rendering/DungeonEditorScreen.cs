@@ -65,6 +65,14 @@ namespace WorldGen.Rendering
         Transform toolbarBar;
         Text upperCountLabel;
         Text regenMsgLabel;
+        // «+ Здание» in its click-to-place form (Task 8b) — settlements only, so all three stay null on a
+        // dungeon / building toolbar and every handler that touches them no-ops there. Re-captured on every
+        // RefreshToolbar (which destroys and rebuilds the row), and nulled first so a stale reference to a
+        // destroyed button can never be painted.
+        Image addBuildingBtnImg;
+        Text addBuildingBtnLabel;
+        Text placementHintLabel;
+        string addBuildingBtnBaseLabel = "";   // «+ Здание» — the profile term, restored when the mode disarms
         int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
         int currentUpperCap = DefaultRooms;  // probed packable max for the current upper floor (set in RefreshToolbar)
         int regenCounter = 0;   // DoRegenerateSettlement: bumped every press so a repeated press on the SAME
@@ -445,7 +453,14 @@ namespace WorldGen.Rendering
             if (toolbarBar == null) return;
             for (int i = toolbarBar.childCount - 1; i >= 0; i--) Destroy(toolbarBar.GetChild(i).gameObject);
             linkToggleImg = null; upperCountLabel = null; regenMsgLabel = null;
+            addBuildingBtnImg = null; addBuildingBtnLabel = null; placementHintLabel = null;
             viewController?.SetLinkMode(false);   // link mode is per-floor — a floor switch exits it
+            // Placement mode is per-binding for the same reason, and disarming here is what makes the freshly
+            // built button below correct BY CONSTRUCTION: it is created in its unarmed look, and the mode it
+            // reflects has just been turned off. Deliberately AFTER the three fields are nulled — the disarm
+            // raises OnPlacementArmedChanged → RefreshPlacementButton, which must find nothing to repaint
+            // rather than reach into buttons that are already destroyed.
+            viewController?.DisarmPlacement();
 
             bool generateOnly = current != null && current.Kind == InteriorKind.Building && CurrentLevelIndex > 0;
             if (generateOnly)
@@ -484,15 +499,54 @@ namespace WorldGen.Rendering
             else
             {
                 var profile = current != null ? Profiles.ForRoom(current) : Profiles.For(InteriorKind.Dungeon);
-                AddToolbarButton(toolbarBar, "+ " + profile.TermRoom, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
+                bool settlement = current != null && current.Kind == InteriorKind.Settlement;
+                addBuildingBtnBaseLabel = "+ " + profile.TermRoom;
+                if (settlement)
+                {
+                    // Task 8b: for a TOWN this button no longer creates anything on press — it ARMS
+                    // click-to-place, exactly like «+ Добавить точку» on the world map (PoiToolPanel /
+                    // PoiManager.TogglePlacement), down to the «Отмена (Esc)» label it takes while armed. The
+                    // building is then created on the tile the DM clicks. Dungeons and building interiors keep
+                    // the immediate AddRoomAtCenter below, unchanged.
+                    addBuildingBtnImg = AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev,
+                                                         () => viewController?.TogglePlacement(), out addBuildingBtnLabel);
+                }
+                else
+                    AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
                 linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
                 AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, RequestDeleteSelected);
                 // Settlement-only regenerate (spec §7): re-roll the WHOLE town from a new seed. A settlement
                 // has no per-floor «Перегенерировать» (it is always free-edit, never generate-only), so this
                 // is its equivalent — shown only when current is a settlement.
-                if (current != null && current.Kind == InteriorKind.Settlement)
+                if (settlement)
+                {
                     AddToolbarButton(toolbarBar, "Сгенерировать заново", 190f, ThemeRole.Accent, RegenerateSettlement);
+                    // The armed hint, mirroring PoiToolPanel's «Кликните по карте, чтобы добавить» — same
+                    // affordance, worded for tiles because here the target is a specific cell and its colour
+                    // is what says whether the click will take. Hidden (empty) until the mode arms.
+                    placementHintLabel = AddToolbarLabel(toolbarBar, "", 340f);
+                    ThemeService.Tag(placementHintLabel, ThemeRole.Accent);
+                }
             }
+        }
+
+        /// <summary>Repaint «+ Здание» for the armed/unarmed state — wired to
+        /// DungeonViewController.OnPlacementArmedChanged, so the button, the hint and the actual mode can
+        /// never disagree no matter WHICH of the mode's many exits fired (Esc, a second press, a successful
+        /// placement, a rebind, leaving the screen). Follows the world map's POI precedent exactly:
+        /// PoiToolPanel.HandleArmedChanged swaps the label to «Отмена (Esc)» and flips the button to
+        /// Accent/AccentInk. No-ops on a dungeon/building toolbar, where these fields are null.</summary>
+        void RefreshPlacementButton(bool armed)
+        {
+            if (addBuildingBtnImg != null)
+                ThemeService.Tag(addBuildingBtnImg, armed ? ThemeRole.Accent : ThemeRole.Elev);
+            if (addBuildingBtnLabel != null)
+            {
+                addBuildingBtnLabel.text = armed ? "Отмена (Esc)" : addBuildingBtnBaseLabel;
+                ThemeService.Tag(addBuildingBtnLabel, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
+            if (placementHintLabel != null)
+                placementHintLabel.text = armed ? "Кликните по тайлу: зелёный — свободно, красный — занято" : "";
         }
 
         /// <summary>«Удалить» handler: DungeonViewController.DeleteSelected removes the room with no
@@ -811,6 +865,13 @@ namespace WorldGen.Rendering
         }
 
         Image AddToolbarButton(Transform parent, string label, float width, ThemeRole bgRole, System.Action onClick)
+            => AddToolbarButton(parent, label, width, bgRole, onClick, out _);
+
+        /// <summary>As above, but also hands back the button's Text (Task 8b): «+ Здание» has to retitle
+        /// itself to «Отмена (Esc)» while placement is armed, and fishing the label out with
+        /// GetComponentInChildren later would depend on this method's internal child layout.</summary>
+        Image AddToolbarButton(Transform parent, string label, float width, ThemeRole bgRole, System.Action onClick,
+                               out Text labelText)
         {
             var go = new GameObject($"Tool_{label}");
             go.transform.SetParent(parent, false);
@@ -822,6 +883,7 @@ namespace WorldGen.Rendering
             btn.onClick.AddListener(() => onClick?.Invoke());
             var lbl = MakeText(go.transform, label, 12, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
             Stretch(lbl.rectTransform); lbl.raycastTarget = false;
+            labelText = lbl;
             return img;
         }
 
@@ -900,6 +962,10 @@ namespace WorldGen.Rendering
             // and re-enter from its own completion callback.
             viewController.OnCascadeSettled = RevalidateOnly;
             viewController.OnJumpToLevel = SetLevel;
+            // Task 8b: the ONE place the «+ Здание» button learns the mode changed. Wired here (once, at build
+            // time) and not inside RefreshToolbar, because the mode can end for reasons the toolbar never sees
+            // — Esc, a successful placement, or the screen closing.
+            viewController.OnPlacementArmedChanged = RefreshPlacementButton;
 
             var flatGO = new GameObject("FlatRenderer", typeof(RectTransform));
             flatGO.transform.SetParent(viewGO.transform, false);

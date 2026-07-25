@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using WorldGen.Generation;
 using WorldGen.Notes.Rendering;
 
@@ -43,9 +44,17 @@ namespace WorldGen.Rendering
         // that inspects geometry in that window sees a state that is about to be thrown away. Must NOT be
         // wired to anything that mutates the graph or calls BeginCascade again — that would re-enter and loop.
         public System.Action OnCascadeSettled;
+        // Fires whenever «+ Здание» placement mode arms/disarms (Task 8b). The host uses it ONLY to repaint
+        // the toolbar button (active look + «Отмена (Esc)» label) — exactly PoiManager.OnPlacementArmedChanged's
+        // role on the world map. Must not mutate the graph: DisarmPlacement raises it from inside the commit
+        // path, one line before the room is created.
+        public System.Action<bool> OnPlacementArmedChanged;
 
         public int SelectedRoomId { get; private set; }
         public bool LinkMode { get; private set; }
+        /// <summary>True while «+ Здание» is armed and the next click on a free tile will create a building
+        /// there (Task 8b). Transient UI state — never stored, never serialized, never saved.</summary>
+        public bool PlacementArmed { get; private set; }
         /// <summary>True between BeginCascade and OnCascadeSettled — i.e. while the rooms are animating and
         /// their positions are deliberately NOT the settled ones. A host that reads room geometry (the shaft
         /// check is the only such rule today) must wait for OnCascadeSettled instead of reading it now.</summary>
@@ -69,6 +78,22 @@ namespace WorldGen.Rendering
         // nudges off overlaps; for a DUNGEON it's the leash/Separate anchor. Held here because OnEndDrag has
         // already cleared draggingRoomId by the time OnGraphMutated → BeginCascade runs.
         int lastAnchorRoomId;
+
+        // ── «+ Здание» click-to-place (Task 8b) ─────────────────────────────────────────────────────────
+        // THE WHOLE STATE MACHINE, and deliberately no bigger: one bool for "armed", and one cell under the
+        // cursor. Everything else about the mode is derived.
+        //   • not armed  — the shipped behaviour, untouched (click = select, background click = clear).
+        //   • armed      — pressing the settlement toolbar's «+ Здание». Every frame, UpdatePlacement re-reads
+        //                  the cell under the pointer into hoverValid/hoverNx/hoverNy/hoverPlaceable and paints
+        //                  it green (free) or red (taken). A click COMMITS THAT STORED CELL — see
+        //                  PlaceHoveredBuilding for why the click must not re-sample the pointer itself.
+        // Ways out (all of them): a successful placement, Esc, pressing the button again, the toolbar being
+        // rebuilt (floor/interior switch), the binding ceasing to be a settlement, and OnDisable (leaving the
+        // screen). ArmPlacement itself refuses for anything but a settlement drawn by the volumetric renderer,
+        // so a dungeon or a building interior can never enter this state at all.
+        bool hoverValid;          // false = no cell under the pointer (off the map, or nothing drawn yet)
+        float hoverNx, hoverNy;   // the hovered cell's CENTRE, normalized — what a commit writes verbatim
+        bool hoverPlaceable;      // the colour currently on screen: true = green, false = red
 
         // Animated cascade state — moved verbatim from DungeonGraphView (Checkpoint-B tuning, user-approved
         // "мне нравится"). cascadeTargets holds the resolved end position per room id (computed once by
@@ -467,6 +492,11 @@ namespace WorldGen.Rendering
 
         void Update()
         {
+            // Task 8b — unconditionally first, and self-gated on PlacementArmed. Update() early-returns just
+            // below when nothing is animating, which is the normal state while the DM is placing a building,
+            // so the hover MUST be sampled before that return or the preview would only track the cursor
+            // during a cascade.
+            UpdatePlacement();
             if (!cascading) return;
             var lvl = BoundLevel;
             if (lvl == null || cascadeTargets == null || renderer == null)
@@ -548,6 +578,132 @@ namespace WorldGen.Rendering
             RefreshHighlights();
         }
 
+        // ── «+ Здание» placement mode (Task 8b) ─────────────────────────────────────────────────────────
+
+        /// <summary>Can this binding place buildings by click at all? SETTLEMENTS ONLY, and only while the
+        /// volumetric renderer is the active one — that renderer is what owns the cell lattice, the tile types
+        /// the green/red test reads, and the preview quad. A dungeon or a building interior fails this and can
+        /// therefore never arm, which is the single gate that keeps their «+ Комната» behaviour (including
+        /// AttachNewRoom's "placement is FINAL" rule) byte-identical to what shipped.</summary>
+        public bool SupportsClickPlacement
+            => dungeon != null && dungeon.Kind == InteriorKind.Settlement
+               && renderer is SettlementVolumeRenderer;
+
+        public void ArmPlacement()
+        {
+            if (PlacementArmed || !SupportsClickPlacement) return;
+            PlacementArmed = true;
+            hoverValid = false;   // no cell sampled yet — a click before the first Update places nothing
+            OnPlacementArmedChanged?.Invoke(true);
+        }
+
+        public void DisarmPlacement()
+        {
+            if (!PlacementArmed) return;
+            PlacementArmed = false;
+            hoverValid = false;
+            (renderer as SettlementVolumeRenderer)?.HidePlacementHighlight();
+            OnPlacementArmedChanged?.Invoke(false);
+        }
+
+        /// <summary>The «+ Здание» button's whole job — arm, or cancel if already armed. Same shape as
+        /// PoiManager.TogglePlacement on the world map, so the two screens behave identically.</summary>
+        public void TogglePlacement()
+        {
+            if (PlacementArmed) DisarmPlacement();
+            else ArmPlacement();
+        }
+
+        /// <summary>Leaving the screen cancels placement. ScreenSwitcher deactivates the whole
+        /// DungeonEditorScreen GameObject, and this controller is a descendant of it, so this is the one hook
+        /// that catches EVERY exit — «← Назад», opening a building interior, a battle map, the POI editor —
+        /// without each of them having to remember. Mirrors PoiToolPanel.OnDisable's own DisarmPlacement.
+        /// Also the reason no highlight can leak: a disarm always hides the quad.</summary>
+        void OnDisable() => DisarmPlacement();
+
+        /// <summary>ONE frame of the armed mode: cancel key, then re-sample the cell under the cursor and
+        /// repaint the preview. Runs from Update (see the call site) — i.e. before this frame is rendered, so
+        /// the quad the DM sees is always THIS frame's cursor position, never last frame's.
+        ///
+        /// Input System throughout (Keyboard.current / Mouse.current): legacy UnityEngine.Input compiles but
+        /// THROWS at runtime in this project — BrushToolController.HandleUndo is the template, including its
+        /// "no device, do nothing" guard.
+        ///
+        /// Containment is RectangleContainsScreenPoint against the renderer's own rect, NOT
+        /// EventSystem.IsPointerOverGameObject(): the controller's own hit-plate IS a raycast target covering
+        /// the whole map area, so that test is true everywhere it matters and would suppress the preview
+        /// entirely.</summary>
+        void UpdatePlacement()
+        {
+            if (!PlacementArmed) return;
+
+            if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) { DisarmPlacement(); return; }
+
+            // The binding can change under an armed mode (a rebind to a different interior, a renderer swap).
+            // One guard covers every such case, and disarming is the honest answer: the cell lattice the mode
+            // is about no longer exists.
+            var vol = renderer as SettlementVolumeRenderer;
+            if (!SupportsClickPlacement || vol == null || BoundLevel == null) { DisarmPlacement(); return; }
+
+            // Invalidate FIRST. Every early return below therefore leaves the mode armed but with NO cell to
+            // commit, which is exactly right: pointer off the map, no mouse, or nothing drawn yet all mean
+            // "there is no highlighted cell", and a click must then do nothing rather than fall back to a
+            // stale one.
+            hoverValid = false;
+
+            var area = vol.Area;
+            if (Mouse.current == null || area == null) { vol.HidePlacementHighlight(); return; }
+            Vector2 screen = Mouse.current.position.ReadValue();
+            if (!RectTransformUtility.RectangleContainsScreenPoint(area, screen, null)
+                || !TryScreenToAreaLocal(screen, out var local)
+                || !vol.TryPlacementCell(local, out float nx, out float ny, out bool placeable))
+            {
+                vol.HidePlacementHighlight();
+                return;
+            }
+
+            hoverValid = true; hoverNx = nx; hoverNy = ny; hoverPlaceable = placeable;
+            vol.ShowPlacementHighlight(nx, ny, placeable);
+        }
+
+        /// <summary>Commit «+ Здание» onto the cell the preview is CURRENTLY showing — the stored hover cell,
+        /// never a fresh sample of the pointer. That distinction is the feature's whole contract ("the building
+        /// lands exactly on the cell that was highlighted"), and it is not merely stylistic: EventSystem's
+        /// update runs at an UNDEFINED order relative to this component's Update, so a click handler that
+        /// re-derived the cell could resolve a pointer sample the DM never saw painted. Committing the stored
+        /// value commits the cell that was actually on screen when they pressed.
+        ///
+        /// A red (occupied) cell, or no cell at all, does NOTHING and leaves the mode armed — the DM simply
+        /// clicks somewhere else (user decision 2).
+        ///
+        /// NO ANTI-OVERLAP NUDGE ON THIS PATH, and provably so rather than incidentally: the cell was verified
+        /// free, so there is nothing to resolve, and a nudge would move the building off the very cell that was
+        /// clicked. lastAnchorRoomId is pinned to 0 before OnGraphMutated fires, and BeginCascade's settlement
+        /// branch passes it to BuildingGenerator.SettleDraggedRoom → CompactLayout.NudgeRoomOffOverlaps, which
+        /// early-returns for a room id that resolves to no room (floor.GetRoom(0) == null). SnapToLattice in the
+        /// same branch is likewise handed that null room and no-ops. So nothing moves the new building after it
+        /// is written, and nothing re-fits the projection either (needsProjectionFit stays false) — the view
+        /// does not rescale under the DM the instant they place.
+        ///
+        /// The write itself is already on the lattice: nx/ny are SettlementTileGrid.CenterX/CenterY of the
+        /// target cell. The lattice cannot shift under it either — Allocate anchors on the min-X/min-Y
+        /// building, and a cell centre is an integer number of cells from the old anchor, so even a new
+        /// building that BECOMES the anchor leaves every other building's cell index intact.</summary>
+        void PlaceHoveredBuilding()
+        {
+            var lvl = BoundLevel;
+            if (lvl == null || !hoverValid || !hoverPlaceable) return;   // stay armed, change nothing
+
+            var room = DungeonOps.AddRoom(lvl, hoverNx, hoverNy);
+            lastAnchorRoomId = 0;
+            DisarmPlacement();
+            // Same order AddRoomAtCenter uses, and it matters: RebuildView clears the renderer's highlight set,
+            // so SelectRoom must come AFTER Refresh or the new building would be created unselected.
+            Refresh();
+            SelectRoom(room.Id);
+            OnGraphMutated?.Invoke();
+        }
+
         /// <summary>Removes the selected room (DungeonOps also strips its corridors and any secrets
         /// anywhere in the dungeon that targeted it), clears selection, rebuilds.</summary>
         public void DeleteSelected()
@@ -587,14 +743,21 @@ namespace WorldGen.Rendering
             // primitive is still in CompactLayout, self-tested, for the day an upper-floor «+» comes back.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building)
                 CompactLayout.AttachNewRoom(lvl, room.Id);
-            // SETTLEMENT ONLY (review fix, Task 8): generation places buildings on this same lattice pitch, so
-            // (0.5, 0.5) snapped to a cell centre lands on an OCCUPIED cell with high probability — two rooms
-            // at identical X/Y, and HitRoomId's tie-break then hides the covered one forever. Building deliberately
-            // leaves lastAnchorRoomId untouched (the paragraph above: placement is FINAL, no nudge) — a settlement
-            // needs the opposite: setting it here makes BeginCascade's anti-overlap nudge (already wired for
-            // drag-end) shove the new building onto the adjacent free cell instead of stacking it.
-            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement)
-                lastAnchorRoomId = room.Id;
+            // SETTLEMENTS NO LONGER REACH THIS METHOD (Task 8b). «+ Здание» now ARMS click-to-place
+            // (DungeonEditorScreen.RefreshToolbar routes a settlement to TogglePlacement) and the building is
+            // created by PlaceHoveredBuilding on the cell the DM clicked, so the fixed (0.5, 0.5) centre that
+            // made this path a problem is gone at the root. This is the ONLY call site of AddRoomAtCenter —
+            // verified by grep — so nothing else can bring a settlement back here.
+            //
+            // The `lastAnchorRoomId = room.Id` that commit 31193f1 set here for a settlement was REMOVED with
+            // that change. Its sole job was to let BeginCascade's anti-overlap nudge shove the new building off
+            // whichever occupied cell (0.5, 0.5) happened to snap onto — a workaround for a placement the DM
+            // did not choose. Nothing else read it: the field's only other writer is OnEndDrag, and its only
+            // readers are BeginCascade's two branches, neither of which needs an add to have set it (the
+            // nudge/leash simply no-op on an id that resolves to no room).
+            //
+            // SnapToLattice above is kept: it is correct and free if a future caller ever does add a
+            // settlement room here, and it is what stops an off-lattice room from re-anchoring the whole grid.
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
@@ -608,6 +771,14 @@ namespace WorldGen.Rendering
         /// tile, tile → room id / tile → normalized — is the renderer's own job (HitRoomId,
         /// TryAreaToNorm), so a non-projection renderer (Task 7) can hit-test and map in its own space.</summary>
         bool TryPointerToAreaLocal(PointerEventData data, out Vector2 local)
+            => TryScreenToAreaLocal(data.position, out local);
+
+        /// <summary>The screen→area-local step itself, split out of TryPointerToAreaLocal (Task 8b) so the
+        /// EVENT path (click/drag, which has a PointerEventData) and the POLLED path (the placement hover,
+        /// which reads Mouse.current) share ONE copy of the readiness gates. Two copies would be free to drift,
+        /// and hover/click disagreeing about whether a point is usable is precisely the failure this feature
+        /// must not have.</summary>
+        bool TryScreenToAreaLocal(Vector2 screenPos, out Vector2 local)
         {
             local = default;
             if (renderer == null || renderer.Area == null) return false;
@@ -620,7 +791,7 @@ namespace WorldGen.Rendering
             // ScreenPointToLocalPointInRectangle returns pivot-relative coords; the projection's local
             // space is CENTRE-relative. area is stretched with a 0.5 pivot, so they already coincide —
             // this is the same assumption DungeonGraphView.PointCenter made.
-            return RectTransformUtility.ScreenPointToLocalPointInRectangle(area, data.position, null, out local);
+            return RectTransformUtility.ScreenPointToLocalPointInRectangle(area, screenPos, null, out local);
         }
 
         public void OnPointerClick(PointerEventData data)
@@ -635,6 +806,13 @@ namespace WorldGen.Rendering
             // eligibleForClick is never cleared, so this click DOES fire on every in-place release.
             // data.dragging is still true here; the input module clears it only after endDrag.
             if (data.dragging) return;
+
+            // «+ Здание» armed (Task 8b): the click is CONSUMED by placement mode either way — it never
+            // selects a room and never clears the selection. Deliberately before the pointer is mapped: the
+            // commit uses the STORED hover cell (the one currently painted green/red), not a fresh sample of
+            // this event's position. See PlaceHoveredBuilding.
+            if (PlacementArmed) { PlaceHoveredBuilding(); return; }
+
             if (!TryPointerToAreaLocal(data, out var local)) return;
             int id = renderer.HitRoomId(local, lvl);
             if (id == 0) { SelectRoom(0); return; }                    // background → clear selection

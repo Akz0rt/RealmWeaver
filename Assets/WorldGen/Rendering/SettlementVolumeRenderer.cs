@@ -92,6 +92,13 @@ namespace WorldGen.Rendering
         [SerializeField] Color gateColor      = new Color(0.72f, 0.56f, 0.25f, 1f);   // timber/brass accent
         [SerializeField] Color shadowColor    = new Color(0f, 0f, 0f, 0.35f);
 
+        [Header("Placement preview (Task 8b — «+ Здание» click-to-place)")]
+        [Tooltip("Cell under the cursor while «+ Здание» is armed and the cell can take a building.")]
+        [SerializeField] Color placeableColor = new Color(0.30f, 0.85f, 0.35f, 0.45f);   // green = free
+        [Tooltip("Cell under the cursor while «+ Здание» is armed and the cell is already taken "
+               + "(Building / Wall / Gate). A click there does nothing.")]
+        [SerializeField] Color blockedColor   = new Color(0.90f, 0.25f, 0.22f, 0.45f);   // red = occupied
+
         [Tooltip("The south (front) face is the top face's colour times this. < 1 = darker.")]
         [SerializeField, Range(0.2f, 1f)] float frontShade = 0.72f;
         [Tooltip("The east strip is the top face's colour times this. Should be below frontShade.")]
@@ -151,8 +158,15 @@ namespace WorldGen.Rendering
         // ── State ────────────────────────────────────────────────────────────────────────────────────────
 
         const string TilesLayerName = "TilesLayer";
+        const string PlacementHighlightName = "PlacementHighlight";
 
         RectTransform tilesLayer;
+        // The «+ Здание» hover preview (Task 8b): ONE quad, deliberately NOT a pool slot and NOT a child of
+        // tilesLayer — that layer's whole depth scheme is "pool slot k sits at sibling index k", and a foreign
+        // child in it would be re-seated (or hidden) by SlotAt/HideFrom on the next repaint. As the LAST
+        // sibling of this renderer's own root it instead draws over every tile, which is what a hover preview
+        // must do: the cell it marks may be a Building whose box is drawn a whole cell tall.
+        Image placementHighlight;
         bool built;
 
         readonly List<TileView> tiles = new List<TileView>();
@@ -188,6 +202,7 @@ namespace WorldGen.Rendering
             if (existing != null) { tilesLayer = existing; DungeonUiKit.ClearLayer(tilesLayer); }
             else tilesLayer = MakeLayer(TilesLayerName);
             tiles.Clear();
+            EnsurePlacementHighlight();
             // Field initializers are NOT reliable on a Unity-deserialized component (this repo's recorded
             // gotcha: deserialization silently overrides them). ConfigureTile dereferences this every cell of
             // every frame, so re-establish it here rather than null-check in the hot loop.
@@ -202,6 +217,33 @@ namespace WorldGen.Rendering
             var rt = (RectTransform)go.transform;
             DungeonUiKit.Stretch(rt);
             return rt;
+        }
+
+        /// <summary>Create (or, after a hot reload, recover) the single placement-preview quad.
+        ///
+        /// raycastTarget = false is LOAD-BEARING, for the identical reason MakeFace turns it off on every tile
+        /// face: the controller owns input through its own full-area hit-plate, and this quad sits under the
+        /// cursor BY DEFINITION whenever it is visible — a raycast target here would swallow the very click
+        /// that commits the placement, and the feature would silently never place anything.
+        ///
+        /// SetAsLastSibling, not a pool slot: see the field's own doc. It is anchored/pivoted at the centre
+        /// like a TileView root, so ShowPlacementHighlight can hand it the same Project(i,j) local position.</summary>
+        void EnsurePlacementHighlight()
+        {
+            var found = transform.Find(PlacementHighlightName);
+            if (found != null) placementHighlight = found.GetComponent<Image>();
+            if (placementHighlight == null)
+            {
+                var go = new GameObject(PlacementHighlightName, typeof(RectTransform));
+                go.transform.SetParent(transform, false);
+                var rt = (RectTransform)go.transform;
+                rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                placementHighlight = go.AddComponent<Image>();
+            }
+            placementHighlight.raycastTarget = false;
+            placementHighlight.transform.SetAsLastSibling();
+            placementHighlight.gameObject.SetActive(false);
         }
 
         // ── Projection ───────────────────────────────────────────────────────────────────────────────────
@@ -261,6 +303,11 @@ namespace WorldGen.Rendering
             // A stale selection id from the PREVIOUS binding must not light up a coincidentally-matching room
             // here. Safe to clear: the controller calls RefreshHighlights immediately after RebuildView.
             highlighted.Clear();
+            // Same rule for the «+ Здание» hover preview (Task 8b): a rebind can arrive while this renderer is
+            // being swapped back IN with a stale quad still parked over some cell of the PREVIOUS town. The
+            // controller re-shows it on the very next frame if the mode is still armed, so clearing here costs
+            // nothing and closes the one window where a leftover could be seen.
+            HidePlacementHighlight();
             RepositionRooms(lvl, rg, includeRoadsInFence: true);
         }
 
@@ -455,6 +502,97 @@ namespace WorldGen.Rendering
             nx = grid.CenterX(i);
             ny = grid.CenterY(j);
             return true;
+        }
+
+        // ── Placement preview (Task 8b) ──────────────────────────────────────────────────────────────────
+
+        /// <summary>Can a new building stand on a cell of this type? The rule, pinned by the task brief:
+        /// everything EXCEPT Building, Wall and Gate is placeable. In particular <see cref="TileType.None"/>
+        /// — a cell outside the current built-up area — IS placeable: placing out there is how the town grows,
+        /// and the wall ring and the streets simply re-derive around the new building on the next rebuild.
+        /// Void (courtyard) and Road are placeable for the same reason.
+        ///
+        /// Static and type-only on purpose: the caller (DungeonViewController) must never make its own
+        /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are
+        /// literally the same expression evaluated twice.</summary>
+        public static bool IsPlaceable(TileType type)
+            => type != TileType.Building && type != TileType.Wall && type != TileType.Gate;
+
+        /// <summary>Is a normalized position inside the 0..1 field a room may legally occupy? A SECOND axis of
+        /// the placement test, alongside the tile-type rule above, and it is not decoration:
+        ///
+        /// DungeonViewController.Update's cascade re-reads each room's CURRENT X/Y every animation frame and
+        /// writes back Mathf.Clamp01 of the smoothed value. A room stored outside 0..1 is therefore pinned to
+        /// the field edge for the WHOLE of every later cascade (any drag of any building starts one) and only
+        /// snaps back when the animation's final exact-target write lands — a visible teleport of the building
+        /// away from the cell the DM chose, which is precisely the surprise click-to-place exists to remove.
+        /// (Worse readings exist: with `cur` re-read from the clamped value the remaining-distance test can
+        /// fail to converge, leaving the cascade running.)
+        ///
+        /// This IS reachable, and only through this new path. Allocate pads the grid by MarginCells = 3 cells
+        /// (0.21 normalized) beyond the outermost building, and SettlementGenerator places a large town's
+        /// buildings out to radius 0.45 from centre 0.5 — so a 40-60 building city genuinely draws, and lets
+        /// the DM click, cells at a NEGATIVE normalized X. Nothing else can write such a room: generation stays
+        /// inside the placement contour, drags clamp to 0.04..0.96 and then snap out by at most half a cell,
+        /// and AddRoomAtCenter writes the canvas centre.
+        ///
+        /// Bound is 0..1 EXACTLY, not the drag clamp's 0.04..0.96 — Clamp01 is the invariant being protected,
+        /// and borrowing a drag-feel constant would hide why the limit is where it is.</summary>
+        static bool OnField(float nx, float ny) => nx >= 0f && nx <= 1f && ny >= 0f && ny <= 1f;
+
+        /// <summary>Area-local point → the cell under it: its CENTRE as a normalized room position (exactly
+        /// what <see cref="TryAreaToNorm"/> answers — same call, same snap) plus whether a building may be
+        /// placed there.
+        ///
+        /// The two placement axes are combined HERE, in one expression, on purpose: the controller paints the
+        /// highlight from this answer and its click accepts or rejects from this answer, so the green/red the
+        /// DM sees and the verdict the click applies can never be two different judgements.
+        ///
+        /// Returns FALSE with both out-params meaningless in exactly the states TryAreaToCell refuses (no tile
+        /// grid built yet, or a degenerate projection). The caller must then show NO highlight and place
+        /// nothing — an invented cell would be a lie the DM could act on.</summary>
+        public bool TryPlacementCell(Vector2 areaLocalPoint, out float nx, out float ny, out bool placeable)
+        {
+            nx = 0f; ny = 0f; placeable = false;
+            if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return false;
+            nx = grid.CenterX(i);
+            ny = grid.CenterY(j);
+            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny);
+            return true;
+        }
+
+        /// <summary>Show the hover preview over the cell CONTAINING the normalized point (nx, ny) — in
+        /// practice the cell centre <see cref="TryPlacementCell"/> just returned, so the round trip
+        /// CenterX(i) → CellI is exact. Green when <paramref name="placeable"/>, red when not.
+        ///
+        /// Sized and positioned from the SAME cw/ch/Project(i,j) the ground face of a flat tile uses, so the
+        /// quad covers precisely the cell footprint the DM is judging — not an approximation of it. Recomputed
+        /// on every call rather than cached: the caller drives this once per frame while armed, and the
+        /// projection or the grid extent may have changed since the last one.</summary>
+        public void ShowPlacementHighlight(float nx, float ny, bool placeable)
+        {
+            EnsureBuilt();
+            if (placementHighlight == null) return;
+            if (grid == null || Projection.PxPerTile <= 0f) { HidePlacementHighlight(); return; }
+
+            int i = grid.CellI(nx), j = grid.CellJ(ny);
+            float cw = CellWidthPx;
+            float ch = cw * Projection.SquashY;
+            var rt = (RectTransform)placementHighlight.transform;
+            rt.sizeDelta = new Vector2(cw * tileOverdraw, ch * tileOverdraw);
+            rt.anchoredPosition = Project(i, j);
+            placementHighlight.color = placeable ? placeableColor : blockedColor;
+            if (!placementHighlight.gameObject.activeSelf) placementHighlight.gameObject.SetActive(true);
+        }
+
+        /// <summary>Hide the hover preview. Called by the controller whenever the mode is cancelled or the
+        /// pointer leaves the map area, and by RebuildView so a highlight can never survive a rebind onto an
+        /// unrelated town (this renderer's host is merely DEACTIVATED on a renderer swap, which hides but does
+        /// not clear it).</summary>
+        public void HidePlacementHighlight()
+        {
+            if (placementHighlight != null && placementHighlight.gameObject.activeSelf)
+                placementHighlight.gameObject.SetActive(false);
         }
 
         // ── Highlight ────────────────────────────────────────────────────────────────────────────────────
