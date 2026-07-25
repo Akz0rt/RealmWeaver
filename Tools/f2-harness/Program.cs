@@ -85,6 +85,7 @@ static class Program
         tileGrid.SelfTestWallRing();
         tileGrid.SelfTestRoadsAndGates();
         tileGrid.SelfTestDepth();
+        tileGrid.SelfTestHeight();
         tileGrid.SelfTestTileGridSanity();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"

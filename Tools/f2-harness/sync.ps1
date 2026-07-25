@@ -783,7 +783,28 @@ New-SettlementRebind 'SelfTestDepth' 'MutDepthKeyNoRowSort' `
   @('SettlementTileGrid\.', '\bTileType\b') `
   @('WorldGen.Generation.MutDepthKeyNoRowSort.SettlementTileGrid.', 'WorldGen.Generation.MutDepthKeyNoRowSort.TileType')
 
+# ---- TILE GRID HEIGHT MUTANT (Task 5): BuildingHeight's FNV term dropped. -------------------------------------
+# SettlementTileGrid.cs still bundles TWO types (TileType + SettlementTileGrid) as documented above, but
+# SelfTestHeight itself never references TileType (it only calls BuildingHeight/BuildingHeightMin/
+# BuildingHeightMax/WallHeight), so — unlike SelfTestWallRing/SelfTestRoadsAndGates/SelfTestDepth above — its
+# rebind needs only the single SettlementTileGrid\. pattern; including the unused \bTileType\b pattern would
+# make New-SettlementRebind throw (no match in this method's body).
+
+# MutHeightConstant: BuildingHeight's FNV term dropped — the function returns BuildingHeightMin unconditionally,
+# so every room id maps to the SAME height. BuildingHeightMin is itself IN-RANGE, so SelfTestHeight's in-range
+# loop cannot catch this; it's caught by the distinct-count ("varies") check collapsing to 1, the spread check
+# collapsing to 0, and the id-7 pinned-value check (pinned != BuildingHeightMin) — see SelfTestHeight's own
+# comments for why the plain determinism check (BuildingHeight(7) == BuildingHeight(7)) cannot.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutHeightConstant' `
+  'return BuildingHeightMin + t * (BuildingHeightMax - BuildingHeightMin);' `
+  'return BuildingHeightMin;   // MUTANT: FNV term dropped, height is constant' `
+  'MutHeightConstant.cs'
+
+New-SettlementRebind 'SelfTestHeight' 'MutHeightConstant' `
+  @('SettlementTileGrid\.') `
+  @('WorldGen.Generation.MutHeightConstant.SettlementTileGrid.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 22 settlement mutants + 22 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 23 settlement mutants + 23 settlement rebound test copies into gen/"
 

@@ -310,6 +310,80 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Depth Order: PASS");
         }
 
+        [ContextMenu("Self-Test: Building Height")]
+        public void SelfTestHeight()
+        {
+            bool ok = true;
+            // deterministic (same-process, same call) — necessary but not sufficient: this alone would still
+            // pass a per-process-seeded hash (e.g. string.GetHashCode) that is stable WITHIN one process but
+            // reshuffles every restart. The pinned check below is what actually rules that out.
+            if (SettlementTileGrid.BuildingHeight(7) != SettlementTileGrid.BuildingHeight(7))
+            { Debug.LogError("FAIL height: BuildingHeight(7) not deterministic"); ok = false; }
+
+            // PINNED: BuildingHeight(7) computed once from the shipped FNV-1a formula and hard-coded here —
+            // guards against silent formula drift (offset basis / prime / byte order, or an accidental switch
+            // to a per-process-seeded hash) that the same-process determinism check above cannot catch on its
+            // own, since it only compares an output to itself, never to a value fixed outside the function.
+            // Mirrors InteriorOpsSelfTests.SelfTestBuildingSeedPin's pinning of InteriorOps.BuildingSeed.
+            // Tolerance, not exact equality: confirmed bit-exact under this harness's runtime, but this same
+            // self-test also runs inside the Unity Editor (Mono/IL2CPP, possibly a different FMA-contraction
+            // choice for Min + t*(Max-Min)), which could legitimately land 1 ulp off on correct code. 1e-6f
+            // costs nothing: the smallest drift this pin can EVER actually detect is one bucket of
+            // `h % 1024`, i.e. 0.55/1024 ~= 5.4e-4 — about 500x looser than the tolerance — so anything this
+            // check can catch at all, it still catches with room to spare. (NOTE: this method's body must
+            // never literally spell the ContextMenu attribute's own bracket-prefixed tag — even inside a
+            // comment — since Tools/f2-harness's rebinding tool finds a method's end by scanning for that
+            // exact tag, wherever it appears.)
+            const float PinnedHeight7 = 1.08388671875f;   // BuildingHeight(7), computed once via the harness
+            float h7 = SettlementTileGrid.BuildingHeight(7);
+            if (System.Math.Abs(h7 - PinnedHeight7) > 1e-6f)
+            { Debug.LogError($"FAIL height: BuildingHeight(7) = {h7:G9}, want the pinned {PinnedHeight7:G9} — formula drift?"); ok = false; }
+
+            // in range
+            for (int id = 1; id <= 40; id++)
+            {
+                float h = SettlementTileGrid.BuildingHeight(id);
+                if (h < SettlementTileGrid.BuildingHeightMin || h > SettlementTileGrid.BuildingHeightMax)
+                { Debug.LogError($"FAIL height: id {id} height {h} out of [{SettlementTileGrid.BuildingHeightMin},{SettlementTileGrid.BuildingHeightMax}]"); ok = false; }
+            }
+
+            // varies (not constant) — a MUCH higher bound than "at least a handful of distinct values": the
+            // MutHeightConstant mutant (drops the FNV term entirely, always returns BuildingHeightMin)
+            // collapses this to a set of size 1, and BuildingHeightMin is itself IN-RANGE, so the in-range
+            // loop above cannot catch that mutant — only this check (and the spread check right after it) can.
+            // >=20 of 40 ids landing on a distinct height is far above what any accidental near-constant
+            // function could produce, while still nowhere near brittle (the real FNV-1a formula produces 40
+            // distinct values here — see the task report).
+            var set = new System.Collections.Generic.HashSet<float>();
+            float minH = float.MaxValue, maxH = float.MinValue;
+            for (int id = 1; id <= 40; id++)
+            {
+                float h = SettlementTileGrid.BuildingHeight(id);
+                set.Add(h);
+                if (h < minH) minH = h;
+                if (h > maxH) maxH = h;
+            }
+            if (set.Count < 20)
+            { Debug.LogError($"FAIL height: only {set.Count} distinct heights across 40 ids (want >= 20) — height is barely varying"); ok = false; }
+
+            // spread: the distinct values must actually SPAN the [Min,Max] range, not cluster near one point.
+            // A function that alternates between two nearby values (e.g. Min and Min+epsilon) could pass a
+            // bare distinct-count check yet still read as visually constant once drawn — this catches that.
+            float spread = maxH - minH;
+            float range = SettlementTileGrid.BuildingHeightMax - SettlementTileGrid.BuildingHeightMin;
+            if (spread < 0.5f * range)
+            { Debug.LogError($"FAIL height: heights span only {spread:G9} of a possible {range:G9} across 40 ids — clustered, not spread"); ok = false; }
+
+            // Strict: the requirement is "WallHeight is ABOVE the tallest house", so the pass/fail boundary
+            // must sit exactly at BuildingHeightMax — any slack here (e.g. "- 0.01f") tolerates a real
+            // violation (a WallHeight only 0.005 below BuildingHeightMax would then read the wall as SHORTER
+            // than the tallest house and still pass).
+            if (SettlementTileGrid.WallHeight <= SettlementTileGrid.BuildingHeightMax)
+            { Debug.LogError($"FAIL height: WallHeight {SettlementTileGrid.WallHeight} not above the tallest house {SettlementTileGrid.BuildingHeightMax}"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Height: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

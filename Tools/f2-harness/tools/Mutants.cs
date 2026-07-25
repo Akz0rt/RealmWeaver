@@ -102,6 +102,9 @@ namespace WorldGen.Generation
 
                 ("MutDepthKeyNoRowSort", "SettlementTileGrid.DepthKey rewritten column-major (i primary, j secondary) instead of row-major (drops near-occludes-far entirely)",
                     () => new WorldGen.MutantTests.MutDepthKeyNoRowSortSelfTests().SelfTestDepth()),
+
+                ("MutHeightConstant", "SettlementTileGrid.BuildingHeight's FNV term dropped (always returns BuildingHeightMin — every building the same height)",
+                    () => new WorldGen.MutantTests.MutHeightConstantSelfTests().SelfTestHeight()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

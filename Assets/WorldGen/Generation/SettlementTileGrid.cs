@@ -399,5 +399,41 @@ namespace WorldGen.Generation
             if (b == h - 1 || !inside[a, b + 1]) return true;
             return false;
         }
+
+        // ---- height (Task 5) -------------------------------------------------------------------------------
+        // Per-building height, in CELL UNITS (the renderer — Task 7 — multiplies by pixel cell size). PURE
+        // function of the room id alone: a house must not change height when the settlement is redrawn or
+        // when some OTHER building is dragged/regenerated, so nothing here reads draw order, position, or any
+        // other building's state — only `roomId`. WallHeight sits above BuildingHeightMax so the wall reads
+        // as taller than the tallest possible house (SelfTestHeight pins this — strictly, WallHeight >
+        // BuildingHeightMax, not merely close to it). GateHeight is a fixed constant, not derived per-gate —
+        // only WallHeight/BuildingHeight vary; its value is not asserted by any self-test (out of this task's
+        // scope, see the task brief's Interfaces block), so a future change to it is NOT caught here.
+        public const float BuildingHeightMin = 0.55f, BuildingHeightMax = 1.10f;
+        public const float WallHeight = 1.25f, GateHeight = 0.85f;
+
+        // Explicit FNV-1a, byte-wise over roomId's 4 bytes (same offset basis/prime as InteriorOps.BuildingSeed,
+        // which XORs the whole int in one step instead — this one is per-byte, per this task's brief). NEVER
+        // string.GetHashCode / object.GetHashCode: both are randomized per .NET process, not stable across
+        // runs — see InteriorOps.BuildingSeed's doc comment and this repo's regen-seed lesson (a stable
+        // char-hash was substituted there for exactly this reason). h % 1024 keeps t's numerator a small
+        // non-negative int so `/ 1024f` is an EXACT power-of-two division, with no accumulated rounding beyond
+        // the final Min + t*(Max-Min) lerp.
+        public static float BuildingHeight(int roomId)
+        {
+            unchecked
+            {
+                uint h = 2166136261u;
+                uint v = (uint)roomId;
+                for (int i = 0; i < 4; i++)
+                {
+                    h ^= (byte)(v & 0xFF);
+                    h *= 16777619u;
+                    v >>= 8;
+                }
+                float t = (h % 1024) / 1024f;
+                return BuildingHeightMin + t * (BuildingHeightMax - BuildingHeightMin);
+            }
+        }
     }
 }
