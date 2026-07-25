@@ -87,8 +87,11 @@ namespace WorldGen.Rendering
         void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                          System.Action<int> onJumpToLevel);
 
-        /// <summary>Cheap per-frame reposition of existing visuals from current Room.X/Y — NO allocation,
-        /// NO destroy/create. Called every cascade frame and every drag sample.
+        /// <summary>Cheap per-frame reposition of existing visuals from current Room.X/Y — no full teardown of
+        /// the view (no ClearLayer/RebuildView-style destroy-and-recreate). Called every cascade frame and
+        /// every drag sample. Allocation behaviour is implementer-specific: DungeonFlatRenderer moves its
+        /// existing cards with none; SettlementVolumeRenderer re-derives its tile grid each call and reuses a
+        /// pooled, appended-only set of tile views.
         ///
         /// <paramref name="includeRoadsInFence"/> two-tiers the derived settlement fence exactly like the road
         /// router: pass the SAME value the controller feeds SettlementRoadsFor(mode) to BuildRenderGraph — false

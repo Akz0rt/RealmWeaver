@@ -150,8 +150,10 @@ namespace WorldGen.Rendering
             if (built) return;
             // Hot-reload guard, but stricter than the flat renderer's childCount check: our depth scheme
             // relies on pool slot k sitting at sibling index k, and a domain reload drops the pool list while
-            // leaving the GameObjects. Clearing the recovered layer puts the (deferred-Destroy) leftovers
-            // behind every freshly appended slot, and EnsureSlotDepth re-seats anything that still disagrees.
+            // leaving the GameObjects. Object.Destroy is deferred, so the recovered leftovers are still
+            // children right after this clear; SlotAt's SetSiblingIndex(k) then re-seats the freshly rebuilt
+            // slots at indices 0..k-1, leaving the (soon-to-be-destroyed) leftovers ON TOP for one frame.
+            // Harmless — editor hot-reload only, one frame — but worth getting right.
             var existing = transform.Find(TilesLayerName) as RectTransform;
             if (existing != null) { tilesLayer = existing; DungeonUiKit.ClearLayer(tilesLayer); }
             else tilesLayer = MakeLayer(TilesLayerName);
@@ -251,6 +253,16 @@ namespace WorldGen.Rendering
             lastLvl = lvl;
             lastRg = rg ?? new RenderGraph();
             if (lvl == null)
+            {
+                grid = null;
+                cellRooms.Clear();
+                HideFrom(0);
+                return;
+            }
+            // Pre-fit frame (Projection not yet resolved): drawing now would create/activate hundreds of
+            // zero-size tiles at the origin for nothing. LateUpdate re-fits and calls Refresh() the moment
+            // ResolveProjection succeeds, so this only skips one cosmetic frame, never a permanent blank view.
+            if (Projection.PxPerTile <= 0f)
             {
                 grid = null;
                 cellRooms.Clear();
@@ -604,7 +616,7 @@ namespace WorldGen.Rendering
             // Marks: ACTIVE buildings only, exactly as the schematic gated them (settlement + TypeId 1 + not
             // a dummy). Sized off the cell so they scale with the view instead of pinning to a magic pixel
             // count at every zoom.
-            bool markable = isSettlement && type == TileType.Building && room != null && !dummy;
+            bool markable = isSettlement && type == TileType.Building && room != null && room.TypeId == 1 && !dummy;
             float markPx = Mathf.Max(3f, cw * 0.26f);
             SetMark(v.PreviewMark, markable && room.Preview != null, markPx);
             SetMark(v.InteriorMark, markable && RoomsWithInterior != null && RoomsWithInterior.Contains(room.Id), markPx);
