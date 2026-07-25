@@ -519,6 +519,23 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   $method = $t.Substring($startIdx, $endIdx - $startIdx)
   $after  = $t.Substring($endIdx)
 
+  # Guard against a silent truncation: the [ContextMenu marker scan above is comment-blind, so if the
+  # literal substring "[ContextMenu" ever appears inside THIS method's own body (including inside a //
+  # comment), $endIdx lands early and $method is cut off mid-body. A truncated method can still happen
+  # to compile, so nothing downstream would notice - the mutant would report CAUGHT while actually
+  # testing UNMUTATED code, a false pass with no signal anywhere in the harness output. Brace-balance
+  # plus a '}' terminator is a cheap, reliable proxy for "this is a complete method body" - but $method
+  # legitimately runs past its own closing brace into the NEXT method's leading // or /// comment (the
+  # real [ContextMenu match sits after that comment), so the terminator check below is applied to a
+  # copy with trailing comment/blank lines stripped, not to $method itself.
+  $openBraces = ([regex]::Matches($method, '\{')).Count
+  $closeBraces = ([regex]::Matches($method, '\}')).Count
+  $codeTail = ($method -replace '(?s)(\s*//[^\r\n]*\r?\n)+\s*$', '').TrimEnd()
+  $lastChar = if ($codeTail.Length -gt 0) { $codeTail[-1] } else { '<empty>' }
+  if ($openBraces -ne $closeBraces -or $codeTail.Length -eq 0 -or $lastChar -ne '}') {
+    throw "$methodName extraction truncated while deriving SelfTests_$mutantClass.cs: braces $openBraces open / $closeBraces close, code (comments stripped) ends with '$lastChar' instead of '}'. This almost certainly means the literal '[ContextMenu' appears inside $methodName's own body or a comment within it, so the scan for the next method's [ContextMenu marker stopped early and cut $methodName off mid-body. A truncated extraction can still compile, so it would otherwise silently produce a mutant that reports CAUGHT while actually testing UNMUTATED code - fix the offending text in $methodName so '[ContextMenu' does not appear inside its body."
+  }
+
   for ($i = 0; $i -lt $rebindPatterns.Count; $i++) {
     if ($method -notmatch $rebindPatterns[$i]) { throw "$methodName has no match for '$($rebindPatterns[$i])' to rebind for $mutantClass" }
     $method = $method -replace $rebindPatterns[$i], $rebindTo[$i]
