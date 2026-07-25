@@ -163,11 +163,15 @@ namespace WorldGen.Rendering
             // ---- OVERRIDE 1: the spur's far tip is REPRESENTED (grid extent folded past the buildings' own
             // bbox) and ENCLOSED (the wall wraps it — not left as a silently-dropped/Outside cell) ----
             if (!clean.InBounds(1, 10))
-            { Debug.LogError("FAIL roads: far spur cell (1,10) is OUT of bounds — the grid extent was not folded over the routed road (OVERRIDE 1)"); ok = false; }
+            { Debug.LogError($"FAIL roads: far spur cell (1,10) is OUT of bounds — grid is {clean.W}x{clean.H} @ ({clean.OriginI},{clean.OriginJ}) — the grid extent was not folded over the routed road (OVERRIDE 1)"); ok = false; }
             else if (clean.At(1, 10) != TileType.Road)
             { Debug.LogError($"FAIL roads: far spur cell (1,10) is {clean.At(1, 10)}, expected Road (present but misclassified)"); ok = false; }
-            if (clean.At(1, 12) != TileType.Wall)
-            { Debug.LogError($"FAIL roads: cell (1,12), two cells beyond the spur's tip, is {clean.At(1, 12)}, expected Wall — the wall must wrap the spur, not just the buildings"); ok = false; }
+            // Expected row expressed via CourtyardCells (a tunable knob — the dilation radius BuildWallRing
+            // uses is CourtyardCells + 1) rather than a bare literal, so a future retune of CourtyardCells
+            // still produces an intelligible mismatch instead of a bare "expected Wall" against a stale row.
+            int spurWallRow = 10 + SettlementTileGrid.CourtyardCells + 1;
+            if (clean.At(1, spurWallRow) != TileType.Wall)
+            { Debug.LogError($"FAIL roads: cell (1,{spurWallRow}), CourtyardCells+1 beyond the spur's tip (row 10), is {clean.At(1, spurWallRow)}, expected Wall — the wall must wrap the spur, not just the buildings"); ok = false; }
 
             // ---- OVERRIDE 2: the gate reclassifies the NEAREST ring cell, on the correct side — not just
             // "some ring cell somewhere" (the opposite wall must stay Wall) ----
@@ -180,12 +184,35 @@ namespace WorldGen.Rendering
             // present — gates don't depend on roads) ----
             var fast = SettlementTileGrid.Build(f, null);
             if (fast.InBounds(1, 10))
-            { Debug.LogError("FAIL roads: Fast tier (buildings-only extent) already covers the far spur cell (1,10) — the OVERRIDE 1 extent-fold assertion above is not load-bearing"); ok = false; }
+            { Debug.LogError($"FAIL roads: Fast tier (buildings-only extent) already covers the far spur cell (1,10) — grid is {fast.W}x{fast.H} @ ({fast.OriginI},{fast.OriginJ}) — the OVERRIDE 1 extent-fold assertion above is not load-bearing"); ok = false; }
             int roadCells = 0; for (int a=0;a<fast.W;a++) for (int b=0;b<fast.H;b++) if (fast.Cells[a,b]==TileType.Road) roadCells++;
             if (roadCells != 0)
             { Debug.LogError($"FAIL roads: Fast tier (null roads) produced {roadCells} Road cells, expected 0"); ok = false; }
             if (fast.At(-2, 1) != TileType.Gate)
             { Debug.LogError($"FAIL roads: Fast tier gate reclassify missing — (-2,1) is {fast.At(-2,1)}, expected Gate"); ok = false; }
+
+            // ---- fix: an UNWALLED settlement (HasWall=false) must still get its roads. Reachable in
+            // production: MapScreenController sets HasWall = (poi.Type == PoiType.City), so every Village is
+            // unwalled, and SettlementStreets still generates streets for gate-less towns (hub-seeded growth,
+            // see that file's class doc) — without this, every Village would render as houses with zero
+            // streets. Same building layout as `f` above but HasWall=false and no gate room, roaded the same
+            // way, so this exercises MarkRoads' `inside == null` branch (no Inside test at all) rather than
+            // the walled branch the assertions above already cover. ----
+            var openFloor = Floor(false, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
+            var openRoads = new System.Collections.Generic.List<LinkSegment> {
+                new LinkSegment { A = new LinkPoint { X = (ax + 0*c)*T, Y = (ay + 1*c)*T },
+                                   B = new LinkPoint { X = (ax + 2*c)*T, Y = (ay + 1*c)*T }, EdgeIndex = 0 },
+            };
+            var openClean = SettlementTileGrid.Build(openFloor, openRoads);
+            if (openClean.At(1,1) != TileType.Road)
+            { Debug.LogError($"FAIL roads: unwalled courtyard cell (1,1) is {openClean.At(1,1)}, expected Road — HasWall=false must not drop roads (village streets would vanish)"); ok = false; }
+            if (openClean.At(0,1) != TileType.Building)
+            { Debug.LogError($"FAIL roads: unwalled cell (0,1) is {openClean.At(0,1)}, expected Building — road overwrote a building (precedence broken)"); ok = false; }
+            int openWalls = 0, openVoids = 0;
+            for (int a = 0; a < openClean.W; a++) for (int b = 0; b < openClean.H; b++)
+            { if (openClean.Cells[a,b] == TileType.Wall) openWalls++; if (openClean.Cells[a,b] == TileType.Void) openVoids++; }
+            if (openWalls != 0 || openVoids != 0)
+            { Debug.LogError($"FAIL roads: unwalled+roaded settlement has {openWalls} Wall + {openVoids} Void cells, expected 0/0 — HasWall=false must still mean no Inside/Outside split (Task 2's contract)"); ok = false; }
 
             if (ok) Debug.Log("Settlement Roads and Gates: PASS");
         }

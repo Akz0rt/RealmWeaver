@@ -748,15 +748,19 @@ New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoGates' `
   ';   // MUTANT: gate reclassify never applied' `
   'MutTileGridNoGates.cs'
 
-# MutTileGridRoadIgnoresWall: road marking's Building/Wall precedence guard dropped — a road cell overwrites
-# whatever tile (even Building or Wall) already occupies that cell. Caught by SelfTestRoadsAndGates' building-
-# precedence assertion (cell (0,1), the crossing road's own start sample, must stay Building).
-New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridRoadIgnoresWall' `
+# MutTileGridRoadIgnoresBuilding: road marking's Building/Wall precedence guard dropped — a road cell
+# overwrites whatever tile (even Building or Wall) already occupies that cell. Caught by SelfTestRoadsAndGates'
+# building-precedence assertion (cell (0,1), the crossing road's own start sample, must stay Building). Named
+# for the Building half specifically: the Wall half of the dropped guard is provably unreachable (every road
+# cell is in BuildWallRing's dilation seed, so all its 4-neighbours are Inside and it can never itself be
+# written Wall) — this mutant is caught purely via the Building-precedence assertion, never via a Wall one, so
+# it is not evidence the Wall term is pinned by anything.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridRoadIgnoresBuilding' `
   'if (g.Cells[a, b] == TileType.Building || g.Cells[a, b] == TileType.Wall) continue;' `
   '' `
-  'MutTileGridRoadIgnoresWall.cs'
+  'MutTileGridRoadIgnoresBuilding.cs'
 
-foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresWall')) {
+foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding')) {
   New-SettlementRebind 'SelfTestRoadsAndGates' $mc `
     @('SettlementTileGrid\.', '\bTileType\b') `
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
