@@ -99,6 +99,9 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()),
                 ("MutTileGridRoadIgnoresBuilding", "SettlementTileGrid.Build's road marking drops the Building/Wall precedence guard (a road overwrites whatever tile is already there); named for the Building half since the Wall half is provably unreachable and is not what this mutant is caught by",
                     () => new WorldGen.MutantTests.MutTileGridRoadIgnoresBuildingSelfTests().SelfTestRoadsAndGates()),
+
+                ("MutDepthKeyNoRowSort", "SettlementTileGrid.DepthKey rewritten column-major (i primary, j secondary) instead of row-major (drops near-occludes-far entirely)",
+                    () => new WorldGen.MutantTests.MutDepthKeyNoRowSortSelfTests().SelfTestDepth()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

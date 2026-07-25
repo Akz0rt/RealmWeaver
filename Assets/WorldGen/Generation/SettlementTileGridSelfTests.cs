@@ -217,6 +217,84 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Roads and Gates: PASS");
         }
 
+        [ContextMenu("Self-Test: Depth Order")]
+        public void SelfTestDepth()
+        {
+            bool ok = true;
+            // a wall cell directly in front (south, larger row) of a building behind it
+            var f = Floor(true, (0,0),(1,0),(0,1),(1,1));
+            var g = SettlementTileGrid.Build(f, null);
+            var order = g.DrawOrder();
+            int Idx(int i, int j) => order.FindIndex(t => t.i == i && t.j == j);
+
+            // NearOccludesFar: for any two occupied cells, larger row => larger draw index
+            for (int m = 0; m < order.Count; m++) for (int n = 0; n < order.Count; n++)
+                if (order[m].j < order[n].j && !(m < n))
+                { Debug.LogError($"FAIL depth: cell {order[m]} (row {order[m].j}) must draw before {order[n]} (row {order[n].j})"); ok = false; }
+
+            // WallOccludesBuildingBehind: front wall (row j) after building (row j-1), same column.
+            // Verified against the ACTUAL grid this fixture produces (hand-derived and confirmed by this very
+            // test running green): the 2x2 building block at (0,0)-(1,1) dilates (radius CourtyardCells+1=2)
+            // to a solid occupied square spanning world i,j in [-2,3]; the outside flood-fill cannot enter it
+            // (no holes), so Inside == that whole square; its OUTERMOST ring (i==-2, i==3, j==-2, or j==3) is
+            // Wall, everything one cell further in that isn't a Building is Void (the courtyard). So column
+            // i=1's south face reads Building(1,1) -> Void(1,2) -> Wall(1,3).
+            //
+            // NOTE: this same-column pair is the physically real case (this renderer's height spill is
+            // vertical-only, so only same-i pairs can ever actually occlude on screen) but it does NOT, on
+            // its own, discriminate MutDepthKeyNoRowSort: under column-major sorting a tied `i` still breaks
+            // ties by ascending `j`, so a same-column pair's relative order survives the mutant unchanged —
+            // confirmed empirically (this assertion produces zero errors under that mutant; NearOccludesFar's
+            // cross-column sweep is what actually fails it). Kept for the real-geometry documentation and
+            // because it is unconditional (it would still catch other defects, e.g. a reversed sort). The
+            // SECOND pair below is the one that independently discriminates the required mutant.
+            int bi = 1, bj = 1;                    // a building (front row of the block)
+            int wi = 1, wj = 3;                    // the south wall cell in front of it (courtyard at j=2 between)
+            // Each fixture assumption is asserted UNCONDITIONALLY (not folded into the occlusion check's
+            // guard) — a fixture that stopped producing this exact Wall/Building pair must fail loudly here,
+            // not silently skip the occlusion assertion below.
+            if (g.At(bi,bj) != TileType.Building)
+            { Debug.LogError($"FAIL depth: fixture cell ({bi},{bj}) is {g.At(bi,bj)}, expected Building — fixture assumption broken, WallOccludes check would be vacuous"); ok = false; }
+            if (g.At(wi,wj) != TileType.Wall)
+            { Debug.LogError($"FAIL depth: fixture cell ({wi},{wj}) is {g.At(wi,wj)}, expected Wall — fixture assumption broken, WallOccludes check would be vacuous"); ok = false; }
+            if (!(Idx(wi,wj) > Idx(bi,bj)))
+            { Debug.LogError($"FAIL depth: front wall ({wi},{wj}) idx {Idx(wi,wj)} does not draw AFTER building behind ({bi},{bj}) idx {Idx(bi,bj)}"); ok = false; }
+
+            // WallOccludesBuildingBehind — CROSS-COLUMN discriminator. Under row-major DepthKey, j is
+            // PRIMARY, so any wall in a later row than a building must draw after it regardless of column.
+            // Under the required MutDepthKeyNoRowSort mutant (i made primary instead), a wall whose i is
+            // SMALLER than the building's i can sort BEFORE it even though the wall's row is larger — which
+            // is exactly what independently catches that mutant (the same-column pair above cannot, since a
+            // tied i never exercises which of i/j is primary). (-2,3) is the wall ring's SW corner (west wall
+            // column i=-2, south wall row j=3 — on the boundary derived above); (1,1) is the block's SE
+            // building. Correct: key(-2,3) = 3*1_000_000 + (-2) = 2,999,998 > key(1,1) = 1*1_000_000 + 1 =
+            // 1,000,001, so the wall draws after. Column-major mutant: key(-2,3) = -2*1_000_000 + 3 =
+            // -1,999,997 < key(1,1) = 1,000,001, so the wall draws BEFORE the building — this assertion fires.
+            int bi2 = 1, bj2 = 1;                   // same SE building as above
+            int wi2 = -2, wj2 = 3;                  // the wall ring's SW corner — different column, later row
+            if (g.At(bi2,bj2) != TileType.Building)
+            { Debug.LogError($"FAIL depth: fixture cell ({bi2},{bj2}) is {g.At(bi2,bj2)}, expected Building — fixture assumption broken, cross-column WallOccludes check would be vacuous"); ok = false; }
+            if (g.At(wi2,wj2) != TileType.Wall)
+            { Debug.LogError($"FAIL depth: fixture cell ({wi2},{wj2}) is {g.At(wi2,wj2)}, expected Wall — fixture assumption broken, cross-column WallOccludes check would be vacuous"); ok = false; }
+            if (!(Idx(wi2,wj2) > Idx(bi2,bj2)))
+            { Debug.LogError($"FAIL depth: cross-column front wall ({wi2},{wj2}) idx {Idx(wi2,wj2)} does not draw AFTER building behind ({bi2},{bj2}) idx {Idx(bi2,bj2)}"); ok = false; }
+
+            // SpillIsVisualOnly: DrawOrder must not mutate the grid, and must be PURE (idempotent — calling it
+            // twice returns an equal list, not just "some list of the same length").
+            var before = (TileType[,])g.Cells.Clone();
+            var order2 = g.DrawOrder();
+            for (int a=0;a<g.W;a++) for (int b=0;b<g.H;b++) if (before[a,b] != g.Cells[a,b])
+            { Debug.LogError($"FAIL depth: DrawOrder mutated cell [{a},{b}] {before[a,b]}→{g.Cells[a,b]}"); ok = false; }
+            if (order2.Count != order.Count)
+            { Debug.LogError($"FAIL depth: DrawOrder not idempotent — second call returned {order2.Count} cells, first returned {order.Count}"); ok = false; }
+            else
+                for (int k = 0; k < order.Count; k++)
+                    if (order[k] != order2[k])
+                    { Debug.LogError($"FAIL depth: DrawOrder not idempotent — index {k} was {order[k]} on first call, {order2[k]} on second"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Depth Order: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

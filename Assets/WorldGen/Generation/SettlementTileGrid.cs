@@ -163,6 +163,38 @@ namespace WorldGen.Generation
             return g;
         }
 
+        // ---- depth (Task 4) --------------------------------------------------------------------------------
+        // Painter's-algorithm sort key: ROW-MAJOR — j (the row) is the primary term, i (the column) only
+        // breaks ties within a row — so a cell further south (larger j) always sorts after EVERY cell in any
+        // smaller row, regardless of column. That is the exact invariant the renderer (Task 7) needs to draw
+        // back-to-front and get near-occludes-far for free, including the one the user called out twice: a
+        // front (south) Wall tile is never overlapped by a Building behind it, because the Wall's row is
+        // always >= the courtyard/building rows in front of which it stands (SelfTestDepth's
+        // WallOccludesBuildingBehind pins this on the actual grid a 2x2 building block produces).
+        //
+        // Negative i is safe: this grid's world coordinates (OriginI/OriginJ, set by Allocate as
+        // minCellI/minCellJ - MarginCells) only ever go a few cells negative — MarginCells is a small constant
+        // (CourtyardCells + 2) and real settlements span tens of building-lattice cells, not hundreds of
+        // thousands — so |i| never approaches the 1_000_000 row spacing this key relies on to keep i's
+        // contribution from ever crossing a row boundary. A cell would need |i| >= 500,000 to invert the
+        // ordering between two adjacent rows, which is many orders of magnitude past anything this grid can
+        // produce.
+        public static long DepthKey(int i, int j) => (long)j * 1_000_000 + i;
+
+        // Every occupied (non-None) cell, ascending by DepthKey — the exact back-to-front order the renderer
+        // must paint in. PURE: only reads Cells, never writes it; two calls return equal lists (same cells,
+        // same order) since sorting is a function of each cell's own (i,j), not of any external state.
+        public System.Collections.Generic.List<(int i, int j)> DrawOrder()
+        {
+            var order = new System.Collections.Generic.List<(int i, int j)>();
+            for (int a = 0; a < W; a++)
+                for (int b = 0; b < H; b++)
+                    if (Cells[a, b] != TileType.None)
+                        order.Add((a + OriginI, b + OriginJ));
+            order.Sort((p, q) => DepthKey(p.i, p.j).CompareTo(DepthKey(q.i, q.j)));
+            return order;
+        }
+
         // ---- wall ring ------------------------------------------------------------------------------------
         // (a) occupied = (building cells ∪ extraSeed cells, when supplied) dilated by CourtyardCells + 1
         //     (buildings/roads + a one-cell courtyard skirt + the wall layer itself). extraSeed == null (the

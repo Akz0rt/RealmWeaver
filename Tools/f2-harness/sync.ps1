@@ -766,7 +766,25 @@ foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding')) {
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# ---- TILE GRID DEPTH MUTANT (Task 4): DepthKey's row-major sort broken. -------------------------------------
+# Same bundling as the wall-ring/roads-gates mutants above (TileType + SettlementTileGrid share the file), so
+# the rebind needs the same two patterns.
+
+# MutDepthKeyNoRowSort: DepthKey rewritten COLUMN-major (i primary, j only a tie-break) instead of row-major —
+# drops the "further south always draws later, regardless of column" invariant entirely. Caught by
+# SelfTestDepth's NearOccludesFar sweep (a same-row-later-column cell can now sort before an earlier-row cell)
+# and its WallOccludesBuildingBehind assertion (the front wall (1,3) and the building behind it (1,1) differ
+# in i, not just j, so column-major sorting can place the wall before the building).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutDepthKeyNoRowSort' `
+  'public static long DepthKey(int i, int j) => (long)j * 1_000_000 + i;' `
+  'public static long DepthKey(int i, int j) => (long)i * 1_000_000 + j;   // MUTANT: column-major, drops row-major sort' `
+  'MutDepthKeyNoRowSort.cs'
+
+New-SettlementRebind 'SelfTestDepth' 'MutDepthKeyNoRowSort' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutDepthKeyNoRowSort.SettlementTileGrid.', 'WorldGen.Generation.MutDepthKeyNoRowSort.TileType')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 21 settlement mutants + 21 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 22 settlement mutants + 22 settlement rebound test copies into gen/"
 
