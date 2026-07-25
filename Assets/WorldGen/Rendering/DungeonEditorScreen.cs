@@ -854,8 +854,9 @@ namespace WorldGen.Rendering
 
             // One interaction host stretched over MapArea; the renderer is its child. The controller carries
             // a full-area invisible hit-plate (it IS the raycast target) and hit-tests in TILE space, so the
-            // renderer needs no input handling of its own. A second (isometric) renderer is deferred — it
-            // would plug into this same host through SetRenderer, same as flatRenderer below.
+            // renderer needs no input handling of its own. A second renderer — SettlementVolumeRenderer, the
+            // 2.5D town view — is built further down and plugs into this same host via SetRenderers, same as
+            // flatRenderer below.
             var viewGO = new GameObject("DungeonView", typeof(RectTransform));
             viewGO.transform.SetParent(MapArea, false);
             Stretch(viewGO.GetComponent<RectTransform>());

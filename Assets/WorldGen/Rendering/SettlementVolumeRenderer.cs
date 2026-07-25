@@ -143,8 +143,9 @@ namespace WorldGen.Rendering
         /// <summary>Has-interior mark (Ц2): building room ids whose own interior already exists on file.
         /// EXTERNAL state, set by DungeonEditorScreen BEFORE the RebuildView chain fires — deliberately NOT
         /// reset inside RebuildView. Declared with the IDENTICAL name/shape as
-        /// <see cref="DungeonFlatRenderer.RoomsWithInterior"/> so the screen's three assignment sites work on
-        /// either renderer without a second code path.</summary>
+        /// <see cref="DungeonFlatRenderer.RoomsWithInterior"/> so the screen's two assignment sites — funnelled
+        /// through DungeonEditorScreen.SetRoomsWithInterior (Task 8) — work on either renderer without a second
+        /// code path.</summary>
         public HashSet<int> RoomsWithInterior { get; set; } = new HashSet<int>();
 
         // ── State ────────────────────────────────────────────────────────────────────────────────────────

@@ -74,10 +74,11 @@ namespace WorldGen.Rendering
         // already exists on file, e.g. { InteriorOps.RoomsWithInterior(dungeonManager.GetAll(), poiId) }.
         // This is EXTERNAL state — unlike hasContour/isSettlement above (both re-derived from `dungeon`
         // every RebuildView) it cannot be read off anything RebuildView's own parameters carry, so
-        // DungeonEditorScreen.Bind sets it directly on this field BEFORE the RebuildView chain fires, the
-        // same "settable property held by the renderer" role Projection plays for pan/zoom (SetProjection).
-        // Deliberately NOT reset inside RebuildView (Projection isn't either) — it must survive until the
-        // next external set. Defaults to an empty set so an unset/non-settlement bind never shows the mark.
+        // DungeonEditorScreen.SetRoomsWithInterior (Task 8's funnel over both renderers) sets it on this
+        // field BEFORE the RebuildView chain fires, the same "settable property held by the renderer" role
+        // Projection plays for pan/zoom (SetProjection). Deliberately NOT reset inside RebuildView (Projection
+        // isn't either) — it must survive until the next external set. Defaults to an empty set so an
+        // unset/non-settlement bind never shows the mark.
         public HashSet<int> RoomsWithInterior { get; set; } = new HashSet<int>();
 
         const float MinCardPx = 20f;      // a 1-tile room must stay a usable click target

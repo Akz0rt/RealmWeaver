@@ -15,7 +15,8 @@ namespace WorldGen.Rendering
     /// sub-project 3. The two renderers that exist are chosen by what is being EDITED, not by a view switch,
     /// and a given bind only ever has one right answer: DungeonFlatRenderer draws dungeons and building
     /// interiors as the flat schematic; SettlementVolumeRenderer draws settlements as the 2.5D volumetric
-    /// tile view. Nothing here knows which is which — the host does the Kind-gating and calls SetRenderer.
+    /// tile view. The host only INSTALLS both (SetRenderers); the Kind-gate itself lives here, in
+    /// RendererForKind, so no caller has to remember which interior gets which view.
     ///
     /// The key move that makes one controller drive both: pointer input is resolved down to an AREA-LOCAL
     /// point against the active renderer's own RectTransform, and the renderer maps that point to a room id /
@@ -193,7 +194,13 @@ namespace WorldGen.Rendering
                 }
                 else
                 {
-                    minX -= halfCell; minY -= halfCell; maxX += halfCell; maxY += halfCell;
+                    // Village (wall-less) fit margin (review fix, Minor): a village's streets route through
+                    // the same SettlementRoads grid (GridMargin = 4), so a road can reach
+                    // maxBuildingCentre + 7 tiles — one cell further out than halfCell budgets, which showed
+                    // up as a road tile clipped in half at the panel edge. A full cell instead of half a cell
+                    // covers it; 8.96 extra tiles of margin on a village is cosmetically negligible.
+                    float cell = SettlementGenerator.BuildingCell * T;
+                    minX -= cell; minY -= cell; maxX += cell; maxY += cell;
                 }
 
                 // The active renderer IS the volumetric one whenever Kind == Settlement: SetRenderers/Bind
@@ -580,6 +587,14 @@ namespace WorldGen.Rendering
             // primitive is still in CompactLayout, self-tested, for the day an upper-floor «+» comes back.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building)
                 CompactLayout.AttachNewRoom(lvl, room.Id);
+            // SETTLEMENT ONLY (review fix, Task 8): generation places buildings on this same lattice pitch, so
+            // (0.5, 0.5) snapped to a cell centre lands on an OCCUPIED cell with high probability — two rooms
+            // at identical X/Y, and HitRoomId's tie-break then hides the covered one forever. Building deliberately
+            // leaves lastAnchorRoomId untouched (the paragraph above: placement is FINAL, no nudge) — a settlement
+            // needs the opposite: setting it here makes BeginCascade's anti-overlap nudge (already wired for
+            // drag-end) shove the new building onto the adjacent free cell instead of stacking it.
+            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement)
+                lastAnchorRoomId = room.Id;
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
