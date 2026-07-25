@@ -548,17 +548,40 @@ namespace WorldGen.Rendering
         /// highlight from this answer and its click accepts or rejects from this answer, so the green/red the
         /// DM sees and the verdict the click applies can never be two different judgements.
         ///
+        /// A THIRD axis, added alongside the tile-type rule and the on-field guard: the cell must have no room
+        /// ALREADY mapped to it (<see cref="AnyRoomAtCell"/>). The tile-type rule alone is not enough — a gate
+        /// room (TypeId 0) writes no tile of its own (only TypeId==1 rooms write Building, see
+        /// SettlementTileGrid.Build), and its wall-ring Gate tile is the NEAREST ring cell (MarkGates), not
+        /// necessarily its own cell — so a gate's own cell commonly reads Void or Road and would pass the
+        /// tile-type test clean, letting a second room land on top of it (HitRoomId's tie-break then
+        /// permanently hides one of the two from clicks — the exact bug click-to-place exists to remove).
+        ///
         /// Returns FALSE with both out-params meaningless in exactly the states TryAreaToCell refuses (no tile
         /// grid built yet, or a degenerate projection). The caller must then show NO highlight and place
         /// nothing — an invented cell would be a lie the DM could act on.</summary>
-        public bool TryPlacementCell(Vector2 areaLocalPoint, out float nx, out float ny, out bool placeable)
+        public bool TryPlacementCell(Vector2 areaLocalPoint, InteriorFloor lvl, out float nx, out float ny, out bool placeable)
         {
             nx = 0f; ny = 0f; placeable = false;
             if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return false;
             nx = grid.CenterX(i);
             ny = grid.CenterY(j);
-            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny);
+            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny) && !AnyRoomAtCell(lvl, i, j);
             return true;
+        }
+
+        /// <summary>True if some room — of ANY type, a gate included — already maps to cell (i,j), via the
+        /// identical mapping <see cref="HitRoomId"/> uses (grid.CellI/CellJ). On a settlement floor only
+        /// TypeId 0 (gate) and TypeId 1 (building, active or dummy) rooms exist (SettlementGenerator,
+        /// DungeonOps.AddRoom); every TypeId 1 room already fails the tile-type rule above (it always owns a
+        /// Building tile, which Allocate's bbox guarantees is InBounds and Build's write order never lets a
+        /// later pass overwrite). So this term is reachable ONLY for a gate room's own cell — it adds no new
+        /// restriction beyond that.</summary>
+        bool AnyRoomAtCell(InteriorFloor lvl, int i, int j)
+        {
+            if (lvl == null) return false;
+            foreach (var r in lvl.Rooms)
+                if (grid.CellI(r.X) == i && grid.CellJ(r.Y) == j) return true;
+            return false;
         }
 
         /// <summary>Show the hover preview over the cell CONTAINING the normalized point (nx, ny) — in
@@ -571,7 +594,11 @@ namespace WorldGen.Rendering
         /// projection or the grid extent may have changed since the last one.</summary>
         public void ShowPlacementHighlight(float nx, float ny, bool placeable)
         {
-            EnsureBuilt();
+            // GUARD, not EnsureBuilt() (Task 8b Minor 5 fix): this runs every hover frame while armed, and
+            // rebuild/recovery belongs on the structural path — RepositionRooms and RebuildView both call
+            // EnsureBuilt() themselves before this method's only caller can ever see a usable grid. A
+            // not-yet-built frame here just skips one highlight; the next structural call repairs it.
+            if (!built) return;
             if (placementHighlight == null) return;
             if (grid == null || Projection.PxPerTile <= 0f) { HidePlacementHighlight(); return; }
 

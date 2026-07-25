@@ -95,6 +95,16 @@ namespace WorldGen.Rendering
         float hoverNx, hoverNy;   // the hovered cell's CENTRE, normalized — what a commit writes verbatim
         bool hoverPlaceable;      // the colour currently on screen: true = green, false = red
 
+        // Reflex-double-click guard (Task 8b Minor 2 fix). PlaceHoveredBuilding disarms the mode but does NOT
+        // consume the click sequence, so a DM's ordinary reflex double-click lands its second click on the
+        // now-disarmed mode, hitting the just-created room with clickCount == 2 — which would immediately fire
+        // OnRoomDoubleClicked and open the new building's interior, navigating away from the town the DM only
+        // just clicked into. Set the moment a building is placed; the clickCount == 2 branch in OnPointerClick
+        // swallows exactly that one pairing when the id matches, and the plain (non-double-click) fallthrough
+        // clears it — so a LATER, deliberate double-click on the same room (necessarily preceded by its own
+        // single click, which reaches that fallthrough first) still opens it normally. Transient only.
+        int lastPlacedRoomId;
+
         // Animated cascade state — moved verbatim from DungeonGraphView (Checkpoint-B tuning, user-approved
         // "мне нравится"). cascadeTargets holds the resolved end position per room id (computed once by
         // DungeonLayout.Separate at cascade start); cascadeVel is SmoothDamp's per-room velocity
@@ -643,7 +653,8 @@ namespace WorldGen.Rendering
             // One guard covers every such case, and disarming is the honest answer: the cell lattice the mode
             // is about no longer exists.
             var vol = renderer as SettlementVolumeRenderer;
-            if (!SupportsClickPlacement || vol == null || BoundLevel == null) { DisarmPlacement(); return; }
+            var lvl = BoundLevel;
+            if (!SupportsClickPlacement || vol == null || lvl == null) { DisarmPlacement(); return; }
 
             // Invalidate FIRST. Every early return below therefore leaves the mode armed but with NO cell to
             // commit, which is exactly right: pointer off the map, no mouse, or nothing drawn yet all mean
@@ -656,7 +667,7 @@ namespace WorldGen.Rendering
             Vector2 screen = Mouse.current.position.ReadValue();
             if (!RectTransformUtility.RectangleContainsScreenPoint(area, screen, null)
                 || !TryScreenToAreaLocal(screen, out var local)
-                || !vol.TryPlacementCell(local, out float nx, out float ny, out bool placeable))
+                || !vol.TryPlacementCell(local, lvl, out float nx, out float ny, out bool placeable))
             {
                 vol.HidePlacementHighlight();
                 return;
@@ -696,6 +707,7 @@ namespace WorldGen.Rendering
 
             var room = DungeonOps.AddRoom(lvl, hoverNx, hoverNy);
             lastAnchorRoomId = 0;
+            lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
             // Same order AddRoomAtCenter uses, and it matters: RebuildView clears the renderer's highlight set,
             // so SelectRoom must come AFTER Refresh or the new building would be created unselected.
@@ -811,7 +823,17 @@ namespace WorldGen.Rendering
             // selects a room and never clears the selection. Deliberately before the pointer is mapped: the
             // commit uses the STORED hover cell (the one currently painted green/red), not a fresh sample of
             // this event's position. See PlaceHoveredBuilding.
-            if (PlacementArmed) { PlaceHoveredBuilding(); return; }
+            //
+            // LEFT BUTTON ONLY (Task 8b Minor 4 fix): armed placement is a left-click gesture, matching the
+            // POI-placement precedent on the world map (PoiInteractionController.Update gates its own press on
+            // Mouse.current.leftButton). Scoped to the ARMED branch only — an unarmed right-click still selects
+            // exactly as before; this must not touch that path.
+            if (PlacementArmed)
+            {
+                if (data.button != PointerEventData.InputButton.Left) return;
+                PlaceHoveredBuilding();
+                return;
+            }
 
             if (!TryPointerToAreaLocal(data, out var local)) return;
             int id = renderer.HitRoomId(local, lvl);
@@ -825,9 +847,17 @@ namespace WorldGen.Rendering
             if (data.clickCount == 2 && !LinkMode)
             {
                 SelectRoom(id);
+                // Reflex-double-click guard (Task 8b Minor 2 fix): click 1 of this pair was
+                // PlaceHoveredBuilding, which disarms the mode but does not consume the click sequence, so
+                // this second click reaches here as an ordinary double-click ON THE ROOM JUST PLACED — which
+                // would immediately open its interior and navigate away from the town. Swallow exactly that
+                // one pairing; lastPlacedRoomId is cleared below on the next plain click, so a later,
+                // deliberate double-click on the same room still opens it.
+                if (id == lastPlacedRoomId) return;
                 OnRoomDoubleClicked?.Invoke(id);
                 return;
             }
+            lastPlacedRoomId = 0;
             OnRoomActivated(id);
         }
 

@@ -545,8 +545,12 @@ namespace WorldGen.Rendering
                 addBuildingBtnLabel.text = armed ? "Отмена (Esc)" : addBuildingBtnBaseLabel;
                 ThemeService.Tag(addBuildingBtnLabel, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
             }
+            // «нельзя», not «занято» (Task 8b Minor 3 fix): a cell reads red either because it is genuinely
+            // occupied (Building/Wall/Gate, or now another room's own cell — see AnyRoomAtCell) OR simply
+            // because it falls outside the settlement's 0..1 field (SettlementVolumeRenderer.OnField) — empty
+            // ground, not занято. «нельзя» covers both truthfully without getting longer.
             if (placementHintLabel != null)
-                placementHintLabel.text = armed ? "Кликните по тайлу: зелёный — свободно, красный — занято" : "";
+                placementHintLabel.text = armed ? "Кликните по тайлу: зелёный — свободно, красный — нельзя" : "";
         }
 
         /// <summary>«Удалить» handler: DungeonViewController.DeleteSelected removes the room with no
