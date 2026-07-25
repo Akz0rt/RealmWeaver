@@ -80,6 +80,9 @@ static class Program
         var interiorOps = new WorldGen.Rendering.InteriorOpsSelfTests();
         interiorOps.SelfTestInteriorOps();
         interiorOps.SelfTestBuildingSeedPin();
+        var tileGrid = new WorldGen.Rendering.SettlementTileGridSelfTests();
+        tileGrid.SelfTestTileMapping();
+        tileGrid.SelfTestTileGridSanity();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
