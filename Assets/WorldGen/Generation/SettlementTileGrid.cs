@@ -9,9 +9,12 @@ namespace WorldGen.Generation
     /// UnityEngine-free and fully derived per rebuild — nothing here is stored/serialized. Allocate sizes the
     /// grid shell (cell↔normalized mapping, buildings-derived extent, snap). Build (Task 2) places buildings
     /// and, when the settlement HasWall, derives the wall ring + one-cell courtyard void from an outside
-    /// flood-fill — same no-holes guarantee SettlementFence uses at tile resolution (SettlementFence.cs class
-    /// doc), just at the coarser building-cell grid instead of SettlementFence's continuous-tile grid. Roads
-    /// (Task 3) reclassify on top; depth sort-keys (Task 4) and per-building height (Task 5) build further.</summary>
+    /// flood-fill — the same no-holes guarantee SettlementFence uses at tile resolution (SettlementFence.cs
+    /// class doc), just at the coarser building-cell grid instead of SettlementFence's continuous-tile grid.
+    /// NOT full parity, though: unlike SettlementFence, this pass does not bridge disconnected stray building
+    /// clusters (SettlementFence.BridgeStrays) — each cluster gets its own independent dilation ring and
+    /// flood-fill, with no attempt to connect separate clusters into one boundary. Roads (Task 3) reclassify
+    /// on top; depth sort-keys (Task 4) and per-building height (Task 5) build further.</summary>
     public sealed class SettlementTileGrid
     {
         public TileType[,] Cells;          // [a, b]: a = col (i - OriginI), b = row (j - OriginJ)

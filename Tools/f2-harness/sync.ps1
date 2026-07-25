@@ -701,19 +701,18 @@ New-SettlementRebind 'SelfTestBuilding' 'MutUpperFloorNoGap' `
 # not a failing assertion. InteriorFloor/Room/LinkSegment live in unmutated files and resolve outward, so no
 # further rebind or cross-file stub is needed here (no IReadOnlyList<T> struct-covariance trap).
 
-# MutTileGridNoFloodFill: the Outside->Inside CONSUMER line neutered — inside is forced true for every cell,
-# as if the flood-fill never found anything outside — rather than neutering a border-seed line. (A border-seed
-# neuter risks the same vacuity the fence arc hit — a redundant seed elsewhere still reaches the same cells;
-# an `inside = occupied` no-op-fill neuter, mirroring MutFenceNoFill exactly, is ALSO vacuous on this specific
-# fixture: radius-2 dilation of the 3x3 ring already covers the centre directly, so `occupied` and the correct
-# post-fill `inside` are bit-identical here — there is no unoccupied-but-enclosed cell for that mutation to
-# corrupt. Forcing `inside = true` unconditionally is the line that both compiles and is actually detected: it
-# turns the wall ring's outer boundary into the literal array edge, so (-2,1) — one cell in from the true grid
-# border — reads Void instead of Wall.) Caught by SelfTestWallRing's Wall-ring assertion (and its
-# Building->Void->Wall chain assertion).
+# MutTileGridNoFloodFill: the Outside->Inside CONSUMER line neutered — inside collapses to the raw pre-fill
+# occupied raster, so an enclosed pocket stays a literal hole (None) instead of Void — the fence arc's
+# MutFenceNoFill mutation (`inside[i] = town[i]`) mirrored exactly onto this file's naming (`inside[a, b] =
+# occupied[a, b]`). This mutation was vacuous on the ORIGINAL 3x3-ring fixture alone: radius-2 dilation of
+# that ring already covers its centre directly, so `occupied` and the correct post-fill `inside` are
+# bit-identical there — there is no unoccupied-but-enclosed cell for it to corrupt. SelfTestWallRing's SECOND
+# fixture (buildings on the perimeter of a 7x7 block) fixes that: its centre (3,3) is genuinely unoccupied
+# and only Inside via the flood-fill actually walking around the ring, so this mutation now flips it to None
+# and the fixture's dedicated assertion fires. Caught by SelfTestWallRing's 7x7-perimeter centre assertion.
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoFloodFill' `
   'inside[a, b] = !outside[a, b];' `
-  'inside[a, b] = true;   // MUTANT: outside flood-fill result never consulted — every cell reads Inside' `
+  'inside[a, b] = occupied[a, b];   // MUTANT: outside flood-fill result never consulted — inside collapses to the raw pre-fill occupied raster' `
   'MutTileGridNoFloodFill.cs'
 
 # MutTileGridNoWallRing: the Wall assignment neutered — 0 wall cells ever get written, so every cell that

@@ -93,6 +93,26 @@ namespace WorldGen.Rendering
             if (walls != 0 || voids != 0)
             { Debug.LogError($"FAIL wallring: open village has {walls} Wall + {voids} Void cells, expected 0/0"); ok = false; }
 
+            // Second fixture: the no-hole guarantee itself. The 3x3-ring fixture above can't test this — its
+            // radius-2 dilation directly occupies the "hole" at (1,1) (Chebyshev-1 from every ring building),
+            // so (1,1) is Inside via dilation, never merely enclosed. Buildings on the PERIMETER of a 7x7 block
+            // (i,j in 0..6, i in {0,6} or j in {0,6}, 24 buildings) push every building at least 3 cells from
+            // the centre: for world cell (i,j), the nearest building is exactly min(i,6-i,j,6-j) cells away
+            // (each edge has a building matching the other coordinate exactly), so a cell is occupied by the
+            // radius-2 dilation iff that min is <=2. The unique cell with min(i,6-i,j,6-j) >= 3 in range 0..6
+            // is (3,3) itself. So (3,3) is genuinely unoccupied, 4-surrounded by occupied cells, and Inside
+            // ONLY because the outside flood-fill cannot reach it through the ring — exactly the no-hole
+            // guarantee. Correct code -> Void; a fill that never actually walks the outside (e.g. seeded from
+            // one border cell, or that leaks through a broken connectivity rule) leaves (3,3) as None.
+            var perimeter = new System.Collections.Generic.List<(int i, int j)>();
+            for (int i = 0; i <= 6; i++)
+                for (int j = 0; j <= 6; j++)
+                    if (i == 0 || i == 6 || j == 0 || j == 6)
+                        perimeter.Add((i, j));
+            var gHole = SettlementTileGrid.Build(Floor(true, perimeter.ToArray()), null);
+            if (gHole.At(3, 3) != TileType.Void)
+            { Debug.LogError($"FAIL wallring: 7x7-perimeter fixture's enclosed centre (3,3) is {gHole.At(3, 3)}, expected Void (outside flood-fill did not reach it — a real hole)"); ok = false; }
+
             if (ok) Debug.Log("Settlement Wall Ring: PASS");
         }
 

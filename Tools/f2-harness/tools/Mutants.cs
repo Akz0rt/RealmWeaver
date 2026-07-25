@@ -89,7 +89,7 @@ namespace WorldGen.Generation
                 ("MutFenceNoRoads", "SettlementFence's road-ribbon rasterization call skipped (a routed road never marks a cell)",
                     () => new WorldGen.MutantTests.MutFenceNoRoadsSelfTests().SelfTestFence()),
 
-                ("MutTileGridNoFloodFill", "SettlementTileGrid outside flood-fill neutered — every cell reads Inside",
+                ("MutTileGridNoFloodFill", "SettlementTileGrid's outside flood-fill result never consulted — inside collapses to the raw pre-fill occupied raster (an enclosed pocket stays a literal hole)",
                     () => new WorldGen.MutantTests.MutTileGridNoFloodFillSelfTests().SelfTestWallRing()),
                 ("MutTileGridNoWallRing", "SettlementTileGrid.Build's Wall assignment neutered (0 wall cells)",
                     () => new WorldGen.MutantTests.MutTileGridNoWallRingSelfTests().SelfTestWallRing()),
