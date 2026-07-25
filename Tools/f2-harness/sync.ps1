@@ -483,12 +483,16 @@ $interiorTests = Get-Content (Join-Path $src 'InteriorOpsSelfTests.cs') -Raw -En
 # Third source: the upper-floor-wall-gap mutant (below) is caught via SelfTestBuilding, which lives in
 # BuildingGeneratorSelfTests.cs, not SettlementSelfTests.cs or InteriorOpsSelfTests.cs.
 $buildingTests = Get-Content (Join-Path $src 'BuildingGeneratorSelfTests.cs') -Raw -Encoding UTF8
+# Fourth source: the tile-grid wall-ring mutants (below) are caught via SelfTestWallRing, which lives in
+# SettlementTileGridSelfTests.cs, not any of the three files above.
+$tileGridTests = Get-Content (Join-Path $src 'SettlementTileGridSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
   # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
   # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
-  # $interiorTests, and SelfTestBuilding falls through to $buildingTests.
+  # $interiorTests, SelfTestBuilding falls through to $buildingTests, and SelfTestWallRing falls through to
+  # $tileGridTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
@@ -498,6 +502,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $buildingTests
     $origClass = 'BuildingGeneratorSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $tileGridTests
+    $origClass = 'SettlementTileGridSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -682,7 +690,55 @@ New-SettlementRebind 'SelfTestBuilding' 'MutUpperFloorNoGap' `
   @('BuildingGenerator\.') `
   @('WorldGen.Generation.MutUpperFloorNoGap.BuildingGenerator.')
 
+# ---- TILE GRID WALL-RING MUTANTS: three rules pinned by SettlementTileGrid.Build's wall-ring pass. ----------
+# SettlementTileGrid.cs bundles TWO types in one namespace block: enum TileType AND class SettlementTileGrid
+# (the same bundling shape as BattleGridGenerator.cs/GridPoint and SettlementGenerator.cs/SettlementConfig
+# above) — renamespacing the file for a mutant moves TileType into the nested mutant namespace too, so its
+# rebind needs a SECOND pattern (bare `\bTileType\b`) alongside `SettlementTileGrid\.`, exactly like
+# BattleGridOps's `\bBattleGridStroke\b` and SettlementGenerator's `\bSettlementConfig\b` above — without it,
+# `g.At(1,1) != TileType.Void` in the rebound test would compare the mutant's nested TileType against the
+# real WorldGen.Generation.TileType (via `using WorldGen.Generation;`), a hard CS0019 nominal-type mismatch,
+# not a failing assertion. InteriorFloor/Room/LinkSegment live in unmutated files and resolve outward, so no
+# further rebind or cross-file stub is needed here (no IReadOnlyList<T> struct-covariance trap).
+
+# MutTileGridNoFloodFill: the Outside->Inside CONSUMER line neutered — inside is forced true for every cell,
+# as if the flood-fill never found anything outside — rather than neutering a border-seed line. (A border-seed
+# neuter risks the same vacuity the fence arc hit — a redundant seed elsewhere still reaches the same cells;
+# an `inside = occupied` no-op-fill neuter, mirroring MutFenceNoFill exactly, is ALSO vacuous on this specific
+# fixture: radius-2 dilation of the 3x3 ring already covers the centre directly, so `occupied` and the correct
+# post-fill `inside` are bit-identical here — there is no unoccupied-but-enclosed cell for that mutation to
+# corrupt. Forcing `inside = true` unconditionally is the line that both compiles and is actually detected: it
+# turns the wall ring's outer boundary into the literal array edge, so (-2,1) — one cell in from the true grid
+# border — reads Void instead of Wall.) Caught by SelfTestWallRing's Wall-ring assertion (and its
+# Building->Void->Wall chain assertion).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoFloodFill' `
+  'inside[a, b] = !outside[a, b];' `
+  'inside[a, b] = true;   // MUTANT: outside flood-fill result never consulted — every cell reads Inside' `
+  'MutTileGridNoFloodFill.cs'
+
+# MutTileGridNoWallRing: the Wall assignment neutered — 0 wall cells ever get written, so every cell that
+# should be Wall falls through to the Void pass instead. Caught by SelfTestWallRing's Wall-ring assertion
+# ((-2,1) reads Void, not Wall) and its Building->Void->Wall chain assertion.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoWallRing' `
+  'g.Cells[a, b] = TileType.Wall;' `
+  ';   // MUTANT: wall ring never assigned' `
+  'MutTileGridNoWallRing.cs'
+
+# MutTileGridNoVoid: the Void assignment neutered — the one-cell courtyard ring (and the enclosed centre) stay
+# TileType.None instead of Void. Caught by SelfTestWallRing's enclosed-centre assertion (Void expected, gets
+# None) and its Building->Void->Wall chain assertion (the courtyard cell reads None, not Void).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoVoid' `
+  'g.Cells[a, b] = TileType.Void;' `
+  ';   // MUTANT: void ring never assigned' `
+  'MutTileGridNoVoid.cs'
+
+foreach ($mc in @('MutTileGridNoFloodFill', 'MutTileGridNoWallRing', 'MutTileGridNoVoid')) {
+  New-SettlementRebind 'SelfTestWallRing' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 16 settlement mutants + 16 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 19 settlement mutants + 19 settlement rebound test copies into gen/"
 

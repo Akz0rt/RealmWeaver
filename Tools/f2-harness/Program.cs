@@ -82,6 +82,7 @@ static class Program
         interiorOps.SelfTestBuildingSeedPin();
         var tileGrid = new WorldGen.Rendering.SettlementTileGridSelfTests();
         tileGrid.SelfTestTileMapping();
+        tileGrid.SelfTestWallRing();
         tileGrid.SelfTestTileGridSanity();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"

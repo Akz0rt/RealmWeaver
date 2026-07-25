@@ -88,6 +88,13 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutFenceNoGatesSelfTests().SelfTestFence()),
                 ("MutFenceNoRoads", "SettlementFence's road-ribbon rasterization call skipped (a routed road never marks a cell)",
                     () => new WorldGen.MutantTests.MutFenceNoRoadsSelfTests().SelfTestFence()),
+
+                ("MutTileGridNoFloodFill", "SettlementTileGrid outside flood-fill neutered — every cell reads Inside",
+                    () => new WorldGen.MutantTests.MutTileGridNoFloodFillSelfTests().SelfTestWallRing()),
+                ("MutTileGridNoWallRing", "SettlementTileGrid.Build's Wall assignment neutered (0 wall cells)",
+                    () => new WorldGen.MutantTests.MutTileGridNoWallRingSelfTests().SelfTestWallRing()),
+                ("MutTileGridNoVoid", "SettlementTileGrid.Build's Void assignment neutered (courtyard cells stay None)",
+                    () => new WorldGen.MutantTests.MutTileGridNoVoidSelfTests().SelfTestWallRing()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

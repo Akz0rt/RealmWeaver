@@ -65,6 +65,37 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement TileGrid Mapping: PASS");
         }
 
+        [ContextMenu("Self-Test: Wall Ring")]
+        public void SelfTestWallRing()
+        {
+            bool ok = true;
+            // 8 buildings ringing an empty centre at (1,1)
+            var f = Floor(true, (0,0),(1,0),(2,0),(0,1),(2,1),(0,2),(1,2),(2,2));
+            var g = SettlementTileGrid.Build(f, null);
+
+            // no hole: the enclosed centre is Inside → Void, never outside-None
+            if (g.At(1,1) != TileType.Void)
+            { Debug.LogError($"FAIL wallring: enclosed centre (1,1) is {g.At(1,1)}, expected Void (outside fill leaked into a hole)"); ok = false; }
+            // wall is the OUTER ring — one courtyard cell out from the buildings
+            if (g.At(-2,1) != TileType.Wall)
+            { Debug.LogError($"FAIL wallring: cell (-2,1) is {g.At(-2,1)}, expected Wall (outermost ring)"); ok = false; }
+            // the user-chosen gap: Building → Void(courtyard) → Wall, so a building is NEVER flush to a wall
+            if (!(g.At(0,1) == TileType.Building && g.At(-1,1) == TileType.Void && g.At(-2,1) == TileType.Wall))
+            { Debug.LogError($"FAIL wallring: no Building→Void→Wall gap at row 1 — got {g.At(0,1)}/{g.At(-1,1)}/{g.At(-2,1)} (building is flush to the wall)"); ok = false; }
+            // building cells stay Building
+            if (g.At(0,0) != TileType.Building)
+            { Debug.LogError($"FAIL wallring: building (0,0) is {g.At(0,0)}, expected Building"); ok = false; }
+            // HasWall=false → no Wall and no Void (no Inside/Outside split)
+            var open = SettlementTileGrid.Build(Floor(false, (0,0),(1,0),(2,0),(0,1),(2,1),(0,2),(1,2),(2,2)), null);
+            int walls = 0, voids = 0;
+            for (int a=0;a<open.W;a++) for (int b=0;b<open.H;b++)
+            { if (open.Cells[a,b]==TileType.Wall) walls++; if (open.Cells[a,b]==TileType.Void) voids++; }
+            if (walls != 0 || voids != 0)
+            { Debug.LogError($"FAIL wallring: open village has {walls} Wall + {voids} Void cells, expected 0/0"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Wall Ring: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

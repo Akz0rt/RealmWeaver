@@ -1,14 +1,17 @@
 namespace WorldGen.Generation
 {
-    /// <summary>A tile's role in the 2.5D volumetric settlement render (Task 1 scaffold — no wall/road
-    /// rasterization, depth or height yet; those are Tasks 2–5). None is the array default (0), so an
-    /// untouched Cells slot reads as empty without any fill pass.</summary>
+    /// <summary>A tile's role in the 2.5D volumetric settlement render. Task 2 rasterizes Building/Wall/Void;
+    /// Road/Gate are Task 3 (roads reclassify Void→Road and Wall→Gate at crossings). None is the array default
+    /// (0), so an untouched Cells slot reads as empty without any fill pass.</summary>
     public enum TileType { None = 0, Building, Road, Void, Wall, Gate }
 
     /// <summary>A settlement floor rasterized onto the building-cell lattice (SettlementGenerator.BuildingCell),
-    /// UnityEngine-free and fully derived per rebuild — nothing here is stored/serialized. Task 1 provides only
-    /// the grid shell: the cell↔normalized mapping, the buildings-derived extent, and snap. Wall/road/gate
-    /// rasterization (Tasks 2–3), depth sort-keys (Task 4) and per-building height (Task 5) build on top.</summary>
+    /// UnityEngine-free and fully derived per rebuild — nothing here is stored/serialized. Allocate sizes the
+    /// grid shell (cell↔normalized mapping, buildings-derived extent, snap). Build (Task 2) places buildings
+    /// and, when the settlement HasWall, derives the wall ring + one-cell courtyard void from an outside
+    /// flood-fill — same no-holes guarantee SettlementFence uses at tile resolution (SettlementFence.cs class
+    /// doc), just at the coarser building-cell grid instead of SettlementFence's continuous-tile grid. Roads
+    /// (Task 3) reclassify on top; depth sort-keys (Task 4) and per-building height (Task 5) build further.</summary>
     public sealed class SettlementTileGrid
     {
         public TileType[,] Cells;          // [a, b]: a = col (i - OriginI), b = row (j - OriginJ)
@@ -75,6 +78,126 @@ namespace WorldGen.Generation
             g.H = (maxCellJ - minCellJ + 1) + 2 * MarginCells;
             g.Cells = new TileType[g.W, g.H];
             return g;
+        }
+
+        // Build the settlement's tile grid: buildings placed onto the lattice, plus — when the settlement
+        // HasWall — the wall-ring/courtyard classification. Task 2 implements the buildings+wall+void pass in
+        // full (roads == null exercises exactly that path); Task 3 adds routed-road rasterization on top,
+        // reclassifying some Void cells to Road and the Wall cells at road crossings to Gate. The wall pass
+        // itself runs unconditionally whenever HasWall — it does not gate on roads == null — so a Task-3 build
+        // that already passes a non-null roads list still gets a correct base wall/courtyard, roads simply not
+        // yet layered on (that layering is Task 3's job, not this one's).
+        public static SettlementTileGrid Build(InteriorFloor floor, System.Collections.Generic.IReadOnlyList<LinkSegment> roads)
+        {
+            var g = Allocate(floor.Rooms);
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId != 1) continue;
+                int i = g.CellI(r.X), j = g.CellJ(r.Y);
+                if (g.InBounds(i, j)) g.Cells[i - g.OriginI, j - g.OriginJ] = TileType.Building;
+            }
+
+            bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
+            if (hasWall) BuildWallRing(g);
+            // roads: Task 3 reclassifies Void -> Road and, at road/wall crossings, Wall -> Gate. Unused here.
+
+            return g;
+        }
+
+        // ---- wall ring (Task 2) ----------------------------------------------------------------------------
+        // (a) occupied = building cells dilated by CourtyardCells + 1 (buildings + a one-cell courtyard skirt +
+        //     the wall layer itself). (b) flood-fill Outside from the grid border through !occupied
+        //     (4-connected) — SettlementFence.InsideFromOutsideFill's technique, at cell resolution. (c) Inside
+        //     = !Outside, so an enclosed pocket among the buildings can never read as outside-None (no holes).
+        //     (d) Wall = Inside cells that are not Building and have >=1 non-Inside 4-neighbour — the OUTERMOST
+        //     ring of Inside only, since every cell further in already has all-Inside neighbours. (e) Void =
+        //     whatever Inside is left (neither Building nor Wall) — the one-cell courtyard ring plus any
+        //     enclosed interior courtyard, so a building is never flush to a wall tile.
+        static void BuildWallRing(SettlementTileGrid g)
+        {
+            int w = g.W, h = g.H;
+            var occupied = Dilate(g.Cells, w, h, CourtyardCells + 1);
+            var outside = FloodOutside(occupied, w, h);
+
+            var inside = new bool[w, h];
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                    inside[a, b] = !outside[a, b];
+
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                {
+                    if (!inside[a, b] || g.Cells[a, b] == TileType.Building) continue;
+                    if (HasNonInsideNeighbour(inside, w, h, a, b))
+                        g.Cells[a, b] = TileType.Wall;
+                }
+
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                    if (inside[a, b] && g.Cells[a, b] != TileType.Building && g.Cells[a, b] != TileType.Wall)
+                        g.Cells[a, b] = TileType.Void;
+        }
+
+        // Square (Chebyshev) dilation: every array cell within `radius` cells on EACH axis of a Building cell
+        // becomes occupied — the discrete analogue of SettlementFence's inflated-rect building footprint
+        // (RasterizeRoad/Derive's hw/hh inflation), just applied to a single-cell building instead of a rect.
+        static bool[,] Dilate(TileType[,] cells, int w, int h, int radius)
+        {
+            var occupied = new bool[w, h];
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                {
+                    if (cells[a, b] != TileType.Building) continue;
+                    int a0 = System.Math.Max(0, a - radius), a1 = System.Math.Min(w - 1, a + radius);
+                    int b0 = System.Math.Max(0, b - radius), b1 = System.Math.Min(h - 1, b + radius);
+                    for (int da = a0; da <= a1; da++)
+                        for (int db = b0; db <= b1; db++)
+                            occupied[da, db] = true;
+                }
+            return occupied;
+        }
+
+        // 4-connected BFS of !occupied cells seeded from every border cell -> the OUTSIDE set.
+        static bool[,] FloodOutside(bool[,] occupied, int w, int h)
+        {
+            var outside = new bool[w, h];
+            var stack = new System.Collections.Generic.List<(int a, int b)>();
+            for (int a = 0; a < w; a++)
+            {
+                Seed(occupied, outside, stack, a, 0);
+                Seed(occupied, outside, stack, a, h - 1);
+            }
+            for (int b = 0; b < h; b++)
+            {
+                Seed(occupied, outside, stack, 0, b);
+                Seed(occupied, outside, stack, w - 1, b);
+            }
+            while (stack.Count > 0)
+            {
+                var (a, b) = stack[stack.Count - 1];
+                stack.RemoveAt(stack.Count - 1);
+                if (a > 0) Seed(occupied, outside, stack, a - 1, b);
+                if (a < w - 1) Seed(occupied, outside, stack, a + 1, b);
+                if (b > 0) Seed(occupied, outside, stack, a, b - 1);
+                if (b < h - 1) Seed(occupied, outside, stack, a, b + 1);
+            }
+            return outside;
+        }
+
+        static void Seed(bool[,] occupied, bool[,] outside, System.Collections.Generic.List<(int a, int b)> stack, int a, int b)
+        {
+            if (occupied[a, b] || outside[a, b]) return;
+            outside[a, b] = true;
+            stack.Add((a, b));
+        }
+
+        static bool HasNonInsideNeighbour(bool[,] inside, int w, int h, int a, int b)
+        {
+            if (a == 0 || !inside[a - 1, b]) return true;
+            if (a == w - 1 || !inside[a + 1, b]) return true;
+            if (b == 0 || !inside[a, b - 1]) return true;
+            if (b == h - 1 || !inside[a, b + 1]) return true;
+            return false;
         }
     }
 }
