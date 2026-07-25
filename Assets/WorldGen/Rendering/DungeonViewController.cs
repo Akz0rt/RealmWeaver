@@ -8,15 +8,21 @@ namespace WorldGen.Rendering
 {
     /// <summary>
     /// Owns ALL dungeon-floor editing mechanics: binding, selection, link mode, drag, delete/add, and the
-    /// animated cascade. Draws NOTHING — it delegates every visual to an IDungeonRenderer and swaps that
-    /// renderer when the Граф/Изо toggle flips (sub-project 3 revision, spec R5).
+    /// animated cascade. Draws NOTHING — it delegates every visual to an IDungeonRenderer, which the host
+    /// installs through SetRenderer (spec R5).
     ///
-    /// The key move: pointer input is resolved down to an AREA-LOCAL point against the active renderer's
-    /// own RectTransform; the renderer maps that point to a room id / normalized position in its own
-    /// coordinate space (IDungeonRenderer.HitRoomId / TryAreaToNorm — Task 6). The flat renderer still does
-    /// that via DungeonProjection + TILE space, so Граф and Изо (which share one projection type differing
-    /// only by SquashY) drive editing through the SAME renderer-side logic — editing in Изо (spec R4)
-    /// required no second implementation. A non-projection renderer is now free to hit-test differently.
+    /// THE REAL SPLIT (arc C.1). There is no Граф/Изо toggle — that iso renderer was built and dropped in
+    /// sub-project 3. The two renderers that exist are chosen by what is being EDITED, not by a view switch,
+    /// and a given bind only ever has one right answer: DungeonFlatRenderer draws dungeons and building
+    /// interiors as the flat schematic; SettlementVolumeRenderer draws settlements as the 2.5D volumetric
+    /// tile view. Nothing here knows which is which — the host does the Kind-gating and calls SetRenderer.
+    ///
+    /// The key move that makes one controller drive both: pointer input is resolved down to an AREA-LOCAL
+    /// point against the active renderer's own RectTransform, and the renderer maps that point to a room id /
+    /// normalized position in ITS OWN coordinate space (IDungeonRenderer.HitRoomId / TryAreaToNorm — Task 6).
+    /// The flat renderer does that in DungeonProjection TILE space; the volumetric one inverts the same
+    /// projection down to a building-lattice CELL and snaps to it. Neither needs a second editing code path
+    /// here, which is exactly why the mapping was pushed behind the interface.
     ///
     /// Sits on the same GameObject hierarchy as before (a child of DungeonEditorScreen.MapArea) and
     /// carries the same rect gotcha: never read a rect at Bind time (it is {0,0} pre-activation) —

@@ -4,24 +4,30 @@ using WorldGen.Generation;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Draw-only contract for one dungeon-floor view (sub-project 3 revision). A renderer NEVER receives
-    /// raw input, mutates the model, or knows about selection semantics — DungeonViewController owns all of
-    /// that and resolves PointerEventData down to an AREA-LOCAL point. From there, hit-testing and
-    /// area-local→normalized mapping are THIS renderer's own coordinate space (Task 6: HitRoomId /
-    /// TryAreaToNorm) — the flat renderer still does it via Projection + TILE space, but a non-projection
-    /// renderer (Task 7) is free to hit-test and map in its own space instead.
+    /// Draw-only contract for one interior-floor view. A renderer NEVER receives raw input, mutates the
+    /// model, or knows about selection semantics — DungeonViewController owns all of that and resolves
+    /// PointerEventData down to an AREA-LOCAL point. From there, hit-testing and area-local→normalized
+    /// mapping are THIS renderer's own coordinate space (Task 6: HitRoomId / TryAreaToNorm).
     ///
-    /// That inversion is the entire point of the split: because Граф and Изо differ only by
-    /// DungeonProjection.SquashY, one controller drives both, and editing in Изо is structural rather
-    /// than a second code path (spec R4/R5).
+    /// That inversion is the entire point of the split, and there are now two live implementations proving
+    /// it: DungeonFlatRenderer (dungeons + building interiors) maps through DungeonProjection in TILE space;
+    /// SettlementVolumeRenderer (settlements) inverts the same projection down to a building-lattice CELL and
+    /// snaps to it. One controller drives both with no per-renderer editing branch. The host picks the
+    /// renderer from the interior's Kind — there is no user-facing view toggle (the Граф/Изо toggle this
+    /// interface was originally shaped for never shipped; the iso renderer was built and dropped).
     /// </summary>
     public interface IDungeonRenderer
     {
-        /// <summary>Tile↔pixel mapping for THIS view. The flat renderer uses it for its own hit-testing and
-        /// drag mapping; it is resolved by ResolveProjection and then held (spec R6 — no rescaling
-        /// mid-drag). The controller ALSO still reads Projection.PxPerTile directly, as its own
-        /// pointer-input readiness gate (TryPointerToAreaLocal) — a future renderer without a meaningful
-        /// PxPerTile needs that gate revisited, not just HitRoomId/TryAreaToNorm implemented (Task 7).</summary>
+        /// <summary>Tile↔pixel mapping for THIS view. Both renderers use it for their own hit-testing and drag
+        /// mapping; it is resolved by ResolveProjection and then held (spec R6 — no rescaling mid-drag).
+        ///
+        /// PxPerTile IS LOAD-BEARING BEYOND DRAWING. The controller reads it directly as its pointer-input
+        /// readiness gate (TryPointerToAreaLocal), BEFORE any delegation: while PxPerTile &lt;= 0 every click
+        /// and drag is discarded and HitRoomId/TryAreaToNorm are never reached. An implementer must therefore
+        /// produce a meaningful positive PxPerTile, not merely implement the two mapping methods. The
+        /// volumetric renderer satisfies this by expressing its camera tilt as DungeonProjection.SquashY and
+        /// fitting normally, so PxPerTile stays exactly "pixels per tile" and its cell width derives from it
+        /// (Cell × TilesPerAxis × PxPerTile) — which is why that gate did not have to be revisited.</summary>
         DungeonProjection Projection { get; }
 
         /// <summary>The RectTransform pointer coordinates are resolved against (this renderer's own root).</summary>
@@ -33,16 +39,30 @@ namespace WorldGen.Rendering
         // renderer's own coordinate space and stays here.
 
         /// <summary>Topmost room whose footprint contains areaLocalPoint (mapped into this renderer's own
-        /// space). "Topmost" = drawn last, so overlapping rooms resolve the same way they LOOK stacked.
-        /// Returns 0 for a miss (background).</summary>
+        /// space), resolving an overlap the way the view makes it LOOK stacked. Returns 0 for a miss
+        /// (background) — never a negative id: DungeonViewController.OnPointerClick keys "clear the
+        /// selection" on exactly `id == 0`, so any other miss value silently breaks background-click.
+        ///
+        /// PRECONDITION: <paramref name="lvl"/> must be the controller's currently bound floor and non-null —
+        /// this is the room list the answer is drawn from, and the controller guards it before every call. An
+        /// implementer should treat null as a miss rather than throwing, but must not rely on being handed
+        /// one.</summary>
         int HitRoomId(Vector2 areaLocalPoint, InteriorFloor lvl);
 
         /// <summary>areaLocalPoint → normalized 0..1 room position, via this renderer's own coordinate map.
-        /// False if this renderer cannot place the point (e.g. an unresolved projection) — the caller must
-        /// not act on out/out params when this returns false.</summary>
+        /// The caller must not act on nx/ny when this returns false.
+        ///
+        /// FALSE means "I cannot place this point", and implementers differ in whether that is reachable —
+        /// which is deliberate, not an inconsistency to normalize away. DungeonFlatRenderer returns true
+        /// unconditionally: its only failure mode is an unresolved projection, and the controller's own
+        /// PxPerTile gate already rejected that before the point ever arrived, so it has nothing left to
+        /// refuse. SettlementVolumeRenderer does return false — for a not-yet-built tile grid or a degenerate
+        /// projection — because for it those states would silently answer with a corner cell rather than with
+        /// nothing, and the drag path needs to be able to tell the difference.</summary>
         bool TryAreaToNorm(Vector2 areaLocalPoint, out float nx, out float ny);
 
-        /// <summary>The GameObject the controller activates/deactivates when the Граф/Изо toggle flips.</summary>
+        /// <summary>This renderer's own root GameObject. The controller deactivates the outgoing renderer's
+        /// Host and activates the incoming one's whenever SetRenderer swaps them.</summary>
         GameObject Host { get; }
 
         /// <summary>Fit Projection to the given TILE-space bounds and this renderer's own rect. Called ONCE
@@ -59,10 +79,11 @@ namespace WorldGen.Rendering
         /// <summary>Tear down and rebuild every visual from scratch (structural change: add/delete/link,
         /// level switch, room type/size change).
         ///
-        /// NAMED RebuildView, not Rebuild, on purpose: DungeonIsoRenderer derives from UnityEngine.UI.Graphic,
-        /// which ALREADY has a public virtual Rebuild(CanvasUpdate). A same-name member would be a legal
-        /// overload but a genuine landmine — a mistyped argument would silently bind to Unity's canvas
-        /// rebuild instead of ours.</summary>
+        /// NAMED RebuildView, not Rebuild, on purpose: any implementer deriving from UnityEngine.UI.Graphic
+        /// (the dropped iso renderer did) ALREADY inherits a public virtual Rebuild(CanvasUpdate). A same-name
+        /// member would be a legal overload but a genuine landmine — a mistyped argument would silently bind
+        /// to Unity's canvas rebuild instead of ours. Neither renderer that exists today derives from Graphic,
+        /// but the name stays: the hazard returns the moment one does.</summary>
         void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                          System.Action<int> onJumpToLevel);
 

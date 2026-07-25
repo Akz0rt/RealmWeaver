@@ -427,11 +427,21 @@ namespace WorldGen.Rendering
 
         // ── Hit-test and screen→norm (Task 6, moved verbatim from DungeonViewController) ──
 
-        /// <summary>Topmost room whose FOOTPRINT contains the tile point. "Topmost" = drawn last = largest
-        /// tile Y (painter's order is by Y — see DungeonIsoRenderer.DepthOf), so overlapping rooms resolve
-        /// the same way they LOOK stacked. Returns 0 for a miss (background). Moved verbatim from
-        /// DungeonViewController.HitRoomId — only the tx/ty source changed, from a controller-supplied tile
-        /// point to this renderer's own Projection.LocalToTile of the caller's area-local point.</summary>
+        /// <summary>Topmost room whose FOOTPRINT contains the tile point. Returns 0 for a miss (background).
+        ///
+        /// "Topmost" resolves to LARGEST TILE Y — the room furthest south. That is a deliberate CONVENTION,
+        /// not a readback of this renderer's own draw order: cards are built in lvl.Rooms order (RebuildView's
+        /// foreach over lvl.Rooms), so the card actually drawn last is whichever room happens to sit last in
+        /// that list, and two overlapping rooms may well LOOK stacked the other way round. Largest-Y is
+        /// picked because it is the rule the volumetric renderer's painter order genuinely follows
+        /// (SettlementTileGrid.DepthKey — larger row = south = nearer the viewer), so both renderers resolve
+        /// an ambiguous click identically. This comment previously cited a "DungeonIsoRenderer.DepthOf" as
+        /// the source of a by-Y painter order; no such class exists anywhere in the repo — the iso renderer
+        /// was built and then dropped in sub-project 3 — and the claim was false for this renderer besides.
+        ///
+        /// Moved verbatim from DungeonViewController.HitRoomId — only the tx/ty source changed, from a
+        /// controller-supplied tile point to this renderer's own Projection.LocalToTile of the caller's
+        /// area-local point.</summary>
         public int HitRoomId(Vector2 areaLocalPoint, InteriorFloor lvl)
         {
             var (tx, ty) = Projection.LocalToTile(areaLocalPoint.x, areaLocalPoint.y);
