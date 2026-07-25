@@ -55,6 +55,11 @@ namespace WorldGen.Rendering
         InteriorFloor boundLevel;   // last-bound level OBJECT (not just index) — see Bind's sameBinding check
         Font font;
         IDungeonRenderer renderer;
+        // The two renderers the host installs once (SetRenderers, Task 8). The ACTIVE one is `renderer` above
+        // and is re-picked from the bound interior's Kind on every Bind — there is no user-facing view toggle.
+        // Both may be null in a host that installs only one (SetRenderer still works standalone).
+        IDungeonRenderer flatRenderer;
+        IDungeonRenderer volumeRenderer;
         int pendingLinkId;
         bool needsProjectionFit;
         int draggingRoomId;
@@ -79,6 +84,38 @@ namespace WorldGen.Rendering
         const float DragClampMin = 0.04f;
         const float DragClampMax = 0.96f;
 
+        /// <summary>The settlement CELL LATTICE to snap a room position onto, or null when the bound interior
+        /// is not a settlement (dungeons and building interiors keep their free, continuous positions).
+        ///
+        /// WHY THE CONTROLLER RE-SNAPS AT ALL. SettlementVolumeRenderer.TryAreaToNorm already answers with a
+        /// cell CENTRE, so a position that came straight out of it is on the lattice. The hazard is every
+        /// controller-side write that then MODIFIES that answer — the drag clamp, the drag-settle nudge, and
+        /// «+ Здание»'s fixed (0.5, 0.5). One object = one cell is the whole model of this view: a room parked
+        /// between cells still snaps to one for DRAWING (CellI/CellJ round), so the damage is not a
+        /// half-drawn tile, it is the ANCHOR — SettlementTileGrid.Allocate anchors the lattice on the min-X /
+        /// min-Y building, so if the off-lattice room happens to be that one, EVERY other building's cell
+        /// index shifts and the whole town slides up to half a cell.
+        ///
+        /// CALL THIS BEFORE THE WRITE, NEVER AFTER. The anchor is read from the room list, so a lattice
+        /// derived AFTER an off-lattice write is anchored on the very room that needs correcting: SnapX/SnapY
+        /// would then be an exact no-op against a lattice that has already shifted. Every call site here
+        /// captures the lattice first and applies it to the value it is about to store. Taken before the
+        /// write, the lattice is exact — generation places buildings on this pitch and every accepted drag
+        /// lands on a cell centre, so the anchor is genuinely on-lattice at that moment.</summary>
+        SettlementTileGrid LatticeFor(InteriorFloor lvl)
+            => dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl != null
+                 ? SettlementTileGrid.Allocate(lvl.Rooms)
+                 : null;
+
+        /// <summary>Snap one room onto a lattice captured BEFORE it was written. No-op for a null lattice
+        /// (non-settlement) or a room that has since vanished.</summary>
+        static void SnapToLattice(SettlementTileGrid lattice, Room room)
+        {
+            if (lattice == null || room == null) return;
+            room.X = lattice.SnapX(room.X);
+            room.Y = lattice.SnapY(room.Y);
+        }
+
         InteriorFloor BoundLevel =>
             dungeon != null && levelIndex >= 0 && levelIndex < dungeon.Floors.Count
                 ? dungeon.Floors[levelIndex] : null;
@@ -92,13 +129,36 @@ namespace WorldGen.Rendering
         /// floor renders at the IDENTICAL scale and position, and the stairwell column (and every room) looks
         /// absolutely the same on every floor (user 2026-07-19). The current floor is NOT unioned in: upper
         /// floors are generated within this outline (nothing is clipped), and floor 0's own rooms ARE the
-        /// outline, so a per-floor union would only make the fit jitter between floors. For a walled
-        /// SETTLEMENT (Task 3, Ц1.5; Task 7 fence rework): the fence extends past its inner buildings, so a
-        /// room-only fit clips the fence's corners off-screen — fit the UNION of the rooms' bounds and the
-        /// DERIVED fence's own bounds (DungeonLayout.DeriveTownFence) instead, the same "union with a second
-        /// shape's bounds" precedent as the Building case just above. A wall-less settlement (village/camp)
-        /// falls through to the plain room bounds below (HasWall == false). Dungeons: the
-        /// current floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
+        /// outline, so a per-floor union would only make the fit jitter between floors.
+        ///
+        /// SETTLEMENT (Task 8 — this now fits the 2.5D TILE GRID, not the fence polyline). What is drawn for a
+        /// town is SettlementTileGrid's cell lattice, and it reaches MUCH further out than the fence polyline
+        /// the old fit unioned in, so that fit clipped the wall ring off-screen. The numbers, all in tiles
+        /// (one lattice cell = SettlementGenerator.BuildingCell × TilesPerAxis = 8.96 tiles):
+        ///   • the wall ring sits CourtyardCells+1 = 2 cells beyond the occupied seed (SettlementTileGrid.
+        ///     BuildWallRing's dilation radius);
+        ///   • on the CLEAN tier — which is what a bind draws — that seed includes the ROAD cells, and roads
+        ///     reach the gates, which sit a building half-width (3) + SettlementFence.FenceMarginTiles (2) =
+        ///     5 tiles outside the buildings, i.e. ONE more cell (SettlementRoads' own A* grid is bounded to
+        ///     the nodes' bbox + GridMargin 4 tiles, so nothing can bulge past that);
+        ///   • each drawn tile extends half a cell past its own centre.
+        /// 2 + 1 + 0.5 = 3.5 cells = 31.4 tiles past the outermost building CENTRE — which is exactly the
+        /// extent SettlementTileGrid.Allocate(buildings) already allocates (its MarginCells is 3) taken ±half
+        /// a cell. So the fit is read straight off Allocate rather than re-deriving a margin here, and no road
+        /// routing is needed on the fit path at all (the old DeriveTownFence(includeRoads: true) call is gone —
+        /// the ring's INNER edge at ~17.9 tiles already strictly encloses that polyline at ~5 tiles, so it
+        /// contributed nothing but a ~12.5 ms road A* per bind).
+        ///
+        /// A WALL-LESS settlement (village/camp) keeps its room-bounds fit, widened by half a cell: it draws no
+        /// ring, so the allocated grid's 3-cell margin would shrink it for nothing, but its building tiles are
+        /// still a full cell wide where a room footprint is 6 tiles.
+        ///
+        /// BOTH settlement cases add ExtrusionHeadroomTiles at the NORTH (min-Y) edge: bounds describe the
+        /// GROUND plane only and every box is drawn upward out of it, so without it the back row's roofs are
+        /// clipped off the top of the panel. Nothing is needed at the south edge — a box's front face bottom
+        /// sits exactly on its ground footprint edge, already covered by the half-cell.
+        ///
+        /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
         (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
@@ -107,20 +167,75 @@ namespace WorldGen.Rendering
                 float pad = FloorFootprint.ContourMargin + ContourViewPad;
                 return (c.minX - pad, c.minY - pad, c.maxX + pad, c.maxY + pad);
             }
-            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl.SettlementParams?.HasWall == true)
+            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl != null)
             {
-                var (rMinX, rMinY, rMaxX, rMaxY) = DungeonProjection.ContentBoundsTiles(lvl);
-                // The fence is DERIVED here (no stored Wall) and is ALREADY tile space, so read its bounds with
-                // tileSpace: true — a ×T here would double-scale the union far off-screen. A null derive
-                // (degenerate trace) yields WallBoundsTiles' degenerate centre box, which the min/max absorbs.
-                // FitBoundsFor runs ONLY on bind / renderer-swap (needsProjectionFit is set at SetRenderer and
-                // Bind, never in the drag path), so it is a one-shot — include roads for the accurate fence bounds.
-                var (wMinX, wMinY, wMaxX, wMaxY) = DungeonProjection.WallBoundsTiles(DungeonLayout.DeriveTownFence(lvl, includeRoads: true), tileSpace: true);
-                return (System.Math.Min(rMinX, wMinX), System.Math.Min(rMinY, wMinY),
-                        System.Math.Max(rMaxX, wMaxX), System.Math.Max(rMaxY, wMaxY));
+                var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(lvl);
+                const float T = DungeonLayout.TilesPerAxis;
+                float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 4.48 tiles
+
+                if (lvl.SettlementParams?.HasWall == true)
+                {
+                    // Buildings-only Allocate: cheap (two passes over the rooms, no dilate/flood-fill) and the
+                    // extent it produces is the one derived above. The union with the room bounds is kept for
+                    // the same reason the pre-Task-8 fit unioned the fence in — a room can never be clipped —
+                    // and it is what carries the degenerate case below.
+                    var g = SettlementTileGrid.Allocate(lvl.Rooms);
+                    // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
+                    // NOT at the town: unioning that box in would drag the fit to the corner of the field.
+                    // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
+                    if (g.W > 1 || g.H > 1)
+                    {
+                        minX = System.Math.Min(minX, g.CenterX(g.OriginI) * T - halfCell);
+                        minY = System.Math.Min(minY, g.CenterY(g.OriginJ) * T - halfCell);
+                        maxX = System.Math.Max(maxX, g.CenterX(g.OriginI + g.W - 1) * T + halfCell);
+                        maxY = System.Math.Max(maxY, g.CenterY(g.OriginJ + g.H - 1) * T + halfCell);
+                    }
+                }
+                else
+                {
+                    minX -= halfCell; minY -= halfCell; maxX += halfCell; maxY += halfCell;
+                }
+
+                // The active renderer IS the volumetric one whenever Kind == Settlement: SetRenderers/Bind
+                // apply RendererForKind BEFORE anything can call this (Bind writes `dungeon` first, then
+                // gates, and SetRenderer assigns `renderer` before its own Refresh). The ?? 0f is therefore
+                // unreachable in practice and exists so a host that installed only the flat renderer still
+                // fits to something sane instead of throwing.
+                float headroom = (renderer as SettlementVolumeRenderer)?.ExtrusionHeadroomTiles ?? 0f;
+                return (minX, minY - headroom, maxX, maxY);
             }
             return DungeonProjection.ContentBoundsTiles(lvl);
         }
+
+        /// <summary>Install BOTH renderers at once (Task 8) and activate the one the CURRENT binding calls for.
+        /// The host builds them; the KIND-GATE lives here, so no caller has to remember which interior gets
+        /// which view (spec: "the host does the Kind-gating" was revised to "the host installs, the controller
+        /// gates" — one rule, one place, and Bind can re-apply it when the Kind changes under a live screen).
+        ///
+        /// The explicit deactivation is LOAD-BEARING and not something SetRenderer can do for us: SetRenderer
+        /// only ever deactivates the OUTGOING renderer, and at install time there is none — so the renderer we
+        /// are not choosing would stay active and draw its own visuals straight on top of the chosen one (flat
+        /// room cards over the 2.5D tiles). The `!ReferenceEquals(..., want)` guard matters just as much in the
+        /// other direction: SetRenderer early-returns when the wanted renderer is already active, so
+        /// deactivating it here unconditionally would leave the view permanently blank.</summary>
+        public void SetRenderers(IDungeonRenderer flat, IDungeonRenderer volume)
+        {
+            flatRenderer = flat;
+            volumeRenderer = volume;
+            var want = RendererForKind();
+            if (flat != null && flat.Host != null && !ReferenceEquals(flat, want)) flat.Host.SetActive(false);
+            if (volume != null && volume.Host != null && !ReferenceEquals(volume, want)) volume.Host.SetActive(false);
+            SetRenderer(want);
+        }
+
+        /// <summary>The renderer the CURRENT binding calls for: a settlement (town/city) draws 2.5D volumetric
+        /// tiles, everything else — dungeons and building interiors — keeps the flat schematic. Falls back to
+        /// the flat renderer whenever the volumetric one was never installed, so a host that wires only one
+        /// (or a headless/test host) degrades to the pre-Task-8 behaviour instead of drawing nothing.</summary>
+        IDungeonRenderer RendererForKind()
+            => dungeon != null && dungeon.Kind == InteriorKind.Settlement && volumeRenderer != null
+                 ? volumeRenderer
+                 : flatRenderer;
 
         /// <summary>Swap the active renderer (Граф ⇄ Изо). Deactivates the old host, activates the new,
         /// re-fits the new renderer's projection to the bound level and rebuilds it. Selection, link mode
@@ -165,7 +280,18 @@ namespace WorldGen.Rendering
                 // Re-fit the scale to the new level's content (spec R6: fit once per bind, then hold).
                 needsProjectionFit = true;
             }
-            Refresh();
+            // Kind-gate the renderer (Task 8). Deliberately AFTER the field writes above: SetRenderer calls
+            // Refresh() itself, and Refresh reads `dungeon` / `boundLevel` — gating before the writes would
+            // paint the PREVIOUS binding into the new renderer for one frame, and FitBoundsFor would fit it to
+            // the previous interior's bounds. When the right renderer is already active this is a no-op
+            // (SetRenderer early-returns on ReferenceEquals), which is the normal case: the Kind only changes
+            // when the DM opens a different interior in the same screen (town ⇄ its building's own interior).
+            var want = RendererForKind();
+            bool swapped = want != null && !ReferenceEquals(want, renderer);
+            SetRenderer(want);
+            // SetRenderer already rebuilt through Refresh() when it actually swapped; a second Refresh here
+            // would re-route a settlement's roads (~12.5 ms) for nothing on every town open.
+            if (!swapped) Refresh();
         }
 
         /// <summary>Full visual rebuild from the bound level.</summary>
@@ -257,7 +383,25 @@ namespace WorldGen.Rendering
                 // one. Any shaft check run in that window sees a mismatch of the nudge distance and reports a
                 // false «лестница не совпадает со столбом». Hence OnCascadeSettled: the host re-validates only
                 // once the animation has landed. Do not move validation back before the animation.
+                //
+                // SETTLEMENT re-snap (Task 8, handoff b). NudgeRoomOffOverlaps measures in TILES and shoves by
+                // the penetration depth, which is never a whole number of cells — so for a settlement the
+                // nudge is the second controller-side write that lands a room off the lattice, and the anchor
+                // hazard in LatticeFor applies in full. The nudge is deliberately RUN and then corrected,
+                // NOT skipped: cell snapping makes an exact-centre collision a NORMAL outcome (drop a building
+                // on an occupied cell and the two rooms share one X/Y exactly), and two rooms at one position
+                // are not merely ugly — HitRoomId's tie-break (larger Y, then larger Id) then returns the SAME
+                // one forever, so the other can never be selected or dragged again. With the nudge, identical
+                // centres give overlapX == overlapY, which takes the Y branch and shoves a full room width
+                // (6.005 tiles) — past the half-cell (4.48) rounding threshold — so the re-snap lands it on
+                // the ADJACENT cell rather than back on top. Residual, not fixed here: if that neighbour is
+                // occupied too, the least-penetration shove oscillates into PlaceOutwardFromPoint's nearest-
+                // free-slot fallback, whose position can still round back onto an occupied cell.
+                var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE the nudge moves anything
                 BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
+                // Only lastAnchorRoomId can have moved: NudgeRoomOffOverlaps moves that room alone, and
+                // RealignUpperFloorsToColumn early-returns for a settlement's single floor.
+                SnapToLattice(lattice, lvl.GetRoom(lastAnchorRoomId));
             }
             else
             {
@@ -414,7 +558,14 @@ namespace WorldGen.Rendering
         {
             var lvl = BoundLevel;
             if (lvl == null) return null;
+            // SETTLEMENT (Task 8, handoff b — the THIRD write of that class, beyond the two the handoff named):
+            // «+ Здание» is on the settlement toolbar (DungeonEditorScreen.RefreshToolbar's free-edit branch),
+            // and DungeonOps.AddRoom writes a TypeId 1 room — a BUILDING, which Allocate's anchor pass counts —
+            // at the fixed canvas centre (0.5, 0.5), which is not a cell centre. Captured before the add for
+            // the usual reason: the new room could itself be the min-X/min-Y building.
+            var lattice = LatticeFor(lvl);
             var room = DungeonOps.AddRoom(lvl, 0.5f, 0.5f);
+            SnapToLattice(lattice, room);
             // BUILDING (spec C6 / user 2026-07-19): a + room must become PART of the building, never float in
             // empty space outside the contour — attach it flush to the nearest room, so the footprint grows to
             // wrap it. The placement is FINAL — we do NOT set lastAnchorRoomId, so BeginCascade's anti-overlap
@@ -505,10 +656,21 @@ namespace WorldGen.Rendering
             var room = lvl?.GetRoom(draggingRoomId);
             if (room == null) return;
             if (!TryPointerToAreaLocal(data, out var local)) return;
+            // FALSE means the renderer genuinely cannot place this point (no tile grid drawn yet, degenerate
+            // projection) — nx/ny are meaningless then, so bail rather than write a corner position.
             if (!renderer.TryAreaToNorm(local, out float nx, out float ny)) return;
 
+            // SETTLEMENT (Task 8, handoff b): the clamp below is off-lattice by construction — 0.04/0.96 are
+            // not cell centres — so re-snap after it. Captured BEFORE the write; see LatticeFor for why the
+            // order is load-bearing. For a dungeon/building LatticeFor is null and the clamp stands alone,
+            // byte-identical to before.
+            var lattice = LatticeFor(lvl);
             room.X = Mathf.Clamp(nx, DragClampMin, DragClampMax);
             room.Y = Mathf.Clamp(ny, DragClampMin, DragClampMax);
+            // The snap can push a clamped value back OUT of [0.04, 0.96] by up to half a cell (0.035), so for
+            // a settlement the clamp is now approximate: worst case ~0.005, still on the board — and the view
+            // itself is fit to the buildings, so it follows them out rather than cropping them.
+            SnapToLattice(lattice, room);
 
             // BUILDING (spec C4): the room moves FREELY with the cursor — NO corridor leash — so the DM can
             // pull it right out of the contour and watch C2' flag it live (RepositionRooms re-tests the

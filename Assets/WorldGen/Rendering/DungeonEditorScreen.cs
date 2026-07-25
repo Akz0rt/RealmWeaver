@@ -55,7 +55,7 @@ namespace WorldGen.Rendering
 
         DungeonViewController viewController;
         DungeonFlatRenderer flatRenderer;
-        // DungeonIsoRenderer isoRenderer;   // deferred — not yet built
+        SettlementVolumeRenderer volumeRenderer;   // Task 8: the 2.5D town view; picked by Kind, not by a toggle
         DungeonInspectorPanel inspectorPanel;
         Image linkToggleImg;
         int selectedRoomId;   // mirrors DungeonViewController.SelectedRoomId; drives inspectorPanel.ShowRoom
@@ -115,7 +115,7 @@ namespace WorldGen.Rendering
             EnsureBuilt();
             current = dungeon;
             this.headerOverride = headerOverride;
-            if (flatRenderer != null) flatRenderer.RoomsWithInterior = roomsWithInterior ?? new HashSet<int>();
+            SetRoomsWithInterior(roomsWithInterior);
             if (current.Floors.Count == 0)
             {
                 if (current.Kind == InteriorKind.Building)
@@ -124,6 +124,21 @@ namespace WorldGen.Rendering
                     current.Floors.Add(DungeonGraphGenerator.Generate(FreshSeed(), DefaultRooms));
             }
             SetLevel(0);
+        }
+
+        /// <summary>Publish the has-interior mark (Ц2) to EVERY renderer this screen owns, not just the active
+        /// one. Both DungeonFlatRenderer and SettlementVolumeRenderer declare the property with the identical
+        /// name and shape on purpose (see the volumetric renderer's own doc), but it is NOT on IDungeonRenderer
+        /// and there is no shared assignment path — so this single funnel exists instead of repeating the
+        /// null-coalesce at each call site. Assigning to BOTH rather than to the current one matters because
+        /// the two call sites run at different moments in the swap: Bind sets this BEFORE SetLevel(0) fires the
+        /// first rebuild, and at that instant the Kind-gate may not have swapped the renderer yet. The two
+        /// renderers deliberately SHARE the one set instance — both only ever read it.</summary>
+        void SetRoomsWithInterior(HashSet<int> rooms)
+        {
+            var set = rooms ?? new HashSet<int>();
+            if (flatRenderer != null) flatRenderer.RoomsWithInterior = set;
+            if (volumeRenderer != null) volumeRenderer.RoomsWithInterior = set;
         }
 
         public void SetLevel(int index)
@@ -750,8 +765,7 @@ namespace WorldGen.Rendering
             // set "BEFORE SetLevel(0) ... so that first rebuild already sees it" — SetLevel -> RefreshBody
             // is the rebuild that reads it, so refreshing AFTER SetLevel(0) would draw one frame of stale
             // marks that nothing then redraws.
-            if (flatRenderer != null)
-                flatRenderer.RoomsWithInterior = RemoveAllBuildingInteriors?.Invoke() ?? new HashSet<int>();
+            SetRoomsWithInterior(RemoveAllBuildingInteriors?.Invoke());
 
             // New seed each press so the DM gets a DIFFERENT town. A stable char-hash of the POI id (NOT
             // string.GetHashCode, which is randomized per process in modern .NET) plus a per-press counter:
@@ -891,7 +905,19 @@ namespace WorldGen.Rendering
             Stretch(flatGO.GetComponent<RectTransform>());
             flatRenderer = flatGO.AddComponent<DungeonFlatRenderer>();
 
-            viewController.SetRenderer(flatRenderer);   // the only renderer today; the seam a deferred iso renderer plugs into
+            // Task 8: the second renderer, built exactly like the first — its OWN GameObject under the same
+            // interaction host, created WITH a RectTransform (its Area is `transform as RectTransform`, and a
+            // bare container GameObject has none) and STRETCHED (an unlaid-out {0,0} rect makes
+            // ResolveProjection refuse forever, i.e. a permanently blank view).
+            var volumeGO = new GameObject("VolumeRenderer", typeof(RectTransform));
+            volumeGO.transform.SetParent(viewGO.transform, false);
+            Stretch(volumeGO.GetComponent<RectTransform>());
+            volumeRenderer = volumeGO.AddComponent<SettlementVolumeRenderer>();
+
+            // Both are INSTALLED here; which one is ACTIVE is the controller's Kind-gate (settlement → 2.5D,
+            // dungeon/building → flat), re-applied on every Bind. SetRenderers also deactivates the host that
+            // is not chosen — SetRenderer alone would leave both drawing.
+            viewController.SetRenderers(flatRenderer, volumeRenderer);
 
             var sidebarGO = new GameObject("Sidebar", typeof(RectTransform));
             sidebarGO.transform.SetParent(body.transform, false);

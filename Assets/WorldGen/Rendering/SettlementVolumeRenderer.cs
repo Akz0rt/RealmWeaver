@@ -111,6 +111,35 @@ namespace WorldGen.Rendering
 
         public GameObject Host => gameObject;
 
+        /// <summary>Vertical headroom, in TILE-space Y units, that the TALLEST extruded tile occupies ABOVE its
+        /// own ground cell. A caller fitting this view (DungeonViewController.FitBoundsFor) must add it at the
+        /// NORTH (min-Y) edge of the tile-space bounds it fits, or the back row's roofs are clipped off the top
+        /// of the panel — the ground plane is all ResolveProjection's bounds describe, and every box is drawn
+        /// UPWARD out of it.
+        ///
+        /// Derivation, and why it is INDEPENDENT of the scale it is used to compute (no chicken-and-egg):
+        ///   h_px = hCells * cw * heightScale,  cw = Cell * T * PxPerTile
+        ///   dY(tiles) = h_px / (PxPerTile * SquashY) = hCells * Cell * T * heightScale / SquashY
+        /// PxPerTile CANCELS, so this is meaningful before any projection has been resolved — which is exactly
+        /// when the fit needs it. WallHeight is the tallest tile the grid can produce (SettlementTileGrid pins
+        /// WallHeight &gt; BuildingHeightMax), and it is also what stands on the outermost — i.e. the northmost
+        /// drawn — row of a walled town, so it is the right bound for both the walled and the wall-less case
+        /// (a village merely over-budgets by the 0.15-cell wall/house difference, ~1.7 tiles).
+        ///
+        /// Reads the SERIALIZED tunables rather than their defaults on purpose: the DM dials tiltSquash and
+        /// heightScale live at the checkpoint, and a fit computed against the defaults would clip the moment
+        /// either moves. This is the only reason the fit needs to know this renderer's concrete type.</summary>
+        public float ExtrusionHeadroomTiles
+        {
+            get
+            {
+                float squash = tiltSquash > 0f ? tiltSquash : 1f;      // same guard ResolveProjection applies
+                float scale = heightScale > 0f ? heightScale : 0f;     // 0 = no extrusion drawn = no headroom
+                return SettlementTileGrid.WallHeight * SettlementGenerator.BuildingCell
+                     * DungeonLayout.TilesPerAxis * scale / squash;
+            }
+        }
+
         /// <summary>Has-interior mark (Ц2): building room ids whose own interior already exists on file.
         /// EXTERNAL state, set by DungeonEditorScreen BEFORE the RebuildView chain fires — deliberately NOT
         /// reset inside RebuildView. Declared with the IDENTICAL name/shape as
