@@ -29,10 +29,18 @@ namespace WorldGen.Rendering
             //
             // MEASURED, not guessed: a sweep over targets {5,8,12,20,30,40,55,60,80} x seeds 1..60 (540
             // towns, reported in task-A3-report.md) puts the achieved/requested ratio in [0.250, 0.800]. The
-            // band below is that measurement with headroom on both sides, so it is a real constraint (a
-            // layout that produced half as many buildings, or a third again as many, fails here) and not one
-            // widened until the code fit.
+            // band below is that measurement with headroom on both sides, so it is a real constraint over
+            // THAT swept range, and not one widened until the code fit.
+            //
+            // NOT A PROPERTY OF Generate FOR EVERY target, though — only for target >= 5, which is where the
+            // sweep starts and where Check() below is ever called. targets 1..4 are ALSO production-reachable
+            // (DungeonInspectorPanel.StepTargetBuildings clamps only to Max(1, ...)) and break the UPPER bound
+            // by construction, not by any layout defect: achieved is never less than one whole building, so
+            // target 1 alone can read ratio 3.00 (1..3 buildings observed), target 2 up to 1.50, 3 up to 1.33,
+            // 4 up to 1.00 — all measured, none of them a collapse. Check() is scoped to target >= 5 below;
+            // this test makes no claim about the small-target regime.
             const float MinRatio = 0.20f, MaxRatio = 0.90f;
+            const int MinBandTarget = 5;
 
             // One full structural sweep of a generated layout. Called for several (seed, target) pairs below
             // so the invariants are pinned across towns, not on one lucky fixture.
@@ -136,10 +144,15 @@ namespace WorldGen.Rendering
                     }
 
                 // ---- 6. THE ACHIEVED COUNT SITS IN THE STATED BAND -------------------------------------
-                int achieved = layout.Buildings.Count;
-                float lo = MinRatio * target, hi = MaxRatio * target;
-                if (achieved < lo || achieved > hi)
-                { Debug.LogError($"FAIL blocks {at}: achieved {achieved} buildings, want {lo:F1}..{hi:F1} (ratio {(target > 0 ? achieved / (float)target : 0f):F2}, band {MinRatio:F2}..{MaxRatio:F2})"); ok = false; }
+                // Scoped to target >= MinBandTarget — see the band's own doc above for why smaller targets
+                // are not a case this band describes.
+                if (target >= MinBandTarget)
+                {
+                    int achieved = layout.Buildings.Count;
+                    float lo = MinRatio * target, hi = MaxRatio * target;
+                    if (achieved < lo || achieved > hi)
+                    { Debug.LogError($"FAIL blocks {at}: achieved {achieved} buildings, want {lo:F1}..{hi:F1} (ratio {(target > 0 ? achieved / (float)target : 0f):F2}, band {MinRatio:F2}..{MaxRatio:F2})"); ok = false; }
+                }
 
                 // ---- 7. DETERMINISM: THE SAME SEED REPRODUCES THE LAYOUT EXACTLY -----------------------
                 // Cell-for-cell, in order — not "the same counts". A shuffled-but-equal layout is still a

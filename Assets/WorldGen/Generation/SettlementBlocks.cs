@@ -11,7 +11,8 @@ namespace WorldGen.Generation
     /// through street cells only" a statement about this one list rather than two unrelated ones.</summary>
     public sealed class BlockLayout
     {
-        /// <summary>Every street cell, ring included. All streets are ONE cell wide.</summary>
+        /// <summary>Every street cell, ring included. Subdivision strips are exactly one cell wide; the ring
+        /// is 4-connected but only MOSTLY one cell wide — see <see cref="SettlementBlocks.RingStreet"/>.</summary>
         public List<(int i, int j)> StreetCells = new List<(int i, int j)>();
         /// <summary>One footprint per building — non-empty, 4-connected, pairwise disjoint, and each one
         /// 4-adjacent to at least one street cell (nothing is walled in).</summary>
@@ -27,17 +28,21 @@ namespace WorldGen.Generation
     /// FIVE PASSES, IN THIS ORDER, each separately testable:
     ///   1. <see cref="InteriorCells"/> — the lattice cells whose CENTRE lies inside the contour, reduced to
     ///      the single largest 4-connected component (a jittered contour can in principle pinch off a stray).
-    ///   2. <see cref="RingStreet"/> — the one-cell ring just inside the contour: every interior cell with a
-    ///      non-interior 4-neighbour. This is the street every outermost block fronts onto, and it is what
-    ///      keeps a building from ever standing flush against the wall.
+    ///   2. <see cref="RingStreet"/> — the 4-connected ring just inside the contour: every interior cell with
+    ///      a non-interior 4-neighbour, reconnected to one lap. This is the street every outermost block
+    ///      fronts onto, and it is what keeps a building from ever standing flush against the wall.
     ///   3. <see cref="Subdivide"/> — recursive axis-aligned subdivision of what is left (the CORE) by
     ///      one-cell street strips, until a block is at or below <see cref="BlockTargetCells"/>.
     ///   4. <see cref="PlaceGates"/> — a gate where a subdivision street runs out into the ring.
     ///   5. <see cref="FillBlock"/> — each block filled with disjoint, flush footprints of varied size.
     ///
-    /// ALL STREETS ARE ONE CELL WIDE, RING INCLUDED. A wider main axis is deliberately NOT in this arc: it
-    /// would add a street-class concept nothing else models yet, and it would arrive as a hidden default
-    /// rather than a choice the DM made.
+    /// SUBDIVISION STREETS ARE ONE CELL WIDE, ALWAYS. THE RING IS NOT — it is 4-connected, and only MOSTLY
+    /// one cell wide: measured over 540 towns (task-A3-report.md), 25.9% of ring cells are genuinely TWO
+    /// cells deep (all four orthogonal neighbours interior), stable at 21-27% across every town size from a
+    /// 5-building hamlet to an 80-building city. This is not slack to tighten: 4-connectivity and strict
+    /// one-cell width are incompatible on a digitized disk (see <see cref="RingStreet"/>'s own doc for why).
+    /// A wider main axis is deliberately NOT in this arc: it would add a street-class concept nothing else
+    /// models yet, and it would arrive as a hidden default rather than a choice the DM made.
     ///
     /// `targetBuildings` IS ADVISORY. It steers how big the buildings come out (see
     /// <see cref="SizeClassFor"/>), never how many are emitted: the achieved count is whatever the geometry
@@ -80,7 +85,7 @@ namespace WorldGen.Generation
             if (interior.Count == 0) return layout;                     // degenerate contour → empty layout
             var interiorSet = new HashSet<(int i, int j)>(interior);
 
-            // ---- 2. the one-cell ring street just inside the contour ----------------------------------
+            // ---- 2. the ring street just inside the contour (4-connected, mostly one cell wide) -------
             var ring = RingStreet(interior, interiorSet);
             var ringSet = new HashSet<(int i, int j)>(ring);
 
@@ -155,8 +160,8 @@ namespace WorldGen.Generation
 
         // ---- pass 2: the ring street -----------------------------------------------------------------
 
-        /// <summary>The one-cell ring just inside the contour — every interior cell with a 4-neighbour that
-        /// is NOT interior — RECONNECTED so it is a single 4-connected lap of the town.
+        /// <summary>The ring just inside the contour — every interior cell with a 4-neighbour that is NOT
+        /// interior — RECONNECTED so it is a single 4-connected lap of the town.
         ///
         /// THE RECONNECT IS NOT OPTIONAL. The raw rule above is exactly "the cells touching the wall", and it
         /// FRAGMENTS at the poles of any rounded contour: where the shape tapers by more than one cell
@@ -166,11 +171,17 @@ namespace WorldGen.Generation
         /// sweep came out fragmented (seed 13 / target 40 reached only 29 of its 40 street cells from a
         /// gate).
         ///
-        /// The alternative — the EIGHT-neighbour ring, which is 4-connected by the standard digital-topology
-        /// dual — was measured too and rejected: it is genuinely more than one cell wide wherever the contour
-        /// tapers, and it cost ~20% of the achieved building count across the same sweep (target 20 fell from
-        /// an average ratio of 0.54 to 0.41). Reconnecting the thin ring buys the same guarantee for a
-        /// handful of cells.</summary>
+        /// WHAT RECONNECT ACTUALLY PRODUCES, and this corrects an earlier draft of this doc: it is NOT a thin
+        /// one-cell repair sitting alongside a thicker eight-neighbour alternative. Measured over 540 towns
+        /// (task-A3-report.md) the reconnected ring's cell set is EXACTLY the eight-neighbour boundary — every
+        /// interior cell with an 8-neighbour that is not interior — zero mismatches, every single town. That
+        /// is not a defect to fix: 4-connectivity and strict one-cell width are provably incompatible on a
+        /// digitized disk, because the raw 4-boundary (the only ring that IS always one cell wide) fragments
+        /// on 538 of those same 540 towns. So the ring this method returns is 4-connected but only MOSTLY one
+        /// cell wide — genuinely TWO cells deep wherever the contour curves (25.9% of ring cells overall,
+        /// stable at 21-27% across every town size, from a 5-building hamlet to an 80-building city).
+        /// 4-connectivity was chosen over strict width because the alternative — a ring that fragments on
+        /// 538/540 towns, i.e. almost always — is the far worse defect.</summary>
         public static List<(int i, int j)> RingStreet(IReadOnlyList<(int i, int j)> interior,
                                                      HashSet<(int i, int j)> interiorSet)
         {
@@ -313,9 +324,18 @@ namespace WorldGen.Generation
         ///
         /// FALLBACK, and it is a judgement call: a town too small to subdivide at all (a hamlet whose whole
         /// core is under BlockTargetCells) produces no subdivision street and therefore no gate by the rule
-        /// above — yet a walled settlement with no way in is not a thing. Such a town gets two gates, at the
-        /// first and last ring cell in row-major order; those are the extreme ends of the ring, so they land
-        /// on opposite sides rather than side by side.</summary>
+        /// above — yet a walled settlement with no way in is not a thing. Such a town gets a gate at the
+        /// first ring cell in row-major order, plus a SECOND at the last ring cell — normally the two extreme
+        /// ends of the ring, landing on opposite sides rather than side by side.
+        ///
+        /// THIS PROMISES TWO GATES BUT CAN DELIVER ONE: when the ring is small enough that its row-major
+        /// first and last cell are the SAME cell, "first" and "last" collapse and only one gate comes out.
+        /// Measured, not theorised: a WallContour radius of ~0.05 reproduces this. It is unreachable through
+        /// SettlementGenerator.BuildFloor/Generate — WallRadiusFor floors at 0.16, safely above where the
+        /// collapse starts — but this method is public and does not itself enforce that floor, so a caller
+        /// building a WallContour directly can still hit it. Left as a known one-gate edge case rather than
+        /// patched: fabricating a second gate on a ring this degenerate (small enough to have no distinct
+        /// "opposite side" left) would need a rule invented for a shape production code never builds.</summary>
         public static List<(int i, int j)> PlaceGates(IReadOnlyList<(int i, int j)> ring,
                                                      IReadOnlyList<(int i, int j)> primaryStreets,
                                                      HashSet<(int i, int j)> ringSet)

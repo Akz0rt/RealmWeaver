@@ -342,11 +342,17 @@ namespace WorldGen.Rendering
             // of the ~68 cells a WallRadiusFor(40) interior holds. A town is now blocks-and-streets: the
             // one-cell ring plus the subdivision strips take roughly HALF the interior before a single house
             // is placed, so half the target is no longer reachable at any seed — the number had to move or
-            // it would be asserting the old model. Re-derived from the new model's measured envelope
-            // (targets 5..80 x seeds 1..60, task-A3-report.md): at target 40 the achieved count is 15..24,
-            // i.e. ratio 0.375..0.600. 12 is 0.30 x target — 20% below the measured minimum, so it still
-            // fires on any real collapse (a near-empty town, a fill that stopped seeding) while no longer
-            // encoding a density the geometry cannot produce.
+            // it would be asserting the old model.
+            //
+            // SAME RULE AS SelfTestBlocks' OWN MinRatio, just applied at this fixture's own scope rather than
+            // cross-target: both floors are 0.8 x a measured minimum, they were only ever UNDOCUMENTED as the
+            // same rule. SelfTestBlocks' MinRatio (0.20) is 0.8 x the GLOBAL measured minimum ratio across
+            // every swept target, 0.250 (task-A3-report.md §8, the "all" row). 12 here is 0.8 x the measured
+            // minimum count AT THIS FIXTURE'S OWN target, 15 (target 40's own row: 15..24 buildings over seeds
+            // 1..60) — a tighter number BECAUSE it is scoped to one target instead of nine. One rule, two
+            // scopes: the cross-target test needs the loose (global) form, a single-target fixture like this
+            // one can afford the tight (local) form, and both stay reachable from the same "0.8 x measured
+            // minimum" sentence rather than reading as two unrelated tolerances.
             const int minBuildNodes = 12;
             if (buildNodes < minBuildNodes)
             { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥{minBuildNodes} for a 40-target town"); ok = false; }
@@ -458,10 +464,13 @@ namespace WorldGen.Rendering
             if (gateNodes != 0)
             { Debug.LogError($"FAIL village: {gateNodes} gate rooms in a wall-less village, want 0"); ok = false; }
             // RE-DERIVED from 20, identically to SelfTestAssembly's own floor (arc A, task 3) — same model
-            // change, same measured envelope (target 40 → 15..24 buildings over seeds 1..60), same 0.30 x
-            // target floor. This fixture (seed 4) happens to land on 21 and would still have squeaked past
-            // 20, which is precisely why it is being moved: a threshold that survives by one building is
-            // pinning luck, not a rule.
+            // change, same measured envelope (target 40 → 15..24 buildings over seeds 1..60). This fixture
+            // (seed 4) happens to land on 21 and would still have squeaked past 20, which is precisely why
+            // it is being moved: a threshold that survives by one building is pinning luck, not a rule.
+            //
+            // SAME RULE AS SelfTestBlocks' OWN MinRatio, same reasoning as SelfTestAssembly's identical floor
+            // just above: both are 0.8 x a measured minimum, only at different scope (cross-target 0.250 for
+            // MinRatio vs this-target 15 for the 12 here) — one rule, two scopes, not two tolerances.
             const int minVillageBuildings = 12;
             if (buildNodes < minVillageBuildings)
             { Debug.LogError($"FAIL village: a village produced only {buildNodes} buildings, want >={minVillageBuildings}"); ok = false; }
@@ -881,11 +890,55 @@ namespace WorldGen.Rendering
             foreach (var r in floor.Rooms)
                 if (r.TypeId == 1)
                     foreach (var c in SettlementFootprint.Decode(r.Cells)) occupied.Add(c);
+            // Stored STREET cells count as occupied too. Without this, the "free" 4-neighbour picked below
+            // could be a street cell — the drag would still relocate the building and (b)'s assertion would
+            // still fire, but onto a cell that is a road, i.e. a house standing in the street rather than a
+            // free lot. Found in review.
+            foreach (var c in SettlementFootprint.Decode(floor.SettlementParams?.StreetCells)) occupied.Add(c);
+            // Nearest lattice cell to `origin` that is in neither `occupied` set, searched ring by ring
+            // (Chebyshev distance 1, 2, 3, ...) rather than just the immediate 4-neighbours. Needed because
+            // this fixture's whole interior — ring + subdivision streets + buildings, 35 cells for seed 1 /
+            // target 20 — is FULLY claimed once street cells count as occupied too (measured: zero courtyard
+            // cells anywhere in this town), so a strict 4-neighbour search comes up empty for every single
+            // -cell building. AssertClean asserts nothing about a building staying inside the wall/interior,
+            // so landing just past the ring (measured: radius 2 for every candidate below) is still a
+            // faithful "drag to a genuinely free cell" — it is simply not always an ADJACENT one.
+            //
+            // SAY IT PLAINLY: at radius 2 the destination is OUTSIDE the wall/interior, not a lot two doors
+            // down. "Dragged" here now means "dragged clear of the town", not "nudged one lot over" — still a
+            // genuine whole-cell relocation FootprintOf must re-derive, just not the in-town nudge the name
+            // might suggest. A larger TargetBuildings for this fixture would likely grow real courtyard cells
+            // (§10 concern 4 in task-A3-report.md) and could keep the drag adjacent, but that is a fixture
+            // change beyond this pass's scope — not made here.
+            bool TryNearestFree((int i, int j) origin, out int di, out int dj)
+            {
+                for (int radius = 1; radius <= 64; radius++)
+                    for (int dx = -radius; dx <= radius; dx++)
+                        for (int dy = -radius; dy <= radius; dy++)
+                        {
+                            if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dy)) != radius) continue;
+                            if (!occupied.Contains((origin.i + dx, origin.j + dy))) { di = dx; dj = dy; return true; }
+                        }
+                di = 0; dj = 0; return false;
+            }
+
+            // Pick a single-cell building that ALSO has a free destination cell — free of every OTHER
+            // building's footprint AND of every stored street cell (see the `occupied` fix above) — rather
+            // than the first single-cell building found regardless. The two searches used to be separate (a
+            // fixed building, then a search for a free neighbour among ITS four), which is what let the "free"
+            // neighbour turn out to be a street cell; searching jointly is what actually fixes that, not just
+            // widening the occupied set.
             Room moved = null;
+            int mdi = 0, mdj = 0;
             foreach (var r in floor.Rooms)
-                if (r.TypeId == 1 && SettlementFootprint.Decode(r.Cells).Count == 1) { moved = r; break; }
+            {
+                if (r.TypeId != 1) continue;
+                var cells = SettlementFootprint.Decode(r.Cells);
+                if (cells.Count != 1) continue;
+                if (TryNearestFree(cells[0], out int di, out int dj)) { moved = r; mdi = di; mdj = dj; break; }
+            }
             if (moved == null)
-            { Debug.LogError("FAIL roads: the seed-1/20 fixture holds no SINGLE-cell building — neither drag assertion below can fire FootprintOf's re-derive rule, so both would prove nothing"); ok = false; }
+            { Debug.LogError("FAIL roads: no single-cell building in the seed-1/20 fixture has ANY free (building- and street-free) lattice cell to drag into — neither drag assertion below can fire FootprintOf's re-derive rule, so both would prove nothing"); ok = false; }
             else
             {
                 // (a) sub-cell nudge: the point moves, the node must not.
@@ -899,23 +952,18 @@ namespace WorldGen.Rendering
                 if (n1.CX != n0.CX || n1.CY != n0.CY || n1.W != n0.W || n1.H != n0.H)
                 { Debug.LogError($"FAIL roads: a SUB-CELL nudge moved room {moved.Id}'s road node from ({n0.CX:F3},{n0.CY:F3}) {n0.W:F3}x{n0.H:F3} to ({n1.CX:F3},{n1.CY:F3}) {n1.W:F3}x{n1.H:F3} — the FOOTPRINT must be authoritative over the point"); ok = false; }
 
-                // (b) whole-cell drag into a free neighbouring cell: the node MUST follow, and the re-assert
-                // below then runs on a town that really did change.
+                // (b) whole-cell drag into the nearest free (building- AND street-free) cell picked during
+                // selection above: the node MUST follow, and the re-assert below then runs on a town that
+                // really did change. The sub-cell nudge above never moved `moved` to a different cell (that
+                // is exactly assertion (a)), so moved.Cells — and therefore mdi/mdj's target — is still the
+                // same cell the selection search checked.
                 var cell = SettlementFootprint.Decode(moved.Cells)[0];
-                int di = 0, dj = 0;
-                foreach (var (ci, cj) in new[] { (1, 0), (0, 1), (-1, 0), (0, -1) })
-                    if (!occupied.Contains((cell.i + ci, cell.j + cj))) { di = ci; dj = cj; break; }
-                if (di == 0 && dj == 0)
-                { Debug.LogError($"FAIL roads: room {moved.Id} at cell ({cell.i},{cell.j}) has no free 4-neighbour cell to be dragged into — the drag case cannot run"); ok = false; }
-                else
-                {
-                    moved.X = SettlementFootprint.CenterOf(cell.i + di);
-                    moved.Y = SettlementFootprint.CenterOf(cell.j + dj);
-                    var n2 = DungeonLayout.LinkNodeFor(moved, settlement: true);
-                    if (n2.CX == n0.CX && n2.CY == n0.CY)
-                    { Debug.LogError($"FAIL roads: a WHOLE-CELL drag of room {moved.Id} to cell ({cell.i + di},{cell.j + dj}) left its road node at ({n2.CX:F3},{n2.CY:F3}) — the stale single-cell footprint was never re-derived, so the re-assert below would run on an UNCHANGED town"); ok = false; }
-                    AssertClean(floor, "dragged");
-                }
+                moved.X = SettlementFootprint.CenterOf(cell.i + mdi);
+                moved.Y = SettlementFootprint.CenterOf(cell.j + mdj);
+                var n2 = DungeonLayout.LinkNodeFor(moved, settlement: true);
+                if (n2.CX == n0.CX && n2.CY == n0.CY)
+                { Debug.LogError($"FAIL roads: a WHOLE-CELL drag of room {moved.Id} to cell ({cell.i + mdi},{cell.j + mdj}) left its road node at ({n2.CX:F3},{n2.CY:F3}) — the stale single-cell footprint was never re-derived, so the re-assert below would run on an UNCHANGED town"); ok = false; }
+                AssertClean(floor, "dragged");
             }
 
             if (ok) Debug.Log("Settlement Roads: PASS");

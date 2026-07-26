@@ -26,10 +26,21 @@ namespace WorldGen.Generation
     /// REMOVED. Roads route avoiding ONLY buildings; Build takes no wall parameter any more.</summary>
     public static class SettlementRoads
     {
-        /// <summary>How far a road keeps clear of a building, in tiles. The inter-building free gap is
-        /// ~2.96 tiles (pitch 8.96 − footprint 6), so 1.0 leaves a ~1-tile lane on each side. Ц2.6 bumped
-        /// this from 0.5 (tuned back when it also doubled as the wall clearance, before the wall stopped
-        /// being a road obstacle). TUNABLE — the user eyeballs it.</summary>
+        /// <summary>How far a road keeps clear of a building, in tiles.
+        ///
+        /// ITS OWN DERIVATION WAS STALE (fixed arc A, task 3): this constant used to be justified by "the
+        /// inter-building free gap is ~2.96 tiles (pitch 8.96 − footprint 6)", which was true back when a
+        /// settlement building's road node came from a fixed 6-tile EffectiveSize regardless of its actual
+        /// footprint. Since DungeonLayout.LinkNodeFor started sizing a settlement building's road node from
+        /// its own FOOTPRINT, a flush building's node spans its WHOLE lattice cell — (extent+1) * Pitch,
+        /// 8.96 tiles for a single-cell house — so that 2.96-tile gap no longer exists: two flush buildings'
+        /// node rects meet with nothing between them. What RoadClearanceTiles actually carves lane-room out
+        /// of now is the STREET cell itself: a road only ever runs on a cell SettlementBlocks marked as
+        /// street, exactly one cell (8.96 tiles) wide, so clearance eats into that lane from both sides —
+        /// 8.96 − 2*1.0 = 6.96 tiles left to route in. The constant's VALUE still works (that lane is still
+        /// comfortably wide enough to route and read as a road); only the comment's derivation was wrong.
+        /// Ц2.6 bumped it from 0.5 (tuned back when it also doubled as the wall clearance, before the wall
+        /// stopped being a road obstacle). TUNABLE — the user eyeballs it.</summary>
         public const float RoadClearanceTiles = 1.0f;
 
         /// <summary>A* pays this many tiles per 90° turn — straight, readable roads. TUNABLE.</summary>
