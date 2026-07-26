@@ -105,6 +105,13 @@ namespace WorldGen.Generation
 
                 ("MutHeightConstant", "SettlementTileGrid.BuildingHeight's FNV term dropped (always returns BuildingHeightMin — every building the same height)",
                     () => new WorldGen.MutantTests.MutHeightConstantSelfTests().SelfTestHeight()),
+
+                ("MutFootprintNoConnectivity", "SettlementFootprint.IsConnected4 returns true unconditionally (any cell set reads as one piece, diagonals included)",
+                    () => new WorldGen.MutantTests.MutFootprintNoConnectivitySelfTests().SelfTestFootprint()),
+                ("MutFootprintRoundNotFloor", "SettlementFootprint.CellOf rounds instead of flooring (a cell stops being the half-open span [i*Pitch,(i+1)*Pitch))",
+                    () => new WorldGen.MutantTests.MutFootprintRoundNotFloorSelfTests().SelfTestFootprint()),
+                ("MutMigrationSkipsFootprint", "SettlementFootprint.EnsureFootprints writes no cells (a v9 settlement building loads with no footprint at all)",
+                    () => new WorldGen.MutantTests.MutMigrationSkipsFootprintSelfTests().SelfTestFootprintMigration()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

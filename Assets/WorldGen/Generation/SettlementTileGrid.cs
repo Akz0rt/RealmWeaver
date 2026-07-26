@@ -10,8 +10,10 @@ namespace WorldGen.Generation
     public enum TileType { None = 0, Building, Road, Void, Wall, Gate }
 
     /// <summary>A settlement floor rasterized onto the building-cell lattice (SettlementGenerator.BuildingCell),
-    /// UnityEngine-free and fully derived per rebuild — nothing here is stored/serialized. Allocate sizes the
-    /// grid shell (cell↔normalized mapping, buildings-derived extent, snap). Build places buildings and, when
+    /// UnityEngine-free and fully derived per rebuild — nothing here is stored/serialized. The cell↔normalized
+    /// mapping is <see cref="SettlementFootprint"/>'s FIXED, absolute one (cell (0,0) spans normalized
+    /// [0,Pitch)), so a cell index never depends on which buildings exist; Allocate therefore sizes only the
+    /// grid's EXTENT (buildings-derived bbox + margin) and its array offset. Build places buildings and, when
     /// the settlement HasWall, derives the wall ring + one-cell courtyard void from an outside flood-fill — the
     /// same no-holes guarantee SettlementFence uses at tile resolution (SettlementFence.cs class doc), just at
     /// the coarser building-cell grid instead of SettlementFence's continuous-tile grid. NOT full parity,
@@ -31,15 +33,21 @@ namespace WorldGen.Generation
     {
         public TileType[,] Cells;          // [a, b]: a = col (i - OriginI), b = row (j - OriginJ)
         public int W, H, OriginI, OriginJ; // array is W×H; world cell (i,j) at (i-OriginI, j-OriginJ)
+        /// <summary>Both anchors are FIXED at 0 and are kept only so the pitch (Cell) still has a stated
+        /// origin to be read against: the lattice is <see cref="SettlementFootprint"/>'s absolute one, cell
+        /// (0,0) spanning normalized [0,Pitch). Do NOT reintroduce a per-grid anchor — see Allocate.</summary>
         public float AnchorX, AnchorY, Cell;
 
         public const int CourtyardCells = 1;               // empty Void ring kept between buildings and the wall
         public const int MarginCells = CourtyardCells + 2; // courtyard(1) + wall(1) + flood-fill border(1) = 3
 
-        public int CellI(float xNorm) => (int)System.Math.Round((xNorm - AnchorX) / Cell);
-        public int CellJ(float yNorm) => (int)System.Math.Round((yNorm - AnchorY) / Cell);
-        public float CenterX(int i) => AnchorX + i * Cell;
-        public float CenterY(int j) => AnchorY + j * Cell;
+        // The cell↔normalized mapping is SettlementFootprint's and nothing else's — one lattice for the data
+        // model (Room.Cells), the grid, and every renderer, so a stored cell index and a drawn cell index can
+        // never disagree. Floor, not round: a cell is the half-open span [i*Pitch,(i+1)*Pitch).
+        public int CellI(float xNorm) => SettlementFootprint.CellOf(xNorm);
+        public int CellJ(float yNorm) => SettlementFootprint.CellOf(yNorm);
+        public float CenterX(int i) => SettlementFootprint.CenterOf(i);
+        public float CenterY(int j) => SettlementFootprint.CenterOf(j);
         public bool InBounds(int i, int j) => (i-OriginI)>=0 && (i-OriginI)<W && (j-OriginJ)>=0 && (j-OriginJ)<H;
         public TileType At(int i, int j) => InBounds(i,j) ? Cells[i-OriginI, j-OriginJ] : TileType.None;
         public float SnapX(float xNorm) => CenterX(CellI(xNorm));
@@ -50,36 +58,23 @@ namespace WorldGen.Generation
         // routed road leaving the buildings' bbox is still representable (OVERRIDE 1: a dropped road cell
         // could never be wrapped by the wall — the exact bug the fine-fence arc had to fix). `roads` defaults
         // to null so every existing buildings-only call site (this method's own doc history, and Task 8's
-        // view-fitting) keeps calling `Allocate(buildings)` unchanged and gets byte-identical output.
+        // view-fitting) keeps calling `Allocate(buildings)` unchanged.
+        //
+        // ORIGIN vs EXTENT — the distinction this method now turns on. The EXTENT still depends on what is
+        // placed (it is the occupied bbox plus MarginCells, and it must be, or a building would fall off the
+        // array). The ORIGIN does NOT: the lattice is SettlementFootprint's absolute one, so cell (i,j) means
+        // the same patch of normalized space no matter which buildings exist. There is no anchor pass any
+        // more, deliberately. The old one took the min-X/min-Y building as cell (0,0), which made every other
+        // building's cell index a function of THAT ONE building's position — move it and the whole town
+        // renumbers (and, whenever it moved off-pitch, slides). OriginI/OriginJ stay: they are the array's
+        // offset into the absolute lattice, not a redefinition of it.
         public static SettlementTileGrid Allocate(System.Collections.Generic.IReadOnlyList<Room> buildings,
             System.Collections.Generic.IReadOnlyList<LinkSegment> roads = null)
         {
-            var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell };
+            var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell, AnchorX = 0f, AnchorY = 0f };
 
-            // Pass 1: anchor = min X/Y over TypeId==1 rooms. AnchorX/Y must be fixed before CellI/CellJ mean
-            // anything, since both read them.
+            // ONE pass now, not two: with a fixed lattice the cell-index bbox needs nothing established first.
             bool any = false;
-            float minX = 0f, minY = 0f;
-            foreach (var r in buildings)
-            {
-                if (r.TypeId != 1) continue;
-                if (!any || r.X < minX) minX = r.X;
-                if (!any || r.Y < minY) minY = r.Y;
-                any = true;
-            }
-            g.AnchorX = minX;
-            g.AnchorY = minY;
-
-            if (!any)
-            {
-                // No buildings: a minimal 1x1 None grid, no throw.
-                g.OriginI = 0; g.OriginJ = 0; g.W = 1; g.H = 1;
-                g.Cells = new TileType[1, 1];
-                return g;
-            }
-
-            // Pass 2: cell-index bbox over the same buildings, via the grid's own mapping (now that Anchor/Cell
-            // are set). The anchor building maps to cell (0,0) by construction.
             int minCellI = int.MaxValue, minCellJ = int.MaxValue, maxCellI = int.MinValue, maxCellJ = int.MinValue;
             foreach (var r in buildings)
             {
@@ -89,6 +84,16 @@ namespace WorldGen.Generation
                 if (i > maxCellI) maxCellI = i;
                 if (j < minCellJ) minCellJ = j;
                 if (j > maxCellJ) maxCellJ = j;
+                any = true;
+            }
+
+            if (!any)
+            {
+                // No buildings: a minimal 1x1 None grid, no throw. Roads are NOT folded in on this path — the
+                // pre-existing empty-input contract, unchanged.
+                g.OriginI = 0; g.OriginJ = 0; g.W = 1; g.H = 1;
+                g.Cells = new TileType[1, 1];
+                return g;
             }
 
             // Fold in every road segment's ENDPOINTS (Clean tier only). A LinkSegment is a straight line, so

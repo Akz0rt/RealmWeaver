@@ -62,6 +62,22 @@ namespace WorldGen.Generation
         /// an absent key loads as false (active), the default. World definition only.</summary>
         [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public bool IsDummy = false;
+        /// <summary>A SETTLEMENT BUILDING's occupied cells on the fixed building-cell lattice, flattened to
+        /// [i0,j0, i1,j1, …]. The units are ABSOLUTE lattice indices (SettlementFootprint.CellOf / CenterOf),
+        /// never tiles and never anything relative to another building — that is what lets a block of flush
+        /// buildings be described at all, and what makes a stored index still mean the same place after some
+        /// other building moves.
+        ///
+        /// Null for EVERYTHING that is not a settlement building: a gate, a dungeon room, a building-interior
+        /// room. NullValueHandling.Ignore keeps the key out of every such room's JSON entirely (the
+        /// Room.Grid / Room.Preview precedent), so no dungeon or building save grows by a byte.
+        ///
+        /// NOT a re-use of SizeW/SizeH, which stay TILES and stay unread here — one lattice cell is
+        /// 0.07 * 128 ≈ 8.96 tiles, so conflating the two units would inflate a saved town ~54x in area.
+        /// World definition only. Absent in a v9 save → null → SettlementFootprint.EnsureFootprints gives the
+        /// room a single-cell footprint at load, so an existing town keeps one building per cell.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public int[] Cells = null;
         [JsonProperty("Secrets")]                        // preserve v6 wire key
         public List<Portal> Portals = new List<Portal>();
     }
@@ -89,6 +105,16 @@ namespace WorldGen.Generation
         public int ActiveBuildings;
         [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public bool HasWall = false;
+        /// <summary>The settlement's STREET cells on the same fixed building-cell lattice, flattened to
+        /// [i0,j0, i1,j1, …] — ABSOLUTE lattice indices, decoded with SettlementFootprint.Decode exactly like
+        /// Room.Cells. Null until a later task authors blocks-and-streets; a settlement whose streets are
+        /// still derived per rebuild simply leaves it unset.
+        ///
+        /// Null for dungeons and building interiors by construction (SettlementParams itself is null there).
+        /// NullValueHandling.Ignore keeps the key off the wire when unset, the same treatment Room.Preview
+        /// and Room.Cells carry. World definition only.</summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public int[] StreetCells = null;
     }
 
     /// <summary>One floor as a graph: rooms + links. NextRoomId hands out stable ids.</summary>

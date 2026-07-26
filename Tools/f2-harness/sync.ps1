@@ -20,7 +20,7 @@ $files = @(
   'BattleGridData.cs', 'BattleGridGenerator.cs', 'BattleGridOps.cs', 'BattleGridUndo.cs', 'BattleGridSelfTests.cs',
   'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementRoads.cs', 'SettlementFence.cs', 'SettlementSelfTests.cs',
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
-  'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs'
+  'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
@@ -821,7 +821,55 @@ New-SettlementRebind 'SelfTestHeight' 'MutHeightConstant' `
   @('SettlementTileGrid\.') `
   @('WorldGen.Generation.MutHeightConstant.SettlementTileGrid.')
 
+# ---- FOOTPRINT MUTANTS (arc A, task 1): three rules pinned by SettlementFootprint. ---------------------------
+# SettlementFootprint.cs defines ONE class and no data types — InteriorData/InteriorFloor/Room live in the
+# unmutated DungeonData.cs and resolve OUTWARD once the file is re-namespaced — so the single-class
+# New-SettlementMutant / rebind-only-"SettlementFootprint." shape (SettlementRoads/InteriorOps/FloorFootprint
+# above) is sound here: no second bare type to rebind (unlike SettlementTileGrid's TileType) and no
+# IReadOnlyList<T> struct-covariance trap (unlike SettlementGenerator's PlacedBuilding/GatePoint).
+
+# MutFootprintNoConnectivity: IsConnected4's reached-vs-total comparison replaced by an unconditional true, so
+# ANY cell set reads as one piece. Caught by SelfTestFootprint's diagonal-pair assertion — two cells touching
+# only at a corner must NOT be 4-connected. The L / ring / translate assertions cannot catch it: all three
+# expect true, which this mutant still returns.
+New-SettlementMutant 'SettlementFootprint.cs' 'MutFootprintNoConnectivity' `
+  'return seen.Count == all.Count;' `
+  'return true;   // MUTANT: connectivity never actually checked' `
+  'MutFootprintNoConnectivity.cs'
+
+# MutFootprintRoundNotFloor: CellOf ROUNDS instead of flooring, so a cell stops being the half-open span
+# [i*Pitch, (i+1)*Pitch) and each span is split between two indices. Caught twice by SelfTestFootprint: the
+# CellOf(3.5*Pitch) assertion (Math.Round(3.5) is 4, not 3) and, independently, the CenterOf/CellOf round-trip
+# at cell 7 (Math.Round(7.5) is 8). A BLOCK comment, not a line one: CellOf is an expression-bodied member, so
+# a trailing // would swallow its own semicolon.
+New-SettlementMutant 'SettlementFootprint.cs' 'MutFootprintRoundNotFloor' `
+  '(int)System.Math.Floor(norm / Pitch)' `
+  '(int)System.Math.Round(norm / Pitch) /* MUTANT: round, not floor */' `
+  'MutFootprintRoundNotFloor.cs'
+
+# MutMigrationSkipsFootprint: the v10 load normalization's single write neutered — a settlement building with
+# no stored footprint stays footprint-less instead of getting its single-cell one at the cell its point falls
+# in. Caught by SelfTestFootprintMigration's exactly-one-cell assertions on rooms 1 and 2. NOTE it does NOT
+# exercise the no-overwrite branch (room 4) — that property is pinned by the assertion itself, which stores
+# (9,9) on a room whose own point maps to (4,4), plus the second-pass idempotence sweep.
+New-SettlementMutant 'SettlementFootprint.cs' 'MutMigrationSkipsFootprint' `
+  'r.Cells = Encode(one);' `
+  ';   // MUTANT: the load normalization writes no footprint' `
+  'MutMigrationSkipsFootprint.cs'
+
+New-SettlementRebind 'SelfTestFootprint' 'MutFootprintNoConnectivity' `
+  @('SettlementFootprint\.') `
+  @('WorldGen.Generation.MutFootprintNoConnectivity.SettlementFootprint.')
+
+New-SettlementRebind 'SelfTestFootprint' 'MutFootprintRoundNotFloor' `
+  @('SettlementFootprint\.') `
+  @('WorldGen.Generation.MutFootprintRoundNotFloor.SettlementFootprint.')
+
+New-SettlementRebind 'SelfTestFootprintMigration' 'MutMigrationSkipsFootprint' `
+  @('SettlementFootprint\.') `
+  @('WorldGen.Generation.MutMigrationSkipsFootprint.SettlementFootprint.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 23 settlement mutants + 23 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 26 settlement mutants + 26 settlement rebound test copies into gen/"
 

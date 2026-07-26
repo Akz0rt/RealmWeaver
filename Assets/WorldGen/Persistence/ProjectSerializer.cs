@@ -30,7 +30,18 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 9;   // 9: Room.Preview (settlement building preview image)
+        public const int CurrentFormatVersion = 10;  // 10: Room.Cells (a settlement building's footprint on the
+                                                     // FIXED building-cell lattice, absolute indices) +
+                                                     // SettlementParams.StreetCells. Both are absent from a v9
+                                                     // file and deserialize to null; SettlementFootprint.
+                                                     // EnsureFootprints then gives every settlement building a
+                                                     // SINGLE-CELL footprint at the cell its stored point falls
+                                                     // in, so an existing town keeps one building per cell and
+                                                     // nothing the DM authored is restructured. Bumped so a
+                                                     // v0.4.0 build WARNS on open instead of silently dropping
+                                                     // every footprint on its next save.
+                                                     //
+                                                     // 9: Room.Preview (settlement building preview image)
                                                      // + InteriorFloor.Wall (settlement wall contour — that
                                                      // field was LATER removed in the fence rework; the fence
                                                      // is now derived, and any "Wall" key in an existing v9
@@ -113,7 +124,19 @@ namespace WorldGen.Persistence
                     : new List<InteriorData>()
             };
 
-            foreach (var d in result.Dungeons) RoomSizing.ApplyDefaults(d);
+            // Two UNGATED, idempotent normalizations, deliberately not guarded on FormatVersion: each one
+            // only fires on a field it finds unset, so re-running it over an already-normalized project is a
+            // no-op, whereas a version guard is a thing the NEXT format bump forgets to widen.
+            //   • ApplyDefaults  — a room with a non-positive tile footprint gets its type default (v5-era).
+            //   • EnsureFootprints — a SETTLEMENT BUILDING with no lattice footprint gets a single-cell one at
+            //     the cell its stored point falls in (v10). Never overwrites an existing footprint, never
+            //     touches SizeW/SizeH (those are TILES; one lattice cell is ~9 tiles — see that method's doc),
+            //     and never touches a dungeon or a building interior.
+            foreach (var d in result.Dungeons)
+            {
+                RoomSizing.ApplyDefaults(d);
+                SettlementFootprint.EnsureFootprints(d);
+            }
 
             if (data.FormatVersion > CurrentFormatVersion)
                 result.WarningMessage = "Файл сохранён более новой версией инструмента — часть данных может не загрузиться.";

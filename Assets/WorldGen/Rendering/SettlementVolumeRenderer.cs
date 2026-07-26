@@ -28,7 +28,8 @@ namespace WorldGen.Rendering
     /// A cell (i,j) maps to area-local pixels as
     ///     Project(i,j) = Projection.TileToLocal(CenterX(i)*T, CenterY(j)*T)
     ///                  = ( CenterX(i)*T*Px + PanX ,  -(CenterY(j)*T*Px*SquashY) + PanY ).
-    /// Substituting CenterY(j) = AnchorY + j*Cell and collecting the j-independent part into `oy`:
+    /// Substituting CenterY(j) = (j + 0.5)*Cell (the ABSOLUTE lattice — see SettlementFootprint) and
+    /// collecting the j-independent part into `oy`:
     ///     local.y = oy - (j - OriginJ) * CH,   CH = Cell*T*Px*SquashY = CW*SquashY,  CW = Cell*T*Px.
     /// Note the MINUS. Larger j therefore sits LOWER on screen (Unity UI local +Y is up). That is exactly what
     /// <see cref="SettlementTileGrid.DepthKey"/> assumes — larger j = SOUTH = NEARER the viewer — so painting

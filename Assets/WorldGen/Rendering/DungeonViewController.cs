@@ -158,18 +158,19 @@ namespace WorldGen.Rendering
         /// WHY THE CONTROLLER RE-SNAPS AT ALL. SettlementVolumeRenderer.TryAreaToNorm already answers with a
         /// cell CENTRE, so a position that came straight out of it is on the lattice. The hazard is every
         /// controller-side write that then MODIFIES that answer — the drag clamp, the drag-settle nudge, and
-        /// «+ Здание»'s fixed (0.5, 0.5). One object = one cell is the whole model of this view: a room parked
-        /// between cells still snaps to one for DRAWING (CellI/CellJ round), so the damage is not a
-        /// half-drawn tile, it is the ANCHOR — SettlementTileGrid.Allocate anchors the lattice on the min-X /
-        /// min-Y building, so if the off-lattice room happens to be that one, EVERY other building's cell
-        /// index shifts and the whole town slides up to half a cell.
+        /// «+ Здание»'s fixed (0.5, 0.5). One object = one cell is the whole model of this view, and a room
+        /// parked between cells would keep its stored position half a cell off the tile it draws on, so
+        /// anything that measures from the stored point (street routing, the fence, nearest-neighbour) and
+        /// anything that measures from the drawn cell would quietly disagree.
         ///
-        /// CALL THIS BEFORE THE WRITE, NEVER AFTER. The anchor is read from the room list, so a lattice
-        /// derived AFTER an off-lattice write is anchored on the very room that needs correcting: SnapX/SnapY
-        /// would then be an exact no-op against a lattice that has already shifted. Every call site here
-        /// captures the lattice first and applies it to the value it is about to store. Taken before the
-        /// write, the lattice is exact — generation places buildings on this pitch and every accepted drag
-        /// lands on a cell centre, so the anchor is genuinely on-lattice at that moment.</summary>
+        /// ORDER NO LONGER MATTERS (it used to, badly). The lattice is now the ABSOLUTE one —
+        /// SettlementFootprint's fixed origin, cell (0,0) spanning normalized [0,Pitch) — so
+        /// SettlementTileGrid.Allocate derives the same mapping whatever rooms it is handed. Before that,
+        /// Allocate anchored on the min-X/min-Y building, which made this method order-critical: a lattice
+        /// derived AFTER an off-lattice write was anchored on the very room that needed correcting, so
+        /// SnapX/SnapY became an exact no-op against a lattice that had already shifted. That whole failure
+        /// mode is gone; the call sites here still capture the lattice first, which is now merely tidy rather
+        /// than load-bearing.</summary>
         SettlementTileGrid LatticeFor(InteriorFloor lvl)
             => dungeon != null && dungeon.Kind == InteriorKind.Settlement && lvl != null
                  ? SettlementTileGrid.Allocate(lvl.Rooms)
@@ -1049,9 +1050,9 @@ namespace WorldGen.Rendering
         /// candidates like any other: generated streets connect them too.
         ///
         /// The write itself is already on the lattice: nx/ny are SettlementTileGrid.CenterX/CenterY of the
-        /// target cell. The lattice cannot shift under it either — Allocate anchors on the min-X/min-Y
-        /// building, and a cell centre is an integer number of cells from the old anchor, so even a new
-        /// building that BECOMES the anchor leaves every other building's cell index intact.</summary>
+        /// target cell. The lattice cannot shift under it either — it is SettlementFootprint's ABSOLUTE one
+        /// (cell (0,0) spans normalized [0,Pitch)), so adding a building cannot renumber or move any other
+        /// building's cell, wherever the new one lands.</summary>
         void PlaceHoveredBuilding()
         {
             var lvl = BoundLevel;

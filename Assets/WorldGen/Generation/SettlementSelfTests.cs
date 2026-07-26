@@ -1009,6 +1009,151 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Fence: PASS");
         }
 
+        [ContextMenu("Self-Test: Footprint")]
+        public void SelfTestFootprint()
+        {
+            bool ok = true;
+
+            // Encode/Decode round-trips, and an odd-length or null array decodes to empty rather than throwing.
+            var cells = new System.Collections.Generic.List<(int i, int j)> { (3, 4), (4, 4), (4, 5) };
+            var flat = SettlementFootprint.Encode(cells);
+            var back = SettlementFootprint.Decode(flat);
+            if (back.Count != 3 || back[0] != (3, 4) || back[1] != (4, 4) || back[2] != (4, 5))
+            { Debug.LogError($"FAIL footprint: round-trip gave {back.Count} cells, first {(back.Count > 0 ? back[0].ToString() : "none")}"); ok = false; }
+            if (SettlementFootprint.Decode(null).Count != 0 || SettlementFootprint.Decode(new[] { 1, 2, 3 }).Count != 0)
+            { Debug.LogError("FAIL footprint: a null or odd-length array must decode to an EMPTY footprint, not throw"); ok = false; }
+
+            // The lattice is FIXED: a cell index depends only on the coordinate, never on what is placed.
+            if (SettlementFootprint.CellOf(0f) != 0)
+            { Debug.LogError($"FAIL footprint: CellOf(0) = {SettlementFootprint.CellOf(0f)}, want 0"); ok = false; }
+            float c = SettlementFootprint.Pitch;
+            if (SettlementFootprint.CellOf(c * 3.5f) != 3)
+            { Debug.LogError($"FAIL footprint: CellOf(3.5 pitch) = {SettlementFootprint.CellOf(c * 3.5f)}, want 3"); ok = false; }
+            if (System.Math.Abs(SettlementFootprint.CenterOf(3) - c * 3.5f) > 1e-5f)
+            { Debug.LogError($"FAIL footprint: CenterOf(3) = {SettlementFootprint.CenterOf(3)}, want {c * 3.5f}"); ok = false; }
+            if (SettlementFootprint.CellOf(SettlementFootprint.CenterOf(7)) != 7)
+            { Debug.LogError($"FAIL footprint: CenterOf/CellOf do not round-trip at cell 7"); ok = false; }
+
+            // 4-connectivity: the L above is connected; a diagonal-only pair is NOT.
+            if (!SettlementFootprint.IsConnected4(cells))
+            { Debug.LogError("FAIL footprint: the L-shaped fixture must be 4-connected"); ok = false; }
+            var diag = new System.Collections.Generic.List<(int i, int j)> { (0, 0), (1, 1) };
+            if (SettlementFootprint.IsConnected4(diag))
+            { Debug.LogError("FAIL footprint: two diagonal cells must NOT count as 4-connected"); ok = false; }
+
+            // A ring with a hole is LEGAL (the DM chose arbitrary shapes).
+            var ring = new System.Collections.Generic.List<(int i, int j)>();
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) if (i != 1 || j != 1) ring.Add((i, j));
+            if (!SettlementFootprint.IsConnected4(ring))
+            { Debug.LogError("FAIL footprint: a 3x3 ring around a hole must be legal and 4-connected"); ok = false; }
+
+            // Overlap.
+            var other = new System.Collections.Generic.List<(int i, int j)> { (4, 5), (5, 5) };
+            if (!SettlementFootprint.Overlaps(cells, other))
+            { Debug.LogError("FAIL footprint: footprints sharing cell (4,5) must overlap"); ok = false; }
+            if (SettlementFootprint.Overlaps(cells, new System.Collections.Generic.List<(int i, int j)> { (9, 9) }))
+            { Debug.LogError("FAIL footprint: disjoint footprints must not overlap"); ok = false; }
+
+            // The representative cell must be ON the building — an L's true centroid can fall outside it.
+            var rep = SettlementFootprint.Representative(cells);
+            if (!cells.Contains(rep))
+            { Debug.LogError($"FAIL footprint: representative cell {rep} is not one of the footprint's own cells"); ok = false; }
+            if (rep != (3, 4))
+            { Debug.LogError($"FAIL footprint: representative {rep} is not the lowest row-major cell (3,4) — it must be deterministic"); ok = false; }
+
+            // Translate preserves shape and connectivity.
+            var moved = SettlementFootprint.Translate(cells, 10, -2);
+            if (moved.Count != 3 || moved[0] != (13, 2) || !SettlementFootprint.IsConnected4(moved))
+            { Debug.LogError($"FAIL footprint: translate by (10,-2) gave first cell {(moved.Count > 0 ? moved[0].ToString() : "none")}"); ok = false; }
+
+            // Bounds: the L above spans i 3..4, j 4..5. Hand-derived from the fixture, not read back from the
+            // implementation, so a Bounds that silently returned the FIRST cell twice would fail here.
+            var box = SettlementFootprint.Bounds(cells);
+            if (box != (3, 4, 4, 5))
+            { Debug.LogError($"FAIL footprint: Bounds of the L fixture = {box}, want (3,4,4,5)"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Footprint: PASS");
+        }
+
+        [ContextMenu("Self-Test: Footprint Migration")]
+        public void SelfTestFootprintMigration()
+        {
+            bool ok = true;
+
+            // A settlement floor exactly as an EXISTING save carries it: building rooms with X/Y and NO Cells
+            // key at all. Expected cells are HAND-DERIVED from the fixed lattice (cell i spans
+            // [i*Pitch, (i+1)*Pitch), Pitch = 0.07), never read back from the implementation:
+            //     0.30 / 0.07 =  4.2857… -> floor 4        0.05 / 0.07 =  0.7142… -> floor 0
+            //     0.72 / 0.07 = 10.2857… -> floor 10
+            var floor = new InteriorFloor();
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.3f, Y = 0.3f, SizeW = 6, SizeH = 6 });
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.05f, Y = 0.72f, SizeW = 6, SizeH = 6 });
+            floor.Rooms.Add(new Room { Id = 3, TypeId = 0, X = 0.5f, Y = 0.5f, SizeW = 7, SizeH = 5 });
+            // Room 4 ALREADY carries a footprint, and its own point maps to (4,4) — so an overwrite would be
+            // plainly visible as (4,4) instead of the stored (9,9).
+            floor.Rooms.Add(new Room { Id = 4, TypeId = 1, X = 0.3f, Y = 0.3f, SizeW = 6, SizeH = 6,
+                Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (9, 9) }) });
+            var town = new InteriorData { OwnerPoiId = "poi-migration", Kind = InteriorKind.Settlement };
+            town.Floors.Add(floor);
+
+            SettlementFootprint.EnsureFootprints(town);
+
+            void Expect(int id, int ei, int ej, string why)
+            {
+                var r = floor.GetRoom(id);
+                var got = SettlementFootprint.Decode(r.Cells);
+                if (got.Count != 1)
+                { Debug.LogError($"FAIL footprint-migration: room {id} ({why}) ended with {got.Count} cells, want exactly 1"); ok = false; return; }
+                if (got[0] != (ei, ej))
+                { Debug.LogError($"FAIL footprint-migration: room {id} ({why}) got cell {got[0]}, want ({ei},{ej})"); ok = false; }
+            }
+
+            Expect(1, 4, 4, "no footprint in the save");
+            Expect(2, 0, 10, "no footprint in the save");
+            Expect(4, 9, 9, "already had a footprint, must NOT be overwritten");
+
+            // A gate (TypeId 0) is not a building: it must stay footprint-less.
+            var gate = floor.GetRoom(3);
+            if (gate.Cells != null)
+            { Debug.LogError($"FAIL footprint-migration: gate room 3 got a footprint of {gate.Cells.Length} ints, want none (Cells stays null)"); ok = false; }
+
+            // THE LANDMINE. The footprint is a SEPARATE field: SizeW/SizeH are TILES (one lattice cell is
+            // 0.07 * 128 ≈ 8.96 tiles), so a migration that reinterpreted them as cells would inflate every
+            // saved town ~54x in area, silently, on load. Pin that this pass never writes them.
+            foreach (var r in floor.Rooms)
+            {
+                int wantW = r.TypeId == 0 ? 7 : 6, wantH = r.TypeId == 0 ? 5 : 6;
+                if (r.SizeW != wantW || r.SizeH != wantH)
+                { Debug.LogError($"FAIL footprint-migration: room {r.Id} SizeW/SizeH became {r.SizeW}x{r.SizeH}, want {wantW}x{wantH} — the footprint must never touch the TILE size"); ok = false; }
+            }
+
+            // IDEMPOTENCE, proved by assertion: a second pass over the already-normalized floor changes
+            // nothing at all — not the freshly-migrated rooms, not the pre-existing footprint, not the gate.
+            string Dump(Room r) => r.Cells == null ? "null" : string.Join(",", r.Cells);
+            var snapshot = new System.Collections.Generic.List<string>();
+            foreach (var r in floor.Rooms) snapshot.Add(Dump(r));
+            SettlementFootprint.EnsureFootprints(town);
+            for (int k = 0; k < floor.Rooms.Count; k++)
+                if (Dump(floor.Rooms[k]) != snapshot[k])
+                { Debug.LogError($"FAIL footprint-migration: a SECOND EnsureFootprints changed room {floor.Rooms[k].Id} from '{snapshot[k]}' to '{Dump(floor.Rooms[k])}' — the normalization is not idempotent"); ok = false; }
+
+            // A BUILDING interior (Ц2 recursion) also holds TypeId==1 rooms. Only Kind == Settlement carries
+            // footprints — without the Kind guard every room of every building interior would acquire a
+            // meaningless one on load.
+            var bfloor = new InteriorFloor();
+            bfloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.3f, Y = 0.3f });
+            var building = new InteriorData { OwnerPoiId = "poi-migration", OwnerRoomId = 4, Kind = InteriorKind.Building };
+            building.Floors.Add(bfloor);
+            SettlementFootprint.EnsureFootprints(building);
+            if (bfloor.Rooms[0].Cells != null)
+            { Debug.LogError($"FAIL footprint-migration: a Building interior's room got a footprint of {bfloor.Rooms[0].Cells.Length} ints, want none"); ok = false; }
+
+            // A corrupt/absent interior must degrade, not throw, exactly like Decode.
+            SettlementFootprint.EnsureFootprints(null);
+
+            if (ok) Debug.Log("Settlement Footprint Migration: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {

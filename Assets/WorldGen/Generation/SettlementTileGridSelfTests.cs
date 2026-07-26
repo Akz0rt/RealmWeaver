@@ -5,14 +5,25 @@ namespace WorldGen.Rendering
 {
     public class SettlementTileGridSelfTests : MonoBehaviour
     {
+        // The normalized position of lattice point k — i.e. the CENTRE of absolute cell k.
+        //
+        // FIXTURE CONVENTION, UNCHANGED: building (i,j) sits on the lattice point of cell (i,j), so every
+        // world-cell coordinate the assertions below name is literally the index in Floor's argument list.
+        // What changed with the fixed lattice is only WHERE that lattice point is. It used to be
+        // 0.3 + i*Cell: the grid re-anchored itself on the min-X/min-Y building, so an arbitrary 0.3 became
+        // cell 0 by construction. It is now the absolute lattice's own centre, (i + 0.5)*Cell. Since 0.3 was
+        // arbitrary, that is a RIGID TRANSLATION of the whole fixture by (0.035 - 0.3) = -0.265 on BOTH axes:
+        // every cell index, every inter-building distance, every gate-to-ring-cell distance and every
+        // dilation radius is identical, so no assertion's expected value moves.
+        static float P(int k) => SettlementFootprint.CenterOf(k);
+
         // Build a settlement floor: buildings (TypeId=1) at lattice points, optional gate (TypeId=0).
         static InteriorFloor Floor(bool hasWall, params (int i, int j)[] cells)
         {
-            float c = SettlementGenerator.BuildingCell, ax = 0.3f, ay = 0.3f;
             var f = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = hasWall } };
             int id = 1;
             foreach (var (i, j) in cells)
-                f.Rooms.Add(new Room { Id = id++, TypeId = 1, X = ax + i * c, Y = ay + j * c });
+                f.Rooms.Add(new Room { Id = id++, TypeId = 1, X = P(i), Y = P(j) });
             return f;
         }
 
@@ -20,7 +31,7 @@ namespace WorldGen.Rendering
         public void SelfTestTileMapping()
         {
             bool ok = true;
-            float c = SettlementGenerator.BuildingCell, ax = 0.3f, ay = 0.3f;
+            float c = SettlementGenerator.BuildingCell, ax = P(0), ay = P(0);
             var f = Floor(false, (0,0), (2,0), (0,3));
             var g = SettlementTileGrid.Allocate(f.Rooms);
 
@@ -31,9 +42,23 @@ namespace WorldGen.Rendering
                 if (System.Math.Abs(g.CenterX(i) - r.X) > 1e-4f || System.Math.Abs(g.CenterY(j) - r.Y) > 1e-4f)
                 { Debug.LogError($"FAIL tilemap: room {r.Id} at ({r.X},{r.Y}) does not round-trip to cell ({i},{j}) center ({g.CenterX(i)},{g.CenterY(j)})"); ok = false; }
             }
-            // anchor is the min building corner → its cell is 0
+            // THE LATTICE IS ABSOLUTE. Cell 0 is the normalized span [0, Cell) — not "wherever the min-X/min-Y
+            // building happens to be", which is what the old anchor-derived mapping meant. Two assertions,
+            // because the first alone is satisfied by the old code too (the fixture's (0,0) building WAS the
+            // min one): the second re-asks the SAME coordinate of a grid allocated from a COMPLETELY DIFFERENT
+            // building set, which the anchored mapping cannot answer the same way.
             if (g.CellI(ax) != 0 || g.CellJ(ay) != 0)
-            { Debug.LogError($"FAIL tilemap: anchor building not at cell 0 (got {g.CellI(ax)},{g.CellJ(ay)})"); ok = false; }
+            { Debug.LogError($"FAIL tilemap: normalized ({ax},{ay}) is cell ({g.CellI(ax)},{g.CellJ(ay)}), want (0,0)"); ok = false; }
+            var elsewhere = SettlementTileGrid.Allocate(Floor(false, (7,9), (9,9)).Rooms);
+            if (elsewhere.CellI(ax) != g.CellI(ax) || elsewhere.CellJ(ay) != g.CellJ(ay))
+            { Debug.LogError($"FAIL tilemap: normalized ({ax},{ay}) is cell ({g.CellI(ax)},{g.CellJ(ay)}) on one grid but ({elsewhere.CellI(ax)},{elsewhere.CellJ(ay)}) on a grid built from different buildings — the lattice still depends on what is placed"); ok = false; }
+            if (System.Math.Abs(elsewhere.CenterX(3) - g.CenterX(3)) > 1e-6f || System.Math.Abs(elsewhere.CenterY(3) - g.CenterY(3)) > 1e-6f)
+            { Debug.LogError($"FAIL tilemap: cell (3,3) centres at ({g.CenterX(3)},{g.CenterY(3)}) on one grid and ({elsewhere.CenterX(3)},{elsewhere.CenterY(3)}) on another — the lattice still depends on what is placed"); ok = false; }
+            // Half-open span [i*Cell, (i+1)*Cell): a coordinate exactly ON a boundary belongs to the UPPER
+            // cell. 2*Cell is the low edge of cell 2, so it is cell 2 and not cell 1.
+            float boundary = 2f * c;
+            if (g.CellI(boundary) != 2)
+            { Debug.LogError($"FAIL tilemap: the exact cell boundary {boundary} maps to cell {g.CellI(boundary)}, want 2 (the span is half-open, so a boundary belongs to the cell above it)"); ok = false; }
             // extent covers bbox (i 0..2, j 0..3) plus MarginCells on each side
             int expW = (2 - 0 + 1) + 2 * SettlementTileGrid.MarginCells;
             int expH = (3 - 0 + 1) + 2 * SettlementTileGrid.MarginCells;
@@ -41,12 +66,14 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL tilemap: extent {g.W}x{g.H}, expected {expW}x{expH}"); ok = false; }
             if (g.OriginI != -SettlementTileGrid.MarginCells || g.OriginJ != -SettlementTileGrid.MarginCells)
             { Debug.LogError($"FAIL tilemap: origin ({g.OriginI},{g.OriginJ}) not (-margin,-margin)"); ok = false; }
-            // snap picks the NEAREST cell centre, not floor/ceiling: an offset of 0.3*Cell above a lattice
-            // point must snap DOWN to that point's centre; an offset of 0.7*Cell must snap UP to the next
-            // cell's centre. Floor gets the 0.7 case wrong (stays at the lower centre); Ceiling gets the 0.3
-            // case wrong (jumps to the upper centre) — so together these pin Round specifically. (The old
-            // idempotency check — SnapX(SnapX(x)) — held for Floor/Ceiling/Round alike, since the second call
-            // always receives an exact lattice value; it could not tell them apart.)
+            // Snap = the centre of the cell the coordinate FALLS IN. ax is cell 0's centre, i.e. already 0.5
+            // of a cell into cell 0's span, so an offset of +0.3*Cell lands 0.8 into that span (still cell 0,
+            // snaps back DOWN to ax) and +0.7*Cell lands 1.2 in (cell 1, snaps UP to ax + Cell). Together
+            // these still pin Floor specifically, with the two roles swapped relative to the old anchored
+            // lattice: the 0.3 case now rules out BOTH Round (0.8 -> 1) and Ceiling (0.8 -> 1), and the 0.7
+            // case rules out Ceiling (1.2 -> 2). (An idempotency check — SnapX(SnapX(x)) — would hold for
+            // Floor/Ceiling/Round alike, since the second call always receives an exact lattice value; it
+            // could not tell them apart.)
             float snapDownX = g.SnapX(ax + 0.3f * c);
             if (System.Math.Abs(snapDownX - ax) > 1e-4f)
             { Debug.LogError($"FAIL tilemap: SnapX(ax+0.3*Cell) = {snapDownX}, want {ax} (snap DOWN to the lattice point)"); ok = false; }
@@ -120,7 +147,7 @@ namespace WorldGen.Rendering
         public void SelfTestRoadsAndGates()
         {
             bool ok = true;
-            float c = SettlementGenerator.BuildingCell, ax = 0.3f, ay = 0.3f;
+            float c = SettlementGenerator.BuildingCell, ax = P(0), ay = P(0);
             float T = DungeonLayout.TilesPerAxis;
 
             // buildings leave the centre (1,1) empty; a road runs along row j=1 across it.
