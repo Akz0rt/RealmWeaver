@@ -66,8 +66,10 @@ namespace WorldGen.Rendering
                + "cell stands exactly one cell-WIDTH tall on screen.")]
         [SerializeField, Range(0.25f, 3f)] float heightScale = 1f;
 
-        [Tooltip("Tiles are drawn this much larger than their lattice pitch so neighbours butt up without "
-               + "hairline seams. The LATTICE step is unaffected — this is overdraw only.")]
+        [Tooltip("Extruded tiles (Building/Wall/Gate) are drawn this much larger than their lattice pitch so "
+               + "neighbours butt up without hairline seams. Flat ground tiles (Road/Void) do NOT use this — "
+               + "they inset by gridThicknessPx instead, so the cell-grid line shows through between them. "
+               + "The LATTICE step is unaffected either way — this is overdraw only.")]
         [SerializeField, Range(1f, 1.25f)] float tileOverdraw = 1.04f;
 
         [Tooltip("Width of the darker east strip on a box's front face, as a fraction of the cell width. The "
@@ -823,10 +825,13 @@ namespace WorldGen.Rendering
         /// LOOP BOUNDS run one index PAST i1/j1 (`&lt;= i1 + 2`, not `&lt;= i1 + 1`): i1 = CellI(1)+1 already
         /// carries one cell of margin beyond the raw 0..1 span, and a line at boundary index i only frames
         /// cells up to i-1 on its own (a cell's east edge is the NEXT boundary index). Stopping at i1+1 frames
-        /// cells i0..i1 but leaves a ground (Void/Road) cell one index further out with only its near edge
-        /// drawn — reachable because SettlementTileGrid's own allocated bounds (MarginCells beyond the
-        /// outermost building) are independent of this field-relative span and can sit past it. The extra
-        /// iteration costs one more pooled quad per axis and removes that sub-pixel gap.</summary>
+        /// cells i0..i1 but leaves a ground (Void/Road) cell at i1+1 with only its near edge drawn — a real
+        /// possibility since SettlementTileGrid's own allocated bounds are computed independently of this
+        /// field-relative span (see the near-symmetric case OnField's own doc calls out: MarginCells beyond
+        /// the outermost building can push cells past the field edge on the i0/j0 side too, which this
+        /// asymmetric +1 does NOT extend for — worst case there remains the same sub-pixel panel-background
+        /// hairline this fixes on the i1/j1 side, left as-is since only the i1/j1 case was in scope here).
+        /// The extra iteration costs one more pooled quad per axis.</summary>
         void RebuildGrid(float cw, float ch)
         {
             int used = 0;
