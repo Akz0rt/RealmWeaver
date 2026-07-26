@@ -187,6 +187,7 @@ GameObject:
   - component: {fileID: 43947998}
   - component: {fileID: 43947999}
   - component: {fileID: 43948000}
+  - component: {fileID: 43948001}
   m_Layer: 0
   m_Name: Test&Debug
   m_TagString: Untagged
@@ -368,6 +369,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 96a00fc4c89df324aaf3a65c351d9cb4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.InteriorOpsSelfTests
+--- !u!114 &43948001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 43947986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2a226760e408a8c47ae4b3d3c2d8c64b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.SettlementTileGridSelfTests
 --- !u!1 &71450242
 GameObject:
   m_ObjectHideFlags: 0
