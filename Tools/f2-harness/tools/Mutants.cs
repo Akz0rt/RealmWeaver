@@ -99,6 +99,13 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()),
                 ("MutTileGridRoadIgnoresBuilding", "SettlementTileGrid.Build's road marking drops the Building/Wall precedence guard (a road overwrites whatever tile is already there); named for the Building half since the Wall half is provably unreachable and is not what this mutant is caught by",
                     () => new WorldGen.MutantTests.MutTileGridRoadIgnoresBuildingSelfTests().SelfTestRoadsAndGates()),
+                ("MutGridStreetsNotSeeded", "SettlementTileGrid.Build marks the stored street cells Road but never folds them into the wall ring's occupied seed (the wall stops wrapping a street)",
+                    () => new WorldGen.MutantTests.MutGridStreetsNotSeededSelfTests().SelfTestRoadsAndGates()),
+
+                ("MutGridOneCellPerRoom", "SettlementTileGrid.Build writes only a footprint's REPRESENTATIVE cell instead of every cell (a building is a point again)",
+                    () => new WorldGen.MutantTests.MutGridOneCellPerRoomSelfTests().SelfTestFootprintTiles()),
+                ("MutGridExtentIgnoresFootprint", "SettlementTileGrid.Allocate folds only a footprint's REPRESENTATIVE cell into the extent (far cells fall out of bounds and are silently dropped by the InBounds guards)",
+                    () => new WorldGen.MutantTests.MutGridExtentIgnoresFootprintSelfTests().SelfTestFootprintTiles()),
 
                 ("MutDepthKeyNoRowSort", "SettlementTileGrid.DepthKey rewritten column-major (i primary, j secondary) instead of row-major (drops near-occludes-far entirely)",
                     () => new WorldGen.MutantTests.MutDepthKeyNoRowSortSelfTests().SelfTestDepth()),

@@ -17,15 +17,58 @@ namespace WorldGen.Rendering
         // dilation radius is identical, so no assertion's expected value moves.
         static float P(int k) => SettlementFootprint.CenterOf(k);
 
-        // Build a settlement floor: buildings (TypeId=1) at lattice points, optional gate (TypeId=0).
+        // Build a settlement floor: ONE single-cell building (TypeId=1) per listed cell.
+        //
+        // FOOTPRINTS, NOT POINTS: every room now carries an explicit Room.Cells footprint. The point is set
+        // too, and set CONSISTENTLY (X/Y = the footprint cell's own centre) — that is not decoration, it is
+        // required: SettlementTileGrid.FootprintOf treats a SINGLE-cell footprint that disagrees with the
+        // room's point as STALE and re-derives it from the point, so a fixture that wrote Cells and left X/Y
+        // at 0 would silently collapse every building onto cell (0,0).
+        //
+        // WHY NO EXPECTED VALUE IN THIS FILE MOVED: for a single-cell footprint {(i,j)} with X = CenterOf(i),
+        // FootprintOf returns exactly {(i,j)} — the same cell the pre-footprint code computed as
+        // (CellI(r.X), CellJ(r.Y)). So every grid this helper produces is bit-identical to the one the same
+        // argument list produced before footprints existed, and SelfTestTileMapping / SelfTestWallRing /
+        // SelfTestDepth keep their hand-derived numbers untouched.
         static InteriorFloor Floor(bool hasWall, params (int i, int j)[] cells)
         {
             var f = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = hasWall } };
             int id = 1;
             foreach (var (i, j) in cells)
-                f.Rooms.Add(new Room { Id = id++, TypeId = 1, X = P(i), Y = P(j) });
+                f.Rooms.Add(One(id++, i, j));
             return f;
         }
+
+        // One single-cell building: footprint {(i,j)} and the matching point.
+        static Room One(int id, int i, int j) => new Room
+        {
+            Id = id, TypeId = 1, X = P(i), Y = P(j),
+            Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (i, j) })
+        };
+
+        // One MULTI-cell building. `pointCell` is where the room's stored point sits — normally the
+        // footprint's representative cell, but the staleness fixtures deliberately put it elsewhere.
+        static Room Many(int id, (int i, int j) pointCell, params (int i, int j)[] cells) => new Room
+        {
+            Id = id, TypeId = 1, X = P(pointCell.i), Y = P(pointCell.j),
+            Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)>(cells))
+        };
+
+        // A rectangular footprint, w cells east by h cells south of (i0, j0), row-major.
+        static (int i, int j)[] Rect(int i0, int j0, int w, int h)
+        {
+            var cells = new System.Collections.Generic.List<(int i, int j)>();
+            for (int j = j0; j < j0 + h; j++)
+                for (int i = i0; i < i0 + w; i++)
+                    cells.Add((i, j));
+            return cells.ToArray();
+        }
+
+        // NOTE: there is deliberately NO shared "count cells of type T" helper here, and the counting loops
+        // below are spelled out inline instead. A file-level static helper is NOT rebound by the mutant
+        // machinery (sync.ps1's New-SettlementRebind rewrites only the catching METHOD's body), so a helper
+        // whose signature names SettlementTileGrid/TileType would be handed the mutant's nested types and
+        // fail to compile — the rebound copy would never even run.
 
         [ContextMenu("Self-Test: Tile Mapping")]
         public void SelfTestTileMapping()
@@ -101,7 +144,7 @@ namespace WorldGen.Rendering
             bool ok = true;
             // 8 buildings ringing an empty centre at (1,1)
             var f = Floor(true, (0,0),(1,0),(2,0),(0,1),(2,1),(0,2),(1,2),(2,2));
-            var g = SettlementTileGrid.Build(f, null);
+            var g = SettlementTileGrid.Build(f);
 
             // no hole: the enclosed centre is Inside → Void, never outside-None
             if (g.At(1,1) != TileType.Void)
@@ -116,7 +159,7 @@ namespace WorldGen.Rendering
             if (g.At(0,0) != TileType.Building)
             { Debug.LogError($"FAIL wallring: building (0,0) is {g.At(0,0)}, expected Building"); ok = false; }
             // HasWall=false → no Wall and no Void (no Inside/Outside split)
-            var open = SettlementTileGrid.Build(Floor(false, (0,0),(1,0),(2,0),(0,1),(2,1),(0,2),(1,2),(2,2)), null);
+            var open = SettlementTileGrid.Build(Floor(false, (0,0),(1,0),(2,0),(0,1),(2,1),(0,2),(1,2),(2,2)));
             int walls = 0, voids = 0;
             for (int a=0;a<open.W;a++) for (int b=0;b<open.H;b++)
             { if (open.Cells[a,b]==TileType.Wall) walls++; if (open.Cells[a,b]==TileType.Void) voids++; }
@@ -139,7 +182,7 @@ namespace WorldGen.Rendering
                 for (int j = 0; j <= 6; j++)
                     if (i == 0 || i == 6 || j == 0 || j == 6)
                         perimeter.Add((i, j));
-            var gHole = SettlementTileGrid.Build(Floor(true, perimeter.ToArray()), null);
+            var gHole = SettlementTileGrid.Build(Floor(true, perimeter.ToArray()));
             if (gHole.At(3, 3) != TileType.Void)
             { Debug.LogError($"FAIL wallring: 7x7-perimeter fixture's enclosed centre (3,3) is {gHole.At(3, 3)}, expected Void (outside flood-fill did not reach it — a real hole)"); ok = false; }
 
@@ -153,96 +196,99 @@ namespace WorldGen.Rendering
             float c = SettlementGenerator.BuildingCell, ax = P(0), ay = P(0);
             float T = DungeonLayout.TilesPerAxis;
 
-            // buildings leave the centre (1,1) empty; a road runs along row j=1 across it.
+            // Six buildings leave the centre column i=1 empty; the STORED streets run along row j=1 across it
+            // and then spur south. Streets are SettlementParams.StreetCells now — absolute lattice cells, not
+            // routed LinkSegments — so this fixture names the exact cells the grid must classify instead of
+            // relying on a rasterizer to land on them.
             var f = Floor(true, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
 
-            // OVERRIDE 2: the brief's original fixture placed the gate exactly ON the ring cell (-2,1) —
-            // that never exercises "find the NEAREST ring cell", since the gate WAS the ring cell already. A
-            // real gate sits on the fine fence, ~1.5 fine tiles from the built-up edge (SettlementGenerator
-            // places gates on a fence traced tight around the actual buildings) — ~0.0117 normalized, an
-            // order of magnitude closer than the coarse ring (2 cells = 0.14 normalized out). The whole west
-            // ring column (i=-2) is Wall at every j from -2..4 (this fixture's dilation makes it one solid
-            // block, see the class doc), so placing the gate at that realistic distance and offset to row j=1
-            // forces the nearest-cell search to actually discriminate the target (-2,1) — 0.1283 normalized
-            // away — from its column neighbours (-2,0)/(-2,2) — 0.1462 away each — rather than trivially
-            // matching a cell the gate already sits on.
-            float gateOffset = 1.5f / T;                 // ~0.0117 normalized: realistic fine-fence clearance
+            // The street cell list, in three deliberate parts:
+            //   (a) (0,1),(1,1),(2,1) — the crossing. (0,1) and (2,1) are ALSO building cells, on purpose:
+            //       nothing stops a stored street cell from naming a stored footprint cell, so this is what
+            //       keeps the Building > Road precedence guard pinned (MutTileGridRoadIgnoresBuilding).
+            //   (b) (1,2)..(1,10) — a spur leaving the buildings' bbox entirely. Its far tip sits 10 cells
+            //       south of the block; MarginCells (3) alone reaches only 5 cells out from the buildings, so
+            //       representing this tip REQUIRES Allocate to fold the STREET cells into the extent.
+            var streets = new System.Collections.Generic.List<(int i, int j)> { (0,1), (1,1), (2,1) };
+            for (int j = 2; j <= 10; j++) streets.Add((1, j));
+            f.SettlementParams.StreetCells = SettlementFootprint.Encode(streets);
+
+            // The gate sits ~1.5 fine tiles west of building (0,1) — a realistic fine-fence clearance
+            // (~0.0117 normalized), an order of magnitude closer than the coarse ring (2 cells = 0.14
+            // normalized out). Placing it exactly ON the ring cell would never exercise "find the NEAREST ring
+            // cell". The whole west ring column (i=-2) is Wall at every j from -2..4, so this offset forces
+            // the search to discriminate the target (-2,1) — 0.1283 normalized away — from its column
+            // neighbours (-2,0)/(-2,2), 0.1462 away each.
+            float gateOffset = 1.5f / T;
             f.Rooms.Add(new Room { Id = 99, TypeId = 0, X = ax + 0 * c - gateOffset, Y = ay + 1 * c });
 
-            var roads = new System.Collections.Generic.List<LinkSegment> {
-                // crossing road: west building row -> east building row, straight through the courtyard gap
-                new LinkSegment { A = new LinkPoint { X = (ax + 0*c)*T, Y = (ay + 1*c)*T },
-                                   B = new LinkPoint { X = (ax + 2*c)*T, Y = (ay + 1*c)*T }, EdgeIndex = 0 },
-                // OVERRIDE 1: a spur leaving the buildings' bbox entirely. Its far tip sits 10 cells south of
-                // the building block; MarginCells (3) alone would only ever reach 5 cells out from the
-                // buildings, so representing this tip REQUIRES the allocation to fold in the road extent, not
-                // just the buildings' bbox. Starts at the courtyard cell the crossing road already occupies,
-                // so the whole road network stays one connected blob (no stray-bridge machinery needed here).
-                new LinkSegment { A = new LinkPoint { X = (ax + 1*c)*T, Y = (ay + 1*c)*T },
-                                   B = new LinkPoint { X = (ax + 1*c)*T, Y = (ay + 10*c)*T }, EdgeIndex = 1 },
-            };
+            var clean = SettlementTileGrid.Build(f);
 
-            var clean = SettlementTileGrid.Build(f, roads);
-
-            // ---- roads: rasterized, and precedence-guarded (Building > ... > Road) ----
+            // ---- streets: marked Road, and precedence-guarded (Building > ... > Road) ----
             if (clean.At(1,1) != TileType.Road)
-            { Debug.LogError($"FAIL roads: courtyard cell (1,1) is {clean.At(1,1)}, expected Road (a road crosses it)"); ok = false; }
+            { Debug.LogError($"FAIL roads: courtyard cell (1,1) is {clean.At(1,1)}, expected Road (a stored street cell names it)"); ok = false; }
             if (clean.At(0,1) != TileType.Building)
-            { Debug.LogError($"FAIL roads: cell (0,1) is {clean.At(0,1)}, expected Building — road overwrote a building (precedence broken)"); ok = false; }
+            { Debug.LogError($"FAIL roads: cell (0,1) is {clean.At(0,1)}, expected Building — a street cell overwrote a building footprint cell (precedence broken)"); ok = false; }
 
-            // ---- OVERRIDE 1: the spur's far tip is REPRESENTED (grid extent folded past the buildings' own
-            // bbox) and ENCLOSED (the wall wraps it — not left as a silently-dropped/Outside cell) ----
+            // ---- the spur's far tip is REPRESENTED (grid extent folded over the STREET cells, past the
+            // buildings' own bbox) and ENCLOSED (the wall wraps it — not left as a dropped/Outside cell) ----
             if (!clean.InBounds(1, 10))
-            { Debug.LogError($"FAIL roads: far spur cell (1,10) is OUT of bounds — grid is {clean.W}x{clean.H} @ ({clean.OriginI},{clean.OriginJ}) — the grid extent was not folded over the routed road (OVERRIDE 1)"); ok = false; }
+            { Debug.LogError($"FAIL roads: far spur cell (1,10) is OUT of bounds — grid is {clean.W}x{clean.H} @ ({clean.OriginI},{clean.OriginJ}) — Allocate did not fold the street cells into the extent"); ok = false; }
             else if (clean.At(1, 10) != TileType.Road)
             { Debug.LogError($"FAIL roads: far spur cell (1,10) is {clean.At(1, 10)}, expected Road (present but misclassified)"); ok = false; }
             // Expected row expressed via CourtyardCells (a tunable knob — the dilation radius BuildWallRing
             // uses is CourtyardCells + 1) rather than a bare literal, so a future retune of CourtyardCells
             // still produces an intelligible mismatch instead of a bare "expected Wall" against a stale row.
+            // This is the assertion that pins "streets are folded into the RING SEED, not merely painted Road
+            // afterwards" (MutGridStreetsNotSeeded): seed the ring from the buildings alone and the whole
+            // spur — tip and wrapping ring both — falls outside the blob.
             int spurWallRow = 10 + SettlementTileGrid.CourtyardCells + 1;
             if (clean.At(1, spurWallRow) != TileType.Wall)
-            { Debug.LogError($"FAIL roads: cell (1,{spurWallRow}), CourtyardCells+1 beyond the spur's tip (row 10), is {clean.At(1, spurWallRow)}, expected Wall — the wall must wrap the spur, not just the buildings"); ok = false; }
+            { Debug.LogError($"FAIL roads: cell (1,{spurWallRow}), CourtyardCells+1 beyond the spur's tip (row 10), is {clean.At(1, spurWallRow)}, expected Wall — the wall must wrap the streets, not just the buildings"); ok = false; }
 
-            // ---- OVERRIDE 2: the gate reclassifies the NEAREST ring cell, on the correct side — not just
-            // "some ring cell somewhere" (the opposite wall must stay Wall) ----
+            // ---- the gate reclassifies the NEAREST ring cell, on the correct side — not just "some ring cell
+            // somewhere" (the opposite wall must stay Wall) ----
             if (clean.At(-2, 1) != TileType.Gate)
             { Debug.LogError($"FAIL roads: west wall cell (-2,1) is {clean.At(-2,1)}, expected Gate (nearest ring cell to the realistic-distance gate)"); ok = false; }
             if (clean.At(4, 1) != TileType.Wall)
             { Debug.LogError($"FAIL roads: opposite (east) wall cell (4,1) is {clean.At(4,1)}, expected Wall — only the nearest ring cell should reclassify"); ok = false; }
 
-            // ---- Fast tier: null roads -> no Road cells, and no folded extent (wall/void/gates still
-            // present — gates don't depend on roads) ----
-            var fast = SettlementTileGrid.Build(f, null);
-            if (fast.InBounds(1, 10))
-            { Debug.LogError($"FAIL roads: Fast tier (buildings-only extent) already covers the far spur cell (1,10) — grid is {fast.W}x{fast.H} @ ({fast.OriginI},{fast.OriginJ}) — the OVERRIDE 1 extent-fold assertion above is not load-bearing"); ok = false; }
-            int roadCells = 0; for (int a=0;a<fast.W;a++) for (int b=0;b<fast.H;b++) if (fast.Cells[a,b]==TileType.Road) roadCells++;
+            // ---- NO stored streets -> no Road cells at all, and the buildings-only extent. This pair
+            // replaces the deleted Fast-tier block (there is no Fast/Clean split any more) and carries the
+            // same two loads: (a) Road comes from StreetCells and from nothing else — a grid that invented
+            // Road cells from the room graph would fail the count; (b) the extent assertion above is not
+            // vacuous — without the streets the far spur cell is genuinely out of bounds, so the InBounds
+            // check there is really testing the fold. Same rooms, same gate; only StreetCells differs. ----
+            var noStreets = Floor(true, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
+            noStreets.Rooms.Add(new Room { Id = 99, TypeId = 0, X = ax + 0 * c - gateOffset, Y = ay + 1 * c });
+            var bare = SettlementTileGrid.Build(noStreets);
+            if (bare.InBounds(1, 10))
+            { Debug.LogError($"FAIL roads: street-less grid (buildings-only extent) already covers the far spur cell (1,10) — grid is {bare.W}x{bare.H} @ ({bare.OriginI},{bare.OriginJ}) — the extent-fold assertion above is not load-bearing"); ok = false; }
+            int roadCells = 0; for (int a=0;a<bare.W;a++) for (int b=0;b<bare.H;b++) if (bare.Cells[a,b]==TileType.Road) roadCells++;
             if (roadCells != 0)
-            { Debug.LogError($"FAIL roads: Fast tier (null roads) produced {roadCells} Road cells, expected 0"); ok = false; }
-            if (fast.At(-2, 1) != TileType.Gate)
-            { Debug.LogError($"FAIL roads: Fast tier gate reclassify missing — (-2,1) is {fast.At(-2,1)}, expected Gate"); ok = false; }
+            { Debug.LogError($"FAIL roads: a settlement with StreetCells unset produced {roadCells} Road cells, expected 0 — Road must come from StreetCells and nothing else"); ok = false; }
+            if (bare.At(-2, 1) != TileType.Gate)
+            { Debug.LogError($"FAIL roads: street-less gate reclassify missing — (-2,1) is {bare.At(-2,1)}, expected Gate (a gate does not depend on streets)"); ok = false; }
 
-            // ---- fix: an UNWALLED settlement (HasWall=false) must still get its roads. Reachable in
-            // production: MapScreenController sets HasWall = (poi.Type == PoiType.City), so every Village is
-            // unwalled, and SettlementStreets still generates streets for gate-less towns (hub-seeded growth,
-            // see that file's class doc) — without this, every Village would render as houses with zero
-            // streets. Same building layout as `f` above but HasWall=false and no gate room, roaded the same
-            // way, so this exercises MarkRoads' `inside == null` branch (no Inside test at all) rather than
-            // the walled branch the assertions above already cover. ----
+            // ---- an UNWALLED settlement (HasWall=false) must still get its streets. Reachable in production:
+            // MapScreenController sets HasWall = (poi.Type == PoiType.City), so every Village is unwalled, and
+            // SettlementStreets still generates streets for gate-less towns (hub-seeded growth, see that
+            // file's class doc) — without this, every Village would render as houses with zero streets. Same
+            // building layout as `f` above but HasWall=false and no gate room, so this exercises MarkRoads'
+            // `inside == null` branch (no Inside test at all) rather than the walled branch above. ----
             var openFloor = Floor(false, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
-            var openRoads = new System.Collections.Generic.List<LinkSegment> {
-                new LinkSegment { A = new LinkPoint { X = (ax + 0*c)*T, Y = (ay + 1*c)*T },
-                                   B = new LinkPoint { X = (ax + 2*c)*T, Y = (ay + 1*c)*T }, EdgeIndex = 0 },
-            };
-            var openClean = SettlementTileGrid.Build(openFloor, openRoads);
+            openFloor.SettlementParams.StreetCells = SettlementFootprint.Encode(
+                new System.Collections.Generic.List<(int i, int j)> { (0,1), (1,1), (2,1) });
+            var openClean = SettlementTileGrid.Build(openFloor);
             if (openClean.At(1,1) != TileType.Road)
-            { Debug.LogError($"FAIL roads: unwalled courtyard cell (1,1) is {openClean.At(1,1)}, expected Road — HasWall=false must not drop roads (village streets would vanish)"); ok = false; }
+            { Debug.LogError($"FAIL roads: unwalled courtyard cell (1,1) is {openClean.At(1,1)}, expected Road — HasWall=false must not drop streets (village streets would vanish)"); ok = false; }
             if (openClean.At(0,1) != TileType.Building)
-            { Debug.LogError($"FAIL roads: unwalled cell (0,1) is {openClean.At(0,1)}, expected Building — road overwrote a building (precedence broken)"); ok = false; }
+            { Debug.LogError($"FAIL roads: unwalled cell (0,1) is {openClean.At(0,1)}, expected Building — a street cell overwrote a building (precedence broken)"); ok = false; }
             int openWalls = 0, openVoids = 0;
             for (int a = 0; a < openClean.W; a++) for (int b = 0; b < openClean.H; b++)
             { if (openClean.Cells[a,b] == TileType.Wall) openWalls++; if (openClean.Cells[a,b] == TileType.Void) openVoids++; }
             if (openWalls != 0 || openVoids != 0)
-            { Debug.LogError($"FAIL roads: unwalled+roaded settlement has {openWalls} Wall + {openVoids} Void cells, expected 0/0 — HasWall=false must still mean no Inside/Outside split (Task 2's contract)"); ok = false; }
+            { Debug.LogError($"FAIL roads: unwalled+streeted settlement has {openWalls} Wall + {openVoids} Void cells, expected 0/0 — HasWall=false must still mean no Inside/Outside split"); ok = false; }
 
             if (ok) Debug.Log("Settlement Roads and Gates: PASS");
         }
@@ -253,7 +299,7 @@ namespace WorldGen.Rendering
             bool ok = true;
             // a wall cell directly in front (south, larger row) of a building behind it
             var f = Floor(true, (0,0),(1,0),(0,1),(1,1));
-            var g = SettlementTileGrid.Build(f, null);
+            var g = SettlementTileGrid.Build(f);
             // Cloned BEFORE the first DrawOrder() call (not after) so SpillIsVisualOnly's mutation check below
             // catches a first-call mutation too — a first-call mutation that happens to be idempotent and
             // None-preserving would otherwise escape both that diff check and the idempotency check.
@@ -416,6 +462,132 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL height: WallHeight {wallH} not above the tallest house {tallestHouse}"); ok = false; }
 
             if (ok) Debug.Log("Settlement Height: PASS");
+        }
+
+        [ContextMenu("Self-Test: Footprint Tiles")]
+        public void SelfTestFootprintTiles()
+        {
+            bool ok = true;
+
+            // ---- A. A 2x3 footprint marks ALL SIX of its cells, and nothing else -----------------------
+            // HasWall=false throughout this test: no ring, no courtyard, so every non-Building cell reads
+            // None and a count of Building cells is an exact statement about the footprint pass alone.
+            var fA = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            var rectA = Rect(0, 0, 2, 3);                       // (0,0),(1,0),(0,1),(1,1),(0,2),(1,2)
+            fA.Rooms.Add(Many(1, (0, 0), rectA));
+            var gA = SettlementTileGrid.Build(fA);
+            foreach (var cell in rectA)
+                if (gA.At(cell.i, cell.j) != TileType.Building)
+                { Debug.LogError($"FAIL footprint-tiles: 2x3 footprint cell ({cell.i},{cell.j}) is {gA.At(cell.i, cell.j)}, expected Building — only part of the footprint was drawn"); ok = false; }
+            int buildA = 0; for (int a=0;a<gA.W;a++) for (int b=0;b<gA.H;b++) if (gA.Cells[a,b]==TileType.Building) buildA++;
+            if (buildA != rectA.Length)
+            { Debug.LogError($"FAIL footprint-tiles: a 2x3 footprint produced {buildA} Building cells, expected {rectA.Length}"); ok = false; }
+            // The two cells immediately past the footprint's east and south edges must stay empty — named
+            // explicitly rather than left to the count above, so an over-marking bug says WHERE.
+            if (gA.At(2, 0) != TileType.None)
+            { Debug.LogError($"FAIL footprint-tiles: cell (2,0), one east of the 2x3 footprint, is {gA.At(2,0)}, expected None"); ok = false; }
+            if (gA.At(0, 3) != TileType.None)
+            { Debug.LogError($"FAIL footprint-tiles: cell (0,3), one south of the 2x3 footprint, is {gA.At(0,3)}, expected None"); ok = false; }
+
+            // ---- B. Two FLUSH footprints each keep their own cells --------------------------------------
+            // Adjacency between buildings is legal now (that is the whole point of blocks), so this must not
+            // merge, drop or overwrite either side. Two 1x2 bars sharing the i=0/i=1 seam.
+            var fB = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            var west = Rect(0, 0, 1, 2);                        // (0,0),(0,1)
+            var east = Rect(1, 0, 1, 2);                        // (1,0),(1,1)
+            fB.Rooms.Add(Many(10, (0, 0), west));
+            fB.Rooms.Add(Many(11, (1, 0), east));
+            // Non-vacuity: the fixture really is two DISJOINT footprints, so "each keeps its own cells" is a
+            // claim about adjacency and not about an overlap that was never there.
+            if (SettlementFootprint.Overlaps(SettlementFootprint.Decode(fB.Rooms[0].Cells), SettlementFootprint.Decode(fB.Rooms[1].Cells)))
+            { Debug.LogError("FAIL footprint-tiles: the two flush fixture footprints already share a cell — the flush assertions below would be vacuous"); ok = false; }
+            var gB = SettlementTileGrid.Build(fB);
+            foreach (var cell in west)
+                if (gB.At(cell.i, cell.j) != TileType.Building)
+                { Debug.LogError($"FAIL footprint-tiles: west building's cell ({cell.i},{cell.j}) is {gB.At(cell.i, cell.j)}, expected Building — a flush neighbour cost it a cell"); ok = false; }
+            foreach (var cell in east)
+                if (gB.At(cell.i, cell.j) != TileType.Building)
+                { Debug.LogError($"FAIL footprint-tiles: east building's cell ({cell.i},{cell.j}) is {gB.At(cell.i, cell.j)}, expected Building — a flush neighbour cost it a cell"); ok = false; }
+            int buildB = 0; for (int a=0;a<gB.W;a++) for (int b=0;b<gB.H;b++) if (gB.Cells[a,b]==TileType.Building) buildB++;
+            if (buildB != west.Length + east.Length)
+            { Debug.LogError($"FAIL footprint-tiles: two flush 1x2 footprints produced {buildB} Building cells, expected {west.Length + east.Length}"); ok = false; }
+            // And each ROOM still reports its own cells — a flush neighbour must not have re-derived either
+            // footprint (the multi-cell never-re-derive rule, checked here on an adjacency fixture).
+            var fpWest = SettlementTileGrid.FootprintOf(fB.Rooms[0]);
+            var fpEast = SettlementTileGrid.FootprintOf(fB.Rooms[1]);
+            if (fpWest.Count != west.Length || fpEast.Count != east.Length)
+            { Debug.LogError($"FAIL footprint-tiles: flush neighbours report {fpWest.Count}/{fpEast.Count} cells, expected {west.Length}/{east.Length}"); ok = false; }
+
+            // ---- C. The EXTENT folds every footprint cell, not one per room -----------------------------
+            // A horizontal bar long enough that its far end cannot fit inside a representative-only extent:
+            // that extent spans i in [-MarginCells, +MarginCells] around the representative, so the bar is
+            // made MarginCells + 4 cells wide and its far cell sits at i = MarginCells + 3. Derived from
+            // MarginCells rather than hard-coded so a future margin retune cannot silently make this vacuous.
+            int barW = SettlementTileGrid.MarginCells + 4;
+            int farI = barW - 1;
+            if (farI <= SettlementTileGrid.MarginCells)
+            { Debug.LogError($"FAIL footprint-tiles: the bar's far cell i={farI} is within MarginCells ({SettlementTileGrid.MarginCells}) of the representative — a representative-only extent would still contain it and this fixture proves nothing"); ok = false; }
+            var fC = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            var bar = Rect(0, 0, barW, 1);
+            fC.Rooms.Add(Many(1, (0, 0), bar));
+            var gC = SettlementTileGrid.Build(fC);
+            if (!gC.InBounds(farI, 0))
+            { Debug.LogError($"FAIL footprint-tiles: the bar's far cell ({farI},0) is OUT of bounds — grid is {gC.W}x{gC.H} @ ({gC.OriginI},{gC.OriginJ}) — Allocate sized the extent from one cell per room, so the far cells are silently dropped by the InBounds guards"); ok = false; }
+            else if (gC.At(farI, 0) != TileType.Building)
+            { Debug.LogError($"FAIL footprint-tiles: the bar's far cell ({farI},0) is {gC.At(farI, 0)}, expected Building (in bounds but never written)"); ok = false; }
+            int buildC = 0; for (int a=0;a<gC.W;a++) for (int b=0;b<gC.H;b++) if (gC.Cells[a,b]==TileType.Building) buildC++;
+            if (buildC != barW)
+            { Debug.LogError($"FAIL footprint-tiles: a 1x{barW} bar produced {buildC} Building cells, expected {barW}"); ok = false; }
+
+            // ---- D. NO footprint at all -> one cell, derived from the room's point ----------------------
+            // This is the GENERATED town: SettlementGenerator.BuildFloor does not populate Room.Cells, while a
+            // reloaded town has single-cell footprints from the v10 migration. Both must render the same.
+            var fD = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            fD.Rooms.Add(new Room { Id = 1, TypeId = 1, X = P(4), Y = P(5) });      // Cells left null
+            var gD = SettlementTileGrid.Build(fD);
+            if (gD.At(4, 5) != TileType.Building)
+            { Debug.LogError($"FAIL footprint-tiles: a room with NO footprint at point cell (4,5) reads {gD.At(4,5)}, expected Building (the point fallback did not fire)"); ok = false; }
+            int buildD = 0; for (int a=0;a<gD.W;a++) for (int b=0;b<gD.H;b++) if (gD.Cells[a,b]==TileType.Building) buildD++;
+            if (buildD != 1)
+            { Debug.LogError($"FAIL footprint-tiles: a room with no footprint produced {buildD} Building cells, expected exactly 1"); ok = false; }
+
+            // ---- E. A STALE single-cell footprint is re-derived from the point ---------------------------
+            // Moving a building writes Room.X/Y from eight editor call sites and does not (yet) rewrite
+            // Room.Cells, and the v10 migration never overwrites a non-empty footprint — so without this rule
+            // a migrated building's tile would freeze at where it used to be and dragging it would stop
+            // moving it. Footprint says (0,0); the point says (3,2); the point wins.
+            var fE = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            fE.Rooms.Add(Many(1, (3, 2), (0, 0)));
+            var gE = SettlementTileGrid.Build(fE);
+            if (gE.At(3, 2) != TileType.Building)
+            { Debug.LogError($"FAIL footprint-tiles: a building whose stale single-cell footprint says (0,0) but whose point says (3,2) draws {gE.At(3,2)} at (3,2), expected Building — the stale footprint was trusted"); ok = false; }
+            if (!gE.InBounds(0, 0))
+            { Debug.LogError($"FAIL footprint-tiles: the stale cell (0,0) is out of the grid entirely — the check below would pass for the wrong reason"); ok = false; }
+            else if (gE.At(0, 0) == TileType.Building)
+            { Debug.LogError("FAIL footprint-tiles: the STALE cell (0,0) is still drawn Building — the building is in two places at once"); ok = false; }
+            int buildE = 0; for (int a=0;a<gE.W;a++) for (int b=0;b<gE.H;b++) if (gE.Cells[a,b]==TileType.Building) buildE++;
+            if (buildE != 1)
+            { Debug.LogError($"FAIL footprint-tiles: a stale single-cell footprint produced {buildE} Building cells, expected exactly 1"); ok = false; }
+
+            // ---- F. A MULTI-cell footprint is NEVER re-derived, even when the point disagrees ------------
+            // The other half of rule E, and the reason it is restricted to single cells: a point cannot
+            // reconstruct a shape, so "self-healing" a bar or an L would amputate it to one cell. Footprint
+            // says (0,0),(1,0); the point says (3,2); the FOOTPRINT wins. (3,2) is inside the extent both
+            // rules produce, so this really discriminates rather than reading None for being off-grid.
+            var fF = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = false } };
+            fF.Rooms.Add(Many(1, (3, 2), (0, 0), (1, 0)));
+            var gF = SettlementTileGrid.Build(fF);
+            if (gF.At(0, 0) != TileType.Building || gF.At(1, 0) != TileType.Building)
+            { Debug.LogError($"FAIL footprint-tiles: a 2-cell footprint whose point sits at (3,2) draws {gF.At(0,0)}/{gF.At(1,0)} at (0,0)/(1,0), expected Building/Building — a multi-cell footprint was re-derived from the point and amputated"); ok = false; }
+            if (!gF.InBounds(3, 2))
+            { Debug.LogError($"FAIL footprint-tiles: the disagreeing point cell (3,2) is out of the grid entirely — grid is {gF.W}x{gF.H} @ ({gF.OriginI},{gF.OriginJ}) — the check below would pass for the wrong reason"); ok = false; }
+            else if (gF.At(3, 2) == TileType.Building)
+            { Debug.LogError("FAIL footprint-tiles: the disagreeing point cell (3,2) is drawn Building — a multi-cell footprint must not be re-derived"); ok = false; }
+            int buildF = 0; for (int a=0;a<gF.W;a++) for (int b=0;b<gF.H;b++) if (gF.Cells[a,b]==TileType.Building) buildF++;
+            if (buildF != 2)
+            { Debug.LogError($"FAIL footprint-tiles: a 2-cell footprint produced {buildF} Building cells, expected exactly 2"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Footprint Tiles: PASS");
         }
 
         [ContextMenu("Self-Test: TileGrid Sanity")]

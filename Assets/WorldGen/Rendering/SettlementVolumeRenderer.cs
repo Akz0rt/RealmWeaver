@@ -406,13 +406,12 @@ namespace WorldGen.Rendering
         /// runs through, and where the gates land. That derive is a few hundred cells of dilate + flood-fill,
         /// far below the cost of the road A* it is deliberately kept clear of.
         ///
-        /// TWO-TIER, honouring <paramref name="includeRoadsInFence"/> exactly as SettlementTileGrid.Build
-        /// documents it: false (Fast/drag) passes roads == null, so Build takes its buildings-only path — no
-        /// Road cells, and the wall ring wraps the live building/gate rects alone, skipping the ~12.5 ms grid
-        /// A*. true (bind/settle) passes the routed roads, so they rasterize as Road cells AND fold into the
-        /// occupied blob before the ring pass, exactly like the shipped fence. Roads come from `rg`, which the
-        /// controller built with the SAME SettlementRoadsFor(mode) flag it passes here, so the two can never
-        /// disagree — and it costs no second routing pass.</summary>
+        /// ONE TIER now. <paramref name="includeRoadsInFence"/> used to pick between a buildings-only grid
+        /// (Fast/drag, skipping a ~12.5 ms road A*) and one with the routed roads rasterized in
+        /// (Clean/bind/settle). SettlementTileGrid.Build reads STORED street cells instead of routing
+        /// anything, so both tiers now produce the identical grid and the flag is INERT for the tile grid. It
+        /// stays on the signature because callers pass it and DungeonLayout.DeriveTownFence(lvl, includeRoads)
+        /// still honours it.</summary>
         public void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence)
         {
             EnsureBuilt();
@@ -438,8 +437,12 @@ namespace WorldGen.Rendering
                 return;
             }
 
-            var roads = (isSettlement && includeRoadsInFence) ? RoadsFromGraph(lastRg) : null;
-            grid = SettlementTileGrid.Build(lvl, roads);
+            // SettlementTileGrid.Build takes no roads any more: streets are STORED cells
+            // (SettlementParams.StreetCells), so there is nothing left for the includeRoadsInFence flag to
+            // switch between here and the grid is the same one on every tier. The parameter itself stays —
+            // DungeonLayout.DeriveTownFence(lvl, includeRoads) still honours it — but it is now INERT for the
+            // tile grid.
+            grid = SettlementTileGrid.Build(lvl);
             RebuildCellRooms(lvl);
 
             float cw = CellWidthPx;

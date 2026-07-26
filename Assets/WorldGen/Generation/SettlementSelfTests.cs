@@ -157,14 +157,28 @@ namespace WorldGen.Rendering
                 if (!wall.Contains(b.X, b.Y))
                 { Debug.LogError($"FAIL buildings: building at ({b.X:F3},{b.Y:F3}) is OUTSIDE the wall"); ok = false; break; }
 
-            // ---- 2. NO two buildings are closer than one cell — the anti-overlap guarantee -------------
+            // ---- 2. NO two buildings SHARE A LATTICE CELL — the anti-overlap guarantee ------------------
             // This is the exact defect that disqualified the dungeon packer (18–48 overlapping pairs at 40).
+            //
+            // WHY THIS IS NOT A DISTANCE TEST ANY MORE. It used to assert that no two buildings were closer
+            // than one BuildingCell. A building is a FOOTPRINT of cells now, and a town is meant to be blocks
+            // of FLUSH buildings separated by streets — two buildings sharing a wall are exactly one cell
+            // apart, so the old assertion forbade the shape this arc exists to produce. What actually matters
+            // — and what the old distance test was a proxy for — is that no two buildings occupy the SAME
+            // cell: overlapping is a defect, touching is the design. Expressed on SettlementFootprint's
+            // absolute lattice (CellOf), which is the same lattice the tile grid and Room.Cells use, so this
+            // says the same thing about a point building as SettlementFootprint.Overlaps says about a shaped
+            // one. PlaceBuildings still emits one point per building on a grid of pitch BuildingCell, so two
+            // distinct buildings differ by at least one full pitch on some axis and therefore land in
+            // different cells (floor(x/p) and floor((x+p)/p) differ by exactly 1) — the rule holds without
+            // any tolerance term, and no longer needs the old 0.9 fudge factor.
             for (int i = 0; i < buildings.Count && ok; i++)
                 for (int j = i + 1; j < buildings.Count; j++)
                 {
-                    float dx = buildings[i].X - buildings[j].X, dy = buildings[i].Y - buildings[j].Y;
-                    if (dx * dx + dy * dy < SettlementGenerator.BuildingCell * SettlementGenerator.BuildingCell * 0.9f)
-                    { Debug.LogError($"FAIL buildings: buildings {i} and {j} overlap (closer than a cell)"); ok = false; break; }
+                    int ci = SettlementFootprint.CellOf(buildings[i].X), cj = SettlementFootprint.CellOf(buildings[i].Y);
+                    int dj = SettlementFootprint.CellOf(buildings[j].X), dk = SettlementFootprint.CellOf(buildings[j].Y);
+                    if (ci == dj && cj == dk)
+                    { Debug.LogError($"FAIL buildings: buildings {i} ({buildings[i].X:F4},{buildings[i].Y:F4}) and {j} ({buildings[j].X:F4},{buildings[j].Y:F4}) share lattice cell ({ci},{cj})"); ok = false; break; }
                 }
 
             // ---- 3. Every building sits at least half a cell from the wall (card doesn't straddle it) ---

@@ -1,12 +1,12 @@
 namespace WorldGen.Generation
 {
-    /// <summary>A tile's role in the 2.5D volumetric settlement render. Building/Wall/Void come from Task 2's
-    /// wall-ring pass; Road/Gate are Task 3 — a routed road reclassifies a Void cell to Road when the
-    /// settlement HasWall, or a None cell to Road when it does not (a wall-less village still gets streets —
-    /// see MarkRoads), and a stored gate room reclassifies its nearest Wall ring cell to Gate. Precedence
-    /// (highest wins; enforced by write ORDER, never by re-checking every rule at every write): Building >
-    /// Gate > Wall > Road > Void > None. None is the array default (0), so an untouched Cells slot reads as
-    /// empty without any fill pass.</summary>
+    /// <summary>A tile's role in the 2.5D volumetric settlement render. Building comes from a room's stored
+    /// FOOTPRINT (every cell of it, not just one), Wall/Void from the wall-ring pass; Road is a STORED street
+    /// cell (SettlementParams.StreetCells) reclassifying a Void cell when the settlement HasWall, or a None
+    /// cell when it does not (a wall-less village still gets streets — see MarkRoads), and a stored gate room
+    /// reclassifies its nearest Wall ring cell to Gate. Precedence (highest wins; enforced by write ORDER,
+    /// never by re-checking every rule at every write): Building > Gate > Wall > Road > Void > None. None is
+    /// the array default (0), so an untouched Cells slot reads as empty without any fill pass.</summary>
     public enum TileType { None = 0, Building, Road, Void, Wall, Gate }
 
     /// <summary>A settlement floor rasterized onto the building-cell lattice (SettlementGenerator.BuildingCell),
@@ -21,14 +21,20 @@ namespace WorldGen.Generation
     /// (SettlementFence.BridgeStrays) — each cluster gets its own independent dilation ring and flood-fill,
     /// with no attempt to connect separate clusters into one boundary.
     ///
-    /// TWO-TIER, mirroring the shipped DungeonLayout.DeriveTownFence(lvl, includeRoads): roads == null is
-    /// FAST (drag frames — buildings-only ring/void, no Road cells, gates still applied since they don't
-    /// depend on roads); roads != null is CLEAN (routed roads are rasterized and, when the settlement
-    /// HasWall, folded into the occupied blob BEFORE the ring/void pass so the wall wraps the roads too, then
-    /// reclassified Void→Road on top; when the settlement does NOT HasWall there is no ring/void pass to fold
-    /// into, so the raw rasterized road cells are reclassified None→Road directly — a wall-less village still
-    /// gets its streets, see MarkRoads). Depth sort-keys (Task 4) and per-building height (Task 5) build
-    /// further on top of this.</summary>
+    /// A BUILDING IS A FOOTPRINT, NOT A POINT. Every cell of every settlement building room's footprint
+    /// (Room.Cells, read through FootprintOf) is written Building, so a block of FLUSH multi-cell buildings
+    /// renders as the solid mass it is. Adjacency between two buildings is now legal and ordinary — the
+    /// separation that used to be guaranteed by "one building per cell" is gone, and nothing here re-imposes
+    /// it.
+    ///
+    /// STREETS ARE STORED, NOT ROUTED. Road cells come from SettlementParams.StreetCells — the same absolute
+    /// lattice, decoded by SettlementFootprint.Decode — so this pass no longer rasterizes routed LinkSegments
+    /// and no longer has a Fast/Clean two-tier split: there is exactly ONE grid for a given floor, and it
+    /// costs no road A*. Street cells are folded into the occupied blob BEFORE the ring/void pass, so the
+    /// wall wraps the streets exactly as it used to wrap the routed roads; when the settlement does NOT
+    /// HasWall there is no ring/void pass to fold into, so the raw street cells are reclassified None→Road
+    /// directly — a wall-less village still gets its streets, see MarkRoads. Depth sort-keys and per-building
+    /// height build further on top of this.</summary>
     public sealed class SettlementTileGrid
     {
         public TileType[,] Cells;          // [a, b]: a = col (i - OriginI), b = row (j - OriginJ)
@@ -50,12 +56,45 @@ namespace WorldGen.Generation
         public float SnapX(float xNorm) => CenterX(CellI(xNorm));
         public float SnapY(float yNorm) => CenterY(CellJ(yNorm));
 
-        // Allocate the empty grid (Cells all None), sized to the buildings' cell bbox + MarginCells — OR, when
-        // roads is supplied (the Clean tier), the (buildings ∪ road-endpoints) bbox + MarginCells, so a
-        // routed road leaving the buildings' bbox is still representable (OVERRIDE 1: a dropped road cell
-        // could never be wrapped by the wall — the exact bug the fine-fence arc had to fix). `roads` defaults
-        // to null so every existing buildings-only call site (this method's own doc history, and Task 8's
-        // view-fitting) keeps calling `Allocate(buildings)` unchanged.
+        // ---- footprints ------------------------------------------------------------------------------------
+        // The cells a settlement BUILDING room occupies, and the single place both Allocate and Build ask.
+        // Room.Cells is AUTHORITATIVE WHEN PRESENT — a multi-cell footprint is the only description of that
+        // shape there is, and nothing here may second-guess it. Two rules cover the cases where it is not
+        // present or not trustworthy:
+        //
+        //   (a) NO FOOTPRINT -> one cell, derived from the room's point. A freshly GENERATED town has this:
+        //       SettlementGenerator.BuildFloor does not populate Cells (block generation is a later task),
+        //       while a RELOADED town has single-cell footprints from SettlementFootprint.EnsureFootprints'
+        //       v10 migration. Both must render identically, and this is what makes them.
+        //
+        //   (b) A SINGLE-CELL FOOTPRINT THAT DISAGREES WITH THE POINT IS STALE -> re-derived from the point.
+        //       Moving a building writes Room.X/Y from eight editor call sites and does NOT (yet) rewrite
+        //       Room.Cells, and the migration never overwrites a non-empty footprint — so a migrated
+        //       building's one cell would be frozen at where it USED to be, and dragging it would stop moving
+        //       its tile. Re-deriving is exact for the single-cell case (one cell IS the point's cell, by
+        //       construction) and it is why this rule stays correct even after moves start maintaining the
+        //       footprint properly: at that point the two simply never disagree, and the rule never fires.
+        //
+        //       A MULTI-CELL footprint is NEVER re-derived, deliberately: a point cannot reconstruct a shape,
+        //       so "self-healing" one would silently amputate an L or a bar down to a single cell — far worse
+        //       than the staleness it would be trying to fix. Both halves are asserted (SelfTestFootprintTiles).
+        public static System.Collections.Generic.List<(int i, int j)> FootprintOf(Room r)
+        {
+            var point = (i: SettlementFootprint.CellOf(r.X), j: SettlementFootprint.CellOf(r.Y));
+            var cells = SettlementFootprint.Decode(r.Cells);
+            if (cells.Count == 0) return new System.Collections.Generic.List<(int i, int j)> { point };            // (a)
+            if (cells.Count == 1 && cells[0] != point)
+                return new System.Collections.Generic.List<(int i, int j)> { point };                              // (b)
+            return cells;
+        }
+
+        // Allocate the empty grid (Cells all None), sized to the (building FOOTPRINT cells ∪ street cells)
+        // bbox + MarginCells — EVERY cell, never one representative cell per room. That "every" is
+        // load-bearing rather than tidy: every write in this file is bounds-guarded (InBounds), so a footprint
+        // whose far cells fall outside an under-sized extent is dropped SILENTLY, with no error anywhere —
+        // the same class of bug as a road cell the wall could never wrap, which is what the fine-fence arc
+        // had to fix. `roads` (optional, and no longer passed by Build — see below) additionally folds routed
+        // road ENDPOINTS in, for the view-fit call site.
         //
         // ORIGIN vs EXTENT — the distinction this method now turns on. The EXTENT still depends on what is
         // placed (it is the occupied bbox plus MarginCells, and it must be, or a building would fall off the
@@ -66,17 +105,16 @@ namespace WorldGen.Generation
         // renumbers (and, whenever it moved off-pitch, slides). OriginI/OriginJ stay: they are the array's
         // offset into the absolute lattice, not a redefinition of it.
         public static SettlementTileGrid Allocate(System.Collections.Generic.IReadOnlyList<Room> buildings,
-            System.Collections.Generic.IReadOnlyList<LinkSegment> roads = null)
+            System.Collections.Generic.IReadOnlyList<LinkSegment> roads = null,
+            System.Collections.Generic.IReadOnlyList<(int i, int j)> streets = null)
         {
             var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell };
 
             // ONE pass now, not two: with a fixed lattice the cell-index bbox needs nothing established first.
             bool any = false;
             int minCellI = int.MaxValue, minCellJ = int.MaxValue, maxCellI = int.MinValue, maxCellJ = int.MinValue;
-            foreach (var r in buildings)
+            void Fold(int i, int j)
             {
-                if (r.TypeId != 1) continue;
-                int i = g.CellI(r.X), j = g.CellJ(r.Y);
                 if (i < minCellI) minCellI = i;
                 if (i > maxCellI) maxCellI = i;
                 if (j < minCellJ) minCellJ = j;
@@ -84,33 +122,41 @@ namespace WorldGen.Generation
                 any = true;
             }
 
+            foreach (var r in buildings)
+            {
+                if (r.TypeId != 1) continue;
+                foreach (var c in FootprintOf(r)) Fold(c.i, c.j);
+            }
+            // Streets count towards `any`, unlike the road ENDPOINTS below: a street cell is stored data that
+            // must be representable in its own right, whereas a routed road is derived and its fold is only
+            // ever a widening of an extent the buildings already established.
+            if (streets != null)
+                foreach (var c in streets) Fold(c.i, c.j);
+
             if (!any)
             {
-                // No buildings: a minimal 1x1 None grid, no throw. Roads are NOT folded in on this path — the
-                // pre-existing empty-input contract, unchanged.
+                // Nothing placed at all: a minimal 1x1 None grid, no throw. Roads are NOT folded in on this
+                // path — the pre-existing empty-input contract, unchanged.
                 g.OriginI = 0; g.OriginJ = 0; g.W = 1; g.H = 1;
                 g.Cells = new TileType[1, 1];
                 return g;
             }
 
-            // Fold in every road segment's ENDPOINTS (Clean tier only). A LinkSegment is a straight line, so
-            // both X and Y are monotonic along it — the cell-coordinate extremes of every intermediate sample
-            // Build will later rasterize are already bounded by the two endpoints' own cell coordinates, so
-            // folding just the endpoints (not the full step-sampled path) is exact for bbox purposes and far
-            // cheaper. Endpoints are TILE space (RoomLinkGeometry convention); divide by TilesPerAxis first.
+            // Fold in every road segment's ENDPOINTS. A LinkSegment is a straight line, so both X and Y are
+            // monotonic along it — every intermediate point's cell coordinates are already bounded by the two
+            // endpoints' own, so folding just the endpoints is exact for bbox purposes and far cheaper.
+            // Endpoints are TILE space (RoomLinkGeometry convention); divide by TilesPerAxis first.
+            //
+            // NOTE: Build no longer passes this — streets are stored cells now, not routed segments — so the
+            // only live caller is DungeonViewController.FitBoundsFor, which sizes the VIEW to the routed road
+            // network so a road leaving the buildings' bbox is not fitted off-panel. That means this fold has
+            // no self-test coverage of its own any more; it is not dead, and deleting it as "unused" would
+            // silently narrow the fit.
             if (roads != null)
                 foreach (var seg in roads)
                 {
-                    int ai = g.CellI(seg.A.X / DungeonLayout.TilesPerAxis), aj = g.CellJ(seg.A.Y / DungeonLayout.TilesPerAxis);
-                    int bi = g.CellI(seg.B.X / DungeonLayout.TilesPerAxis), bj = g.CellJ(seg.B.Y / DungeonLayout.TilesPerAxis);
-                    if (ai < minCellI) minCellI = ai;
-                    if (ai > maxCellI) maxCellI = ai;
-                    if (aj < minCellJ) minCellJ = aj;
-                    if (aj > maxCellJ) maxCellJ = aj;
-                    if (bi < minCellI) minCellI = bi;
-                    if (bi > maxCellI) maxCellI = bi;
-                    if (bj < minCellJ) minCellJ = bj;
-                    if (bj > maxCellJ) maxCellJ = bj;
+                    Fold(g.CellI(seg.A.X / DungeonLayout.TilesPerAxis), g.CellJ(seg.A.Y / DungeonLayout.TilesPerAxis));
+                    Fold(g.CellI(seg.B.X / DungeonLayout.TilesPerAxis), g.CellJ(seg.B.Y / DungeonLayout.TilesPerAxis));
                 }
 
             g.OriginI = minCellI - MarginCells;
@@ -121,45 +167,45 @@ namespace WorldGen.Generation
             return g;
         }
 
-        // Build the settlement's tile grid: buildings placed onto the lattice, plus — when the settlement
-        // HasWall — the wall-ring/courtyard classification, roads rasterized on top, and gates reclassifying
-        // the ring. TWO-TIER: roads == null is FAST (buildings-only ring/void, no Road cells — byte-identical
-        // to the Task-2 wall-ring algorithm); roads != null is CLEAN (routed roads are always rasterized —
-        // when HasWall they're folded into the occupied blob BEFORE the ring/void pass, so the wall wraps them
-        // too, then reclassified onto the result; when NOT HasWall there is no ring/void pass, so the raw
-        // rasterized cells are reclassified directly — see MarkRoads). Gates apply in BOTH tiers whenever
-        // HasWall — a gate's existence has nothing to do with whether roads were supplied this particular
-        // rebuild.
+        // Build the settlement's tile grid: every cell of every building's FOOTPRINT placed onto the lattice,
+        // every STORED street cell marked Road, plus — when the settlement HasWall — the wall-ring/courtyard
+        // classification and the gates reclassifying the ring. ONE TIER: the streets are read out of
+        // SettlementParams.StreetCells rather than routed, so there is nothing expensive left to defer and no
+        // Fast/Clean split to keep in sync (that split existed only because the Clean tier had to pay for a
+        // ~12.5 ms road A*).
         //
         // Precedence Building > Gate > Wall > Road > Void > None is enforced by WRITE ORDER, never by
         // re-deciding every rule at every cell: buildings are written first and every later pass explicitly
-        // skips Building cells; MarkRoads additionally skips Wall cells (so under HasWall a road can only ever
-        // land on Void — see MarkRoads for why Wall is unreachable there in the first place; without HasWall
-        // there is no Wall to skip and a road lands on None instead); MarkGates only ever retargets a cell
-        // that currently reads Wall or (idempotently) Gate (so it can't clobber a Road cell, and trivially
-        // can't clobber Building either) — see MarkGates for why Gate is accepted too.
-        public static SettlementTileGrid Build(InteriorFloor floor, System.Collections.Generic.IReadOnlyList<LinkSegment> roads)
+        // skips Building cells; MarkRoads additionally skips Wall cells (so under HasWall a street can only
+        // ever land on Void — see MarkRoads for why Wall is unreachable there in the first place; without
+        // HasWall there is no Wall to skip and a street lands on None instead); MarkGates only ever retargets
+        // a cell that currently reads Wall or (idempotently) Gate (so it can't clobber a Road cell, and
+        // trivially can't clobber Building either) — see MarkGates for why Gate is accepted too.
+        public static SettlementTileGrid Build(InteriorFloor floor)
         {
-            var g = Allocate(floor.Rooms, roads);
+            // Decode ONCE and hand the same list to Allocate (extent) and StreetMask (cells): the extent must
+            // be sized for exactly the cells that will be written, or a street outside it is dropped silently.
+            var streets = SettlementFootprint.Decode(floor.SettlementParams?.StreetCells);
+            var g = Allocate(floor.Rooms, null, streets);
             foreach (var r in floor.Rooms)
             {
                 if (r.TypeId != 1) continue;
-                int i = g.CellI(r.X), j = g.CellJ(r.Y);
-                if (g.InBounds(i, j)) g.Cells[i - g.OriginI, j - g.OriginJ] = TileType.Building;
+                var fp = FootprintOf(r);
+                foreach (var c in fp)
+                    if (g.InBounds(c.i, c.j)) g.Cells[c.i - g.OriginI, c.j - g.OriginJ] = TileType.Building;
             }
 
             bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
-            // Roads are rasterized whenever supplied, regardless of HasWall: a wall-less village (every
-            // Village — MapScreenController sets HasWall = City-only) still generates streets
-            // (SettlementStreets' gate-less hub-seeded growth pass, see that file's class doc) and those
-            // streets must render. Only the WALL/gate machinery below is conditional on HasWall — "Inside"
-            // is a wall-ring concept and simply doesn't exist without a wall, so when HasWall is false `inside`
-            // stays null and MarkRoads is told (via that null) not to apply an Inside test at all.
-            bool[,] roadMask = roads != null ? RasterizeRoads(g, roads) : null;
+            // Streets are marked regardless of HasWall: a wall-less village (every Village —
+            // MapScreenController sets HasWall = City-only) still gets streets, and those streets must
+            // render. Only the WALL/gate machinery below is conditional on HasWall — "Inside" is a wall-ring
+            // concept and simply doesn't exist without a wall, so when HasWall is false `inside` stays null
+            // and MarkRoads is told (via that null) not to apply an Inside test at all.
+            bool[,] streetMask = StreetMask(g, streets);
 
-            bool[,] inside = hasWall ? BuildWallRing(g, roadMask) : null;
+            bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;
 
-            if (roadMask != null) MarkRoads(g, roadMask, inside);
+            MarkRoads(g, streetMask, inside);
             if (hasWall) MarkGates(g, floor.Rooms);
 
             return g;
@@ -203,8 +249,8 @@ namespace WorldGen.Generation
 
         // ---- wall ring ------------------------------------------------------------------------------------
         // (a) occupied = (building cells ∪ extraSeed cells, when supplied) dilated by CourtyardCells + 1
-        //     (buildings/roads + a one-cell courtyard skirt + the wall layer itself). extraSeed == null (the
-        //     Fast tier) reduces this to exactly Task 2's buildings-only dilation — byte-identical. (b)
+        //     (buildings/streets + a one-cell courtyard skirt + the wall layer itself). extraSeed is the
+        //     STREET mask; a null/all-false one reduces this to a buildings-only dilation. (b)
         //     flood-fill Outside from the grid border through !occupied (4-connected) —
         //     SettlementFence.InsideFromOutsideFill's technique, at cell resolution. (c) Inside = !Outside, so
         //     an enclosed pocket among the buildings can never read as outside-None (no holes). (d) Wall =
@@ -248,7 +294,7 @@ namespace WorldGen.Generation
         // Square (Chebyshev) dilation: every array cell within `radius` cells on EACH axis of a seed cell
         // becomes occupied — the discrete analogue of SettlementFence's inflated-rect building footprint
         // (RasterizeRoad/Derive's hw/hh inflation), just applied to single cells instead of rects. `seed` is
-        // Building-only for the Fast tier, Building ∪ raw-road-cells for Clean (BuildWallRing builds it).
+        // Building ∪ the stored street cells (BuildWallRing builds it).
         static bool[,] Dilate(bool[,] seed, int w, int h, int radius)
         {
             var occupied = new bool[w, h];
@@ -265,52 +311,41 @@ namespace WorldGen.Generation
             return occupied;
         }
 
-        // ---- roads (Task 3) --------------------------------------------------------------------------------
-        // Rasterize every road segment onto the cell lattice as a RAW cell-membership mask, independent of
-        // Inside/Wall/Building — used both (a) as BuildWallRing's extraSeed, so the occupied blob (and hence
-        // the wall ring derived from it) includes the road, and (b) after Inside/Wall/Void are known, to
-        // reclassify Void cells to Road. Every write is bounds-checked (InBounds) and never throws, even if a
-        // sample's nearest cell falls outside the grid — belt-and-suspenders alongside the Allocate extent
-        // fold above (OVERRIDE 1): a caller that ever passes roads without routing them through this Build's
-        // own Allocate call still can't crash this pass, it just silently loses the out-of-range samples.
-        static bool[,] RasterizeRoads(SettlementTileGrid g, System.Collections.Generic.IReadOnlyList<LinkSegment> roads)
+        // ---- streets ---------------------------------------------------------------------------------------
+        // The STORED street cells as a RAW cell-membership mask, independent of Inside/Wall/Building — used
+        // both (a) as BuildWallRing's extraSeed, so the occupied blob (and hence the wall ring derived from
+        // it) includes the streets, and (b) after Inside/Wall/Void are known, to reclassify Void cells to
+        // Road. Every write is bounds-checked (InBounds) and never throws even if a stored cell falls outside
+        // the grid — belt-and-suspenders alongside Allocate's street fold above, which is what actually makes
+        // that impossible for a grid Build itself allocated.
+        static bool[,] StreetMask(SettlementTileGrid g, System.Collections.Generic.IReadOnlyList<(int i, int j)> streets)
         {
             var mask = new bool[g.W, g.H];
-            foreach (var seg in roads)
-            {
-                float ax = seg.A.X / DungeonLayout.TilesPerAxis, ay = seg.A.Y / DungeonLayout.TilesPerAxis;
-                float bx = seg.B.X / DungeonLayout.TilesPerAxis, by = seg.B.Y / DungeonLayout.TilesPerAxis;
-                float dx = bx - ax, dy = by - ay;
-                float len = (float)System.Math.Sqrt(dx * dx + dy * dy);
-                int steps = (int)System.Math.Ceiling(len / (0.5f * g.Cell));
-                if (steps < 1) steps = 1;
-                for (int s = 0; s <= steps; s++)
-                {
-                    float t = (float)s / steps;
-                    int i = g.CellI(ax + dx * t), j = g.CellJ(ay + dy * t);
-                    if (g.InBounds(i, j)) mask[i - g.OriginI, j - g.OriginJ] = true;
-                }
-            }
+            if (streets == null) return mask;
+            foreach (var c in streets)
+                if (g.InBounds(c.i, c.j)) mask[c.i - g.OriginI, c.j - g.OriginJ] = true;
             return mask;
         }
 
-        // Reclassify every rasterized road cell to Road, subject to two guard terms. `inside` is NULLABLE:
-        // non-null (HasWall) means "only reclassify cells the wall-ring pass judged Inside"; null (no wall at
-        // all — see Build) means there is no Inside/Outside concept to test against, so every rasterized cell
-        // is eligible regardless — a wall-less village still gets its streets. Each guard has a live half and
+        // Reclassify every street cell to Road, subject to two guard terms. `inside` is NULLABLE: non-null
+        // (HasWall) means "only reclassify cells the wall-ring pass judged Inside"; null (no wall at all —
+        // see Build) means there is no Inside/Outside concept to test against, so every street cell is
+        // eligible regardless — a wall-less village still gets its streets. Each guard has a live half and
         // a defensive/unreachable half, kept deliberately rather than folded away:
         //   - `inside != null && !inside[a, b]`: the `inside != null` half is LIVE — it is what makes the
         //     no-wall path above work at all. The `!inside[a, b]` half is defensive-only: whenever `inside` IS
-        //     non-null, every road cell is itself part of BuildWallRing's dilation seed, and radius >= 1
-        //     dilation always covers a seed cell's own 4-neighbours, so a road cell can never actually end up
-        //     Outside. Not dead code — this depends on CourtyardCells + 1 staying >= 1, not something this
+        //     non-null, every street cell is itself part of BuildWallRing's dilation seed, and radius >= 1
+        //     dilation always covers a seed cell's own 4-neighbours, so a street cell can never actually end
+        //     up Outside. Not dead code — this depends on CourtyardCells + 1 staying >= 1, not something this
         //     method should silently assume forever.
         //   - `Building || Wall`: the Building half is LIVE and load-bearing — it is what keeps the precedence
-        //     promise Building > ... > Road (dropping it lets a road overwrite a building). The Wall half is
-        //     defensive-only, unreachable by the SAME seed/dilation argument as above when `inside` is
-        //     non-null (a road cell can never have been written Wall by BuildWallRing); when `inside` is null
-        //     there are no Wall cells anywhere in the grid, so it is vacuously false for the unrelated reason
-        //     that HasWall is false. Kept because the brief's precedence rule names the Wall term explicitly.
+        //     promise Building > ... > Road (dropping it lets a street overwrite a building, which stored
+        //     street cells make MORE reachable than routed roads did: nothing forces a stored street cell to
+        //     miss a stored footprint cell). The Wall half is defensive-only, unreachable by the SAME
+        //     seed/dilation argument as above when `inside` is non-null (a street cell can never have been
+        //     written Wall by BuildWallRing); when `inside` is null there are no Wall cells anywhere in the
+        //     grid, so it is vacuously false for the unrelated reason that HasWall is false. Kept because the
+        //     precedence rule names the Wall term explicitly.
         static void MarkRoads(SettlementTileGrid g, bool[,] roadMask, bool[,] inside)
         {
             for (int a = 0; a < g.W; a++)
@@ -326,8 +361,7 @@ namespace WorldGen.Generation
         // For every stored gate room (TypeId == 0), find the ring cell whose CENTRE is nearest the gate's
         // normalized position (plain Euclidean distance over every current Wall/Gate cell — the ring is small
         // enough per settlement that an O(W*H) scan per gate costs nothing measurable) and reclassify it to
-        // Gate. Runs whenever HasWall, independent of roads — a gate's ring cell doesn't depend on whether
-        // this particular rebuild routed any roads. No separate Inside test needed: scanning for
+        // Gate. Runs whenever HasWall. No separate Inside test needed: scanning for
         // TileType.Wall/Gate already implies Inside (BuildWallRing only ever writes Wall to Inside cells, and
         // a Gate cell only ever comes from THIS method retargeting a former Wall cell).
         //

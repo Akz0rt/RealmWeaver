@@ -777,8 +777,48 @@ New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridRoadIgnoresBuilding' `
   '' `
   'MutTileGridRoadIgnoresBuilding.cs'
 
-foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding')) {
+# MutGridStreetsNotSeeded: the STREET mask is still marked Road (MarkRoads runs unchanged) but is no longer
+# folded into the wall ring's occupied SEED, so the ring is dilated from the buildings alone. Caught by
+# SelfTestRoadsAndGates' spur pair: the street spur runs 10 cells south of the building block, far outside the
+# buildings-only blob, so its tip reads None instead of Road (MarkRoads' Inside test rejects it) and the cell
+# CourtyardCells+1 beyond the tip reads None instead of Wall — the wall stops wrapping the streets.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGridStreetsNotSeeded' `
+  'bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;' `
+  'bool[,] inside = hasWall ? BuildWallRing(g, null) : null;   // MUTANT: streets never folded into the ring seed' `
+  'MutGridStreetsNotSeeded.cs'
+
+foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding', 'MutGridStreetsNotSeeded')) {
   New-SettlementRebind 'SelfTestRoadsAndGates' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
+# ---- TILE GRID FOOTPRINT MUTANTS (arc A, task 2): a building is a FOOTPRINT of cells, not a point. ----------
+# Same bundling as every other SettlementTileGrid mutant above (TileType + SettlementTileGrid share the file),
+# so the rebind needs the same two patterns. SettlementFootprint.cs is NOT mutated here and is not in the same
+# file, so `SettlementFootprint.` inside the renamespaced mutant resolves OUTWARD to the real one — which is
+# exactly what these two mutants need (they call the real Representative to collapse a footprint).
+
+# MutGridOneCellPerRoom: Build writes only the footprint's REPRESENTATIVE cell instead of every cell, i.e. the
+# pre-footprint "one building = one tile" behaviour. Caught by SelfTestFootprintTiles' 2x3 fixture — the five
+# non-representative cells read None instead of Building, and the Building count collapses from 6 to 1.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGridOneCellPerRoom' `
+  'var fp = FootprintOf(r);' `
+  'var fp = new System.Collections.Generic.List<(int i, int j)> { SettlementFootprint.Representative(FootprintOf(r)) };   // MUTANT: only the representative cell is drawn' `
+  'MutGridOneCellPerRoom.cs'
+
+# MutGridExtentIgnoresFootprint: Allocate folds only the footprint's REPRESENTATIVE cell into the grid extent,
+# so a footprint reaching further than MarginCells past it falls outside the array — and because every write in
+# SettlementTileGrid is InBounds-guarded, those cells are dropped SILENTLY with no error anywhere. Caught by
+# SelfTestFootprintTiles' bar fixture, whose far cell sits MarginCells+3 east of the representative: InBounds
+# reads false and At() returns None.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGridExtentIgnoresFootprint' `
+  'foreach (var c in FootprintOf(r)) Fold(c.i, c.j);' `
+  '{ var rep = SettlementFootprint.Representative(FootprintOf(r)); Fold(rep.i, rep.j); }   // MUTANT: extent folds one cell per room' `
+  'MutGridExtentIgnoresFootprint.cs'
+
+foreach ($mc in @('MutGridOneCellPerRoom', 'MutGridExtentIgnoresFootprint')) {
+  New-SettlementRebind 'SelfTestFootprintTiles' $mc `
     @('SettlementTileGrid\.', '\bTileType\b') `
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
