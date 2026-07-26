@@ -411,8 +411,14 @@ namespace WorldGen.Rendering
         ///     Dropping it collapses every road onto a single cell; adding it twice throws them 128x away.
         ///   - TYPE: RenderSegment -> LinkSegment. EdgeIndex is left 0; SettlementTileGrid never reads it.
         /// Junction-splitting in the render graph is harmless here — a segment cut into collinear pieces
-        /// rasterizes to the same cell set as the whole.</summary>
-        static List<LinkSegment> RoadsFromGraph(RenderGraph rg)
+        /// rasterizes to the same cell set as the whole.
+        ///
+        /// PUBLIC (Task B4), and this is the point: DungeonViewController.FitBoundsFor must size the view to
+        /// the SAME grid this renderer draws, which means feeding SettlementTileGrid.Allocate the same road
+        /// list. Sharing this one conversion is what makes "the fit and the draw agree" structural instead of
+        /// two copies free to drift on either of the two silent conversions above. It routes NOTHING — it is a
+        /// pure O(segments) re-frame of a graph the caller has already built.</summary>
+        public static List<LinkSegment> RoadsFromGraph(RenderGraph rg)
         {
             const float T = DungeonLayout.TilesPerAxis;
             var roads = new List<LinkSegment>(rg.Segments.Count);

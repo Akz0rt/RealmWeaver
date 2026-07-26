@@ -76,6 +76,12 @@ namespace WorldGen.Rendering
         IDungeonRenderer volumeRenderer;
         int pendingLinkId;
         bool needsProjectionFit;
+        // The bounds the LIVE projection was actually fitted to — written only where a fit is APPLIED, so it
+        // can never describe a fit that ResolveProjection refused (a {0,0} rect). RefitIfContentOverflows
+        // compares the freshly drawn extent against these; see its doc for why containment, and not mutation,
+        // is what re-arms the fit.
+        (float minX, float minY, float maxX, float maxY) fittedBounds;
+        bool hasFittedBounds;
         int draggingRoomId;
         // The room the current settle should treat as the "just-moved" one: the last room the DM dragged
         // (OnEndDrag) or a freshly added room (AddRoomAtCenter). For a BUILDING it's the room BeginCascade
@@ -165,6 +171,29 @@ namespace WorldGen.Rendering
         // canvas edge. Beyond ContourMargin (which sets how far the outline sits from the rooms).
         const float ContourViewPad = 2f;
 
+        // ── What a settlement tile actually DRAWS past its own cell (Task B4) ───────────────────────────────
+        // The fit describes the GROUND LATTICE and already budgets half a cell around the outermost cell
+        // CENTRE — i.e. exactly the cell boundary. These two constants are how much further the PIXELS reach,
+        // in cells. Derived from SettlementVolumeRenderer.ConfigureTile; re-derive them if that changes.
+        //
+        //   • VOLUME tile (Building / Wall / Gate). Every face is sized at `tileOverdraw` = 1.04x the cell, so
+        //     top/front/east all reach 1.04/2 = 0.52 cell from the cell centre — 0.02 PAST the boundary, on
+        //     all four sides.
+        //   • ITS DROP SHADOW. A quad of 1.04 x 1.15 = 1.196 cell, offset (+0.14 cw, -0.14 ch) — right and
+        //     DOWN the screen. Far corner: 0.14 + 1.196/2 = 0.738 cell from the centre, i.e. 0.238 past the
+        //     boundary. Near corner: 0.598 - 0.14 = 0.458 — still INSIDE the cell, so the shadow adds nothing
+        //     on the near sides. Down-screen is +Y in TILE space (DungeonProjection inverts Y once), so the
+        //     shadow lands on max-X and max-Y.
+        //   • FLAT tile (Road / Void). Drawn NARROWER than its cell — `cw - gridThicknessPx`, so the cell-grid
+        //     line shows through between neighbours (Task B3) — and its shadow is switched off. A flat tile
+        //     therefore never overhangs anything, and needs no term here at all.
+        //
+        // MAX, NOT SUM. Both terms are reaches measured from the SAME cell centre, so the shadow's 0.738
+        // simply subsumes the face's 0.52 wherever both apply; adding them would over-budget by 0.02 cell.
+        // In tiles (one cell = BuildingCell x TilesPerAxis = 8.96 tiles): 0.179 near, 2.132 far.
+        const float TileOverhangMinCells = 0.02f;           // west (min-X) and north (min-Y): the overdraw alone
+        const float TileOverhangMaxCells = 0.738f - 0.5f;   // east (max-X) and south (max-Y): the shadow, 0.238
+
         /// <summary>Tile-space bounds to fit the projection to for `lvl`. For a BUILDING the fit is CONSTANT
         /// across floors — floor 0's footprint bbox expanded by the contour margin + a little pad — so every
         /// floor renders at the IDENTICAL scale and position, and the stairwell column (and every room) looks
@@ -184,23 +213,36 @@ namespace WorldGen.Rendering
         ///     the nodes' bbox + GridMargin 4 tiles, so nothing can bulge past that);
         ///   • each drawn tile extends half a cell past its own centre.
         /// 2 + 1 + 0.5 = 3.5 cells = 31.4 tiles past the outermost building CENTRE — which is exactly the
-        /// extent SettlementTileGrid.Allocate(buildings) already allocates (its MarginCells is 3) taken ±half
-        /// a cell. So the fit is read straight off Allocate rather than re-deriving a margin here, and no road
-        /// routing is needed on the fit path at all (the old DeriveTownFence(includeRoads: true) call is gone —
-        /// the ring's INNER edge at ~17.9 tiles already strictly encloses that polyline at ~5 tiles, so it
-        /// contributed nothing but a ~12.5 ms road A* per bind).
+        /// extent SettlementTileGrid.Allocate already allocates (its MarginCells is 3) taken ±half a cell. So
+        /// the fit is read straight off Allocate rather than re-deriving a margin here, and STILL no road
+        /// routing happens on the fit path (the old DeriveTownFence(includeRoads: true) call is gone — the
+        /// ring's INNER edge at ~17.9 tiles already strictly encloses that polyline at ~5 tiles, so it
+        /// contributed nothing but a ~12.5 ms road A* per bind). Task B4 hands Allocate the caller's ALREADY
+        /// ROUTED road segments so the fitted grid is the drawn grid — see the rg parameter.
         ///
-        /// A WALL-LESS settlement (village/camp) keeps its room-bounds fit, widened by half a cell: it draws no
+        /// A WALL-LESS settlement (village/camp) keeps its room-bounds fit, widened by a full cell: it draws no
         /// ring, so the allocated grid's 3-cell margin would shrink it for nothing, but its building tiles are
         /// still a full cell wide where a room footprint is 6 tiles.
         ///
         /// BOTH settlement cases add ExtrusionHeadroomTiles at the NORTH (min-Y) edge: bounds describe the
         /// GROUND plane only and every box is drawn upward out of it, so without it the back row's roofs are
-        /// clipped off the top of the panel. Nothing is needed at the south edge — a box's front face bottom
-        /// sits exactly on its ground footprint edge, already covered by the half-cell.
+        /// clipped off the top of the panel. The SOUTH edge needs no headroom — a box's front face bottom sits
+        /// exactly on its ground footprint edge — but it does need the drop shadow, which hangs below it; that
+        /// and the tile overdraw are the TileOverhangMin/MaxCells terms applied at the end.
         ///
-        /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.</summary>
-        (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
+        /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.
+        ///
+        /// <paramref name="rg"/> (Task B4) is the render graph the caller is ABOUT to draw, and it is what
+        /// closes the fit/draw grid asymmetry: the renderer builds its tile grid from
+        /// SettlementTileGrid.Build(lvl, roads) → Allocate(lvl.Rooms, roads), which folds the ROAD ENDPOINTS
+        /// into the cell bbox, while this fit used to call Allocate(lvl.Rooms) with no roads at all. Gates are
+        /// street nodes a building half-width + FenceMarginTiles = 5 tiles (0.56 cell) outside the buildings,
+        /// and SettlementRoads' own A* grid may run 4 tiles further still, so the DRAWN grid could be a whole
+        /// cell wider per side than the FITTED one — and the wall ring dilated around those road cells landed
+        /// off the panel. Pass null (or a non-settlement binding) and the buildings-only extent is restored
+        /// verbatim. NOTHING IS ROUTED HERE: the segments are read out of the graph the caller already built,
+        /// through the renderer's own RoadsFromGraph, so this stays a pure O(rooms + segments) pass.</summary>
+        (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl, RenderGraph rg)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
             {
@@ -216,11 +258,13 @@ namespace WorldGen.Rendering
 
                 if (lvl.SettlementParams?.HasWall == true)
                 {
-                    // Buildings-only Allocate: cheap (two passes over the rooms, no dilate/flood-fill) and the
-                    // extent it produces is the one derived above. The union with the room bounds is kept for
-                    // the same reason the pre-Task-8 fit unioned the fence in — a room can never be clipped —
-                    // and it is what carries the degenerate case below.
-                    var g = SettlementTileGrid.Allocate(lvl.Rooms);
+                    // Allocate ONLY — cheap (two passes over the rooms plus one over the road endpoints, no
+                    // dilate/flood-fill/A*) — but with the SAME road list the renderer hands Build, so the
+                    // fitted extent is the drawn extent and not a narrower one (see the rg param above). The
+                    // union with the room bounds is kept for the same reason the pre-Task-8 fit unioned the
+                    // fence in — a room can never be clipped — and it is what carries the degenerate case
+                    // below.
+                    var g = SettlementTileGrid.Allocate(lvl.Rooms, RoadsForFit(rg));
                     // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
                     // NOT at the town: unioning that box in would drag the fit to the corner of the field.
                     // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
@@ -249,9 +293,93 @@ namespace WorldGen.Rendering
                 // unreachable in practice and exists so a host that installed only the flat renderer still
                 // fits to something sane instead of throwing.
                 float headroom = (renderer as SettlementVolumeRenderer)?.ExtrusionHeadroomTiles ?? 0f;
-                return (minX, minY - headroom, maxX, maxY);
+
+                // Everything above budgets the GROUND PLANE out to the cell boundary; these two budget the
+                // pixels that hang past it (see TileOverhangMin/MaxCells for the derivation). Applied to BOTH
+                // settlement cases: a village draws the same extruded, shadow-casting houses a city does, its
+                // whole-cell margin merely happens to absorb most of them already. min-Y takes the overhang on
+                // TOP of the extrusion headroom rather than instead of it — headroom carries the roof's CENTRE
+                // up to h, the overhang covers the extra 0.02 cell the roof quad's own half-height adds there.
+                float overhangMin = TileOverhangMinCells * SettlementGenerator.BuildingCell * T;   // 0.179 tiles
+                float overhangMax = TileOverhangMaxCells * SettlementGenerator.BuildingCell * T;   // 2.132 tiles
+                return (minX - overhangMin, minY - overhangMin - headroom,
+                        maxX + overhangMax, maxY + overhangMax);
             }
             return DungeonProjection.ContentBoundsTiles(lvl);
+        }
+
+        /// <summary>The road segments the RENDERER will fold into its tile grid, or null when this binding
+        /// draws none — mirroring SettlementVolumeRenderer.RepositionRooms' own
+        /// `(isSettlement &amp;&amp; includeRoadsInFence) ? RoadsFromGraph(rg) : null` line by line, and calling the
+        /// very same conversion so the two cannot drift.
+        ///
+        /// COSTS NO ROUTING, and that is load-bearing: <paramref name="rg"/> is a graph the caller has ALREADY
+        /// built (Refresh builds exactly one per rebuild and hands the same instance to the fit, the
+        /// containment check and RebuildView), so this is an O(segments) re-frame — not a second pass through
+        /// the ~12.5 ms road A* the two-tier Fast/Clean signal exists to keep off drag frames. A null rg falls
+        /// back to the buildings-only extent, which is what the pre-Task-B4 fit always used.</summary>
+        System.Collections.Generic.IReadOnlyList<LinkSegment> RoadsForFit(RenderGraph rg)
+            => rg != null && SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean)
+                 ? SettlementVolumeRenderer.RoadsFromGraph(rg)
+                 : null;
+
+        /// <summary>Re-arm the fit when what is now drawn no longer sits inside what the projection was
+        /// actually fitted to. CONTAINMENT is the trigger, never "something changed": re-scaling on every edit
+        /// would make the town jump under the cursor, which spec R6 forbids outright. Accepted, and intended:
+        /// the view never zooms back IN when a town shrinks — only a rebind or a panel resize does that.
+        ///
+        /// COST: one SettlementTileGrid.Allocate (two O(rooms) passes, one O(segments) pass and a W×H enum
+        /// array — a few hundred cells for a real town) plus four float compares, ONCE PER REBUILD. It routes
+        /// NOTHING: the segments come from the graph the caller already built (see RoadsForFit). It is
+        /// deliberately not on the per-frame path at all — drag samples and cascade frames go through
+        /// RepositionNow, which never reaches Refresh.
+        ///
+        /// NEVER MID-DRAG. draggingRoomId != 0 is the exact flag OnDrag/OnEndDrag gate on, and `cascading` is
+        /// the settle animation's own — together they cover the whole window in which room positions are
+        /// transient. Refresh IS reached during a cascade (BeginCascade ends in one), so this guard is live,
+        /// not defensive. Nothing starves: the flag is only skipped, so the next rebuild after the cursor
+        /// lifts re-tests and re-arms.
+        ///
+        /// SETTLEMENTS ONLY — a deliberate narrowing of Task B4's brief, which did not scope it. The brief's
+        /// own hard constraint is that dungeons, building interiors and battle grids must behave IDENTICALLY,
+        /// and an unscoped check would not leave them so: a dungeon's fit is simply
+        /// DungeonProjection.ContentBoundsTiles(lvl), which GROWS the moment any room is dragged outward, and
+        /// the drag clamp lets a room travel out to 0.96 normalized — so every outward drag would rescale the
+        /// dungeon on settle, where today it fits once per bind and holds (spec R6). A settlement, by
+        /// contrast, is the case the DM actually hit, and its content can grow without any drag at all («+
+        /// Здание», an auto-linked street, the wall ring re-derived around both). Panel resize is NOT narrowed
+        /// this way: OnRectTransformDimensionsChange fixes a genuine clipping bug for every view, and it fires
+        /// only when the rect really changed.</summary>
+        void RefitIfContentOverflows(InteriorFloor lvl, RenderGraph rg)
+        {
+            if (!hasFittedBounds || needsProjectionFit || lvl == null) return;
+            if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
+            if (draggingRoomId != 0 || cascading) return;
+            const float eps = 1e-3f;
+            var b = FitBoundsFor(lvl, rg);
+            if (b.minX < fittedBounds.minX - eps || b.minY < fittedBounds.minY - eps ||
+                b.maxX > fittedBounds.maxX + eps || b.maxY > fittedBounds.maxY + eps)
+                needsProjectionFit = true;
+        }
+
+        /// <summary>Unity sends this on ANY dimension change of THIS component's own RectTransform. That is the
+        /// right rect: DungeonEditorScreen creates «DungeonView» with a RectTransform and Stretch()es it
+        /// (anchors 0..1, zero offsets) inside MapArea, which is itself stretched inside Body inside the
+        /// screen's Root — and the editor canvas is a bare AddComponent&lt;CanvasScaler&gt;(), i.e.
+        /// ConstantPixelSize, so that chain tracks the Unity window 1:1. A window resize, a dock/undock, a
+        /// maximize-on-play therefore all land here. Both renderers are Stretch()ed children of this same
+        /// object, so the rect ResolveProjection measures is congruent to this one by construction.
+        ///
+        /// The scale used to be computed ONCE per binding with no layout hook anywhere under Assets/WorldGen,
+        /// so a resized panel kept a scale fitted to the OLD rect — oversized tiles, the town clipped on three
+        /// edges. Re-arming here is the fix.
+        ///
+        /// ONE LINE, ON PURPOSE. Unity can send this DURING layout; doing work here (a fit, a rebuild) would
+        /// re-enter it. Setting the flag cannot — LateUpdate consumes it on the next frame, off the layout
+        /// pass, and holds it while a drag or cascade is live.</summary>
+        void OnRectTransformDimensionsChange()
+        {
+            needsProjectionFit = true;
         }
 
         /// <summary>Install BOTH renderers at once (Task 8) and activate the one the CURRENT binding calls for.
@@ -341,33 +469,74 @@ namespace WorldGen.Rendering
             if (!swapped) Refresh();
         }
 
-        /// <summary>Full visual rebuild from the bound level.</summary>
+        /// <summary>Full visual rebuild from the bound level — and THE one place a fit is applied (Task B4).
+        ///
+        /// The render graph is now built BEFORE the fit, where it used to be built after, and the order is
+        /// load-bearing rather than cosmetic: for a settlement the fit has to size itself to the same tile grid
+        /// this very graph's road segments are about to widen (FitBoundsFor's rg param). BuildRenderGraph is
+        /// pure in `lvl` — it reads room positions and links and nothing about the projection — so moving it
+        /// ahead of ResolveProjection changes no output, and it is built EXACTLY ONCE either way: the same
+        /// instance feeds the fit, RebuildView and the containment check.</summary>
         public void Refresh()
         {
             if (renderer == null) return;
             var lvl = BoundLevel;
             if (lvl == null) { renderer.RebuildView(dungeon, levelIndex, null, new RenderGraph(), font, OnJumpToLevel); return; }
 
+            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
+
+            bool justFitted = false;
             if (needsProjectionFit)
             {
-                var (fminX, fminY, fmaxX, fmaxY) = FitBoundsFor(lvl);
-                if (renderer.ResolveProjection(fminX, fminY, fmaxX, fmaxY)) needsProjectionFit = false;
+                var b = FitBoundsFor(lvl, rg);
+                if (renderer.ResolveProjection(b.minX, b.minY, b.maxX, b.maxY))
+                {
+                    needsProjectionFit = false;
+                    // Record what the LIVE projection is fitted to, at the only moment it is known to have
+                    // been accepted. A refused fit (rect still {0,0}) deliberately leaves both untouched.
+                    fittedBounds = b;
+                    hasFittedBounds = true;
+                    justFitted = true;
+                }
             }
 
-            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
             renderer.RebuildView(dungeon, levelIndex, lvl, rg, font, OnJumpToLevel);
             RefreshHighlights();
+            // Skipped when this call just fitted: the bounds were computed from this very rg, so the check
+            // could only re-derive them and find them equal to themselves.
+            if (!justFitted) RefitIfContentOverflows(lvl, rg);
         }
 
+        /// <summary>Consumes a pending fit, one frame after whatever armed it. Delegates the whole thing to
+        /// Refresh rather than resolving the projection itself (Task B4): a settlement's fit now needs the
+        /// render graph's road segments, and Refresh is where that graph is built — a second fit site here
+        /// would either have to route roads of its own or silently fit to the narrower buildings-only extent
+        /// and then clear the flag, which is the exact bug this task exists to remove.
+        ///
+        /// The rect pre-check is what the removed ResolveProjection call used to give us for free, and it is
+        /// kept for the same reason: while the panel is still {0,0} (the bind-time rect gotcha) there is
+        /// nothing to fit to, and falling through to Refresh would rebuild — and, for a settlement, re-route —
+        /// every frame until layout catches up.
+        ///
+        /// IT IS THE UNION OF BOTH RENDERERS' OWN READINESS TESTS, and it has to be at least that strict or
+        /// this becomes an editor hang rather than a fix. DungeonFlatRenderer.ResolveProjection tests
+        /// `rect.width &lt;= 0f || rect.height &lt;= 0f` (its Area is a hard cast, so no null branch);
+        /// SettlementVolumeRenderer.ResolveProjection tests `area == null` as well. This tests both, so it can
+        /// only ever be STRICTER than the renderer it is gating — and a stricter pre-check merely defers a fit
+        /// by a frame. The dangerous direction is the other one: were this LOOSER, a ResolveProjection that
+        /// refused would leave needsProjectionFit set while this method kept calling Refresh — a full card
+        /// teardown plus a Clean corridor route — every frame, forever. Widen this, never narrow it.
+        ///
+        /// HOLDS THE SCALE while a drag or a settle animation is live: the flag simply stays armed and the
+        /// next frame after the cursor lifts consumes it.</summary>
         void LateUpdate()
         {
             if (!needsProjectionFit || renderer == null) return;
-            var lvl = BoundLevel;
-            if (lvl == null) return;
-            var (minX, minY, maxX, maxY) = FitBoundsFor(lvl);
-            if (!renderer.ResolveProjection(minX, minY, maxX, maxY)) return;   // rect still {0,0} — retry next frame
-            needsProjectionFit = false;
+            if (draggingRoomId != 0 || cascading) return;
+            if (BoundLevel == null) return;
+            var area = renderer.Area;
+            if (area == null || area.rect.width <= 0f || area.rect.height <= 0f) return;   // retry next frame
             Refresh();
         }
 
