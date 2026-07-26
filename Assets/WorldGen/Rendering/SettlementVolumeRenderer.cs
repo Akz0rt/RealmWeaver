@@ -83,6 +83,14 @@ namespace WorldGen.Rendering
                + "the FRONT-MOST (nearest) tiles are the ones omitted, which is deliberately obvious on screen.")]
         [SerializeField] int maxTiles = 1200;
 
+        [Header("Cell grid")]
+        [Tooltip("Thin lines on the cell boundaries, drawn BEHIND every tile and across the whole field so a "
+               + "building can be aimed at outside the town. Purely an aid to reading cell edges — keep it "
+               + "quiet.")]
+        [SerializeField] bool drawCellGrid = true;
+        [SerializeField] Color gridColor = new Color(1f, 1f, 1f, 0.06f);
+        [SerializeField, Range(0.5f, 3f)] float gridThicknessPx = 1f;
+
         [Header("Placeholder palette (provisional — replaced by the tileset)")]
         [SerializeField] Color voidColor      = new Color(0.42f, 0.36f, 0.28f, 1f);   // courtyard earth
         [SerializeField] Color roadColor      = new Color(0.60f, 0.53f, 0.40f, 1f);   // packed sand, lighter
@@ -158,8 +166,13 @@ namespace WorldGen.Rendering
         // ── State ────────────────────────────────────────────────────────────────────────────────────────
 
         const string TilesLayerName = "TilesLayer";
+        const string GridLayerName = "GridLayer";
         const string PlacementHighlightName = "PlacementHighlight";
 
+        // Task 3: a quiet cell grid drawn BEHIND every tile. Created before tilesLayer (see EnsureBuilt) so
+        // it is the earlier sibling and every tile paints over it — the same reasoning tilesLayer itself
+        // relies on for the placementHighlight quad, just one layer further back.
+        RectTransform gridLayer;
         RectTransform tilesLayer;
         // The «+ Здание» hover preview (Task 8b): ONE quad, deliberately NOT a pool slot and NOT a child of
         // tilesLayer — that layer's whole depth scheme is "pool slot k sits at sibling index k", and a foreign
@@ -170,6 +183,9 @@ namespace WorldGen.Rendering
         bool built;
 
         readonly List<TileView> tiles = new List<TileView>();
+        // Pool of grid-line quads, one flat Image each — reused across rebuilds exactly like `tiles`, never
+        // destroyed per frame (RebuildGrid runs on drag frames alongside the tile derive).
+        readonly List<RectTransform> gridLines = new List<RectTransform>();
         readonly HashSet<int> highlighted = new HashSet<int>();
         // Cell -> the room that owns it, keyed by DepthKey (unique per cell at this grid's scale). Rebuilt
         // every reposition alongside the grid itself; used for per-building height, marks and dummy shading.
@@ -198,10 +214,18 @@ namespace WorldGen.Rendering
             // children right after this clear; SlotAt's SetSiblingIndex(k) then re-seats the freshly rebuilt
             // slots at indices 0..k-1, leaving the (soon-to-be-destroyed) leftovers ON TOP for one frame.
             // Harmless — editor hot-reload only, one frame — but worth getting right.
+            // Grid layer FIRST — must be created before tilesLayer so it is the earlier sibling and every
+            // tile (a later sibling) draws over it. This ordering is the entire reason it lives here; do not
+            // move it after tilesLayer's own setup below.
+            var existingGrid = transform.Find(GridLayerName) as RectTransform;
+            if (existingGrid != null) { gridLayer = existingGrid; DungeonUiKit.ClearLayer(gridLayer); }
+            else gridLayer = MakeLayer(GridLayerName);
+
             var existing = transform.Find(TilesLayerName) as RectTransform;
             if (existing != null) { tilesLayer = existing; DungeonUiKit.ClearLayer(tilesLayer); }
             else tilesLayer = MakeLayer(TilesLayerName);
             tiles.Clear();
+            gridLines.Clear();
             EnsurePlacementHighlight();
             // Field initializers are NOT reliable on a Unity-deserialized component (this repo's recorded
             // gotcha: deserialization silently overrides them). ConfigureTile dereferences this every cell of
@@ -334,6 +358,7 @@ namespace WorldGen.Rendering
                 grid = null;
                 cellRooms.Clear();
                 HideFrom(0);
+                RebuildGrid(0f, 0f);   // grid == null short-circuits RebuildGrid's own guard: hides every line
                 return;
             }
             // Pre-fit frame (Projection not yet resolved): drawing now would create/activate hundreds of
@@ -344,6 +369,7 @@ namespace WorldGen.Rendering
                 grid = null;
                 cellRooms.Clear();
                 HideFrom(0);
+                RebuildGrid(0f, 0f);   // same guard, via PxPerTile this time — hides every line
                 return;
             }
 
@@ -353,6 +379,8 @@ namespace WorldGen.Rendering
 
             float cw = CellWidthPx;
             float ch = cw * Projection.SquashY;
+
+            RebuildGrid(cw, ch);
 
             var order = grid.DrawOrder();
             int used = 0;
@@ -764,6 +792,70 @@ namespace WorldGen.Rendering
             img.raycastTarget = false;
             go.SetActive(false);
             return go;
+        }
+
+        // ── Cell grid (Task 3) ───────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Lay the cell grid over the whole normalized field. Lines sit on cell BOUNDARIES (half a
+        /// cell off the centres derived from Project), so they frame cells instead of bisecting them. The
+        /// span deliberately covers 0..1 rather than the allocated grid: a building may be placed outside the
+        /// town and the DM needs cells to aim at out there.
+        ///
+        /// Only one corner per axis is ever projected (Project is affine and axis-aligned, per the class doc's
+        /// TileToLocal expansion), not every line endpoint. Larger j draws LOWER on screen (the single Y
+        /// inversion lives in DungeonProjection.TileToLocal) — a horizontal line for row-boundary j therefore
+        /// sits at Project(i0, j).y + ch/2 (half a cell NORTH, i.e. toward smaller j, of that row's centre),
+        /// not -ch/2; getting this backwards offsets the whole grid by one row against the tiles it is meant
+        /// to frame.</summary>
+        void RebuildGrid(float cw, float ch)
+        {
+            int used = 0;
+            if (drawCellGrid && grid != null && Projection.PxPerTile > 0f)
+            {
+                int i0 = grid.CellI(0f) - 1, i1 = grid.CellI(1f) + 1;
+                int j0 = grid.CellJ(0f) - 1, j1 = grid.CellJ(1f) + 1;
+
+                // Project is affine and axis-aligned, so one corner per axis fixes the whole span.
+                Vector2 lo = Project(i0, j1), hi = Project(i1, j0);   // larger j draws LOWER on screen
+                float left = lo.x - cw * 0.5f, right = hi.x + cw * 0.5f;
+                float bottom = lo.y - ch * 0.5f, top = hi.y + ch * 0.5f;
+                float height = top - bottom, width = right - left;
+
+                for (int i = i0; i <= i1 + 1; i++)
+                {
+                    var rt = GridLineAt(used++);
+                    rt.sizeDelta = new Vector2(gridThicknessPx, height);
+                    rt.anchoredPosition = new Vector2(Project(i, j0).x - cw * 0.5f, bottom + height * 0.5f);
+                }
+                for (int j = j0; j <= j1 + 1; j++)
+                {
+                    var rt = GridLineAt(used++);
+                    rt.sizeDelta = new Vector2(width, gridThicknessPx);
+                    rt.anchoredPosition = new Vector2(left + width * 0.5f, Project(i0, j).y + ch * 0.5f);
+                }
+            }
+            for (int k = used; k < gridLines.Count; k++)
+                if (gridLines[k] != null) gridLines[k].gameObject.SetActive(false);
+        }
+
+        /// <summary>Pool slot k, grown on demand — mirrors <see cref="SlotAt"/>'s idiom exactly: append-only,
+        /// so the surplus past `used` is hidden (never destroyed) by RebuildGrid's own tail loop, the same way
+        /// HideFrom hides the tile pool's surplus. Uses <see cref="MakeFace"/>, the identical Image-creation
+        /// helper MakeTile uses for every one of a tile's four faces (centre anchor/pivot, raycastTarget
+        /// already off) — a grid line is nothing more than a fifth kind of flat quad, parented to gridLayer
+        /// instead of a tile's own root.</summary>
+        RectTransform GridLineAt(int k)
+        {
+            while (gridLines.Count <= k)
+            {
+                var img = MakeFace(gridLayer, "GridLine", out RectTransform rt);
+                img.raycastTarget = false;   // belt and braces — MakeFace already sets this
+                gridLines.Add(rt);
+            }
+            var line = gridLines[k];
+            line.gameObject.SetActive(true);
+            line.GetComponent<Image>().color = gridColor;
+            return line;
         }
 
         // ── Per-cell configuration ───────────────────────────────────────────────────────────────────────
