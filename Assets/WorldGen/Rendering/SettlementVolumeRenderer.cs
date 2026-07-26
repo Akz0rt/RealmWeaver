@@ -89,7 +89,7 @@ namespace WorldGen.Rendering
                + "quiet.")]
         [SerializeField] bool drawCellGrid = true;
         [SerializeField] Color gridColor = new Color(1f, 1f, 1f, 0.06f);
-        [SerializeField, Range(0.5f, 3f)] float gridThicknessPx = 1f;
+        [SerializeField, Range(1f, 3f)] float gridThicknessPx = 1f;
 
         [Header("Placeholder palette (provisional — replaced by the tileset)")]
         [SerializeField] Color voidColor      = new Color(0.42f, 0.36f, 0.28f, 1f);   // courtyard earth
@@ -184,8 +184,11 @@ namespace WorldGen.Rendering
 
         readonly List<TileView> tiles = new List<TileView>();
         // Pool of grid-line quads, one flat Image each — reused across rebuilds exactly like `tiles`, never
-        // destroyed per frame (RebuildGrid runs on drag frames alongside the tile derive).
-        readonly List<RectTransform> gridLines = new List<RectTransform>();
+        // destroyed per frame (RebuildGrid runs on drag frames alongside the tile derive). GridLineView caches
+        // its Image the same way TileView caches Shadow/Front/East/Top: GetComponent<Image>() is O(children)
+        // and RebuildGrid repositions every pooled line on every drag/cascade frame, so caching turns 36-38
+        // GetComponent calls per frame into zero.
+        readonly List<GridLineView> gridLines = new List<GridLineView>();
         readonly HashSet<int> highlighted = new HashSet<int>();
         // Cell -> the room that owns it, keyed by DepthKey (unique per cell at this grid's scale). Rebuilt
         // every reposition alongside the grid itself; used for per-building height, marks and dummy shading.
@@ -358,7 +361,7 @@ namespace WorldGen.Rendering
                 grid = null;
                 cellRooms.Clear();
                 HideFrom(0);
-                RebuildGrid(0f, 0f);   // grid == null short-circuits RebuildGrid's own guard: hides every line
+                HideGridLines();   // grid == null: nothing to derive cw/ch from, so hide the pool directly
                 return;
             }
             // Pre-fit frame (Projection not yet resolved): drawing now would create/activate hundreds of
@@ -369,7 +372,7 @@ namespace WorldGen.Rendering
                 grid = null;
                 cellRooms.Clear();
                 HideFrom(0);
-                RebuildGrid(0f, 0f);   // same guard, via PxPerTile this time — hides every line
+                HideGridLines();   // same reasoning, via PxPerTile this time — no cw/ch to compute yet
                 return;
             }
 
@@ -796,6 +799,15 @@ namespace WorldGen.Rendering
 
         // ── Cell grid (Task 3) ───────────────────────────────────────────────────────────────────────────
 
+        /// <summary>One pooled grid-line quad. Mirrors <see cref="TileView"/>'s own reasoning for caching its
+        /// faces: RebuildGrid repositions every pooled line on every drag/cascade frame, so the Image is
+        /// resolved once at creation instead of via GetComponent&lt;Image&gt;() 36-38 times a frame.</summary>
+        sealed class GridLineView
+        {
+            public RectTransform Rt;
+            public Image Img;
+        }
+
         /// <summary>Lay the cell grid over the whole normalized field. Lines sit on cell BOUNDARIES (half a
         /// cell off the centres derived from Project), so they frame cells instead of bisecting them. The
         /// span deliberately covers 0..1 rather than the allocated grid: a building may be placed outside the
@@ -806,7 +818,15 @@ namespace WorldGen.Rendering
         /// inversion lives in DungeonProjection.TileToLocal) — a horizontal line for row-boundary j therefore
         /// sits at Project(i0, j).y + ch/2 (half a cell NORTH, i.e. toward smaller j, of that row's centre),
         /// not -ch/2; getting this backwards offsets the whole grid by one row against the tiles it is meant
-        /// to frame.</summary>
+        /// to frame.
+        ///
+        /// LOOP BOUNDS run one index PAST i1/j1 (`&lt;= i1 + 2`, not `&lt;= i1 + 1`): i1 = CellI(1)+1 already
+        /// carries one cell of margin beyond the raw 0..1 span, and a line at boundary index i only frames
+        /// cells up to i-1 on its own (a cell's east edge is the NEXT boundary index). Stopping at i1+1 frames
+        /// cells i0..i1 but leaves a ground (Void/Road) cell one index further out with only its near edge
+        /// drawn — reachable because SettlementTileGrid's own allocated bounds (MarginCells beyond the
+        /// outermost building) are independent of this field-relative span and can sit past it. The extra
+        /// iteration costs one more pooled quad per axis and removes that sub-pixel gap.</summary>
         void RebuildGrid(float cw, float ch)
         {
             int used = 0;
@@ -821,40 +841,53 @@ namespace WorldGen.Rendering
                 float bottom = lo.y - ch * 0.5f, top = hi.y + ch * 0.5f;
                 float height = top - bottom, width = right - left;
 
-                for (int i = i0; i <= i1 + 1; i++)
+                for (int i = i0; i <= i1 + 2; i++)
                 {
-                    var rt = GridLineAt(used++);
-                    rt.sizeDelta = new Vector2(gridThicknessPx, height);
-                    rt.anchoredPosition = new Vector2(Project(i, j0).x - cw * 0.5f, bottom + height * 0.5f);
+                    var line = GridLineAt(used++);
+                    line.Rt.sizeDelta = new Vector2(gridThicknessPx, height);
+                    line.Rt.anchoredPosition = new Vector2(Project(i, j0).x - cw * 0.5f, bottom + height * 0.5f);
                 }
-                for (int j = j0; j <= j1 + 1; j++)
+                for (int j = j0; j <= j1 + 2; j++)
                 {
-                    var rt = GridLineAt(used++);
-                    rt.sizeDelta = new Vector2(width, gridThicknessPx);
-                    rt.anchoredPosition = new Vector2(left + width * 0.5f, Project(i0, j).y + ch * 0.5f);
+                    var line = GridLineAt(used++);
+                    line.Rt.sizeDelta = new Vector2(width, gridThicknessPx);
+                    line.Rt.anchoredPosition = new Vector2(left + width * 0.5f, Project(i0, j).y + ch * 0.5f);
                 }
             }
-            for (int k = used; k < gridLines.Count; k++)
-                if (gridLines[k] != null) gridLines[k].gameObject.SetActive(false);
+            HideGridLinesFrom(used);
+        }
+
+        /// <summary>Hide every pooled grid line, without touching the pool itself. The two early-return paths
+        /// in RepositionRooms (no level bound, or projection not yet resolved) have no cw/ch to hand
+        /// RebuildGrid, and used to call it with inert `(0f, 0f)` arguments relying on the `grid == null` /
+        /// `PxPerTile &lt;= 0f` guard to make them dead — this says directly what those calls meant.</summary>
+        void HideGridLines() => HideGridLinesFrom(0);
+
+        /// <summary>Shared tail with RebuildGrid's own guarded-off case: hide every pooled line from index
+        /// `first` onward, the identical "hide, never destroy, surplus past what's needed" idiom
+        /// <see cref="HideFrom"/> applies to the tile pool.</summary>
+        void HideGridLinesFrom(int first)
+        {
+            for (int k = first; k < gridLines.Count; k++)
+                if (gridLines[k] != null && gridLines[k].Rt != null) gridLines[k].Rt.gameObject.SetActive(false);
         }
 
         /// <summary>Pool slot k, grown on demand — mirrors <see cref="SlotAt"/>'s idiom exactly: append-only,
-        /// so the surplus past `used` is hidden (never destroyed) by RebuildGrid's own tail loop, the same way
-        /// HideFrom hides the tile pool's surplus. Uses <see cref="MakeFace"/>, the identical Image-creation
+        /// so the surplus past `used` is hidden (never destroyed) by <see cref="HideGridLinesFrom"/>, the same
+        /// way HideFrom hides the tile pool's surplus. Uses <see cref="MakeFace"/>, the identical Image-creation
         /// helper MakeTile uses for every one of a tile's four faces (centre anchor/pivot, raycastTarget
         /// already off) — a grid line is nothing more than a fifth kind of flat quad, parented to gridLayer
         /// instead of a tile's own root.</summary>
-        RectTransform GridLineAt(int k)
+        GridLineView GridLineAt(int k)
         {
             while (gridLines.Count <= k)
             {
                 var img = MakeFace(gridLayer, "GridLine", out RectTransform rt);
-                img.raycastTarget = false;   // belt and braces — MakeFace already sets this
-                gridLines.Add(rt);
+                gridLines.Add(new GridLineView { Rt = rt, Img = img });
             }
             var line = gridLines[k];
-            line.gameObject.SetActive(true);
-            line.GetComponent<Image>().color = gridColor;
+            line.Rt.gameObject.SetActive(true);
+            line.Img.color = gridColor;
             return line;
         }
 
@@ -875,7 +908,18 @@ namespace WorldGen.Rendering
         /// land on a nearer one it can never occlude.
         ///
         /// Height uses cw (the UNSQUASHED cell width): vertical extent on screen must not shrink with the
-        /// camera tilt, or tilting the camera would flatten the buildings as well as the ground.</summary>
+        /// camera tilt, or tilting the camera would flatten the buildings as well as the ground.
+        ///
+        /// dw/dh (Task B3 review fix): a VOLUME tile (Building/Wall/Gate) keeps the `tileOverdraw` overdraw —
+        /// it has no cell-grid line to preserve, since a building's own front face already covers its south
+        /// boundary, and the overdraw is what hides the seam between neighbours. A FLAT ground tile
+        /// (Road/Void) instead shrinks by a flat `gridThicknessPx`, not a fraction of cw: the top face's
+        /// point-anchor is the cell centre, so shrinking both axes by gridThicknessPx insets EVERY edge by
+        /// exactly gridThicknessPx/2 from the cell boundary, and the grid line already drawn there (centred on
+        /// the boundary, `gridThicknessPx` wide, see RebuildGrid) exactly fills that inset on both
+        /// neighbours combined — a gap of gridThicknessPx screen pixels, independent of cw, at any scale.
+        /// Multiplying by a fraction of cw (the overdraw's own idiom) would instead make the visible band
+        /// scale WITH cw, defeating the "the constraint is one pixel" requirement this exists to meet.</summary>
         void ConfigureTile(TileView v, int i, int j, TileType type, float cw, float ch)
         {
             v.Root.anchoredPosition = Project(i, j);
@@ -885,8 +929,9 @@ namespace WorldGen.Rendering
             bool dummy = isSettlement && room != null && room.IsDummy && room.TypeId == 1;
 
             float h = HeightCells(type, room) * cw * heightScale;
-            float dw = cw * tileOverdraw, dh = ch * tileOverdraw;
             bool volume = h > 0.5f;   // sub-pixel extrusions read as a seam, not a box
+            float dw = volume ? cw * tileOverdraw : cw - gridThicknessPx;
+            float dh = volume ? ch * tileOverdraw : ch - gridThicknessPx;
 
             Color face = FaceColor(type, dummy);
 
