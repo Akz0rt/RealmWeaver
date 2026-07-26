@@ -248,7 +248,7 @@ namespace WorldGen.Rendering
         ///
         /// <paramref name="rg"/> (Task B4) is the render graph the caller is ABOUT to draw. It was introduced
         /// to close the fit/draw grid asymmetry against the ROUTED-ROAD renderer this call site originally
-        /// fit against; that renderer call signature no longer exists. As of arc C.1 task 2,
+        /// fit against; that renderer call signature no longer exists. As of arc A, task 2,
         /// SettlementTileGrid.Build(floor) takes no `roads` parameter at all — it calls
         /// Allocate(floor.Rooms, null, streets) internally, folding footprints ∪ STORED STREET CELLS
         /// (SettlementParams.StreetCells) into the cell bbox. This fit still calls
@@ -271,35 +271,42 @@ namespace WorldGen.Rendering
                 const float T = DungeonLayout.TilesPerAxis;
                 float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 4.48 tiles
 
-                if (lvl.SettlementParams?.HasWall == true)
+                // Allocate ONLY — cheap (two passes over the rooms plus one over the road endpoints and one
+                // over the street cells, no dilate/flood-fill/A*) — but with the SAME road list AND the SAME
+                // street cells the renderer hands Build, so the fitted extent is the drawn extent and not a
+                // narrower one (see the rg param above). The union with the room bounds is kept for the same
+                // reason the pre-Task-8 fit unioned the fence in — a room can never be clipped — and it is
+                // what carries the degenerate case below.
+                //
+                // THE STREET CELLS ARE PART OF THAT SAME "fitted extent IS the drawn extent" contract (arc
+                // C.1 Task 3). SettlementTileGrid.Build allocates over footprints ∪ STREETS; this fit
+                // allocated over footprints ∪ road endpoints only. That was harmless while
+                // SettlementParams.StreetCells was empty in production — it no longer is: the ring street
+                // rings the whole interior, a full cell OUTSIDE the outermost building, so the drawn grid
+                // would exceed the fitted one and the town would clip against the panel edge on every side.
+                // Decoding here costs one pass over a few dozen ints, on a path that already walks every room.
+                //
+                // AND IT RUNS FOR A VILLAGE TOO — that is not scope creep, it is where the bug actually
+                // bites hardest: MapScreenController sets HasWall for a City only, so EVERY village takes
+                // the wall-less path, and a village stores exactly the same street cells (only the gates are
+                // suppressed). The wall-less branch used to pad the ROOM bounds by one whole cell, a margin
+                // derived when the only thing reaching past the buildings was a routed road (maxBuildingCentre
+                // + 7 tiles). Street cells reach further than that and by an amount no fixed pad can bound —
+                // a lopsided town's ring can run several cells past its outermost house — so the pad is
+                // replaced by the same extent-derived union the walled path uses. That union is strictly
+                // wider than the old pad it replaces (Allocate's own MarginCells is 3 cells against the pad's
+                // 1), so nothing that used to fit can start clipping.
+                var streetsForFit = SettlementFootprint.Decode(lvl.SettlementParams?.StreetCells);
+                var g = SettlementTileGrid.Allocate(lvl.Rooms, RoadsForFit(rg), streetsForFit);
+                // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
+                // NOT at the town: unioning that box in would drag the fit to the corner of the field.
+                // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
+                if (g.W > 1 || g.H > 1)
                 {
-                    // Allocate ONLY — cheap (two passes over the rooms plus one over the road endpoints, no
-                    // dilate/flood-fill/A*) — but with the SAME road list the renderer hands Build, so the
-                    // fitted extent is the drawn extent and not a narrower one (see the rg param above). The
-                    // union with the room bounds is kept for the same reason the pre-Task-8 fit unioned the
-                    // fence in — a room can never be clipped — and it is what carries the degenerate case
-                    // below.
-                    var g = SettlementTileGrid.Allocate(lvl.Rooms, RoadsForFit(rg));
-                    // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
-                    // NOT at the town: unioning that box in would drag the fit to the corner of the field.
-                    // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
-                    if (g.W > 1 || g.H > 1)
-                    {
-                        minX = System.Math.Min(minX, g.CenterX(g.OriginI) * T - halfCell);
-                        minY = System.Math.Min(minY, g.CenterY(g.OriginJ) * T - halfCell);
-                        maxX = System.Math.Max(maxX, g.CenterX(g.OriginI + g.W - 1) * T + halfCell);
-                        maxY = System.Math.Max(maxY, g.CenterY(g.OriginJ + g.H - 1) * T + halfCell);
-                    }
-                }
-                else
-                {
-                    // Village (wall-less) fit margin (review fix, Minor): a village's streets route through
-                    // the same SettlementRoads grid (GridMargin = 4), so a road can reach
-                    // maxBuildingCentre + 7 tiles — one cell further out than halfCell budgets, which showed
-                    // up as a road tile clipped in half at the panel edge. A full cell instead of half a cell
-                    // covers it; 8.96 extra tiles of margin on a village is cosmetically negligible.
-                    float cell = SettlementGenerator.BuildingCell * T;
-                    minX -= cell; minY -= cell; maxX += cell; maxY += cell;
+                    minX = System.Math.Min(minX, g.CenterX(g.OriginI) * T - halfCell);
+                    minY = System.Math.Min(minY, g.CenterY(g.OriginJ) * T - halfCell);
+                    maxX = System.Math.Max(maxX, g.CenterX(g.OriginI + g.W - 1) * T + halfCell);
+                    maxY = System.Math.Max(maxY, g.CenterY(g.OriginJ + g.H - 1) * T + halfCell);
                 }
 
                 // The active renderer IS the volumetric one whenever Kind == Settlement: SetRenderers/Bind

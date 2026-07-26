@@ -20,7 +20,8 @@ $files = @(
   'BattleGridData.cs', 'BattleGridGenerator.cs', 'BattleGridOps.cs', 'BattleGridUndo.cs', 'BattleGridSelfTests.cs',
   'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementRoads.cs', 'SettlementFence.cs', 'SettlementSelfTests.cs',
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
-  'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs'
+  'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs',
+  'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
@@ -486,6 +487,9 @@ $buildingTests = Get-Content (Join-Path $src 'BuildingGeneratorSelfTests.cs') -R
 # Fourth source: the tile-grid wall-ring mutants (below) are caught via SelfTestWallRing, which lives in
 # SettlementTileGridSelfTests.cs, not any of the three files above.
 $tileGridTests = Get-Content (Join-Path $src 'SettlementTileGridSelfTests.cs') -Raw -Encoding UTF8
+# Fifth source: the block-generation mutants (below) are caught via SelfTestBlocks, which lives in
+# SettlementBlocksSelfTests.cs.
+$blocksTests = Get-Content (Join-Path $src 'SettlementBlocksSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
@@ -506,6 +510,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $tileGridTests
     $origClass = 'SettlementTileGridSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $blocksTests
+    $origClass = 'SettlementBlocksSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -930,7 +938,57 @@ New-SettlementRebind 'SelfTestFootprintMigration' 'MutMigrationSkipsFootprint' `
   @('SettlementFootprint\.') `
   @('WorldGen.Generation.MutMigrationSkipsFootprint.SettlementFootprint.')
 
+# ---- BLOCK GENERATION MUTANTS (arc A, task 3): three rules pinned by SettlementBlocks.Generate. -----------
+# SettlementBlocks.cs bundles TWO types in one namespace block — class BlockLayout AND class SettlementBlocks —
+# the same bundling shape as SettlementTileGrid.cs/TileType and SettlementGenerator.cs/SettlementConfig above.
+# Unlike those two, though, SelfTestBlocks NEVER NAMES BlockLayout: every layout it touches is captured through
+# `var` (and its local Check(...) function takes only ints), exactly the way BattleGridGenerator's GridPoint is
+# handled. So a rebind of just `SettlementBlocks\.` is sound and complete here — adding a `\bBlockLayout\b`
+# pattern would make New-SettlementRebind throw for want of a match. WallContour / SettlementGenerator /
+# SettlementFootprint all live in unmutated files and resolve OUTWARD once SettlementBlocks.cs is
+# re-namespaced, and no IReadOnlyList<T> struct-covariance trap exists (the layout's lists are
+# List<(int,int)>, a value tuple of ints, identical in both namespaces).
+
+# MutBlocksNoRingStreet: the one-cell ring street just inside the wall is never laid — Generate takes an empty
+# ring, so the whole interior becomes the subdividable core. The town then has only its subdivision strips for
+# streets and, because PlaceGates opens a gate on a RING cell, no ring means NO GATES AT ALL. Caught by
+# SelfTestBlocks assertion 4: the zero-gate check fires first and names the count, and the reachability sweep
+# fires behind it (every street cell is unreachable when there is nothing to start from).
+#
+# NOTE, and it is a correction to this task's brief rather than an oversight: the brief predicted the
+# street-ADJACENCY assertion would fire ("a building ends up flush against the wall with no street access").
+# It cannot, and that is by design — FillBlock only ever SEEDS on a cell that already fronts a street, so
+# removing the ring does not wall a building in, it simply leaves the outermost cells unbuilt. The invariant
+# holds by construction; what the ring is load-bearing for is the town having a way IN.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoRingStreet' `
+  'var ring = RingStreet(interior, interiorSet);' `
+  'var ring = new List<(int i, int j)>();   // MUTANT: no ring street is laid at all' `
+  'MutBlocksNoRingStreet.cs'
+
+# MutBlocksNoSubdivision: every block is accepted as-is on its first visit, so the core is never cut and the
+# whole interior comes out as ONE block. Caught by SelfTestBlocks assertion 5, which recovers the blocks as the
+# 4-connected components of (interior minus streets) and requires each to be at or below BlockTargetCells — the
+# single surviving block is several times that and the assertion names its exact cell count and bbox.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoSubdivision' `
+  'if (block.Count <= BlockTargetCells) { blocks.Add(block); continue; }' `
+  'if (true) { blocks.Add(block); continue; }   // MUTANT: never subdivide — one block for the whole interior' `
+  'MutBlocksNoSubdivision.cs'
+
+# MutBlocksOverlapAllowed: the fill's disjointness term is dropped from Available, so a cell already claimed by
+# one building is handed to the next as well — every block cell seeds its own building and the grown rects
+# overlap. Caught by SelfTestBlocks assertion 1, which names the shared cell and both buildings.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksOverlapAllowed' `
+  '=> blockSet.Contains(c) && !claimed.Contains(c);' `
+  '=> blockSet.Contains(c);   /* MUTANT: the fill skips its disjointness check */' `
+  'MutBlocksOverlapAllowed.cs'
+
+foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksNoSubdivision', 'MutBlocksOverlapAllowed')) {
+  New-SettlementRebind 'SelfTestBlocks' $mc `
+    @('SettlementBlocks\.') `
+    @("WorldGen.Generation.$mc.SettlementBlocks.")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 26 settlement mutants + 26 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 29 settlement mutants + 29 settlement rebound test copies into gen/"
 

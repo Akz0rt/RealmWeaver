@@ -110,35 +110,61 @@ namespace WorldGen.Rendering
             if (gates2.Count != gates.Count || (gates.Count > 0 && (gates2[0].X != gates[0].X || gates2[0].Y != gates[0].Y)))
             { Debug.LogError("FAIL gates: two seed-3 gate placements differ — not deterministic"); ok = false; }
 
-            // ---- 7. In an ACTUAL generated floor, gates hug the PRELIMINARY fence derived from its OWN
-            // buildings (Ц2.6: BuildFloor no longer places gates on the raw notional wall above — it derives
-            // a fence from the placed buildings first, then spaces gates on THAT). Independently re-derive
-            // the same building fence from the floor's TypeId-1 rooms and assert every TypeId-0 gate sits
-            // within ~1.5 normalized tiles (converted via ÷T) of it. MutGateAtCentre collapses every gate to
-            // the town centre, which sits far from this fence's boundary — caught here.
+            // ---- 7. In an ACTUAL generated floor, every gate room sits ON THE WALL RING and IS one of the
+            // floor's own stored street cells.
+            //
+            // REPLACES (arc A, task 3) the Ц2.6 assertion that every gate hugged a PRELIMINARY fence derived
+            // from the placed buildings. That mechanism no longer exists: BuildFloor does not derive a fence
+            // and does not call PlaceGates at all — SettlementBlocks opens a gate where a PRIMARY street runs
+            // out into the one-cell ring just inside the wall. The old assertion could only be kept by
+            // re-asserting a fence nothing builds; these two assert the rule that replaced it, and assert it
+            // MORE tightly (exact cell membership, plus a hand-derived distance bound) than a 1.5-tile
+            // proximity band did.
+            //
+            // (a) STORED: the gate room's point must land in a cell that is one of the floor's stored street
+            //     cells. This also pins the round-trip CenterOf -> CellOf that every renderer depends on.
+            // (b) ON THE RING: that cell must be one of the RING cells specifically — the one-cell street
+            //     just inside the wall — not merely some street cell somewhere in town. MEMBERSHIP, not a
+            //     distance band: an earlier draft asserted "within 2 pitches of the wall line" and called
+            //     that exact, which it is not — SettlementBlocks.RingStreet's reconnect pass iterates to a
+            //     FIXED POINT, so a cell promoted in a second round can sit three pitches out. Membership
+            //     needs no bound at all and is strictly tighter.
+            // (c) NON-VACUITY, asserted rather than assumed: "on the ring" must be strictly stronger than "a
+            //     street cell" (there must exist a stored street cell that is NOT a ring cell), and the ring
+            //     must not contain the middle of town.
             var floor = SettlementGenerator.BuildFloor(cfg);
-            const float T = DungeonLayout.TilesPerAxis;
-            var bNodes = new System.Collections.Generic.List<LinkNode>();
+            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
+                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var streetSet = new System.Collections.Generic.HashSet<(int i, int j)>(
+                SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+            var interior = SettlementBlocks.InteriorCells(placement);
+            var interiorSet = new System.Collections.Generic.HashSet<(int i, int j)>(interior);
+            var ringSet = new System.Collections.Generic.HashSet<(int i, int j)>(
+                SettlementBlocks.RingStreet(interior, interiorSet));
+
+            int nonRingStreets = 0;
+            foreach (var c in streetSet) if (!ringSet.Contains(c)) nonRingStreets++;
+            if (nonRingStreets == 0)
+            { Debug.LogError($"FAIL gates: all {streetSet.Count} stored street cells are ring cells — the ring-membership check below would be no stronger than the street check"); ok = false; }
+            var centreCell = (i: SettlementFootprint.CellOf(0.5f), j: SettlementFootprint.CellOf(0.5f));
+            if (ringSet.Contains(centreCell))
+            { Debug.LogError($"FAIL gates: the town-centre cell ({centreCell.i},{centreCell.j}) reads as a RING cell — the check below would not exclude the middle of town"); ok = false; }
+
+            int gateRooms = 0;
             foreach (var r in floor.Rooms)
-                if (r.TypeId == 1)
-                    bNodes.Add(new LinkNode { Id = r.Id, CX = r.X * T, CY = r.Y * T, W = SettlementGenerator.NominalBuildingTiles, H = SettlementGenerator.NominalBuildingTiles });
-            var fenceTile = SettlementFence.Derive(bNodes, new System.Collections.Generic.List<LinkNode>(), new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
-            if (fenceTile == null || !fenceTile.IsClosedSane())
-            { Debug.LogError("FAIL gates: the building fence re-derived from the generated floor's rooms is null/insane"); ok = false; }
-            else
             {
-                var fenceNorm = new WallContour();
-                foreach (var p in fenceTile.Points)
-                    fenceNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
-                float tol = 1.5f / T;
-                foreach (var r in floor.Rooms)
-                    if (r.TypeId == 0)
-                    {
-                        float d = fenceNorm.DistanceToEdge(r.X, r.Y);
-                        if (d > tol)
-                        { Debug.LogError($"FAIL gates: gate room {r.Id} at ({r.X:F3},{r.Y:F3}) is {d * T:F2} tiles from the derived building fence, want <=1.5"); ok = false; }
-                    }
+                if (r.TypeId != 0) continue;
+                gateRooms++;
+                var cell = (i: SettlementFootprint.CellOf(r.X), j: SettlementFootprint.CellOf(r.Y));
+                if (!streetSet.Contains(cell))
+                { Debug.LogError($"FAIL gates: gate room {r.Id} at ({r.X:F3},{r.Y:F3}) sits in cell ({cell.i},{cell.j}), which is NOT one of the floor's {streetSet.Count} stored street cells"); ok = false; }
+                if (!ringSet.Contains(cell))
+                { Debug.LogError($"FAIL gates: gate room {r.Id} sits in cell ({cell.i},{cell.j}), which is NOT one of the {ringSet.Count} ring cells — it is inside the town, not on the wall ring"); ok = false; }
             }
+            // A walled town always opens at least the two ends of its primary street (SettlementBlocks
+            // .PlaceGates' fallback guarantees two even for a town too small to cut).
+            if (gateRooms < 2)
+            { Debug.LogError($"FAIL gates: a walled {cfg.TargetBuildings}-target town produced {gateRooms} gate rooms, want >=2"); ok = false; }
 
             if (ok) Debug.Log("Settlement Gates: PASS");
         }
@@ -311,37 +337,44 @@ namespace WorldGen.Rendering
             }
             if (gateNodes < 2)
             { Debug.LogError($"FAIL assembly: {gateNodes} gate nodes, want ≥2"); ok = false; }
-            if (buildNodes < 20)
-            { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥20 for a 40-target town"); ok = false; }
+            // RE-DERIVED from 20 (arc A, task 3). The old 20 was HALF the 40-building target, and half was
+            // attainable when a building was one lattice cell and PlaceBuildings simply kept up to `target`
+            // of the ~68 cells a WallRadiusFor(40) interior holds. A town is now blocks-and-streets: the
+            // one-cell ring plus the subdivision strips take roughly HALF the interior before a single house
+            // is placed, so half the target is no longer reachable at any seed — the number had to move or
+            // it would be asserting the old model. Re-derived from the new model's measured envelope
+            // (targets 5..80 x seeds 1..60, task-A3-report.md): at target 40 the achieved count is 15..24,
+            // i.e. ratio 0.375..0.600. 12 is 0.30 x target — 20% below the measured minimum, so it still
+            // fires on any real collapse (a near-empty town, a fill that stopped seeding) while no longer
+            // encoding a density the geometry cannot produce.
+            const int minBuildNodes = 12;
+            if (buildNodes < minBuildNodes)
+            { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥{minBuildNodes} for a 40-target town"); ok = false; }
 
             // ---- 3. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
-            // Reconstruct the exact placement/buildings/gates/edges BuildFloor used (all deterministic from
-            // cfg alone — there is no stored wall), then verify (a) rooms were created in
-            // gates-then-buildings order — the room at combined index i carries node i's position and type —
-            // and (b) every street edge {A,B} became a link between room ids A+1 and B+1. A reversed or
-            // scrambled index→id mapping (the "every street links the wrong pair" bug) fails here; a
-            // ContainsKey check could not, because idByIndex is a bijection. Gates are re-derived by the SAME
-            // preliminary-fence-then-space steps BuildFloor itself runs (byte-identical: same NominalBuildingTiles,
-            // empty gates/roads, FenceMarginTiles, ÷T, GateCountFor, seed) — recomputed from primitives here,
-            // never read back off `floor`, so this stays an independent check of the assembly wiring.
+            // Reconstruct the exact placement/layout/edges BuildFloor used (all deterministic from cfg alone
+            // — there is no stored wall), then verify (a) rooms were created in gates-then-buildings order —
+            // the room at combined index i carries node i's position, type AND FOOTPRINT — and (b) every
+            // street edge {A,B} became a link between room ids A+1 and B+1. A reversed or scrambled index→id
+            // mapping (the "every street links the wrong pair" bug) fails here; a ContainsKey check could
+            // not, because idByIndex is a bijection.
+            //
+            // RE-DERIVED (arc A, task 3) from the old PlaceBuildings + preliminary-fence + PlaceGates
+            // reconstruction: BuildFloor calls none of those three any more. Gates and buildings both come
+            // out of SettlementBlocks.Generate now, so the reconstruction calls THAT — still recomputed from
+            // primitives here, never read back off `floor`, so it stays an independent check of the assembly
+            // wiring rather than a tautology.
             var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
                 SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var exBuildings = SettlementGenerator.PlaceBuildings(exPlacement, cfg.Seed, cfg.TargetBuildings);
+            var exLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.TargetBuildings);
             var exGates = new System.Collections.Generic.List<GatePoint>();
-            if (exBuildings.Count > 0)
+            foreach (var gc in exLayout.GateCells)   // cfg.HasWall is true for this fixture
+                exGates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
+            var exBuildings = new System.Collections.Generic.List<PlacedBuilding>();
+            foreach (var fp in exLayout.Buildings)
             {
-                const float T = DungeonLayout.TilesPerAxis;
-                var bNodes = new System.Collections.Generic.List<LinkNode>(exBuildings.Count);
-                for (int i = 0; i < exBuildings.Count; i++)
-                    bNodes.Add(new LinkNode { Id = i, CX = exBuildings[i].X * T, CY = exBuildings[i].Y * T, W = SettlementGenerator.NominalBuildingTiles, H = SettlementGenerator.NominalBuildingTiles });
-                var prelimTile = SettlementFence.Derive(bNodes, new System.Collections.Generic.List<LinkNode>(), new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
-                if (prelimTile != null)
-                {
-                    var prelimNorm = new WallContour();
-                    foreach (var p in prelimTile.Points)
-                        prelimNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
-                    exGates = SettlementGenerator.PlaceGates(prelimNorm, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
-                }
+                var rep = SettlementFootprint.Representative(fp);
+                exBuildings.Add(new PlacedBuilding { X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j) });
             }
             var exEdges = SettlementStreets.GenerateStreets(exPlacement, exBuildings, exGates, cfg.Seed);
             int nG = exGates.Count;
@@ -354,7 +387,26 @@ namespace WorldGen.Rendering
                 var rm = floor.Rooms[nG + i];
                 if (rm.TypeId != 1 || rm.X != exBuildings[i].X || rm.Y != exBuildings[i].Y)
                 { Debug.LogError($"FAIL assembly: room index {nG + i} (id {rm.Id}) is not building {i} at ({exBuildings[i].X:F3},{exBuildings[i].Y:F3})"); ok = false; }
+                // THE FOOTPRINT IS THE BUILDING NOW: the room must carry building i's WHOLE cell set, not a
+                // point that merely happens to agree with it. Cell-for-cell and in order — Room.Cells is
+                // serialized, so a reordering rewrites every saved town.
+                var got = SettlementFootprint.Decode(rm.Cells);
+                if (got.Count != exLayout.Buildings[i].Count)
+                { Debug.LogError($"FAIL assembly: room index {nG + i} (id {rm.Id}) carries {got.Count} footprint cells, want {exLayout.Buildings[i].Count}"); ok = false; }
+                else
+                    for (int k = 0; k < got.Count; k++)
+                        if (got[k] != exLayout.Buildings[i][k])
+                        { Debug.LogError($"FAIL assembly: room index {nG + i} (id {rm.Id}) footprint cell {k} is ({got[k].i},{got[k].j}), want ({exLayout.Buildings[i][k].i},{exLayout.Buildings[i][k].j})"); ok = false; break; }
             }
+            // (a2) THE STREETS ARE STORED, and stored exactly once: the floor's SettlementParams must carry
+            // the layout's whole street list, cell-for-cell. Nothing else in the codebase re-routes them.
+            var exStreets = SettlementFootprint.Decode(floor.SettlementParams?.StreetCells);
+            if (exStreets.Count != exLayout.StreetCells.Count)
+            { Debug.LogError($"FAIL assembly: floor stores {exStreets.Count} street cells, want {exLayout.StreetCells.Count}"); ok = false; }
+            else
+                for (int k = 0; k < exStreets.Count; k++)
+                    if (exStreets[k] != exLayout.StreetCells[k])
+                    { Debug.LogError($"FAIL assembly: stored street cell {k} is ({exStreets[k].i},{exStreets[k].j}), want ({exLayout.StreetCells[k].i},{exLayout.StreetCells[k].j})"); ok = false; break; }
             // (b) each street edge {A,B} → a link between room ids A+1 and B+1 (order-insensitive).
             foreach (var e in exEdges)
             {
@@ -405,8 +457,14 @@ namespace WorldGen.Rendering
             }
             if (gateNodes != 0)
             { Debug.LogError($"FAIL village: {gateNodes} gate rooms in a wall-less village, want 0"); ok = false; }
-            if (buildNodes < 20)
-            { Debug.LogError($"FAIL village: a village produced only {buildNodes} buildings, want >=20"); ok = false; }
+            // RE-DERIVED from 20, identically to SelfTestAssembly's own floor (arc A, task 3) — same model
+            // change, same measured envelope (target 40 → 15..24 buildings over seeds 1..60), same 0.30 x
+            // target floor. This fixture (seed 4) happens to land on 21 and would still have squeaked past
+            // 20, which is precisely why it is being moved: a threshold that survives by one building is
+            // pinning luck, not a rule.
+            const int minVillageBuildings = 12;
+            if (buildNodes < minVillageBuildings)
+            { Debug.LogError($"FAIL village: a village produced only {buildNodes} buildings, want >={minVillageBuildings}"); ok = false; }
 
             // ---- 3. Hub connectivity: every building is reachable from the hub, and floor.Links agrees ---
             // Re-derive the SAME notional placement contour BuildFloor now falls back to when HasWall=false
@@ -437,11 +495,29 @@ namespace WorldGen.Rendering
                     { Debug.LogError($"FAIL village: building index {i} (room id {i + 1}) is unreachable from the hub"); ok = false; break; }
             }
 
-            // floor.Links must carry the SAME edges (mapped to room ids i+1, order-insensitive) — proves
-            // BuildFloor actually wires this GenerateStreets output into the floor for the gate-less path.
-            if (floor.Links.Count != exEdges.Count)
-            { Debug.LogError($"FAIL village: floor.Links has {floor.Links.Count} links vs {exEdges.Count} street edges"); ok = false; }
-            foreach (var e in exEdges)
+            // ---- 3b. floor.Links must carry the SAME edges (mapped to room ids i+1, order-insensitive) —
+            // proves BuildFloor actually wires its GenerateStreets output into the floor for the gate-less
+            // path.
+            //
+            // SPLIT FROM 3a (arc A, task 3), and the split is the point. 3a above must keep feeding
+            // GenerateStreets from PlaceBuildings — that direct call is the ONLY thing that makes
+            // MutStreetsNoHub observable through this test (BuildFloor's own internal call always binds to
+            // the real, un-rebound SettlementStreets). But BuildFloor no longer places buildings that way at
+            // all, so PlaceBuildings' points are no longer the nodes its links are indexed against; comparing
+            // floor.Links against 3a's edge list now compares two different towns. This half therefore
+            // re-derives the nodes the way BuildFloor does — SettlementBlocks.Generate, footprint
+            // representatives, no gates for a village — and compares against THOSE.
+            var blLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.TargetBuildings);
+            var blBuildings = new System.Collections.Generic.List<PlacedBuilding>();
+            foreach (var fp in blLayout.Buildings)
+            {
+                var rep = SettlementFootprint.Representative(fp);
+                blBuildings.Add(new PlacedBuilding { X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j) });
+            }
+            var blEdges = SettlementStreets.GenerateStreets(exPlacement, blBuildings, exGates, cfg.Seed);
+            if (floor.Links.Count != blEdges.Count)
+            { Debug.LogError($"FAIL village: floor.Links has {floor.Links.Count} links vs {blEdges.Count} street edges"); ok = false; }
+            foreach (var e in blEdges)
             {
                 int idA = e.A + 1, idB = e.B + 1;
                 bool found = false;
@@ -450,6 +526,15 @@ namespace WorldGen.Rendering
                 if (!found)
                 { Debug.LogError($"FAIL village: street edge ({e.A},{e.B}) has no link between room ids {idA} and {idB}"); ok = false; break; }
             }
+
+            // ---- 3c. A WALL-LESS VILLAGE STILL GETS ITS STREETS. HasWall suppresses gates and nothing else
+            // — SettlementTileGrid.MarkRoads has an explicit no-wall path for exactly this, and it would draw
+            // nothing if the generator stopped storing the cells.
+            var villageStreets = SettlementFootprint.Decode(floor.SettlementParams?.StreetCells);
+            if (villageStreets.Count != blLayout.StreetCells.Count)
+            { Debug.LogError($"FAIL village: a wall-less village stored {villageStreets.Count} street cells, want {blLayout.StreetCells.Count}"); ok = false; }
+            if (villageStreets.Count == 0)
+            { Debug.LogError("FAIL village: a wall-less village stored NO street cells at all"); ok = false; }
 
             // ---- 4. Determinism: two seed-4 villages have identical room count and first-room position ---
             var data2 = SettlementGenerator.Generate(cfg, "poi-village");
@@ -774,28 +859,81 @@ namespace WorldGen.Rendering
 
             AssertClean(floor, "generated");
 
-            // THE DRAG CASE: a building dragged off the BuildingCell grid must still be routed AROUND.
-            //    +1.3/+0.7 tiles is a non-multiple of the pitch and small enough (< half the ~3-tile free
-            //    gap) to never create a room overlap.
+            // THE DRAG CASE — REWRITTEN (arc A, task 3), because this task's own change made the old one
+            // VACUOUS. It used to nudge a building by +1.3/+0.7 TILES — a non-multiple of the BuildingCell
+            // pitch — and re-assert, on the premise that a building dragged OFF the lattice must still be
+            // routed around. A settlement building's road node no longer comes from its point at all:
+            // DungeonLayout.LinkNodeFor reads its FOOTPRINT, and SettlementTileGrid.FootprintOf re-derives a
+            // single-cell footprint only when the point moves into a DIFFERENT cell. 1.3 tiles is 0.0102
+            // normalized against a 0.07 pitch, so the point never left its own cell, the footprint never
+            // moved, and the "dragged" pass re-ran AssertClean on byte-identical nodes. Measured before
+            // rewriting, not inferred: the node read CX 67.2000 / CY 49.2800 / 8.960 x 8.960 both before and
+            // after the nudge.
+            //
+            // Both halves of what that fixture was worth are kept, and the first is NEW coverage:
+            //   (a) THE ROAD NODE IS LATTICE-QUANTIZED. A sub-cell point drag must NOT move it — the
+            //       footprint is authoritative over the point. Nothing else asserts this, and it is exactly
+            //       the property that made the old fixture vacuous, so it is now stated instead of assumed.
+            //   (b) A WHOLE-CELL drag DOES relocate the building (FootprintOf's rule (b) re-derives a
+            //       single-cell footprint whose point has moved to another cell), and THAT genuinely
+            //       different town is what AssertClean re-runs on.
+            var occupied = new System.Collections.Generic.HashSet<(int i, int j)>();
+            foreach (var r in floor.Rooms)
+                if (r.TypeId == 1)
+                    foreach (var c in SettlementFootprint.Decode(r.Cells)) occupied.Add(c);
             Room moved = null;
-            foreach (var r in floor.Rooms) if (r.TypeId == 1) { moved = r; break; }
-            moved.X += 1.3f / DungeonLayout.TilesPerAxis;
-            moved.Y += 0.7f / DungeonLayout.TilesPerAxis;
-            AssertClean(floor, "dragged");
+            foreach (var r in floor.Rooms)
+                if (r.TypeId == 1 && SettlementFootprint.Decode(r.Cells).Count == 1) { moved = r; break; }
+            if (moved == null)
+            { Debug.LogError("FAIL roads: the seed-1/20 fixture holds no SINGLE-cell building — neither drag assertion below can fire FootprintOf's re-derive rule, so both would prove nothing"); ok = false; }
+            else
+            {
+                // (a) sub-cell nudge: the point moves, the node must not.
+                var n0 = DungeonLayout.LinkNodeFor(moved, settlement: true);
+                float px = moved.X, py = moved.Y;
+                moved.X += 1.3f / DungeonLayout.TilesPerAxis;
+                moved.Y += 0.7f / DungeonLayout.TilesPerAxis;
+                if (moved.X == px || moved.Y == py)
+                { Debug.LogError($"FAIL roads: the sub-cell nudge left room {moved.Id}'s point at ({px:F5},{py:F5}) — assertion (a) would be vacuous"); ok = false; }
+                var n1 = DungeonLayout.LinkNodeFor(moved, settlement: true);
+                if (n1.CX != n0.CX || n1.CY != n0.CY || n1.W != n0.W || n1.H != n0.H)
+                { Debug.LogError($"FAIL roads: a SUB-CELL nudge moved room {moved.Id}'s road node from ({n0.CX:F3},{n0.CY:F3}) {n0.W:F3}x{n0.H:F3} to ({n1.CX:F3},{n1.CY:F3}) {n1.W:F3}x{n1.H:F3} — the FOOTPRINT must be authoritative over the point"); ok = false; }
+
+                // (b) whole-cell drag into a free neighbouring cell: the node MUST follow, and the re-assert
+                // below then runs on a town that really did change.
+                var cell = SettlementFootprint.Decode(moved.Cells)[0];
+                int di = 0, dj = 0;
+                foreach (var (ci, cj) in new[] { (1, 0), (0, 1), (-1, 0), (0, -1) })
+                    if (!occupied.Contains((cell.i + ci, cell.j + cj))) { di = ci; dj = cj; break; }
+                if (di == 0 && dj == 0)
+                { Debug.LogError($"FAIL roads: room {moved.Id} at cell ({cell.i},{cell.j}) has no free 4-neighbour cell to be dragged into — the drag case cannot run"); ok = false; }
+                else
+                {
+                    moved.X = SettlementFootprint.CenterOf(cell.i + di);
+                    moved.Y = SettlementFootprint.CenterOf(cell.j + dj);
+                    var n2 = DungeonLayout.LinkNodeFor(moved, settlement: true);
+                    if (n2.CX == n0.CX && n2.CY == n0.CY)
+                    { Debug.LogError($"FAIL roads: a WHOLE-CELL drag of room {moved.Id} to cell ({cell.i + di},{cell.j + dj}) left its road node at ({n2.CX:F3},{n2.CY:F3}) — the stale single-cell footprint was never re-derived, so the re-assert below would run on an UNCHANGED town"); ok = false; }
+                    AssertClean(floor, "dragged");
+                }
+            }
 
             if (ok) Debug.Log("Settlement Roads: PASS");
         }
 
         // Adapter identical to DungeonLayout.BuildRenderGraph's: rooms → tile-space LinkNodes, links → LinkEdges
         // (ids). Hoisted out of SelfTestRoads (Task 7) so SelfTestRoadJunctions/SelfTestRoadsPerf share them too.
+        //
+        // It now CALLS that adapter (DungeonLayout.LinkNodeFor) instead of re-spelling it (arc A, task 3).
+        // Re-spelling it was already only "identical" by inspection; with a settlement building's size coming
+        // from its FOOTPRINT rather than from EffectiveSize, a copy here would have kept measuring 6x6 rects
+        // while production routed around 8.96-tile cells — every clearance assertion below would then have
+        // been checking a town nobody draws.
         private System.Collections.Generic.List<LinkNode> RoadNodes(InteriorFloor lvl)
         {
+            bool settlement = lvl.SettlementParams != null;
             var ns = new System.Collections.Generic.List<LinkNode>();
-            foreach (var r in lvl.Rooms)
-            {
-                var (w, h) = DungeonProjection.EffectiveSize(r);
-                ns.Add(new LinkNode { Id = r.Id, CX = r.X * DungeonLayout.TilesPerAxis, CY = r.Y * DungeonLayout.TilesPerAxis, W = w, H = h });
-            }
+            foreach (var r in lvl.Rooms) ns.Add(DungeonLayout.LinkNodeFor(r, settlement));
             return ns;
         }
         private System.Collections.Generic.List<LinkEdge> RoadEdges(InteriorFloor lvl)
@@ -819,7 +957,16 @@ namespace WorldGen.Rendering
             // (2,3,6,9,12,15,17,19,22,25,... ~40% of seeds), confirming the reuse-discount merge behaviour
             // itself is intact and this is a fixture ripple, not a regression; seed 2 is the first that
             // merges and is otherwise unremarkable.
-            var cfg = new SettlementConfig { Seed = 2, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            //
+            // Re-pinned 2->1 (arc A, task 3): a town is blocks-and-streets now, so every building position,
+            // every gate and therefore every routed lane moved. Seed 2 still MERGES — the suite stays green
+            // on it — but it stopped DISCRIMINATING: with the reuse discount removed its branches happen to
+            // share a >=3-cell stretch with an arterial anyway, so MutRoadsNoReuse read NOT DETECTED. The
+            // re-pin was made from a direct scan (seeds 1..300, this exact fixture shape, real router vs the
+            // MutRoadsNoReuse build, task-A3-report.md): the real router merges on 288 of 300 seeds and 222
+            // of them discriminate, so the discount's merge behaviour is emphatically intact and this is a
+            // fixture ripple. Seed 1 is the FIRST discriminating seed and is otherwise unremarkable.
+            var cfg = new SettlementConfig { Seed = 1, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
             var g = SettlementRoads.Build(nodes, edges);

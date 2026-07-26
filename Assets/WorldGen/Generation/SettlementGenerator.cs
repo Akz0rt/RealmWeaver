@@ -34,7 +34,13 @@ namespace WorldGen.Generation
         /// RoomSizing.Default(1)'s default case — (6,6), both sides already inside RoomSizing.Clamp's 1..16
         /// range unchanged. 6 is therefore the exact size a building room would render/pack at if it ever
         /// went through the normal room-sizing path, so the preliminary fence hugs buildings at the same
-        /// nominal scale the rest of the codebase already assumes for a TypeId-1 room.</summary>
+        /// nominal scale the rest of the codebase already assumes for a TypeId-1 room.
+        ///
+        /// NO LONGER CALLED BY ANYTHING (arc A, task 3). BuildFloor does not derive a preliminary fence any
+        /// more — gates come out of SettlementBlocks — and the road/fence adapter now sizes a settlement
+        /// building from its FOOTPRINT (DungeonLayout.LinkNodeFor), which is the whole point of that change:
+        /// a multi-cell house is 8.96 tiles per cell, not 6 tiles total. Left compiling, and left DOCUMENTED
+        /// as dead, because Task 5 removes this whole preliminary-gate path along with SettlementStreets.</summary>
         public const float NominalBuildingTiles = 6f;
 
         /// <summary>Wall radius (normalized) for a building count: bigger towns need more room. Clamped so a
@@ -136,37 +142,49 @@ namespace WorldGen.Generation
             return kept;
         }
 
-        /// <summary>Assemble one settlement floor: gate rooms (TypeId 0) then building rooms (TypeId 1) in
-        /// the SAME order the street stage indexes them (gates first), streets → links. Ц2.6: no wall is
-        /// stored — a walled town's gates are spaced on a PRELIMINARY fence derived from the buildings
-        /// actually placed (SettlementFence.Derive), never on the raw notional wall; the FINAL fence (which
-        /// also wraps routed roads) is re-derived by the renderer/fit (Task 7). Room ids are assigned 1..N in
-        /// gates-then-buildings order so a StreetEdge index i maps to room id i+1.</summary>
+        /// <summary>Assemble one settlement floor from a BLOCK LAYOUT: gate rooms (TypeId 0) then building
+        /// rooms (TypeId 1) in the SAME order the street stage indexes them (gates first), streets → links.
+        ///
+        /// A BUILDING IS A FOOTPRINT NOW. SettlementBlocks.Generate carves the notional contour's interior
+        /// into blocks with one-cell streets and fills each block with flush, disjoint footprints; every
+        /// building room carries its own cells on Room.Cells and every street cell is stored once on
+        /// SettlementParams.StreetCells. Both are ABSOLUTE lattice indices (SettlementFootprint), the same
+        /// frame SettlementTileGrid draws from, so the stored town and the drawn town cannot disagree.
+        ///
+        /// A ROOM'S POINT IS ITS REPRESENTATIVE CELL'S CENTRE, never a centroid: SettlementTileGrid.FootprintOf
+        /// treats a SINGLE-cell footprint that disagrees with the room's point as stale and re-derives it from
+        /// the point, so a point in some other cell would silently relocate every one-cell house in town.
+        ///
+        /// GATES COME FROM THE LAYOUT — the ring-street cells its primary streets run out into — not from a
+        /// preliminary fence any more (Ц2.6's SettlementFence.Derive → PlaceGates path). A wall-less village
+        /// gets none; it still gets its streets.
+        ///
+        /// STILL LIVE, AND STILL TASK 5's TO DELETE: SettlementStreets.GenerateStreets and the
+        /// gates-then-buildings id↔index contract below. Links are what SettlementRoads routes the drawn
+        /// roads from, and a link-less floor routes nothing at all, so the contract cannot go until
+        /// SettlementStreets itself does. PlaceBuildings, PlaceGates and GateCountFor, by contrast, are no
+        /// longer called from here at all — they compile, they are still self-tested directly, and they are
+        /// dead as far as generation is concerned.</summary>
         public static InteriorFloor BuildFloor(SettlementConfig cfg)
         {
-            // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) used only
-            // to seed the building grid and route streets — never stored, so nothing renders it directly.
+            // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) that block
+            // generation carves up — never stored, so nothing renders it directly.
             var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
-            var buildings = PlaceBuildings(placement, cfg.Seed, cfg.TargetBuildings);
+            var layout = SettlementBlocks.Generate(placement, cfg.Seed, cfg.TargetBuildings);
 
-            // Gates: derived from a preliminary fence traced around the placed buildings (tile space), then
-            // spaced on it (normalized). A wall-less village, or a walled town that placed zero buildings,
-            // gets none.
+            // A wall-less village has nothing to open a gate IN, so it takes none of the layout's.
             var gates = new List<GatePoint>();
-            if (cfg.HasWall && buildings.Count > 0)
+            if (cfg.HasWall)
+                foreach (var gc in layout.GateCells)
+                    gates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
+
+            // The street stage still works in POINTS (Task 5 replaces it wholesale), so each footprint is
+            // handed to it as its representative cell's centre — the same point the room below carries.
+            var buildings = new List<PlacedBuilding>(layout.Buildings.Count);
+            foreach (var fp in layout.Buildings)
             {
-                const float T = DungeonLayout.TilesPerAxis;
-                var bNodes = new List<LinkNode>(buildings.Count);
-                for (int i = 0; i < buildings.Count; i++)
-                    bNodes.Add(new LinkNode { Id = i, CX = buildings[i].X * T, CY = buildings[i].Y * T, W = NominalBuildingTiles, H = NominalBuildingTiles });
-                var prelimTile = SettlementFence.Derive(bNodes, new List<LinkNode>(), new List<LinkSegment>(), SettlementFence.FenceMarginTiles);
-                if (prelimTile != null)
-                {
-                    var prelimNorm = new WallContour();
-                    foreach (var p in prelimTile.Points)
-                        prelimNorm.Points.Add(new WallPoint { X = p.X / T, Y = p.Y / T });
-                    gates = PlaceGates(prelimNorm, GateCountFor(cfg.TargetBuildings), cfg.Seed);
-                }
+                var rep = SettlementFootprint.Representative(fp);
+                buildings.Add(new PlacedBuilding { X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j) });
             }
 
             var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);
@@ -185,13 +203,26 @@ namespace WorldGen.Generation
             for (int i = 0; i < buildings.Count; i++)
             {
                 idByIndex[gates.Count + i] = next;
-                floor.Rooms.Add(new Room { Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y, IsDummy = i >= activeCount });
+                floor.Rooms.Add(new Room
+                {
+                    Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y,
+                    Cells = SettlementFootprint.Encode(layout.Buildings[i]),
+                    IsDummy = i >= activeCount,
+                });
                 next++;
             }
             floor.NextRoomId = next;
             foreach (var e in edges)
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
-            floor.SettlementParams = new SettlementParams { TargetBuildings = cfg.TargetBuildings, ActiveBuildings = cfg.ActiveBuildings, HasWall = cfg.HasWall };
+            floor.SettlementParams = new SettlementParams
+            {
+                TargetBuildings = cfg.TargetBuildings,
+                ActiveBuildings = cfg.ActiveBuildings,
+                HasWall = cfg.HasWall,
+                // Null, not an empty array, when there are no streets at all — SettlementParams.StreetCells
+                // is NullValueHandling.Ignore, and an empty array would put the key on the wire for nothing.
+                StreetCells = layout.StreetCells.Count > 0 ? SettlementFootprint.Encode(layout.StreetCells) : null,
+            };
             return floor;
         }
 

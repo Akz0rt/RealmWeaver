@@ -123,6 +123,13 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutFootprintRoundNotFloorSelfTests().SelfTestFootprint()),
                 ("MutMigrationSkipsFootprint", "SettlementFootprint.EnsureFootprints writes no cells (a v9 settlement building loads with no footprint at all)",
                     () => new WorldGen.MutantTests.MutMigrationSkipsFootprintSelfTests().SelfTestFootprintMigration()),
+
+                ("MutBlocksNoRingStreet", "SettlementBlocks.Generate lays no ring street just inside the wall (so no gate can open on it either)",
+                    () => new WorldGen.MutantTests.MutBlocksNoRingStreetSelfTests().SelfTestBlocks()),
+                ("MutBlocksNoSubdivision", "SettlementBlocks.Subdivide accepts every block uncut (one block for the whole interior)",
+                    () => new WorldGen.MutantTests.MutBlocksNoSubdivisionSelfTests().SelfTestBlocks()),
+                ("MutBlocksOverlapAllowed", "SettlementBlocks' fill drops the not-already-claimed term from Available (footprints overlap)",
+                    () => new WorldGen.MutantTests.MutBlocksOverlapAllowedSelfTests().SelfTestBlocks()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

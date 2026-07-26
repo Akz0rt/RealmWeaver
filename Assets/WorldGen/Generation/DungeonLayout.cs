@@ -26,6 +26,58 @@ namespace WorldGen.Generation
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
 
+        /// <summary>THE ONE ADAPTER from a Room to the tile-space rect the ROAD ROUTER and the FENCE read.
+        /// Both call it, and so does SettlementSelfTests' own RoadNodes, so the three can never disagree
+        /// about how big a building is.
+        ///
+        /// WHY IT EXISTS (arc A, task 3). Every caller used to build its LinkNode straight from
+        /// DungeonProjection.EffectiveSize, which for a settlement building room (TypeId 1, SizeW/H unset)
+        /// falls through to RoomSizing.Default(1) = 6x6 TILES — about 0.67 of ONE lattice cell (a cell is
+        /// BuildingCell * TilesPerAxis = 8.96 tiles). That was harmless while every settlement building
+        /// occupied exactly one cell and no two were ever adjacent. It stopped being harmless the moment a
+        /// building became a FOOTPRINT: a house spanning 2x2 cells is 17.9 tiles across, so a 6x6 rect would
+        /// have the fence wrapping a fraction of it and the roads clearing a fraction of it — a road would
+        /// run straight through three quarters of a house and the wall would cut the rest off.
+        ///
+        /// A SETTLEMENT BUILDING therefore projects as its FOOTPRINT's cell bounding box, in tiles. The bbox
+        /// (not the exact cell set) because both consumers want a rect: SettlementRoads rasterizes an
+        /// inflated rect mask and SettlementFence rasterizes an inflated rect. An L-shaped footprint is
+        /// consequently read as its filled bbox — deliberately conservative: the fence wraps a little more
+        /// than the house and roads keep a little further off it, which is the safe direction for both.
+        /// Note the single-cell case is EXACTLY unchanged in position: a footprint {(i,j)} has bbox centre
+        /// (i+0.5)*Pitch, which is CenterOf(i) — the same point ToTile(r.X) already produced.
+        ///
+        /// EVERYTHING ELSE — a gate (TypeId 0), a dungeon room, a building-interior room — keeps
+        /// EffectiveSize verbatim. A gate has no footprint to read, and SettlementFence rasterizes it as a
+        /// bare centre POINT regardless of its W/H, so nothing about the fence changes for gates either.</summary>
+        public static LinkNode LinkNodeFor(Room r, bool settlement)
+        {
+            if (settlement && r.TypeId == 1)
+            {
+                var fp = SettlementTileGrid.FootprintOf(r);
+                if (fp.Count > 0)
+                {
+                    var (minI, minJ, maxI, maxJ) = SettlementFootprint.Bounds(fp);
+                    const float pitchT = SettlementFootprint.Pitch * TilesPerAxis;   // 8.96 tiles per cell
+                    return new LinkNode
+                    {
+                        Id = r.Id,
+                        CX = (minI + maxI + 1) * 0.5f * pitchT,
+                        CY = (minJ + maxJ + 1) * 0.5f * pitchT,
+                        W = (maxI - minI + 1) * pitchT,
+                        H = (maxJ - minJ + 1) * pitchT,
+                    };
+                }
+            }
+            var (w, h) = DungeonProjection.EffectiveSize(r);
+            return new LinkNode { Id = r.Id, CX = ToTile(r.X), CY = ToTile(r.Y), W = w, H = h };
+        }
+
+        /// <summary>True when this floor is a SETTLEMENT floor — the gate on LinkNodeFor's footprint path.
+        /// Read off the floor's own SettlementParams rather than off any caller-supplied flag, so the road
+        /// router and the fence cannot end up disagreeing about which model they are in.</summary>
+        static bool IsSettlementFloor(InteriorFloor lvl) => lvl != null && lvl.SettlementParams != null;
+
         // RoomLinkGeometry works in TILE space; LayoutPoint (and Room.X/Y) are normalized 0..1.
         static LayoutPoint ToLayout(LinkPoint p) => new LayoutPoint { X = ToNorm(p.X), Y = ToNorm(p.Y) };
 
@@ -203,17 +255,12 @@ namespace WorldGen.Generation
             // geometry past that limit — they no longer run centre-to-centre through the rooms they join.
             // The routing itself lives in RoomLinkGeometry, which knows nothing about dungeons so the same
             // math can serve building/city maps later; this method is just the adapter.
+            // LinkNodeFor, not EffectiveSize: a settlement BUILDING is a footprint of lattice cells and must
+            // be routed around at its real size (see LinkNodeFor). TILE space either way, and byte-identical
+            // for every non-settlement floor.
+            bool settlement = IsSettlementFloor(lvl);
             var nodes = new List<LinkNode>(lvl.Rooms.Count);
-            foreach (var r in lvl.Rooms)
-            {
-                var (w, h) = DungeonProjection.EffectiveSize(r);
-                nodes.Add(new LinkNode
-                {
-                    Id = r.Id,
-                    CX = ToTile(r.X), CY = ToTile(r.Y),   // RoomLinkGeometry works in TILE space
-                    W = w, H = h,
-                });
-            }
+            foreach (var r in lvl.Rooms) nodes.Add(LinkNodeFor(r, settlement));
             var linkEdges = new List<LinkEdge>(lvl.Links.Count);
             foreach (var c in lvl.Links) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
@@ -318,13 +365,15 @@ namespace WorldGen.Generation
         {
             if (lvl == null || lvl.SettlementParams == null || !lvl.SettlementParams.HasWall) return null;
 
+            // LinkNodeFor, not EffectiveSize: the fence must wrap the buildings' actual FOOTPRINTS, or a
+            // multi-cell house pokes out through its own town wall (see LinkNodeFor). Always the settlement
+            // path here — this method returns null above for anything that is not a walled settlement floor.
             var nodes = new List<LinkNode>(lvl.Rooms.Count);
             var buildings = new List<LinkNode>();
             var gates = new List<LinkNode>();
             foreach (var r in lvl.Rooms)
             {
-                var (w, h) = DungeonProjection.EffectiveSize(r);
-                var node = new LinkNode { Id = r.Id, CX = ToTile(r.X), CY = ToTile(r.Y), W = w, H = h };
+                var node = LinkNodeFor(r, settlement: true);
                 nodes.Add(node);
                 if (r.TypeId == 1) buildings.Add(node); else gates.Add(node);   // gate = TypeId 0 (rasterized as a point)
             }

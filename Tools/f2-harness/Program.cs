@@ -90,6 +90,9 @@ static class Program
         tileGrid.SelfTestHeight();
         tileGrid.SelfTestFootprintTiles();
         tileGrid.SelfTestTileGridSanity();
+        var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
+        blocks.SelfTestBlocks();
+        blocks.SelfTestBlocksSanity();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");
