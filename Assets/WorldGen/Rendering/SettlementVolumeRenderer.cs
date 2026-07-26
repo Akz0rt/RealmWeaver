@@ -409,9 +409,12 @@ namespace WorldGen.Rendering
         /// ONE TIER now. <paramref name="includeRoadsInFence"/> used to pick between a buildings-only grid
         /// (Fast/drag, skipping a ~12.5 ms road A*) and one with the routed roads rasterized in
         /// (Clean/bind/settle). SettlementTileGrid.Build reads STORED street cells instead of routing
-        /// anything, so both tiers now produce the identical grid and the flag is INERT for the tile grid. It
-        /// stays on the signature because callers pass it and DungeonLayout.DeriveTownFence(lvl, includeRoads)
-        /// still honours it.</summary>
+        /// anything, so both tiers now produce the identical grid and the flag is INERT for the tile grid
+        /// THIS METHOD DRAWS. It stays on the signature because it is part of the shared
+        /// <see cref="IDungeonRenderer.RepositionRooms"/> contract — DungeonFlatRenderer's implementation of
+        /// the SAME interface method still honours it (RebuildTownWall → DungeonLayout.DeriveTownFence), so
+        /// this renderer cannot drop the parameter unilaterally without breaking that shared signature; this
+        /// renderer itself never calls DeriveTownFence.</summary>
         public void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence)
         {
             EnsureBuilt();
@@ -440,8 +443,9 @@ namespace WorldGen.Rendering
             // SettlementTileGrid.Build takes no roads any more: streets are STORED cells
             // (SettlementParams.StreetCells), so there is nothing left for the includeRoadsInFence flag to
             // switch between here and the grid is the same one on every tier. The parameter itself stays —
-            // DungeonLayout.DeriveTownFence(lvl, includeRoads) still honours it — but it is now INERT for the
-            // tile grid.
+            // it is part of the IDungeonRenderer.RepositionRooms contract (DungeonFlatRenderer's
+            // implementation still honours it via RebuildTownWall/DeriveTownFence) — but it is now INERT for
+            // the tile grid THIS method builds; this renderer never calls DeriveTownFence itself.
             grid = SettlementTileGrid.Build(lvl);
             RebuildCellRooms(lvl);
 

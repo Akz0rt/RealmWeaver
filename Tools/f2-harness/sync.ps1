@@ -817,7 +817,28 @@ New-SettlementMutant 'SettlementTileGrid.cs' 'MutGridExtentIgnoresFootprint' `
   '{ var rep = SettlementFootprint.Representative(FootprintOf(r)); Fold(rep.i, rep.j); }   // MUTANT: extent folds one cell per room' `
   'MutGridExtentIgnoresFootprint.cs'
 
-foreach ($mc in @('MutGridOneCellPerRoom', 'MutGridExtentIgnoresFootprint')) {
+# MutFootprintNoNullFallback: FootprintOf's rule (a) — "no footprint -> one cell, derived from the room's
+# point" — disabled. A generated town's rooms (Cells == null) still take the s_noCells short-circuit ABOVE
+# this line unchanged, but with `cells.Count == 0` neutered the function falls all the way through to
+# `return cells;`, handing back the shared EMPTY list instead of the one-cell fallback. Caught by
+# SelfTestFootprintTiles fixture D (a room with no footprint at all): its point cell reads None instead of
+# Building, and the Building count drops from 1 to 0.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutFootprintNoNullFallback' `
+  'if (cells.Count == 0) return' `
+  'if (false && cells.Count == 0) return' `
+  'MutFootprintNoNullFallback.cs'
+
+# MutFootprintStaleNotRederived: FootprintOf's rule (b) — "a single-cell footprint that disagrees with the
+# room's point is STALE -> re-derived from the point" — disabled. A migrated/moved building's frozen
+# one-cell footprint is trusted verbatim instead of being corrected, so the building would stop moving when
+# dragged. Caught by SelfTestFootprintTiles fixture E: the footprint's stale cell (0,0) stays Building and
+# the point cell (3,2) — where the building actually is — never gets one.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutFootprintStaleNotRederived' `
+  'if (cells.Count == 1 && cells[0] != point)' `
+  'if (false && cells.Count == 1 && cells[0] != point)' `
+  'MutFootprintStaleNotRederived.cs'
+
+foreach ($mc in @('MutGridOneCellPerRoom', 'MutGridExtentIgnoresFootprint', 'MutFootprintNoNullFallback', 'MutFootprintStaleNotRederived')) {
   New-SettlementRebind 'SelfTestFootprintTiles' $mc `
     @('SettlementTileGrid\.', '\bTileType\b') `
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")

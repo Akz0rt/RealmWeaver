@@ -106,6 +106,10 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutGridOneCellPerRoomSelfTests().SelfTestFootprintTiles()),
                 ("MutGridExtentIgnoresFootprint", "SettlementTileGrid.Allocate folds only a footprint's REPRESENTATIVE cell into the extent (far cells fall out of bounds and are silently dropped by the InBounds guards)",
                     () => new WorldGen.MutantTests.MutGridExtentIgnoresFootprintSelfTests().SelfTestFootprintTiles()),
+                ("MutFootprintNoNullFallback", "SettlementTileGrid.FootprintOf's rule (a) disabled (cells.Count == 0 never falls back to the room's point; a footprint-less room draws nothing)",
+                    () => new WorldGen.MutantTests.MutFootprintNoNullFallbackSelfTests().SelfTestFootprintTiles()),
+                ("MutFootprintStaleNotRederived", "SettlementTileGrid.FootprintOf's rule (b) disabled (a stale single-cell footprint that disagrees with the room's point is trusted verbatim instead of being re-derived)",
+                    () => new WorldGen.MutantTests.MutFootprintStaleNotRederivedSelfTests().SelfTestFootprintTiles()),
 
                 ("MutDepthKeyNoRowSort", "SettlementTileGrid.DepthKey rewritten column-major (i primary, j secondary) instead of row-major (drops near-occludes-far entirely)",
                     () => new WorldGen.MutantTests.MutDepthKeyNoRowSortSelfTests().SelfTestDepth()),

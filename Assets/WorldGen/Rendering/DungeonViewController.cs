@@ -246,16 +246,17 @@ namespace WorldGen.Rendering
         ///
         /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.
         ///
-        /// <paramref name="rg"/> (Task B4) is the render graph the caller is ABOUT to draw, and it is what
-        /// closes the fit/draw grid asymmetry: the renderer builds its tile grid from
-        /// SettlementTileGrid.Build(lvl, roads) → Allocate(lvl.Rooms, roads), which folds the ROAD ENDPOINTS
-        /// into the cell bbox, while this fit used to call Allocate(lvl.Rooms) with no roads at all. Gates are
-        /// street nodes a building half-width + FenceMarginTiles = 5 tiles (0.56 cell) outside the buildings,
-        /// and SettlementRoads' own A* grid may run 4 tiles further still, so the DRAWN grid could be a whole
-        /// cell wider per side than the FITTED one — and the wall ring dilated around those road cells landed
-        /// off the panel. Pass null (or a non-settlement binding) and the buildings-only extent is restored
-        /// verbatim. NOTHING IS ROUTED HERE: the segments are read out of the graph the caller already built,
-        /// through the renderer's own RoadsFromGraph, so this stays a pure O(rooms + segments) pass.</summary>
+        /// <paramref name="rg"/> (Task B4) is the render graph the caller is ABOUT to draw. It was introduced
+        /// to close the fit/draw grid asymmetry against the ROUTED-ROAD renderer this call site originally
+        /// fit against; that renderer call signature no longer exists. As of arc C.1 task 2,
+        /// SettlementTileGrid.Build(floor) takes no `roads` parameter at all — it calls
+        /// Allocate(floor.Rooms, null, streets) internally, folding footprints ∪ STORED STREET CELLS
+        /// (SettlementParams.StreetCells) into the cell bbox. This fit still calls
+        /// Allocate(lvl.Rooms, RoadsForFit(rg)) — footprints ∪ routed ROAD ENDPOINTS, no streets — so `rg`
+        /// remains what widens the fit past the buildings-only extent for the gate/road geometry described
+        /// below. Pass null (or a non-settlement binding) and the buildings-only extent is restored verbatim.
+        /// NOTHING IS ROUTED HERE: the segments are read out of the graph the caller already built, through
+        /// the renderer's own RoadsFromGraph, so this stays a pure O(rooms + segments) pass.</summary>
         (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl, RenderGraph rg)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)

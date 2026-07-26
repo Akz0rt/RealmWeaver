@@ -78,10 +78,25 @@ namespace WorldGen.Generation
         //       A MULTI-CELL footprint is NEVER re-derived, deliberately: a point cannot reconstruct a shape,
         //       so "self-healing" one would silently amputate an L or a bar down to a single cell — far worse
         //       than the staleness it would be trying to fix. Both halves are asserted (SelfTestFootprintTiles).
+        // Shared, NEVER-MUTATED empty list — the null/empty-Cells short-circuit below reuses this ONE instance
+        // instead of letting Decode allocate its own throwaway empty list every call. Safe to share: `cells`
+        // below is only ever read (.Count, [0]) or returned outright when NEITHER fallback rule fires, and
+        // this instance's Count is always 0, which always fires rule (a) a few lines down — so it can never
+        // reach that final `return cells;` and escape into a caller that might mutate it.
+        static readonly System.Collections.Generic.List<(int i, int j)> s_noCells = new System.Collections.Generic.List<(int i, int j)>();
+
         public static System.Collections.Generic.List<(int i, int j)> FootprintOf(Room r)
         {
             var point = (i: SettlementFootprint.CellOf(r.X), j: SettlementFootprint.CellOf(r.Y));
-            var cells = SettlementFootprint.Decode(r.Cells);
+            // r.Cells is null for EVERY building in a freshly generated town (block generation is a later
+            // task) and this function runs twice per building per rebuild (Allocate's fold, then Build's
+            // write) — skip Decode's own throwaway empty-list allocation for that hot case by handing it the
+            // shared s_noCells instead. This does NOT duplicate rule (a): an odd-length/corrupt array (not
+            // null, not empty, but still Decodes to zero cells) still reaches Decode() below and falls through
+            // to the SAME `cells.Count == 0` check two lines down, so that check stays the one and only place
+            // rule (a) is decided — deliberately, so a mutant on it (MutFootprintNoNullFallback) still has
+            // exactly one line to break.
+            var cells = (r.Cells == null || r.Cells.Length == 0) ? s_noCells : SettlementFootprint.Decode(r.Cells);
             if (cells.Count == 0) return new System.Collections.Generic.List<(int i, int j)> { point };            // (a)
             if (cells.Count == 1 && cells[0] != point)
                 return new System.Collections.Generic.List<(int i, int j)> { point };                              // (b)
