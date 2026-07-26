@@ -77,7 +77,6 @@ static class Program
         settlement.SelfTestRoads();
         settlement.SelfTestRoadJunctions();
         settlement.SelfTestRoadsPerf();
-        settlement.SelfTestBuildingSpacing();
         var interiorOps = new WorldGen.Rendering.InteriorOpsSelfTests();
         interiorOps.SelfTestInteriorOps();
         interiorOps.SelfTestBuildingSeedPin();

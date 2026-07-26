@@ -514,7 +514,7 @@ namespace WorldGen.Rendering
         // (an active count above the total it belongs to would be a silently-inconsistent stored state).
         void StepTargetBuildings(SettlementParams sp, int dir)
         {
-            sp.TargetBuildings = Mathf.Clamp(sp.TargetBuildings + dir, 1, SettlementGenerator.MaxBuildings);
+            sp.TargetBuildings = Mathf.Max(1, sp.TargetBuildings + dir);
             if (sp.ActiveBuildings > sp.TargetBuildings) sp.ActiveBuildings = sp.TargetBuildings;
             Rebuild();
             OnChanged?.Invoke();

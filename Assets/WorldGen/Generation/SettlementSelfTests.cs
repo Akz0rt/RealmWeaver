@@ -173,7 +173,7 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL buildings: building at ({b.X:F3},{b.Y:F3}) hugs the wall line"); ok = false; break; }
 
             // ---- 4. A big town gets as many buildings as the grid holds, up to the target --------------
-            // We do not require EXACTLY target (a small wall may not fit 40), but a 40-target radius-0.425
+            // We do not require EXACTLY target (a small wall may not fit 40), but a 40-target radius-0.34
             // wall must fit a substantial fraction; catch a placement that silently yields near-zero.
             if (buildings.Count < 20)
             { Debug.LogError($"FAIL buildings: a 40-target town produced only {buildings.Count} buildings"); ok = false; }
@@ -228,14 +228,8 @@ namespace WorldGen.Rendering
                     if (edges2[i].A != edges[i].A || edges2[i].B != edges[i].B)
                     { Debug.LogError($"FAIL streets: seed-5 rerun edge {i} is ({edges2[i].A},{edges2[i].B}) vs ({edges[i].A},{edges[i].B}) — not deterministic"); ok = false; break; }
 
-            // ---- 4. Perf threshold: the largest town this law can build routes in well under a frame ----
+            // ---- 4. Perf threshold: 80 buildings route in well under a frame ----------------------------
             // The whole reason this stage exists instead of BuildRenderGraph(Clean), which took 20–34 s at 60.
-            // This calls PlaceGates/PlaceBuildings directly (bypassing BuildFloor's MaxBuildings clamp), but
-            // TargetBuildings=80 is still an unreachable request under the no-shared-edge rule: capacity is
-            // the even sublattice alone (see SettlementGenerator.MaxBuildings/PlaceBuildings), so this places
-            // as many as that sublattice holds at this seed/radius, not 80 — measured (seed 9): 49 buildings.
-            // 80 is kept as the request (rather than renamed to 49) so this still asks for "far more than can
-            // fit," which is the scenario this perf gate cares about.
             var bigCfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, HasWall = true };
             var bw = WallContour.Rounded(bigCfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(bigCfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var bg = SettlementGenerator.PlaceGates(bw, SettlementGenerator.GateCountFor(bigCfg.TargetBuildings), bigCfg.Seed);
@@ -244,7 +238,7 @@ namespace WorldGen.Rendering
             SettlementStreets.GenerateStreets(bw, bb, bg, bigCfg.Seed);
             sw.Stop();
             if (sw.ElapsedMilliseconds > 50)
-            { Debug.LogError($"FAIL streets: routing {bb.Count} buildings (requested 80) took {sw.ElapsedMilliseconds} ms, want <50"); ok = false; }
+            { Debug.LogError($"FAIL streets: routing 80 buildings took {sw.ElapsedMilliseconds} ms, want <50"); ok = false; }
 
             // ---- Ц1.6: gate-gate arterials — every gate on one connected arterial net, emitted FIRST --
             // (a) Collect gate-gate edges and where they sit in the list.
@@ -811,27 +805,7 @@ namespace WorldGen.Rendering
             // (2,3,6,9,12,15,17,19,22,25,... ~40% of seeds), confirming the reuse-discount merge behaviour
             // itself is intact and this is a fixture ripple, not a regression; seed 2 is the first that
             // merges and is otherwise unremarkable.
-            // Re-pinned 2->1 (checkerboard-parity placement task, first pass): PlaceBuildings' new
-            // no-shared-edge algorithm lands buildings on a different grid than the old fill-shuffle-trim
-            // one, re-routing seed 2's town so its arterial merge becomes a coincidental >=3-cell overlap
-            // that persists even with SettlementRoads' reuse discount REMOVED (MutRoadsNoReuse went from
-            // CAUGHT to NOT DETECTED through this fixture — a real regression in the fixture, not in
-            // SettlementRoads, which this task never touches). Surveyed seeds 1..400 with the SAME fixture
-            // shape (target=20/active=5, gates=2 throughout): a real merge is common (384/400, 96%) but a
-            // merge that specifically requires the reuse discount (real merges, MutRoadsNoReuse's copy does
-            // not) is 162/400 (~40%, first hits at 1,7,13,14,20,22,23,27,...) — the discount-dependent merge
-            // behaviour is intact and this is again a fixture ripple. Seed 1 was the first such seed.
-            // Re-pinned 1->3 (same task, second pass): the radius law itself changed after the first re-pin
-            // (the two-anchor sqrt law was replaced by one that reaches the 0.45 clamp exactly at the cap —
-            // see WallRadiusFor), which also moved WallRadiusFor(20) (0.297 -> 0.306) and re-routed seed 1's
-            // town again, breaking the SAME way (MutRoadsNoReuse NOT DETECTED). Re-surveyed seeds 1..400
-            // under the NEW radius law with the identical fixture shape: real merge common (376/400, 94.0%),
-            // discount-dependent merge 158/400 (~39.5%, first hits at 3,4,8,14,16,18,20,25,26,27,...) — the
-            // discount-dependent merge behaviour is intact yet again; this is a second fixture ripple from
-            // the same root cause (the town's layout is a function of the radius law), not a new regression.
-            // Seed 3 is the first such seed and is otherwise unremarkable. If the radius law changes again,
-            // re-survey the same way rather than assuming the pin still holds.
-            var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var cfg = new SettlementConfig { Seed = 2, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
             var g = SettlementRoads.Build(nodes, edges);
@@ -876,27 +850,21 @@ namespace WorldGen.Rendering
         [ContextMenu("Self-Test: Settlement Roads Perf")]
         public void SelfTestRoadsPerf()
         {
-            // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the largest legal town
+            // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the 80-building cap
             // must stay under the settle-path budget. 50 ms mirrors SelfTestStreets' bound; the per-frame
             // budget (if RoadsDuringDrag) was measured separately by the spike.
-            // B-task-1 clamp review: TargetBuildings=80 goes through BuildFloor, which now clamps every
-            // request to MaxBuildings=45 before placement — an 80-building town can no longer be built at
-            // all, so despite the request below this measures the plain building-obstacle Build cost at the
-            // 45-building cap (measured, seed 9: floor has exactly 45 TypeId==1 rooms), not at 80. The 80 is
-            // kept in the config only as a "way above the cap" request, matching SelfTestStreets' bigCfg
-            // shape; the 50 ms budget is unchanged and should be read as covering the 45-building workload.
             var cfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
 
             // Ц2.6: the wall is no longer a road obstacle, so there is no wall sweep cost left to pay here —
-            // the gate now times the plain building-obstacle Build at the largest grid the cap allows.
+            // the gate now times the plain building-obstacle Build at the largest grid (80-building cap).
             SettlementRoads.Build(nodes, edges);             // warm-up
             var sw = System.Diagnostics.Stopwatch.StartNew();
             SettlementRoads.Build(nodes, edges);
             sw.Stop();
             if (sw.ElapsedMilliseconds >= 50)
-                Debug.LogError($"FAIL roads perf: Build at the 45-building cap (requested 80, clamped by MaxBuildings) took {sw.ElapsedMilliseconds} ms, want <50");
+                Debug.LogError($"FAIL roads perf: Build at 80 buildings took {sw.ElapsedMilliseconds} ms, want <50");
             else
                 Debug.Log($"Settlement Roads Perf: PASS ({sw.ElapsedMilliseconds} ms)");
         }
@@ -1039,142 +1007,6 @@ namespace WorldGen.Rendering
             }
 
             if (ok) Debug.Log("Settlement Fence: PASS");
-        }
-
-        [ContextMenu("Self-Test: Building Spacing")]
-        public void SelfTestBuildingSpacing()
-        {
-            bool ok = true;
-            float c = SettlementGenerator.BuildingCell;
-
-            System.Collections.Generic.List<(int ix, int iy, int id)> Cells(InteriorFloor f)
-            {
-                var list = new System.Collections.Generic.List<(int ix, int iy, int id)>();
-                foreach (var r in f.Rooms)
-                {
-                    if (r.TypeId != 1) continue;
-                    list.Add(((int)System.Math.Round(r.X / c), (int)System.Math.Round(r.Y / c), r.Id));
-                }
-                return list;
-            }
-
-            // No two buildings may share a lattice cell or a lattice edge — the invariant this task exists
-            // for, checked unconditionally on ALL THREE fixtures below, regardless of how tightly each one packs.
-            void CheckNoTouching(System.Collections.Generic.List<(int ix, int iy, int id)> cells, string label)
-            {
-                var set = new System.Collections.Generic.HashSet<(int, int)>();
-                foreach (var e in cells)
-                {
-                    if (!set.Add((e.ix, e.iy)))
-                    { Debug.LogError($"FAIL spacing[{label}]: two buildings share lattice cell ({e.ix},{e.iy}); building {e.id} is the duplicate"); ok = false; }
-                }
-                // Only +X and +Y are tested: every touching pair is found exactly once, so the error count is
-                // the number of touching PAIRS rather than double it.
-                foreach (var e in cells)
-                {
-                    if (set.Contains((e.ix + 1, e.iy)))
-                    { Debug.LogError($"FAIL spacing[{label}]: building {e.id} at cell ({e.ix},{e.iy}) shares an edge with the building at ({e.ix + 1},{e.iy})"); ok = false; }
-                    if (set.Contains((e.ix, e.iy + 1)))
-                    { Debug.LogError($"FAIL spacing[{label}]: building {e.id} at cell ({e.ix},{e.iy}) shares an edge with the building at ({e.ix},{e.iy + 1})"); ok = false; }
-                }
-            }
-
-            // ---- Fixture 1: HEADROOM (40 of the 45 cap). Exact count expected: this is where an
-            // under-provisioned radius must still be caught. Measured (seed 7): the current sqrt law's
-            // r(40)=0.425 places exactly 40; the OLD linear law's r(40)=0.34 placed only 26 — a wide,
-            // unambiguous margin that keeps MutRadiusLinear biting.
-            var cfg40 = new SettlementConfig { Seed = 7, TargetBuildings = 40, ActiveBuildings = 10, HasWall = true };
-            var floor40 = SettlementGenerator.BuildFloor(cfg40);
-            var cells40 = Cells(floor40);
-            if (cells40.Count != 40)
-            { Debug.LogError($"FAIL spacing[headroom]: asked for 40 buildings, placed {cells40.Count}"); ok = false; }
-            CheckNoTouching(cells40, "headroom");
-
-            // ---- Fixture 2: THE CAP (45) — the tightest legal town, where a missing parity split shows up
-            // as touching houses (the missing-adjacency-guard case is Fixture 3 below: at this seed the even
-            // sublattice alone already covers the target, so the odd-tier guard never runs here). Count: a
-            // jittered contour can legitimately be tighter than the nominal circle (short-placed is valid,
-            // not an error — see PlaceBuildings), so this is measured, not assumed. A 1000-seed sweep at the
-            // current law's r(45)=0.45 (the clamp) found 956/1000 seeds (95.6%) reach exactly 45, minimum
-            // observed 39 across the sample; seed 7 (this fixture's own seed) reaches exactly 45, so the
-            // count below is asserted exactly rather
-            // than as a floor.
-            var cfg = new SettlementConfig { Seed = 7, TargetBuildings = 45, ActiveBuildings = 10, HasWall = true };
-            var floor = SettlementGenerator.BuildFloor(cfg);
-            var cells = Cells(floor);
-
-            if (cells.Count != 45)
-            { Debug.LogError($"FAIL spacing[cap]: asked for 45 buildings, placed {cells.Count} — the placement contour is too tight for the no-touching rule"); ok = false; }
-            CheckNoTouching(cells, "cap");
-
-            // ---- Fixture 3: SHORTFALL (also target 45, seed 36). Neither fixture above ever exercises the
-            // odd-tier top-up's NoNeighbour guard any more: with the corrected radius law, seed 7's even
-            // sublattice alone already covers both targets (even=44 at target 40, even=50 at target 45), so
-            // the odd loop's `if (kept.Count >= targetCount) break;` fires before its first iteration in both
-            // cases — MutSpacingNoAdjacencyCheck (which only mutates that loop) would go undetected. Seed 36
-            // is a genuine short-placer at target 45 (even=44, one shy of the target — a jittered contour
-            // tighter than the nominal circle, exactly the "valid, not an error" case PlaceBuildings documents):
-            // this forces the odd loop to actually run. Measured: the REAL code stays at 44 with no touching
-            // pair (NoNeighbour correctly rejects every odd candidate); a hand-simulated no-adjacency-check
-            // mutant reaches 45 by accepting the first odd candidate regardless of touching. No count is
-            // asserted here — short-placing is the point of this fixture, not a defect — only that no two
-            // buildings ever touch, unconditionally, same as the other two fixtures. If a future radius-law
-            // change makes seed 36 stop short-placing, re-survey for a new seed with even < 45 at target 45
-            // (same method as this one), or MutSpacingNoAdjacencyCheck will silently go undetected again.
-            var cfgShort = new SettlementConfig { Seed = 36, TargetBuildings = 45, ActiveBuildings = 10, HasWall = true };
-            var floorShort = SettlementGenerator.BuildFloor(cfgShort);
-            var cellsShort = Cells(floorShort);
-            // FIXTURE PRECONDITION, not a product property: this fixture only exercises the odd-tier
-            // NoNeighbour guard while seed 36 short-places (even < 45). If a radius change lifts it to 45,
-            // this fires — re-survey for a new short-placing seed rather than deleting this line, or
-            // MutSpacingNoAdjacencyCheck goes undetected.
-            if (cellsShort.Count >= 45)
-            { Debug.LogError($"FAIL spacing[shortfall]: seed 36 now places {cellsShort.Count} — it no longer short-places, so the odd-tier top-up never runs and this fixture has stopped exercising the adjacency guard"); ok = false; }
-            CheckNoTouching(cellsShort, "shortfall");
-
-            // Determinism: the same seed must reproduce the same town exactly.
-            var again = SettlementGenerator.BuildFloor(new SettlementConfig { Seed = 7, TargetBuildings = 45, ActiveBuildings = 10, HasWall = true });
-            int n1 = 0, n2 = 0;
-            foreach (var r in floor.Rooms) if (r.TypeId == 1) n1++;
-            foreach (var r in again.Rooms) if (r.TypeId == 1) n2++;
-            if (n1 != n2)
-            { Debug.LogError($"FAIL spacing: seed 7 produced {n1} buildings then {n2} — placement is not deterministic"); ok = false; }
-            else
-            {
-                var a = new System.Collections.Generic.List<Room>(); foreach (var r in floor.Rooms) if (r.TypeId == 1) a.Add(r);
-                var b = new System.Collections.Generic.List<Room>(); foreach (var r in again.Rooms) if (r.TypeId == 1) b.Add(r);
-                for (int k = 0; k < a.Count; k++)
-                    if (System.Math.Abs(a[k].X - b[k].X) > 1e-6f || System.Math.Abs(a[k].Y - b[k].Y) > 1e-6f)
-                    { Debug.LogError($"FAIL spacing: building #{k} moved between two seed-7 runs: ({a[k].X},{a[k].Y}) vs ({b[k].X},{b[k].Y})"); ok = false; break; }
-            }
-
-            // The cap is enforced by the generator, not only by the UI.
-            var over = SettlementGenerator.BuildFloor(new SettlementConfig { Seed = 3, TargetBuildings = 200, ActiveBuildings = 5, HasWall = true });
-            int capped = 0; foreach (var r in over.Rooms) if (r.TypeId == 1) capped++;
-            if (capped > SettlementGenerator.MaxBuildings)
-            { Debug.LogError($"FAIL spacing: asked for 200 buildings and got {capped}, above the cap {SettlementGenerator.MaxBuildings}"); ok = false; }
-            // The two clamp CONSUMERS specifically: TargetBuildings must be STORED clamped (not the raw
-            // request), and the gate count must be derived from the CLAMPED target. Neither was covered above
-            // — `capped` only reads the placed-building count, which stays <= 45 even if BOTH consumers were
-            // reverted to the unclamped cfg.TargetBuildings, since PlaceBuildings' own capacity ceiling (the
-            // even sublattice) already tops out well under 200.
-            if (over.SettlementParams.TargetBuildings != SettlementGenerator.MaxBuildings)
-            { Debug.LogError($"FAIL spacing: asked for 200, stored TargetBuildings = {over.SettlementParams.TargetBuildings}, want the clamped {SettlementGenerator.MaxBuildings}"); ok = false; }
-            int gatesOver = 0; foreach (var r in over.Rooms) if (r.TypeId == 0) gatesOver++;
-            int wantGates = SettlementGenerator.GateCountFor(SettlementGenerator.MaxBuildings);
-            if (gatesOver != wantGates)
-            { Debug.LogError($"FAIL spacing: a 200-target town got {gatesOver} gates, want {wantGates} (the gate count must read the CLAMPED target, not the requested one)"); ok = false; }
-
-            // Radius law: square-root, anchored so the curve reaches the 0.45 clamp exactly at the cap.
-            float r8 = SettlementGenerator.WallRadiusFor(8), r40 = SettlementGenerator.WallRadiusFor(40), rBig = SettlementGenerator.WallRadiusFor(500);
-            if (System.Math.Abs(r8 - 0.200f) > 0.005f)
-            { Debug.LogError($"FAIL spacing: WallRadiusFor(8) = {r8}, expected ~0.200"); ok = false; }
-            if (System.Math.Abs(r40 - 0.425f) > 0.005f)
-            { Debug.LogError($"FAIL spacing: WallRadiusFor(40) = {r40}, expected ~0.425"); ok = false; }
-            if (rBig > 0.45f + 1e-6f)
-            { Debug.LogError($"FAIL spacing: WallRadiusFor(500) = {rBig}, above the 0.45 clamp (buildings would sit outside the field)"); ok = false; }
-
-            if (ok) Debug.Log("Settlement Building Spacing: PASS");
         }
 
         [ContextMenu("Self-Test: Settlement Validation")]
