@@ -42,13 +42,16 @@ namespace WorldGen.Generation
         public static float CenterOf(int cell) => (cell + 0.5f) * Pitch;
 
         /// <summary>Read a stored footprint. NEVER throws: null, empty, or an odd length (a truncated or
-        /// hand-edited save) all yield an empty footprint. The odd trailing int is dropped rather than
-        /// guessed at.</summary>
+        /// hand-edited save) all yield an empty footprint — the WHOLE array is dropped (there is no
+        /// trustworthy way to tell which int is the odd one out), matching the class doc above.</summary>
         public static List<(int i, int j)> Decode(int[] flat)
         {
             var cells = new List<(int i, int j)>();
             if (flat == null || flat.Length % 2 != 0) return cells;
-            for (int k = 0; k + 1 < flat.Length; k += 2) cells.Add((flat[k], flat[k + 1]));
+            // Length is even here (or we already returned), so `k < flat.Length` alone never reads flat[k+1]
+            // out of bounds on the last pair — the more defensive-looking `k + 1 < flat.Length` decides the
+            // exact same set of k's and was dropped as redundant, not as a behaviour change.
+            for (int k = 0; k < flat.Length; k += 2) cells.Add((flat[k], flat[k + 1]));
             return cells;
         }
 
@@ -57,7 +60,7 @@ namespace WorldGen.Generation
         /// for every non-settlement room.</summary>
         public static int[] Encode(IReadOnlyList<(int i, int j)> cells)
         {
-            if (cells == null) return new int[0];
+            if (cells == null) return System.Array.Empty<int>();
             var flat = new int[cells.Count * 2];
             for (int k = 0; k < cells.Count; k++)
             {
@@ -193,7 +196,13 @@ namespace WorldGen.Generation
                 foreach (var r in floor.Rooms)
                 {
                     if (r == null || r.TypeId != 1) continue;
-                    if (r.Cells != null && r.Cells.Length > 0) continue;   // already footprinted — never overwrite
+                    // Guard on the DECODED count, not r.Cells.Length: an odd-length array (corrupt or
+                    // hand-edited) is non-empty by Length but Decodes to zero cells, so a Length-only guard
+                    // would read it as "already footprinted" and skip it FOREVER — the same idempotent
+                    // never-overwrite rule that makes a good footprint permanent then makes a bad one
+                    // permanent too. Decode(...).Count > 0 instead lets exactly the input Decode was
+                    // hardened against (and only that input) self-heal on the very next load.
+                    if (Decode(r.Cells).Count > 0) continue;   // already footprinted — never overwrite
                     var one = new List<(int i, int j)> { (CellOf(r.X), CellOf(r.Y)) };
                     r.Cells = Encode(one);
                 }

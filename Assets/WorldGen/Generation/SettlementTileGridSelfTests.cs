@@ -54,11 +54,14 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL tilemap: normalized ({ax},{ay}) is cell ({g.CellI(ax)},{g.CellJ(ay)}) on one grid but ({elsewhere.CellI(ax)},{elsewhere.CellJ(ay)}) on a grid built from different buildings — the lattice still depends on what is placed"); ok = false; }
             if (System.Math.Abs(elsewhere.CenterX(3) - g.CenterX(3)) > 1e-6f || System.Math.Abs(elsewhere.CenterY(3) - g.CenterY(3)) > 1e-6f)
             { Debug.LogError($"FAIL tilemap: cell (3,3) centres at ({g.CenterX(3)},{g.CenterY(3)}) on one grid and ({elsewhere.CenterX(3)},{elsewhere.CenterY(3)}) on another — the lattice still depends on what is placed"); ok = false; }
-            // Half-open span [i*Cell, (i+1)*Cell): a coordinate exactly ON a boundary belongs to the UPPER
-            // cell. 2*Cell is the low edge of cell 2, so it is cell 2 and not cell 1.
-            float boundary = 2f * c;
-            if (g.CellI(boundary) != 2)
-            { Debug.LogError($"FAIL tilemap: the exact cell boundary {boundary} maps to cell {g.CellI(boundary)}, want 2 (the span is half-open, so a boundary belongs to the cell above it)"); ok = false; }
+            // Half-open span [i*Cell, (i+1)*Cell): pins FLOOR specifically, not merely "some rounding rule".
+            // An EXACT integer boundary (e.g. 2*Cell) does NOT discriminate — Floor, Round and Ceiling of an
+            // exact integer all agree, so a prior version of this assertion (CellOf(2*Cell) == 2) passed
+            // under all three and pinned nothing. 0.9*Cell sits INSIDE cell 0's own span (not yet at the
+            // next boundary), so Floor keeps it in cell 0 while Round(0.9)->1 and Ceiling(0.9)->1 would not.
+            float nearBoundary = 0.9f * c;
+            if (g.CellI(nearBoundary) != 0)
+            { Debug.LogError($"FAIL tilemap: 0.9*Cell = {nearBoundary} maps to cell {g.CellI(nearBoundary)}, want 0 (Floor keeps a sub-cell coordinate in its own span; Round/Ceiling would push it into cell 1)"); ok = false; }
             // extent covers bbox (i 0..2, j 0..3) plus MarginCells on each side
             int expW = (2 - 0 + 1) + 2 * SettlementTileGrid.MarginCells;
             int expH = (3 - 0 + 1) + 2 * SettlementTileGrid.MarginCells;

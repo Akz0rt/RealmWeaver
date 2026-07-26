@@ -796,5 +796,128 @@ namespace WorldGen.Persistence
                 ? "Self-Test Interior OwnerRoomId Round-Trip: PASS"
                 : "Self-Test Interior OwnerRoomId Round-Trip: FAIL — see field checks in SelfTestInteriorOwnerRoomIdRoundTrip");
         }
+
+        [ContextMenu("Self-Test: Settlement Footprint Fields Round-Trip")]
+        public void SelfTestSettlementFootprintFieldsRoundTrip()
+        {
+            bool ok = true;
+
+            // COLLISION GUARD: ProjectSaveData ITSELF has a top-level field also named "Cells"
+            // (List<VoronoiCell>), always present (never NullValueHandling — it's the map's own cell list,
+            // not omittable). So a plain json.Contains("\"Cells\"") can never prove anything about
+            // Room.Cells specifically — it is true of EVERY saved file regardless of any building's
+            // footprint. CountKeyOccurrences below counts the literal quoted key "\"Cells\"" and every
+            // assertion reasons about the DELTA against that always-present baseline of 1, not the raw
+            // presence/absence a Preview/HasWall check can use unambiguously.
+            int CountKeyOccurrences(string haystack, string key)
+            {
+                int count = 0, idx = 0;
+                while ((idx = haystack.IndexOf(key, idx, System.StringComparison.Ordinal)) >= 0)
+                { count++; idx += key.Length; }
+                return count;
+            }
+
+            // ---- 1. A settlement building's Cells key is PRESENT when the footprint is non-empty (one MORE
+            // "\"Cells\"" occurrence than the always-present top-level ProjectSaveData.Cells baseline), and
+            // the stored cells survive the round trip intact. -------
+            string path = Path.Combine(Path.GetTempPath(), "settlement_footprint_fields_roundtrip_test.dndproj");
+            var floor = new InteriorFloor { NextRoomId = 2 };
+            var footprint = new List<(int i, int j)> { (3, 4), (3, 5) };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f, Cells = SettlementFootprint.Encode(footprint) });
+            var town = new InteriorData { OwnerPoiId = "poi-town-cells", Kind = InteriorKind.Settlement, Floors = { floor } };
+
+            ProjectSerializer.Save(path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { town });
+            string json = File.ReadAllText(path);
+            var loaded = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            int cellsKeyCount = CountKeyOccurrences(json, "\"Cells\"");
+            if (cellsKeyCount != 2)
+            { Debug.LogError("FAIL settlement footprint fields: a non-empty Cells footprint did not write the Cells key at all (found " + cellsKeyCount + " Cells keys, want 2 — the top-level ProjectSaveData.Cells plus the building's own)"); ok = false; }
+
+            if (!loaded.Success || loaded.Dungeons.Count != 1)
+            { Debug.LogError("FAIL settlement footprint fields: the town did not load back"); ok = false; }
+            else
+            {
+                var b = loaded.Dungeons[0].Floors[0].Rooms.Find(x => x.Id == 1);
+                var decoded = b == null ? null : SettlementFootprint.Decode(b.Cells);
+                if (decoded == null || decoded.Count != 2 || !decoded.Contains((3, 4)) || !decoded.Contains((3, 5)))
+                { Debug.LogError("FAIL settlement footprint fields: building's Cells did not round-trip intact"); ok = false; }
+            }
+
+            // ---- 2. Cells is OMITTED for a DUNGEON room and for a settlement BUILDING with no footprint
+            // (only the ever-present top-level ProjectSaveData.Cells key remains — count stays 1), and
+            // StreetCells is OMITTED entirely when a settlement's SettlementParams leaves it unset — both
+            // NullValueHandling.Ignore, same contract as Preview/SettlementParams/HasWall above. StreetCells
+            // has no top-level collision (nothing else is named that), so a plain Contains is unambiguous
+            // for it. Scoped narrowly (one dungeon room, one settlement building, neither with Cells set). --
+            string minPath = Path.Combine(Path.GetTempPath(), "settlement_footprint_fields_nullkeys_selftest.json");
+            var dungeonFloor = new InteriorFloor { NextRoomId = 2 };
+            dungeonFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // dungeon room, Cells stays null
+            var dungeonInterior = new InteriorData { OwnerPoiId = "poi-dungeon", Kind = InteriorKind.Dungeon, Floors = { dungeonFloor } };
+
+            var minSettlementFloor = new InteriorFloor { NextRoomId = 2 };
+            minSettlementFloor.SettlementParams = new SettlementParams { TargetBuildings = 4, ActiveBuildings = 4 };  // StreetCells left null
+            minSettlementFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // building, Cells left null
+            var minTown = new InteriorData { OwnerPoiId = "poi-village-cells", Kind = InteriorKind.Settlement, Floors = { minSettlementFloor } };
+
+            ProjectSerializer.Save(minPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { dungeonInterior, minTown });
+            string minJson = File.ReadAllText(minPath);
+            try { File.Delete(minPath); } catch { }
+
+            int minCellsKeyCount = CountKeyOccurrences(minJson, "\"Cells\"");
+            if (minCellsKeyCount != 1)
+            { Debug.LogError("FAIL settlement footprint fields: a dungeon room / unset-footprint building wrote a Cells key (found " + minCellsKeyCount + " Cells keys, want exactly 1 — only the top-level ProjectSaveData.Cells) — NullValueHandling.Ignore is not taking effect"); ok = false; }
+            if (minJson.Contains("\"StreetCells\""))
+            { Debug.LogError("FAIL settlement footprint fields: an unset StreetCells was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
+
+            // ---- 3. THE MIGRATION'S CALL SITE ITSELF (review finding, Task A1): load a v9-SHAPED fixture (a
+            // settlement building with X/Y set but NO Cells) through ProjectSerializer.Load — not by calling
+            // SettlementFootprint.EnsureFootprints directly, the way SettlementSelfTests.
+            // SelfTestFootprintMigration does — and confirm each building comes back with exactly ONE cell,
+            // at the cell its stored point falls in. This is the only test anywhere that exercises
+            // ProjectSerializer.cs's own `SettlementFootprint.EnsureFootprints(d)` call (beside
+            // RoomSizing.ApplyDefaults, in the Dungeons normalization loop): deleting that one line leaves
+            // every other self-test green, because the offline harness cannot compile
+            // Assets/WorldGen/Persistence at all, and SelfTestFootprintMigration calls EnsureFootprints
+            // directly, never through a load. -------
+            string v9Path = Path.Combine(Path.GetTempPath(), "settlement_footprint_v9_migration_selftest.dndproj");
+            var v9Floor = new InteriorFloor { NextRoomId = 3 };
+            v9Floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.23f, Y = 0.61f });   // building, Cells UNSET (v9-shaped)
+            v9Floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.81f, Y = 0.09f });   // a second building, a different cell
+            var v9Town = new InteriorData { OwnerPoiId = "poi-v9-town", Kind = InteriorKind.Settlement, Floors = { v9Floor } };
+
+            ProjectSerializer.Save(v9Path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { v9Town });
+            var v9Result = ProjectSerializer.Load(v9Path);
+            try { File.Delete(v9Path); } catch { }
+
+            if (!v9Result.Success || v9Result.Dungeons.Count != 1)
+            { Debug.LogError("FAIL settlement footprint fields: the v9-shaped town did not load back"); ok = false; }
+            else
+            {
+                var f = v9Result.Dungeons[0].Floors[0];
+                var expectations = new (int id, float x, float y)[] { (1, 0.23f, 0.61f), (2, 0.81f, 0.09f) };
+                foreach (var (id, x, y) in expectations)
+                {
+                    var r = f.Rooms.Find(rm => rm.Id == id);
+                    var decoded = r == null ? null : SettlementFootprint.Decode(r.Cells);
+                    var wantCell = (SettlementFootprint.CellOf(x), SettlementFootprint.CellOf(y));
+                    if (decoded == null || decoded.Count != 1 || decoded[0] != wantCell)
+                    {
+                        string gotDesc = decoded == null ? "null" : $"{decoded.Count} cells";
+                        Debug.LogError($"FAIL settlement footprint fields: building {id} migrated to {gotDesc}, want exactly one cell {wantCell} — the v10 load migration (ProjectSerializer.cs's EnsureFootprints call) did not run through Load");
+                        ok = false;
+                    }
+                }
+            }
+
+            Debug.Log(ok ? "Settlement Footprint Fields Round-Trip: PASS" : "Settlement Footprint Fields Round-Trip: FAIL");
+        }
     }
 }

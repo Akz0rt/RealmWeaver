@@ -33,10 +33,7 @@ namespace WorldGen.Generation
     {
         public TileType[,] Cells;          // [a, b]: a = col (i - OriginI), b = row (j - OriginJ)
         public int W, H, OriginI, OriginJ; // array is W×H; world cell (i,j) at (i-OriginI, j-OriginJ)
-        /// <summary>Both anchors are FIXED at 0 and are kept only so the pitch (Cell) still has a stated
-        /// origin to be read against: the lattice is <see cref="SettlementFootprint"/>'s absolute one, cell
-        /// (0,0) spanning normalized [0,Pitch). Do NOT reintroduce a per-grid anchor — see Allocate.</summary>
-        public float AnchorX, AnchorY, Cell;
+        public float Cell;
 
         public const int CourtyardCells = 1;               // empty Void ring kept between buildings and the wall
         public const int MarginCells = CourtyardCells + 2; // courtyard(1) + wall(1) + flood-fill border(1) = 3
@@ -71,7 +68,7 @@ namespace WorldGen.Generation
         public static SettlementTileGrid Allocate(System.Collections.Generic.IReadOnlyList<Room> buildings,
             System.Collections.Generic.IReadOnlyList<LinkSegment> roads = null)
         {
-            var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell, AnchorX = 0f, AnchorY = 0f };
+            var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell };
 
             // ONE pass now, not two: with a fixed lattice the cell-index bbox needs nothing established first.
             bool any = false;

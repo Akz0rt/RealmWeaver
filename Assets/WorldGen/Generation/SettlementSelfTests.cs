@@ -1148,6 +1148,24 @@ namespace WorldGen.Rendering
             if (bfloor.Rooms[0].Cells != null)
             { Debug.LogError($"FAIL footprint-migration: a Building interior's room got a footprint of {bfloor.Rooms[0].Cells.Length} ints, want none"); ok = false; }
 
+            // SELF-HEAL (review fix): an ODD-LENGTH Cells array (corrupt or hand-edited) is non-empty by
+            // Length but Decodes to zero cells. A guard on Length alone would read that as "already
+            // footprinted" and skip it — and because the pass never overwrites, a Length-only guard would
+            // make that bad array PERMANENT, unlike everything else Decode is hardened against. Guarding on
+            // Decode(...).Count instead means this exact input self-heals on the very next load: room 5
+            // carries a 3-int (odd) array and must come out with exactly ONE cell at its own X/Y, same as a
+            // room with no Cells at all.
+            var oddFloor = new InteriorFloor();
+            oddFloor.Rooms.Add(new Room { Id = 5, TypeId = 1, X = 0.3f, Y = 0.3f, SizeW = 6, SizeH = 6,
+                Cells = new[] { 9, 9, 1 } });
+            var oddTown = new InteriorData { OwnerPoiId = "poi-migration-odd", Kind = InteriorKind.Settlement };
+            oddTown.Floors.Add(oddFloor);
+            SettlementFootprint.EnsureFootprints(oddTown);
+            var oddRoom = oddFloor.GetRoom(5);
+            var oddGot = SettlementFootprint.Decode(oddRoom.Cells);
+            if (oddGot.Count != 1 || oddGot[0] != (4, 4))
+            { Debug.LogError($"FAIL footprint-migration: room 5 (odd-length Cells [9,9,1]) ended with {oddGot.Count} cells ({(oddGot.Count > 0 ? oddGot[0].ToString() : "none")}), want exactly 1 cell (4,4) — an odd-length array must self-heal, not stay footprint-less forever"); ok = false; }
+
             // A corrupt/absent interior must degrade, not throw, exactly like Decode.
             SettlementFootprint.EnsureFootprints(null);
 
