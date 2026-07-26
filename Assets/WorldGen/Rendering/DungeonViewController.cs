@@ -75,13 +75,34 @@ namespace WorldGen.Rendering
         IDungeonRenderer flatRenderer;
         IDungeonRenderer volumeRenderer;
         int pendingLinkId;
-        bool needsProjectionFit;
+
+        // ── The pending fit, and WHAT IT COSTS TO APPLY (Task B4 review fix) ────────────────────────────────
+        // ONE field, not a bool plus a "needs a rebuild" companion, and that is the point: two bools can latch
+        // out of step — clear the first without the second and every later resize silently takes the expensive
+        // path again for the rest of the session, restoring the very defect this enum exists to remove. With a
+        // single value the stale state is unrepresentable.
+        //
+        //   Rebuild   — the CONTENT changed (a bind, a renderer swap, «+ Здание», a containment overflow), so
+        //               the fit must be applied through Refresh: a new graph, a new fit, a full RebuildView.
+        //   FromCache — only the RECT changed (a window/dock resize). The drawn layout is still exactly right;
+        //               only the SCALE is wrong. Resolve the projection and repaint the renderer's own cached
+        //               level+graph through IDungeonRenderer.SetProjection, routing NOTHING. See LateUpdate.
+        //
+        // Rebuild always wins a race: a resize arriving while a Rebuild is pending must not downgrade it (the
+        // content really did change), which is why OnRectTransformDimensionsChange only writes over None.
+        enum PendingFit { None, FromCache, Rebuild }
+        PendingFit pendingFit;
         // The bounds the LIVE projection was actually fitted to — written only where a fit is APPLIED, so it
         // can never describe a fit that ResolveProjection refused (a {0,0} rect). RefitIfContentOverflows
         // compares the freshly drawn extent against these; see its doc for why containment, and not mutation,
         // is what re-arms the fit.
         (float minX, float minY, float maxX, float maxY) fittedBounds;
         bool hasFittedBounds;
+        // The LAST render graph handed to the renderer, from either build site (Refresh and RepositionNow) —
+        // i.e. always the same instance the renderer itself has cached as `lastRg`. Held so the resize re-fit
+        // can size a settlement to the roads that are ACTUALLY DRAWN without building a graph of its own; see
+        // RefitFromCache for why the two caches cannot disagree at the moment it is read.
+        RenderGraph lastBuiltRg;
         int draggingRoomId;
         // The room the current settle should treat as the "just-moved" one: the last room the DM dragged
         // (OnEndDrag) or a freshly added room (AddRoomAtCenter). For a BUILDING it's the room BeginCascade
@@ -173,26 +194,18 @@ namespace WorldGen.Rendering
 
         // ── What a settlement tile actually DRAWS past its own cell (Task B4) ───────────────────────────────
         // The fit describes the GROUND LATTICE and already budgets half a cell around the outermost cell
-        // CENTRE — i.e. exactly the cell boundary. These two constants are how much further the PIXELS reach,
-        // in cells. Derived from SettlementVolumeRenderer.ConfigureTile; re-derive them if that changes.
-        //
-        //   • VOLUME tile (Building / Wall / Gate). Every face is sized at `tileOverdraw` = 1.04x the cell, so
-        //     top/front/east all reach 1.04/2 = 0.52 cell from the cell centre — 0.02 PAST the boundary, on
-        //     all four sides.
-        //   • ITS DROP SHADOW. A quad of 1.04 x 1.15 = 1.196 cell, offset (+0.14 cw, -0.14 ch) — right and
-        //     DOWN the screen. Far corner: 0.14 + 1.196/2 = 0.738 cell from the centre, i.e. 0.238 past the
-        //     boundary. Near corner: 0.598 - 0.14 = 0.458 — still INSIDE the cell, so the shadow adds nothing
-        //     on the near sides. Down-screen is +Y in TILE space (DungeonProjection inverts Y once), so the
-        //     shadow lands on max-X and max-Y.
-        //   • FLAT tile (Road / Void). Drawn NARROWER than its cell — `cw - gridThicknessPx`, so the cell-grid
-        //     line shows through between neighbours (Task B3) — and its shadow is switched off. A flat tile
-        //     therefore never overhangs anything, and needs no term here at all.
-        //
-        // MAX, NOT SUM. Both terms are reaches measured from the SAME cell centre, so the shadow's 0.738
-        // simply subsumes the face's 0.52 wherever both apply; adding them would over-budget by 0.02 cell.
-        // In tiles (one cell = BuildingCell x TilesPerAxis = 8.96 tiles): 0.179 near, 2.132 far.
-        const float TileOverhangMinCells = 0.02f;           // west (min-X) and north (min-Y): the overdraw alone
-        const float TileOverhangMaxCells = 0.738f - 0.5f;   // east (max-X) and south (max-Y): the shadow, 0.238
+        // CENTRE — i.e. exactly the cell boundary. How much further the PIXELS reach is a property of the
+        // RENDERER, not a constant here: it is a function of `tileOverdraw`, one of the sliders the DM dials
+        // live at the Task 9 checkpoint (Range 1.00-1.25). Baking its default in under-budgets by up to ~1.6
+        // tiles the moment the slider moves, so both terms are read off the renderer exactly the way
+        // ExtrusionHeadroomTiles below already is — see SettlementVolumeRenderer.TileOverhangMin/MaxCells for
+        // the derivation and for why a FLAT (Road/Void) tile needs no term at all.
+        //   • MIN — west (min-X) and north (min-Y): the tile's own faces. 0.02 cell = 0.179 tiles at the 1.04
+        //     default, 0.125 cell = 1.12 tiles at 1.25.
+        //   • MAX — east (max-X) and south (max-Y): the drop shadow, which is offset right and DOWN the screen
+        //     (+Y in TILE space, since DungeonProjection inverts Y once). 0.238 cell = 2.132 tiles at the
+        //     default, 0.359 cell = 3.21 tiles at 1.25.
+        // One cell = SettlementGenerator.BuildingCell x DungeonLayout.TilesPerAxis = 8.96 tiles.
 
         /// <summary>Tile-space bounds to fit the projection to for `lvl`. For a BUILDING the fit is CONSTANT
         /// across floors — floor 0's footprint bbox expanded by the contour margin + a little pad — so every
@@ -292,16 +305,18 @@ namespace WorldGen.Rendering
                 // gates, and SetRenderer assigns `renderer` before its own Refresh). The ?? 0f is therefore
                 // unreachable in practice and exists so a host that installed only the flat renderer still
                 // fits to something sane instead of throwing.
-                float headroom = (renderer as SettlementVolumeRenderer)?.ExtrusionHeadroomTiles ?? 0f;
+                var vol = renderer as SettlementVolumeRenderer;
+                float headroom = vol?.ExtrusionHeadroomTiles ?? 0f;
 
                 // Everything above budgets the GROUND PLANE out to the cell boundary; these two budget the
-                // pixels that hang past it (see TileOverhangMin/MaxCells for the derivation). Applied to BOTH
-                // settlement cases: a village draws the same extruded, shadow-casting houses a city does, its
-                // whole-cell margin merely happens to absorb most of them already. min-Y takes the overhang on
-                // TOP of the extrusion headroom rather than instead of it — headroom carries the roof's CENTRE
-                // up to h, the overhang covers the extra 0.02 cell the roof quad's own half-height adds there.
-                float overhangMin = TileOverhangMinCells * SettlementGenerator.BuildingCell * T;   // 0.179 tiles
-                float overhangMax = TileOverhangMaxCells * SettlementGenerator.BuildingCell * T;   // 2.132 tiles
+                // pixels that hang past it (see the TileOverhang note above the method, and the renderer's own
+                // properties, for the derivation). Applied to BOTH settlement cases: a village draws the same
+                // extruded, shadow-casting houses a city does, its whole-cell margin merely happens to absorb
+                // most of them already. min-Y takes the overhang on TOP of the extrusion headroom rather than
+                // instead of it — headroom carries the roof's CENTRE up to h, the overhang covers the extra
+                // half-height the roof quad itself adds there.
+                float overhangMin = (vol?.TileOverhangMinCells ?? 0f) * SettlementGenerator.BuildingCell * T;
+                float overhangMax = (vol?.TileOverhangMaxCells ?? 0f) * SettlementGenerator.BuildingCell * T;
                 return (minX - overhangMin, minY - overhangMin - headroom,
                         maxX + overhangMax, maxY + overhangMax);
             }
@@ -318,7 +333,7 @@ namespace WorldGen.Rendering
         /// containment check and RebuildView), so this is an O(segments) re-frame — not a second pass through
         /// the ~12.5 ms road A* the two-tier Fast/Clean signal exists to keep off drag frames. A null rg falls
         /// back to the buildings-only extent, which is what the pre-Task-B4 fit always used.</summary>
-        System.Collections.Generic.IReadOnlyList<LinkSegment> RoadsForFit(RenderGraph rg)
+        IReadOnlyList<LinkSegment> RoadsForFit(RenderGraph rg)
             => rg != null && SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean)
                  ? SettlementVolumeRenderer.RoadsFromGraph(rg)
                  : null;
@@ -337,8 +352,16 @@ namespace WorldGen.Rendering
         /// NEVER MID-DRAG. draggingRoomId != 0 is the exact flag OnDrag/OnEndDrag gate on, and `cascading` is
         /// the settle animation's own — together they cover the whole window in which room positions are
         /// transient. Refresh IS reached during a cascade (BeginCascade ends in one), so this guard is live,
-        /// not defensive. Nothing starves: the flag is only skipped, so the next rebuild after the cursor
-        /// lifts re-tests and re-arms.
+        /// not defensive.
+        ///
+        /// AND BECAUSE IT IS LIVE, Update's completion branch must call this too (review fix). BeginCascade
+        /// sets `cascading` BEFORE its own Refresh, so on the anyMoved path this guard rejects that call; the
+        /// animation then lands through RepositionNow, not Refresh, and OnCascadeSettled → RevalidateOnly
+        /// redraws nothing — so without the second call site the overflow would never be tested at all and the
+        /// town would stay clipped until some later rebuild. Not a corner case: this file's own BeginCascade
+        /// calls an exact-centre collision "a NORMAL outcome" for a settlement, i.e. dropping a building onto
+        /// an occupied cell takes precisely the anyMoved branch. (The !anyMoved branch was always safe — it
+        /// clears `cascading` before its Refresh.)
         ///
         /// SETTLEMENTS ONLY — a deliberate narrowing of Task B4's brief, which did not scope it. The brief's
         /// own hard constraint is that dungeons, building interiors and battle grids must behave IDENTICALLY,
@@ -352,14 +375,14 @@ namespace WorldGen.Rendering
         /// only when the rect really changed.</summary>
         void RefitIfContentOverflows(InteriorFloor lvl, RenderGraph rg)
         {
-            if (!hasFittedBounds || needsProjectionFit || lvl == null) return;
+            if (!hasFittedBounds || pendingFit != PendingFit.None || lvl == null) return;
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
             if (draggingRoomId != 0 || cascading) return;
             const float eps = 1e-3f;
             var b = FitBoundsFor(lvl, rg);
             if (b.minX < fittedBounds.minX - eps || b.minY < fittedBounds.minY - eps ||
                 b.maxX > fittedBounds.maxX + eps || b.maxY > fittedBounds.maxY + eps)
-                needsProjectionFit = true;
+                pendingFit = PendingFit.Rebuild;   // the CONTENT grew — a repaint at a new scale is not enough
         }
 
         /// <summary>Unity sends this on ANY dimension change of THIS component's own RectTransform. That is the
@@ -376,10 +399,19 @@ namespace WorldGen.Rendering
         ///
         /// ONE LINE, ON PURPOSE. Unity can send this DURING layout; doing work here (a fit, a rebuild) would
         /// re-enter it. Setting the flag cannot — LateUpdate consumes it on the next frame, off the layout
-        /// pass, and holds it while a drag or cascade is live.</summary>
+        /// pass, and holds it while a drag or cascade is live.
+        ///
+        /// FromCache, AND ONLY OVER None (review fix — the Critical one). A resize changes the RECT and
+        /// nothing else, so the layout the renderer already holds is still correct at the new scale and
+        /// LateUpdate can repaint it without routing; arming Rebuild here would pay one BuildRenderGraph per
+        /// RESIZED FRAME — a Clean route for a dungeon or building interior, measured at 106 ms median /
+        /// 221 ms max for 20 rooms (.superpowers/sdd/town-scale-measurement.md), i.e. ~5-9 fps while the DM
+        /// drags a window edge. Writing only over None is what stops a resize DOWNGRADING a Rebuild that a
+        /// real content change armed: N of these in one frame still cost one consume, and a resize during a
+        /// pending rebuild keeps the rebuild.</summary>
         void OnRectTransformDimensionsChange()
         {
-            needsProjectionFit = true;
+            if (pendingFit == PendingFit.None) pendingFit = PendingFit.FromCache;
         }
 
         /// <summary>Install BOTH renderers at once (Task 8) and activate the one the CURRENT binding calls for.
@@ -421,7 +453,9 @@ namespace WorldGen.Rendering
             if (renderer != null && renderer.Host != null) renderer.Host.SetActive(false);
             renderer = next;
             if (renderer.Host != null) renderer.Host.SetActive(true);
-            needsProjectionFit = true;   // the new host's rect may not have laid out yet — LateUpdate retries
+            // Rebuild, not FromCache: the INCOMING renderer has drawn nothing yet, so it has no cache to
+            // repaint. Its rect may also not have laid out — LateUpdate retries.
+            pendingFit = PendingFit.Rebuild;
             Refresh();
         }
 
@@ -452,8 +486,9 @@ namespace WorldGen.Rendering
                 cascading = false;
                 cascadeTargets = null;
                 cascadeVel = null;
-                // Re-fit the scale to the new level's content (spec R6: fit once per bind, then hold).
-                needsProjectionFit = true;
+                // Re-fit the scale to the new level's content (spec R6: fit once per bind, then hold). Rebuild:
+                // the content is a DIFFERENT level, so the renderer's cached layout is the wrong one to repaint.
+                pendingFit = PendingFit.Rebuild;
             }
             // Kind-gate the renderer (Task 8). Deliberately AFTER the field writes above: SetRenderer calls
             // Refresh() itself, and Refresh reads `dungeon` / `boundLevel` — gating before the writes would
@@ -476,22 +511,36 @@ namespace WorldGen.Rendering
         /// this very graph's road segments are about to widen (FitBoundsFor's rg param). BuildRenderGraph is
         /// pure in `lvl` — it reads room positions and links and nothing about the projection — so moving it
         /// ahead of ResolveProjection changes no output, and it is built EXACTLY ONCE either way: the same
-        /// instance feeds the fit, RebuildView and the containment check.</summary>
+        /// instance feeds the fit, RebuildView, the containment check — and lastBuiltRg, so a later resize
+        /// re-fit can size itself to this same graph without building one of its own.
+        ///
+        /// THIS IS THE EXPENSIVE PATH, and only content changes should reach it: BuildRenderGraph is the
+        /// 106 ms-at-20-rooms Clean route for a dungeon or building interior. A pure RESIZE goes through
+        /// RefitFromCache instead — see PendingFit.</summary>
         public void Refresh()
         {
             if (renderer == null) return;
             var lvl = BoundLevel;
-            if (lvl == null) { renderer.RebuildView(dungeon, levelIndex, null, new RenderGraph(), font, OnJumpToLevel); return; }
+            if (lvl == null)
+            {
+                lastBuiltRg = new RenderGraph();
+                renderer.RebuildView(dungeon, levelIndex, null, lastBuiltRg, font, OnJumpToLevel);
+                return;
+            }
 
-            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
+            var rg = lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
 
             bool justFitted = false;
-            if (needsProjectionFit)
+            if (pendingFit != PendingFit.None)
             {
                 var b = FitBoundsFor(lvl, rg);
                 if (renderer.ResolveProjection(b.minX, b.minY, b.maxX, b.maxY))
                 {
-                    needsProjectionFit = false;
+                    // A Refresh satisfies EITHER kind of pending fit — it rebuilds as well as re-fits — so the
+                    // whole state clears here, in one write. (That single write is the reason PendingFit is one
+                    // field: a separate "needs a rebuild" bool left un-cleared beside this line would latch, and
+                    // every resize for the rest of the session would take the routing path again.)
+                    pendingFit = PendingFit.None;
                     // Record what the LIVE projection is fitted to, at the only moment it is known to have
                     // been accepted. A refused fit (rect still {0,0}) deliberately leaves both untouched.
                     fittedBounds = b;
@@ -508,16 +557,33 @@ namespace WorldGen.Rendering
             if (!justFitted) RefitIfContentOverflows(lvl, rg);
         }
 
-        /// <summary>Consumes a pending fit, one frame after whatever armed it. Delegates the whole thing to
-        /// Refresh rather than resolving the projection itself (Task B4): a settlement's fit now needs the
-        /// render graph's road segments, and Refresh is where that graph is built — a second fit site here
-        /// would either have to route roads of its own or silently fit to the narrower buildings-only extent
-        /// and then clear the flag, which is the exact bug this task exists to remove.
+        /// <summary>Consumes a pending fit, one frame after whatever armed it — down ONE of two paths, chosen
+        /// by what armed it (review fix — the Critical one).
+        ///
+        ///   Rebuild (a bind, a renderer swap, «+ Здание», a containment overflow) → Refresh, i.e. a fresh
+        ///     BuildRenderGraph, a fit computed from it, and a full RebuildView. Unchanged, and it must stay
+        ///     that way: the content really did change, so there is nothing correct to repaint from.
+        ///   FromCache (a window/dock resize) → RefitFromCache: resolve the projection and repaint the
+        ///     renderer's cached layout, routing NOTHING.
+        ///
+        /// The split exists because a resize is the one arming site that fires ONCE PER CHANGED FRAME for as
+        /// long as the DM holds the window edge. Sending that down Refresh costs one BuildRenderGraph per
+        /// frame — Clean for a dungeon or a building interior (settlements alone are forced Fast by RouteMode),
+        /// measured at 106 ms median / 221 ms max at 20 rooms and 2.9 s at 40
+        /// (.superpowers/sdd/town-scale-measurement.md), with DungeonEditorScreen's upper-floor stepper capped
+        /// at exactly 20 and a hand-grown dungeon not capped at all. That is a hang, not a jank. Deferring by a
+        /// frame would not help: it still pays a full route at the end of every resize.
+        ///
+        /// A settlement is the same shape and milder — RouteMode forces Fast, but SettlementRoadsFor(Clean) is
+        /// still true, so Refresh would pay one road grid A* (12.5 ms median, 17.5 max —
+        /// .superpowers/sdd/roads-perf-spike.md) plus a full rebuild per frame. Same fix, same path.
         ///
         /// The rect pre-check is what the removed ResolveProjection call used to give us for free, and it is
         /// kept for the same reason: while the panel is still {0,0} (the bind-time rect gotcha) there is
-        /// nothing to fit to, and falling through to Refresh would rebuild — and, for a settlement, re-route —
-        /// every frame until layout catches up.
+        /// nothing to fit to, and falling through would rebuild — and, for a settlement, re-route — every
+        /// frame until layout catches up. It gates BOTH paths, since the cheap one cannot fit to a {0,0} rect
+        /// either; RefitFromCache's own refusal branch is then only ever reached on a rect that changed
+        /// between this check and the resolve.
         ///
         /// IT IS THE UNION OF BOTH RENDERERS' OWN READINESS TESTS, and it has to be at least that strict or
         /// this becomes an editor hang rather than a fix. DungeonFlatRenderer.ResolveProjection tests
@@ -525,19 +591,58 @@ namespace WorldGen.Rendering
         /// SettlementVolumeRenderer.ResolveProjection tests `area == null` as well. This tests both, so it can
         /// only ever be STRICTER than the renderer it is gating — and a stricter pre-check merely defers a fit
         /// by a frame. The dangerous direction is the other one: were this LOOSER, a ResolveProjection that
-        /// refused would leave needsProjectionFit set while this method kept calling Refresh — a full card
-        /// teardown plus a Clean corridor route — every frame, forever. Widen this, never narrow it.
+        /// refused would leave pendingFit armed while this method kept calling Refresh — a full card teardown
+        /// plus a Clean corridor route — every frame, forever. Widen this, never narrow it.
         ///
         /// HOLDS THE SCALE while a drag or a settle animation is live: the flag simply stays armed and the
         /// next frame after the cursor lifts consumes it.</summary>
         void LateUpdate()
         {
-            if (!needsProjectionFit || renderer == null) return;
+            if (pendingFit == PendingFit.None || renderer == null) return;
             if (draggingRoomId != 0 || cascading) return;
-            if (BoundLevel == null) return;
+            var lvl = BoundLevel;
+            if (lvl == null) return;
             var area = renderer.Area;
             if (area == null || area.rect.width <= 0f || area.rect.height <= 0f) return;   // retry next frame
-            Refresh();
+            if (pendingFit == PendingFit.Rebuild) { Refresh(); return; }
+            RefitFromCache(lvl);
+        }
+
+        /// <summary>Apply a RESIZE-armed fit: re-scale the projection, then repaint what the renderer already
+        /// holds. NO ROUTING HAPPENS ANYWHERE ON THIS PATH — that is its entire reason to exist, and it is
+        /// verifiable by inspection: there is no BuildRenderGraph call here, none in FitBoundsFor (RoadsForFit
+        /// is a pure O(segments) re-frame of an existing graph), and none in IDungeonRenderer.SetProjection,
+        /// which repaints from the renderer's own cached lvl/rg.
+        ///
+        /// ResolveProjection THEN SetProjection, and the apparent redundancy is deliberate. ResolveProjection
+        /// is the only thing that knows how to turn tile-space bounds + this renderer's rect into a projection
+        /// (the volumetric one folds in its own serialized tiltSquash, which is private to it), and it writes
+        /// the result straight onto Projection — but it does not repaint. SetProjection is the repaint-from-
+        /// cache primitive. Handing it back the projection ResolveProjection just stored is therefore a no-op
+        /// assignment followed by exactly the redraw we want, and it needs no new interface member.
+        ///
+        /// THE TWO CACHES CANNOT DISAGREE, which is what makes feeding the fit from lastBuiltRg sound. Every
+        /// site that builds a graph — Refresh and RepositionNow, the only two — stores the SAME INSTANCE into
+        /// lastBuiltRg and hands it to the renderer, which keeps it as its own lastRg. So the roads this fit
+        /// reads are literally the roads the repaint below rasterizes, and neither side routes to obtain them.
+        /// The one graph that is not settle-equivalent — a Fast, road-less drag/cascade frame — can never be
+        /// the one read here: LateUpdate's `draggingRoomId != 0 || cascading` guard holds the pending fit for
+        /// exactly the window in which such a graph is the newest, and every exit from that window (Update's
+        /// completion RepositionNow(Clean), BeginCascade's !anyMoved Refresh) replaces it with a Clean one
+        /// first.
+        ///
+        /// A REFUSED fit (rect still {0,0}) leaves pendingFit armed and repaints nothing — LateUpdate's own
+        /// pre-check makes that near-unreachable, and a retry next frame is the correct fallback either way.
+        /// No containment check follows: the bounds were just derived from the very graph that is being
+        /// repainted, so it could only compare them with themselves.</summary>
+        void RefitFromCache(InteriorFloor lvl)
+        {
+            var b = FitBoundsFor(lvl, lastBuiltRg);
+            if (!renderer.ResolveProjection(b.minX, b.minY, b.maxX, b.maxY)) return;
+            pendingFit = PendingFit.None;
+            fittedBounds = b;
+            hasFittedBounds = true;
+            renderer.SetProjection(renderer.Projection);   // repaint from the renderer's cache — routes nothing
         }
 
         // ── Cascade (moved verbatim from DungeonGraphView.cs:151-241) ────────────
@@ -758,6 +863,14 @@ namespace WorldGen.Rendering
                 cascading = false;
                 cascadeTargets = null;
                 cascadeVel = null;
+                // THE OVERFLOW TEST FOR THE ANIMATED PATH (review fix). This is the only place it can run for a
+                // settle that actually moved something: BeginCascade's own Refresh happens with `cascading`
+                // already true, so RefitIfContentOverflows rejects it there, and nothing else redraws before
+                // the animation lands here. Deliberately AFTER the three clears above — the check guards on
+                // `cascading` too — and BEFORE OnCascadeSettled, so a host handler that rebuilds sees the fit
+                // already armed. lastBuiltRg is the graph RepositionNow just built one line up, i.e. the drawn
+                // one; the check routes nothing.
+                RefitIfContentOverflows(lvl, lastBuiltRg);
                 // Rooms are now EXACTLY on their targets — the first moment the whole interior is
                 // self-consistent again (see BeginCascade's building branch). Fire last, after the state is
                 // cleared, so a handler that somehow re-enters cannot see a half-torn-down cascade.
@@ -772,7 +885,12 @@ namespace WorldGen.Rendering
             // Fast/drag frames (fence skips the road A*, per .superpowers/sdd/roads-perf-spike.md), true on the
             // Clean settle. This is what keeps an 80-building walled-city drag off the 12.5 ms road router.
             bool includeRoads = SettlementRoadsFor(mode);
-            renderer.RepositionRooms(lvl, DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), includeRoads), includeRoads);
+            // Cached for the resize re-fit, which must size itself to the graph the renderer is ACTUALLY
+            // holding — see RefitFromCache. Storing it at BOTH build sites (here and Refresh) is what keeps
+            // the two caches the same instance: a settle lands through this method, not through Refresh, so
+            // caching in Refresh alone would leave the fit reading a graph built from pre-animation positions.
+            lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), includeRoads);
+            renderer.RepositionRooms(lvl, lastBuiltRg, includeRoads);
         }
 
         // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
@@ -957,7 +1075,8 @@ namespace WorldGen.Rendering
             // so the rebuild below already draws at the new scale instead of drawing once at the old one and
             // being rebuilt again by LateUpdate. PLACEMENT ONLY — drag and drag-end must NOT refit (the spec
             // forbids rescaling under the cursor), which is why this lives here and not in OnDrag/OnEndDrag.
-            needsProjectionFit = true;
+            // Rebuild, not FromCache: a building was ADDED, so the cached graph no longer describes the town.
+            pendingFit = PendingFit.Rebuild;
             // Same order AddRoomAtCenter uses, and it matters: RebuildView clears the renderer's highlight set,
             // so SelectRoom must come AFTER Refresh or the new building would be created unselected.
             Refresh();

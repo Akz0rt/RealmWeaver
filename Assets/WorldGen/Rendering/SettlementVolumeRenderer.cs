@@ -157,6 +157,58 @@ namespace WorldGen.Rendering
             }
         }
 
+        /// <summary>How far a drawn tile's PIXELS reach PAST ITS OWN CELL BOUNDARY, in cells, on the WEST
+        /// (min-X) and NORTH (min-Y) sides — the "near" sides, away from the drop shadow. A caller fitting this
+        /// view (DungeonViewController.FitBoundsFor) budgets the GROUND LATTICE out to the cell boundary and
+        /// must then add this, or the outermost tiles are shaved at the panel edge.
+        ///
+        /// Two candidate reaches, MAX of the two — both are measured from the same cell centre, so the larger
+        /// simply subsumes the smaller; adding them would double-count:
+        ///   • the tile's own faces, each sized <see cref="tileOverdraw"/> × the cell pitch → reach od/2;
+        ///   • its drop shadow, a quad of od × <see cref="ShadowScale"/> offset <see cref="ShadowOffsetCells"/>
+        ///     right and DOWN the screen, so on the near sides the offset SUBTRACTS → reach
+        ///     od·ShadowScale/2 − ShadowOffsetCells.
+        /// Across the whole slider range (1.00–1.25) the faces win here — the shadow only overtakes them above
+        /// od ≈ 1.87 — so the Max is defensive, not load-bearing. At the 1.04 default this is 0.52 − 0.5 = 0.02
+        /// cell (0.179 tiles); at 1.25 it is 0.125 cell (1.12 tiles).
+        ///
+        /// A FLAT tile (Road/Void) needs no term at all: it is drawn NARROWER than its cell (cw −
+        /// gridThicknessPx, so the cell-grid line shows through) and its shadow is switched off.
+        ///
+        /// SERIALIZED, NOT CONSTANT — the same reason <see cref="ExtrusionHeadroomTiles"/> gives for reading its
+        /// own tunables: the DM dials tileOverdraw live at the checkpoint, and a fit computed against the
+        /// default would clip the moment the slider moves.</summary>
+        public float TileOverhangMinCells
+        {
+            get
+            {
+                float od = tileOverdraw > 0f ? tileOverdraw : 1f;
+                return Mathf.Max(od * 0.5f, od * ShadowScale * 0.5f - ShadowOffsetCells) - 0.5f;
+            }
+        }
+
+        /// <summary>The same reach on the EAST (max-X) and SOUTH (max-Y) sides, where the drop shadow's offset
+        /// ADDS instead of subtracting — so the shadow always wins here (ShadowScale/2 > 0.5 for any overdraw)
+        /// and this is the larger of the two margins. Down-screen is +Y in TILE space (DungeonProjection
+        /// inverts Y once), which is why the shadow lands on max-Y and not min-Y. At the 1.04 default this is
+        /// 0.738 − 0.5 = 0.238 cell (2.132 tiles); at 1.25 it is 0.359 cell (3.21 tiles). See
+        /// <see cref="TileOverhangMinCells"/> for the rest of the derivation.</summary>
+        public float TileOverhangMaxCells
+        {
+            get
+            {
+                float od = tileOverdraw > 0f ? tileOverdraw : 1f;
+                return Mathf.Max(od * 0.5f, od * ShadowScale * 0.5f + ShadowOffsetCells) - 0.5f;
+            }
+        }
+
+        /// <summary>Drop-shadow geometry, in units of the (already overdrawn) tile size and of the cell pitch
+        /// respectively. Named rather than inlined at the one draw site because the FIT reads them too
+        /// (TileOverhangMin/MaxCells): two copies of 1.15 / 0.14 would be free to drift, and the failure mode —
+        /// a shadow shaved at the panel edge — is exactly what Task B4 was fixing.</summary>
+        const float ShadowScale = 1.15f;
+        const float ShadowOffsetCells = 0.14f;
+
         /// <summary>Has-interior mark (Ц2): building room ids whose own interior already exists on file.
         /// EXTERNAL state, set by DungeonEditorScreen BEFORE the RebuildView chain fires — deliberately NOT
         /// reset inside RebuildView. Declared with the IDENTICAL name/shape as
@@ -297,15 +349,22 @@ namespace WorldGen.Rendering
             return true;
         }
 
-        /// <summary>Replace the projection wholesale and repaint the last-drawn layout (pan/zoom seam).
+        /// <summary>Replace the projection wholesale and repaint the last-drawn layout — WITHOUT re-routing
+        /// anything. That is the whole value of this entry point and the reason it now has a caller:
+        /// DungeonViewController.RefitFromCache, the panel-RESIZE re-fit. A resize changes the SCALE and
+        /// nothing else, so the cached lvl/rg still describe the layout exactly; rebuilding through Refresh
+        /// would re-run BuildRenderGraph once per resized frame, which measured 106 ms at 20 rooms.
         ///
-        /// includeRoadsInFence: true for PARITY with DungeonFlatRenderer.SetProjection — a pan/zoom is a
-        /// repaint of a STABLE layout, i.e. settle-equivalent, not a drag frame. LIMITATION worth knowing:
-        /// this renderer reads the roads out of the cached render graph rather than re-routing them (see
-        /// RoadsFromGraph), so panning immediately after a Fast drag frame — whose graph carries no roads —
-        /// repaints without Road cells until the next Clean rebuild. Currently moot: SetProjection has NO
-        /// caller anywhere in the project (pan/zoom was never wired), and this exists to satisfy the
-        /// interface.</summary>
+        /// includeRoadsInFence: true for PARITY with DungeonFlatRenderer.SetProjection — a resize (like the
+        /// pan/zoom this was originally written for) is a repaint of a STABLE layout, i.e. settle-equivalent,
+        /// not a drag frame. LIMITATION, now live rather than theoretical: this renderer reads the roads out
+        /// of the cached render graph rather than re-routing them (see RoadsFromGraph), so a repaint taken
+        /// immediately after a Fast drag frame — whose graph carries no roads — would draw without Road cells
+        /// until the next Clean rebuild. It cannot bite from the resize path: DungeonViewController.LateUpdate
+        /// holds the pending fit while `draggingRoomId != 0 || cascading`, and the only calls that leave a
+        /// road-less graph cached here are the Fast RepositionNow frames inside exactly that window — every
+        /// path OUT of it (BeginCascade's !anyMoved Refresh, Update's completion RepositionNow(Clean)) ends
+        /// on a Clean, roads-included graph before the flag can be consumed.</summary>
         public void SetProjection(DungeonProjection p)
         {
             Projection = p;
@@ -965,8 +1024,8 @@ namespace WorldGen.Rendering
                     Paint(v.East, sprites.Resolve(sprites.wallSprite), Shade(face, eastShade));
                 }
 
-                v.ShadowRt.sizeDelta = new Vector2(dw * 1.15f, dh * 1.15f);
-                v.ShadowRt.anchoredPosition = new Vector2(cw * 0.14f, -ch * 0.14f);
+                v.ShadowRt.sizeDelta = new Vector2(dw * ShadowScale, dh * ShadowScale);
+                v.ShadowRt.anchoredPosition = new Vector2(cw * ShadowOffsetCells, -ch * ShadowOffsetCells);
                 Paint(v.Shadow, sprites.Resolve(sprites.shadowSprite), shadowColor, tintSprite: true);
             }
             v.FrontRt.gameObject.SetActive(volume);

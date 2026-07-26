@@ -131,12 +131,30 @@ namespace WorldGen.Rendering
             return true;
         }
 
+        /// <summary>Replace the projection and repaint the LAST-drawn layout, re-routing NOTHING (Task B4 fix).
+        /// Written for pan/zoom (Task 5); its actual caller today is DungeonViewController.RefitFromCache, the
+        /// panel-RESIZE re-fit, and "routes nothing" is precisely why: a dungeon or a building interior routes
+        /// Clean (settlements do not), which measured 106 ms median / 221 ms max at 20 rooms — a per-frame cost
+        /// no window drag can absorb. Everything this renderer draws is re-projected from tile space on every
+        /// RepositionRooms — cards, their sizes, corridor lines, junctions, the contour (RepositionContour
+        /// re-runs Local() over the cached tile-space segments), room walls and the town fence — so a repaint
+        /// at a new scale is complete, and only the once-per-structure work (card GameObjects, badge strips,
+        /// BuildBuildingCorridors for the contour) is skipped, none of which a resize invalidates.
+        ///
+        /// No building moves, so this is a settle-equivalent redraw, not a drag frame: include roads so the
+        /// fence is the accurate, road-wrapping one (a stable layout re-routes to the same roads).
+        ///
+        /// ONE RESIDUAL, and it is unreachable in the shipped host: `true` also makes RebuildTownWall derive
+        /// the fence with roads, and THAT call does route (DungeonLayout.DeriveTownFence runs SettlementRoads'
+        /// grid A*, ~12.5 ms). It only runs for `isSettlement`, and a settlement is drawn by
+        /// SettlementVolumeRenderer — this renderer sees one only in a host that installed no volumetric
+        /// renderer at all (DungeonViewController.RendererForKind's degradation fallback; DungeonEditorScreen
+        /// always installs both). In that configuration a resize drag would pay that A* per frame, matching
+        /// what its own drag-settle already pays per settle. Dungeons and building interiors — the Kinds this
+        /// renderer actually draws — have isSettlement false and route nothing here.</summary>
         public void SetProjection(DungeonProjection p)
         {
             Projection = p;
-            // Pan/zoom (Task 5): a repaint of the LAST-drawn layout — no building moves, so this is a
-            // settle-equivalent redraw, not a drag frame. Include roads so the fence is the accurate,
-            // road-wrapping one (a stable layout re-routes to the same roads).
             RepositionRooms(lastLvl, lastRg, includeRoadsInFence: true);
         }
 
