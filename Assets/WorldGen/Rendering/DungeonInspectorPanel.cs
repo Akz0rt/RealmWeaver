@@ -193,12 +193,16 @@ namespace WorldGen.Rendering
                 // RevalidateAndRefresh → viewController.BeginCascade(), so the room resizes and the cascade
                 // animates the whole floor to its re-settled positions.
                 //
-                // Task E (absorbing plan Task 8): gated OFF for a settlement room, mirroring the TypeRow
-                // gate just above. On a settlement floor this stepper edits tile-space SizeW/SizeH, which
-                // moves the derived fence and the block fit while the DRAWN tile never changes — the DM
-                // reported it as an inert stepper. Dungeons and building interiors are untouched: the row
-                // still renders exactly as before for both.
-                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
+                // Task E (absorbing plan Task 8): gated OFF for a settlement BUILDING specifically
+                // (TypeId == 1), not every settlement room. DungeonLayout.LinkNodeFor only takes the
+                // footprint path when settlement && TypeId == 1 — a building's SizeW/SizeH is provably
+                // dead there, since the footprint (not this stepper) drives its drawn fit and the fence.
+                // A gate room falls through to DungeonProjection.EffectiveSize instead, which DOES read
+                // SizeW/SizeH, and that size feeds the road router's obstacle mask — so a gate's stepper
+                // is a working control (e.g. shrinking an oversized default against its ring lane) and
+                // must stay visible. Dungeons and building interiors are untouched: the row still renders
+                // exactly as before for both (TypeId is irrelevant off a settlement floor).
+                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement || room.TypeId != 1)
                 {
                     var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
                     var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
@@ -509,6 +513,10 @@ namespace WorldGen.Rendering
             // measured guarantee (the pre-Task-E stepper clamped to the higher, unreliable
             // TargetBuildings instead). Bring it into range on display so the row never shows a
             // value above its own «макс.» caption before the DM has touched the stepper even once.
+            // Maintainer's note: this silently rewrites floor.SettlementParams from a RENDER path
+            // (Rebuild(), not a user action) and deliberately does NOT call OnChanged — same
+            // "OnChanged only fires after a commit" contract the rest of this panel follows, and
+            // there is no new commit here, just a value coming back into its own declared range.
             int guarantee = SettlementSizing.GuaranteedMinBuildings(sp.Size);
             if (sp.ActiveBuildings > guarantee) sp.ActiveBuildings = guarantee;
 
