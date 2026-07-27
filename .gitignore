@@ -62,3 +62,11 @@ crashlytics-build.properties
 /Tools/f2-harness/bin/
 /Tools/f2-harness/obj/
 /Tools/f2-harness/gen/
+
+# Tools/notes-harness — the same arrangement for the notes document layer (Notes П1). Kept separate from
+# f2-harness on purpose: that harness's sync.ps1 is edited by the settlement work, and two agents must not
+# share one instrument.
+!/Tools/notes-harness/*.csproj
+/Tools/notes-harness/bin/
+/Tools/notes-harness/obj/
+/Tools/notes-harness/gen/
