@@ -282,5 +282,195 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Validate and Normalize: PASS" : "Self-Test Validate and Normalize: FAIL");
         }
+
+        // ── Task 2 fixture ─────────────────────────────────────────────────────
+
+        /// <summary>A «Сессии» group holding one session sheet, a reference group holding an «Староста Ольга»
+        /// document page and a «Связи культа» BOARD page, one row in the sheet linked to Ольга, and one
+        /// BoardRef card pointing at the board. The board carries 7 objects so the card's «7 объектов»
+        /// subtitle has something real to read.</summary>
+        static NotesDocument BuildDocWithOlgaAndBoard(out NotesPage sheet, out NotesPage olga,
+                                                      out NotesPage board, out DocBlock line, out DocBlock card)
+        {
+            var doc = new NotesDocument();
+            var sessions = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(sessions);
+
+            sheet = NotesDocOps.CreateSessionSheet("Сессия 1");
+            sessions.Pages.Add(sheet);
+
+            var reference = NotesDocOps.EnsureReferenceGroup(doc);
+            olga = new NotesPage { Name = "Староста Ольга", Kind = PageKind.Document };
+            board = new NotesPage { Name = "Связи культа", Kind = PageKind.Board };
+            for (int i = 0; i < 7; i++) board.Objects.Add(new NoteCardData());
+            reference.Pages.Add(olga);
+            reference.Pages.Add(board);
+
+            line = NotesDocOps.NewBlock(BlockKind.Item, 1, "Староста Ольга");
+            line.LinkedPageId = olga.Id;
+            NotesDocOps.Insert(sheet.Blocks, sheet.Blocks.FindIndex(b => b.Text == "Важные NPC") + 1, line);
+
+            card = NotesDocOps.NewBlock(BlockKind.BoardRef, 1);
+            card.LinkedPageId = board.Id;
+            NotesDocOps.Insert(sheet.Blocks, sheet.Blocks.Count, card);
+
+            return doc;
+        }
+
+        // ── Task 2 tests ───────────────────────────────────────────────────────
+
+        [ContextMenu("Self-Test: Promote and Backlinks")]
+        public void SelfTestPromoteBacklinks()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(g);
+            var s1 = NotesDocOps.CreateSessionSheet("Сессия 1"); g.Pages.Add(s1);
+            var s3 = NotesDocOps.CreateSessionSheet("Сессия 3"); g.Pages.Add(s3);
+
+            var olga1 = NotesDocOps.NewBlock(BlockKind.Item, 1, "Староста Ольга");
+            NotesDocOps.Insert(s1.Blocks, s1.Blocks.FindIndex(b => b.Text == "Важные NPC") + 1, olga1);
+
+            var page = NotesDocOps.PromoteToPage(doc, olga1.Id, out bool linkedExisting);
+            if (page == null || page.Name != "Староста Ольга")
+            { Debug.LogError($"FAIL promote: page name «{page?.Name}», want «Староста Ольга»"); ok = false; }
+            if (linkedExisting)
+            { Debug.LogError("FAIL promote: the first promotion must CREATE, not link"); ok = false; }
+            if (page != null && olga1.LinkedPageId != page.Id)
+            { Debug.LogError("FAIL promote: the source row must point at the new page"); ok = false; }
+            if (page != null && page.Kind != PageKind.Document)
+            { Debug.LogError($"FAIL promote: promoted page Kind = {page.Kind}, want Document"); ok = false; }
+
+            var refGroup = doc.Groups.Find(x => x.IsReference);
+            if (refGroup == null || refGroup.Title != NotesDocOps.ReferenceGroupTitle || !refGroup.Pages.Contains(page))
+            { Debug.LogError("FAIL promote: the new page must be filed in the reference group"); ok = false; }
+
+            // The duplicate guard: the same name in another session LINKS, it does not create a second Ольга.
+            var olga2 = NotesDocOps.NewBlock(BlockKind.Item, 1, "  староста ольга  ");
+            NotesDocOps.Insert(s3.Blocks, s3.Blocks.FindIndex(b => b.Text == "Важные NPC") + 1, olga2);
+            var again = NotesDocOps.PromoteToPage(doc, olga2.Id, out linkedExisting);
+            if (!linkedExisting || again != page)
+            { Debug.LogError("FAIL promote: a matching name (case- and space-insensitive) must LINK to the existing page"); ok = false; }
+            if (refGroup != null && refGroup.Pages.Count != 1)
+            { Debug.LogError($"FAIL promote: reference group holds {refGroup.Pages.Count} pages, want 1"); ok = false; }
+
+            // Exactly one reference group ever exists (I5).
+            NotesDocOps.EnsureReferenceGroup(doc); NotesDocOps.EnsureReferenceGroup(doc);
+            if (doc.Groups.FindAll(x => x.IsReference).Count != 1)
+            { Debug.LogError($"FAIL promote: {doc.Groups.FindAll(x => x.IsReference).Count} reference groups, want 1 (I5)"); ok = false; }
+
+            // Backlinks find every referencing row, across pages, and name the SECTION it sits under.
+            var backs = NotesDocOps.FindBacklinks(doc, page.Id);
+            if (backs.Count != 2)
+            { Debug.LogError($"FAIL backlinks: {backs.Count} found, want 2"); ok = false; }
+            else
+            {
+                if (backs[0].SourcePageName != "Сессия 1" || backs[0].SectionTitle != "Важные NPC")
+                { Debug.LogError($"FAIL backlinks: first = «{backs[0].SourcePageName}» / «{backs[0].SectionTitle}», want «Сессия 1» / «Важные NPC»"); ok = false; }
+                if (backs[1].SourcePageName != "Сессия 3")
+                { Debug.LogError($"FAIL backlinks: second came from «{backs[1].SourcePageName}», want «Сессия 3»"); ok = false; }
+                if (backs[0].BlockId != olga1.Id)
+                { Debug.LogError("FAIL backlinks: the entry must name the block it came from"); ok = false; }
+            }
+            if (NotesDocOps.FindBacklinks(doc, "no-such-page").Count != 0)
+            { Debug.LogError("FAIL backlinks: an unreferenced page must produce an empty list, not throw"); ok = false; }
+
+            // Unlink removes exactly one reference and leaves the text alone.
+            NotesDocOps.Unlink(doc, olga1.Id);
+            if (!string.IsNullOrEmpty(olga1.LinkedPageId) || olga1.Text != "Староста Ольга")
+            { Debug.LogError($"FAIL unlink: link «{olga1.LinkedPageId}» / text «{olga1.Text}» — want no link, text intact"); ok = false; }
+            if (NotesDocOps.FindBacklinks(doc, page.Id).Count != 1)
+            { Debug.LogError("FAIL unlink: one backlink should remain"); ok = false; }
+
+            var problems = NotesDocOps.Validate(doc);
+            if (problems.Count != 0)
+            { Debug.LogError($"FAIL promote: document invalid: {string.Join("; ", problems)}"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Promote and Backlinks: PASS" : "Self-Test Promote and Backlinks: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Delete Integrity Both Seams")]
+        public void SelfTestDeleteIntegrity()
+        {
+            bool ok = true;
+
+            // Seam 1 — deleting one referenced page: the row's text survives, its link goes, nothing dangles.
+            var doc = BuildDocWithOlgaAndBoard(out NotesPage sheet, out NotesPage olga, out NotesPage board,
+                                               out DocBlock line, out DocBlock card);
+            if (NotesDocOps.Validate(doc).Count != 0)
+            { Debug.LogError($"FAIL delete: the fixture itself is invalid: {string.Join("; ", NotesDocOps.Validate(doc))}"); ok = false; }
+
+            var counts = NotesDocOps.ClearLinksTo(doc, olga.Id);
+            if (counts.lines != 1 || counts.cards != 0)
+            { Debug.LogError($"FAIL delete: counted {counts.lines} lines / {counts.cards} cards, want 1 / 0"); ok = false; }
+            if (line.Text != "Староста Ольга")
+            { Debug.LogError($"FAIL delete: row text became «{line.Text}» — it must survive"); ok = false; }
+            if (!string.IsNullOrEmpty(line.LinkedPageId))
+            { Debug.LogError("FAIL delete: the link must be cleared (I3)"); ok = false; }
+
+            // A deleted BOARD degrades its card to a row carrying the old title — it never orphans it.
+            counts = NotesDocOps.ClearLinksTo(doc, board.Id);
+            if (counts.cards != 1 || counts.lines != 0)
+            { Debug.LogError($"FAIL delete: counted {counts.lines} lines / {counts.cards} cards, want 0 / 1"); ok = false; }
+            if (card.Kind != BlockKind.Item)
+            { Debug.LogError($"FAIL delete: card Kind = {card.Kind}, want Item once its board died"); ok = false; }
+            if (card.Text != "Связи культа")
+            { Debug.LogError($"FAIL delete: degraded card text «{card.Text}», want «Связи культа»"); ok = false; }
+            if (!string.IsNullOrEmpty(card.LinkedPageId))
+            { Debug.LogError("FAIL delete: the degraded card must hold no LinkedPageId (I8)"); ok = false; }
+
+            // Seam 2 — deleting the whole GROUP. This is the seam the spec's first draft missed entirely.
+            doc = BuildDocWithOlgaAndBoard(out sheet, out olga, out board, out line, out card);
+            var refGroup = doc.Groups.Find(x => x.IsReference);
+            int lines = 0, cards = 0;
+            foreach (var p in new List<NotesPage>(refGroup.Pages))
+            { var c = NotesDocOps.ClearLinksTo(doc, p.Id); lines += c.lines; cards += c.cards; }
+            doc.Groups.Remove(refGroup);
+
+            if (lines != 1 || cards != 1)
+            { Debug.LogError($"FAIL delete: group deletion counted {lines} lines / {cards} cards, want 1 / 1"); ok = false; }
+            var problems = NotesDocOps.Validate(doc);
+            if (problems.Count != 0)
+            { Debug.LogError($"FAIL delete: deleting a group left dangling references: {string.Join("; ", problems)}"); ok = false; }
+            if (line.Text != "Староста Ольга" || card.Text != "Связи культа")
+            { Debug.LogError($"FAIL delete: group deletion lost text — row «{line.Text}», card «{card.Text}»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Delete Integrity Both Seams: PASS" : "Self-Test Delete Integrity Both Seams: FAIL");
+        }
+
+        [ContextMenu("Self-Test: BoardRef Rules")]
+        public void SelfTestBoardRef()
+        {
+            bool ok = true;
+            var doc = BuildDocWithOlgaAndBoard(out NotesPage sheet, out NotesPage olga, out NotesPage board,
+                                               out _, out _);
+
+            if (board.Objects.Count != 7)
+            { Debug.LogError($"FAIL boardref: fixture board holds {board.Objects.Count} objects, want 7"); ok = false; }
+
+            // A BoardRef may only target a Board page (I8).
+            var bad = NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, olga.Id);
+            if (bad != null)
+            { Debug.LogError("FAIL boardref: pointing a BoardRef at a Document page must be refused (I8)"); ok = false; }
+
+            var good = NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, board.Id);
+            if (good == null || good.Kind != BlockKind.BoardRef || good.LinkedPageId != board.Id)
+            { Debug.LogError("FAIL boardref: a Board target must produce a BoardRef pointing at it"); ok = false; }
+            if (good != null && good.Depth < 1)
+            { Debug.LogError($"FAIL boardref: Depth = {good?.Depth}, want >= 1 (I1)"); ok = false; }
+            if (good != null && !string.IsNullOrEmpty(good.Detail))
+            { Debug.LogError("FAIL boardref: a BoardRef must carry no Detail (I7)"); ok = false; }
+
+            // Linking a card at its own page is refused (I4).
+            if (NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, sheet.Id) != null)
+            { Debug.LogError("FAIL boardref: a card pointing at its own page must be refused (I4)"); ok = false; }
+
+            var problems = NotesDocOps.Validate(doc);
+            if (problems.Count != 0)
+            { Debug.LogError($"FAIL boardref: document invalid: {string.Join("; ", problems)}"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test BoardRef Rules: PASS" : "Self-Test BoardRef Rules: FAIL");
+        }
     }
 }

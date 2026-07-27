@@ -299,6 +299,159 @@ namespace WorldGen.Notes.Data
             return true;
         }
 
+        // ── Pages and links ────────────────────────────────────────────────────
+
+        /// <summary>The single section a freshly promoted page opens with. A promoted page cannot start out
+        /// empty: I2 requires a page's first block to be a Section, so with no seed the DM would have nowhere
+        /// to type until they had somehow created one.</summary>
+        public const string PromotedPageSectionTitle = "Описание";
+
+        /// <summary>Trim- and case-insensitive name comparison. ToLowerInvariant rather than the current
+        /// culture: these names are Cyrillic and must fold the same way on every machine.</summary>
+        public static bool NameMatches(string a, string b)
+            => (a ?? "").Trim().ToLowerInvariant() == (b ?? "").Trim().ToLowerInvariant();
+
+        public static PageGroup EnsureReferenceGroup(NotesDocument doc)
+        {
+            if (doc == null) return null;
+            var existing = doc.Groups.Find(g => g.IsReference);
+            if (existing != null) return existing;
+
+            var group = new PageGroup { Title = ReferenceGroupTitle, IsReference = true };
+            doc.Groups.Add(group);
+            return group;
+        }
+
+        /// <summary>The title of the section a block sits under — the nearest Section at or before it.</summary>
+        static string SectionTitleFor(IReadOnlyList<DocBlock> blocks, int index)
+        {
+            for (int k = index; k >= 0; k--)
+                if (blocks[k].Kind == BlockKind.Section) return blocks[k].Text ?? "";
+            return "";
+        }
+
+        /// <summary>Gives a row its own page. When the reference group already holds a page of the same name
+        /// the row is LINKED to it instead of a second one being created — promoting «Староста Ольга» in two
+        /// sessions must not produce two Ольгas, which is the very failure backlinks exist to prevent.</summary>
+        public static NotesPage PromoteToPage(NotesDocument doc, string blockId, out bool linkedExisting)
+        {
+            linkedExisting = false;
+            var block = FindBlock(doc, blockId, out NotesPage owner);
+            if (block == null || block.Kind != BlockKind.Item) return null;
+
+            string name = (block.Text ?? "").Trim();
+            if (name.Length == 0) return null;
+
+            var group = EnsureReferenceGroup(doc);
+            var match = group.Pages.Find(p => NameMatches(p.Name, name));
+            if (match != null)
+            {
+                if (match == owner) return null;                  // I4: never link a row to its own page
+                linkedExisting = true;
+                block.LinkedPageId = match.Id;
+                return match;
+            }
+
+            var page = new NotesPage { Name = name, Kind = PageKind.Document };
+            page.Blocks.Add(NewBlock(BlockKind.Section, 0, PromotedPageSectionTitle));
+            page.Blocks.Add(NewBlock(BlockKind.Item, 1));
+            group.Pages.Add(page);
+            block.LinkedPageId = page.Id;
+            return page;
+        }
+
+        public static void LinkExistingPage(NotesDocument doc, string blockId, string pageId)
+        {
+            var block = FindBlock(doc, blockId, out NotesPage owner);
+            if (block == null) return;
+            if (block.Kind != BlockKind.Item && block.Kind != BlockKind.BoardRef) return;   // I7
+
+            var target = FindPage(doc, pageId);
+            if (target == null || target == owner) return;                                   // I3, I4
+            if (block.Kind == BlockKind.BoardRef && target.Kind != PageKind.Board) return;    // I8
+
+            block.LinkedPageId = target.Id;
+        }
+
+        public static void Unlink(NotesDocument doc, string blockId)
+        {
+            var block = FindBlock(doc, blockId, out _);
+            if (block == null) return;
+            DegradeIfBoardRef(doc, block);
+            block.LinkedPageId = null;
+        }
+
+        /// <summary>A BoardRef without a board is a card pointing at nothing, which I8 forbids and which says
+        /// nothing to a reader. So it becomes a plain row carrying the board's title: the DM can still see
+        /// what used to be there.</summary>
+        static void DegradeIfBoardRef(NotesDocument doc, DocBlock block)
+        {
+            if (block.Kind != BlockKind.BoardRef) return;
+            var target = FindPage(doc, block.LinkedPageId);
+            if (string.IsNullOrEmpty(block.Text) && target != null) block.Text = target.Name;
+            block.Kind = BlockKind.Item;
+        }
+
+        public static List<Backlink> FindBacklinks(NotesDocument doc, string pageId)
+        {
+            var found = new List<Backlink>();
+            if (doc == null || string.IsNullOrEmpty(pageId)) return found;
+
+            foreach (var g in doc.Groups)
+                foreach (var p in g.Pages)
+                    for (int i = 0; i < p.Blocks.Count; i++)
+                        if (p.Blocks[i].LinkedPageId == pageId)
+                            found.Add(new Backlink
+                            {
+                                SourcePageId = p.Id,
+                                SourcePageName = p.Name,
+                                SectionTitle = SectionTitleFor(p.Blocks, i),
+                                BlockId = p.Blocks[i].Id,
+                            });
+            return found;
+        }
+
+        /// <summary>Strips every reference to a page that is about to be deleted, so no saved document ever
+        /// holds a dangling LinkedPageId (I3). Rows keep their text; cards degrade to rows. Returns the two
+        /// counts separately because the confirm dialog reports them separately — they are different losses.
+        ///
+        /// Call this for a single page AND for every page of a group being deleted: DeleteGroup takes its
+        /// pages with it, which is the second seam, and missing it is what would leave dangling links across
+        /// every session sheet.</summary>
+        public static (int lines, int cards) ClearLinksTo(NotesDocument doc, string pageId)
+        {
+            int lines = 0, cards = 0;
+            if (doc == null || string.IsNullOrEmpty(pageId)) return (0, 0);
+
+            foreach (var g in doc.Groups)
+                foreach (var p in g.Pages)
+                    foreach (var b in p.Blocks)
+                    {
+                        if (b.LinkedPageId != pageId) continue;
+                        if (b.Kind == BlockKind.BoardRef) { DegradeIfBoardRef(doc, b); cards++; }
+                        else lines++;
+                        b.LinkedPageId = null;
+                    }
+            return (lines, cards);
+        }
+
+        /// <summary>Inserts a card that points at a board page. Index 0 is nudged to 1 on a non-empty page:
+        /// a page must start with a Section (I2), so a card can never be its first block.</summary>
+        public static DocBlock InsertBoardRef(NotesDocument doc, NotesPage page, int index, string boardPageId)
+        {
+            if (doc == null || page == null) return null;
+            var target = FindPage(doc, boardPageId);
+            if (target == null || target == page) return null;        // I3, I4
+            if (target.Kind != PageKind.Board) return null;           // I8
+
+            var block = NewBlock(BlockKind.BoardRef, 1);
+            block.LinkedPageId = target.Id;
+            if (index <= 0 && page.Blocks.Count > 0) index = 1;
+            Insert(page.Blocks, index, block);
+            ClampDepths(page.Blocks);
+            return block;
+        }
+
         // ── Integrity ──────────────────────────────────────────────────────────
 
         public static List<string> Validate(NotesDocument doc)
