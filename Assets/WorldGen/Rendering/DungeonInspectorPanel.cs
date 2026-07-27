@@ -42,6 +42,8 @@ namespace WorldGen.Rendering
 
         RectTransform content;
         bool built;
+        bool committingActiveBuildings;   // re-entrancy latch for CommitActiveBuildingsTyped; plain runtime
+                                           // flag, never [SerializeField] — must not be scene-restored
 
         InteriorFloor CurrentLevel
         {
@@ -531,15 +533,18 @@ namespace WorldGen.Rendering
             AddInfoText(sec.transform, $"≈ {SettlementSizing.TargetBuildings(sp.Size)} зданий",
                 10, ThemeRole.Mut, FontStyle.Italic);
 
-            AddBoolToggle(sec.transform, "Со стеной", sp.HasWall, v => { sp.HasWall = v; Rebuild(); OnChanged?.Invoke(); });
+            // Defect fix: AddBoolToggle's LayoutElement only sets flexibleWidth (no height) — its ONE
+            // other call site (BuildSecretRow's "Bi" row, above) always parents it into an AddRow of
+            // fixed height, which is where its height comes from. Parented straight into this section's
+            // VerticalLayoutGroup (childControlHeight=true, childForceExpandHeight=false) it rendered as
+            // a zero-height, unclickable strip. Same "Bi" row recipe (22f, 0f spacing) fixes it here.
+            var wallRow = AddRow(sec.transform, "WallRow", 22f, 0f);
+            AddBoolToggle(wallRow.transform, "Со стеной", sp.HasWall, v => { sp.HasWall = v; Rebuild(); OnChanged?.Invoke(); });
 
-            // The honest active row: the caption states the size's MEASURED cap, and the stepper itself
-            // (StepActiveBuildings, below) refuses to go above it — no more dialing in a number only a
-            // lucky seed could deliver.
-            BuildCompositionStepperRow(sec.transform,
-                $"Из них активных (макс. {SettlementSizing.GuaranteedMinBuildings(sp.Size)})",
-                sp.ActiveBuildings.ToString(),
-                () => StepActiveBuildings(sp, -1), () => StepActiveBuildings(sp, 1));
+            // The honest active row: the caption states the size's MEASURED cap, and every path into
+            // ActiveBuildings — arrows AND typed entry — refuses to go above it (`guarantee`, computed
+            // once above, is the exact same expression the caption shows, so the two can never drift).
+            BuildActiveBuildingsRow(sec.transform, sp, guarantee);
 
             // The ACHIEVED count for the town actually open right now — a readout, not an input, so it
             // is counted straight off lvl.Rooms rather than trusted from ActiveBuildings/TargetBuildings
@@ -550,24 +555,54 @@ namespace WorldGen.Rendering
             AddInfoText(sec.transform, $"в городе {achieved} зданий", 10, ThemeRole.Mut, FontStyle.Italic);
         }
 
-        // A labelled ◄ value ► row for a full-word caption, unlike BuildStepper's short "W"/"Эт." tags
-        // (which assume a fixed 24px caption column that would clip a full Russian phrase) — the caption
-        // gets flexibleWidth like the corridor rows' "↔ Комната N" label, and the stepper controls sit at
-        // the row's end. Mirrors BuildStepper's own AddStepBtn/MakeText recipe otherwise.
-        // `value` is a STRING, not an int: the size row shows a Russian word («Малый»/«Средний»/«Большой»)
-        // where the active-count row still shows a number, and one row builder for both is what keeps them
-        // looking like one control.
-        void BuildCompositionStepperRow(Transform parent, string caption, string value, System.Action onPrev, System.Action onNext)
+        // A labelled ◄ [typed field] ► row for the active-buildings count. Same caption-flexibleWidth /
+        // AddStepBtn recipe BuildStepper uses, but the middle value is now an editable field instead of
+        // a static label, so the DM can type an exact number (DM request) as well as nudge it with the
+        // arrows. The field itself is built with BuildInputField — the SAME recipe the room Title/Body
+        // editors above (:221-227) use (Image bg + Text + Placeholder + onEndEdit commit) — just narrowed
+        // from BuildInputField's default flexibleWidth=1f to a fixed 64px column so it drops into the row
+        // where BuildCompositionStepperRow's old static value label used to sit.
+        void BuildActiveBuildingsRow(Transform parent, SettlementParams sp, int guarantee)
         {
-            var row = AddRow(parent, $"Comp_{caption}", 22f, 4f);
-            var capLbl = MakeText(row.transform, caption, 11, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleLeft);
+            var row = AddRow(parent, "ActiveRow", 22f, 4f);
+            var capLbl = MakeText(row.transform, $"Из них активных (макс. {guarantee})", 11, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleLeft);
             capLbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             capLbl.raycastTarget = false;
-            AddStepBtn(row.transform, "◄", onPrev, true);
-            var valTxt = MakeText(row.transform, value, 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
-            valTxt.gameObject.AddComponent<LayoutElement>().preferredWidth = 64f;
-            valTxt.raycastTarget = false;
-            AddStepBtn(row.transform, "►", onNext, true);
+            AddStepBtn(row.transform, "◄", () => StepActiveBuildings(sp, -1), true);
+
+            var field = BuildInputField(row.transform, false, "");
+            var fieldLayout = field.GetComponent<LayoutElement>();
+            fieldLayout.flexibleWidth = 0f;
+            fieldLayout.preferredWidth = 64f;
+            field.text = sp.ActiveBuildings.ToString();
+            field.onEndEdit.AddListener(v => CommitActiveBuildingsTyped(sp, v));
+
+            AddStepBtn(row.transform, "►", () => StepActiveBuildings(sp, 1), true);
+        }
+
+        // Typed-entry commit: parses on end-edit and clamps into the same 0..guarantee range
+        // StepActiveBuildings enforces, reading the same SettlementSizing.GuaranteedMinBuildings
+        // expression the caption shows — the shown cap and the enforced cap can never drift. Unparseable
+        // or empty input leaves sp.ActiveBuildings untouched (restores, doesn't zero). Either way this
+        // ends in the exact Rebuild()+OnChanged shape StepActiveBuildings already uses — Rebuild() is also
+        // what redraws the field back to whatever the canonical value now is (same "InputField commits on
+        // onEndEdit, so a rebuild never loses a pending edit" contract the class doc states).
+        //
+        // Unlike every other onEndEdit handler in this file, this one calls Rebuild() from INSIDE the
+        // field's own onEndEdit — which destroys the very InputField the event is firing on. Legacy
+        // InputField can re-enter DeactivateInputField from OnDisable/OnDestroy during that teardown and
+        // fire onEndEdit a second time; committingActiveBuildings makes that re-entry a no-op instead of a
+        // second Rebuild()+OnChanged round trip.
+        void CommitActiveBuildingsTyped(SettlementParams sp, string typed)
+        {
+            if (committingActiveBuildings) return;
+            committingActiveBuildings = true;
+            int parsed;
+            if (int.TryParse(typed, out parsed))
+                sp.ActiveBuildings = Mathf.Clamp(parsed, 0, SettlementSizing.GuaranteedMinBuildings(sp.Size));
+            Rebuild();
+            OnChanged?.Invoke();
+            committingActiveBuildings = false;
         }
 
         // Task E: choice-button handler for the 3-way size picker. Unlike the old StepSize's ±1 nudge,
