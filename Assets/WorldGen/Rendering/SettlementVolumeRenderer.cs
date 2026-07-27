@@ -573,12 +573,16 @@ namespace WorldGen.Rendering
         ///
         /// TEMPORARY — the whole Y/Id tie-break below the type term is scheduled for deletion. Two rooms
         /// wanting one cell is an INVARIANT VIOLATION, not a tie: **Task 4** makes the validator report
-        /// overlapping footprints, and **Task 7** makes a drag REJECT a translation that would overlap. Neither
-        /// has landed, and the state is reachable TODAY — the anti-overlap nudge was already removed from the
-        /// settlement path (see DungeonViewController.OnDrag's own "THE ACCEPTED TRADE" note), so a DM drag can
-        /// genuinely produce overlapping footprints right now. Undefined rendering on a state the DM can reach
-        /// is worse than a tie-break that outlives its justification by two tasks. Remove it after Task 7, not
-        /// before.</summary>
+        /// overlapping footprints, and **Task 7** makes a drag REJECT a translation that would overlap.
+        ///
+        /// HALF OF THAT CONDITION IS NOW MET. Task 7 HAS landed: DungeonViewController's footprint drag
+        /// evaluates <see cref="AreCellsFree"/> over the whole proposed footprint and simply does not move the
+        /// building when any cell is already another room's — so a drag can no longer manufacture an overlap,
+        /// and the "THE ACCEPTED TRADE" regression that note in BeginCascade described is closed. **Task 4 has
+        /// still not landed**, so the tie-break STAYS: existing overlaps are still reachable from data written
+        /// before this task (a save made while the trade was open, or a hand-edited file), and nothing yet
+        /// REPORTS them — undefined rendering on a state the DM can reach is worse than a tie-break that
+        /// outlives half its justification. Remove it after Task 4, not before.</summary>
         static bool Precedes(Room held, Room candidate)
         {
             bool heldBuilding = held.TypeId == 1, candBuilding = candidate.TypeId == 1;
@@ -636,8 +640,14 @@ namespace WorldGen.Rendering
         /// footprint contains the point. Height is deliberately NOT considered (overlap is visual only).
         /// False on the two states where the answer would be a lie rather than a cell: no grid drawn yet, or a
         /// degenerate projection — DungeonProjection.LocalToTile answers (0,0) for ANY input when PxPerTile or
-        /// SquashY is &lt;= 0, which is precisely the "dragged room snaps to the corner" bug.</summary>
-        bool TryAreaToCell(Vector2 areaLocalPoint, out int i, out int j)
+        /// SquashY is &lt;= 0, which is precisely the "dragged room snaps to the corner" bug.
+        ///
+        /// PUBLIC since Task 7. A footprint drag is a CELL DELTA — the cell the press landed in subtracted
+        /// from the cell the pointer is over now — so the controller needs the cell INDEX, not the cell centre
+        /// <see cref="TryAreaToNorm"/> answers. Deriving the index from that centre would work but would put a
+        /// second area→cell mapping in the controller, free to drift from this one; the index is the primitive
+        /// and the centre is derived from it, so the primitive is what gets exposed.</summary>
+        public bool TryAreaToCell(Vector2 areaLocalPoint, out int i, out int j)
         {
             i = 0; j = 0;
             if (grid == null) return false;
@@ -715,7 +725,14 @@ namespace WorldGen.Rendering
         ///
         /// The snap is STABLE under its own feedback: the lattice anchor is the minimum building X/Y, so if
         /// the dragged building becomes the new minimum it is by construction already an integer number of
-        /// cells from the old anchor and the lattice does not shift under the cursor.</summary>
+        /// cells from the old anchor and the lattice does not shift under the cursor.
+        ///
+        /// NO LIVE CALLER SINCE TASK 7, and it is not dead code. DungeonViewController.OnDrag used to route a
+        /// settlement drag through here; it now translates the room's CELLS (TranslateFootprintTo) and derives
+        /// the point from them, because a point cannot describe where a multi-cell building's other cells went.
+        /// This stays because it is part of the IDungeonRenderer contract — the controller calls it through the
+        /// interface for the flat renderer's rooms, and a renderer that refused to implement it would not be
+        /// substitutable. Removing it would mean narrowing the interface, which is a different task.</summary>
         public bool TryAreaToNorm(Vector2 areaLocalPoint, out float nx, out float ny)
         {
             nx = 0f; ny = 0f;
@@ -752,7 +769,12 @@ namespace WorldGen.Rendering
         ///
         /// Static and type-only on purpose: the caller (DungeonViewController) must never make its own
         /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are
-        /// literally the same expression evaluated twice.</summary>
+        /// literally the same expression evaluated twice.
+        ///
+        /// FOUNDING ONLY, NEVER MOVING (Task 7). This rule is consumed by <see cref="AreCellsPlaceable"/> and
+        /// by nothing else; a DRAG goes through <see cref="AreCellsFree"/>, which deliberately does NOT apply
+        /// it. See AreCellsFree for the derivation — in short, Wall/Gate are DERIVED from (buildings ∪
+        /// streets), so testing a MOVE against them is self-referential, and for a gate it is simply wrong.</summary>
         public static bool IsPlaceable(TileType type)
             => type != TileType.Building && type != TileType.Wall && type != TileType.Gate;
 
@@ -796,36 +818,90 @@ namespace WorldGen.Rendering
         ///
         /// Returns FALSE with both out-params meaningless in exactly the states TryAreaToCell refuses (no tile
         /// grid built yet, or a degenerate projection). The caller must then show NO highlight and place
-        /// nothing — an invented cell would be a lie the DM could act on.</summary>
+        /// nothing — an invented cell would be a lie the DM could act on.
+        ///
+        /// A SET VERDICT OVER A ONE-CELL SET since Task 7: the whole judgement is
+        /// <see cref="AreCellsPlaceable"/>, the same method the arc-2 drag-to-draw shape will hand a
+        /// many-cell set. «+ Здание» founds ONE cell (task brief step 3, and DungeonOps.AddRoom writes exactly
+        /// that one cell), so the set it builds here is a singleton — but the RULE is no longer written
+        /// per-cell, which is what stops a multi-cell caller from having to restate it.</summary>
         public bool TryPlacementCell(Vector2 areaLocalPoint, InteriorFloor lvl, out float nx, out float ny, out bool placeable)
         {
             nx = 0f; ny = 0f; placeable = false;
             if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return false;
             nx = grid.CenterX(i);
             ny = grid.CenterY(j);
-            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny) && !AnyRoomAtCell(i, j);
+            placeable = AreCellsPlaceable(new List<(int i, int j)> { (i, j) });
             return true;
         }
 
-        /// <summary>True if some room — of ANY type, a gate included — already owns cell (i,j).
+        /// <summary>THE FOUNDING VERDICT: may a building that does not exist yet occupy exactly
+        /// <paramref name="cells"/>? A SET verdict — every cell must pass, or the whole placement is refused.
+        /// «+ Здание»'s green/red preview and its click both evaluate this one expression, so what the DM sees
+        /// and what the click applies can never be two different judgements.
         ///
-        /// Reads the cellRooms map, i.e. FOOTPRINT ownership, where it used to re-scan the floor by
-        /// representative point. Two reasons, and the first is the one that matters: this question is about
-        /// the PICTURE the DM is judging, and the map is precisely what that picture was drawn from — it is
-        /// rebuilt in the same RepositionRooms call that builds the grid, and TryAreaToCell already refuses
-        /// every path where `grid` is null, so a reachable call here always sees a map from the current frame.
-        /// Second, it drops an O(rooms) scan that ran on every hover frame while «+ Здание» was armed.
+        /// It is <see cref="AreCellsFree"/> (on-field, and no cell owned by any existing room — mover id 0
+        /// means "no room is exempt") PLUS the tile-type rule <see cref="IsPlaceable"/>. That extra term is
+        /// what keeps a new house out of the wall ring, and it is meaningful HERE precisely because the ring
+        /// is derived from buildings the candidate is not one of.</summary>
+        public bool AreCellsPlaceable(IReadOnlyList<(int i, int j)> cells)
+        {
+            if (!AreCellsFree(cells, 0)) return false;
+            for (int k = 0; k < cells.Count; k++)
+                if (!IsPlaceable(grid.At(cells[k].i, cells[k].j))) return false;
+            return true;
+        }
+
+        /// <summary>THE MOVE VERDICT: may the room <paramref name="moverRoomId"/> occupy exactly
+        /// <paramref name="cells"/>? A SET verdict over the whole proposed footprint — one bad cell refuses
+        /// the entire translation, because half a building cannot move.
         ///
-        /// On a settlement floor only TypeId 0 (gate) and TypeId 1 (building, active or dummy) rooms exist
-        /// (SettlementGenerator, DungeonOps.AddRoom); every TypeId 1 room's cells already fail the tile-type
-        /// rule above (they are Building tiles, which Allocate's bbox guarantees are InBounds and Build's write
-        /// order never lets a later pass overwrite). So this term is still reachable ONLY for a gate room's own
-        /// cell — a gate writes no tile of its own and its cell commonly reads Void or Road, which would pass
-        /// the tile-type test clean and let a second room land on top of it.
+        /// TWO AXES, and they are exactly the two the task brief names — "would overlap another footprint, or
+        /// leave the field":
+        ///   • ON FIELD. Every proposed cell's CENTRE must lie in 0..1. This replaces the old drag clamp
+        ///     (DragClampMin/Max) for a settlement, and it is the honest version of it: the clamp squeezed a
+        ///     POINT back onto the board, which for a multi-cell building would have said nothing about where
+        ///     its far cells ended up. See <see cref="OnField"/> for why 0..1 exactly (the cascade's Clamp01).
+        ///   • NO CELL OWNED BY ANOTHER ROOM. cellRooms is FOOTPRINT ownership over every room of every type,
+        ///     gates included, so this one term rejects building-onto-building, building-onto-gate, and
+        ///     gate-onto-building alike. The last of those is not decoration: <see cref="Precedes"/> makes a
+        ///     building STRICTLY beat a gate for a cell, so a gate dropped onto a building's footprint would
+        ///     become permanently unselectable (a gate draws no tile of its own to click). Rejecting the
+        ///     translation is what closes that.
         ///
-        /// <see cref="TryPlacementCell"/> keeps its `lvl` parameter, now unread: the signature is the
-        /// controller's call site, which is outside this task's file.</summary>
-        bool AnyRoomAtCell(int i, int j) => RoomAtCell(i, j) != null;
+        /// THE MOVER IS EXEMPT FROM ITS OWN CELLS, and it must be: translating a 2x2 by one cell proposes a
+        /// 1x2 strip it already stands on, and the identity translation proposes all of them. Exemption is by
+        /// ROOM ID off the same map, so it costs nothing and cannot disagree with what is drawn.
+        ///
+        /// WHY THE TILE-TYPE RULE (<see cref="IsPlaceable"/>) IS DELIBERATELY ABSENT HERE. Wall and Gate tiles
+        /// are DERIVED, every rebuild, from (building footprints ∪ stored street cells) — SettlementTileGrid
+        /// .BuildWallRing dilates that seed and rings it. For a NEW building the ring is independent of the
+        /// candidate, so testing against it is meaningful. For a MOVE it is self-referential: the ring is
+        /// derived partly FROM the mover's own current cells, so the proposed cells would be judged against a
+        /// pre-move artifact that the very move is about to redraw. And for a GATE it is simply wrong — a gate
+        /// room's own cell is a ring-STREET cell, which sits >= 2 cells inside the dilation and therefore
+        /// never reads Wall (it reads Road), while every cell of the ring the gate exists to open reads
+        /// Wall/Gate. Applying the tile-type rule to a move would freeze every gate in town off its own wall,
+        /// permanently. The DISCRIMINATING CHECK for this method: a gate must be draggable one cell onto the
+        /// ring and back.
+        ///
+        /// EMPTY IS REFUSED. A null/empty set is not "trivially fine" — it is a room with no footprint, and
+        /// accepting it would let a caller write an empty Cells array back onto a building.
+        ///
+        /// grid == null is refused too. Both callers reach here only past TryAreaToCell, which already
+        /// refuses that state, but this is now consumed by two features and must not depend on that.</summary>
+        public bool AreCellsFree(IReadOnlyList<(int i, int j)> cells, int moverRoomId)
+        {
+            if (grid == null || cells == null || cells.Count == 0) return false;
+            for (int k = 0; k < cells.Count; k++)
+            {
+                var (i, j) = cells[k];
+                if (!OnField(grid.CenterX(i), grid.CenterY(j))) return false;
+                var owner = RoomAtCell(i, j);
+                if (owner != null && owner.Id != moverRoomId) return false;
+            }
+            return true;
+        }
 
         /// <summary>Show the hover preview over the cell CONTAINING the normalized point (nx, ny) — in
         /// practice the cell centre <see cref="TryPlacementCell"/> just returned, so the round trip

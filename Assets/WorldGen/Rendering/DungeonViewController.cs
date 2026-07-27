@@ -110,6 +110,31 @@ namespace WorldGen.Rendering
         // already cleared draggingRoomId by the time OnGraphMutated → BeginCascade runs.
         int lastAnchorRoomId;
 
+        // ── Footprint-drag state (Task 7) ───────────────────────────────────────────────────────────────────
+        // A settlement drag TRANSLATES A FOOTPRINT by a whole number of cells; it does not move a point. These
+        // three fields are the gesture's whole memory, written together in OnBeginDrag and cleared together in
+        // OnEndDrag. All three are assigned unconditionally at the start of every OnBeginDrag rather than
+        // relying on their declared defaults — this repo's recorded gotcha is that Unity scene deserialization
+        // silently overrides C# field initializers, and a stale `true` here would translate the WRONG room.
+        //
+        // WHY THE ORIGIN IS SNAPSHOT AND THE DELTA IS ABSOLUTE (measured from the press, never from the last
+        // sample). A rejected translation must not accumulate: with an incremental delta a building that stalls
+        // against an obstacle would still be "moving" in the controller's book, and would resume from the wrong
+        // offset once past it — or, worse, drift a cell every time a sample was refused. Measuring every sample
+        // against the ORIGINAL footprint and the ORIGINAL press cell makes the proposed position a pure
+        // function of where the cursor is now, so a building stalls at an obstacle, and the moment the cursor
+        // clears it the building jumps to exactly the offset the cursor is at. That is also what makes the
+        // gesture idempotent: OnEndDrag can re-evaluate the same expression on the release point and either
+        // change nothing or apply the one translation the last OnDrag sample had not yet seen.
+        bool dragFootprint;                          // this gesture translates cells, not a point
+        (int i, int j) dragAnchorCell;               // the lattice cell the press landed in
+        List<(int i, int j)> dragOriginCells;        // the dragged room's footprint AT THE PRESS
+        // The delta already applied to the model, so a sample that resolves to the same cell delta (the common
+        // case — a cell is ~4 tiles wide, so most pointer moves stay inside one) skips the verdict, the write
+        // and the whole tile-grid rebuild. NOT updated on a rejection, deliberately: the model still holds the
+        // last ACCEPTED delta, and that is what this must keep describing.
+        (int i, int j) dragAppliedDelta;
+
         // ── «+ Здание» click-to-place (Task 8b) ─────────────────────────────────────────────────────────
         // THE WHOLE STATE MACHINE, and deliberately no bigger: one bool for "armed", and one cell under the
         // cursor. Everything else about the mode is derived.
@@ -157,8 +182,12 @@ namespace WorldGen.Rendering
         ///
         /// WHY THE CONTROLLER RE-SNAPS AT ALL. SettlementVolumeRenderer.TryAreaToNorm already answers with a
         /// cell CENTRE, so a position that came straight out of it is on the lattice. The hazard is every
-        /// controller-side write that then MODIFIES that answer — the drag clamp, the drag-settle nudge, and
-        /// «+ Здание»'s fixed (0.5, 0.5). One object = one cell is the whole model of this view, and a room
+        /// controller-side write that then MODIFIES that answer — the drag-settle nudge and «+ Здание»'s fixed
+        /// (0.5, 0.5). (The DRAG CLAMP was the third such write and is no longer one of them: since Task 7 a
+        /// settlement drag never reaches TryAreaToNorm or the clamp at all — it translates cells and derives
+        /// the point from them — so both of this method's remaining settlement call sites are handed a point
+        /// that is already a cell centre. Which is why SnapToLattice is now an exact no-op for a town; see
+        /// BeginCascade.) One object = one cell is the whole model of this view, and a room
         /// parked between cells would keep its stored position half a cell off the tile it draws on, so
         /// anything that measures from the stored point (street routing, the fence, nearest-neighbour) and
         /// anything that measures from the drawn cell would quietly disagree.
@@ -748,18 +777,18 @@ namespace WorldGen.Rendering
                 // where it was dropped. A tile-space repair simply cannot express a one-cell street lane.
                 //
                 // OVERLAP IS PREVENTED AT THE EDIT, NOT REPAIRED AFTER IT. That is the model for a footprint
-                // town: the only ways a building moves are «+ Здание» (PlaceHoveredBuilding, which commits
-                // only onto a verified-free cell) and a drag (a later task makes it REJECT a translation onto
-                // an occupied cell outright, the way the placement preview already refuses one). Anything
-                // that still slips through is the VALIDATOR's to report, not this method's to silently undo.
+                // town, and BOTH edits now honour it: «+ Здание» (PlaceHoveredBuilding) commits only onto a
+                // verified-free cell, and a drag (TranslateFootprintTo, Task 7) REJECTS a translation whose
+                // proposed footprint touches another room's cells or leaves the field — it moves nothing
+                // rather than moving into a collision. Anything that still slips through is the VALIDATOR's to
+                // report, not this method's to silently undo.
                 //
-                // THE ACCEPTED TRADE, stated plainly because it is a real regression until that later task
-                // lands: a DM can now drag one building onto another and nothing repairs it. Worse than the
-                // visual overlap, cell snapping makes an EXACT-centre collision the normal outcome (drop onto
-                // an occupied cell and the two rooms hold identical X/Y), and HitRoomId's tie-break (larger Y,
-                // then larger Id) then returns the SAME room forever — so the other can no longer be selected
-                // or dragged. Deliberately NOT worked around here: any replacement repair would be the same
-                // tile-space nudge under another name, and the fix belongs at the edit.
+                // THE ACCEPTED TRADE IS CLOSED (Task 7). It read, until that task landed: "a DM can now drag
+                // one building onto another and nothing repairs it — and cell snapping makes an EXACT-centre
+                // collision the normal outcome, so HitRoomId's tie-break returns the SAME room forever and the
+                // other can no longer be selected or dragged." A drag can no longer produce that state at all.
+                // The note is kept in the past tense rather than deleted because it is WHY the repair is gone:
+                // the answer was never to bring back a tile-space nudge, it was to make the edit refuse.
                 //
                 // NOTHING ELSE ON THE SETTLEMENT PATH REPAIRS OVERLAP (grep-verified): DungeonLayout.Separate
                 // and EnforceCorridorLeash are in the dungeon-only else branch and OnDrag's non-settlement
@@ -768,10 +797,23 @@ namespace WorldGen.Rendering
                 //
                 // WHAT ACTUALLY HAPPENS NOW, end to end: nothing moves, so `anyMoved` below stays false and
                 // the !anyMoved branch does ONE static Refresh and fires OnCascadeSettled — the host still
-                // re-validates, exactly as it did after an animated settle. SnapToLattice is kept and is an
-                // idempotent no-op here (OnDrag already snapped the room, and CellOf(CenterOf(k)) == k); it
-                // stays because it is the correct guard for any future controller-side write and because for
-                // a BUILDING LatticeFor is null and this line is byte-identical to before.
+                // re-validates, exactly as it did after an animated settle.
+                //
+                // SnapToLattice IS AN EXACT NO-OP FOR A SETTLEMENT, and that is now provable rather than
+                // incidental: TranslateFootprintTo writes X = SettlementFootprint.CenterOf(rep.i), and
+                // SnapX(x) is CenterX(CellI(x)) = CenterOf(CellOf(x)), whose round trip through a cell CENTRE
+                // is the identity (the centre sits half a cell clear of both half-open boundaries). It matters
+                // that it cannot move the point: this call writes X/Y WITHOUT touching Room.Cells, so a
+                // hypothetical non-zero snap would desync a 1x1's point from its cell and FootprintOf's rule
+                // (b) would relocate the building behind the DM's back on the next rebuild. The line stays for
+                // the same two reasons as before — it is the correct guard for any future controller-side
+                // write, and for a BUILDING LatticeFor is null and it is byte-identical to what shipped.
+                //
+                // KNOWN, MASKED, NOT THIS TASK'S: the cascade ANIMATION below writes r.X/r.Y per frame and
+                // likewise never touches Cells, so it would desync a settlement room the same way. It cannot
+                // fire today — the settlement branch moves nothing, so `anyMoved` stays false and the animation
+                // is never entered — but a future edit that made a settlement move here would need to carry
+                // cells too.
                 var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE anything moves
                 if (dungeon.Kind != InteriorKind.Settlement)
                     BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
@@ -1310,6 +1352,82 @@ namespace WorldGen.Rendering
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && levelIndex > 0) return;
             if (!TryPointerToAreaLocal(data, out var local)) return;
             draggingRoomId = renderer.HitRoomId(local, lvl);
+            ArmFootprintDrag(lvl, local);
+        }
+
+        /// <summary>Decide whether this gesture is a FOOTPRINT drag, and if so snapshot what it needs.
+        ///
+        /// A footprint drag needs three things to exist and it takes all three or none: a settlement bound, the
+        /// volumetric renderer active (it owns the cell lattice), and a resolvable press cell. Anything short
+        /// of that leaves dragFootprint false — and for a SETTLEMENT that means the drag does nothing at all
+        /// (see OnDrag), which is the right degradation: writing a point into a footprint town would move the
+        /// room's mark without moving its tiles, exactly the defect this task exists to remove.
+        ///
+        /// The footprint is read through SettlementTileGrid.FootprintOf, the canonical read — the SAME call
+        /// that decided which tiles were drawn and which room HitRoomId just returned. So a room with no cells
+        /// (rule a) or a stale single cell (rule b) is snapshot as the one cell it VISIBLY occupies, and the
+        /// first accepted translation writes that back as real data: the drag self-heals such a room instead of
+        /// inheriting its inconsistency.
+        ///
+        /// A DUNGEON OR BUILDING INTERIOR NEVER ARMS THIS. Their drags stay free and continuous, byte-identical
+        /// to before — the Kind test below is the whole gate.</summary>
+        void ArmFootprintDrag(InteriorFloor lvl, Vector2 areaLocal)
+        {
+            dragFootprint = false;
+            dragAnchorCell = (0, 0);
+            dragAppliedDelta = (0, 0);
+            dragOriginCells = null;
+            if (draggingRoomId == 0) return;
+            if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
+            var vol = renderer as SettlementVolumeRenderer;
+            if (vol == null || !vol.TryAreaToCell(areaLocal, out int ai, out int aj)) return;
+            var room = lvl.GetRoom(draggingRoomId);
+            if (room == null) return;
+            dragOriginCells = SettlementTileGrid.FootprintOf(room);
+            if (dragOriginCells.Count == 0) return;   // nothing to translate — leave the room alone
+            dragAnchorCell = (ai, aj);
+            dragFootprint = true;
+        }
+
+        /// <summary>Translate the dragged footprint so the press cell follows the pointer — or refuse, and move
+        /// nothing at all. THE one expression that decides a settlement drag, called from exactly two places:
+        /// OnDrag (every sample, which is what the DM watches) and OnEndDrag (the release point). The preview
+        /// the DM sees and the accept/reject the drop applies are therefore the same code, not two rules kept
+        /// in agreement by hand.
+        ///
+        /// WHAT REJECTION LOOKS LIKE, and it is deliberately silent: the building simply stops following the
+        /// cursor and stays on the last cells that were accepted. There is no snap-back to where the gesture
+        /// started (the DM would lose a move they had already watched succeed) and no ghost outline (a
+        /// multi-cell red preview is arc 2's drag-to-draw machinery, not this task's). Releasing over a blocked
+        /// cell commits exactly what is already on screen — the drop cannot surprise, because the drop applies
+        /// the same verdict the last sample did.
+        ///
+        /// CELLS ARE THE SOURCE OF TRUTH; THE POINT IS DERIVED FROM THEM. Room.X/Y is rewritten from the
+        /// translated cells, never carried along independently, because SettlementTileGrid.FootprintOf's rule
+        /// (b) treats a SINGLE-cell footprint that disagrees with its room's point as stale and re-derives the
+        /// footprint FROM the point — so a 1x1 whose cells moved but whose point did not would be dragged right
+        /// back on the very next rebuild. The point is the REPRESENTATIVE cell's centre, matching
+        /// SettlementGenerator.BuildFloor (the only producer of multi-cell footprints) rather than
+        /// SettlementMigration.RederivePositions' bbox centre; the two agree exactly for one cell, and for many
+        /// cells this one keeps a generated building's stored point unchanged under a zero-delta drag instead
+        /// of shifting it to a different convention the first time it is touched. Representative commutes with
+        /// Translate (the row-major minimum of a translated set is the translated minimum), so the derived
+        /// point moves by exactly the same delta as the cells.</summary>
+        void TranslateFootprintTo(InteriorFloor lvl, Room room, Vector2 areaLocal)
+        {
+            var vol = renderer as SettlementVolumeRenderer;
+            if (vol == null || !vol.TryAreaToCell(areaLocal, out int ci, out int cj)) return;
+            var delta = (i: ci - dragAnchorCell.i, j: cj - dragAnchorCell.j);
+            if (delta == dragAppliedDelta) return;   // same cell as last time — nothing to re-decide
+            var moved = SettlementFootprint.Translate(dragOriginCells, delta.i, delta.j);
+            if (!vol.AreCellsFree(moved, room.Id)) return;   // REJECTED — the building does not move
+
+            room.Cells = SettlementFootprint.Encode(moved);
+            var rep = SettlementFootprint.Representative(moved);
+            room.X = SettlementFootprint.CenterOf(rep.i);
+            room.Y = SettlementFootprint.CenterOf(rep.j);
+            dragAppliedDelta = delta;
+            RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
         }
 
         public void OnDrag(PointerEventData data)
@@ -1324,20 +1442,34 @@ namespace WorldGen.Rendering
             var room = lvl?.GetRoom(draggingRoomId);
             if (room == null) return;
             if (!TryPointerToAreaLocal(data, out var local)) return;
+
+            // SETTLEMENT (Task 7): a whole FOOTPRINT translates by a cell delta, or nothing moves. This is the
+            // early return that retires the old snap-a-point-and-repair-later machinery for a town — the
+            // TryAreaToNorm → clamp → SnapToLattice sequence below no longer runs for a settlement at all, and
+            // with it goes the last consumer of the anti-overlap repair that BeginCascade had already dropped.
+            // Nothing after this point in the method applies to a town: the corridor leash is already excluded
+            // for a settlement (see below), and TranslateFootprintTo does its own RepositionNow only when the
+            // model actually changed.
+            //
+            // NOT REACHED WHEN dragFootprint IS FALSE ON A SETTLEMENT — that combination means ArmFootprintDrag
+            // could not resolve a lattice, and a settlement must then move NOTHING rather than fall through to
+            // the point path. See ArmFootprintDrag.
+            if (dungeon != null && dungeon.Kind == InteriorKind.Settlement)
+            {
+                if (dragFootprint) TranslateFootprintTo(lvl, room, local);
+                return;
+            }
+
             // FALSE means the renderer genuinely cannot place this point (no tile grid drawn yet, degenerate
             // projection) — nx/ny are meaningless then, so bail rather than write a corner position.
             if (!renderer.TryAreaToNorm(local, out float nx, out float ny)) return;
 
-            // SETTLEMENT (Task 8, handoff b): the clamp below is off-lattice by construction — 0.04/0.96 are
-            // not cell centres — so re-snap after it. Captured BEFORE the write; see LatticeFor for why the
-            // order is load-bearing. For a dungeon/building LatticeFor is null and the clamp stands alone,
-            // byte-identical to before.
+            // A DUNGEON or BUILDING interior only: LatticeFor is null for both, so SnapToLattice is a no-op and
+            // the clamp stands alone, byte-identical to what shipped. The pair is kept rather than collapsed
+            // because it is the correct guard the moment any other Kind reaches here.
             var lattice = LatticeFor(lvl);
             room.X = Mathf.Clamp(nx, DragClampMin, DragClampMax);
             room.Y = Mathf.Clamp(ny, DragClampMin, DragClampMax);
-            // The snap can push a clamped value back OUT of [0.04, 0.96] by up to half a cell (0.035), so for
-            // a settlement the clamp is now approximate: worst case ~0.005, still on the board — and the view
-            // itself is fit to the buildings, so it follows them out rather than cropping them.
             SnapToLattice(lattice, room);
 
             // BUILDING (spec C4): the room moves FREELY with the cursor — NO corridor leash — so the DM can
@@ -1360,11 +1492,26 @@ namespace WorldGen.Rendering
         public void OnEndDrag(PointerEventData data)
         {
             if (draggingRoomId == 0) return;
+            // THE DROP'S VERDICT — the same expression the live drag evaluates, on the release point (Task 7).
+            // Not decoration: OnEndDrag carries its own pointer position, and Unity does not guarantee that an
+            // OnDrag sample was delivered for it, so the release can genuinely name a cell no sample saw. When
+            // it names one that was already applied, the delta test inside makes this an exact no-op; when it
+            // names a blocked one, the refusal is the same refusal and the building keeps the cells the DM has
+            // been looking at. Either way the drop can never commit a translation the drag would have refused,
+            // because there is only one place that decision is made.
+            if (dragFootprint && TryPointerToAreaLocal(data, out var local))
+            {
+                var lvl = BoundLevel;
+                var room = lvl?.GetRoom(draggingRoomId);
+                if (room != null) TranslateFootprintTo(lvl, room, local);
+            }
             // Clear on EVERY drag path, here and nowhere else. If the release lands outside this
             // hit-plate (over the toolbar, or a badge Button), no click fires at all — leaving the clear
             // to OnPointerClick would strand draggingRoomId set and swallow the next click.
             lastAnchorRoomId = draggingRoomId;
             draggingRoomId = 0;
+            dragFootprint = false;
+            dragOriginCells = null;
             OnGraphMutated?.Invoke();
         }
 
