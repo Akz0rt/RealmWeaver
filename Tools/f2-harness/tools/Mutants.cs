@@ -138,8 +138,12 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutSizingLargeOverflowsFieldSelfTests().SelfTestSizing()),
                 ("MutMigrationNoRecentre", "SettlementMigration.RecentreFloor returns immediately (a pre-v11 town is left in the corner the finer lattice put it in)",
                     () => new WorldGen.MutantTests.MutMigrationNoRecentreSelfTests().SelfTestSizeMigration()),
-                ("MutMigrationCurrentPitch", "SettlementFootprint.EnsureFootprints derives a missing cell with CellOf instead of LegacyCellOf (a legacy point read on the current lattice)",
+                ("MutMigrationTruncatingHalf", "SettlementMigration.RecentreFloor's FloorHalf reverted to C#'s truncating / (a bbox summing odd AND negative recentres one cell off, then moves again on the next load)",
+                    () => new WorldGen.MutantTests.MutMigrationTruncatingHalfSelfTests().SelfTestSizeMigration()),
+                ("MutMigrationCurrentPitch", "SettlementFootprint.EnsureFootprints ignores legacyLattice and always uses CellOf (a LEGACY point read on the current lattice)",
                     () => new WorldGen.MutantTests.MutMigrationCurrentPitchSelfTests().SelfTestSizeMigration()),
+                ("MutMigrationAlwaysLegacyPitch", "SettlementFootprint.EnsureFootprints ignores legacyLattice and always uses LegacyCellOf (a v11 point read on the legacy lattice — wrong data at rest that nothing repairs)",
+                    () => new WorldGen.MutantTests.MutMigrationAlwaysLegacyPitchSelfTests().SelfTestSizeMigration()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

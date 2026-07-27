@@ -678,6 +678,31 @@ namespace WorldGen.Persistence
                 { Debug.LogError($"FAIL settlement fields: SettlementParams came back {f.SettlementParams.Size}/{f.SettlementParams.ActiveBuildings}, want Small/5"); ok = false; }
                 else if (f.SettlementParams.HasWall != true)
                 { Debug.LogError($"FAIL settlement fields: SettlementParams.HasWall came back {f.SettlementParams.HasWall}, want true"); ok = false; }
+
+                // ---- 1b. THE STAMPED CELL, on a file saved at the CURRENT format version -----------------
+                // This fixture's rooms carry X/Y and NO Cells, so ProjectSerializer's EnsureFootprints call
+                // stamps one on load — and WHICH PITCH it stamps on must follow the FILE. Saved here at
+                // CurrentFormatVersion (11), so the answer is the CURRENT lattice: CellOf(0.5) = 16, NOT
+                // LegacyCellOf(0.5) = 7. Asserted rather than assumed because nothing else can catch it:
+                // the surviving-fields checks above pass either way, RecentreFloor/RederivePositions are
+                // version-gated OFF for a v11 file so no later pass repairs a wrong index, and
+                // SettlementTileGrid.FootprintOf rule (b) re-derives a disagreeing single-cell footprint
+                // from the point at RENDER time — so a legacy-pitch stamp here is invisible wrong data at
+                // rest. Room 1 is the GATE (TypeId 0, x 0.8) and room 2 a building at the field centre, so
+                // this pins both type branches of the widened pass.
+                var stamped = new (int id, float x, float y)[] { (1, 0.8f, 0.5f), (2, 0.5f, 0.5f), (3, 0.45f, 0.55f) };
+                foreach (var (id, x, y) in stamped)
+                {
+                    var rm = f.Rooms.Find(q => q.Id == id);
+                    var got = rm == null ? null : SettlementFootprint.Decode(rm.Cells);
+                    var want = (SettlementFootprint.CellOf(x), SettlementFootprint.CellOf(y));
+                    var legacy = (SettlementFootprint.LegacyCellOf(x), SettlementFootprint.LegacyCellOf(y));
+                    if (got == null || got.Count != 1 || got[0] != want)
+                    {
+                        Debug.LogError($"FAIL settlement fields: room {id} came back with {(got == null ? "no" : got.Count.ToString())} cells{(got != null && got.Count > 0 ? " at " + got[0] : "")}, want exactly one at {want} — a file saved at format {ProjectSerializer.CurrentFormatVersion} must be stamped on the CURRENT lattice, not the legacy one ({legacy})");
+                        ok = false;
+                    }
+                }
             }
 
             // ---- 2. Reusing the settlement round-trip's null-key text scenario: a floor whose only building

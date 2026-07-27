@@ -186,13 +186,27 @@ namespace WorldGen.Generation
         /// it. One widened type guard, not a second pass, deliberately: there stays exactly ONE `r.Cells =`
         /// write in this method for a mutant to break.
         ///
-        /// THE CELL IS DERIVED WITH <see cref="LegacyCellOf"/>, NOT CellOf. A room reaching this method has no
-        /// footprint at all, and every town that has ever been SAVED without one was authored on the pre-v11
-        /// 0.07 pitch — so its stored point means a legacy cell index, and reading it on the current 0.03
-        /// lattice would scatter the town's cells 2.33x apart, opening a gap between every pair of houses that
-        /// stood flush. The v11 migration (SettlementMigration.RecentreFloor, then RederivePositions) then
-        /// translates those legacy indices bodily onto the current lattice's centre and rewrites every point
-        /// from them, so the pair is what makes an old town open as the same town.
+        /// WHICH PITCH THE CELL IS DERIVED ON IS THE CALLER'S TO DECIDE, and it must follow the FILE'S FORMAT
+        /// VERSION — which is why <paramref name="legacyLattice"/> has no default and ProjectSerializer, the
+        /// only place that knows the version, is the only production caller.
+        ///
+        ///   • legacyLattice TRUE (a file at format &lt;= 10): the point means a cell on the pre-v11 0.07
+        ///     pitch, so <see cref="LegacyCellOf"/> recovers it. Reading it on the current 0.03 lattice would
+        ///     scatter the town's cells 2.33x apart and open a gap between every pair of houses that stood
+        ///     flush. The v11 migration (SettlementMigration.RecentreFloor, then RederivePositions) then
+        ///     translates those legacy indices bodily onto the current lattice's centre and rewrites every
+        ///     point from them, so the pair is what makes an old town open as the same town.
+        ///   • legacyLattice FALSE (a file already at format 11): the point means a CURRENT-lattice cell, so
+        ///     <see cref="CellOf"/> recovers it. This branch should never fire in practice — every v11 writer
+        ///     stores cells alongside points (SettlementGenerator.BuildFloor for generated rooms,
+        ///     DungeonOps.AddRoom for hand-added ones) — but "should never" is not "cannot", and a hand-edited
+        ///     or partially-written v11 file that DID reach here on the legacy branch would get a 0.07-pitch
+        ///     index written back to disk that no later pass ever repairs: RecentreFloor and RederivePositions
+        ///     are both version-gated off at v11. The render masks it (SettlementTileGrid.FootprintOf rule (b)
+        ///     re-derives a disagreeing single-cell footprint from the point), so it would be silently wrong
+        ///     data at rest rather than a visible defect — exactly the class of bug that survives a checkpoint.
+        ///     Keeping the pitch tied to the version is what makes "a v11 file's cells are v11 cells" hold by
+        ///     construction instead of by convention.
         ///
         /// Lives here, not in ProjectSerializer, so it can be exercised headlessly: ProjectSerializer drags in
         /// System.IO/Newtonsoft/the notes+region model and cannot compile in the offline harness, which would
@@ -200,9 +214,11 @@ namespace WorldGen.Generation
         /// no mutant. ProjectSerializer keeps the CALL, beside RoomSizing.ApplyDefaults.
         ///
         /// IDEMPOTENT, AND IT NEVER OVERWRITES. A room whose Cells is already non-empty is skipped outright,
-        /// so re-running this pass (or running it over an already-v10 file) is a no-op — which is why it is
-        /// NOT version-gated, exactly like the RoomSizing.ApplyDefaults call beside it. A guard on
-        /// FormatVersion is a thing a future bump forgets to widen; an idempotent normalization is not.
+        /// so re-running this pass (or running it over an already-normalized file) is a no-op — which is why
+        /// the PASS itself is not version-gated, exactly like the RoomSizing.ApplyDefaults call beside it. A
+        /// guard on FormatVersion is a thing a future bump forgets to widen; an idempotent normalization is
+        /// not. Only its PITCH follows the version, through the parameter above — the pass still fires at
+        /// every version, it just no longer assumes which lattice it is repairing.
         ///
         /// SizeW/SizeH ARE NOT TOUCHED, and must never be. They are TILES (one lattice cell is 0.03 * 128
         /// = 3.84 tiles) and ApplyDefaults has already given every settlement building 6x6 in every existing
@@ -211,7 +227,7 @@ namespace WorldGen.Generation
         ///
         /// Kind == Settlement only: a BUILDING interior (Ц2 recursion) and a dungeon also hold TypeId==1 and
         /// TypeId==0 rooms, and neither has any business carrying a settlement lattice footprint.</summary>
-        public static void EnsureFootprints(InteriorData interior)
+        public static void EnsureFootprints(InteriorData interior, bool legacyLattice)
         {
             if (interior == null || interior.Kind != InteriorKind.Settlement || interior.Floors == null) return;
             foreach (var floor in interior.Floors)
@@ -227,7 +243,8 @@ namespace WorldGen.Generation
                     // permanent too. Decode(...).Count > 0 instead lets exactly the input Decode was
                     // hardened against (and only that input) self-heal on the very next load.
                     if (Decode(r.Cells).Count > 0) continue;   // already footprinted — never overwrite
-                    var one = new List<(int i, int j)> { (LegacyCellOf(r.X), LegacyCellOf(r.Y)) };
+                    var cell = legacyLattice ? (LegacyCellOf(r.X), LegacyCellOf(r.Y)) : (CellOf(r.X), CellOf(r.Y));
+                    var one = new List<(int i, int j)> { cell };
                     r.Cells = Encode(one);
                 }
             }

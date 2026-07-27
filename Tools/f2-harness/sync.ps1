@@ -1043,20 +1043,53 @@ New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationNoRecentre' `
   @('SettlementMigration\.') `
   @('WorldGen.Generation.MutMigrationNoRecentre.SettlementMigration.')
 
-# MutMigrationCurrentPitch: EnsureFootprints derives a cell-less room's single cell with CellOf (the CURRENT
-# 0.03 lattice) instead of LegacyCellOf (the 0.07 one every pre-v11 save was authored on) — the exact mistake
+# MutMigrationTruncatingHalf: RecentreFloor's FloorHalf reverted to C#'s truncate-toward-zero `/` — the exact
+# implementation the D5 deviation exists to replace. The two agree for every non-negative sum, so this is
+# silent until a town's cell bbox sums ODD AND NEGATIVE on an axis, where truncation lands the town one cell
+# off centre AND leaves a non-zero delta behind, so it moves AGAIN on the next load. Caught by
+# SelfTestSizeMigration's section-7 fixture (cells at i = -2..-1, sum -3), which asserts both halves: the
+# hand-derived 16..17 landing and the second-RecentreFloor-changes-nothing idempotence.
+New-SettlementMutant 'SettlementMigration.cs' 'MutMigrationTruncatingHalf' `
+  'static int FloorHalf(int v) => v >= 0 ? v / 2 : -(((-v) + 1) / 2);' `
+  'static int FloorHalf(int v) => v / 2;   // MUTANT: C# truncating division — wrong for an odd NEGATIVE sum' `
+  'MutMigrationTruncatingHalf.cs'
+
+New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationTruncatingHalf' `
+  @('SettlementMigration\.') `
+  @('WorldGen.Generation.MutMigrationTruncatingHalf.SettlementMigration.')
+
+# MutMigrationCurrentPitch: EnsureFootprints ignores its legacyLattice argument and always derives a
+# cell-less room's cell with CellOf (the CURRENT 0.03 lattice), even for a pre-v11 file — the exact mistake
 # that would scatter a legacy town's houses 2.33x apart and open a gap between every pair that stood flush.
-# Caught by SelfTestSizeMigration's gate-cell assertion: the gate's point 0.60/0.66 is legacy cell (8,9) and
-# current cell (20,22). Mutates SettlementFootprint.cs, so this is a SECOND rebind of SelfTestSizeMigration
-# against a different file (the SelfTestRoads/MutRoadsNoAvoid+MutRoadsNoClearance precedent).
+# Caught by SelfTestSizeMigration's gate-cell assertion on fixture 1 (loaded with legacyLattice: true): the
+# gate's point 0.60/0.66 is legacy cell (8,9) and current cell (20,22). Mutates SettlementFootprint.cs, so
+# this is a SECOND rebind of SelfTestSizeMigration against a different file (the SelfTestRoads/
+# MutRoadsNoAvoid+MutRoadsNoClearance precedent).
 New-SettlementMutant 'SettlementFootprint.cs' 'MutMigrationCurrentPitch' `
-  'var one = new List<(int i, int j)> { (LegacyCellOf(r.X), LegacyCellOf(r.Y)) };' `
-  'var one = new List<(int i, int j)> { (CellOf(r.X), CellOf(r.Y)) };   // MUTANT: a legacy point read on the CURRENT lattice' `
+  'var cell = legacyLattice ? (LegacyCellOf(r.X), LegacyCellOf(r.Y)) : (CellOf(r.X), CellOf(r.Y));' `
+  'var cell = (CellOf(r.X), CellOf(r.Y));   // MUTANT: a LEGACY point always read on the CURRENT lattice' `
   'MutMigrationCurrentPitch.cs'
 
 New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationCurrentPitch' `
   @('SettlementFootprint\.') `
   @('WorldGen.Generation.MutMigrationCurrentPitch.SettlementFootprint.')
+
+# MutMigrationAlwaysLegacyPitch: the MIRROR of the mutant above, and the one that pins the defect review
+# found — EnsureFootprints ignores legacyLattice the OTHER way and always derives on the pre-v11 0.07 pitch.
+# A v11 file's cell-less room then gets a legacy index written back to disk that NOTHING repairs
+# (RecentreFloor/RederivePositions are version-gated off at v11) and that the render masks
+# (SettlementTileGrid.FootprintOf rule (b) re-derives a disagreeing single-cell footprint from the point), so
+# it is silently wrong data at rest. Caught by SelfTestSizeMigration's section-8 fixture, which calls
+# EnsureFootprints(legacyLattice: false) and pins the stamped cell at CellOf's (20,22) rather than
+# LegacyCellOf's (8,9).
+New-SettlementMutant 'SettlementFootprint.cs' 'MutMigrationAlwaysLegacyPitch' `
+  'var cell = legacyLattice ? (LegacyCellOf(r.X), LegacyCellOf(r.Y)) : (CellOf(r.X), CellOf(r.Y));' `
+  'var cell = (LegacyCellOf(r.X), LegacyCellOf(r.Y));   // MUTANT: a v11 point always read on the LEGACY lattice' `
+  'MutMigrationAlwaysLegacyPitch.cs'
+
+New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationAlwaysLegacyPitch' `
+  @('SettlementFootprint\.') `
+  @('WorldGen.Generation.MutMigrationAlwaysLegacyPitch.SettlementFootprint.')
 
 # ---- POI MIGRATION MUTANT: the removed Village type must still normalize on load. ---------------------------
 # PoiMigration.cs defines ONE class and no data types (PoiData/PoiType live in the unmutated PoiData.cs and
@@ -1076,5 +1109,5 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 33 settlement mutants + 33 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 35 settlement mutants + 35 settlement rebound test copies into gen/"
 

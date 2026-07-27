@@ -1318,7 +1318,7 @@ namespace WorldGen.Rendering
             var town = new InteriorData { OwnerPoiId = "poi-migration", Kind = InteriorKind.Settlement };
             town.Floors.Add(floor);
 
-            SettlementFootprint.EnsureFootprints(town);
+            SettlementFootprint.EnsureFootprints(town, legacyLattice: true);
 
             void Expect(int id, int ei, int ej, string why)
             {
@@ -1355,7 +1355,7 @@ namespace WorldGen.Rendering
             string Dump(Room r) => r.Cells == null ? "null" : string.Join(",", r.Cells);
             var snapshot = new System.Collections.Generic.List<string>();
             foreach (var r in floor.Rooms) snapshot.Add(Dump(r));
-            SettlementFootprint.EnsureFootprints(town);
+            SettlementFootprint.EnsureFootprints(town, legacyLattice: true);
             for (int k = 0; k < floor.Rooms.Count; k++)
                 if (Dump(floor.Rooms[k]) != snapshot[k])
                 { Debug.LogError($"FAIL footprint-migration: a SECOND EnsureFootprints changed room {floor.Rooms[k].Id} from '{snapshot[k]}' to '{Dump(floor.Rooms[k])}' — the normalization is not idempotent"); ok = false; }
@@ -1367,7 +1367,7 @@ namespace WorldGen.Rendering
             bfloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.3f, Y = 0.3f });
             var building = new InteriorData { OwnerPoiId = "poi-migration", OwnerRoomId = 4, Kind = InteriorKind.Building };
             building.Floors.Add(bfloor);
-            SettlementFootprint.EnsureFootprints(building);
+            SettlementFootprint.EnsureFootprints(building, legacyLattice: true);
             if (bfloor.Rooms[0].Cells != null)
             { Debug.LogError($"FAIL footprint-migration: a Building interior's room got a footprint of {bfloor.Rooms[0].Cells.Length} ints, want none"); ok = false; }
 
@@ -1383,14 +1383,14 @@ namespace WorldGen.Rendering
                 Cells = new[] { 9, 9, 1 } });
             var oddTown = new InteriorData { OwnerPoiId = "poi-migration-odd", Kind = InteriorKind.Settlement };
             oddTown.Floors.Add(oddFloor);
-            SettlementFootprint.EnsureFootprints(oddTown);
+            SettlementFootprint.EnsureFootprints(oddTown, legacyLattice: true);
             var oddRoom = oddFloor.GetRoom(5);
             var oddGot = SettlementFootprint.Decode(oddRoom.Cells);
             if (oddGot.Count != 1 || oddGot[0] != (4, 4))
             { Debug.LogError($"FAIL footprint-migration: room 5 (odd-length Cells [9,9,1]) ended with {oddGot.Count} cells ({(oddGot.Count > 0 ? oddGot[0].ToString() : "none")}), want exactly 1 cell (4,4) — an odd-length array must self-heal, not stay footprint-less forever"); ok = false; }
 
             // A corrupt/absent interior must degrade, not throw, exactly like Decode.
-            SettlementFootprint.EnsureFootprints(null);
+            SettlementFootprint.EnsureFootprints(null, legacyLattice: true);
 
             if (ok) Debug.Log("Settlement Footprint Migration: PASS");
         }
@@ -1480,7 +1480,7 @@ namespace WorldGen.Rendering
             // (8,9), not CellOf(0.60)/CellOf(0.66) = (20,22): a footprint-less room can only have come from a
             // pre-v11 save, so its point means a LEGACY cell. Reading it on the current lattice would fling
             // the gate 12 cells clear of the town it belongs to — MutMigrationCurrentPitch is exactly that.
-            SettlementFootprint.EnsureFootprints(town);
+            SettlementFootprint.EnsureFootprints(town, legacyLattice: true);
             var gateCells = SettlementFootprint.Decode(floor.GetRoom(1).Cells);
             int wantGi = SettlementFootprint.LegacyCellOf(0.60f), wantGj = SettlementFootprint.LegacyCellOf(0.66f);
             if (gateCells.Count != 1)
@@ -1564,6 +1564,71 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL size-migration: a SECOND RecentreFloor changed room {floor.Rooms[k].Id} from '{snapshot[k]}' to '{Dump(floor.Rooms[k])}' — recentring is not idempotent"); ok = false; }
             if (string.Join(",", floor.SettlementParams.StreetCells) != streetSnapshot)
             { Debug.LogError($"FAIL size-migration: a SECOND RecentreFloor changed the street cells from '{streetSnapshot}' to '{string.Join(",", floor.SettlementParams.StreetCells)}'"); ok = false; }
+
+            // ---- 7. A NEGATIVE, ODD BBOX SUM — the case plain `/` gets wrong -----------------------------
+            // RecentreFloor halves the bbox sum with FLOOR division, not C#'s truncate-toward-zero `/`, and
+            // fixture 1 above CANNOT tell the two apart: its sums are 17 and 16, both positive, where
+            // FloorHalf(17) == 17 / 2 == 8. Every assertion above therefore passes verbatim against the
+            // truncating implementation the floor-division exists to replace, which is no coverage at all.
+            //
+            // Cells at i = -2..-1 sum to -3: ODD and NEGATIVE, the only regime where the two disagree.
+            //   floor:    floor(-3/2) = -2  ->  delta 16-(-2) = +18  ->  i = 16..17, sum 33, floor -> 16 ✓
+            //   truncate: (-3)/2      = -1  ->  delta 16-(-1) = +17  ->  i = 15..16, sum 31, trunc -> 15 ✗
+            // So truncation lands the town ONE CELL off target AND leaves a second RecentreFloor with a
+            // non-zero delta — the town moves again on the next load. Both halves are asserted below, and
+            // MutMigrationTruncatingHalf pins them.
+            //
+            // Negative indices are reachable in production, not a synthetic curiosity: the lattice origin is
+            // normalized 0 and CellOf floors, so any pre-v11 town whose buildings sat near the field's origin
+            // has cells at or below 0 once the ring street and the courtyard margin are counted outward.
+            var negFloor = new InteriorFloor { NextRoomId = 3 };
+            negFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = -0.1f, Y = 0.2f, SizeW = 6, SizeH = 6,
+                Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (-2, 3) }) });
+            negFloor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = -0.05f, Y = 0.2f, SizeW = 6, SizeH = 6,
+                Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (-1, 3) }) });
+            negFloor.SettlementParams = new SettlementParams { Size = SettlementSize.Small, ActiveBuildings = 2, HasWall = true };
+
+            var (nMinI0, nMinJ0, nMaxI0, nMaxJ0) = TownCellBounds(negFloor);
+            if (nMinI0 + nMaxI0 != -3 || (nMinI0 + nMaxI0) % 2 == 0)
+            { Debug.LogError($"FAIL size-migration: the negative fixture's i bbox is {nMinI0}..{nMaxI0}, sum {nMinI0 + nMaxI0} — it must be ODD and NEGATIVE (-3) or it cannot discriminate floor from truncating division"); ok = false; }
+
+            SettlementMigration.RecentreFloor(negFloor);
+            var (nMinI, nMinJ, nMaxI, nMaxJ) = TownCellBounds(negFloor);
+            if (nMinI != 16 || nMaxI != 17)
+            { Debug.LogError($"FAIL size-migration: a bbox summing to -3 on i recentred to {nMinI}..{nMaxI}, want the hand-derived 16..17 — truncating division would give 15..16, one cell short of centre {centreCell}"); ok = false; }
+            if ((nMinI + nMaxI) / 2 != centreCell)
+            { Debug.LogError($"FAIL size-migration: a bbox summing to -3 on i recentred to centre {(nMinI + nMaxI) / 2}, want {centreCell}"); ok = false; }
+
+            // The idempotence half, which is the one that actually bites the DM: truncation leaves a non-zero
+            // delta behind, so the town keeps walking one cell per load.
+            string negSnapshot = string.Join(";", negFloor.Rooms.ConvertAll(Dump));
+            SettlementMigration.RecentreFloor(negFloor);
+            string negAfter = string.Join(";", negFloor.Rooms.ConvertAll(Dump));
+            if (negAfter != negSnapshot)
+            { Debug.LogError($"FAIL size-migration: a SECOND RecentreFloor on the negative-odd fixture changed the cells from '{negSnapshot}' to '{negAfter}' — halving is truncating toward zero instead of flooring, so the town moves again on every load"); ok = false; }
+
+            // ---- 8. THE CURRENT-LATTICE BRANCH of EnsureFootprints (v11 file) ----------------------------
+            // legacyLattice is the caller's decision and follows the FILE'S FORMAT VERSION. Fixture 1 above
+            // exercises only the TRUE branch; without this, forcing the pitch to legacy unconditionally would
+            // pass every assertion in this file while writing a 0.07-pitch index into a v11 save that no
+            // later pass repairs (RecentreFloor/RederivePositions are gated off at v11) and that the render
+            // masks (FootprintOf rule (b)). MutMigrationAlwaysLegacyPitch pins this branch.
+            //
+            // The SAME point 0.60/0.66 as fixture 1's gate, so the two branches are directly comparable:
+            //   CellOf:       0.60 / 0.03 = 20.0  -> 20      0.66 / 0.03 = 22.0  -> 22
+            //   LegacyCellOf: 0.60 / 0.07 =  8.57 ->  8      0.66 / 0.07 =  9.43 ->  9
+            var v11Floor = new InteriorFloor { NextRoomId = 2 };
+            v11Floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.60f, Y = 0.66f, SizeW = 6, SizeH = 6 });
+            v11Floor.SettlementParams = new SettlementParams { Size = SettlementSize.Small, ActiveBuildings = 1 };
+            var v11Town = new InteriorData { OwnerPoiId = "poi-v11-lattice", Kind = InteriorKind.Settlement };
+            v11Town.Floors.Add(v11Floor);
+
+            SettlementFootprint.EnsureFootprints(v11Town, legacyLattice: false);
+            var v11Cells = SettlementFootprint.Decode(v11Floor.GetRoom(1).Cells);
+            if (v11Cells.Count != 1)
+            { Debug.LogError($"FAIL size-migration: the v11-lattice room ended with {v11Cells.Count} cells, want exactly 1"); ok = false; }
+            else if (v11Cells[0] != (20, 22))
+            { Debug.LogError($"FAIL size-migration: EnsureFootprints(legacyLattice: false) stamped cell {v11Cells[0]}, want CellOf(0.60),CellOf(0.66) = (20,22) — NOT LegacyCellOf's ({SettlementFootprint.LegacyCellOf(0.60f)},{SettlementFootprint.LegacyCellOf(0.66f)}). A v11 file stamped on the legacy pitch is wrong data at rest that no later pass repairs."); ok = false; }
 
             // A null floor/interior must degrade, not throw — same contract as EnsureFootprints.
             SettlementMigration.RecentreFloor(null);

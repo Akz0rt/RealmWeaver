@@ -147,18 +147,28 @@ namespace WorldGen.Persistence
             // forgets to widen.
             //   • ApplyDefaults  — a room with a non-positive tile footprint gets its type default (v5-era).
             //   • EnsureFootprints — a SETTLEMENT BUILDING OR GATE with no lattice footprint gets a
-            //     single-cell one, at the LEGACY-pitch cell its stored point falls in (v10, widened to gates
-            //     in v11). Never overwrites an existing footprint, never touches SizeW/SizeH (those are
-            //     TILES; one lattice cell is 3.84 tiles — see that method's doc), and never touches a dungeon
-            //     or a building interior.
+            //     single-cell one, at the cell its stored point falls in (v10, widened to gates in v11).
+            //     Never overwrites an existing footprint, never touches SizeW/SizeH (those are TILES; one
+            //     lattice cell is 3.84 tiles — see that method's doc), and never touches a dungeon or a
+            //     building interior.
+            //
+            //     ITS PITCH FOLLOWS THE FILE, even though the PASS does not. Recovering a cell from a point
+            //     needs to know which lattice that point was authored on, and THIS is the only place that
+            //     knows: a file at format <= 10 was laid out on the 0.07 pitch, a v11 file on 0.03. Passing
+            //     the wrong one writes a cell index that is silently 2.33x out and that nothing later
+            //     repairs — RecentreFloor/RederivePositions below are version-gated OFF at v11 — while
+            //     SettlementTileGrid.FootprintOf rule (b) masks it at render, so it would be wrong data at
+            //     rest with no visible symptom. The pass itself stays ungated (it is idempotent and fires
+            //     only on a room it finds footprint-less); only this argument is version-derived.
             //   • NormalizeLegacyTypes — a POI whose stored type is the removed PoiType.Village (legacy id 5)
             //     becomes a City. Not version-gated for the same reason as its two neighbours above: it fires
             //     only on data it finds legacy, and a version guard is what the next bump forgets to widen.
+            bool legacyLattice = data.FormatVersion <= 10;
             PoiMigration.NormalizeLegacyTypes(result.Pois);
             foreach (var d in result.Dungeons)
             {
                 RoomSizing.ApplyDefaults(d);
-                SettlementFootprint.EnsureFootprints(d);
+                SettlementFootprint.EnsureFootprints(d, legacyLattice);
             }
 
             // v11 lattice migration. VERSION-GATED, unlike its three neighbours above, and BOTH passes are:
@@ -180,7 +190,7 @@ namespace WorldGen.Persistence
             // has no cells for RecentreFloor to move and the town would recentre around whatever subset
             // happened to be footprinted. The `> 0` guard on the legacy count is what makes the size
             // bucketing safe to run on a floor that never carried the old knob at all.
-            if (data.FormatVersion <= 10)
+            if (legacyLattice)
                 foreach (var d in result.Dungeons)
                 {
                     if (d.Kind != InteriorKind.Settlement) continue;
