@@ -583,26 +583,43 @@ namespace WorldGen.Rendering
         // Typed-entry commit: parses on end-edit and clamps into the same 0..guarantee range
         // StepActiveBuildings enforces, reading the same SettlementSizing.GuaranteedMinBuildings
         // expression the caption shows — the shown cap and the enforced cap can never drift. Unparseable
-        // or empty input leaves sp.ActiveBuildings untouched (restores, doesn't zero). Either way this
-        // ends in the exact Rebuild()+OnChanged shape StepActiveBuildings already uses — Rebuild() is also
-        // what redraws the field back to whatever the canonical value now is (same "InputField commits on
-        // onEndEdit, so a rebuild never loses a pending edit" contract the class doc states).
+        // or empty input leaves sp.ActiveBuildings untouched (restores, doesn't zero). Parses as a long
+        // (not int) so an oversized paste like "99999999999999" still clamps down to the size's
+        // guarantee instead of overflowing int.TryParse into "unparseable" and wrongly restoring the old
+        // value. Either way this ends in the exact Rebuild()+OnChanged shape StepActiveBuildings already
+        // uses — Rebuild() is also what redraws the field back to whatever the canonical value now is
+        // (same "InputField commits on onEndEdit, so a rebuild never loses a pending edit" contract the
+        // class doc states).
         //
-        // Unlike every other onEndEdit handler in this file, this one calls Rebuild() from INSIDE the
-        // field's own onEndEdit — which destroys the very InputField the event is firing on. Legacy
-        // InputField can re-enter DeactivateInputField from OnDisable/OnDestroy during that teardown and
-        // fire onEndEdit a second time; committingActiveBuildings makes that re-entry a no-op instead of a
-        // second Rebuild()+OnChanged round trip.
+        // committingActiveBuildings is defensive re-entrancy insurance, not a fix for a confirmed bug:
+        // tracing InputField's own commit path shows DeactivateInputField() sets m_AllowInput = false
+        // BEFORE invoking SendOnEndEdit(), so the deferred Destroy() this method triggers (via Rebuild())
+        // hits that same guard on its own later OnDisable → DeactivateInputField and does not re-fire
+        // onEndEdit through this specific path. The latch stays anyway as cheap insurance against any
+        // OTHER synchronous re-entrant call Rebuild()/OnChanged might one day trigger, and is wrapped in
+        // try/finally so a throw from either can never leave it stuck true — an unreleased latch would
+        // silently freeze the field: keystrokes still register, but every commit returns early at the
+        // guard and never writes sp.ActiveBuildings or redraws again for the rest of the session.
         void CommitActiveBuildingsTyped(SettlementParams sp, string typed)
         {
             if (committingActiveBuildings) return;
             committingActiveBuildings = true;
-            int parsed;
-            if (int.TryParse(typed, out parsed))
-                sp.ActiveBuildings = Mathf.Clamp(parsed, 0, SettlementSizing.GuaranteedMinBuildings(sp.Size));
-            Rebuild();
-            OnChanged?.Invoke();
-            committingActiveBuildings = false;
+            try
+            {
+                long parsed;
+                if (long.TryParse(typed, out parsed))
+                {
+                    long cap = SettlementSizing.GuaranteedMinBuildings(sp.Size);
+                    long clamped = parsed < 0 ? 0 : (parsed > cap ? cap : parsed);
+                    sp.ActiveBuildings = (int)clamped;
+                }
+                Rebuild();
+                OnChanged?.Invoke();
+            }
+            finally
+            {
+                committingActiveBuildings = false;
+            }
         }
 
         // Task E: choice-button handler for the 3-way size picker. Unlike the old StepSize's ±1 nudge,
