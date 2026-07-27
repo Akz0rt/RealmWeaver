@@ -132,13 +132,13 @@ namespace WorldGen.Rendering
             // not stored (InteriorFloor.Wall was removed), so there is no separate wall assignment.
             if (editingDungeon.Kind == InteriorKind.Settlement && editingDungeon.Floors.Count == 0)
             {
-                var (total, activeN) = SettlementDefaults(poi.Type);
+                var (size, activeN) = SettlementDefaults(poi.Type);
                 var cfg = new WorldGen.Generation.SettlementConfig
                 {
                     Seed = SettlementSeed(poi),
-                    TargetBuildings = total,
+                    Size = size,
                     ActiveBuildings = activeN,
-                    HasWall = poi.Type == PoiType.City,
+                    HasWall = true,
                 };
                 editingDungeon.Floors.AddRange(WorldGen.Generation.SettlementGenerator.Generate(cfg, poi.Id).Floors);
             }
@@ -211,16 +211,20 @@ namespace WorldGen.Rendering
             }
         }
 
-        // Ц1.5 per-type composition defaults: a City is a walled town, a Village an open one.
-        // (total buildings, of which active.) Halved from the Ц1 draft per DM feedback.
-        static (int total, int active) SettlementDefaults(PoiType type)
-        {
-            switch (type)
-            {
-                case PoiType.City:    return (20, 5);
-                default:              return (10, 3);
-            }
-        }
+        /// <summary>What a settlement POI generates as before the DM touches anything: a SIZE CLASS and how
+        /// many of its buildings start out active (a real place with a name/description/interior, as opposed
+        /// to a decorative dummy).
+        ///
+        /// ONE ROW, NOT A PER-TYPE TABLE. PoiType.Village no longer exists (task A removed it) and the type
+        /// that remains — City — is the only settlement type there is, so switching on it would be a table
+        /// with one meaningful row and a `default` nothing reaches. Size is what distinguishes a hamlet from a
+        /// capital now, and the DM sets it in the editor; a fresh town starts Medium so it is obviously
+        /// adjustable in both directions.
+        ///
+        /// HasWall is likewise no longer derived from the POI type (see the call site, which passes true): the
+        /// wall is the DM's own «Со стеной» choice, stored on SettlementParams.HasWall, and deriving a default
+        /// from a type that no longer varies would just be a second opinion about it.</summary>
+        static (SettlementSize size, int active) SettlementDefaults(PoiType type) => (SettlementSize.Medium, 5);
 
         /// <summary>Wired to DungeonEditorScreen.OnCloseRequested (the top-strip back button) — the SAME
         /// single handler for both of its meanings. When a building interior is open (parentTown != null),

@@ -17,9 +17,11 @@ namespace WorldGen.Generation
     /// RoadReuseFactor (< 1) for cells earlier roads already claimed — arterials come first in the input,
     /// so branches merge into arterial lanes and junctions read as T-junctions.
     ///
-    /// Cost: the mask is O(grid); each A* is bounded by the fixed grid (≤ ~10k cells at the 80-building
-    /// cap), so a full Build is linear in edge count — contrast BuildRenderGraph(Clean)'s per-link Hanan
-    /// grid over all rooms, which measured 20–34 s at 60 nodes.
+    /// Cost: the mask is O(grid); each A* is bounded by the fixed grid, so a full Build is linear in edge
+    /// count — contrast BuildRenderGraph(Clean)'s per-link Hanan grid over all rooms, which measured 20–34 s
+    /// at 60 nodes. The grid is sized by the town's TILE extent, which the v11 pitch SHRANK even as the
+    /// building count grew: a Large town is 9.1 cells of radius = ~70 tiles across, ~6k cells, against the
+    /// ~10k the old 80-building cap reached at 0.07. SelfTestRoadsPerf times the largest size class.
     ///
     /// Ц2.6: the fence is DERIVED FROM the roads (SettlementFence.Derive wraps whatever the roads do), so
     /// the wall is no longer a road obstacle — the Ц1.7 wall-blocking rule this class used to enforce is
@@ -28,19 +30,26 @@ namespace WorldGen.Generation
     {
         /// <summary>How far a road keeps clear of a building, in tiles.
         ///
-        /// ITS OWN DERIVATION WAS STALE (fixed arc A, task 3): this constant used to be justified by "the
-        /// inter-building free gap is ~2.96 tiles (pitch 8.96 − footprint 6)", which was true back when a
-        /// settlement building's road node came from a fixed 6-tile EffectiveSize regardless of its actual
-        /// footprint. Since DungeonLayout.LinkNodeFor started sizing a settlement building's road node from
-        /// its own FOOTPRINT, a flush building's node spans its WHOLE lattice cell — (extent+1) * Pitch,
-        /// 8.96 tiles for a single-cell house — so that 2.96-tile gap no longer exists: two flush buildings'
-        /// node rects meet with nothing between them. What RoadClearanceTiles actually carves lane-room out
-        /// of now is the STREET cell itself: a road only ever runs on a cell SettlementBlocks marked as
-        /// street, exactly one cell (8.96 tiles) wide, so clearance eats into that lane from both sides —
-        /// 8.96 − 2*1.0 = 6.96 tiles left to route in. The constant's VALUE still works (that lane is still
-        /// comfortably wide enough to route and read as a road); only the comment's derivation was wrong.
+        /// WHAT IT CARVES LANE-ROOM OUT OF. A settlement building's road node is its FOOTPRINT's cell bbox
+        /// (DungeonLayout.LinkNodeFor), so a flush building's node spans its WHOLE lattice cells and two flush
+        /// buildings' rects meet with nothing between them. The only free lane is therefore the STREET cell
+        /// itself — a road only ever runs on a cell SettlementBlocks marked as street, exactly one cell wide —
+        /// and clearance eats into that lane from both sides.
+        ///
+        /// THE LANE GOT 2.33x NARROWER AT THE v11 PITCH, AND THE VALUE STILL HOLDS (measured by derivation,
+        /// task B). A cell was 8.96 tiles (pitch 0.07) and left 8.96 − 2*1.0 = 6.96 tiles to route in; it is
+        /// 3.84 tiles now (pitch 0.03) and leaves 1.84. That is not "roughly one column" hand-waving: with the
+        /// cell's left edge at tile 3.84·s = m + u (m integer, u the fraction), the mask blocks x ≤ m+1 from
+        /// the left neighbour and x ≥ ceil(m+u+2.84) from the right, so the free integer columns run m+2
+        /// .. ceil(m+u+2.84)−1 — exactly ONE when u ≤ 0.16 and TWO otherwise. Never zero, so a lane is always
+        /// routable, and the clearance the router then delivers is ≥ 1.0 on both sides in both cases (the
+        /// tightest is x = m+3 against the right edge at m+u+3.84, i.e. u+0.84 > 1.0 precisely when that column
+        /// is free at all). SelfTestRoads assertion 5 checks this against the real generated town rather than
+        /// against this paragraph.
+        ///
         /// Ц2.6 bumped it from 0.5 (tuned back when it also doubled as the wall clearance, before the wall
-        /// stopped being a road obstacle). TUNABLE — the user eyeballs it.</summary>
+        /// stopped being a road obstacle). TUNABLE — the user eyeballs it — but note that at the v11 pitch the
+        /// headroom above is one tile, not five: raising it to 2.0 would close every lane in town.</summary>
         public const float RoadClearanceTiles = 1.0f;
 
         /// <summary>A* pays this many tiles per 90° turn — straight, readable roads. TUNABLE.</summary>

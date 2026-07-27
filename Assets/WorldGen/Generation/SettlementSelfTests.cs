@@ -72,20 +72,20 @@ namespace WorldGen.Rendering
         public void SelfTestGates()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
-            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var cfg = new SettlementConfig { Seed = 3, Size = SettlementSize.Medium, HasWall = true };
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
 
             // ---- 1. The notional wall contour is a non-null, sane contour --------------------------------
             if (wall == null || !wall.IsClosedSane())
             { Debug.LogError("FAIL gates: notional wall contour null/insane"); ok = false; }
 
             // ---- 3. PlaceGates honours the requested count, and GateCountFor is in 2..4 ----------------
-            int want = SettlementGenerator.GateCountFor(cfg.TargetBuildings);
+            int want = SettlementGenerator.GateCountFor(cfg.Size);
             var gates = SettlementGenerator.PlaceGates(wall, want, cfg.Seed);
             if (gates.Count != want)
             { Debug.LogError($"FAIL gates: asked for {want} gates, placed {gates.Count}"); ok = false; }
             if (want < 2 || want > 4)
-            { Debug.LogError($"FAIL gates: GateCountFor({cfg.TargetBuildings}) = {want}, want 2..4"); ok = false; }
+            { Debug.LogError($"FAIL gates: GateCountFor({cfg.Size}) = {want}, want 2..4"); ok = false; }
 
             // ---- 4. EVERY gate lies ON the wall line ----------------------------------------------------
             // Place gates at the centre instead of on the wall and each of these fires with its distance.
@@ -134,7 +134,7 @@ namespace WorldGen.Rendering
             //     must not contain the middle of town.
             var floor = SettlementGenerator.BuildFloor(cfg);
             var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
-                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+                SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var streetSet = new System.Collections.Generic.HashSet<(int i, int j)>(
                 SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
             var interior = SettlementBlocks.InteriorCells(placement);
@@ -164,7 +164,7 @@ namespace WorldGen.Rendering
             // A walled town always opens at least the two ends of its primary street (SettlementBlocks
             // .PlaceGates' fallback guarantees two even for a town too small to cut).
             if (gateRooms < 2)
-            { Debug.LogError($"FAIL gates: a walled {cfg.TargetBuildings}-target town produced {gateRooms} gate rooms, want >=2"); ok = false; }
+            { Debug.LogError($"FAIL gates: a walled {cfg.Size} town produced {gateRooms} gate rooms, want >=2"); ok = false; }
 
             if (ok) Debug.Log("Settlement Gates: PASS");
         }
@@ -173,9 +173,9 @@ namespace WorldGen.Rendering
         public void SelfTestBuildings()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 11, TargetBuildings = 40, HasWall = true };
-            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            var cfg = new SettlementConfig { Seed = 11, Size = SettlementSize.Medium, HasWall = true };
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
 
             // ---- 1. EVERY building centre is inside the wall -------------------------------------------
             // Drop the Contains filter and cells outside the rounded contour leak in at the bbox corners.
@@ -217,11 +217,11 @@ namespace WorldGen.Rendering
             // wall must fit a substantial fraction; catch a placement that silently yields near-zero.
             if (buildings.Count < 20)
             { Debug.LogError($"FAIL buildings: a 40-target town produced only {buildings.Count} buildings"); ok = false; }
-            if (buildings.Count > cfg.TargetBuildings)
-            { Debug.LogError($"FAIL buildings: produced {buildings.Count}, more than the {cfg.TargetBuildings} target"); ok = false; }
+            if (buildings.Count > SettlementSizing.TargetBuildings(cfg.Size))
+            { Debug.LogError($"FAIL buildings: produced {buildings.Count}, more than the {SettlementSizing.TargetBuildings(cfg.Size)} target for {cfg.Size}"); ok = false; }
 
             // ---- 5. Determinism ------------------------------------------------------------------------
-            var b2 = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            var b2 = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
             if (b2.Count != buildings.Count || (buildings.Count > 0 && (b2[0].X != buildings[0].X || b2[0].Y != buildings[0].Y)))
             { Debug.LogError("FAIL buildings: two seed-11 placements differ — not deterministic"); ok = false; }
 
@@ -232,10 +232,10 @@ namespace WorldGen.Rendering
         public void SelfTestStreets()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 5, TargetBuildings = 40, HasWall = true };
-            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var gates = SettlementGenerator.PlaceGates(wall, SettlementGenerator.GateCountFor(cfg.TargetBuildings), cfg.Seed);
-            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, cfg.TargetBuildings);
+            var cfg = new SettlementConfig { Seed = 5, Size = SettlementSize.Medium, HasWall = true };
+            var wall = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var gates = SettlementGenerator.PlaceGates(wall, SettlementGenerator.GateCountFor(cfg.Size), cfg.Seed);
+            var buildings = SettlementGenerator.PlaceBuildings(wall, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
             var edges = SettlementStreets.GenerateStreets(wall, buildings, gates, cfg.Seed);
 
             int nGates = gates.Count, nNodes = gates.Count + buildings.Count;
@@ -270,10 +270,10 @@ namespace WorldGen.Rendering
 
             // ---- 4. Perf threshold: 80 buildings route in well under a frame ----------------------------
             // The whole reason this stage exists instead of BuildRenderGraph(Clean), which took 20–34 s at 60.
-            var bigCfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, HasWall = true };
-            var bw = WallContour.Rounded(bigCfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(bigCfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var bg = SettlementGenerator.PlaceGates(bw, SettlementGenerator.GateCountFor(bigCfg.TargetBuildings), bigCfg.Seed);
-            var bb = SettlementGenerator.PlaceBuildings(bw, bigCfg.Seed, bigCfg.TargetBuildings);
+            var bigCfg = new SettlementConfig { Seed = 9, Size = SettlementSize.Large, HasWall = true };
+            var bw = WallContour.Rounded(bigCfg.Seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(bigCfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var bg = SettlementGenerator.PlaceGates(bw, SettlementGenerator.GateCountFor(bigCfg.Size), bigCfg.Seed);
+            var bb = SettlementGenerator.PlaceBuildings(bw, bigCfg.Seed, SettlementSizing.TargetBuildings(bigCfg.Size));
             var sw = System.Diagnostics.Stopwatch.StartNew();
             SettlementStreets.GenerateStreets(bw, bb, bg, bigCfg.Seed);
             sw.Stop();
@@ -314,7 +314,7 @@ namespace WorldGen.Rendering
         public void SelfTestAssembly()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 2, TargetBuildings = 40, HasWall = true };
+            var cfg = new SettlementConfig { Seed = 2, Size = SettlementSize.Medium, HasWall = true };
             var data = SettlementGenerator.Generate(cfg, "poi-town");
 
             // ---- 1. Shape: one floor, Kind Settlement, owner set --------------------------------------
@@ -339,7 +339,7 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL assembly: {gateNodes} gate nodes, want ≥2"); ok = false; }
             // RE-DERIVED from 20 (arc A, task 3). The old 20 was HALF the 40-building target, and half was
             // attainable when a building was one lattice cell and PlaceBuildings simply kept up to `target`
-            // of the ~68 cells a WallRadiusFor(40) interior holds. A town is now blocks-and-streets: the
+            // of the ~68 cells the old count-derived radius held. A town is now blocks-and-streets: the
             // one-cell ring plus the subdivision strips take roughly HALF the interior before a single house
             // is placed, so half the target is no longer reachable at any seed — the number had to move or
             // it would be asserting the old model.
@@ -371,8 +371,8 @@ namespace WorldGen.Rendering
             // primitives here, never read back off `floor`, so it stays an independent check of the assembly
             // wiring rather than a tautology.
             var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
-                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var exLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.TargetBuildings);
+                SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var exLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
             var exGates = new System.Collections.Generic.List<GatePoint>();
             foreach (var gc in exLayout.GateCells)   // cfg.HasWall is true for this fixture
                 exGates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
@@ -444,7 +444,7 @@ namespace WorldGen.Rendering
         public void SelfTestVillage()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 4, TargetBuildings = 40, HasWall = false };
+            var cfg = new SettlementConfig { Seed = 4, Size = SettlementSize.Medium, HasWall = false };
             var data = SettlementGenerator.Generate(cfg, "poi-village");
             var floor = data.Floors[0];
 
@@ -485,8 +485,8 @@ namespace WorldGen.Rendering
             // floor.Links (built by the real BuildFloor) must carry that identical edge set, one-to-one by
             // room id (id = node index + 1 for a gate-less town, since gates.Count == 0).
             var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
-                SettlementGenerator.WallRadiusFor(cfg.TargetBuildings), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var exBuildings = SettlementGenerator.PlaceBuildings(exPlacement, cfg.Seed, cfg.TargetBuildings);
+                SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+            var exBuildings = SettlementGenerator.PlaceBuildings(exPlacement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
             var exGates = new System.Collections.Generic.List<GatePoint>();
             var exEdges = SettlementStreets.GenerateStreets(exPlacement, exBuildings, exGates, cfg.Seed);
 
@@ -516,7 +516,7 @@ namespace WorldGen.Rendering
             // floor.Links against 3a's edge list now compares two different towns. This half therefore
             // re-derives the nodes the way BuildFloor does — SettlementBlocks.Generate, footprint
             // representatives, no gates for a village — and compares against THOSE.
-            var blLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.TargetBuildings);
+            var blLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
             var blBuildings = new System.Collections.Generic.List<PlacedBuilding>();
             foreach (var fp in blLayout.Buildings)
             {
@@ -581,7 +581,7 @@ namespace WorldGen.Rendering
         public void SelfTestActiveBuildings()
         {
             bool ok = true;
-            var cfg = new SettlementConfig { Seed = 6, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var cfg = new SettlementConfig { Seed = 6, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.Generate(cfg, "poi-city").Floors[0];
 
             // ---- 1. Exactly min(Active, placed) buildings active; rest dummy; gates never dummy ----------
@@ -601,9 +601,9 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL active: {gateDummies} gate(s) marked dummy — a gate is never a dummy"); ok = false; }
 
             // ---- 2. The stored params carry the config ------------------------------------------------
-            if (floor.SettlementParams == null || floor.SettlementParams.TargetBuildings != cfg.TargetBuildings
+            if (floor.SettlementParams == null || floor.SettlementParams.Size != cfg.Size
                 || floor.SettlementParams.ActiveBuildings != cfg.ActiveBuildings)
-            { Debug.LogError("FAIL active: floor.SettlementParams did not store the config's Target/Active"); ok = false; }
+            { Debug.LogError($"FAIL active: floor.SettlementParams stored {floor.SettlementParams?.Size}/{floor.SettlementParams?.ActiveBuildings}, want the config's {cfg.Size}/{cfg.ActiveBuildings}"); ok = false; }
 
             // ---- 3. Determinism: same seed → identical IsDummy per room ---------------------------------
             var f2 = SettlementGenerator.Generate(cfg, "poi-city").Floors[0];
@@ -612,7 +612,7 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL active: room index {i} (id {floor.Rooms[i].Id}) IsDummy differs between two seed-6 runs"); ok = false; break; }
 
             // ---- 4. A wall-less camp with a tiny active count marks correctly too -----------------------
-            var camp = SettlementGenerator.Generate(new SettlementConfig { Seed = 6, TargetBuildings = 5, ActiveBuildings = 2, HasWall = false }, "poi-camp").Floors[0];
+            var camp = SettlementGenerator.Generate(new SettlementConfig { Seed = 6, Size = SettlementSize.Small, ActiveBuildings = 2, HasWall = false }, "poi-camp").Floors[0];
             int campPlaced = 0, campActive = 0;
             foreach (var r in camp.Rooms) if (r.TypeId == 1) { campPlaced++; if (!r.IsDummy) campActive++; }
             if (campActive != System.Math.Min(2, campPlaced))
@@ -642,7 +642,7 @@ namespace WorldGen.Rendering
             // on screen (exactly what FitBoundsFor does). The fence is TILE space already, so read it with
             // tileSpace: true (no ×T); a double-scale would both falsely satisfy "extends past" AND blow the
             // field, so the explicit magnitude guard below pins the tile-space path. ----
-            var cfg = new SettlementConfig { Seed = 3, TargetBuildings = 40, HasWall = true };
+            var cfg = new SettlementConfig { Seed = 3, Size = SettlementSize.Medium, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var fence = DungeonLayout.DeriveTownFence(floor, includeRoads: true);
             if (fence == null || !fence.IsClosedSane())
@@ -754,11 +754,11 @@ namespace WorldGen.Rendering
         public void SelfTestRoads()
         {
             bool ok = true;
-            // Field names verified against SettlementConfig (Seed / TargetBuildings / ActiveBuildings /
+            // Field names verified against SettlementConfig (Seed / Size / ActiveBuildings /
             // HasWall) and the initializer shape the other settlement tests use.
             // Seed pinned to 1 (kept from the Ц1.7 fixture — still a normal generated+dragged town, no
             // reason to re-pin now the wall obstacle is gone).
-            var cfg = new SettlementConfig { Seed = 1, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            var cfg = new SettlementConfig { Seed = 1, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
 
             void AssertClean(InteriorFloor lvl, string label)
@@ -907,7 +907,7 @@ namespace WorldGen.Rendering
             // SAY IT PLAINLY: at radius 2 the destination is OUTSIDE the wall/interior, not a lot two doors
             // down. "Dragged" here now means "dragged clear of the town", not "nudged one lot over" — still a
             // genuine whole-cell relocation FootprintOf must re-derive, just not the in-town nudge the name
-            // might suggest. A larger TargetBuildings for this fixture would likely grow real courtyard cells
+            // might suggest. A larger Size for this fixture would likely grow real courtyard cells
             // (§10 concern 4 in task-A3-report.md) and could keep the drag adjacent, but that is a fixture
             // change beyond this pass's scope — not made here.
             bool TryNearestFree((int i, int j) origin, out int di, out int dj)
@@ -1014,7 +1014,18 @@ namespace WorldGen.Rendering
             // MutRoadsNoReuse build, task-A3-report.md): the real router merges on 288 of 300 seeds and 222
             // of them discriminate, so the discount's merge behaviour is emphatically intact and this is a
             // fixture ripple. Seed 1 is the FIRST discriminating seed and is otherwise unremarkable.
-            var cfg = new SettlementConfig { Seed = 1, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            //
+            // Re-pinned 1->28 (arc C.2, task B), and this one is a LATTICE ripple rather than a model change:
+            // the pitch went 0.07 -> 0.03 and the town's radius is a size class now, so the A* grid, every
+            // lane and every gate moved. Seed 1 stopped merging at all. Same discipline as the two re-pins
+            // above — SCANNED before re-pinning, not picked: seeds 1..300, this exact fixture shape (Small /
+            // 5 active / walled), real router vs the MutRoadsNoReuse build. The real router merges on 81 of
+            // 300 and 26 of those DISCRIMINATE (real merges, the no-discount build does not), so the reuse
+            // discount's merge behaviour is intact and this is a fixture ripple. Merges got rarer — a 3.84-
+            // tile cell leaves a 1.84-tile lane, so there is far less room for two roads to share a stretch —
+            // which is a consequence of the finer lattice, not of the discount. 28 is the FIRST discriminating
+            // seed and is otherwise unremarkable.
+            var cfg = new SettlementConfig { Seed = 28, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
             var g = SettlementRoads.Build(nodes, edges);
@@ -1062,7 +1073,7 @@ namespace WorldGen.Rendering
             // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the 80-building cap
             // must stay under the settle-path budget. 50 ms mirrors SelfTestStreets' bound; the per-frame
             // budget (if RoadsDuringDrag) was measured separately by the spike.
-            var cfg = new SettlementConfig { Seed = 9, TargetBuildings = 80, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
+            var cfg = new SettlementConfig { Seed = 9, Size = SettlementSize.Large, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
 
@@ -1290,10 +1301,12 @@ namespace WorldGen.Rendering
             bool ok = true;
 
             // A settlement floor exactly as an EXISTING save carries it: building rooms with X/Y and NO Cells
-            // key at all. Expected cells are HAND-DERIVED from the fixed lattice (cell i spans
-            // [i*Pitch, (i+1)*Pitch), Pitch = 0.07), never read back from the implementation:
+            // key at all. Expected cells are HAND-DERIVED from the LEGACY lattice — EnsureFootprints derives a
+            // missing footprint with LegacyCellOf, because a room with no footprint can only have come from a
+            // pre-v11 save, which was authored on the 0.07 pitch (cell i spans [i*LegacyPitch,
+            // (i+1)*LegacyPitch)). Never read back from the implementation:
             //     0.30 / 0.07 =  4.2857… -> floor 4        0.05 / 0.07 =  0.7142… -> floor 0
-            //     0.72 / 0.07 = 10.2857… -> floor 10
+            //     0.72 / 0.07 = 10.2857… -> floor 10       0.50 / 0.07 =  7.1428… -> floor 7
             var floor = new InteriorFloor();
             floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.3f, Y = 0.3f, SizeW = 6, SizeH = 6 });
             floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.05f, Y = 0.72f, SizeW = 6, SizeH = 6 });
@@ -1320,15 +1333,16 @@ namespace WorldGen.Rendering
             Expect(1, 4, 4, "no footprint in the save");
             Expect(2, 0, 10, "no footprint in the save");
             Expect(4, 9, 9, "already had a footprint, must NOT be overwritten");
-
-            // A gate (TypeId 0) is not a building: it must stay footprint-less.
-            var gate = floor.GetRoom(3);
-            if (gate.Cells != null)
-            { Debug.LogError($"FAIL footprint-migration: gate room 3 got a footprint of {gate.Cells.Length} ints, want none (Cells stays null)"); ok = false; }
+            // A GATE (TypeId 0) GETS ONE TOO, from v11. It used to be required to stay footprint-less; the
+            // v11 lattice migration moves a town by translating its CELLS, so a cell-less gate would be the
+            // one node left standing in the middle of the field while the town moved around it. Its cell is
+            // LegacyCellOf(0.5) = 7 on both axes — hand-derived above, and deliberately NOT CellOf(0.5) = 16,
+            // which is what a migration reading a legacy point on the current lattice would produce.
+            Expect(3, 7, 7, "a gate gets its ring cell too (v11), on the LEGACY pitch");
 
             // THE LANDMINE. The footprint is a SEPARATE field: SizeW/SizeH are TILES (one lattice cell is
-            // 0.07 * 128 ≈ 8.96 tiles), so a migration that reinterpreted them as cells would inflate every
-            // saved town ~54x in area, silently, on load. Pin that this pass never writes them.
+            // 0.03 * 128 = 3.84 tiles), so a migration that reinterpreted them as cells would rewrite every
+            // saved town's scale, silently, on load. Pin that this pass never writes them.
             foreach (var r in floor.Rooms)
             {
                 int wantW = r.TypeId == 0 ? 7 : 6, wantH = r.TypeId == 0 ? 5 : 6;
@@ -1381,6 +1395,198 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Footprint Migration: PASS");
         }
 
+        [ContextMenu("Self-Test: Settlement Sizing")]
+        public void SelfTestSizing()
+        {
+            bool ok = true;
+
+            // The table must be monotone in every column — a bigger town is never smaller, never has fewer
+            // gates, never promises fewer buildings. This is the property the whole UI rests on.
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            for (int k = 1; k < sizes.Length; k++)
+            {
+                if (SettlementSizing.WallRadiusCells(sizes[k]) <= SettlementSizing.WallRadiusCells(sizes[k - 1]))
+                { Debug.LogError($"FAIL sizing: radius {SettlementSizing.WallRadiusCells(sizes[k])} at {sizes[k]} is not greater than {SettlementSizing.WallRadiusCells(sizes[k - 1])} at {sizes[k - 1]}"); ok = false; }
+                if (SettlementSizing.TargetBuildings(sizes[k]) <= SettlementSizing.TargetBuildings(sizes[k - 1]))
+                { Debug.LogError($"FAIL sizing: target {SettlementSizing.TargetBuildings(sizes[k])} at {sizes[k]} is not greater than at {sizes[k - 1]}"); ok = false; }
+                if (SettlementSizing.GateCount(sizes[k]) < SettlementSizing.GateCount(sizes[k - 1]))
+                { Debug.LogError($"FAIL sizing: gate count {SettlementSizing.GateCount(sizes[k])} at {sizes[k]} is below {SettlementSizing.GateCount(sizes[k - 1])} at {sizes[k - 1]}"); ok = false; }
+            }
+
+            // The guarantee must be a PROMISE, i.e. strictly below the target it is promised against —
+            // a minimum equal to the target is the exact lie TargetBuildings used to tell.
+            foreach (var s in sizes)
+            {
+                if (SettlementSizing.GuaranteedMinBuildings(s) >= SettlementSizing.TargetBuildings(s))
+                { Debug.LogError($"FAIL sizing: {s} guarantees {SettlementSizing.GuaranteedMinBuildings(s)} against a target of {SettlementSizing.TargetBuildings(s)} — a guarantee must be below the target"); ok = false; }
+                if (SettlementSizing.GuaranteedMinBuildings(s) < 1)
+                { Debug.LogError($"FAIL sizing: {s} guarantees {SettlementSizing.GuaranteedMinBuildings(s)} buildings"); ok = false; }
+            }
+
+            // THE FIELD BOUND. The largest town plus its wall must fit inside the drag clamp's 0.04..0.96,
+            // centred on 0.5 — this is the constraint that forced the pitch change, and nothing may quietly
+            // grow past it later.
+            float rNorm = SettlementSizing.WallRadiusNorm(SettlementSize.Large);
+            if (0.5f - rNorm < 0.04f || 0.5f + rNorm > 0.96f)
+            { Debug.LogError($"FAIL sizing: a Large town's wall radius {rNorm} normalized leaves the 0.04..0.96 field (spans {0.5f - rNorm}..{0.5f + rNorm})"); ok = false; }
+
+            // Legacy bucketing: the two shipped defaults (10 and 20) and the old default 40 must land where
+            // the spec says, and the boundaries are inclusive on the low side.
+            if (SettlementSizing.FromLegacyTarget(10) != SettlementSize.Small ||
+                SettlementSizing.FromLegacyTarget(20) != SettlementSize.Small ||
+                SettlementSizing.FromLegacyTarget(30) != SettlementSize.Small)
+            { Debug.LogError($"FAIL sizing: legacy 10/20/30 bucketed to {SettlementSizing.FromLegacyTarget(10)}/{SettlementSizing.FromLegacyTarget(20)}/{SettlementSizing.FromLegacyTarget(30)}, want Small"); ok = false; }
+            if (SettlementSizing.FromLegacyTarget(31) != SettlementSize.Medium || SettlementSizing.FromLegacyTarget(80) != SettlementSize.Medium)
+            { Debug.LogError($"FAIL sizing: legacy 31/80 bucketed to {SettlementSizing.FromLegacyTarget(31)}/{SettlementSizing.FromLegacyTarget(80)}, want Medium"); ok = false; }
+            if (SettlementSizing.FromLegacyTarget(81) != SettlementSize.Large)
+            { Debug.LogError($"FAIL sizing: legacy 81 bucketed to {SettlementSizing.FromLegacyTarget(81)}, want Large"); ok = false; }
+
+            if (ok) Debug.Log("Settlement Sizing: PASS");
+        }
+
+        [ContextMenu("Self-Test: Settlement Size Migration")]
+        public void SelfTestSizeMigration()
+        {
+            bool ok = true;
+
+            // A pre-v11 settlement floor exactly as a save carries one, and deliberately OFF-CENTRE — the
+            // whole point of the migration is that a legacy town's cell indices, re-read on the finer v11
+            // lattice, land at 3/7 of their old normalized position, i.e. off in a corner. Every expected
+            // value below is HAND-DERIVED from the two pitches, never read back from the implementation:
+            //
+            //   LEGACY pitch 0.07:  0.60 / 0.07 = 8.571… -> cell 8      0.66 / 0.07 = 9.428… -> cell 9
+            //   CURRENT pitch 0.03: 0.50 / 0.03 = 16.66… -> cell 16   (the field's centre cell)
+            //
+            // Room 1 is a GATE with X/Y and NO cells (a pre-v11 save never stored one) — EnsureFootprints
+            // must give it exactly one, at the LEGACY cell (8,9). Rooms 2 and 3 are buildings that ALREADY
+            // carry adjacent legacy cells (8,8) and (9,8). Two street cells sit a row below at j = 7.
+            var floor = new InteriorFloor { NextRoomId = 4 };
+            floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.60f, Y = 0.66f, SizeW = 7, SizeH = 5 });
+            floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.595f, Y = 0.595f, SizeW = 6, SizeH = 6,
+                Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (8, 8) }) });
+            floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.665f, Y = 0.595f, SizeW = 6, SizeH = 6,
+                Cells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (9, 8) }) });
+            floor.SettlementParams = new SettlementParams
+            {
+                Size = SettlementSize.Small,
+                ActiveBuildings = 2,
+                HasWall = true,
+                StreetCells = SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)> { (8, 7), (9, 7) }),
+            };
+            var town = new InteriorData { OwnerPoiId = "poi-size-migration", Kind = InteriorKind.Settlement };
+            town.Floors.Add(floor);
+
+            // ---- 1. The gate gains EXACTLY ONE cell, at LegacyCellOf of its stored point ----------------
+            // (8,9), not CellOf(0.60)/CellOf(0.66) = (20,22): a footprint-less room can only have come from a
+            // pre-v11 save, so its point means a LEGACY cell. Reading it on the current lattice would fling
+            // the gate 12 cells clear of the town it belongs to — MutMigrationCurrentPitch is exactly that.
+            SettlementFootprint.EnsureFootprints(town);
+            var gateCells = SettlementFootprint.Decode(floor.GetRoom(1).Cells);
+            int wantGi = SettlementFootprint.LegacyCellOf(0.60f), wantGj = SettlementFootprint.LegacyCellOf(0.66f);
+            if (gateCells.Count != 1)
+            { Debug.LogError($"FAIL size-migration: the gate (room 1) ended with {gateCells.Count} cells, want exactly 1"); ok = false; }
+            else if (gateCells[0] != (8, 9) || gateCells[0] != (wantGi, wantGj))
+            { Debug.LogError($"FAIL size-migration: the gate's cell is {gateCells[0]}, want (8,9) — LegacyCellOf(0.60),LegacyCellOf(0.66) = ({wantGi},{wantGj}), NOT CellOf's ({SettlementFootprint.CellOf(0.60f)},{SettlementFootprint.CellOf(0.66f)})"); ok = false; }
+
+            // Non-vacuity, asserted rather than assumed: the two pitches must actually DISAGREE here, or the
+            // assertion above would pass for a migration that used either one.
+            if (SettlementFootprint.LegacyCellOf(0.60f) == SettlementFootprint.CellOf(0.60f))
+            { Debug.LogError($"FAIL size-migration: LegacyCellOf and CellOf both map 0.60 to cell {SettlementFootprint.CellOf(0.60f)} — the pitch assertion above cannot discriminate"); ok = false; }
+
+            // ---- 2. The town is OFF-CENTRE before the migration runs (the fixture is worth something) ---
+            var (b0MinI, b0MinJ, b0MaxI, b0MaxJ) = TownCellBounds(floor);
+            int centreCell = SettlementFootprint.CellOf(0.5f);
+            if (b0MinI != 8 || b0MaxI != 9 || b0MinJ != 7 || b0MaxJ != 9)
+            { Debug.LogError($"FAIL size-migration: the fixture's pre-migration cell bbox is ({b0MinI}..{b0MaxI},{b0MinJ}..{b0MaxJ}), want (8..9,7..9)"); ok = false; }
+            if ((b0MinI + b0MaxI) / 2 == centreCell)
+            { Debug.LogError($"FAIL size-migration: the fixture is ALREADY centred on cell {centreCell} — RecentreFloor would be a no-op and assertion 3 would prove nothing"); ok = false; }
+
+            // ---- 3. RecentreFloor puts the cell bbox's CENTRE on the field's centre cell, both axes -----
+            // 8+9 = 17, halved (floor) = 8, so every cell moves by 16-8 = +8; likewise 7+9 = 16 -> 8 -> +8.
+            SettlementMigration.RecentreFloor(floor);
+            var (minI, minJ, maxI, maxJ) = TownCellBounds(floor);
+            if ((minI + maxI) / 2 != centreCell || (minJ + maxJ) / 2 != centreCell)
+            { Debug.LogError($"FAIL size-migration: after RecentreFloor the cell bbox ({minI}..{maxI},{minJ}..{maxJ}) has centre ({(minI + maxI) / 2},{(minJ + maxJ) / 2}), want ({centreCell},{centreCell}) on both axes"); ok = false; }
+            if (minI != 16 || maxI != 17 || minJ != 15 || maxJ != 17)
+            { Debug.LogError($"FAIL size-migration: after RecentreFloor the cell bbox is ({minI}..{maxI},{minJ}..{maxJ}), want the hand-derived (16..17,15..17)"); ok = false; }
+
+            // ---- 4. RELATIVE GEOMETRY SURVIVES: the two buildings are STILL flush neighbours ------------
+            // The offset is one COMMON integer delta, so every fact about the town's shape is preserved. A
+            // per-room recentring (each building centred on its own bbox) would collapse both onto one cell.
+            var a = SettlementFootprint.Decode(floor.GetRoom(2).Cells);
+            var b = SettlementFootprint.Decode(floor.GetRoom(3).Cells);
+            if (a.Count != 1 || b.Count != 1)
+            { Debug.LogError($"FAIL size-migration: buildings 2/3 came out with {a.Count}/{b.Count} cells, want 1 each — the translation must not add or drop cells"); ok = false; }
+            else if (b[0].i - a[0].i != 1 || b[0].j != a[0].j)
+            { Debug.LogError($"FAIL size-migration: buildings 2 and 3 are at {a[0]} and {b[0]} — they were flush 4-neighbours (8,8)/(9,8) and must still be"); ok = false; }
+            else if (a[0] != (16, 16) || b[0] != (17, 16))
+            { Debug.LogError($"FAIL size-migration: buildings 2/3 landed at {a[0]}/{b[0]}, want the hand-derived (16,16)/(17,16)"); ok = false; }
+
+            // The streets moved by the SAME delta — they are stored separately from the rooms, so a
+            // migration that translated only Room.Cells would drive every street through a house.
+            var st = SettlementFootprint.Decode(floor.SettlementParams.StreetCells);
+            if (st.Count != 2 || st[0] != (16, 15) || st[1] != (17, 15))
+            { Debug.LogError($"FAIL size-migration: the street cells came out {(st.Count > 0 ? st[0].ToString() : "none")}/{(st.Count > 1 ? st[1].ToString() : "none")} ({st.Count} of them), want (16,15)/(17,15)"); ok = false; }
+
+            // ---- 5. RederivePositions writes each room's point from its OWN cells ------------------------
+            // The load-bearing property is the ROUND TRIP: SettlementTileGrid.FootprintOf treats a
+            // single-cell footprint whose room point falls in a DIFFERENT cell as stale and re-derives it
+            // from the point, so a point that does not land back in its own cell would silently relocate
+            // every one-cell house in town. Checked per room, plus one hand-derived absolute value:
+            // CenterOf(16) = 16.5 * 0.03 = 0.495.
+            SettlementMigration.RederivePositions(town);
+            foreach (var r in floor.Rooms)
+            {
+                var cells = SettlementFootprint.Decode(r.Cells);
+                var (cMinI, cMinJ, cMaxI, cMaxJ) = SettlementFootprint.Bounds(cells);
+                float wantX = (SettlementFootprint.CenterOf(cMinI) + SettlementFootprint.CenterOf(cMaxI)) * 0.5f;
+                float wantY = (SettlementFootprint.CenterOf(cMinJ) + SettlementFootprint.CenterOf(cMaxJ)) * 0.5f;
+                if (System.Math.Abs(r.X - wantX) > SettlementFootprint.Pitch * 0.5f ||
+                    System.Math.Abs(r.Y - wantY) > SettlementFootprint.Pitch * 0.5f)
+                { Debug.LogError($"FAIL size-migration: room {r.Id} sits at ({r.X:F4},{r.Y:F4}), more than half a pitch from its cells' bbox centre ({wantX:F4},{wantY:F4})"); ok = false; }
+                if (SettlementFootprint.CellOf(r.X) != cMinI || SettlementFootprint.CellOf(r.Y) != cMinJ)
+                { Debug.LogError($"FAIL size-migration: room {r.Id}'s point ({r.X:F4},{r.Y:F4}) falls in cell ({SettlementFootprint.CellOf(r.X)},{SettlementFootprint.CellOf(r.Y)}), not its own ({cMinI},{cMinJ}) — FootprintOf would read the footprint as stale"); ok = false; }
+            }
+            var b2 = floor.GetRoom(2);
+            if (System.Math.Abs(b2.X - 0.495f) > 1e-4f || System.Math.Abs(b2.Y - 0.495f) > 1e-4f)
+            { Debug.LogError($"FAIL size-migration: building 2 (cell (16,16)) sits at ({b2.X:F4},{b2.Y:F4}), want the hand-derived (0.4950,0.4950) = CenterOf(16) on both axes"); ok = false; }
+
+            // ---- 6. IDEMPOTENCE: a second RecentreFloor changes nothing at all ---------------------------
+            // It is version-gated at the call site, but a pass that MOVED an already-centred town would make
+            // that gate the only thing standing between the DM and a town that drifts on every load.
+            string Dump(Room r) => r.Cells == null ? "null" : string.Join(",", r.Cells);
+            var snapshot = new System.Collections.Generic.List<string>();
+            foreach (var r in floor.Rooms) snapshot.Add(Dump(r));
+            string streetSnapshot = string.Join(",", floor.SettlementParams.StreetCells);
+            SettlementMigration.RecentreFloor(floor);
+            for (int k = 0; k < floor.Rooms.Count; k++)
+                if (Dump(floor.Rooms[k]) != snapshot[k])
+                { Debug.LogError($"FAIL size-migration: a SECOND RecentreFloor changed room {floor.Rooms[k].Id} from '{snapshot[k]}' to '{Dump(floor.Rooms[k])}' — recentring is not idempotent"); ok = false; }
+            if (string.Join(",", floor.SettlementParams.StreetCells) != streetSnapshot)
+            { Debug.LogError($"FAIL size-migration: a SECOND RecentreFloor changed the street cells from '{streetSnapshot}' to '{string.Join(",", floor.SettlementParams.StreetCells)}'"); ok = false; }
+
+            // A null floor/interior must degrade, not throw — same contract as EnsureFootprints.
+            SettlementMigration.RecentreFloor(null);
+            SettlementMigration.RederivePositions(null);
+
+            if (ok) Debug.Log("Settlement Size Migration: PASS");
+        }
+
+        // The cell bbox over EVERYTHING on a settlement floor — every TypeId 0/1 room's footprint plus the
+        // stored street cells. Re-derived here rather than read off SettlementMigration, so the assertions
+        // above measure the migration instead of asking it to grade itself.
+        static (int minI, int minJ, int maxI, int maxJ) TownCellBounds(InteriorFloor floor)
+        {
+            var all = new System.Collections.Generic.List<(int i, int j)>();
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId != 0 && r.TypeId != 1) continue;
+                all.AddRange(SettlementFootprint.Decode(r.Cells));
+            }
+            all.AddRange(SettlementFootprint.Decode(floor.SettlementParams?.StreetCells));
+            return SettlementFootprint.Bounds(all);
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {
@@ -1388,7 +1594,7 @@ namespace WorldGen.Rendering
             // A walled city has 2-4 gates and no boss room — under the dungeon rules that WRONGLY yields
             // "должен быть ровно один вход" + "нет комнаты босса". A settlement must yield NO issues.
             var city = SettlementGenerator.Generate(
-                new WorldGen.Generation.SettlementConfig { Seed = 7, TargetBuildings = 20, ActiveBuildings = 5, HasWall = true }, "poi-city");
+                new WorldGen.Generation.SettlementConfig { Seed = 7, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true }, "poi-city");
             var issues = DungeonValidator.Validate(city);
             if (issues.Count != 0)
             {

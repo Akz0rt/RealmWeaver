@@ -6,11 +6,25 @@ namespace WorldGen.Generation
     /// types — headless + self-testable. The editor calls these instead of touching lists directly.</summary>
     public static class DungeonOps
     {
-        /// <summary>Add a new Normal room at (x,y) with a fresh stable id.</summary>
+        /// <summary>Add a new Normal room at (x,y) with a fresh stable id.
+        ///
+        /// ON A SETTLEMENT FLOOR IT ALSO GETS ITS LATTICE CELL (v11), and that is not a nicety — it is what
+        /// keeps the load path's SettlementFootprint.EnsureFootprints honest. That pass gives a cell-less
+        /// settlement room a footprint derived on the LEGACY 0.07 pitch, on the reasoning that a room with no
+        /// cells can only have come from a pre-v11 save. Without this line that reasoning would be FALSE from
+        /// the moment the DM presses «+ Здание»: the new building would carry a current-pitch point and no
+        /// cells, and its next load would read that point as a legacy index and teleport it to roughly 3/7 of
+        /// where it was put. Writing the cell here makes the premise true by construction instead.
+        ///
+        /// Gated on lvl.SettlementParams — the same "is this a settlement floor?" test DungeonLayout uses —
+        /// so a DUNGEON or BUILDING-INTERIOR floor is byte-identical to before: those have no SettlementParams
+        /// and Room.Cells stays null (and NullValueHandling.Ignore keeps it off their wire).</summary>
         public static Room AddRoom(InteriorFloor lvl, float x, float y)
         {
             var room = new Room { Id = lvl.NextRoomId++, TypeId = 1, X = x, Y = y };
             var (w, h) = RoomSizing.Default(1); room.SizeW = w; room.SizeH = h;
+            if (lvl.SettlementParams != null)
+                room.Cells = SettlementFootprint.Encode(new[] { (SettlementFootprint.CellOf(x), SettlementFootprint.CellOf(y)) });
             lvl.Rooms.Add(room);
             return room;
         }

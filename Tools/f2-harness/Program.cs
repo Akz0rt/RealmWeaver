@@ -79,6 +79,8 @@ static class Program
         settlement.SelfTestRoadsPerf();
         settlement.SelfTestFootprint();
         settlement.SelfTestFootprintMigration();
+        settlement.SelfTestSizing();
+        settlement.SelfTestSizeMigration();
         var interiorOps = new WorldGen.Rendering.InteriorOpsSelfTests();
         interiorOps.SelfTestInteriorOps();
         interiorOps.SelfTestBuildingSeedPin();

@@ -201,12 +201,13 @@ namespace WorldGen.Rendering
         // tiles the moment the slider moves, so both terms are read off the renderer exactly the way
         // ExtrusionHeadroomTiles below already is — see SettlementVolumeRenderer.TileOverhangMin/MaxCells for
         // the derivation and for why a FLAT (Road/Void) tile needs no term at all.
-        //   • MIN — west (min-X) and north (min-Y): the tile's own faces. 0.02 cell = 0.179 tiles at the 1.04
-        //     default, 0.125 cell = 1.12 tiles at 1.25.
+        //   • MIN — west (min-X) and north (min-Y): the tile's own faces. 0.02 cell, 0.125 cell at 1.25.
         //   • MAX — east (max-X) and south (max-Y): the drop shadow, which is offset right and DOWN the screen
-        //     (+Y in TILE space, since DungeonProjection inverts Y once). 0.238 cell = 2.132 tiles at the
-        //     default, 0.359 cell = 3.21 tiles at 1.25.
-        // One cell = SettlementGenerator.BuildingCell x DungeonLayout.TilesPerAxis = 8.96 tiles.
+        //     (+Y in TILE space, since DungeonProjection inverts Y once). 0.238 cell, 0.359 cell at 1.25.
+        // One cell = SettlementGenerator.BuildingCell x DungeonLayout.TilesPerAxis = 3.84 tiles at the v11
+        // pitch (8.96 before it). Every term above is stated in CELLS and multiplied by that product at the
+        // point of use, so the pitch change moved all of them together and none of these numbers is a
+        // hardcoded tile count that could go stale.
 
         /// <summary>Tile-space bounds to fit the projection to for `lvl`. For a BUILDING the fit is CONSTANT
         /// across floors — floor 0's footprint bbox expanded by the contour margin + a little pad — so every
@@ -217,16 +218,17 @@ namespace WorldGen.Rendering
         ///
         /// SETTLEMENT (Task 8 — this now fits the 2.5D TILE GRID, not the fence polyline). What is drawn for a
         /// town is SettlementTileGrid's cell lattice, and it reaches MUCH further out than the fence polyline
-        /// the old fit unioned in, so that fit clipped the wall ring off-screen. The numbers, all in tiles
-        /// (one lattice cell = SettlementGenerator.BuildingCell × TilesPerAxis = 8.96 tiles):
+        /// the old fit unioned in, so that fit clipped the wall ring off-screen. The numbers, all in CELLS
+        /// (one lattice cell = SettlementGenerator.BuildingCell × TilesPerAxis = 3.84 tiles at the v11 pitch,
+        /// 8.96 before it — the derivation is in cells so the pitch change does not invalidate it):
         ///   • the wall ring sits CourtyardCells+1 = 2 cells beyond the occupied seed (SettlementTileGrid.
         ///     BuildWallRing's dilation radius);
         ///   • on the CLEAN tier — which is what a bind draws — that seed includes the ROAD cells, and roads
-        ///     reach the gates, which sit a building half-width (3) + SettlementFence.FenceMarginTiles (2) =
-        ///     5 tiles outside the buildings, i.e. ONE more cell (SettlementRoads' own A* grid is bounded to
-        ///     the nodes' bbox + GridMargin 4 tiles, so nothing can bulge past that);
+        ///     reach the gates, which sit a building half-width + SettlementFence.FenceMarginTiles outside the
+        ///     buildings, i.e. ONE more cell (SettlementRoads' own A* grid is bounded to the nodes' bbox +
+        ///     GridMargin 4 tiles, so nothing can bulge past that);
         ///   • each drawn tile extends half a cell past its own centre.
-        /// 2 + 1 + 0.5 = 3.5 cells = 31.4 tiles past the outermost building CENTRE — which is exactly the
+        /// 2 + 1 + 0.5 = 3.5 cells past the outermost building CENTRE — which is exactly the
         /// extent SettlementTileGrid.Allocate already allocates (its MarginCells is 3) taken ±half a cell. So
         /// the fit is read straight off Allocate rather than re-deriving a margin here, and STILL no road
         /// routing happens on the fit path (the old DeriveTownFence(includeRoads: true) call is gone — the
@@ -269,7 +271,7 @@ namespace WorldGen.Rendering
             {
                 var (minX, minY, maxX, maxY) = DungeonProjection.ContentBoundsTiles(lvl);
                 const float T = DungeonLayout.TilesPerAxis;
-                float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 4.48 tiles
+                float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 1.92 tiles at the v11 pitch
 
                 // Allocate ONLY — cheap (two passes over the rooms plus one over the road endpoints and one
                 // over the street cells, no dilate/flood-fill/A*) — but with the SAME road list AND the SAME
@@ -744,10 +746,22 @@ namespace WorldGen.Rendering
                 // are not merely ugly — HitRoomId's tie-break (larger Y, then larger Id) then returns the SAME
                 // one forever, so the other can never be selected or dragged again. With the nudge, identical
                 // centres give overlapX == overlapY, which takes the Y branch and shoves a full room width
-                // (6.005 tiles) — past the half-cell (4.48) rounding threshold — so the re-snap lands it on
-                // the ADJACENT cell rather than back on top. Residual, not fixed here: if that neighbour is
-                // occupied too, the least-penetration shove oscillates into PlaceOutwardFromPoint's nearest-
-                // free-slot fallback, whose position can still round back onto an occupied cell.
+                // (6.005 tiles) — past the half-cell rounding threshold — so the re-snap lands it clear rather
+                // than back on top. Residual, not fixed here: if that neighbour is occupied too, the
+                // least-penetration shove oscillates into PlaceOutwardFromPoint's nearest-free-slot fallback,
+                // whose position can still round back onto an occupied cell.
+                //
+                // KNOWN, MEASURED, AND OUT OF SCOPE HERE (v11 pitch, task B's tile-space audit). The nudge
+                // measures in EffectiveSize TILES — 6x6 for a settlement building, unchanged — while a lattice
+                // cell went from 8.96 tiles to 3.84. Two FLUSH buildings (the shape the blocks-and-streets
+                // model exists to produce) sit exactly one cell apart, so they used to read as clearly
+                // separated (8.96 > 6.1) and now read as OVERLAPPING (3.84 < 6.1). Dropping a building on a
+                // free cell beside a block therefore gets it shoved ~2 cells clear instead of left where it
+                // was put. Nothing here can fix that without redefining what "overlap" means for a settlement
+                // in terms of CELL occupancy rather than tile rects — CompactLayout.NudgeRoomOffOverlaps and
+                // DungeonProjection.EffectiveSize are shared with building interiors and are explicitly out of
+                // this task's reach. Flagged for the interaction pass; it degrades a drag, it never corrupts
+                // stored cells (Room.Cells is untouched by the nudge).
                 var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE the nudge moves anything
                 BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
                 // Only lastAnchorRoomId can have moved: NudgeRoomOffOverlaps moves that room alone, and

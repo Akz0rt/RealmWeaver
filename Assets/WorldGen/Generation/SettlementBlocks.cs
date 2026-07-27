@@ -330,9 +330,11 @@ namespace WorldGen.Generation
         ///
         /// THIS PROMISES TWO GATES BUT CAN DELIVER ONE: when the ring is small enough that its row-major
         /// first and last cell are the SAME cell, "first" and "last" collapse and only one gate comes out.
-        /// Measured, not theorised: a WallContour radius of ~0.05 reproduces this. It is unreachable through
-        /// SettlementGenerator.BuildFloor/Generate — WallRadiusFor floors at 0.16, safely above where the
-        /// collapse starts — but this method is public and does not itself enforce that floor, so a caller
+        /// Measured, not theorised: a ring under ~1 cell of radius reproduces this (a WallContour radius of
+        /// ~0.05 at the pre-v11 0.07 pitch). It is unreachable through SettlementGenerator.BuildFloor/Generate
+        /// — the SMALLEST size class is 4.7 cells (SettlementSizing.WallRadiusCells), safely above where the
+        /// collapse starts, and stated in CELLS rather than normalized units precisely so the claim survives a
+        /// pitch change — but this method is public and does not itself enforce that floor, so a caller
         /// building a WallContour directly can still hit it. Left as a known one-gate edge case rather than
         /// patched: fabricating a second gate on a ring this degenerate (small enough to have no distinct
         /// "opposite side" left) would need a rule invented for a shape production code never builds.</summary>

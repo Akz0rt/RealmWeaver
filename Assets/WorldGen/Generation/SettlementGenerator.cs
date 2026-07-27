@@ -2,12 +2,17 @@ using System.Collections.Generic;
 
 namespace WorldGen.Generation
 {
-    /// <summary>Parameters for generating a settlement. Size is a single knob (TargetBuildings); the wall
-    /// radius and gate count derive from it, so one generator spans a hamlet to a capital.</summary>
+    /// <summary>Parameters for generating a settlement. Scale is a single knob — the SIZE CLASS — and the wall
+    /// radius, gate count and building target all derive from it through SettlementSizing, so one generator
+    /// spans a hamlet to a capital and nothing can disagree about how big the town is.
+    ///
+    /// NO legacy count field here, unlike SettlementParams: SettlementConfig is never serialized (it is the
+    /// argument to Generate/BuildFloor, built fresh at every call site), so there is no old wire value for it
+    /// to have to read back.</summary>
     public class SettlementConfig
     {
         public int Seed;
-        public int TargetBuildings = 40;
+        public SettlementSize Size = SettlementSize.Medium;
         public int ActiveBuildings = 10;
         public bool HasWall = true;
     }
@@ -39,25 +44,19 @@ namespace WorldGen.Generation
         /// NO LONGER CALLED BY ANYTHING (arc A, task 3). BuildFloor does not derive a preliminary fence any
         /// more — gates come out of SettlementBlocks — and the road/fence adapter now sizes a settlement
         /// building from its FOOTPRINT (DungeonLayout.LinkNodeFor), which is the whole point of that change:
-        /// a multi-cell house is 8.96 tiles per cell, not 6 tiles total. Left compiling, and left DOCUMENTED
+        /// a multi-cell house is 3.84 tiles per cell, not 6 tiles total. Left compiling, and left DOCUMENTED
         /// as dead, because Task 5 removes this whole preliminary-gate path along with SettlementStreets.</summary>
         public const float NominalBuildingTiles = 6f;
 
-        /// <summary>Wall radius (normalized) for a building count: bigger towns need more room. Clamped so a
-        /// wall always fits inside the 0..1 canvas with margin.</summary>
-        public static float WallRadiusFor(int buildingCount)
-        {
-            float r = 0.16f + 0.0045f * buildingCount;   // ~0.2 at 8, ~0.34 at 40, ~0.43 at 60
-            return r > 0.45f ? 0.45f : r;
-        }
+        /// <summary>Wall radius (normalized) for a size class. A one-line delegation to SettlementSizing on
+        /// purpose: the table is the ONE place a town's scale is decided, and the old count→radius formula
+        /// (0.16 + 0.0045·count, clamped at 0.45) is exactly the kind of second opinion that made the stored
+        /// building count promise a size the geometry never delivered. Kept as a method here only because
+        /// every call site and self-test already reaches for it through SettlementGenerator.</summary>
+        public static float WallRadiusFor(SettlementSize size) => SettlementSizing.WallRadiusNorm(size);
 
-        /// <summary>Gate count for a building count: 2 for a small town, up to 4 for a large one.</summary>
-        public static int GateCountFor(int buildingCount)
-        {
-            if (buildingCount >= 55) return 4;
-            if (buildingCount >= 30) return 3;
-            return 2;
-        }
+        /// <summary>Gate count for a size class — likewise one line, one source of truth.</summary>
+        public static int GateCountFor(SettlementSize size) => SettlementSizing.GateCount(size);
 
         /// <summary>Place `gateCount` gates spread around the wall by ARC LENGTH (offset by a seeded phase so
         /// towns differ), each landing exactly on a wall segment. `gateCount` is supplied by the caller (via
@@ -105,9 +104,28 @@ namespace WorldGen.Generation
             return new GatePoint { X = wall.Points[0].X, Y = wall.Points[0].Y };
         }
 
-        /// <summary>Normalized pitch of the building grid. One building per cell, so no two are closer than
-        /// this — the anti-overlap guarantee that replaces the dungeon packer.</summary>
-        public const float BuildingCell = 0.07f;
+        /// <summary>Normalized pitch of the building lattice — THE constant that makes the size table
+        /// (SettlementSizing) fit the field.
+        ///
+        /// WHY 0.03 AND NOT THE 0.07 EVERY SAVE BEFORE FORMAT 11 WAS WRITTEN ON. A settlement's scale is a
+        /// SIZE CLASS now, and the largest class wants ~9.1 cells of radius to hold ~120 buildings. At 0.07
+        /// that is 0.637 normalized, so the town would span 0.5 ± 0.637 = −0.137..1.137 — off both ends of a
+        /// 0..1 field, and far outside DungeonViewController's 0.04..0.96 drag clamp, which is the real bound
+        /// (a building the DM cannot drag to where it is drawn is worse than a small town). At 0.03 the same
+        /// 9.1 cells are 0.273 normalized and the town spans 0.227..0.773 — comfortably inside the clamp, with
+        /// room for the wall ring and courtyard the tile grid adds outside the buildings.
+        ///
+        /// A FINER PITCH IS A FINER LATTICE, NOT A SMALLER TOWN. The town covers LESS of the normalized field
+        /// but MORE cells, which is the whole point: cells are what blocks, streets and footprints are counted
+        /// in. Nothing about the model is re-scaled — the view fits to the town's own bounds
+        /// (DungeonViewController.FitBoundsFor), so a 0.273-radius town fills the panel exactly as a
+        /// 0.45-radius one used to.
+        ///
+        /// EVERY TILE-SPACE RATIO MOVED WITH IT: one cell is BuildingCell * DungeonLayout.TilesPerAxis =
+        /// 3.84 tiles, down from 8.96. See SettlementRoads.RoadClearanceTiles and DungeonLayout.LinkNodeFor
+        /// for the two places that ratio is load-bearing. SettlementFootprint.LegacyPitch keeps the old value
+        /// for the v11 migration, which must read pre-v11 coordinates on the lattice they were authored on.</summary>
+        public const float BuildingCell = 0.03f;
 
         public static List<PlacedBuilding> PlaceBuildings(WallContour wall, int seed, int targetCount)
         {
@@ -169,8 +187,8 @@ namespace WorldGen.Generation
         {
             // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) that block
             // generation carves up — never stored, so nothing renders it directly.
-            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.TargetBuildings), WallSides, WallJitter);
-            var layout = SettlementBlocks.Generate(placement, cfg.Seed, cfg.TargetBuildings);
+            var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.Size), WallSides, WallJitter);
+            var layout = SettlementBlocks.Generate(placement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
 
             // A wall-less village has nothing to open a gate IN, so it takes none of the layout's.
             var gates = new List<GatePoint>();
@@ -196,7 +214,16 @@ namespace WorldGen.Generation
             for (int i = 0; i < gates.Count; i++)
             {
                 idByIndex[i] = next;
-                floor.Rooms.Add(new Room { Id = next, TypeId = 0, X = gates[i].X, Y = gates[i].Y });
+                // A GATE CARRIES ITS CELL TOO (v11). `gates` is built one-for-one from layout.GateCells in
+                // order just above (and only when HasWall, which is also the only way this loop runs at all),
+                // so index i names the same gate in both lists. Storing it makes a gate translatable by
+                // SettlementMigration.RecentreFloor — which moves the town by moving CELLS — instead of the
+                // one node left behind when everything else moves.
+                floor.Rooms.Add(new Room
+                {
+                    Id = next, TypeId = 0, X = gates[i].X, Y = gates[i].Y,
+                    Cells = SettlementFootprint.Encode(new[] { layout.GateCells[i] }),
+                });
                 next++;
             }
             int activeCount = cfg.ActiveBuildings < 0 ? 0 : cfg.ActiveBuildings;
@@ -216,7 +243,7 @@ namespace WorldGen.Generation
                 floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
             floor.SettlementParams = new SettlementParams
             {
-                TargetBuildings = cfg.TargetBuildings,
+                Size = cfg.Size,
                 ActiveBuildings = cfg.ActiveBuildings,
                 HasWall = cfg.HasWall,
                 // Null, not an empty array, when there are no streets at all — SettlementParams.StreetCells

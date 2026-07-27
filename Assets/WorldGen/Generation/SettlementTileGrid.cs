@@ -381,9 +381,10 @@ namespace WorldGen.Generation
         // a Gate cell only ever comes from THIS method retargeting a former Wall cell).
         //
         // DESIGN DECISION: candidates are Wall OR Gate, not Wall alone, so the search is idempotent across
-        // multiple gate rooms. At this coarse building-cell resolution one grid cell is ~9 fine tiles (0.07
-        // normalized), so two gate rooms on the same wall segment easily share a single true-nearest ring
-        // cell. If candidates were Wall-only, the first gate's write would remove that cell from candidacy
+        // multiple gate rooms. One grid cell is 3.84 fine tiles (0.03 normalized) at the v11 pitch — 8.96 at
+        // the 0.07 pitch this rule was written under, so two gate rooms sharing a single true-nearest ring
+        // cell is now LESS likely, not more. The rule stands unchanged either way: it is about idempotence,
+        // not about a particular resolution. If candidates were Wall-only, the first gate's write would remove that cell from candidacy
         // before the second gate's search runs, and the second gate would silently claim the NEXT-nearest
         // ring cell instead — a 2-cell-wide opening where the room graph models one gate. Accepting Gate too
         // makes a second gate collapse onto the same cell as the first: at this resolution, two gates sharing

@@ -22,31 +22,53 @@ namespace WorldGen.Rendering
             //   UPPER (0.90) — the fill's size class scales with the cell budget (SizeClassFor), so a town
             //     with far more cells than the DM asked for buildings gets BIGGER buildings rather than more
             //     of them. The request is therefore a ceiling in practice, never a floor.
-            //   LOWER (0.20) — nothing can manufacture cells. The wall radius is WallRadiusFor(target), whose
-            //     interior is ~2.89 * (r/Pitch)^2 cells; the one-cell ring street eats the whole boundary
-            //     (~6*r/Pitch cells) and the subdivision streets eat more, so the buildable core is a
-            //     MINORITY of the interior at every town size — about half of it is street.
+            //   LOWER — nothing can manufacture cells. The contour's interior is ~2.89 * r_cells^2 cells; the
+            //     one-cell ring street eats the whole boundary (~6*r_cells) and the subdivision streets eat
+            //     more, so the buildable core is a MINORITY of the interior at every town size.
             //
-            // MEASURED, not guessed: a sweep over targets {5,8,12,20,30,40,55,60,80} x seeds 1..60 (540
-            // towns, reported in task-A3-report.md) puts the achieved/requested ratio in [0.250, 0.800]. The
-            // band below is that measurement with headroom on both sides, so it is a real constraint over
-            // THAT swept range, and not one widened until the code fit.
+            // RE-MEASURED FOR THE v11 LATTICE (arc C.2, task B). The old band [0.20, 0.90] came from a sweep
+            // against the RETIRED radius formula (0.16 + 0.0045*target, clamped at 0.45 NORMALIZED), which
+            // the size-class model replaced: a town's radius is a property of its size class now, derived in
+            // CELLS from SettlementSizing's own 0.63*(pi*r^2 - 7.9*r) = target fit. That fit is deliberately
+            // calibrated for ratio ~1, i.e. it asks for a radius that COULD deliver the target, where the old
+            // formula systematically under-provided — so the achieved/requested ratio moved up bodily and the
+            // old band is stale by construction, not by any defect in Generate. See task-B-report.md for the
+            // measured range this band is set from; Task D re-derives both this and SettlementSizing's own
+            // columns from a full seed sweep.
             //
-            // NOT A PROPERTY OF Generate FOR EVERY target, though — only for target >= 5, which is where the
-            // sweep starts and where Check() below is ever called. targets 1..4 are ALSO production-reachable
-            // (DungeonInspectorPanel.StepTargetBuildings clamps only to Max(1, ...)) and break the UPPER bound
-            // by construction, not by any layout defect: achieved is never less than one whole building, so
-            // target 1 alone can read ratio 3.00 (1..3 buildings observed), target 2 up to 1.50, 3 up to 1.33,
-            // 4 up to 1.00 — all measured, none of them a collapse. Check() is scoped to target >= 5 below;
-            // this test makes no claim about the small-target regime.
-            const float MinRatio = 0.20f, MaxRatio = 0.90f;
+            // THE NEW MEASUREMENT, targets {5,8,12,20,30,40,50,55,60,80,120} x seeds 1..60 (660 towns, run
+            // through the harness, per-target rows in task-B-report.md): the ratio lands in [0.517, 1.400],
+            // against the old model's [0.250, 0.800]. The band below is that measurement with the SAME
+            // headroom the old band used — 0.8x the measured minimum, ~1.13x the measured maximum — so it is
+            // a real constraint over the swept range and not one widened until the code fit.
+            //
+            // NOT A PROPERTY OF Generate FOR EVERY target, though — only for target >= MinBandTarget, which
+            // is where Check() below is ever called. Very small targets break the UPPER bound by
+            // construction, not by any layout defect: achieved is never less than one whole building, and the
+            // upper end of the band above comes from exactly that regime (target 5 reaches 1.400, target 8
+            // reaches 1.375, while target 120 tops out at 0.792).
+            const float MinRatio = 0.41f, MaxRatio = 1.58f;
             const int MinBandTarget = 5;
+
+            // The contour a town sized for `target` buildings gets. SettlementGenerator.WallRadiusFor takes a
+            // SIZE CLASS now, and this sweep deliberately walks targets BETWEEN the three classes — so it
+            // inverts SettlementSizing's own derivation rather than inventing a second one:
+            //     0.63 * (pi*r^2 - 7.9*r) = target   ->   pi*r^2 - 7.9*r - target/0.63 = 0
+            // solved by the quadratic formula for the positive root. At the three shipped targets this
+            // reproduces the table exactly (20 -> 4.68, 50 -> 6.44, 120 -> 9.15 cells against the table's
+            // 4.7 / 6.4 / 9.1), so a swept target is measured against the same model production uses.
+            float SweepRadiusNorm(int target)
+            {
+                double c = target / 0.63;
+                double r = (7.9 + System.Math.Sqrt(7.9 * 7.9 + 4.0 * System.Math.PI * c)) / (2.0 * System.Math.PI);
+                return (float)r * SettlementFootprint.Pitch;
+            }
 
             // One full structural sweep of a generated layout. Called for several (seed, target) pairs below
             // so the invariants are pinned across towns, not on one lucky fixture.
             void Check(int seed, int target)
             {
-                var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(target),
+                var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SweepRadiusNorm(target),
                                                SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
                 var layout = SettlementBlocks.Generate(wall, seed, target);
                 string at = $"[seed {seed}, target {target}]";
@@ -193,7 +215,7 @@ namespace WorldGen.Rendering
             // ---- 8. A DIFFERENT SEED PRODUCES A DIFFERENT TOWN -------------------------------------------
             // Without this, a Generate that ignored `seed` entirely would satisfy every assertion above
             // (determinism included, vacuously).
-            var wallA = WallContour.Rounded(13, 0.5f, 0.5f, SettlementGenerator.WallRadiusFor(40),
+            var wallA = WallContour.Rounded(13, 0.5f, 0.5f, SweepRadiusNorm(40),
                                             SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
             var seedA = SettlementBlocks.Generate(wallA, 13, 40);
             var seedB = SettlementBlocks.Generate(wallA, 14, 40);   // SAME wall, different seed

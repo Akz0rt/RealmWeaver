@@ -68,14 +68,17 @@ namespace WorldGen.Generation
         /// buildings be described at all, and what makes a stored index still mean the same place after some
         /// other building moves.
         ///
-        /// Null for EVERYTHING that is not a settlement building: a gate, a dungeon room, a building-interior
-        /// room. NullValueHandling.Ignore keeps the key out of every such room's JSON entirely (the
-        /// Room.Grid / Room.Preview precedent), so no dungeon or building save grows by a byte.
+        /// A SETTLEMENT GATE (TypeId 0) carries ONE cell from v11 on — the ring cell it opens — so the v11
+        /// lattice migration, which moves a town by translating its CELLS, moves the gate with it. Null for
+        /// everything else: a dungeon room, a building-interior room. NullValueHandling.Ignore keeps the key
+        /// out of every such room's JSON entirely (the Room.Grid / Room.Preview precedent), so no dungeon or
+        /// building save grows by a byte.
         ///
         /// NOT a re-use of SizeW/SizeH, which stay TILES and stay unread here — one lattice cell is
-        /// 0.07 * 128 ≈ 8.96 tiles, so conflating the two units would inflate a saved town ~54x in area.
-        /// World definition only. Absent in a v9 save → null → SettlementFootprint.EnsureFootprints gives the
-        /// room a single-cell footprint at load, so an existing town keeps one building per cell.</summary>
+        /// 0.03 * 128 = 3.84 tiles, so conflating the two units would rewrite every saved town's scale.
+        /// World definition only. Absent in a v9/v10 save → null → SettlementFootprint.EnsureFootprints gives
+        /// the room a single-cell footprint at load (on the LEGACY pitch — see that method), so an existing
+        /// town keeps one building per cell.</summary>
         [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
         public int[] Cells = null;
         [JsonProperty("Secrets")]                        // preserve v6 wire key
@@ -101,7 +104,17 @@ namespace WorldGen.Generation
     /// steppers and «Сгенерировать заново» read them and they survive reload. Null for dungeons/buildings.</summary>
     public class SettlementParams
     {
-        public int TargetBuildings;
+        /// <summary>The town's SIZE CLASS (v11) — what the DM picks, and the only scale knob there is. The
+        /// wall radius, gate count and building target all derive from it through SettlementSizing. Serialized
+        /// as its int, no attributes: Small is 0, so a DefaultValueHandling.Ignore here would drop the key for
+        /// every small town and make "absent" ambiguous between "small" and "pre-v11".</summary>
+        public SettlementSize Size;
+        /// <summary>The pre-v11 building-count knob, kept ONLY so the v11 migration can bucket an older
+        /// town into a Size. Nothing writes it; DefaultValueHandling.Ignore keeps the key off the wire once
+        /// it is 0, so a v11 save never carries it. Deleting the property outright would make Newtonsoft
+        /// silently drop `"TargetBuildings": 20` on load and every legacy town would bucket as Small.</summary>
+        [JsonProperty("TargetBuildings", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public int LegacyTargetBuildings;
         public int ActiveBuildings;
         [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public bool HasWall = false;

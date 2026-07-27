@@ -643,7 +643,7 @@ namespace WorldGen.Persistence
 
             // ---- 1. A mix of active/dummy buildings + SettlementParams survive the round trip ------------
             var floor = new InteriorFloor { NextRoomId = 4 };
-            floor.SettlementParams = new SettlementParams { TargetBuildings = 20, ActiveBuildings = 5, HasWall = true };
+            floor.SettlementParams = new SettlementParams { Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
             floor.Rooms.Add(new Room { Id = 1, TypeId = 0, X = 0.8f, Y = 0.5f });                    // gate
             floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.5f, Y = 0.5f });                    // active (IsDummy default false)
             floor.Rooms.Add(new Room { Id = 3, TypeId = 1, X = 0.45f, Y = 0.55f, IsDummy = true });  // dummy
@@ -674,8 +674,8 @@ namespace WorldGen.Persistence
 
                 if (f.SettlementParams == null)
                 { Debug.LogError("FAIL settlement fields: floor.SettlementParams did not survive the round trip (null)"); ok = false; }
-                else if (f.SettlementParams.TargetBuildings != 20 || f.SettlementParams.ActiveBuildings != 5)
-                { Debug.LogError($"FAIL settlement fields: SettlementParams came back {f.SettlementParams.TargetBuildings}/{f.SettlementParams.ActiveBuildings}, want 20/5"); ok = false; }
+                else if (f.SettlementParams.Size != SettlementSize.Small || f.SettlementParams.ActiveBuildings != 5)
+                { Debug.LogError($"FAIL settlement fields: SettlementParams came back {f.SettlementParams.Size}/{f.SettlementParams.ActiveBuildings}, want Small/5"); ok = false; }
                 else if (f.SettlementParams.HasWall != true)
                 { Debug.LogError($"FAIL settlement fields: SettlementParams.HasWall came back {f.SettlementParams.HasWall}, want true"); ok = false; }
             }
@@ -713,7 +713,7 @@ namespace WorldGen.Persistence
             string wallPath = Path.Combine(Path.GetTempPath(), "settlement_fields_haswall_default_selftest.json");
             var wallFloor = new InteriorFloor { NextRoomId = 2 };
             wallFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // active
-            wallFloor.SettlementParams = new SettlementParams { TargetBuildings = 8, ActiveBuildings = 8 };  // HasWall left false (default)
+            wallFloor.SettlementParams = new SettlementParams { Size = SettlementSize.Small, ActiveBuildings = 8 };  // HasWall left false (default)
             var openTown = new InteriorData { OwnerPoiId = "poi-open-fields", Kind = InteriorKind.Settlement, Floors = { wallFloor } };
 
             ProjectSerializer.Save(wallPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
@@ -797,6 +797,118 @@ namespace WorldGen.Persistence
                 : "Self-Test Interior OwnerRoomId Round-Trip: FAIL — see field checks in SelfTestInteriorOwnerRoomIdRoundTrip");
         }
 
+        [ContextMenu("Self-Test: Settlement Legacy Size Migration")]
+        public void SelfTestSettlementLegacySizeMigration()
+        {
+            bool ok = true;
+
+            // THE ONLY TEST THAT CAN SEE THE WIRE. SettlementSelfTests.SelfTestSizeMigration builds its
+            // fixture in memory, so it passes whether or not SettlementParams.LegacyTargetBuildings survives
+            // JSON at all — and the offline harness's Newtonsoft is an attributes-only stub
+            // (Tools/f2-harness/stubs/NewtonsoftStub.cs) that cannot serialize, so NO harness test can close
+            // that gap. Without this pair the whole legacy path is untested and would fail silently on the
+            // DM's real saves: deleting the LegacyTargetBuildings property (or its [JsonProperty("Target-
+            // Buildings")] name) makes Newtonsoft drop the key on load with no error anywhere, and every
+            // legacy town would then bucket as Small.
+            //
+            // Hand-written v10 JSON, not a Save() round trip — a round trip could only ever produce what
+            // TODAY's model writes, which is exactly the "Size" key this test needs to be ABSENT. Every value
+            // below is what a real pre-v11 file carries: wire key "Levels" (not Floors — Room/InteriorData
+            // both rename), "Type" (not TypeId), Kind 2 = Settlement, and a SettlementParams whose only size
+            // information is the retired "TargetBuildings": 20.
+            //
+            // "FormatVersion": 10 is LOAD-BEARING TWICE: below 5, Load drops every interior outright (the
+            // pre-room-graph tile dungeons) and this test would pass vacuously against zero towns; above 10
+            // the v11 block skips and nothing migrates.
+            string legacyJson = @"{
+  ""FormatVersion"": 10,
+  ""GenerationParams"": { ""Seed"": 1, ""Width"": 10, ""Height"": 10 },
+  ""Cells"": [],
+  ""Pois"": [],
+  ""Dungeons"": [
+    {
+      ""OwnerPoiId"": ""poi-legacy-size"",
+      ""Kind"": 2,
+      ""Levels"": [
+        {
+          ""Rooms"": [ { ""Id"": 1, ""Type"": 1, ""X"": 0.6, ""Y"": 0.6 } ],
+          ""Corridors"": [],
+          ""NextRoomId"": 2,
+          ""SettlementParams"": { ""TargetBuildings"": 20, ""ActiveBuildings"": 5, ""HasWall"": true }
+        }
+      ]
+    }
+  ]
+}";
+            string legacyPath = Path.Combine(Path.GetTempPath(), "settlement_legacy_size_migration_selftest.dndproj");
+            File.WriteAllText(legacyPath, legacyJson);
+            var loaded = ProjectSerializer.Load(legacyPath);
+            try { File.Delete(legacyPath); } catch { }
+
+            if (!loaded.Success || loaded.Dungeons.Count != 1 || loaded.Dungeons[0].Floors.Count != 1)
+            {
+                Debug.LogError($"FAIL legacy size: the v10 town did not load back (Success={loaded.Success}, {loaded.Dungeons?.Count} interiors) — every assertion below would be vacuous");
+                Debug.Log("Settlement Legacy Size Migration: FAIL");
+                return;
+            }
+
+            var f = loaded.Dungeons[0].Floors[0];
+            // ---- 1. The retired count was READ and bucketed. 20 -> Small (FromLegacyTarget's <= 30 band). --
+            if (f.SettlementParams == null)
+            { Debug.LogError("FAIL legacy size: SettlementParams did not deserialize at all"); ok = false; }
+            else
+            {
+                if (f.SettlementParams.Size != SettlementSize.Small)
+                { Debug.LogError($"FAIL legacy size: a v10 town with \"TargetBuildings\": 20 and no \"Size\" key loaded as {f.SettlementParams.Size}, want {SettlementSize.Small} — FromLegacyTarget(20). A Small result is ALSO what a silently-dropped key produces, which is why assertion 3 below pins the recentring too."); ok = false; }
+                if (f.SettlementParams.LegacyTargetBuildings != 0)
+                { Debug.LogError($"FAIL legacy size: LegacyTargetBuildings is still {f.SettlementParams.LegacyTargetBuildings} after the migration consumed it — it must be zeroed so it stays off the next save's wire"); ok = false; }
+                if (f.SettlementParams.ActiveBuildings != 5 || !f.SettlementParams.HasWall)
+                { Debug.LogError($"FAIL legacy size: the rest of SettlementParams came back {f.SettlementParams.ActiveBuildings} active / HasWall {f.SettlementParams.HasWall}, want 5 / true"); ok = false; }
+            }
+
+            // ---- 2. NON-VACUITY: 20 must be a value the LEGACY reader alone can produce. Size's own default
+            // is Small (enum 0), so assertion 1 on its own would also pass for a build that never read the
+            // key at all. Bucketing a SECOND file at a count that maps somewhere else is what discriminates. --
+            string bigJson = legacyJson.Replace(@"""TargetBuildings"": 20", @"""TargetBuildings"": 120");
+            string bigPath = Path.Combine(Path.GetTempPath(), "settlement_legacy_size_migration_big_selftest.dndproj");
+            File.WriteAllText(bigPath, bigJson);
+            var loadedBig = ProjectSerializer.Load(bigPath);
+            try { File.Delete(bigPath); } catch { }
+            var bigParams = loadedBig.Success && loadedBig.Dungeons.Count == 1 && loadedBig.Dungeons[0].Floors.Count == 1
+                ? loadedBig.Dungeons[0].Floors[0].SettlementParams : null;
+            if (bigParams == null || bigParams.Size != SettlementSize.Large)
+            { Debug.LogError($"FAIL legacy size: a v10 town with \"TargetBuildings\": 120 loaded as {(bigParams == null ? "no params" : bigParams.Size.ToString())}, want {SettlementSize.Large} — the stored count is not reaching FromLegacyTarget at all"); ok = false; }
+
+            // ---- 3. THE MIGRATION'S OWN CALL SITE. ProjectSerializer.cs is the only place RecentreFloor /
+            // RederivePositions are wired; the harness cannot compile it, so deleting either call would leave
+            // SettlementSelfTests.SelfTestSizeMigration green. The room's stored point 0.6 is LEGACY cell
+            // 8 (0.6 / 0.07 = 8.571…) and the field centre is cell 16 (0.5 / 0.03 = 16.66…), so a one-room
+            // town recentres from cell 8 to cell 16 and its point becomes CenterOf(16) = 16.5 * 0.03 = 0.495.
+            var room = f.Rooms.Find(r => r.Id == 1);
+            var cells = room == null ? null : SettlementFootprint.Decode(room.Cells);
+            if (cells == null || cells.Count != 1 || cells[0] != (16, 16))
+            { Debug.LogError($"FAIL legacy size: room 1 came back with {(cells == null ? "no" : cells.Count.ToString())} cells{(cells != null && cells.Count > 0 ? " at " + cells[0] : "")}, want exactly one at (16,16) — EnsureFootprints (legacy cell 8) then RecentreFloor (+8) through Load"); ok = false; }
+            if (room != null && (System.Math.Abs(room.X - 0.495f) > 1e-4f || System.Math.Abs(room.Y - 0.495f) > 1e-4f))
+            { Debug.LogError($"FAIL legacy size: room 1's point came back ({room.X:F4},{room.Y:F4}), want (0.4950,0.4950) — RederivePositions did not run through Load"); ok = false; }
+
+            // ---- 4. THE KEY IS GONE FROM THE NEXT SAVE. DefaultValueHandling.Ignore + the migration zeroing
+            // the field is what keeps a v11 file from carrying a knob nothing writes. Repo-grep confirms
+            // nothing else in the model is named TargetBuildings, so a literal substring check is exactly
+            // what a leaked key looks like (same idiom as the HasWall/Preview checks above). ------------
+            string resavePath = Path.Combine(Path.GetTempPath(), "settlement_legacy_size_resave_selftest.dndproj");
+            ProjectSerializer.Save(resavePath, loaded.GenerationParams ?? new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+                loaded.Cells, loaded.Pois, loaded.Notes, loaded.RegionLabels, loaded.Regions, loaded.Dungeons);
+            string resaved = File.ReadAllText(resavePath);
+            try { File.Delete(resavePath); } catch { }
+
+            if (resaved.Contains("\"TargetBuildings\""))
+            { Debug.LogError("FAIL legacy size: a re-saved v11 file still carries the \"TargetBuildings\" key — the migration did not consume it, or DefaultValueHandling.Ignore is not taking effect"); ok = false; }
+            if (!resaved.Contains("\"Size\""))
+            { Debug.LogError("FAIL legacy size: a re-saved v11 file carries no \"Size\" key at all — the size class must always be on the wire (Small is 0, so an Ignore here would make absent ambiguous between Small and pre-v11)"); ok = false; }
+
+            Debug.Log(ok ? "Settlement Legacy Size Migration: PASS" : "Settlement Legacy Size Migration: FAIL");
+        }
+
         [ContextMenu("Self-Test: Settlement Footprint Fields Round-Trip")]
         public void SelfTestSettlementFootprintFieldsRoundTrip()
         {
@@ -859,7 +971,7 @@ namespace WorldGen.Persistence
             var dungeonInterior = new InteriorData { OwnerPoiId = "poi-dungeon", Kind = InteriorKind.Dungeon, Floors = { dungeonFloor } };
 
             var minSettlementFloor = new InteriorFloor { NextRoomId = 2 };
-            minSettlementFloor.SettlementParams = new SettlementParams { TargetBuildings = 4, ActiveBuildings = 4 };  // StreetCells left null
+            minSettlementFloor.SettlementParams = new SettlementParams { Size = SettlementSize.Small, ActiveBuildings = 4 };  // StreetCells left null
             minSettlementFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.5f, Y = 0.5f });  // building, Cells left null
             var minTown = new InteriorData { OwnerPoiId = "poi-village-cells", Kind = InteriorKind.Settlement, Floors = { minSettlementFloor } };
 
@@ -907,7 +1019,11 @@ namespace WorldGen.Persistence
                 {
                     var r = f.Rooms.Find(rm => rm.Id == id);
                     var decoded = r == null ? null : SettlementFootprint.Decode(r.Cells);
-                    var wantCell = (SettlementFootprint.CellOf(x), SettlementFootprint.CellOf(y));
+                    // LegacyCellOf, not CellOf: EnsureFootprints derives a MISSING footprint on the
+                    // pre-v11 0.07 pitch (see its doc) — a room with no cells can only have been authored
+                    // before the lattice changed, and DungeonOps.AddRoom writes the cell for every
+                    // settlement building added since.
+                    var wantCell = (SettlementFootprint.LegacyCellOf(x), SettlementFootprint.LegacyCellOf(y));
                     if (decoded == null || decoded.Count != 1 || decoded[0] != wantCell)
                     {
                         string gotDesc = decoded == null ? "null" : $"{decoded.Count} cells";

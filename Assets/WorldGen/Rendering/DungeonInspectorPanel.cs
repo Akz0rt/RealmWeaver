@@ -480,15 +480,27 @@ namespace WorldGen.Rendering
         void BuildSettlementCompositionSection(Transform parent, InteriorFloor lvl)
         {
             if (lvl.SettlementParams == null)
-                lvl.SettlementParams = new SettlementParams { TargetBuildings = 10, ActiveBuildings = 3 };
+                lvl.SettlementParams = new SettlementParams { Size = SettlementSize.Medium, ActiveBuildings = 3 };
             var sp = lvl.SettlementParams;
 
             var sec = AddSection(parent, "SettlementSection");
             AddInfoText(sec.transform, "ПОСЕЛЕНИЕ", 10, ThemeRole.Mut, FontStyle.Bold);
 
-            BuildCompositionStepperRow(sec.transform, "Всего зданий", sp.TargetBuildings,
-                () => StepTargetBuildings(sp, -1), () => StepTargetBuildings(sp, 1));
-            BuildCompositionStepperRow(sec.transform, "Из них активных", sp.ActiveBuildings,
+            // A SIZE CLASS, NOT A COUNT (v11). The old «Всего зданий» stepper let the DM dial in an exact
+            // number the geometry could never deliver — a 40 that came back 18. The town's scale is one of
+            // three classes now, stepped through the same ◄ ► row; the count it implies is shown beneath as
+            // the ADVISORY figure it always was, marked «≈» so it never reads as a contract.
+            //
+            // SettlementSizing.GuaranteedMinBuildings IS DELIBERATELY NOT SHOWN HERE. Its values are
+            // PROVISIONAL until Task D calibrates them by measurement, and measurement (task-B-report.md §6:
+            // seeds 1..60) says the current ones are not kept — a Large town achieves 61..94 against a
+            // declared minimum of 90. Displaying a floor the generator misses is a worse lie than the exact
+            // count this control was built to retire, so the promise stays out of the UI until it is one.
+            BuildCompositionStepperRow(sec.transform, "Размер", SettlementSizing.Label(sp.Size),
+                () => StepSize(sp, -1), () => StepSize(sp, 1));
+            AddInfoText(sec.transform, $"≈ {SettlementSizing.TargetBuildings(sp.Size)} зданий",
+                10, ThemeRole.Mut, FontStyle.Italic);
+            BuildCompositionStepperRow(sec.transform, "Из них активных", sp.ActiveBuildings.ToString(),
                 () => StepActiveBuildings(sp, -1), () => StepActiveBuildings(sp, 1));
         }
 
@@ -496,36 +508,42 @@ namespace WorldGen.Rendering
         // (which assume a fixed 24px caption column that would clip a full Russian phrase) — the caption
         // gets flexibleWidth like the corridor rows' "↔ Комната N" label, and the stepper controls sit at
         // the row's end. Mirrors BuildStepper's own AddStepBtn/MakeText recipe otherwise.
-        void BuildCompositionStepperRow(Transform parent, string caption, int value, System.Action onPrev, System.Action onNext)
+        // `value` is a STRING, not an int: the size row shows a Russian word («Малый»/«Средний»/«Большой»)
+        // where the active-count row still shows a number, and one row builder for both is what keeps them
+        // looking like one control.
+        void BuildCompositionStepperRow(Transform parent, string caption, string value, System.Action onPrev, System.Action onNext)
         {
             var row = AddRow(parent, $"Comp_{caption}", 22f, 4f);
             var capLbl = MakeText(row.transform, caption, 11, ThemeRole.Txt, FontStyle.Normal, TextAnchor.MiddleLeft);
             capLbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             capLbl.raycastTarget = false;
             AddStepBtn(row.transform, "◄", onPrev, true);
-            var valTxt = MakeText(row.transform, value.ToString(), 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
-            valTxt.gameObject.AddComponent<LayoutElement>().preferredWidth = 40f;
+            var valTxt = MakeText(row.transform, value, 11, ThemeRole.Txt, FontStyle.Bold, TextAnchor.MiddleCenter);
+            valTxt.gameObject.AddComponent<LayoutElement>().preferredWidth = 64f;
             valTxt.raycastTarget = false;
             AddStepBtn(row.transform, "►", onNext, true);
         }
 
-        // Min 1 (a town cannot target zero buildings). Lowering the total below the current active count
-        // also lowers active — mirrors the brief's "lowering total below active also lowers active" rule
-        // (an active count above the total it belongs to would be a silently-inconsistent stored state).
-        void StepTargetBuildings(SettlementParams sp, int dir)
+        // Clamped to the three defined SettlementSize values — an enum field takes any int, and an
+        // out-of-range one would send every SettlementSizing switch down its `default` (Medium) branch while
+        // the stored value silently drifted further away with each press.
+        void StepSize(SettlementParams sp, int dir)
         {
-            sp.TargetBuildings = Mathf.Max(1, sp.TargetBuildings + dir);
-            if (sp.ActiveBuildings > sp.TargetBuildings) sp.ActiveBuildings = sp.TargetBuildings;
+            int v = Mathf.Clamp((int)sp.Size + dir, (int)SettlementSize.Small, (int)SettlementSize.Large);
+            sp.Size = (SettlementSize)v;
+            // A smaller town cannot keep more active buildings than it aims to have at all.
+            int cap = SettlementSizing.TargetBuildings(sp.Size);
+            if (sp.ActiveBuildings > cap) sp.ActiveBuildings = cap;
             Rebuild();
             OnChanged?.Invoke();
         }
 
-        // Clamped 0..TargetBuildings — an active count can't exceed the town's own total, and can't go
+        // Clamped 0..the size's own target — an active count can't exceed the town's own total, and can't go
         // negative (SettlementGenerator already floors a negative ActiveBuildings to 0 defensively, but
         // the stepper itself should never author an out-of-range value in the first place).
         void StepActiveBuildings(SettlementParams sp, int dir)
         {
-            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, sp.TargetBuildings);
+            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, SettlementSizing.TargetBuildings(sp.Size));
             Rebuild();
             OnChanged?.Invoke();
         }

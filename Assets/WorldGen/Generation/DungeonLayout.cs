@@ -32,12 +32,18 @@ namespace WorldGen.Generation
         ///
         /// WHY IT EXISTS (arc A, task 3). Every caller used to build its LinkNode straight from
         /// DungeonProjection.EffectiveSize, which for a settlement building room (TypeId 1, SizeW/H unset)
-        /// falls through to RoomSizing.Default(1) = 6x6 TILES — about 0.67 of ONE lattice cell (a cell is
-        /// BuildingCell * TilesPerAxis = 8.96 tiles). That was harmless while every settlement building
-        /// occupied exactly one cell and no two were ever adjacent. It stopped being harmless the moment a
-        /// building became a FOOTPRINT: a house spanning 2x2 cells is 17.9 tiles across, so a 6x6 rect would
-        /// have the fence wrapping a fraction of it and the roads clearing a fraction of it — a road would
-        /// run straight through three quarters of a house and the wall would cut the rest off.
+        /// falls through to RoomSizing.Default(1) = 6x6 TILES. A cell is BuildingCell * TilesPerAxis =
+        /// 3.84 tiles at the v11 pitch (8.96 before it), so that fixed 6x6 rect was 0.67 of one cell then and
+        /// is 1.56 cells now — WRONG IN BOTH DIRECTIONS, which is the point: it was never the building's real
+        /// size, only a number that happened to be close. It stopped being harmless the moment a building
+        /// became a FOOTPRINT: a house spanning 2x2 cells is 7.7 tiles across, so a 6x6 rect would have the
+        /// fence wrapping the wrong shape and the roads clearing the wrong shape.
+        ///
+        /// NOTE WHAT STILL READS EffectiveSize FOR A SETTLEMENT, and is out of this adapter's reach: a GATE
+        /// (TypeId 0) keeps RoomSizing.Default(0) = 7x5 tiles, which at the v11 pitch is 1.82 x 1.30 CELLS
+        /// rather than the 0.78 x 0.56 it was — so a gate now inflates into the road router's obstacle mask
+        /// wider than the ring lane it stands in. SelfTestRoads' fallback/clearance assertions are what
+        /// actually decide whether that matters; see task-B-report.md's tile-space audit.
         ///
         /// A SETTLEMENT BUILDING therefore projects as its FOOTPRINT's cell bounding box, in tiles. The bbox
         /// (not the exact cell set) because both consumers want a rect: SettlementRoads rasterizes an
@@ -58,7 +64,7 @@ namespace WorldGen.Generation
                 if (fp.Count > 0)
                 {
                     var (minI, minJ, maxI, maxJ) = SettlementFootprint.Bounds(fp);
-                    const float pitchT = SettlementFootprint.Pitch * TilesPerAxis;   // 8.96 tiles per cell
+                    const float pitchT = SettlementFootprint.Pitch * TilesPerAxis;   // 3.84 tiles per cell (v11)
                     return new LinkNode
                     {
                         Id = r.Id,

@@ -133,6 +133,13 @@ namespace WorldGen.Generation
 
                 ("MutPoiMigrationNoop", "PoiMigration.NormalizeLegacyTypes returns immediately (a legacy Village POI is never rewritten to City)",
                     () => new WorldGen.MutantTests.MutPoiMigrationNoopSelfTests().SelfTestPoiLegacyTypes()),
+
+                ("MutSizingLargeOverflowsField", "SettlementSizing.WallRadiusCells(Large) blown up past the field (a Large town's wall leaves the 0.04..0.96 drag clamp)",
+                    () => new WorldGen.MutantTests.MutSizingLargeOverflowsFieldSelfTests().SelfTestSizing()),
+                ("MutMigrationNoRecentre", "SettlementMigration.RecentreFloor returns immediately (a pre-v11 town is left in the corner the finer lattice put it in)",
+                    () => new WorldGen.MutantTests.MutMigrationNoRecentreSelfTests().SelfTestSizeMigration()),
+                ("MutMigrationCurrentPitch", "SettlementFootprint.EnsureFootprints derives a missing cell with CellOf instead of LegacyCellOf (a legacy point read on the current lattice)",
+                    () => new WorldGen.MutantTests.MutMigrationCurrentPitchSelfTests().SelfTestSizeMigration()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

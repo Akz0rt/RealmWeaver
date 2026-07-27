@@ -22,6 +22,7 @@ $files = @(
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
   'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs',
   'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs',
+  'SettlementSizing.cs', 'SettlementMigration.cs',
   'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
@@ -996,6 +997,67 @@ foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksNoSubdivision', 'MutBlocksO
     @("WorldGen.Generation.$mc.SettlementBlocks.")
 }
 
+# ---- SIZE-CLASS + v11 LATTICE MIGRATION MUTANTS (arc C.2, task B): three rules pinned by SettlementSizing
+# and SettlementMigration. ------------------------------------------------------------------------------------
+# SettlementSizing.cs bundles TWO types in one namespace block — enum SettlementSize AND class
+# SettlementSizing — the same bundling shape as SettlementTileGrid.cs/TileType and SettlementGenerator.cs/
+# SettlementConfig above, so its rebind needs a SECOND bare pattern (`\bSettlementSize\b`) alongside
+# `SettlementSizing\.`. The two patterns cannot collide in either order: "SettlementSize" inside
+# "SettlementSizing" is followed by 'i', a word character, so \b never matches there. SettlementFootprint
+# lives in an unmutated file and resolves OUTWARD once SettlementSizing.cs is re-namespaced (WallRadiusNorm
+# reads SettlementFootprint.Pitch), and SelfTestSizing touches no other type — no cross-file stub needed.
+
+# MutSizingLargeOverflowsField: the Large size's wall radius blown up past what the 0..1 field can hold, so a
+# Large town's wall would need to span 0.5 +/- 0.6 = -0.1..1.1 — off both ends of the field and far outside
+# DungeonViewController's 0.04..0.96 drag clamp. Caught by SelfTestSizing's FIELD BOUND assertion, and ONLY
+# that one: the table stays monotone (20 > 6.4 > 4.7), the targets/gates/guarantees are untouched, and the
+# legacy bucketing does not read a radius at all — so this is a single-rule mutant on the one constraint that
+# forced the pitch change in the first place.
+New-SettlementMutant 'SettlementSizing.cs' 'MutSizingLargeOverflowsField' `
+  'case SettlementSize.Large: return 9.1f;' `
+  'case SettlementSize.Large: return 20f;   // MUTANT: a Large town no longer fits the 0..1 field' `
+  'MutSizingLargeOverflowsField.cs'
+
+New-SettlementRebind 'SelfTestSizing' 'MutSizingLargeOverflowsField' `
+  @('SettlementSizing\.', '\bSettlementSize\b') `
+  @('WorldGen.Generation.MutSizingLargeOverflowsField.SettlementSizing.', 'WorldGen.Generation.MutSizingLargeOverflowsField.SettlementSize')
+
+# SettlementMigration.cs defines ONE class and no data types (InteriorData/InteriorFloor/Room live in the
+# unmutated DungeonData.cs, SettlementFootprint in its own unmutated file — both resolve OUTWARD), so the
+# single-class New-SettlementMutant / rebind-only-"SettlementMigration." shape is sound here, exactly like
+# SettlementFootprint/SettlementRoads/InteriorOps above. No IReadOnlyList<T> struct-covariance trap: every
+# cell list it exchanges is List<(int,int)>, a value tuple of ints, identical in both namespaces.
+
+# MutMigrationNoRecentre: RecentreFloor returns before it folds a single cell, so a legacy town is left
+# wherever the finer lattice put it — 3/7 of the way toward the origin, up in the corner of the field.
+# The pattern is unique in the file (RederivePositions guards with `continue`, and its own null test names
+# `dungeon`, not `floor`), which matters because PowerShell -replace is global. Caught by
+# SelfTestSizeMigration's bbox-centre assertion (the town's cell bbox must centre on CellOf(0.5) = 16) and
+# by the hand-derived (16..17,15..17) bbox behind it.
+New-SettlementMutant 'SettlementMigration.cs' 'MutMigrationNoRecentre' `
+  'if (floor == null) return;' `
+  'return;   // MUTANT: RecentreFloor never runs — a legacy town stays in the corner it landed in' `
+  'MutMigrationNoRecentre.cs'
+
+New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationNoRecentre' `
+  @('SettlementMigration\.') `
+  @('WorldGen.Generation.MutMigrationNoRecentre.SettlementMigration.')
+
+# MutMigrationCurrentPitch: EnsureFootprints derives a cell-less room's single cell with CellOf (the CURRENT
+# 0.03 lattice) instead of LegacyCellOf (the 0.07 one every pre-v11 save was authored on) — the exact mistake
+# that would scatter a legacy town's houses 2.33x apart and open a gap between every pair that stood flush.
+# Caught by SelfTestSizeMigration's gate-cell assertion: the gate's point 0.60/0.66 is legacy cell (8,9) and
+# current cell (20,22). Mutates SettlementFootprint.cs, so this is a SECOND rebind of SelfTestSizeMigration
+# against a different file (the SelfTestRoads/MutRoadsNoAvoid+MutRoadsNoClearance precedent).
+New-SettlementMutant 'SettlementFootprint.cs' 'MutMigrationCurrentPitch' `
+  'var one = new List<(int i, int j)> { (LegacyCellOf(r.X), LegacyCellOf(r.Y)) };' `
+  'var one = new List<(int i, int j)> { (CellOf(r.X), CellOf(r.Y)) };   // MUTANT: a legacy point read on the CURRENT lattice' `
+  'MutMigrationCurrentPitch.cs'
+
+New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationCurrentPitch' `
+  @('SettlementFootprint\.') `
+  @('WorldGen.Generation.MutMigrationCurrentPitch.SettlementFootprint.')
+
 # ---- POI MIGRATION MUTANT: the removed Village type must still normalize on load. ---------------------------
 # PoiMigration.cs defines ONE class and no data types (PoiData/PoiType live in the unmutated PoiData.cs and
 # resolve OUTWARD once this file is re-namespaced), so the single-class New-SettlementMutant / rebind-only-
@@ -1014,5 +1076,5 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 30 settlement mutants + 30 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 33 settlement mutants + 33 settlement rebound test copies into gen/"
 

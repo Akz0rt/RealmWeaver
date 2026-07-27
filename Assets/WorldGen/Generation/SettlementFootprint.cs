@@ -27,9 +27,19 @@ namespace WorldGen.Generation
     /// the whole load.</summary>
     public static class SettlementFootprint
     {
-        /// <summary>Normalized pitch of the lattice — the SAME constant the building grid has always used,
-        /// so this change is a re-origin, never a re-scale.</summary>
-        public const float Pitch = SettlementGenerator.BuildingCell;   // 0.07f, normalized
+        /// <summary>Normalized pitch of the lattice — the SAME constant the building grid uses, so a change
+        /// there is a change here and the two can never describe different lattices.</summary>
+        public const float Pitch = SettlementGenerator.BuildingCell;   // 0.03f, normalized
+
+        /// <summary>The pitch every save written before format 11 was laid out on. Used ONLY by migration,
+        /// to recover cells from coordinates that were authored on the old lattice. Interpreting a legacy
+        /// town on the CURRENT pitch would spread houses that stood flush 2.33 cells apart and open gaps
+        /// through the whole town, which is why this constant exists rather than reusing Pitch.</summary>
+        public const float LegacyPitch = 0.07f;
+
+        /// <summary>CellOf against <see cref="LegacyPitch"/> — the cell a PRE-v11 coordinate was authored in.
+        /// Same floor-not-round rule and the same fixed origin; only the pitch differs.</summary>
+        public static int LegacyCellOf(float norm) => (int)System.Math.Floor(norm / LegacyPitch);
 
         /// <summary>The cell whose half-open span [i*Pitch, (i+1)*Pitch) contains `norm`. Floor, not round —
         /// see the class doc. Negative coordinates map to negative cells (Math.Floor(-0.5) == -1), which is
@@ -165,10 +175,24 @@ namespace WorldGen.Generation
             return moved;
         }
 
-        /// <summary>LOAD NORMALIZATION (format v10): give every settlement BUILDING room that carries no
-        /// footprint a SINGLE-CELL one, at the cell its stored point falls in. This is what makes an existing
-        /// save open unchanged — one building still occupies one cell, exactly as every town the DM has
-        /// authored so far does — instead of being restructured into blocks behind their back.
+        /// <summary>LOAD NORMALIZATION (v10, extended in v11): give every settlement BUILDING **or GATE** room
+        /// that carries no footprint a SINGLE-CELL one, at the cell its stored point falls in. This is what
+        /// makes an existing save open unchanged — one building still occupies one cell, exactly as every town
+        /// the DM has authored so far does — instead of being restructured into blocks behind their back.
+        ///
+        /// GATES TOO, FROM v11 (TypeId 0). A gate is a cell on the wall ring now — SettlementGenerator
+        /// .BuildFloor stores it — and the v11 recentring translates the town by moving CELLS, so a gate with
+        /// no cells would be the one node left behind in the middle of the field while the town moved around
+        /// it. One widened type guard, not a second pass, deliberately: there stays exactly ONE `r.Cells =`
+        /// write in this method for a mutant to break.
+        ///
+        /// THE CELL IS DERIVED WITH <see cref="LegacyCellOf"/>, NOT CellOf. A room reaching this method has no
+        /// footprint at all, and every town that has ever been SAVED without one was authored on the pre-v11
+        /// 0.07 pitch — so its stored point means a legacy cell index, and reading it on the current 0.03
+        /// lattice would scatter the town's cells 2.33x apart, opening a gap between every pair of houses that
+        /// stood flush. The v11 migration (SettlementMigration.RecentreFloor, then RederivePositions) then
+        /// translates those legacy indices bodily onto the current lattice's centre and rewrites every point
+        /// from them, so the pair is what makes an old town open as the same town.
         ///
         /// Lives here, not in ProjectSerializer, so it can be exercised headlessly: ProjectSerializer drags in
         /// System.IO/Newtonsoft/the notes+region model and cannot compile in the offline harness, which would
@@ -180,13 +204,13 @@ namespace WorldGen.Generation
         /// NOT version-gated, exactly like the RoomSizing.ApplyDefaults call beside it. A guard on
         /// FormatVersion is a thing a future bump forgets to widen; an idempotent normalization is not.
         ///
-        /// SizeW/SizeH ARE NOT TOUCHED, and must never be. They are TILES (one lattice cell is 0.07 * 128
-        /// ≈ 8.96 tiles) and ApplyDefaults has already given every settlement building 6x6 in every existing
+        /// SizeW/SizeH ARE NOT TOUCHED, and must never be. They are TILES (one lattice cell is 0.03 * 128
+        /// = 3.84 tiles) and ApplyDefaults has already given every settlement building 6x6 in every existing
         /// save; had the footprint reused them with the units redefined as cells, every saved town would have
-        /// inflated ~54x in area, silently, on load. The footprint is a SEPARATE field.
+        /// inflated by orders of magnitude in area, silently, on load. The footprint is a SEPARATE field.
         ///
-        /// Kind == Settlement only: a BUILDING interior (Ц2 recursion) and a dungeon also hold TypeId==1
-        /// rooms, and neither has any business carrying a settlement lattice footprint.</summary>
+        /// Kind == Settlement only: a BUILDING interior (Ц2 recursion) and a dungeon also hold TypeId==1 and
+        /// TypeId==0 rooms, and neither has any business carrying a settlement lattice footprint.</summary>
         public static void EnsureFootprints(InteriorData interior)
         {
             if (interior == null || interior.Kind != InteriorKind.Settlement || interior.Floors == null) return;
@@ -195,7 +219,7 @@ namespace WorldGen.Generation
                 if (floor == null || floor.Rooms == null) continue;
                 foreach (var r in floor.Rooms)
                 {
-                    if (r == null || r.TypeId != 1) continue;
+                    if (r == null || (r.TypeId != 1 && r.TypeId != 0)) continue;
                     // Guard on the DECODED count, not r.Cells.Length: an odd-length array (corrupt or
                     // hand-edited) is non-empty by Length but Decodes to zero cells, so a Length-only guard
                     // would read it as "already footprinted" and skip it FOREVER — the same idempotent
@@ -203,7 +227,7 @@ namespace WorldGen.Generation
                     // permanent too. Decode(...).Count > 0 instead lets exactly the input Decode was
                     // hardened against (and only that input) self-heal on the very next load.
                     if (Decode(r.Cells).Count > 0) continue;   // already footprinted — never overwrite
-                    var one = new List<(int i, int j)> { (CellOf(r.X), CellOf(r.Y)) };
+                    var one = new List<(int i, int j)> { (LegacyCellOf(r.X), LegacyCellOf(r.Y)) };
                     r.Cells = Encode(one);
                 }
             }

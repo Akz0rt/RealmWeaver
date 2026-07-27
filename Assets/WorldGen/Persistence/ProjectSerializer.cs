@@ -30,7 +30,24 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 10;  // 10: Room.Cells (a settlement building's footprint on the
+        public const int CurrentFormatVersion = 11;  // 11: the settlement SIZE CLASS replaces the exact
+                                                     // building-count knob (SettlementParams.Size, an int
+                                                     // 0/1/2; the old "TargetBuildings" key is read back once
+                                                     // through SettlementParams.LegacyTargetBuildings, bucketed
+                                                     // by SettlementSizing.FromLegacyTarget, then dropped off
+                                                     // the wire), AND the building-cell lattice pitch shrinks
+                                                     // 0.07 -> 0.03 so the largest size fits the 0..1 field.
+                                                     // The pitch is what makes this a MIGRATION rather than a
+                                                     // key rename: a v10 town's stored cell indices still
+                                                     // describe its shape exactly, but on the new lattice they
+                                                     // land at 3/7 of their old normalized position, i.e. off
+                                                     // in a corner — so SettlementMigration.RecentreFloor
+                                                     // translates every cell in town back onto the field's
+                                                     // centre and RederivePositions rewrites every room's
+                                                     // point from its own cells. Gates gain a stored cell here
+                                                     // too, or they would be the one node left behind.
+                                                     //
+                                                     // 10: Room.Cells (a settlement building's footprint on the
                                                      // FIXED building-cell lattice, absolute indices) +
                                                      // SettlementParams.StreetCells. Both are absent from a v9
                                                      // file and deserialize to null; SettlementFootprint.
@@ -129,10 +146,11 @@ namespace WorldGen.Persistence
             // already-normalized project is a no-op, whereas a version guard is a thing the NEXT format bump
             // forgets to widen.
             //   • ApplyDefaults  — a room with a non-positive tile footprint gets its type default (v5-era).
-            //   • EnsureFootprints — a SETTLEMENT BUILDING with no lattice footprint gets a single-cell one at
-            //     the cell its stored point falls in (v10). Never overwrites an existing footprint, never
-            //     touches SizeW/SizeH (those are TILES; one lattice cell is ~9 tiles — see that method's doc),
-            //     and never touches a dungeon or a building interior.
+            //   • EnsureFootprints — a SETTLEMENT BUILDING OR GATE with no lattice footprint gets a
+            //     single-cell one, at the LEGACY-pitch cell its stored point falls in (v10, widened to gates
+            //     in v11). Never overwrites an existing footprint, never touches SizeW/SizeH (those are
+            //     TILES; one lattice cell is 3.84 tiles — see that method's doc), and never touches a dungeon
+            //     or a building interior.
             //   • NormalizeLegacyTypes — a POI whose stored type is the removed PoiType.Village (legacy id 5)
             //     becomes a City. Not version-gated for the same reason as its two neighbours above: it fires
             //     only on data it finds legacy, and a version guard is what the next bump forgets to widen.
@@ -142,6 +160,41 @@ namespace WorldGen.Persistence
                 RoomSizing.ApplyDefaults(d);
                 SettlementFootprint.EnsureFootprints(d);
             }
+
+            // v11 lattice migration. VERSION-GATED, unlike its three neighbours above, and BOTH passes are:
+            // recentring is a one-time repair of coordinates authored on the old 0.07 pitch, not a
+            // fill-in-the-blank normalization, and re-running it on a town the DM has since dragged to one
+            // side would move the town without being asked.
+            //
+            // RederivePositions IS GATED TOO — a DELIBERATE DEVIATION from this task's brief, which called it
+            // ungated on the reasoning that "cells are the source of truth at every version". They are not,
+            // for a settlement building the DM has MOVED: dragging writes Room.X/Y from eight editor call
+            // sites and never rewrites Room.Cells (SettlementTileGrid.FootprintOf's rule (b) exists precisely
+            // to re-derive the stale single-cell footprint from the point at render time, and its own doc
+            // says so). So on a v11 file an ungated pass would read the STALE cell and write the point back
+            // to it — silently undoing every drag the DM made, on every load. Gated, it has nothing to do on
+            // a v11 file anyway: the generator writes cells and points together, and DungeonOps.AddRoom does
+            // the same for a hand-added building, so a v11 town's points already agree with its cells.
+            //
+            // ORDER IS LOAD-BEARING: EnsureFootprints (the loop above) must have run first, or a v9/v10 room
+            // has no cells for RecentreFloor to move and the town would recentre around whatever subset
+            // happened to be footprinted. The `> 0` guard on the legacy count is what makes the size
+            // bucketing safe to run on a floor that never carried the old knob at all.
+            if (data.FormatVersion <= 10)
+                foreach (var d in result.Dungeons)
+                {
+                    if (d.Kind != InteriorKind.Settlement) continue;
+                    foreach (var f in d.Floors)
+                    {
+                        if (f.SettlementParams != null && f.SettlementParams.LegacyTargetBuildings > 0)
+                        {
+                            f.SettlementParams.Size = SettlementSizing.FromLegacyTarget(f.SettlementParams.LegacyTargetBuildings);
+                            f.SettlementParams.LegacyTargetBuildings = 0;   // consumed; keeps it off the next save's wire
+                        }
+                        SettlementMigration.RecentreFloor(f);
+                    }
+                    SettlementMigration.RederivePositions(d);
+                }
 
             if (data.FormatVersion > CurrentFormatVersion)
                 result.WarningMessage = "Файл сохранён более новой версией инструмента — часть данных может не загрузиться.";

@@ -831,13 +831,15 @@ namespace WorldGen.Rendering
             int baseHash = 17;
             foreach (char c in current.OwnerPoiId) baseHash = unchecked(baseHash * 31 + c);
             int newSeed = unchecked(baseHash * 101 + regenCounter++);
-            // Ц1.5 Task 7: read the DM's stored composition (the ПОСЕЛЕНИЕ steppers in DungeonInspectorPanel)
-            // instead of a hardcoded 40/no-active-cap, so a re-roll keeps the counts the DM dialled in.
+            // Ц1.5 Task 7: read the DM's stored composition (the ПОСЕЛЕНИЕ controls in DungeonInspectorPanel)
+            // instead of a hardcoded size/no-active-cap, so a re-roll keeps what the DM dialled in.
             // BuildFloor re-stores SettlementParams from cfg, so the regenerated town keeps them too.
+            // The ?? fallbacks are for a floor that somehow carries no SettlementParams at all; Medium
+            // matches MapScreenController.SettlementDefaults so a repaired town looks like a fresh one.
             var floor0 = current.Floors.Count > 0 ? current.Floors[0] : null;
-            int total = floor0?.SettlementParams?.TargetBuildings ?? 10;
+            var size = floor0?.SettlementParams?.Size ?? SettlementSize.Medium;
             int activeN = floor0?.SettlementParams?.ActiveBuildings ?? 3;
-            var cfg = new SettlementConfig { Seed = newSeed, TargetBuildings = total, ActiveBuildings = activeN, HasWall = HasWallForCurrent() };
+            var cfg = new SettlementConfig { Seed = newSeed, Size = size, ActiveBuildings = activeN, HasWall = HasWallForCurrent() };
             var gen = SettlementGenerator.Generate(cfg, current.OwnerPoiId);
             current.Floors.Clear();
             current.Floors.AddRange(gen.Floors);
