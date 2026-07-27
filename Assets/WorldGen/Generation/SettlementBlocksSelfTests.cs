@@ -162,10 +162,15 @@ namespace WorldGen.Rendering
                 // What used to stand here required every recovered block to be at or below
                 // SettlementBlocks.BlockTargetCells — the recursive subdivision's own stopping rule, restated
                 // as an assertion. Subdivision is gone: streets are laid where a house would otherwise have
-                // no frontage, so a block's SIZE is not a property anything bounds any more. What replaced it
-                // is the frontage rule and the block-DEPTH property it implies, both asserted in
-                // SelfTestFrontage below (a 40-cell block is fine as long as no cell in it is more than one
-                // step from a street).
+                // no frontage, so a block's SIZE is not a property anything bounds any more (a 40-cell block
+                // is fine as long as no cell in it is more than one step from a street).
+                //
+                // WHAT REPLACED IT IS THE FRONTAGE RULE — SelfTestFrontage assertion 1, and that alone. The
+                // block-DEPTH sweep next to it (assertion 5 there) is NOT a second guard: it is logically
+                // EQUIVALENT to the frontage rule in both directions, so the two can only ever fire together.
+                // It earns its place by naming the offending BLOCK — cell count and bbox — where the frontage
+                // assertion names only the stranded cell, i.e. it is a restatement kept for DIAGNOSIS. See
+                // that assertion's own comment for the proof of the equivalence.
 
                 // ---- 6. THE ACHIEVED COUNT SITS IN THE STATED BAND -------------------------------------
                 // Scoped to target >= MinBandTarget — see the band's own doc above for why smaller targets
