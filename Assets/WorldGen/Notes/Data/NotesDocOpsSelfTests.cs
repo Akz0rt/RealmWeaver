@@ -326,6 +326,135 @@ namespace WorldGen.Notes.Data
             Debug.Log(ok ? "Self-Test Defaults Match Absent Json Keys: PASS" : "Self-Test Defaults Match Absent Json Keys: FAIL");
         }
 
+        [ContextMenu("Self-Test: Block Clipboard")]
+        public void SelfTestClipboard()
+        {
+            bool ok = true;
+            var blocks = Sheet();                                    // S0 / a / a1 / b / S1 / c
+
+            // Copying a parent brings its children, and depths come back RELATIVE to the shallowest copied
+            // block so the selection can be pasted at any depth.
+            string payload = NotesDocOps.SerializeBlocks(blocks, new List<string> { blocks[1].Id });
+            if (!NotesDocOps.TryDeserializeBlocks(payload, out var copied))
+            { Debug.LogError("FAIL clipboard: a payload we just produced failed to parse"); ok = false; }
+            else
+            {
+                if (copied.Count != 2 || copied[0].Text != "a" || copied[1].Text != "a1")
+                { Debug.LogError($"FAIL clipboard: copied [{Dump(copied)}], want [a/a1] — a parent must bring its children"); ok = false; }
+                else
+                {
+                    if (copied[0].Depth != 0 || copied[1].Depth != 1)
+                    { Debug.LogError($"FAIL clipboard: depths {copied[0].Depth}/{copied[1].Depth}, want 0/1 (relative)"); ok = false; }
+                    if (copied[0].Id == blocks[1].Id || copied[1].Id == blocks[2].Id)
+                    { Debug.LogError("FAIL clipboard: pasted blocks must get FRESH ids (I6)"); ok = false; }
+                    if (copied[0].Kind != BlockKind.Item)
+                    { Debug.LogError($"FAIL clipboard: kind came back as {copied[0].Kind}, want Item"); ok = false; }
+                }
+            }
+
+            // Selecting a parent AND its child must not duplicate the child.
+            payload = NotesDocOps.SerializeBlocks(blocks, new List<string> { blocks[1].Id, blocks[2].Id });
+            NotesDocOps.TryDeserializeBlocks(payload, out copied);
+            if (copied == null || copied.Count != 2)
+            { Debug.LogError($"FAIL clipboard: overlapping selection produced {copied?.Count} blocks, want 2"); ok = false; }
+
+            // Selection order follows the DOCUMENT, not the order ids were clicked in.
+            payload = NotesDocOps.SerializeBlocks(blocks, new List<string> { blocks[3].Id, blocks[1].Id });
+            NotesDocOps.TryDeserializeBlocks(payload, out copied);
+            if (copied == null || copied.Count != 3 || copied[0].Text != "a" || copied[2].Text != "b")
+            { Debug.LogError($"FAIL clipboard: got [{Dump(copied)}], want [a/a1/b] in document order"); ok = false; }
+
+            // Text carrying tabs and newlines survives, or a multi-line row would corrupt the payload.
+            var tricky = Sheet();
+            tricky[1].Text = "строка\tс табом\nи переносом";
+            tricky[1].Detail = "деталь\nв две строки";
+            payload = NotesDocOps.SerializeBlocks(tricky, new List<string> { tricky[1].Id });
+            NotesDocOps.TryDeserializeBlocks(payload, out copied);
+            if (copied == null || copied.Count < 1 || copied[0].Text != "строка\tс табом\nи переносом")
+            { Debug.LogError($"FAIL clipboard: escaped text came back as «{(copied != null && copied.Count > 0 ? copied[0].Text : "<none>")}»"); ok = false; }
+            else if (copied[0].Detail != "деталь\nв две строки")
+            { Debug.LogError($"FAIL clipboard: detail came back as «{copied[0].Detail}»"); ok = false; }
+
+            // A picture survives the trip byte-for-byte — silently dropping it from a copy would be a nasty
+            // surprise, so it is base64'd into the payload rather than skipped.
+            var withImage = Sheet();
+            var img = NotesDocOps.NewBlock(BlockKind.Image, 1);
+            img.ImageBytes = new byte[] { 137, 80, 0, 255, 42 };
+            img.DisplayHeight = 123.5f;
+            NotesDocOps.Insert(withImage, 2, img);
+            payload = NotesDocOps.SerializeBlocks(withImage, new List<string> { img.Id });
+            NotesDocOps.TryDeserializeBlocks(payload, out copied);
+            var backImg = copied != null ? copied.Find(b => b.Kind == BlockKind.Image) : null;
+            if (backImg == null || backImg.ImageBytes == null || backImg.ImageBytes.Length != 5 || backImg.ImageBytes[3] != 255)
+            { Debug.LogError("FAIL clipboard: image bytes did not survive the payload"); ok = false; }
+            else if (System.Math.Abs(backImg.DisplayHeight - 123.5f) > 0.001f)
+            { Debug.LogError($"FAIL clipboard: DisplayHeight came back {backImg.DisplayHeight}, want 123.5 — check invariant-culture formatting"); ok = false; }
+
+            // Junk must be refused, not half-parsed and not thrown out of.
+            foreach (string junk in new[] { "", "не json вообще", "NOTESBLOCKS/1\nItem" })
+                if (NotesDocOps.TryDeserializeBlocks(junk, out _))
+                { Debug.LogError($"FAIL clipboard: «{junk}» must be refused"); ok = false; }
+
+            // The system clipboard gets plain indented text, so a copied block can go straight into Discord.
+            string text = NotesDocOps.ToIndentedText(blocks, new List<string> { blocks[1].Id });
+            if (text != "a\n  a1")
+            { Debug.LogError($"FAIL clipboard: indented text «{text.Replace("\n", "\\n")}», want «a\\n  a1»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Block Clipboard: PASS" : "Self-Test Block Clipboard: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Hints")]
+        public void SelfTestHints()
+        {
+            bool ok = true;
+            var page = NotesDocOps.CreateSessionSheet("Сессия 1");
+
+            // An EMPTY section shows its own hint...
+            int scenes = page.Blocks.FindIndex(b => b.Text == "Возможные сцены");
+            string hint = NotesDocOps.HintFor(page.Blocks, scenes);
+            if (hint == null || !hint.Contains("однострочник"))
+            { Debug.LogError($"FAIL hints: «Возможные сцены» gave «{hint}», want its own hint"); ok = false; }
+
+            // ...but a section that HAS a row does not — the hint moves to the empty row instead, so the same
+            // text never appears twice on screen.
+            int strong = page.Blocks.FindIndex(b => b.Text == "Сильное начало");
+            if (NotesDocOps.HintFor(page.Blocks, strong) != null)
+            { Debug.LogError("FAIL hints: a section with a row must not also show its hint"); ok = false; }
+            string proseHint = NotesDocOps.HintFor(page.Blocks, strong + 1);
+            if (proseHint == null || !proseHint.Contains("вслух"))
+            { Debug.LogError($"FAIL hints: the empty prose row gave «{proseHint}», want the «Сильное начало» hint"); ok = false; }
+
+            // Once something is typed, the hint goes away.
+            page.Blocks[strong + 1].Text = "Дождь идёт третий день";
+            if (NotesDocOps.HintFor(page.Blocks, strong + 1) != null)
+            { Debug.LogError("FAIL hints: a row with text must show no hint"); ok = false; }
+
+            // A renamed section loses its hint rather than showing another section's.
+            page.Blocks[scenes].Text = "Мои сцены";
+            if (NotesDocOps.HintFor(page.Blocks, scenes) != null)
+            { Debug.LogError("FAIL hints: a renamed section must show no hint, not the wrong one"); ok = false; }
+
+            // Rows under a renamed or user-made section have no hint either.
+            var custom = new List<DocBlock>
+            {
+                NotesDocOps.NewBlock(BlockKind.Section, 0, "Своё"),
+                NotesDocOps.NewBlock(BlockKind.Item, 1, ""),
+            };
+            if (NotesDocOps.HintFor(custom, 1) != null)
+            { Debug.LogError("FAIL hints: an empty row under a user-made section must show no hint"); ok = false; }
+
+            // Pictures and cards never carry a hint.
+            var media = new List<DocBlock>
+            {
+                NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"),
+                NotesDocOps.NewBlock(BlockKind.Image, 1),
+            };
+            if (NotesDocOps.HintFor(media, 1) != null)
+            { Debug.LogError("FAIL hints: an image row must never show a hint"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Hints: PASS" : "Self-Test Hints: FAIL");
+        }
+
         // ── Task 2 fixture ─────────────────────────────────────────────────────
 
         /// <summary>A «Сессии» group holding one session sheet, a reference group holding an «Староста Ольга»

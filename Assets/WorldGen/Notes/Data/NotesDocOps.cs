@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 
 namespace WorldGen.Notes.Data
 {
@@ -451,6 +454,196 @@ namespace WorldGen.Notes.Data
             ClampDepths(page.Blocks);
             return block;
         }
+
+        // ── Hints ──────────────────────────────────────────────────────────────
+
+        /// <summary>The grey placeholder a row should show, or null for none. Never stored: a hint is drawn,
+        /// so rewording one never touches a save file. An EMPTY section shows its own hint; a section that
+        /// already has rows does not, and the hint appears on its empty row instead, so the same sentence is
+        /// never on screen twice. A renamed or user-made section simply has no hint rather than borrowing
+        /// somebody else's.</summary>
+        public static string HintFor(IReadOnlyList<DocBlock> blocks, int index)
+        {
+            if (blocks == null || index < 0 || index >= blocks.Count) return null;
+            var b = blocks[index];
+            if (b.Kind == BlockKind.Image || b.Kind == BlockKind.BoardRef) return null;
+
+            if (b.Kind == BlockKind.Section)
+                return SubtreeLength(blocks, index) > 1 ? null : HintByTitle(b.Text);
+
+            if (!string.IsNullOrEmpty(b.Text)) return null;
+            return HintByTitle(SectionTitleFor(blocks, index));
+        }
+
+        static string HintByTitle(string title)
+            => title != null && hints.TryGetValue(title, out string hint) ? hint : null;
+
+        // ── Block clipboard ────────────────────────────────────────────────────
+
+        const string ClipboardHeader = "NOTESBLOCKS/1";
+        const int ClipboardFieldCount = 8;
+
+        /// <summary>Expands a selection to whole subtrees, in DOCUMENT order — clicking a parent takes its
+        /// children, clicking both takes each once, and the order ids were clicked in is irrelevant.</summary>
+        static List<int> ExpandSelection(IReadOnlyList<DocBlock> blocks, IReadOnlyList<string> selectedIds)
+        {
+            var covered = new HashSet<int>();
+            if (blocks == null || selectedIds == null) return new List<int>();
+
+            foreach (string id in selectedIds)
+            {
+                int i = IndexOf(blocks, id);
+                if (i < 0) continue;
+                int len = SubtreeLength(blocks, i);
+                for (int k = i; k < i + len; k++) covered.Add(k);
+            }
+
+            var ordered = new List<int>(covered);
+            ordered.Sort();
+            return ordered;
+        }
+
+        static int MinDepth(IReadOnlyList<DocBlock> blocks, List<int> indices)
+        {
+            int min = int.MaxValue;
+            foreach (int i in indices) if (blocks[i].Depth < min) min = blocks[i].Depth;
+            return min == int.MaxValue ? 0 : min;
+        }
+
+        /// <summary>Serializes a selection for the in-app clipboard. A hand-rolled tab-separated format rather
+        /// than JSON, because this layer must stay free of Newtonsoft so it can run in the offline harness.
+        /// Depths come out RELATIVE to the shallowest selected block, so the paste site decides the absolute
+        /// depth. Image bytes travel base64'd: dropping a picture out of a copy would be a nasty surprise.</summary>
+        public static string SerializeBlocks(IReadOnlyList<DocBlock> blocks, IReadOnlyList<string> selectedIds)
+        {
+            var indices = ExpandSelection(blocks, selectedIds);
+            int baseDepth = MinDepth(blocks, indices);
+
+            var sb = new StringBuilder();
+            sb.Append(ClipboardHeader);
+            foreach (int i in indices)
+            {
+                var b = blocks[i];
+                sb.Append('\n')
+                  .Append(b.Kind).Append('\t')
+                  .Append((b.Depth - baseDepth).ToString(CultureInfo.InvariantCulture)).Append('\t')
+                  .Append(b.Collapsed ? '1' : '0').Append('\t')
+                  .Append(Escape(b.Text)).Append('\t')
+                  .Append(Escape(b.Detail)).Append('\t')
+                  .Append(Escape(b.LinkedPageId)).Append('\t')
+                  .Append(b.DisplayHeight.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                  .Append(b.ImageBytes != null ? Convert.ToBase64String(b.ImageBytes) : "");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Parses a clipboard payload. Every block gets a FRESH id, since an id must never exist twice
+        /// in a document (I6). Returns false on anything malformed rather than throwing or half-parsing — the
+        /// system clipboard can contain literally anything.</summary>
+        public static bool TryDeserializeBlocks(string payload, out List<DocBlock> blocks)
+        {
+            blocks = new List<DocBlock>();
+            if (string.IsNullOrEmpty(payload)) return false;
+
+            string[] lines = payload.Replace("\r\n", "\n").Split('\n');
+            if (lines.Length < 2 || lines[0] != ClipboardHeader) return false;
+
+            for (int i = 1; i < lines.Length; i++)
+            {
+                if (lines[i].Length == 0) continue;
+                string[] f = lines[i].Split('\t');
+                if (f.Length != ClipboardFieldCount) { blocks.Clear(); return false; }
+
+                if (!TryParseKind(f[0], out BlockKind kind)) { blocks.Clear(); return false; }
+                if (!int.TryParse(f[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int depth))
+                { blocks.Clear(); return false; }
+                if (!float.TryParse(f[6], NumberStyles.Float, CultureInfo.InvariantCulture, out float displayHeight))
+                { blocks.Clear(); return false; }
+
+                byte[] imageBytes = null;
+                if (f[7].Length > 0)
+                {
+                    try { imageBytes = Convert.FromBase64String(f[7]); }
+                    catch (FormatException) { blocks.Clear(); return false; }
+                }
+
+                blocks.Add(new DocBlock
+                {
+                    Kind = kind,
+                    Depth = depth,
+                    Collapsed = f[2] == "1",
+                    Text = Unescape(f[3]) ?? "",
+                    Detail = NullIfEmpty(Unescape(f[4])),
+                    LinkedPageId = NullIfEmpty(Unescape(f[5])),
+                    DisplayHeight = displayHeight,
+                    ImageBytes = imageBytes,
+                });
+            }
+
+            return blocks.Count > 0;
+        }
+
+        /// <summary>The same selection as indented plain text, written to the SYSTEM clipboard alongside the
+        /// internal payload so a copied block of secrets can be pasted straight into Discord or a text file.</summary>
+        public static string ToIndentedText(IReadOnlyList<DocBlock> blocks, IReadOnlyList<string> selectedIds)
+        {
+            var indices = ExpandSelection(blocks, selectedIds);
+            int baseDepth = MinDepth(blocks, indices);
+
+            var sb = new StringBuilder();
+            for (int n = 0; n < indices.Count; n++)
+            {
+                var b = blocks[indices[n]];
+                if (n > 0) sb.Append('\n');
+                sb.Append(new string(' ', 2 * (b.Depth - baseDepth)));
+                sb.Append(b.Kind == BlockKind.Image && string.IsNullOrEmpty(b.Text) ? "[изображение]" : b.Text);
+            }
+            return sb.ToString();
+        }
+
+        static bool TryParseKind(string raw, out BlockKind kind)
+        {
+            switch (raw)
+            {
+                case "Section":  kind = BlockKind.Section;  return true;
+                case "Item":     kind = BlockKind.Item;     return true;
+                case "Prose":    kind = BlockKind.Prose;    return true;
+                case "Image":    kind = BlockKind.Image;    return true;
+                case "BoardRef": kind = BlockKind.BoardRef; return true;
+            }
+            kind = BlockKind.Item;
+            return false;
+        }
+
+        /// <summary>Tabs separate fields and newlines separate records, so both must be escaped inside a text
+        /// value — a multi-line row would otherwise corrupt the whole payload.</summary>
+        static string Escape(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            return value.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        static string Unescape(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            var sb = new StringBuilder(value.Length);
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (value[i] != '\\' || i + 1 >= value.Length) { sb.Append(value[i]); continue; }
+                char next = value[++i];
+                switch (next)
+                {
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case '\\': sb.Append('\\'); break;
+                    default: sb.Append('\\').Append(next); break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        static string NullIfEmpty(string value) => string.IsNullOrEmpty(value) ? null : value;
 
         // ── Integrity ──────────────────────────────────────────────────────────
 
