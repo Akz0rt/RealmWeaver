@@ -283,6 +283,49 @@ namespace WorldGen.Notes.Data
             Debug.Log(ok ? "Self-Test Validate and Normalize: PASS" : "Self-Test Validate and Normalize: FAIL");
         }
 
+        [ContextMenu("Self-Test: Defaults Match Absent Json Keys")]
+        public void SelfTestDefaultsMatchAbsentKeys()
+        {
+            bool ok = true;
+
+            // This is the whole basis of "an older project loses nothing": a file written before document
+            // pages existed carries no Kind, Blocks or IsReference key, and Newtonsoft leaves such fields at
+            // their default. So the defaults ARE the migration, and they are worth pinning here rather than
+            // only in the Editor-only serializer test.
+            var page = new NotesPage();
+            if (page.Kind != PageKind.Board)
+            { Debug.LogError($"FAIL defaults: a new page's Kind is {page.Kind}, want Board — Board must be the enum's zero value"); ok = false; }
+            if ((int)PageKind.Board != 0)
+            { Debug.LogError($"FAIL defaults: PageKind.Board = {(int)PageKind.Board}, want 0"); ok = false; }
+            if (page.Blocks == null || page.Blocks.Count != 0)
+            { Debug.LogError("FAIL defaults: a new page must start with an EMPTY, non-null block list"); ok = false; }
+
+            if (new PageGroup().IsReference)
+            { Debug.LogError("FAIL defaults: a new group must not claim the reference role"); ok = false; }
+
+            var block = new DocBlock();
+            if (block.Kind != BlockKind.Section)
+            { Debug.LogError($"FAIL defaults: a new block's Kind is {block.Kind}, want Section (the zero value)"); ok = false; }
+            if (block.Text != "" || block.Detail != null || block.LinkedPageId != null || block.ImageBytes != null)
+            { Debug.LogError("FAIL defaults: optional block fields must start empty/null so they stay off the wire"); ok = false; }
+            if (string.IsNullOrEmpty(block.Id))
+            { Debug.LogError("FAIL defaults: a new block must already carry an id"); ok = false; }
+
+            // A hand-edited or truncated file can present a page with a null Blocks list. Normalize must
+            // repair that rather than let every consumer guard for null.
+            var doc = Doc(new NotesPage { Name = "Доска", Kind = PageKind.Board });
+            doc.Groups[0].Pages[0].Blocks = null;
+            NotesDocOps.Normalize(doc);
+            if (doc.Groups[0].Pages[0].Blocks == null)
+            { Debug.LogError("FAIL defaults: Normalize must replace a null block list with an empty one"); ok = false; }
+            if (doc.Groups[0].Pages[0].Kind != PageKind.Board)
+            { Debug.LogError("FAIL defaults: a board with no blocks must stay a Board"); ok = false; }
+            if (NotesDocOps.Validate(doc).Count != 0)
+            { Debug.LogError($"FAIL defaults: an empty board is valid, got: {string.Join("; ", NotesDocOps.Validate(doc))}"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Defaults Match Absent Json Keys: PASS" : "Self-Test Defaults Match Absent Json Keys: FAIL");
+        }
+
         // ── Task 2 fixture ─────────────────────────────────────────────────────
 
         /// <summary>A «Сессии» group holding one session sheet, a reference group holding an «Староста Ольга»

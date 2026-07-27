@@ -30,7 +30,19 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 11;  // 11: the settlement SIZE CLASS replaces the exact
+        public const int CurrentFormatVersion = 12;  // 12: document pages — NotesPage.Kind + NotesPage.Blocks
+                                                     // (List<DocBlock>) and PageGroup.IsReference. All three
+                                                     // are ABSENT from an older file and deserialize to their
+                                                     // defaults: Kind to PageKind.Board (which is exactly why
+                                                     // Board must be the enum's zero value), Blocks to an
+                                                     // empty list, IsReference to false. So every page written
+                                                     // before documents existed loads back as the board it is
+                                                     // and NOTHING the DM wrote is lost — no migration code at
+                                                     // all. Bumped anyway, for the same reason 9 was: so an
+                                                     // OLDER build WARNS on open instead of silently dropping
+                                                     // every document page on its next save.
+                                                     //
+                                                     // 11: the settlement SIZE CLASS replaces the exact
                                                      // building-count knob (SettlementParams.Size, an int
                                                      // 0/1/2; the old "TargetBuildings" key is read back once
                                                      // through SettlementParams.LegacyTargetBuildings, bucketed
