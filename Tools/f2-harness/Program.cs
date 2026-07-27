@@ -95,6 +95,7 @@ static class Program
         var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
         blocks.SelfTestBlocks();
         blocks.SelfTestFrontage();
+        blocks.SelfTestSizeCalibration();
         blocks.SelfTestBlocksSanity();
         var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
         poiMigration.SelfTestPoiLegacyTypes();

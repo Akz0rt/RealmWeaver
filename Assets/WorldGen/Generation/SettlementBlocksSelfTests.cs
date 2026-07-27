@@ -8,13 +8,20 @@ namespace WorldGen.Rendering
     /// is a test that passes whether or not the rule holds).</summary>
     public class SettlementBlocksSelfTests : MonoBehaviour
     {
-        /// <summary>The contour a town sized for `target` buildings gets. SettlementGenerator.WallRadiusFor
-        /// takes a SIZE CLASS now, and the sweeps below deliberately walk targets BETWEEN the three classes —
-        /// so this inverts SettlementSizing's own derivation rather than inventing a second one:
+        /// <summary>The contour a town sized for `target` buildings gets, for the BETWEEN-the-three-classes
+        /// sweeps below — deliberately NOT SettlementSizing.WallRadiusNorm, which (post-Task-D) is a table of
+        /// three MEASURED radii with no formula behind it any more. This inverts the algebraic model
+        /// SettlementSizing used to fit its own table BEFORE Task D replaced it:
         ///     0.63 * (pi*r^2 - 7.9*r) = target   ->   pi*r^2 - 7.9*r - target/0.63 = 0
-        /// solved by the quadratic formula for the positive root. At the three shipped targets it reproduces
-        /// the table exactly (20 -> 4.68, 50 -> 6.44, 120 -> 9.15 cells against the table's 4.7 / 6.4 / 9.1),
-        /// so a swept target is measured against the same model production uses.
+        /// solved by the quadratic formula for the positive root. THIS IS NOW A RETIRED MODEL, kept alive only
+        /// to generate a spread of test contours between the shipped classes — it no longer predicts what the
+        /// table ships (Task D's measured radii are 4.7 / 7.0 / 10.0 cells at the three targets, against this
+        /// formula's 4.68 / 6.44 / 9.15: Small still lands close by coincidence, Medium and Large do not,
+        /// because the frontage-street layout's real yield outgrew what a 0.63-efficiency model predicts once
+        /// arc C.2 shipped and Task D re-measured against seeds instead of algebra). The sweeps below don't
+        /// need it to match: SelfTestBlocks/SelfTestFrontage exercise STRUCTURAL invariants (frontage,
+        /// reachability, gate separation, block depth) that must hold for a contour of ANY scale, so a
+        /// self-consistent spread of radii serves that purpose exactly as well as production's own three would.
         ///
         /// A CLASS MEMBER, not a local function in one test: SelfTestBlocks and SelfTestFrontage both sweep
         /// these contours, and two copies of a radius model are two things that can drift apart. It stays
@@ -249,8 +256,9 @@ namespace WorldGen.Rendering
         /// count or a ratio: a metric can be satisfied by the wrong shape, and this line of work has shipped
         /// assertions that were.
         ///
-        /// SEVEN CONTOURS, NOT THREE. The three SHIPPED radii (4.7 / 6.4 / 9.1 cells) are what production ever
-        /// builds, so they are swept first. But the rule these assertions state is STRUCTURAL — it must hold
+        /// SEVEN CONTOURS, NOT THREE. The three SHIPPED radii (4.7 / 7.0 / 10.0 cells, Task D's MEASURED values
+        /// — was 4.7 / 6.4 / 9.1 before) are what production ever builds, so they are swept first. But the
+        /// rule these assertions state is STRUCTURAL — it must hold
         /// for a contour of any scale — and the assertion this method replaced (the retired block-size cap in
         /// SelfTestBlocks) ran on SelfTestBlocks' four BETWEEN-the-classes contours, of which only ~4.68
         /// overlaps a shipped radius. Sweeping only the shipped three would therefore have left three of the
@@ -502,6 +510,101 @@ namespace WorldGen.Rendering
             }
 
             if (ok) Debug.Log("Settlement Frontage Streets: PASS");
+        }
+
+        /// <summary>TASK D's MEASURING INSTRUMENT (step 1, INSTRUMENT ONLY — see the class doc rule "measure
+        /// first, edit second"; SettlementSizing's WallRadiusCells/GuaranteedMinBuildings doc names the exact
+        /// numbers this sweep produced). 200 FIXED seeds per size (seed = 1000+k, k in 0..199) run through the
+        /// REAL production path — SettlementSizing.WallRadiusNorm(size) is exactly the contour
+        /// SettlementGenerator hands SettlementBlocks.Generate for a town of this size.
+        ///
+        /// THE CONTRACT (step 4): every one of the 600 generations must yield AT LEAST
+        /// SettlementSizing.GuaranteedMinBuildings(size) buildings — the promise the table now makes and the
+        /// UI may rely on. The failure names the offending seed, size and achieved count, never a bare "it
+        /// failed": a DM-visible guarantee that breaks silently is worse than one that was never made.
+        ///
+        /// ONE SUMMARY LOG PER SIZE (unconditional, not gated on `ok` — same convention as SelfTestFrontage's
+        /// "Frontage yield" line) carries what a future regression needs to be readable rather than merely red:
+        ///   - min / median / max ACHIEVED BUILDING COUNT, against the table's target and guarantee;
+        ///   - min / median / max INTERIOR CELL COUNT (the buildable budget before streets eat any of it);
+        ///   - the FOOTPRINT-SIZE DISTRIBUTION (how many buildings landed at 1 / 2 / 3 / 4-or-more cells) —
+        ///     SizeClassFor's own tuning doc justifies it against 3x3 subdivision blocks that no longer exist,
+        ///     so this column is what tells a reader whether today's row-house-vs-compound mix still reads
+        ///     right. MEASURED (Task D): 100% of buildings land at 1-2 cells, 0% at 3 or 4+, at every one of
+        ///     the three shipped sizes — SizeClassFor's class stays at 1 everywhere. This is NOT a bug to
+        ///     retune here: SizeClassFor computes round(blockCells/target), and fitting the radius so achieved
+        ///     tracks target (the very thing this sweep does) forces blockCells/target toward class 1's OWN
+        ///     average footprint (~1.13-1.16 measured, ~1.25 nominal) — comfortably under the 1.5 ratio class 2
+        ///     needs. Lowering that threshold would flip every shipped size to class 2 and roughly HALVE the
+        ///     achieved count for the same blockCells (avg footprint ~2.0 instead of ~1.25), which would only
+        ///     be fixable by re-deriving every radius above around a deliberately different design goal (fewer,
+        ///     bigger buildings) — a scope decision for a follow-up task, not a threshold tweak this one can
+        ///     make safely. SettlementBlocks.cs (where SizeClassFor lives) is also outside this task's file
+        ///     list. See task-D-report.md for the full derivation;
+        ///   - WALL-CLOCK for the 200 generations — FrontageFill's greedy re-enumerates every candidate strip
+        ///     each iteration, so its cost is NOT the old subdivision sweep's cost and must be measured, not
+        ///     assumed. MEASURED: comfortably under two seconds for all 600 generations combined — cheap enough
+        ///     to live in the suite.</summary>
+        [ContextMenu("Self-Test: Settlement Size Calibration")]
+        public void SelfTestSizeCalibration()
+        {
+            bool ok = true;
+            const int SeedCount = 200;
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+
+            float Median(System.Collections.Generic.List<int> sorted)
+            {
+                int n = sorted.Count;
+                if (n == 0) return 0f;
+                if ((n & 1) == 1) return sorted[n / 2];
+                return (sorted[n / 2 - 1] + sorted[n / 2]) / 2f;
+            }
+
+            foreach (var size in sizes)
+            {
+                int guarantee = SettlementSizing.GuaranteedMinBuildings(size);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var achieved = new System.Collections.Generic.List<int>(SeedCount);
+                var interiorCounts = new System.Collections.Generic.List<int>(SeedCount);
+                int f1 = 0, f2 = 0, f3 = 0, f4plus = 0;
+
+                for (int k = 0; k < SeedCount; k++)
+                {
+                    int seed = 1000 + k;
+                    var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SettlementSizing.WallRadiusNorm(size),
+                                                   SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+                    var interior = SettlementBlocks.InteriorCells(wall);
+                    var layout = SettlementBlocks.Generate(wall, seed, size);
+
+                    int achievedCount = layout.Buildings.Count;
+                    achieved.Add(achievedCount);
+                    interiorCounts.Add(interior.Count);
+
+                    foreach (var b in layout.Buildings)
+                    {
+                        int n = b.Count;
+                        if (n <= 1) f1++;
+                        else if (n == 2) f2++;
+                        else if (n == 3) f3++;
+                        else f4plus++;
+                    }
+
+                    // ---- THE CONTRACT: THE GUARANTEE HOLDS ON EVERY SEED, NOT JUST ON AVERAGE ----------
+                    if (achievedCount < guarantee)
+                    { Debug.LogError($"FAIL size-calibration [{size}, seed {seed}]: achieved {achievedCount} buildings, below the guaranteed minimum {guarantee}"); ok = false; }
+                }
+                sw.Stop();
+
+                achieved.Sort();
+                interiorCounts.Sort();
+                int totalBuildings = f1 + f2 + f3 + f4plus;
+                Debug.Log($"SizeCalibration [{size}]: buildings min {achieved[0]} / median {Median(achieved):F1} / max {achieved[achieved.Count - 1]} (target {SettlementSizing.TargetBuildings(size)}, guarantee {guarantee}); "
+                    + $"interior cells min {interiorCounts[0]} / median {Median(interiorCounts):F1} / max {interiorCounts[interiorCounts.Count - 1]}; "
+                    + $"footprints 1-cell {f1} / 2-cell {f2} / 3-cell {f3} / 4plus-cell {f4plus} (of {totalBuildings} total); "
+                    + $"{SeedCount} seeds in {sw.ElapsedMilliseconds} ms");
+            }
+
+            if (ok) Debug.Log("Settlement Size Calibration: PASS");
         }
 
         [ContextMenu("Self-Test: Blocks Sanity")]

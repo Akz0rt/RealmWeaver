@@ -20,8 +20,9 @@ namespace WorldGen.Generation
     /// Cost: the mask is O(grid); each A* is bounded by the fixed grid, so a full Build is linear in edge
     /// count — contrast BuildRenderGraph(Clean)'s per-link Hanan grid over all rooms, which measured 20–34 s
     /// at 60 nodes. The grid is sized by the town's TILE extent, which the v11 pitch SHRANK even as the
-    /// building count grew: a Large town is 9.1 cells of radius = ~70 tiles across, ~6k cells, against the
-    /// ~10k the old 80-building cap reached at 0.07. SelfTestRoadsPerf times the largest size class.
+    /// building count grew: a Large town is 10.0 cells of radius (Task D's measured figure, was 9.1 before)
+    /// = ~77 tiles across, ~7.2k cells, against the ~10k the old 80-building cap reached at 0.07.
+    /// SelfTestRoadsPerf times the largest size class.
     ///
     /// Ц2.6: the fence is DERIVED FROM the roads (SettlementFence.Derive wraps whatever the roads do), so
     /// the wall is no longer a road obstacle — the Ц1.7 wall-blocking rule this class used to enforce is

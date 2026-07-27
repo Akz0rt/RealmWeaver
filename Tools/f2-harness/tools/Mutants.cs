@@ -145,6 +145,8 @@ namespace WorldGen.Generation
 
                 ("MutSizingLargeOverflowsField", "SettlementSizing.WallRadiusCells(Large) blown up past the field (a Large town's wall leaves the 0.04..0.96 drag clamp)",
                     () => new WorldGen.MutantTests.MutSizingLargeOverflowsFieldSelfTests().SelfTestSizing()),
+                ("MutSizingGuaranteeTooHigh", "SettlementSizing.GuaranteedMinBuildings returns TargetBuildings for every size (a guarantee equal to the target — precisely the lie the pre-Task-D provisional table used to tell, which the 200-seed calibration sweep exists to catch)",
+                    () => new WorldGen.MutantTests.MutSizingGuaranteeTooHighSelfTests().SelfTestSizeCalibration()),
                 ("MutMigrationNoRecentre", "SettlementMigration.RecentreFloor returns immediately (a pre-v11 town is left in the corner the finer lattice put it in)",
                     () => new WorldGen.MutantTests.MutMigrationNoRecentreSelfTests().SelfTestSizeMigration()),
                 ("MutMigrationTruncatingHalf", "SettlementMigration.RecentreFloor's FloorHalf reverted to C#'s truncating / (a bbox summing odd AND negative recentres one cell off, then moves again on the next load)",

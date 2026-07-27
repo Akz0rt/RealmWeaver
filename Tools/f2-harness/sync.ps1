@@ -1082,13 +1082,39 @@ foreach ($mc in @('MutBlocksNoArterials', 'MutBlocksNoFrontageFill', 'MutBlocksF
 # legacy bucketing does not read a radius at all — so this is a single-rule mutant on the one constraint that
 # forced the pitch change in the first place.
 New-SettlementMutant 'SettlementSizing.cs' 'MutSizingLargeOverflowsField' `
-  'case SettlementSize.Large: return 9.1f;' `
+  'case SettlementSize.Large: return 10.0f;' `
   'case SettlementSize.Large: return 20f;   // MUTANT: a Large town no longer fits the 0..1 field' `
   'MutSizingLargeOverflowsField.cs'
 
 New-SettlementRebind 'SelfTestSizing' 'MutSizingLargeOverflowsField' `
   @('SettlementSizing\.', '\bSettlementSize\b') `
   @('WorldGen.Generation.MutSizingLargeOverflowsField.SettlementSizing.', 'WorldGen.Generation.MutSizingLargeOverflowsField.SettlementSize')
+
+New-SettlementMutant 'SettlementSizing.cs' 'MutSizingGuaranteeTooHigh' `
+  'public static int GuaranteedMinBuildings(SettlementSize size)' `
+  'public static int GuaranteedMinBuildings(SettlementSize size) { return TargetBuildings(size); }   // MUTANT: guarantee == target
+        private static int _GuaranteedMinBuildingsUnreachable(SettlementSize size)' `
+  'MutSizingGuaranteeTooHigh.cs'
+
+# MutSizingGuaranteeTooHigh (Task D): GuaranteedMinBuildings' switch is bypassed entirely — the method returns
+# TargetBuildings(size) instead, i.e. a guarantee equal to the target, the exact lie SettlementSizing's own doc
+# says a guarantee must never tell. The original switch survives as an unreachable, never-called private method
+# (`_GuaranteedMinBuildingsUnreachable`) purely so the mutant copy still compiles with nothing else disturbed.
+# Caught by SelfTestSizeCalibration's per-seed floor: at every one of the three shipped sizes the 200-seed sweep
+# has seeds that land BELOW target (that is exactly why a guarantee below target was needed at all), so forcing
+# the guarantee up to the target must fail the sweep on those seeds.
+#
+# THE CROSS-FILE TYPE TRAP, why this rebind is ONE surgical line and not the usual two-pattern
+# "SettlementSizing\./\bSettlementSize\b" dance: SelfTestSizeCalibration calls SettlementBlocks.Generate(wall,
+# seed, size) — SettlementBlocks.cs is NOT mutated here, so its Generate keeps expecting the REAL
+# WorldGen.Generation.SettlementSize. Rebinding the bare enum too would retype the loop's `size` to the MUTANT
+# namespace's OWN SettlementSize and break that call (a straight compile error, not a covariance one — enums
+# have no implicit conversion between two same-named types in different namespaces). So only the ONE guarantee
+# call is rebound, with an explicit int round-trip cast bridging the two enums at that single call site; `size`
+# itself, and every other SettlementSizing call in the method (WallRadiusNorm, TargetBuildings), stay REAL.
+New-SettlementRebind 'SelfTestSizeCalibration' 'MutSizingGuaranteeTooHigh' `
+  @('int guarantee = SettlementSizing\.GuaranteedMinBuildings\(size\);') `
+  @('int guarantee = WorldGen.Generation.MutSizingGuaranteeTooHigh.SettlementSizing.GuaranteedMinBuildings((WorldGen.Generation.MutSizingGuaranteeTooHigh.SettlementSize)(int)size);')
 
 # SettlementMigration.cs defines ONE class and no data types (InteriorData/InteriorFloor/Room live in the
 # unmutated DungeonData.cs, SettlementFootprint in its own unmutated file — both resolve OUTWARD), so the
@@ -1177,5 +1203,5 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 38 settlement mutants + 38 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 39 settlement mutants + 39 settlement rebound test copies into gen/"
 

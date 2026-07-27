@@ -16,32 +16,36 @@ namespace WorldGen.Generation
     /// the same "a bad file degrades instead of failing the whole load" rule SettlementFootprint.Decode
     /// keeps.
     ///
-    /// WHERE THE RADII COME FROM (PROVISIONAL — Task D replaces them with MEASURED values). A town's
-    /// buildable cell budget is its interior disk MINUS what the streets take: the one-cell ring plus the
-    /// subdivision strips scale with the perimeter, and the fill then converts what is left into houses at
-    /// less than 1 house per cell (SettlementBlocks.PickSize rolls multi-cell rects). The spec's fit of that
-    /// shape is
+    /// WHERE THE RADII COME FROM (MEASURED, Task D — the pre-Task-D doc's algebraic fit against a
+    /// 0.63·(π·r²−7.9·r) model is RETIRED; that model was written for recursive subdivision and, worse,
+    /// stopped predicting the frontage-street layout's actual yield once arc C.2 shipped: it under/over-shot
+    /// by 4-17% at the three sizes and was never re-derived against the real algorithm). The three radii below
+    /// are instead the output of SettlementBlocksSelfTests.SelfTestSizeCalibration — 200 FIXED seeds per size
+    /// (seed = 1000+k, k in 0..199), run through the REAL production path (WallRadiusNorm + SettlementBlocks.
+    /// Generate) — adjusted until each size's MEDIAN achieved count landed within +/-10% of its target:
     ///
-    ///     0.63 · (π·r² − 7.9·r) = target        [r in CELLS]
+    ///     Small:  r = 4.7 cells  -> median 19.0 buildings (target 20,  ratio 0.95)
+    ///     Medium: r = 7.0 cells  -> median 53.0 buildings (target 50,  ratio 1.06)
+    ///     Large:  r = 10.0 cells -> median 120.0 buildings (target 120, ratio 1.00)
     ///
-    /// which the three radii below solve for 20 / 50 / 120:
-    ///     r = 4.7  →  0.63 · (69.4 − 37.1) =  20.3
-    ///     r = 6.4  →  0.63 · (128.7 − 50.6) =  49.2
-    ///     r = 9.1  →  0.63 · (260.2 − 71.9) = 118.6
-    /// These are a MODEL, not a measurement: `targetBuildings` is advisory all the way down (see
-    /// SettlementBlocks' class doc — the achieved count is whatever the geometry yields), so Task D sweeps
-    /// seeds and re-derives both this column and GuaranteedMinBuildings from what actually comes out. Do not
-    /// tune them by eye in the meantime.
+    /// Small needed no change from its pre-Task-D value (4.7 already measured at ratio 0.95); Medium and Large
+    /// both needed to grow (from 6.4 and 9.1) because the retired model's constant (0.63) no longer matches the
+    /// frontage layout's actual yield at those two scales — see task-D-report.md for the full iteration table.
+    /// `targetBuildings` stays advisory all the way down (SettlementBlocks' class doc — the achieved count is
+    /// whatever the geometry yields): these three radii only make the MEDIAN land near target, not every seed.
     ///
-    /// THE GUARANTEED MINIMUMS ARE LIKEWISE PROVISIONAL, at ~0.75 × target. They exist so the UI can promise
-    /// something it can keep; Task D replaces each with the measured minimum over its seed sweep. The one
-    /// property that is NOT provisional, and that SelfTestSizing pins, is that a guarantee is STRICTLY BELOW
+    /// THE GUARANTEED MINIMUMS ARE LIKEWISE MEASURED, at floor(0.9 × the observed minimum) over the SAME
+    /// 200-seed sweep at the radii above (see GuaranteedMinBuildings for the three observed minimums). The one
+    /// property that was NEVER provisional, and that SelfTestSizing pins, is that a guarantee is STRICTLY BELOW
     /// its target — a minimum equal to the target is precisely the lie the old TargetBuildings knob told.
     ///
     /// THE FIELD BOUND IS NOT NEGOTIABLE. WallRadiusNorm(Large) + 0.5 must stay inside the drag clamp's
     /// 0.04..0.96 (DungeonViewController.DragClampMin/Max) — that bound is what forced
     /// SettlementGenerator.BuildingCell down from 0.07 to 0.03, and SelfTestSizing fails if a later edit
-    /// grows a radius past it. If a target cannot be met inside the field, the TARGET moves down.</summary>
+    /// grows a radius past it. Large's measured radius (10.0 cells, WallRadiusNorm 0.30) has ample headroom
+    /// inside that bound (the field allows up to ~15.33 cells), so Task D did not need to lower
+    /// TargetBuildings(Large) to stay inside it. If a target cannot be met inside the field, the TARGET moves
+    /// down.</summary>
     public static class SettlementSizing
     {
         /// <summary>Radius of the placement contour, in LATTICE CELLS (not normalized, not tiles) — the unit
@@ -52,8 +56,8 @@ namespace WorldGen.Generation
             switch (size)
             {
                 case SettlementSize.Small: return 4.7f;
-                case SettlementSize.Large: return 9.1f;
-                default: return 6.4f;
+                case SettlementSize.Large: return 10.0f;
+                default: return 7.0f;
             }
         }
 
@@ -88,15 +92,24 @@ namespace WorldGen.Generation
         }
 
         /// <summary>The count the UI may PROMISE: at or below this, every seed delivers. Strictly below
-        /// TargetBuildings by construction (see the class doc). PROVISIONAL at ~0.75 × target until Task D
-        /// replaces each with the measured minimum over a seed sweep.</summary>
+        /// TargetBuildings by construction (see the class doc). MEASURED (Task D): floor(0.9 x the observed
+        /// minimum) over SettlementBlocksSelfTests.SelfTestSizeCalibration's 200-seed sweep (seed = 1000+k,
+        /// k in 0..199) at the radii below —
+        ///     Small:  observed min 14  -> floor(0.9*14) = 12
+        ///     Medium: observed min 42  -> floor(0.9*42) = 37
+        ///     Large:  observed min 98  -> floor(0.9*98) = 88
+        /// — a 10% margin below the worst seed actually seen, not the ~0.75 x target guess this replaced. The
+        /// sweep itself is the contract (SelfTestSizeCalibration asserts every one of the 600 generations meets
+        /// its size's guarantee); a future radius or fill change that lowers the true minimum must fail that
+        /// sweep before it can ship, which is what turns this table's promise from an assertion into a
+        /// measurement.</summary>
         public static int GuaranteedMinBuildings(SettlementSize size)
         {
             switch (size)
             {
-                case SettlementSize.Small: return 15;
-                case SettlementSize.Large: return 90;
-                default: return 38;
+                case SettlementSize.Small: return 12;
+                case SettlementSize.Large: return 88;
+                default: return 37;
             }
         }
 

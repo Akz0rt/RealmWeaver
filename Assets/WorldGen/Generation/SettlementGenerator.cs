@@ -108,18 +108,19 @@ namespace WorldGen.Generation
         /// (SettlementSizing) fit the field.
         ///
         /// WHY 0.03 AND NOT THE 0.07 EVERY SAVE BEFORE FORMAT 11 WAS WRITTEN ON. A settlement's scale is a
-        /// SIZE CLASS now, and the largest class wants ~9.1 cells of radius to hold ~120 buildings. At 0.07
-        /// that is 0.637 normalized, so the town would span 0.5 ± 0.637 = −0.137..1.137 — off both ends of a
+        /// SIZE CLASS now, and the largest class wants ~10.0 cells of radius to hold ~120 buildings (Task D's MEASURED figure —
+        /// SettlementSizing's class doc; the 9.1 this comment quoted before Task D was the pre-measurement
+        /// algebraic guess). At 0.07 that is 0.70 normalized, so the town would span 0.5 ± 0.70 = −0.20..1.20 — off both ends of a
         /// 0..1 field, and far outside DungeonViewController's 0.04..0.96 drag clamp, which is the real bound
         /// (a building the DM cannot drag to where it is drawn is worse than a small town). At 0.03 the same
-        /// 9.1 cells are 0.273 normalized and the town spans 0.227..0.773 — comfortably inside the clamp, with
+        /// 10.0 cells are 0.30 normalized and the town spans 0.20..0.80 — comfortably inside the clamp, with
         /// room for the wall ring and courtyard the tile grid adds outside the buildings.
         ///
         /// A FINER PITCH IS A FINER LATTICE, NOT A SMALLER TOWN. The town covers LESS of the normalized field
         /// but MORE cells, which is the whole point: cells are what blocks, streets and footprints are counted
         /// in. Nothing about the model is re-scaled — the view fits to the town's own bounds
-        /// (DungeonViewController.FitBoundsFor), so a 0.273-radius town fills the panel exactly as a
-        /// 0.45-radius one used to.
+        /// (DungeonViewController.FitBoundsFor), so a 0.30-radius town (Task D's measured Large, was 0.273
+        /// before Task D re-measured WallRadiusCells) fills the panel exactly as a 0.45-radius one used to.
         ///
         /// EVERY TILE-SPACE RATIO MOVED WITH IT: one cell is BuildingCell * DungeonLayout.TilesPerAxis =
         /// 3.84 tiles, down from 8.96. See SettlementRoads.RoadClearanceTiles and DungeonLayout.LinkNodeFor
