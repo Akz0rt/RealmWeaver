@@ -1309,6 +1309,63 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL fence[F]: far point is inside even WITHOUT the road — the road input is not load-bearing (vacuous)"); ok = false; }
             }
 
+            // Fixture G: THE FOOTPRINT FIXTURE. Every other fixture above hands SettlementFence hand-written
+            // rects; this one starts from ROOMS carrying real multi-cell footprints on SettlementFootprint's
+            // absolute lattice and projects them exactly the way production does — DungeonLayout.LinkNodeFor,
+            // the ONE adapter DeriveTownFence and SettlementRoads both call. That is what makes "the fence
+            // wraps footprints, not a nominal room size" a claim about shipped code: LinkNodeFor reads the
+            // footprint's cell bounding box, so a settlement building no longer projects as
+            // DungeonProjection.EffectiveSize's 6x6 tiles (which was 1.56 cells at the v11 pitch — never the
+            // building's real size, merely a number that happened to be close).
+            //
+            // The bar is FOUR cells long on purpose. One cell is 3.84 tiles and the fence inflates by
+            // FenceMarginTiles = 2, so a rect covering only the representative cell still reaches 3.92 tiles —
+            // just past a 2-cell neighbour's centre at 3.84. A 2-cell footprint therefore CANNOT tell a
+            // whole-footprint rasterization from a representative-cell one, and an assertion built on one
+            // would be vacuous. At four cells the far cell's centre is 11.52 tiles out, far beyond that reach.
+            // (Generation currently emits 1- and 2-cell footprints only; Room.Cells is a stored array of
+            // arbitrary shape — SettlementFootprint's class doc commits to L, bar and ring — so a 4-cell bar
+            // is a shape the format allows and the renderer already honours.)
+            var fpRooms = new System.Collections.Generic.List<Room>();
+            var bar = new System.Collections.Generic.List<(int i, int j)> { (10, 10), (11, 10), (12, 10), (13, 10) };
+            var ell = new System.Collections.Generic.List<(int i, int j)> { (10, 13), (10, 14), (11, 14) };
+            var oneCell = new System.Collections.Generic.List<(int i, int j)> { (14, 13) };
+            foreach (var (roomId, fp) in new[] { (1, bar), (2, ell), (3, oneCell) })
+            {
+                var rep = SettlementFootprint.Representative(fp);
+                fpRooms.Add(new Room
+                {
+                    Id = roomId, TypeId = 1,
+                    X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j),
+                    Cells = SettlementFootprint.Encode(fp),
+                });
+            }
+            var fpNodes = new System.Collections.Generic.List<LinkNode>();
+            foreach (var r in fpRooms) fpNodes.Add(DungeonLayout.LinkNodeFor(r, settlement: true));
+            var fenceG = SettlementFence.Derive(fpNodes, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
+            float cellT = SettlementFootprint.Pitch * DungeonLayout.TilesPerAxis;   // 3.84 tiles per cell
+            if (fenceG == null || !fenceG.IsClosedSane())
+            { Debug.LogError("FAIL fence[G]: footprint-fixture derive returned null or not-sane"); ok = false; }
+            else
+            {
+                // EVERY cell of EVERY footprint is inside — not the representative, not the centroid, each
+                // cell, by its own centre.
+                foreach (var r in fpRooms)
+                    foreach (var c in SettlementTileGrid.FootprintOf(r))
+                    {
+                        float tx = SettlementFootprint.CenterOf(c.i) * DungeonLayout.TilesPerAxis;
+                        float ty = SettlementFootprint.CenterOf(c.j) * DungeonLayout.TilesPerAxis;
+                        if (!fenceG.Contains(tx, ty))
+                        { Debug.LogError($"FAIL fence[G]: building {r.Id} footprint cell ({c.i},{c.j}) — tile x={tx} y={ty} — is OUTSIDE the derived fence"); ok = false; }
+                    }
+                // NON-VACUITY of the enclosure test itself: a point two cells past the bar's far end must
+                // read OUTSIDE, or "inside" would be saying nothing about where the fence actually runs.
+                float outX = SettlementFootprint.CenterOf(13 + 2) * DungeonLayout.TilesPerAxis + cellT;
+                float outY = SettlementFootprint.CenterOf(10) * DungeonLayout.TilesPerAxis;
+                if (fenceG.Contains(outX, outY))
+                { Debug.LogError($"FAIL fence[G]: a point 3 cells past the bar's far end — tile x={outX} y={outY} — reads INSIDE, so the enclosure assertions above are vacuous"); ok = false; }
+            }
+
             // 6. determinism: same inputs → identical point list.
             var again = SettlementFence.Derive(block, noGates, new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
             if (fenceA != null && again != null)
@@ -1748,21 +1805,286 @@ namespace WorldGen.Rendering
             return SettlementFootprint.Bounds(all);
         }
 
+        /// <summary>One settlement floor holding exactly the rooms given, as (TypeId, id, cells) triples, plus
+        /// the street cells. Lives OUTSIDE every self-test method so the mutant rebind — which extracts one
+        /// method body — never has to carry it, exactly like SettlementBlocksSelfTests' own helpers.
+        /// Room.X/Y is the REPRESENTATIVE cell's centre, the same rule SettlementGenerator.BuildFloor follows,
+        /// so SettlementTileGrid.FootprintOf's rule (b) never reads a single-cell footprint as stale.</summary>
+        static InteriorData TownOf((int typeId, int id, (int i, int j)[] cells)[] rooms, (int i, int j)[] streets)
+        {
+            var floor = new InteriorFloor();
+            foreach (var (typeId, id, cells) in rooms)
+            {
+                var list = new System.Collections.Generic.List<(int i, int j)>(cells ?? new (int, int)[0]);
+                var rep = SettlementFootprint.Representative(list);
+                floor.Rooms.Add(new Room
+                {
+                    Id = id, TypeId = typeId,
+                    X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j),
+                    Cells = cells == null ? null : SettlementFootprint.Encode(list),
+                });
+            }
+            floor.SettlementParams = new SettlementParams
+            {
+                Size = SettlementSize.Small, ActiveBuildings = 99, HasWall = true,
+                StreetCells = streets == null ? null
+                    : SettlementFootprint.Encode(new System.Collections.Generic.List<(int i, int j)>(streets)),
+            };
+            var data = new InteriorData { OwnerPoiId = "poi-validation", Kind = InteriorKind.Settlement };
+            data.Floors.Add(floor);
+            return data;
+        }
+
         [ContextMenu("Self-Test: Settlement Validation")]
         public void SelfTestSettlementValidation()
         {
             bool ok = true;
-            // A walled city has 2-4 gates and no boss room — under the dungeon rules that WRONGLY yields
-            // "должен быть ровно один вход" + "нет комнаты босса". A settlement must yield NO issues.
-            var city = SettlementGenerator.Generate(
-                new WorldGen.Generation.SettlementConfig { Seed = 7, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true }, "poi-city");
-            var issues = DungeonValidator.Validate(city);
-            if (issues.Count != 0)
+
+            // ---- 1. A GENERATED town is clean, at every size, over several seeds ------------------------
+            // This is what the old version of this test claimed for one seed, and it USED to be true for a
+            // reason that has now gone: the validator simply had no settlement rules. It is a real claim now
+            // — four footprint rules evaluated against every building of every town — so it is made over a
+            // spread of seeds and all three size classes rather than one Small/seed-7 town.
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            foreach (var size in sizes)
+                foreach (int seed in new[] { 1, 7, 23 })
+                {
+                    var town = SettlementGenerator.Generate(new WorldGen.Generation.SettlementConfig
+                    { Seed = seed, Size = size, ActiveBuildings = 5, HasWall = true }, "poi-city");
+                    foreach (var iss in DungeonValidator.Validate(town))
+                    { Debug.LogError($"FAIL settlement-validation: a freshly generated {size} town (seed {seed}) reported '{iss.Message}'"); ok = false; }
+                }
+            // …and a WALL-LESS village, which takes none of the layout's gates and so exercises a floor with
+            // TypeId-1 rooms only.
+            var village = SettlementGenerator.Generate(new WorldGen.Generation.SettlementConfig
+            { Seed = 4, Size = SettlementSize.Small, ActiveBuildings = 3, HasWall = false }, "poi-village");
+            foreach (var iss in DungeonValidator.Validate(village))
+            { Debug.LogError($"FAIL settlement-validation: a wall-less village reported '{iss.Message}'"); ok = false; }
+
+            // The DUNGEON rules stay gated OFF: a walled town has 2-4 gates and no boss, which under the
+            // dungeon rules would wrongly read as «должен быть ровно один вход» + «нет комнаты босса». Part 1
+            // above already fails on ANY issue, so this is the same claim narrowed to a nameable cause — it
+            // survives even if a later task legitimately adds a settlement issue to some generated town.
+            var walled = SettlementGenerator.Generate(new WorldGen.Generation.SettlementConfig
+            { Seed = 7, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true }, "poi-city");
+            foreach (var iss in DungeonValidator.Validate(walled))
+                if (iss.Message.Contains("вход") || iss.Message.Contains("босс") || iss.Message.Contains("лестниц"))
+                { Debug.LogError($"FAIL settlement-validation: a dungeon/building rule leaked into a settlement: '{iss.Message}'"); ok = false; }
+
+            // ---- 2. each rule FIRES, one at a time, and names the exact offender ------------------------
+            // Both helpers are LOCAL functions rather than file-level ones, and that is a hard requirement of
+            // the mutant harness, not a style choice: sync.ps1's rebind lifts THIS METHOD's text and retypes
+            // DungeonValidator/DungeonIssue/IssueSeverity inside it. A helper declared outside would keep the
+            // REAL DungeonIssue in its signature while the rebound body passes it the mutant's, which is a
+            // compile error rather than a failing assertion.
+            int Count(System.Collections.Generic.List<DungeonIssue> list, IssueSeverity sev, string needle)
             {
-                foreach (var iss in issues) Debug.LogError($"FAIL settlement-validation: settlement produced dungeon issue '{iss.Message}'");
-                ok = false;
+                int n = 0;
+                foreach (var iss in list) if (iss.Severity == sev && iss.Message.Contains(needle)) n++;
+                return n;
             }
+            // Every issue on one line, so an assertion can show what WAS reported when the expected issue
+            // was not.
+            string Join(System.Collections.Generic.List<DungeonIssue> list)
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var iss in list)
+                {
+                    if (sb.Length > 0) sb.Append(" | ");
+                    sb.Append(iss.Severity).Append(": ").Append(iss.Message);
+                }
+                return sb.Length == 0 ? "no issues" : sb.ToString();
+            }
+
+            // (a) EMPTY footprint. Room 1 carries no Cells at all. Read through SettlementTileGrid.FootprintOf
+            // this could never fail — rule (a) there substitutes the room's point cell — so this assertion is
+            // also what pins that the rule reads the STORED array.
+            var emptyFp = TownOf(new[] { (1, 1, ((int, int)[])null), (1, 2, new[] { (6, 5) }) }, null);
+            var emptyIssues = DungeonValidator.Validate(emptyFp);
+            if (Count(emptyIssues, IssueSeverity.Error, "у здания 1 нет ни одной клетки") != 1)
+            { Debug.LogError($"FAIL settlement-validation: a building with NO Cells produced {emptyIssues.Count} issue(s), none naming «у здания 1 нет ни одной клетки»: [{Join(emptyIssues)}]"); ok = false; }
+
+            // (b) DISCONNECTED footprint: two cells that touch at nothing. The message must name BOTH cells,
+            // not just a count — a DM cannot repair "the footprint is broken".
+            var splitFp = TownOf(new[] { (1, 3, new[] { (5, 5), (9, 9) }) }, null);
+            var splitIssues = DungeonValidator.Validate(splitFp);
+            if (Count(splitIssues, IssueSeverity.Error, "здания 3 распадается") != 1
+                || Count(splitIssues, IssueSeverity.Error, "(5, 5) (9, 9)") != 1)
+            { Debug.LogError($"FAIL settlement-validation: a 2-island footprint on room 3 did not produce one Error naming both cells «(5, 5) (9, 9)»: [{Join(splitIssues)}]"); ok = false; }
+            // A 4-connected L on the SAME two-cell-count shape must NOT fire — otherwise the rule is just
+            // "more than one cell is bad".
+            var lFp = TownOf(new[] { (1, 3, new[] { (5, 5), (5, 6), (6, 6) }) }, null);
+            if (DungeonValidator.Validate(lFp).Count != 0)
+            { Debug.LogError($"FAIL settlement-validation: a legal 4-connected L-shaped footprint was reported: [{Join(DungeonValidator.Validate(lFp))}]"); ok = false; }
+
+            // (c) OVERLAP — the data-side twin of SettlementVolumeRenderer.AreCellsFree, and the rule this
+            // task exists to add. Rooms 10 and 11 are 2-cell bars sharing exactly cell (7,5); each also has a
+            // cell of its own, so this is a PARTIAL overlap (a whole-footprint duplicate would also pass a
+            // rule that only compared representative cells).
+            var overlap = TownOf(new[] {
+                (1, 10, new[] { (6, 5), (7, 5) }),
+                (1, 11, new[] { (7, 5), (8, 5) }) }, null);
+            var overlapIssues = DungeonValidator.Validate(overlap);
+            if (Count(overlapIssues, IssueSeverity.Error, "здания 10 и 11 занимают одну клетку (7, 5)") != 1)
+            { Debug.LogError($"FAIL settlement-validation: rooms 10/11 sharing cell (7,5) did not produce exactly one Error naming «здания 10 и 11 занимают одну клетку (7, 5)»: [{Join(overlapIssues)}]"); ok = false; }
+            // …and the SHARED cell is the only one reported: (6,5) and (8,5) belong to one room each.
+            if (Count(overlapIssues, IssueSeverity.Error, "занимают одну клетку") != 1)
+            { Debug.LogError($"FAIL settlement-validation: a single shared cell produced {Count(overlapIssues, IssueSeverity.Error, "занимают одну клетку")} overlap Errors, want exactly 1 — an unshared cell is being reported too: [{Join(overlapIssues)}]"); ok = false; }
+            // NEGATIVE CONTROL for the same fixture shifted apart by one cell: no overlap, no issue at all.
+            var apart = TownOf(new[] {
+                (1, 10, new[] { (6, 5), (7, 5) }),
+                (1, 11, new[] { (8, 5), (9, 5) }) }, null);
+            if (DungeonValidator.Validate(apart).Count != 0)
+            { Debug.LogError($"FAIL settlement-validation: two FLUSH but disjoint 2-cell buildings were reported — adjacency is legal: [{Join(DungeonValidator.Validate(apart))}]"); ok = false; }
+
+            // (d) A BUILDING STANDING ON A STREET — Warning, not Error, and the cell is named. This is the one
+            // of the four a DM reaches by ordinary dragging (a stored street cell is owned by no room, so the
+            // drag verdict AreCellsFree does not refuse it).
+            var onStreet = TownOf(new[] { (1, 20, new[] { (6, 5), (6, 6) }) }, new[] { (6, 6), (6, 7) });
+            var streetIssues = DungeonValidator.Validate(onStreet);
+            if (Count(streetIssues, IssueSeverity.Warning, "здание 20 стоит на улице — клетка (6, 6)") != 1)
+            { Debug.LogError($"FAIL settlement-validation: a building on street cell (6,6) did not produce exactly one Warning naming it: [{Join(streetIssues)}]"); ok = false; }
+            if (Count(streetIssues, IssueSeverity.Error, "стоит на улице") != 0)
+            { Debug.LogError($"FAIL settlement-validation: standing on a street was reported as an Error, want a Warning: [{Join(streetIssues)}]"); ok = false; }
+            // Building 20 spans (6,5) and (6,6); only (6,6) is a street cell, so exactly ONE Warning is due.
+            // A rule that reported the whole building rather than the offending cell would raise two.
+            if (Count(streetIssues, IssueSeverity.Warning, "стоит на улице") != 1)
+            { Debug.LogError($"FAIL settlement-validation: building 20 has ONE cell on a street ((6,6); (6,5) is not one) yet {Count(streetIssues, IssueSeverity.Warning, "стоит на улице")} street Warning(s) were raised, want exactly 1: [{Join(streetIssues)}]"); ok = false; }
+
+            // ---- 3. THE GATE SCOPE (the reason these rules are TypeId==1 only) -------------------------
+            // A gate's own cell IS a street cell by construction — SettlementBlocks.PlaceGateCells picks it
+            // off the ring street. Applied to gates, rule (d) would fire on every gate of every town. This
+            // fixture is exactly that shape: gate 30 sits on street cell (4,4).
+            var gateOnStreet = TownOf(new[] {
+                (0, 30, new[] { (4, 4) }),
+                (1, 31, new[] { (6, 5) }) }, new[] { (4, 4), (5, 4) });
+            var gateIssues = DungeonValidator.Validate(gateOnStreet);
+            if (gateIssues.Count != 0)
+            { Debug.LogError($"FAIL settlement-validation: a GATE on its own ring-street cell was reported — the footprint rules must be buildings-only: [{Join(gateIssues)}]"); ok = false; }
+            // A gate with a BROKEN footprint (empty, and disconnected) is likewise out of scope.
+            var brokenGates = TownOf(new[] {
+                (0, 32, ((int, int)[])null),
+                (0, 33, new[] { (2, 2), (8, 8) }),
+                (1, 34, new[] { (6, 5) }) }, null);
+            if (DungeonValidator.Validate(brokenGates).Count != 0)
+            { Debug.LogError($"FAIL settlement-validation: a gate with an empty/disconnected footprint was reported — buildings-only scope broken: [{Join(DungeonValidator.Validate(brokenGates))}]"); ok = false; }
+
+            // ---- 4. THE RULES ARE SETTLEMENT-ONLY ------------------------------------------------------
+            // The identical broken data under Kind == Building must raise none of these four — a building
+            // interior's TypeId-1 rooms are ROOMS, not footprints on the settlement lattice, and its own
+            // rules are untouched by this task. Kind is flipped on the SAME fixture so the only difference is
+            // the Kind itself.
+            var asBuilding = TownOf(new[] {
+                (1, 10, new[] { (6, 5), (7, 5) }),
+                (1, 11, new[] { (7, 5), (8, 5) }) }, null);
+            asBuilding.Kind = InteriorKind.Building;
+            foreach (var iss in DungeonValidator.Validate(asBuilding))
+                if (iss.Message.Contains("клетк") || iss.Message.Contains("улиц"))
+                { Debug.LogError($"FAIL settlement-validation: a settlement footprint rule leaked into a BUILDING interior: '{iss.Message}'"); ok = false; }
+
             if (ok) Debug.Log("Settlement Validation: PASS");
+        }
+
+        [ContextMenu("Self-Test: Settlement Gate Opening")]
+        public void SelfTestGateOpening()
+        {
+            bool ok = true;
+
+            // THE GATE-OPENING PROPERTY, RE-VERIFIED WHERE IT NOW LIVES. "The wall opens at every gate" was
+            // pinned on SettlementFence's synthetic fixtures (SelfTestFence C/E), where a gate is rasterized
+            // as a bare point that the traced fence bulges out to hug. That is still true OF THAT MODULE, but
+            // it is no longer how a town the DM sees opens its wall, and the street rework is what moved it:
+            //
+            //   • a gate is now a RING-STREET CELL (SettlementBlocks.PlaceGateCells), sitting inside the
+            //     outermost street lane rather than out on a spur, and an arterial reaches the ring exactly
+            //     there;
+            //   • a settlement is drawn by SettlementVolumeRenderer, which builds SettlementTileGrid and
+            //     never calls DungeonLayout.DeriveTownFence at all. The wall the DM sees is the grid's Wall
+            //     ring and the opening is a Gate TILE, produced by SettlementTileGrid's gate pass, which
+            //     retargets the ring cell NEAREST the gate room.
+            //
+            // So the property to hold is a property of the TILE GRID, and it is asserted here on GENERATED
+            // towns rather than on a hand-built fixture (SelfTestRoadsAndGates already pins the gate pass on
+            // one) — a topology change is exactly the kind of thing a fixture cannot notice.
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            foreach (var size in sizes)
+                foreach (int seed in new[] { 1, 7, 23, 30 })
+                {
+                    var town = SettlementGenerator.Generate(new WorldGen.Generation.SettlementConfig
+                    { Seed = seed, Size = size, ActiveBuildings = 5, HasWall = true }, "poi-gates");
+                    var floor = town.Floors[0];
+                    var grid = SettlementTileGrid.Build(floor);
+
+                    int gateRooms = 0;
+                    foreach (var r in floor.Rooms) if (r.TypeId == 0) gateRooms++;
+                    int gateTiles = 0;
+                    for (int a = 0; a < grid.W; a++)
+                        for (int b = 0; b < grid.H; b++)
+                            if (grid.Cells[a, b] == TileType.Gate) gateTiles++;
+
+                    // ONE OPENING PER GATE, EXACTLY. Not ">= 1": the failure this catches is two gates
+                    // collapsing onto the SAME nearest ring cell, which leaves a town with fewer doors than
+                    // gates and no error anywhere. The count is also the reason the gate pass cannot be
+                    // silently neutered — 0 tiles fails here too.
+                    if (gateTiles != gateRooms)
+                    { Debug.LogError($"FAIL gate-opening: {size} seed {seed} has {gateRooms} gate room(s) but {gateTiles} Gate tile(s) — the wall does not open once per gate"); ok = false; }
+
+                    // AND EACH OPENING IS THE GATE'S OWN. A count alone would pass if every gate in town
+                    // opened the ring on the far side. The bound is DERIVED, not fitted: a gate stands on a
+                    // ring-STREET cell, i.e. on the outer edge of the occupied blob the wall ring is dilated
+                    // from, and that dilation is CourtyardCells + 1 with the Wall itself one layer beyond —
+                    // SettlementTileGrid.MarginCells (= CourtyardCells + 2) cells of Chebyshev reach in the
+                    // outward direction. Measured worst case over 120 generated towns: exactly MarginCells.
+                    foreach (var r in floor.Rooms)
+                    {
+                        if (r.TypeId != 0) continue;
+                        var cell = SettlementFootprint.Representative(SettlementTileGrid.FootprintOf(r));
+                        int best = int.MaxValue;
+                        for (int a = 0; a < grid.W; a++)
+                            for (int b = 0; b < grid.H; b++)
+                            {
+                                if (grid.Cells[a, b] != TileType.Gate) continue;
+                                int di = System.Math.Abs(a + grid.OriginI - cell.i);
+                                int dj = System.Math.Abs(b + grid.OriginJ - cell.j);
+                                int cheb = di > dj ? di : dj;
+                                if (cheb < best) best = cheb;
+                            }
+                        if (best > SettlementTileGrid.MarginCells)
+                        {
+                            // "none at all" is reported as such rather than as int.MaxValue cells away — the
+                            // two are different defects (the wall opened nowhere vs. it opened in the wrong
+                            // place) and the message a DM or a mutant report shows must say which.
+                            string howFar = best == int.MaxValue ? "there is NO Gate tile anywhere in the grid"
+                                : $"its nearest Gate tile is {best} cells away (Chebyshev), want <= {SettlementTileGrid.MarginCells}";
+                            Debug.LogError($"FAIL gate-opening: {size} seed {seed} gate room {r.Id} at cell ({cell.i},{cell.j}) — {howFar}; the wall did not open at this gate");
+                            ok = false;
+                        }
+                    }
+
+                    // THE STREETS ARE INSIDE THE TOWN. Every stored street cell must be represented in the
+                    // grid AND classified — Road, or Building where a footprint claims the same cell. A cell
+                    // that came back None (or out of bounds, which At() reports as None) is a street the wall
+                    // never wrapped, the exact defect the fine-fence arc existed to close. This is the half of
+                    // the fence brief's "the fence encloses every street cell" that is TRUE of the town the DM
+                    // sees; the DERIVED vector fence does not enclose them — see the report.
+                    foreach (var c in SettlementFootprint.Decode(floor.SettlementParams?.StreetCells))
+                    {
+                        var t = grid.At(c.i, c.j);
+                        if (t != TileType.Road && t != TileType.Building)
+                        { Debug.LogError($"FAIL gate-opening: {size} seed {seed} street cell ({c.i},{c.j}) is {t}, want Road (or Building where a house claims it) — the wall ring did not wrap it"); ok = false; }
+                    }
+                }
+
+            if (ok) Debug.Log("Settlement Gate Opening: PASS");
+        }
+
+        [ContextMenu("Self-Test: Settlement Sentinel")]
+        public void SelfTestSettlementSentinel()
+        {
+            // Trailing non-reboundable sentinel, matching PoiMigrationSelfTests: the mutant rebind extracts a
+            // method body by scanning forward for the NEXT attribute marker and throws when there is none, so
+            // a mutant-reboundable test must never be a file's last one. Asserts nothing.
+            Debug.Log("Settlement Sentinel: PASS");
         }
     }
 }

@@ -31,8 +31,10 @@ namespace WorldGen.Generation
             bool isBuilding = dungeon.Kind == InteriorKind.Building;
 
             // A SETTLEMENT reuses this graph but none of these dungeon rules apply: its gates are not "the one
-            // entrance", it has no boss, no stairwell. Settlement-specific rules are deferred (Ц1) — until then
-            // a settlement is always valid. Gate every dungeon check below off for it.
+            // entrance", it has no boss, no stairwell, and its rooms are not meant to be corridor-reachable
+            // from anything. Every dungeon check below stays gated OFF for it — those early-outs are correct
+            // and are NOT what this flag replaced. What a settlement has INSTEAD is its own rule block
+            // (SettlementIssues, called at the end of each floor pass below): the FOOTPRINT rules.
             bool isSettlement = dungeon.Kind == InteriorKind.Settlement;
             bool bossRule = !isBuilding && !isSettlement;
 
@@ -104,6 +106,9 @@ namespace WorldGen.Generation
                                     $"Этаж {human}: лестница из комнаты {r.Id} ведёт на несуществующий этаж.");
                         }
                     }
+
+                // The settlement's OWN rules, in place of every dungeon rule this floor just skipped.
+                if (isSettlement) SettlementIssues(issues, lvl, li);
             }
 
             // Building SHAFT integrity: every Лестница must share the floor-0 column's (x,y) AND footprint — one
@@ -126,6 +131,101 @@ namespace WorldGen.Generation
                     }
             }
             return issues;
+        }
+
+        /// <summary>THE SETTLEMENT RULES — what a town has INSTEAD of the dungeon rules its Kind gates off.
+        /// A settlement's rooms are FOOTPRINTS on <see cref="SettlementFootprint"/>'s fixed absolute lattice,
+        /// and these four rules are the whole statement of "this floor's footprints are well formed".
+        ///
+        /// BUILDINGS ONLY (TypeId == 1), every rule, and that scope is load-bearing rather than tidy. A GATE
+        /// room (TypeId 0) carries a one-cell footprint too since v11 (SettlementGenerator.BuildFloor stores
+        /// its ring cell so the recentring migration, which moves a town by moving CELLS, cannot leave the
+        /// gates behind) — but that cell IS a street cell BY CONSTRUCTION: a gate is a ring-street cell picked
+        /// by SettlementBlocks.PlaceGateCells, which is exactly what makes it a gap in the wall the streets
+        /// run out through. Rule 4 applied to gates would therefore fire on EVERY gate of EVERY town ever
+        /// generated — measured: 360 gates over 120 towns, all three size classes, 360 of them on a street
+        /// cell. A rule that fires on every correct town is not a rule, it is noise that teaches the DM to
+        /// ignore the panel.
+        ///
+        /// WHAT THIS SCOPE GIVES UP, stated rather than hidden: a GATE dropped onto a building's footprint is
+        /// not reported here. It is still refused at the edit — SettlementVolumeRenderer.RebuildCellRooms maps
+        /// cells to rooms with NO TypeId filter, so AreCellsFree rejects gate-onto-building, building-onto-gate
+        /// and building-onto-building through one term — and the ONLY way to reach the state is a hand-edited
+        /// save. Rule 3 below is the data-side twin of that same predicate for the building case.
+        ///
+        /// TWO DIFFERENT READS OF THE FOOTPRINT, DELIBERATELY:
+        ///   • Rules 1-2 (shape) read the STORED array through SettlementFootprint.Decode. They are statements
+        ///     about what is ON THE WIRE. Reading them through SettlementTileGrid.FootprintOf instead would
+        ///     make rule 1 STRUCTURALLY VACUOUS — FootprintOf's rule (a) substitutes the room's point cell for
+        ///     a missing footprint and so never returns an empty list, so "the footprint is non-empty" could
+        ///     not fail however broken the data was.
+        ///   • Rules 3-4 (overlap, street) read SettlementTileGrid.FootprintOf. They are statements about what
+        ///     is DRAWN and CLICKABLE, and FootprintOf is the single canonical read every renderer and the
+        ///     drag verdict already share, so a cell this rule calls contended is the same cell the tile grid
+        ///     paints and HitRoomId resolves. Nothing here may second-guess it.
+        ///
+        /// SEVERITIES. Empty/disconnected/overlapping are ERRORS: each one means the stored town cannot be
+        /// drawn as what it claims to be (a building with no cells, a building in two pieces, two buildings
+        /// contending for one cell — the last leaves one of them permanently hidden behind the other and
+        /// unclickable, SettlementVolumeRenderer.Precedes decides which). Standing on a street is a WARNING:
+        /// the town still renders correctly (the tile grid gives Building precedence over Road), the house is
+        /// merely blocking its own street — a planning complaint, not a broken map, and the one of the four a
+        /// DM reaches by ordinary dragging.</summary>
+        static void SettlementIssues(List<DungeonIssue> issues, InteriorFloor lvl, int li)
+        {
+            int human = li + 1;
+            var streets = new HashSet<(int i, int j)>(
+                SettlementFootprint.Decode(lvl.SettlementParams?.StreetCells));
+            // cell -> the FIRST building (in floor order) that claimed it, so a contended cell names a stable
+            // pair of ids rather than whichever two the enumeration happened to visit last.
+            var claimed = new Dictionary<(int i, int j), int>();
+
+            foreach (var r in lvl.Rooms)
+            {
+                if (r == null || r.TypeId != 1) continue;   // BUILDINGS ONLY — see the scope note above
+
+                // ---- rules 1-2: the STORED shape ----------------------------------------------------
+                var stored = SettlementFootprint.Decode(r.Cells);
+                if (stored.Count == 0)
+                    Add(issues, IssueSeverity.Error, li,
+                        $"Этаж {human}: у здания {r.Id} нет ни одной клетки — отпечаток пуст.");
+                else if (!SettlementFootprint.IsConnected4(stored))
+                    Add(issues, IssueSeverity.Error, li,
+                        $"Этаж {human}: отпечаток здания {r.Id} распадается на части — клетки {Describe(stored)} не связаны по стороне.");
+
+                // ---- rules 3-4: what is DRAWN --------------------------------------------------------
+                // Each rule's DECISION is its own single statement (`contended`, and the streets test) rather
+                // than being folded into the branch that reports it. That shape is what lets the non-vacuity
+                // harness remove exactly one rule per mutant with a one-line rewrite —
+                // MutValidatorNoOverlapRule and MutValidatorNoStreetRule each neuter one of these two lines.
+                foreach (var c in SettlementTileGrid.FootprintOf(r))
+                {
+                    bool contended = claimed.ContainsKey(c);
+                    if (contended)
+                        Add(issues, IssueSeverity.Error, li,
+                            $"Этаж {human}: здания {claimed[c]} и {r.Id} занимают одну клетку ({c.i}, {c.j}).");
+                    else claimed[c] = r.Id;
+
+                    if (streets.Contains(c))
+                        Add(issues, IssueSeverity.Warning, li,
+                            $"Этаж {human}: здание {r.Id} стоит на улице — клетка ({c.i}, {c.j}).");
+                }
+            }
+        }
+
+        /// <summary>A footprint's cells as "(i, j) (i, j) …", for an issue message that has to name the EXACT
+        /// offending shape rather than its size. Uncapped on purpose: the only footprints that reach it are
+        /// ones rule 2 has already found broken, and a hand-edited save's few stray cells are precisely what
+        /// the DM needs spelled out.</summary>
+        static string Describe(List<(int i, int j)> cells)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int k = 0; k < cells.Count; k++)
+            {
+                if (k > 0) sb.Append(' ');
+                sb.Append('(').Append(cells[k].i).Append(", ").Append(cells[k].j).Append(')');
+            }
+            return sb.ToString();
         }
 
         // Normalized-coordinate tolerance for "same column position" — matches the ToNorm/ToTile round-trip.

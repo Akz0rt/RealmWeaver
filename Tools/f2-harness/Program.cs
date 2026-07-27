@@ -81,6 +81,8 @@ static class Program
         settlement.SelfTestFootprintMigration();
         settlement.SelfTestSizing();
         settlement.SelfTestSizeMigration();
+        settlement.SelfTestGateOpening();
+        settlement.SelfTestSettlementSentinel();
         var interiorOps = new WorldGen.Rendering.InteriorOpsSelfTests();
         interiorOps.SelfTestInteriorOps();
         interiorOps.SelfTestBuildingSeedPin();

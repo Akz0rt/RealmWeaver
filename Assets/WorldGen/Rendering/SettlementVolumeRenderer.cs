@@ -575,14 +575,20 @@ namespace WorldGen.Rendering
         /// wanting one cell is an INVARIANT VIOLATION, not a tie: **Task 4** makes the validator report
         /// overlapping footprints, and **Task 7** makes a drag REJECT a translation that would overlap.
         ///
-        /// HALF OF THAT CONDITION IS NOW MET. Task 7 HAS landed: DungeonViewController's footprint drag
-        /// evaluates <see cref="AreCellsFree"/> over the whole proposed footprint and simply does not move the
-        /// building when any cell is already another room's — so a drag can no longer manufacture an overlap,
-        /// and the "THE ACCEPTED TRADE" regression that note in BeginCascade described is closed. **Task 4 has
-        /// still not landed**, so the tie-break STAYS: existing overlaps are still reachable from data written
-        /// before this task (a save made while the trade was open, or a hand-edited file), and nothing yet
-        /// REPORTS them — undefined rendering on a state the DM can reach is worse than a tie-break that
-        /// outlives half its justification. Remove it after Task 4, not before.</summary>
+        /// BOTH HALVES OF THAT CONDITION ARE NOW MET, AND THE TIE-BREAK STILL STAYS — the reason has changed,
+        /// so read this before deleting it. Task 7 landed: DungeonViewController's footprint drag evaluates
+        /// <see cref="AreCellsFree"/> over the whole proposed footprint and simply does not move the building
+        /// when any cell is already another room's, so a drag can no longer MANUFACTURE an overlap. Task 4
+        /// landed too: DungeonValidator.SettlementIssues now REPORTS two buildings sharing a cell, as an
+        /// Error naming both room ids and the cell.
+        ///
+        /// What neither of them does is REPAIR an overlap that is already in the data — and that state is
+        /// still reachable, from a save written while the pre-Task-7 trade was open or from a hand-edited
+        /// file. Reporting it is not the same as making it impossible, so a cell with two claimants must
+        /// still resolve to exactly one room deterministically, or the DM would be looking at undefined
+        /// rendering while reading the very error that describes it. The tie-break is what makes the
+        /// reported state legible instead of flickering. Delete it only once something REPAIRS overlaps on
+        /// load, not merely flags them.</summary>
         static bool Precedes(Room held, Room candidate)
         {
             bool heldBuilding = held.TypeId == 1, candBuilding = candidate.TypeId == 1;
@@ -884,6 +890,17 @@ namespace WorldGen.Rendering
         /// Wall/Gate. Applying the tile-type rule to a move would freeze every gate in town off its own wall,
         /// permanently. The DISCRIMINATING CHECK for this method: a gate must be draggable one cell onto the
         /// ring and back.
+        ///
+        /// ITS DATA-SIDE TWIN IS DungeonValidator.SettlementIssues' overlap rule (Task 4), and the two are
+        /// DELIBERATELY NOT one shared predicate. They agree on the term that matters — a cell claimed by
+        /// another room — and on how ownership is read (both go through SettlementTileGrid.FootprintOf), but
+        /// they are different questions: this one is a MOVE verdict, so it carries a mover exemption and an
+        /// on-field bound that a floor-wide invariant has no meaning for, and it answers from `cellRooms`, a
+        /// map this renderer rebuilds every reposition frame. Factoring the common term out would mean either
+        /// moving that map into Generation (Rendering code that has no business there) or threading it
+        /// through as a parameter — more coupling than the single ContainsKey it would save. What the pair
+        /// DOES buy is coverage: Rendering cannot be compiled by the offline harness, so this method has no
+        /// automated test, while the validator rule is pinned headlessly and by MutValidatorNoOverlapRule.
         ///
         /// EMPTY IS REFUSED. A null/empty set is not "trivially fine" — it is a room with no footprint, and
         /// accepting it would let a caller write an empty Cells array back onto a building.

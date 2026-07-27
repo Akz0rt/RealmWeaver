@@ -1201,7 +1201,143 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
   @('PoiMigration\.') `
   @('WorldGen.Generation.MutPoiMigrationNoop.PoiMigration.')
 
+# ---- THE FENCE'S FOOTPRINT PROJECTION (task 4). ------------------------------------------------------------
+# DungeonLayout.cs bundles FOUR types in one namespace block — class DungeonLayout, struct LayoutPoint, class
+# RenderSegment, class RenderGraph — but SelfTestFence names ONLY `DungeonLayout.` (LinkNodeFor, TilesPerAxis);
+# the other three never appear in it, and adding a pattern for them would make New-SettlementRebind throw for
+# want of a match. Nothing else is at risk from the bundling: the mutant copy's own BuildRenderGraph returns its
+# NESTED RenderGraph, and no unmutated file (nor the rebound test) ever receives one. Everything DungeonLayout.cs
+# calls — RoomLinkGeometry, DungeonProjection, SettlementRoads, SettlementFence, SettlementTileGrid,
+# SettlementFootprint, Room/InteriorFloor/Link — lives in an unmutated file and resolves OUTWARD once this file
+# is re-namespaced, so no cross-file stub is needed. LinkNode is RoomLinkGeometry's and stays REAL, so the
+# LinkNodes the rebound fixture hands the REAL SettlementFence carry no covariance trap.
+
+# MutFenceIgnoresFootprint: LinkNodeFor's settlement-building branch projects only the footprint's
+# REPRESENTATIVE cell instead of its whole cell bounding box — i.e. the fence goes back to wrapping a building
+# as a point rather than as its footprint. Caught by SelfTestFence fixture G, whose 4-cell bar puts its far cell
+# 11.52 tiles from the representative, far past the 1.92 + FenceMarginTiles = 3.92 tiles a one-cell rect reaches:
+# that cell falls OUTSIDE the derived fence and the enclosure assertion names it. Fixture G is four cells long
+# for exactly this reason — at TWO cells a representative-only rect still covers the neighbour's centre (3.92 >
+# 3.84) and this mutant would survive.
+New-SettlementMutant 'DungeonLayout.cs' 'MutFenceIgnoresFootprint' `
+  'var (minI, minJ, maxI, maxJ) = SettlementFootprint.Bounds(fp);' `
+  'var repCell = SettlementFootprint.Representative(fp); var (minI, minJ, maxI, maxJ) = (repCell.i, repCell.j, repCell.i, repCell.j);   // MUTANT: only the representative cell is projected' `
+  'MutFenceIgnoresFootprint.cs'
+
+New-SettlementRebind 'SelfTestFence' 'MutFenceIgnoresFootprint' `
+  @('DungeonLayout\.') `
+  @('WorldGen.Generation.MutFenceIgnoresFootprint.DungeonLayout.')
+
+# ---- THE SETTLEMENT VALIDATION RULES (task 4): four rules pinned by DungeonValidator.SettlementIssues. ------
+# DungeonValidator.cs bundles THREE types in one namespace block — enum IssueSeverity, class DungeonIssue AND
+# class DungeonValidator — the same bundling shape as SettlementGenerator.cs/SettlementConfig above, so the
+# rebind needs all three patterns. SelfTestSettlementValidation names every one of them (its two local helpers
+# take List<DungeonIssue> and IssueSeverity — deliberately LOCAL functions, so the rebind's method-scoped
+# rewrite covers their signatures too; a file-level helper would keep the REAL DungeonIssue and turn every
+# mutant into a compile error instead of a failing assertion). The three patterns cannot collide in either
+# order: "DungeonIssue" and "DungeonValidator" share no prefix, and \b anchors both.
+#
+# Everything the mutant copy calls — SettlementFootprint, SettlementTileGrid, InteriorData/InteriorFloor/Room,
+# BuildingGenerator.StairTypeId, DungeonGraphGenerator.DefaultMinBossDistance — lives in an unmutated file and
+# resolves OUTWARD, and Validate takes an InteriorData (unmutated) so the fixtures the rebound test builds pass
+# through unchanged. No cross-file stub needed.
+
+# MutValidatorNoOverlapRule: the disjointness decision is forced false, so two buildings claiming one cell are
+# never reported (the claim map is still filled, so nothing else changes). This is the rule Task 7's report
+# folded into this task: SettlementVolumeRenderer.AreCellsFree is the only thing preventing a permanent overlap
+# at the EDIT and it lives in Rendering, which the harness cannot compile — this is the same property asserted
+# from the data side, where it can be. Caught by SelfTestSettlementValidation part 2(c): rooms 10 and 11 share
+# exactly cell (7,5) and the Error naming both ids and that cell must be raised.
+New-SettlementMutant 'DungeonValidator.cs' 'MutValidatorNoOverlapRule' `
+  'bool contended = claimed.ContainsKey(c);' `
+  'bool contended = false;   // MUTANT: the disjointness rule is dropped' `
+  'MutValidatorNoOverlapRule.cs'
+
+# MutValidatorNoStreetRule: the street-coincidence decision is forced false, so a building standing in its own
+# street is never reported. Caught by SelfTestSettlementValidation part 2(d), which pins the Warning naming
+# cell (6,6). This is the one of the four rules a DM reaches by ordinary dragging — a stored street cell is
+# owned by no room, so the drag verdict does not refuse it — which is why it gets its own mutant.
+New-SettlementMutant 'DungeonValidator.cs' 'MutValidatorNoStreetRule' `
+  'if (streets.Contains(c))' `
+  'if (false)   // MUTANT: the street-coincidence rule is dropped' `
+  'MutValidatorNoStreetRule.cs'
+
+# MutValidatorFootprintScopeAllRooms: the TypeId == 1 scope is widened to every room, so the rules run on GATES
+# too. That is the exact mistake the buildings-only scope exists to prevent: a gate's cell IS a street cell by
+# construction (SettlementBlocks.PlaceGateCells picks it off the ring), so the street rule then fires on every
+# gate of every town. Caught in TWO places at once — part 1 (a freshly generated town must report nothing) and
+# part 3's gate fixtures (a gate on its own ring-street cell, and gates with empty/disconnected footprints).
+# The pattern stops before that line's trailing comment on purpose: sync.ps1 is read by PowerShell 5.1 as ANSI,
+# so a non-ASCII character in a literal here (the source comment's em dash) never matches the UTF-8 source.
+# Keep every mutant pattern and replacement in this file pure ASCII. `r.TypeId != 1` is unique in the file.
+New-SettlementMutant 'DungeonValidator.cs' 'MutValidatorFootprintScopeAllRooms' `
+  'if (r == null || r.TypeId != 1) continue;' `
+  'if (r == null) continue;   /* MUTANT: buildings-only scope dropped, gates are judged too */' `
+  'MutValidatorFootprintScopeAllRooms.cs'
+
+# MutValidatorEmptyViaFootprintOf: rules 1-2 read SettlementTileGrid.FootprintOf instead of the STORED array.
+# This is the ANTI-VACUITY mutant of the pair: FootprintOf's rule (a) substitutes the room's point cell for a
+# missing footprint, so read through it "the footprint is non-empty" can never fail however broken the data is
+# — the rule would still be there, still be evaluated, and be structurally incapable of firing. Caught by
+# SelfTestSettlementValidation part 2(a), whose room 1 carries no Cells at all.
+New-SettlementMutant 'DungeonValidator.cs' 'MutValidatorEmptyViaFootprintOf' `
+  'var stored = SettlementFootprint.Decode(r.Cells);' `
+  'var stored = SettlementTileGrid.FootprintOf(r);   // MUTANT: the stored shape read through the render fallback' `
+  'MutValidatorEmptyViaFootprintOf.cs'
+
+foreach ($mc in @('MutValidatorNoOverlapRule', 'MutValidatorNoStreetRule',
+                  'MutValidatorFootprintScopeAllRooms', 'MutValidatorEmptyViaFootprintOf')) {
+  New-SettlementRebind 'SelfTestSettlementValidation' $mc `
+    @('DungeonValidator\.', '\bDungeonIssue\b', '\bIssueSeverity\b') `
+    @("WorldGen.Generation.$mc.DungeonValidator.", "WorldGen.Generation.$mc.DungeonIssue",
+      "WorldGen.Generation.$mc.IssueSeverity")
+}
+
+# ---- THE GATE-OPENING PROPERTY ON GENERATED TOWNS (task 4). ------------------------------------------------
+# SelfTestGateOpening re-verifies, on GENERATED towns, the property the street rework MOVED: the wall the DM
+# sees is SettlementTileGrid's ring and the opening is a Gate TILE, not the vector fence's bulge around a gate
+# point. Two mutants because it makes two independent claims (one opening per gate, and every stored street
+# enclosed), and each must be shown to fire.
+#
+# WHY THESE ARE SEPARATE CLASSES rather than a second rebind of MutTileGridNoGates / MutGridStreetsNotSeeded
+# above, which is what the SelfTestRoads-x3 precedent might suggest: those three rebind DIFFERENT mutant classes
+# against ONE test method. This is the opposite shape — the SAME mutation caught by a SECOND test method, in a
+# DIFFERENT source file. New-SettlementRebind names its output gen/SelfTests_<mutantClass>.cs and the class
+# inside it ${mutantClass}SelfTests, so reusing the class name would overwrite the SettlementTileGridSelfTests-
+# derived copy with a SettlementSelfTests-derived one, and the existing catch
+# (MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()) would stop compiling. A distinct class per (mutation,
+# catching test) pair is the only shape that works — the same reason MutMigrationCurrentPitch and
+# MutMigrationAlwaysLegacyPitch are two classes over one file.
+#
+# Same two-pattern rebind as every other SettlementTileGrid mutant (the file bundles TileType), and both
+# patterns are required: SelfTestGateOpening reads grid.Cells[a, b] against TileType.Gate/Road/Building, so
+# moving one without the other is a compile error rather than a red assertion. SettlementGenerator and
+# SettlementFootprint stay REAL (unmutated files, resolving outward), so the town under test is the real one
+# and only the grid derived from it is mutated.
+
+# MutGateOpeningNoGates: the same gate-reclassify neutering as MutTileGridNoGates, caught here instead by the
+# GENERATED-town claims — gateTiles falls to 0 in every town, so the one-opening-per-gate count fires, and with
+# no Gate tile anywhere the nearest-Gate-tile search finds none and the Chebyshev bound fires too.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateOpeningNoGates' `
+  'g.Cells[bestA, bestB] = TileType.Gate;' `
+  ';   // MUTANT: gate reclassify never applied' `
+  'MutGateOpeningNoGates.cs'
+
+# MutGateOpeningStreetsNotSeeded: the same ring-seed neutering as MutGridStreetsNotSeeded. The ring is dilated
+# from the buildings alone, so the outermost stored street cells fall outside it and MarkRoads' Inside test
+# rejects them — they read None instead of Road, and the street-enclosure claim fires naming the exact cell.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateOpeningStreetsNotSeeded' `
+  'bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;' `
+  'bool[,] inside = hasWall ? BuildWallRing(g, null) : null;   // MUTANT: streets never folded into the ring seed' `
+  'MutGateOpeningStreetsNotSeeded.cs'
+
+foreach ($mc in @('MutGateOpeningNoGates', 'MutGateOpeningStreetsNotSeeded')) {
+  New-SettlementRebind 'SelfTestGateOpening' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 39 settlement mutants + 39 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 46 settlement mutants + 46 settlement rebound test copies into gen/"
 

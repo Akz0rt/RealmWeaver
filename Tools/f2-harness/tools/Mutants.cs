@@ -140,6 +140,23 @@ namespace WorldGen.Generation
                 ("MutBlocksGatesAdjacent", "SettlementBlocks.PlaceGateCells drops the MinGateSeparationCells term (two gates in one doorway)",
                     () => new WorldGen.MutantTests.MutBlocksGatesAdjacentSelfTests().SelfTestFrontage()),
 
+                ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
+                    () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
+
+                ("MutValidatorNoOverlapRule", "DungeonValidator's settlement disjointness rule dropped (two buildings may share a cell unreported — the data-side twin of SettlementVolumeRenderer.AreCellsFree, which Rendering puts out of the harness's reach)",
+                    () => new WorldGen.MutantTests.MutValidatorNoOverlapRuleSelfTests().SelfTestSettlementValidation()),
+                ("MutValidatorNoStreetRule", "DungeonValidator's settlement street-coincidence rule dropped (a building standing in its own street is never reported)",
+                    () => new WorldGen.MutantTests.MutValidatorNoStreetRuleSelfTests().SelfTestSettlementValidation()),
+                ("MutValidatorFootprintScopeAllRooms", "DungeonValidator's settlement rules widened past TypeId == 1 to every room, so they judge GATES too — whose one cell IS a street cell by construction, making the street rule fire on every gate of every town",
+                    () => new WorldGen.MutantTests.MutValidatorFootprintScopeAllRoomsSelfTests().SelfTestSettlementValidation()),
+                ("MutValidatorEmptyViaFootprintOf", "DungeonValidator's settlement shape rules read SettlementTileGrid.FootprintOf instead of the STORED Cells array — rule (a) there substitutes the room's point cell, so the non-empty rule becomes structurally incapable of firing",
+                    () => new WorldGen.MutantTests.MutValidatorEmptyViaFootprintOfSelfTests().SelfTestSettlementValidation()),
+
+                ("MutGateOpeningNoGates", "SettlementTileGrid's gate-reclassify write neutered, caught on GENERATED towns instead of a fixture (no town opens its wall at any gate)",
+                    () => new WorldGen.MutantTests.MutGateOpeningNoGatesSelfTests().SelfTestGateOpening()),
+                ("MutGateOpeningStreetsNotSeeded", "SettlementTileGrid's wall ring dilated from the buildings alone, caught on GENERATED towns (the outermost stored street cells fall outside the ring and read None instead of Road)",
+                    () => new WorldGen.MutantTests.MutGateOpeningStreetsNotSeededSelfTests().SelfTestGateOpening()),
+
                 ("MutPoiMigrationNoop", "PoiMigration.NormalizeLegacyTypes returns immediately (a legacy Village POI is never rewritten to City)",
                     () => new WorldGen.MutantTests.MutPoiMigrationNoopSelfTests().SelfTestPoiLegacyTypes()),
 

@@ -16,7 +16,22 @@ namespace WorldGen.Generation
     /// pinches → flood-fill the OUTSIDE from the border so enclosed pockets stay inside (no holes) → trace the
     /// single boundary loop with inside-kept-on-the-right directed unit edges, then collapse collinear runs.
     /// Fully deterministic from its inputs (no RNG), so a re-derive with identical nodes yields an identical
-    /// point list.</summary>
+    /// point list.
+    ///
+    /// WHAT A BUILDING'S RECT MEANS, AND WHERE THAT IS DECIDED. This module rasterizes RECTS and knows nothing
+    /// about the settlement lattice — deliberately, so "when the fence approach changes, ONLY this file
+    /// changes" can stay true in both directions: what is HANDED to it is the adapter's business, not its own.
+    /// A settlement building's rect is its FOOTPRINT's cell bounding box in tiles, produced by the one adapter
+    /// every caller shares (DungeonLayout.LinkNodeFor) — NOT DungeonProjection.EffectiveSize's nominal 6x6,
+    /// which at the v11 pitch was 1.56 cells and was never the building's real size. So the fence does wrap
+    /// whole footprints; it simply is not this file that reads Room.Cells. Pinned by SelfTestFence fixture G,
+    /// which projects real multi-cell footprints through that adapter, and by MutFenceIgnoresFootprint, which
+    /// collapses the adapter to the representative cell and must make fixture G's enclosure assertion fire.
+    ///
+    /// AN L OR A RING IS READ AS ITS FILLED BBOX, which is deliberately conservative — the fence wraps a
+    /// little more than the house, never less. It also costs nothing in practice at the shipped margin: one
+    /// cell is 3.84 tiles and every rect is inflated by FenceMarginTiles = 2 on each side, so a one-cell
+    /// concave notch (3.84 wide, 4.0 of inflation reaching into it) closes over anyway.</summary>
     public static class SettlementFence
     {
         /// <summary>How far the fence clears each building rect, in tiles (buildings inflated by this; gates
