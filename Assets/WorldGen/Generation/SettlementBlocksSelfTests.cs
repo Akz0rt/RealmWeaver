@@ -8,61 +8,66 @@ namespace WorldGen.Rendering
     /// is a test that passes whether or not the rule holds).</summary>
     public class SettlementBlocksSelfTests : MonoBehaviour
     {
+        /// <summary>The contour a town sized for `target` buildings gets. SettlementGenerator.WallRadiusFor
+        /// takes a SIZE CLASS now, and the sweeps below deliberately walk targets BETWEEN the three classes —
+        /// so this inverts SettlementSizing's own derivation rather than inventing a second one:
+        ///     0.63 * (pi*r^2 - 7.9*r) = target   ->   pi*r^2 - 7.9*r - target/0.63 = 0
+        /// solved by the quadratic formula for the positive root. At the three shipped targets it reproduces
+        /// the table exactly (20 -> 4.68, 50 -> 6.44, 120 -> 9.15 cells against the table's 4.7 / 6.4 / 9.1),
+        /// so a swept target is measured against the same model production uses.
+        ///
+        /// A CLASS MEMBER, not a local function in one test: SelfTestBlocks and SelfTestFrontage both sweep
+        /// these contours, and two copies of a radius model are two things that can drift apart. It stays
+        /// OUTSIDE every [ContextMenu] method, so sync.ps1's mutant rebind — which extracts one method body
+        /// and leaves the rest of the class alone — carries it into every rebound copy unchanged.</summary>
+        static float SweepRadiusNorm(int target)
+        {
+            double c = target / 0.63;
+            double r = (7.9 + System.Math.Sqrt(7.9 * 7.9 + 4.0 * System.Math.PI * c)) / (2.0 * System.Math.PI);
+            return (float)r * SettlementFootprint.Pitch;
+        }
+
         [ContextMenu("Self-Test: Settlement Blocks")]
         public void SelfTestBlocks()
         {
             bool ok = true;
 
             // ---- THE STATED COUNT TOLERANCE ------------------------------------------------------------
-            // `targetBuildings` is ADVISORY: subdivision aims for it and the achieved count is whatever the
+            // `targetBuildings` is ADVISORY: the layout aims for it and the achieved count is whatever the
             // geometry yields, so this is a BAND, never an equality (an exact-count contract is what forced
             // the reverted building cap). The band is asymmetric on purpose, because the two sides are bounded
             // by different things:
             //
-            //   UPPER (0.90) — the fill's size class scales with the cell budget (SizeClassFor), so a town
-            //     with far more cells than the DM asked for buildings gets BIGGER buildings rather than more
-            //     of them. The request is therefore a ceiling in practice, never a floor.
-            //   LOWER — nothing can manufacture cells. The contour's interior is ~2.89 * r_cells^2 cells; the
-            //     one-cell ring street eats the whole boundary (~6*r_cells) and the subdivision streets eat
-            //     more, so the buildable core is a MINORITY of the interior at every town size.
+            //   UPPER — the fill's size class scales with the cell budget (SizeClassFor), so a town with far
+            //     more cells than the DM asked for buildings gets BIGGER buildings rather than more of them.
+            //   LOWER — nothing can manufacture cells. The contour's interior is ~2.89 * r_cells^2 cells and
+            //     the ring street eats the whole boundary (~6*r_cells) before a single house is placed.
             //
-            // RE-MEASURED FOR THE v11 LATTICE (arc C.2, task B). The old band [0.20, 0.90] came from a sweep
-            // against the RETIRED radius formula (0.16 + 0.0045*target, clamped at 0.45 NORMALIZED), which
-            // the size-class model replaced: a town's radius is a property of its size class now, derived in
-            // CELLS from SettlementSizing's own 0.63*(pi*r^2 - 7.9*r) = target fit. That fit is deliberately
-            // calibrated for ratio ~1, i.e. it asks for a radius that COULD deliver the target, where the old
-            // formula systematically under-provided — so the achieved/requested ratio moved up bodily and the
-            // old band is stale by construction, not by any defect in Generate. See task-B-report.md for the
-            // measured range this band is set from; Task D re-derives both this and SettlementSizing's own
-            // columns from a full seed sweep.
+            // RE-MEASURED FOR THE FRONTAGE LAYOUT (arc C.2, task C), and the re-measurement was NOT optional.
+            // The previous band [0.41, 1.58] was derived — 0.8x the measured minimum, ~1.13x the measured
+            // maximum — from a task-B sweep that ran against RECURSIVE SUBDIVISION, and this task replaced
+            // that rule wholesale: streets are laid only where a house would otherwise have no frontage, which
+            // spends far less of the interior on street and lifted the achieved count by +23% / +47% / +59%
+            // at the three shipped sizes. A band whose stated derivation describes a layout that no longer
+            // exists is a band that has stopped constraining anything it claims to.
             //
-            // THE NEW MEASUREMENT, targets {5,8,12,20,30,40,50,55,60,80,120} x seeds 1..60 (660 towns, run
-            // through the harness, per-target rows in task-B-report.md): the ratio lands in [0.517, 1.400],
-            // against the old model's [0.250, 0.800]. The band below is that measurement with the SAME
-            // headroom the old band used — 0.8x the measured minimum, ~1.13x the measured maximum — so it is
-            // a real constraint over the swept range and not one widened until the code fit.
+            // THE MEASUREMENT THIS BAND IS SET FROM: targets {5,8,12,20,30,40,50,55,60,80,120} x seeds 1..60,
+            // 660 towns, the SAME fixture shape Check() uses below (wall = SweepRadiusNorm(target), size =
+            // FromLegacyTarget(target)), run through the harness. Per-target rows are in task-C-report.md.
+            // The ratio lands in [0.500, 1.500] — against the subdivision layout's [0.517, 1.400]:
+            //     LOW  0.500 at target 80, seed 19   (target 80 is the worst row overall: 0.500..0.838)
+            //     HIGH 1.500 at target  8, seed 48   (target  8 is the loosest row: 0.750..1.500)
+            // The band below applies the SAME headroom convention the file has used since task B — 0.8x the
+            // measured minimum, ~1.13x the measured maximum — to those two numbers.
             //
-            // NOT A PROPERTY OF Generate FOR EVERY target, though — only for target >= MinBandTarget, which
-            // is where Check() below is ever called. Very small targets break the UPPER bound by
-            // construction, not by any layout defect: achieved is never less than one whole building, and the
-            // upper end of the band above comes from exactly that regime (target 5 reaches 1.400, target 8
-            // reaches 1.375, while target 120 tops out at 0.792).
-            const float MinRatio = 0.41f, MaxRatio = 1.58f;
+            // WHY THE UPPER EDGE SITS ABOVE 1, and it is not slack anyone chose: it is set entirely by the
+            // SMALL-TARGET QUANTIZATION regime. A town asked for 8 buildings cannot deliver a fraction of one,
+            // so a single extra house is +0.125 of ratio all by itself; targets 5/8/12 reach 1.400/1.500/1.417
+            // while every target from 20 up stays at or under 1.150 and target 120 tops out at 0.967. Check()
+            // is called with targets 8, 20, 40 and 80, so exactly one of its four fixtures lives in that
+            // regime — and MinBandTarget keeps the band from being applied below it at all.
+            const float MinRatio = 0.40f, MaxRatio = 1.70f;
             const int MinBandTarget = 5;
-
-            // The contour a town sized for `target` buildings gets. SettlementGenerator.WallRadiusFor takes a
-            // SIZE CLASS now, and this sweep deliberately walks targets BETWEEN the three classes — so it
-            // inverts SettlementSizing's own derivation rather than inventing a second one:
-            //     0.63 * (pi*r^2 - 7.9*r) = target   ->   pi*r^2 - 7.9*r - target/0.63 = 0
-            // solved by the quadratic formula for the positive root. At the three shipped targets this
-            // reproduces the table exactly (20 -> 4.68, 50 -> 6.44, 120 -> 9.15 cells against the table's
-            // 4.7 / 6.4 / 9.1), so a swept target is measured against the same model production uses.
-            float SweepRadiusNorm(int target)
-            {
-                double c = target / 0.63;
-                double r = (7.9 + System.Math.Sqrt(7.9 * 7.9 + 4.0 * System.Math.PI * c)) / (2.0 * System.Math.PI);
-                return (float)r * SettlementFootprint.Pitch;
-            }
 
             // One full structural sweep of a generated layout. Called for several (seed, target) pairs below
             // so the invariants are pinned across towns, not on one lucky fixture.
@@ -234,10 +239,19 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Blocks: PASS");
         }
 
-        /// <summary>THE FRONTAGE RULE AND WHAT IT IMPLIES, over 12 seeds x 3 size classes. Everything here is
+        /// <summary>THE FRONTAGE RULE AND WHAT IT IMPLIES, over 12 seeds x SEVEN contours. Everything here is
         /// a property of the town's GEOMETRY — which cell is a street, which cell touches one — never of a
         /// count or a ratio: a metric can be satisfied by the wrong shape, and this line of work has shipped
-        /// assertions that were.</summary>
+        /// assertions that were.
+        ///
+        /// SEVEN CONTOURS, NOT THREE. The three SHIPPED radii (4.7 / 6.4 / 9.1 cells) are what production ever
+        /// builds, so they are swept first. But the rule these assertions state is STRUCTURAL — it must hold
+        /// for a contour of any scale — and the assertion this method replaced (the retired block-size cap in
+        /// SelfTestBlocks) ran on SelfTestBlocks' four BETWEEN-the-classes contours, of which only ~4.68
+        /// overlaps a shipped radius. Sweeping only the shipped three would therefore have left three of the
+        /// four contours the old cap covered with nothing asserting that a core cell is fronted at all — the
+        /// surviving "every building fronts a street" is true BY CONSTRUCTION (FillBlock seeds only on cells
+        /// that already front one) and so is strictly weaker. Both families are swept here.</summary>
         [ContextMenu("Self-Test: Frontage Streets")]
         public void SelfTestFrontage()
         {
@@ -245,17 +259,16 @@ namespace WorldGen.Rendering
             var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
             var seeds = new[] { 1, 2, 3, 5, 7, 11, 13, 17, 23, 29, 37, 41 };
 
-            foreach (var size in sizes)
+            // The same quadratic inversion of SettlementSizing's own fit that SelfTestBlocks.Check uses for its
+            // between-the-classes contours — SweepRadiusNorm, hoisted to a class member so both methods sweep
+            // the SAME radii instead of two models that could drift apart. See SelfTestBlocks for its
+            // derivation.
+            int CheckTown(int seed, float radiusNorm, SettlementSize size, string at)
             {
-                // Per-size roll-up for task D's calibration sweep — printed once per size, never asserted on.
-                int achievedMin = int.MaxValue, achievedMax = 0, achievedSum = 0;
-
-                foreach (var seed in seeds)
                 {
-                    var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SettlementSizing.WallRadiusNorm(size),
+                    var wall = WallContour.Rounded(seed, 0.5f, 0.5f, radiusNorm,
                                                    SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
                     var layout = SettlementBlocks.Generate(wall, seed, size);
-                    string at = $"[seed {seed}, size {size}]";
 
                     var streetSet = new System.Collections.Generic.HashSet<(int i, int j)>();
                     foreach (var c in layout.StreetCells) streetSet.Add(c);
@@ -354,17 +367,28 @@ namespace WorldGen.Rendering
                     if (core.Count > 0 && !streetSet.Contains(centre))
                     { Debug.LogError($"FAIL frontage {at}: the town centre cell ({centre.i},{centre.j}) is not a street — no arterial reached the middle of town"); ok = false; }
 
-                    // ---- 5. BLOCK DEPTH ----------------------------------------------------------------
-                    // Stated as the GEOMETRY, not as a size cap or a ratio: no block may contain a cell whose
-                    // four orthogonal neighbours are all in that same block, because such a cell has no
-                    // frontage in any direction. That is the two-row property — a block is at most two cells
-                    // deep from a street on every axis — expressed as the one cell that would break it.
+                    // ---- 5. BLOCK DEPTH — A RESTATEMENT OF ASSERTION 1, FOR DIAGNOSIS ------------------
+                    // The brief asks for the two-row property to be stated as GEOMETRY (no block contains a
+                    // cell whose four orthogonal neighbours are all in that same block) rather than as a count
+                    // or a ratio, and that is what this is. BUT IT ADDS NO DETECTION POWER, and pretending
+                    // otherwise would be its own kind of vacuity, so: it is LOGICALLY EQUIVALENT to assertion
+                    // 1, in both directions.
+                    //   (→) A cell surrounded by its own block on all four sides is itself non-street with no
+                    //       street 4-neighbour, so assertion 1 fires on it too.
+                    //   (←) Every core cell has all four neighbours INTERIOR — RingStreet's base rule puts any
+                    //       interior cell with a non-interior 4-neighbour into the RING, and the core is what
+                    //       the ring did not take — so an unfronted non-street core cell forces all four of
+                    //       its neighbours into `core \ streets`, hence into its own 4-connected component,
+                    //       and this assertion fires on it too.
+                    // The two therefore fire together, always. What this one adds is the DIAGNOSIS: it names
+                    // the offending block, its cell count and its bbox, which is what a reader needs to see
+                    // which block went wrong — assertion 1 names only the stranded cell.
                     var blockCells = new System.Collections.Generic.List<(int i, int j)>();
                     foreach (var c in core) if (!streetSet.Contains(c)) blockCells.Add(c);
                     var blocks = SettlementBlocks.Components(blockCells);
-                    // `depthReported` and not `ok`: this sweep must run on its own merits even when an
-                    // earlier section has already failed, or a mutant that trips section 1 would leave this
-                    // one silently unexercised and its non-vacuity unproven.
+                    // `depthReported` and not `ok`: this sweep must still RUN when an earlier section has
+                    // already failed, so its diagnosis appears alongside assertion 1's rather than being
+                    // skipped exactly when it would be most useful.
                     bool depthReported = false;
                     for (int b = 0; b < blocks.Count && !depthReported; b++)
                     {
@@ -408,7 +432,17 @@ namespace WorldGen.Rendering
                             { Debug.LogError($"FAIL frontage {at}: rerun building {b} occupies different cells"); ok = false; break; }
                         }
 
-                    int achieved = layout.Buildings.Count;
+                    return layout.Buildings.Count;
+                }
+            }
+
+            // ---- FAMILY A: THE THREE SHIPPED RADII, with the yield roll-up task D calibrates from ---------
+            foreach (var size in sizes)
+            {
+                int achievedMin = int.MaxValue, achievedMax = 0, achievedSum = 0;
+                foreach (var seed in seeds)
+                {
+                    int achieved = CheckTown(seed, SettlementSizing.WallRadiusNorm(size), size, $"[seed {seed}, size {size}]");
                     if (achieved < achievedMin) achievedMin = achieved;
                     if (achieved > achievedMax) achievedMax = achieved;
                     achievedSum += achieved;
@@ -418,6 +452,19 @@ namespace WorldGen.Rendering
                 // minimums from exactly these numbers, so they are printed rather than pinned — a band here
                 // would only have to move again the moment the table does.
                 Debug.Log($"Frontage yield [{size}]: target {SettlementSizing.TargetBuildings(size)}, achieved min {achievedMin} / avg {achievedSum / (float)seeds.Length:F1} / max {achievedMax} over {seeds.Length} seeds (guarantee claims {SettlementSizing.GuaranteedMinBuildings(size)})");
+            }
+
+            // ---- FAMILY B: THE FOUR BETWEEN-THE-CLASSES CONTOURS SelfTestBlocks SWEEPS --------------------
+            // The same four targets SelfTestBlocks.Check is called with — 8 / 20 / 40 / 80, i.e. 3.63 / 4.68 /
+            // 5.93 / 7.73 cells of radius — so the frontage rule is asserted across the SAME continuum the
+            // retired block-size cap covered, not only on the three radii the size table ships. `size` is the
+            // class the target buckets into, exactly as SelfTestBlocks does it, so the gate count asserted is
+            // the one that town would actually get.
+            foreach (var target in new[] { 8, 20, 40, 80 })
+            {
+                var size = SettlementSizing.FromLegacyTarget(target);
+                foreach (var seed in seeds)
+                    CheckTown(seed, SweepRadiusNorm(target), size, $"[seed {seed}, sweep target {target}, size {size}]");
             }
 
             // ---- 7. THE SEPARATION RULE, ON THE ONLY RING THAT CAN EXERCISE IT --------------------------

@@ -129,7 +129,24 @@ namespace WorldGen.Generation
             {
                 if (!byId.TryGetValue(edges[ei].A, out var A) || !byId.TryGetValue(edges[ei].B, out var B)) continue;
                 path.Clear();
-                if (!Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path))
+                bool routed = Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path, strict: true);
+                // THE PERMISSIVE RETRY, and it is a DEGRADATION LADDER, not a second opinion. The strict carve
+                // (CarvedOpen) refuses a cell any THIRD party claims — including B's own centre cell, which is
+                // where the A* has to finish. On a generated town that cell is never claimed by anyone else (a
+                // flush neighbour's inflated rect reaches Wn/2 + 1 tiles while B's centre is (Wn + Wb)/2 away,
+                // and Wb = 3.84 tiles leaves 0.92 tiles of margin against the half-tile goal rounding —
+                // measured: zero retries over 40 Small and 15 Large towns). But a building the DM has DRAGGED
+                // ONTO another one buries its own centre under the other's rect, and then the strict pass
+                // cannot finish at all.
+                //
+                // Falling straight through to the centre-to-centre line there would be the WORST of the three
+                // outcomes — a diagonal drawn across the whole town, through every house in between — and it
+                // is exactly the defect the strict carve exists to prevent. So the strict pass is a PREFERENCE:
+                // when it fails, retry with the old permissive carve (anything inside either endpoint's
+                // inflated rect), which is never worse than what shipped before this rule existed, and only
+                // then give up. SelfTestRoads' overlap fixture pins this ladder.
+                if (!routed) { path.Clear(); routed = Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path, strict: false); }
+                if (!routed)
                 {
                     // Graceful degradation (never fail the Build): the straight centre-to-centre line.
                     EmitPolyline(g, ei, A, B, new List<LinkPoint>
@@ -157,7 +174,7 @@ namespace WorldGen.Generation
         static bool Route(LinkNode A, LinkNode B, bool[] blocked, int[] claimCount, HashSet<int> roads,
                           float[] best, int[] parent, bool[] closed, Heap heap,
                           int minX, int minY, int maxX, int maxY,
-                          int gw, List<(int x, int y)> outPath)
+                          int gw, List<(int x, int y)> outPath, bool strict)
         {
             int sx = Clamp((int)System.Math.Round(A.CX), minX, maxX), sy = Clamp((int)System.Math.Round(A.CY), minY, maxY);
             int tx = Clamp((int)System.Math.Round(B.CX), minX, maxX), ty = Clamp((int)System.Math.Round(B.CY), minY, maxY);
@@ -187,7 +204,7 @@ namespace WorldGen.Generation
                     if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
                     int nc = (ny - minY) * gw + (nx - minX);
                     // Passable: a free cell, or one the OWN-ENDPOINT CARVE forgives — see CarvedOpen.
-                    if (blocked[nc] && !CarvedOpen(nx, ny, nc, A, B, claimCount)) continue;
+                    if (blocked[nc] && !CarvedOpen(nx, ny, nc, A, B, claimCount, strict)) continue;
                     float step = roads.Contains(nc) ? RoadReuseFactor : 1f;
                     if (pd != 4 && pd != d) step += RoadTurnPenalty;
                     float ng = best[st] + step;
@@ -265,12 +282,19 @@ namespace WorldGen.Generation
         /// MEASURED, not theorised (task-C-report.md): before this term, 18 of 40 Small towns and 14 of 15
         /// Large ones routed a road clean through a third party's rect. It was never a property of the
         /// frontage layout — those two numbers come from the SAME sweep run against the PRE-frontage
-        /// subdivision layout. The pinned SelfTestRoads seed simply happened to be one of the clean ones.</summary>
-        static bool CarvedOpen(int x, int y, int cell, LinkNode A, LinkNode B, int[] claimCount)
+        /// subdivision layout. The pinned SelfTestRoads seed simply happened to be one of the clean ones.
+        ///
+        /// `strict: false` IS THE PRE-TASK-C RULE, VERBATIM — "inside either endpoint's inflated rect" and
+        /// nothing more. Build's degradation ladder runs the strict pass first and only reaches this one when
+        /// an endpoint's own centre cell is buried under somebody else's rect (a DRAGGED overlap; never a
+        /// generated town). See Build's own comment for why that beats giving up.</summary>
+        static bool CarvedOpen(int x, int y, int cell, LinkNode A, LinkNode B, int[] claimCount, bool strict)
         {
+            bool inA = InsideInflated(x, y, A), inB = InsideInflated(x, y, B);
+            if (!strict) return inA || inB;
             int others = claimCount[cell];
-            if (InsideInflated(x, y, A)) others--;
-            if (InsideInflated(x, y, B)) others--;
+            if (inA) others--;
+            if (inB) others--;
             return others <= 0;
         }
 

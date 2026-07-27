@@ -70,6 +70,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutRoadsNoReuseSelfTests().SelfTestRoadJunctions()),
                 ("MutRoadsNoClearance", "SettlementRoads' obstacle-mask inflation drops its + RoadClearanceTiles term (roads may hug buildings)",
                     () => new WorldGen.MutantTests.MutRoadsNoClearanceSelfTests().SelfTestRoads()),
+                ("MutRoadsNoCarveRetry", "SettlementRoads.Build's permissive retry removed (an endpoint buried under another building's rect falls straight to the diagonal centre-to-centre line)",
+                    () => new WorldGen.MutantTests.MutRoadsNoCarveRetrySelfTests().SelfTestRoads()),
                 ("MutRoadsNoArterials", "SettlementStreets' gate-gate arterial pass skipped (gates fall back to seed points)",
                     () => new WorldGen.MutantTests.MutRoadsNoArterialsSelfTests().SelfTestStreets()),
 

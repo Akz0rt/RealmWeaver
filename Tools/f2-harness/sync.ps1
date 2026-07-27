@@ -461,6 +461,17 @@ New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoClearance' `
   'float hw = n.W * 0.5f, hh = n.H * 0.5f;   // MUTANT: no clearance inflation' `
   'MutRoadsNoClearance.cs'
 
+# MutRoadsNoCarveRetry: Build's PERMISSIVE RETRY removed, so an edge whose endpoint centre cell is claimed by
+# a third party — a building dragged clean ON TOP of another one — has its strict pass fail and falls straight
+# through to the centre-to-centre line. Caught by SelfTestRoads' overlap fixture (assertion 7a): that fixture's
+# two endpoints differ on BOTH axes, so the fallback line is diagonal by construction and the diagonal check
+# names the exact segment. The rest of the suite is silent — no GENERATED town ever needs the retry (measured:
+# zero retries over 40 Small and 15 Large towns), which is precisely why the fixture had to be synthetic.
+New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoCarveRetry' `
+  'if (!routed) { path.Clear(); routed = Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path, strict: false); }' `
+  ';   // MUTANT: no permissive retry — an unroutable strict pass falls straight to the centre-to-centre line' `
+  'MutRoadsNoCarveRetry.cs'
+
 # MutRoadsNoArterials: SettlementStreets' gate-gate arterial pass skipped — gates fall back to being
 # mere seed points. SelfTestStreets' arterial-net span assertion must fail.
 New-SettlementMutant 'SettlementStreets.cs' 'MutRoadsNoArterials' `
@@ -617,6 +628,12 @@ New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoAvoid' `
 New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoClearance' `
   @('SettlementRoads\.') `
   @('WorldGen.Generation.MutRoadsNoClearance.SettlementRoads.')
+
+# A THIRD rebind of SelfTestRoads — MutRoadsNoCarveRetry is caught by that same method's overlap fixture
+# (assertion 7), not by a different one, exactly like MutRoadsNoClearance above.
+New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoCarveRetry' `
+  @('SettlementRoads\.') `
+  @('WorldGen.Generation.MutRoadsNoCarveRetry.SettlementRoads.')
 
 New-SettlementRebind 'SelfTestRoadJunctions' 'MutRoadsNoReuse' `
   @('SettlementRoads\.') `

@@ -642,7 +642,20 @@ namespace WorldGen.Rendering
             // on screen (exactly what FitBoundsFor does). The fence is TILE space already, so read it with
             // tileSpace: true (no ×T); a double-scale would both falsely satisfy "extends past" AND blow the
             // field, so the explicit magnitude guard below pins the tile-space path. ----
-            var cfg = new SettlementConfig { Seed = 3, Size = SettlementSize.Medium, HasWall = true };
+            //
+            // Re-pinned 3->1 (arc C.2, task C). The frontage layout moved every building, and this fixture
+            // turns out to be sensitive to WHICH node is extreme rather than to the fence at all: a GATE
+            // projects into ContentBoundsTiles as RoomSizing.Default(0)'s 7x5 TILES (see DungeonLayout
+            // LinkNodeFor's own note — 1.82 x 1.30 cells at the v11 pitch) while SettlementFence rasterizes it
+            // as a bare centre POINT, so on a town whose extreme node on every side is a gate, the room bounds
+            // out-reach the fence and nothing pokes past. Seed 3 became one of those.
+            //
+            // SCANNED before re-pinning, same discipline as SelfTestRoadJunctions: seeds 1..60, this exact
+            // fixture shape (Medium / walled). The fence pokes past the room bounds on 51 of 60 — so the
+            // property is emphatically still there and this is a fixture ripple, not a regression. 1 is the
+            // FIRST poking seed (the head of the list is 1, 2, 4, 5, 6, 8, 9, 12, 13, 14) and is otherwise
+            // unremarkable.
+            var cfg = new SettlementConfig { Seed = 1, Size = SettlementSize.Medium, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var fence = DungeonLayout.DeriveTownFence(floor, includeRoads: true);
             if (fence == null || !fence.IsClosedSane())
@@ -965,6 +978,63 @@ namespace WorldGen.Rendering
                 { Debug.LogError($"FAIL roads: a WHOLE-CELL drag of room {moved.Id} to cell ({cell.i + mdi},{cell.j + mdj}) left its road node at ({n2.CX:F3},{n2.CY:F3}) — the stale single-cell footprint was never re-derived, so the re-assert below would run on an UNCHANGED town"); ok = false; }
                 AssertClean(floor, "dragged");
             }
+
+            // ---- 7. A BUILDING DRAGGED ON TOP OF ANOTHER STILL GETS A ROUTED ROAD, NOT A DIAGONAL ---------
+            // THE CASE AssertClean CANNOT REACH, and it is the one the task-C carve created. SettlementRoads'
+            // strict carve refuses any cell a THIRD party claims — but the A* has to FINISH on B's centre
+            // cell, and a building dragged onto another one buries its own centre under the other's rect. The
+            // strict pass then cannot complete, and without the permissive retry Build falls through to the
+            // straight centre-to-centre line: a DIAGONAL drawn across the town through every house between the
+            // two, i.e. precisely the defect the strict carve exists to prevent, reintroduced in its worst
+            // form. AssertClean's own "dragged" half cannot reach this: it relocates to a cell that is FREE of
+            // every other footprint (at Chebyshev radius 2, outside the wall), so no third party ever claims
+            // the moved building's centre.
+            //
+            // SYNTHETIC, not generated, and deliberately so: production never emits two rooms on one cell, so
+            // the fixture has to construct the overlap by hand. Three single-cell buildings — A at (0,0), C at
+            // (5,5), and B placed ON C at (5,5) — with ONE link, A—B. B's centre cell is then claimed by C, so
+            // the strict pass fails and the retry is the only thing standing between this town and a diagonal.
+            // The cells differ on BOTH axes, so the centre-to-centre fallback is unambiguously diagonal and
+            // assertion (a) below cannot pass by accident.
+            var over = new InteriorFloor { NextRoomId = 4, SettlementParams = new SettlementParams { Size = SettlementSize.Small, HasWall = false } };
+            void AddCell(int id, int i, int j)
+                => over.Rooms.Add(new Room
+                {
+                    Id = id, TypeId = 1,
+                    X = SettlementFootprint.CenterOf(i), Y = SettlementFootprint.CenterOf(j),
+                    Cells = SettlementFootprint.Encode(new[] { (i, j) }),
+                });
+            AddCell(1, 0, 0);
+            AddCell(2, 5, 5);      // C, the squatter's victim
+            AddCell(3, 5, 5);      // B, dragged clean on top of C
+            over.Links.Add(new Link { RoomA = 1, RoomB = 3 });
+
+            var overNodes = RoadNodes(over);
+            // The fixture only proves anything if the overlap is REAL: rooms 2 and 3 must land on the same
+            // rect. If a future FootprintOf change relocated one of them, every assertion below would pass
+            // against a town with no overlap in it at all.
+            if (overNodes.Count != 3 || overNodes[1].CX != overNodes[2].CX || overNodes[1].CY != overNodes[2].CY)
+            { Debug.LogError($"FAIL roads[overlap]: rooms 2 and 3 were meant to share a cell but their road nodes are ({overNodes[1].CX:F2},{overNodes[1].CY:F2}) and ({overNodes[2].CX:F2},{overNodes[2].CY:F2}) — the fixture has no overlap and proves nothing"); ok = false; }
+            var overG = SettlementRoads.Build(overNodes, RoadEdges(over));
+
+            // (a) THE ROAD IS STILL ROUTED. A diagonal segment means Route failed both passes and Build drew
+            //     the raw centre line — the exact degradation the retry exists to avoid.
+            if (overG.Segments.Count == 0)
+            { Debug.LogError("FAIL roads[overlap]: the A—B link produced no segments at all"); ok = false; }
+            foreach (var s in overG.Segments)
+                if (System.Math.Abs(s.A.X - s.B.X) > 1e-3f && System.Math.Abs(s.A.Y - s.B.Y) > 1e-3f)
+                { Debug.LogError($"FAIL roads[overlap]: segment ({s.A.X:F1},{s.A.Y:F1})→({s.B.X:F1},{s.B.Y:F1}) is diagonal — the permissive retry did not fire and Build fell back to the straight centre-to-centre line through every house between A and B"); ok = false; break; }
+
+            // (b) AND IT STILL ARRIVES. Every routed cell must be axis-adjacent to the previous one and the
+            //     polyline must actually reach B's rect — a "routed" path that stops short would satisfy (a)
+            //     vacuously.
+            bool reachesB = false;
+            var bNode = overNodes[2];
+            foreach (var s in overG.Segments)
+                if (System.Math.Abs(s.B.X - bNode.CX) <= bNode.W * 0.5f + 0.51f &&
+                    System.Math.Abs(s.B.Y - bNode.CY) <= bNode.H * 0.5f + 0.51f) { reachesB = true; break; }
+            if (!reachesB)
+            { Debug.LogError($"FAIL roads[overlap]: no segment ends on room 3's rect at ({bNode.CX:F2},{bNode.CY:F2}) — the road never arrives, so assertion (a) would pass vacuously"); ok = false; }
 
             if (ok) Debug.Log("Settlement Roads: PASS");
         }

@@ -405,12 +405,21 @@ namespace WorldGen.Generation
             var paved = new HashSet<(int i, int j)>();
             foreach (var gate in gateCells)
             {
-                var start = InwardStep(gate, core, centre);
-                if (!start.HasValue) continue;               // a gate with no core neighbour opens on nothing
+                // WHERE THE ROAD STARTS. Normally the core 4-neighbour nearest the centre — that is "the core
+                // cell just inside the gate". But the ring is only MOSTLY one cell wide (RingStreet: a quarter
+                // of it is genuinely two cells deep), and on a SMALL contour a gate can land in the outer
+                // layer with all four of its neighbours still ring, so there is no such cell. Starting the
+                // walk AT THE GATE covers that: the paving loop below skips every non-core cell, so the road
+                // simply begins at the first core cell the path reaches, however deep the ring is there.
+                //
+                // MEASURED, not hypothetical — this is exactly what a 3.63-cell contour does (SelfTestFrontage
+                // sweep target 8, seed 1). Without the fallback BOTH of that town's gates were skipped, no
+                // arterial ran at all, and the centre cell was left unpaved.
+                var start = InwardStep(gate, core, centre) ?? gate;
 
                 int di = centre.i - gate.i, dj = centre.j - gate.j;
                 bool iFirst = System.Math.Abs(di) >= System.Math.Abs(dj);
-                foreach (var cell in LPath(start.Value, centre, iFirst))
+                foreach (var cell in LPath(start, centre, iFirst))
                 {
                     if (paved.Contains(cell)) break;         // an earlier arterial already carries this route
                     if (!core.Contains(cell)) continue;      // a ring cell / outside — already street, or not ours
@@ -424,7 +433,8 @@ namespace WorldGen.Generation
         /// <summary>The core cell an arterial starts from: the 4-neighbour of the gate that is in the core
         /// and lies nearest the centre, ties row-major. Nearest-to-centre rather than a fixed compass order
         /// because a gate on a diagonal stretch of wall has TWO inward neighbours and the road should set off
-        /// toward town, not sideways along it. Null when the gate has no core 4-neighbour at all.</summary>
+        /// toward town, not sideways along it. Null when the gate has no core 4-neighbour at all — a gate
+        /// buried in a two-cell-deep stretch of ring; see Arterials for what happens then.</summary>
         static (int i, int j)? InwardStep((int i, int j) gate, HashSet<(int i, int j)> core, (int i, int j) centre)
         {
             bool have = false;
