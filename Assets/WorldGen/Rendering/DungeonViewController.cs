@@ -685,10 +685,12 @@ namespace WorldGen.Rendering
             var start = new Dictionary<int, (float x, float y)>();
             foreach (var r in lvl.Rooms) start[r.Id] = (r.X, r.Y);
 
-            // RESTART, NOT IGNORE. Ignoring a re-entrant call would silently drop the new edit's settle (its
-            // anti-overlap nudge above all) and leave the old cascade converging on targets computed before
-            // that edit existed. Restarting from the landed state costs one extra resolve and keeps the
-            // invariant that every BeginCascade produces a settle for the state it was called on.
+            // RESTART, NOT IGNORE. Ignoring a re-entrant call would silently drop the new edit's resolve — a
+            // dungeon's Separate, a building's anti-overlap nudge — and leave the old cascade converging on
+            // targets computed before that edit existed. Restarting from the landed state costs one extra
+            // resolve and keeps the invariant that every BeginCascade produces a resolve for the state it was
+            // called on. (A SETTLEMENT has no resolve to drop any more — see its branch below — so for a town
+            // this is purely about landing the in-flight animation before the next snapshot.)
             if (cascading) LandRunningCascade(lvl);
 
             if (dungeon != null && (dungeon.Kind == InteriorKind.Building || dungeon.Kind == InteriorKind.Settlement))
@@ -704,20 +706,14 @@ namespace WorldGen.Rendering
                 // per-floor contour containment).
                 //
                 // SETTLEMENT (final-review fix I3): a settlement's buildings are placed non-overlapping BY
-                // CONSTRUCTION (PlaceBuildings) and its "corridors" are trunk/branch streets spanning up to
+                // CONSTRUCTION (SettlementBlocks) and its "corridors" are trunk/branch streets spanning up to
                 // ~80 tiles — far past DungeonLayout.MaxCorridorTiles (8). Falling into the DUNGEON branch
                 // below (Separate → EnforceCorridorLeash → Separate) violently yanked every linked building
                 // toward the dragged one and collapsed the whole town on the FIRST BeginCascade, which fires
                 // on drag-end AND on any OnChanged edit (e.g. attaching a building preview image) — so this
-                // could fire before the DM ever dragged anything. A settlement wants exactly the BUILDING
-                // treatment: stays put, anti-overlap only, never leashed. This is safe to share verbatim:
-                // SettleDraggedRoom → RealignUpperFloorsToColumn early-returns on Floors.Count <= 1 (a
-                // settlement has exactly one floor), so it is a no-op for a settlement, and
-                // NudgeRoomOffOverlaps early-returns for an unresolved/zero room id (e.g. a non-drag edit,
-                // where lastAnchorRoomId is stale or 0) — so a pure OnChanged edit with no drag moves nothing
-                // and this branch redraws statically, exactly fixing the "adding a preview image collapses
-                // the town" symptom. NudgeRoomOffOverlaps is O(n) over the floor's own room list (a plain
-                // overlap scan, not a routing pass), so this introduces no new cost even at 40-80 buildings.
+                // could fire before the DM ever dragged anything. A settlement shares the BUILDING branch for
+                // what it does NOT do: no re-pack, no cascade of other rooms, never leashed. It differs in
+                // one thing, and the guard below is the whole difference — it does not SETTLE. See there.
                 //
                 // The shaft auto-realign (commit e61473a) is PART of this step and lives inside
                 // SettleDraggedRoom, not at the RevalidateAndRefresh call site above it: the nudge can move
@@ -737,33 +733,48 @@ namespace WorldGen.Rendering
                 // false «лестница не совпадает со столбом». Hence OnCascadeSettled: the host re-validates only
                 // once the animation has landed. Do not move validation back before the animation.
                 //
-                // SETTLEMENT re-snap (Task 8, handoff b). NudgeRoomOffOverlaps measures in TILES and shoves by
-                // the penetration depth, which is never a whole number of cells — so for a settlement the
-                // nudge is the second controller-side write that lands a room off the lattice, and the anchor
-                // hazard in LatticeFor applies in full. The nudge is deliberately RUN and then corrected,
-                // NOT skipped: cell snapping makes an exact-centre collision a NORMAL outcome (drop a building
-                // on an occupied cell and the two rooms share one X/Y exactly), and two rooms at one position
-                // are not merely ugly — HitRoomId's tie-break (larger Y, then larger Id) then returns the SAME
-                // one forever, so the other can never be selected or dragged again. With the nudge, identical
-                // centres give overlapX == overlapY, which takes the Y branch and shoves a full room width
-                // (6.005 tiles) — past the half-cell rounding threshold — so the re-snap lands it clear rather
-                // than back on top. Residual, not fixed here: if that neighbour is occupied too, the
-                // least-penetration shove oscillates into PlaceOutwardFromPoint's nearest-free-slot fallback,
-                // whose position can still round back onto an occupied cell.
+                // A SETTLEMENT DOES NOT SETTLE (v11 pitch; Task 5 step 4, pulled forward by the final review).
+                // A dragged building stays EXACTLY on the cell the DM dropped it on, and the guard below is
+                // what makes that true.
                 //
-                // KNOWN, MEASURED, AND OUT OF SCOPE HERE (v11 pitch, task B's tile-space audit). The nudge
-                // measures in EffectiveSize TILES — 6x6 for a settlement building, unchanged — while a lattice
-                // cell went from 8.96 tiles to 3.84. Two FLUSH buildings (the shape the blocks-and-streets
-                // model exists to produce) sit exactly one cell apart, so they used to read as clearly
-                // separated (8.96 > 6.1) and now read as OVERLAPPING (3.84 < 6.1). Dropping a building on a
-                // free cell beside a block therefore gets it shoved ~2 cells clear instead of left where it
-                // was put. Nothing here can fix that without redefining what "overlap" means for a settlement
-                // in terms of CELL occupancy rather than tile rects — CompactLayout.NudgeRoomOffOverlaps and
-                // DungeonProjection.EffectiveSize are shared with building interiors and are explicitly out of
-                // this task's reach. Flagged for the interaction pass; it degrades a drag, it never corrupts
-                // stored cells (Room.Cells is untouched by the nudge).
-                var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE the nudge moves anything
-                BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
+                // WHY THE NUDGE HAD TO GO, and it is arithmetic rather than taste. CompactLayout
+                // .NudgeRoomOffOverlaps measures in DungeonProjection.EffectiveSize TILES — 6x6 for a
+                // settlement building — while a lattice cell went from 8.96 tiles at the old 0.07 pitch to
+                // 3.84 at 0.03. Two FLUSH buildings, the shape this whole arc exists to produce, sit exactly
+                // one cell apart: they used to read as clearly separated (8.96 > 6.1) and now read as
+                // OVERLAPPING (3.84 < 6.1). CompactLayout's IsFree then demands ~1.56 cells of clearance from
+                // every other room, which NO position inside a block satisfies, so PlaceOutwardFromPoint
+                // walked cardinal rays until one cleared and the building was ALWAYS relocated — never left
+                // where it was dropped. A tile-space repair simply cannot express a one-cell street lane.
+                //
+                // OVERLAP IS PREVENTED AT THE EDIT, NOT REPAIRED AFTER IT. That is the model for a footprint
+                // town: the only ways a building moves are «+ Здание» (PlaceHoveredBuilding, which commits
+                // only onto a verified-free cell) and a drag (a later task makes it REJECT a translation onto
+                // an occupied cell outright, the way the placement preview already refuses one). Anything
+                // that still slips through is the VALIDATOR's to report, not this method's to silently undo.
+                //
+                // THE ACCEPTED TRADE, stated plainly because it is a real regression until that later task
+                // lands: a DM can now drag one building onto another and nothing repairs it. Worse than the
+                // visual overlap, cell snapping makes an EXACT-centre collision the normal outcome (drop onto
+                // an occupied cell and the two rooms hold identical X/Y), and HitRoomId's tie-break (larger Y,
+                // then larger Id) then returns the SAME room forever — so the other can no longer be selected
+                // or dragged. Deliberately NOT worked around here: any replacement repair would be the same
+                // tile-space nudge under another name, and the fix belongs at the edit.
+                //
+                // NOTHING ELSE ON THE SETTLEMENT PATH REPAIRS OVERLAP (grep-verified): DungeonLayout.Separate
+                // and EnforceCorridorLeash are in the dungeon-only else branch and OnDrag's non-settlement
+                // guard, and CompactLayout.AttachNewRoom in AddRoomAtCenter is gated on Kind == Building
+                // (settlements do not reach that method at all). The guard below is the last one.
+                //
+                // WHAT ACTUALLY HAPPENS NOW, end to end: nothing moves, so `anyMoved` below stays false and
+                // the !anyMoved branch does ONE static Refresh and fires OnCascadeSettled — the host still
+                // re-validates, exactly as it did after an animated settle. SnapToLattice is kept and is an
+                // idempotent no-op here (OnDrag already snapped the room, and CellOf(CenterOf(k)) == k); it
+                // stays because it is the correct guard for any future controller-side write and because for
+                // a BUILDING LatticeFor is null and this line is byte-identical to before.
+                var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE anything moves
+                if (dungeon.Kind != InteriorKind.Settlement)
+                    BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
                 // Only lastAnchorRoomId can have moved: NudgeRoomOffOverlaps moves that room alone, and
                 // RealignUpperFloorsToColumn early-returns for a settlement's single floor.
                 SnapToLattice(lattice, lvl.GetRoom(lastAnchorRoomId));
@@ -1045,11 +1056,13 @@ namespace WorldGen.Rendering
         ///
         /// NO ANTI-OVERLAP NUDGE ON THIS PATH, and provably so rather than incidentally: the cell was verified
         /// free, so there is nothing to resolve, and a nudge would move the building off the very cell that was
-        /// clicked. lastAnchorRoomId is pinned to 0 before OnGraphMutated fires, and BeginCascade's settlement
-        /// branch passes it to BuildingGenerator.SettleDraggedRoom → CompactLayout.NudgeRoomOffOverlaps, which
-        /// early-returns for a room id that resolves to no room (floor.GetRoom(0) == null). SnapToLattice in the
-        /// same branch is likewise handed that null room and no-ops. So nothing moves the new building after it
-        /// is written — the DM's cell is final.
+        /// clicked. This is now guaranteed TWICE OVER. BeginCascade's settlement branch no longer calls
+        /// BuildingGenerator.SettleDraggedRoom at all (a settlement does not settle — see the rationale there),
+        /// so no tile-space repair runs on a settlement from any path. And independently of that,
+        /// lastAnchorRoomId is still pinned to 0 before OnGraphMutated fires, so even if a future edit brought a
+        /// settle back it would be handed an id that resolves to no room; SnapToLattice in the same branch is
+        /// likewise handed that null room and no-ops. So nothing moves the new building after it is written —
+        /// the DM's cell is final.
         ///
         /// THE AUTO-LINK, AND WHY IT IS NOT OPTIONAL (final-review fix). DungeonOps.AddRoom creates a room with
         /// NO links. A settlement's streets are routed from lvl.Links (SettlementRoads.Build over
