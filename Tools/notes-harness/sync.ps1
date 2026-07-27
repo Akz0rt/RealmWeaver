@@ -18,7 +18,9 @@ New-Item -ItemType Directory -Path $gen | Out-Null
 $files = @(
   'NotesData.cs',
   'NotesDocOps.cs',
-  'NotesDocOpsSelfTests.cs'
+  'NotesDocOpsSelfTests.cs',
+  'DocKeyboardOps.cs',
+  'DocKeyboardOpsSelfTests.cs'
 )
 
 $copied = 0

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
@@ -25,29 +26,37 @@ static class Program
     // output order is stable between runs.
     static int SelfTests()
     {
-        var suite = typeof(WorldGen.Notes.Data.NotesDocOpsSelfTests);
-        var instance = Activator.CreateInstance(suite);
-
-        var methods = suite
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => m.Name.StartsWith("SelfTest", StringComparison.Ordinal)
-                        && m.GetParameters().Length == 0
-                        && m.ReturnType == typeof(void))
-            .OrderBy(m => m.Name, StringComparer.Ordinal)
+        // Every *SelfTests type in the notes namespace, not a hand-listed set — adding a suite must never
+        // require remembering to register it here.
+        var suites = typeof(WorldGen.Notes.Data.NotesDocOps).Assembly
+            .GetTypes()
+            .Where(t => t.Namespace == "WorldGen.Notes.Data"
+                        && t.Name.EndsWith("SelfTests", StringComparison.Ordinal)
+                        && !t.IsAbstract)
+            .OrderBy(t => t.Name, StringComparer.Ordinal)
             .ToList();
+
+        var methods = new List<(Type Suite, MethodInfo Method)>();
+        foreach (var suite in suites)
+            foreach (var m in suite.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                         .Where(m => m.Name.StartsWith("SelfTest", StringComparison.Ordinal)
+                                     && m.GetParameters().Length == 0
+                                     && m.ReturnType == typeof(void))
+                         .OrderBy(m => m.Name, StringComparer.Ordinal))
+                methods.Add((suite, m));
 
         if (methods.Count == 0)
         {
-            Console.WriteLine("NOTES SELF-TESTS: no SelfTest* methods found — the suite is empty, which is a failure, not a pass.");
+            Console.WriteLine("NOTES SELF-TESTS: no SelfTest* methods found — an empty suite is a failure, not a pass.");
             return 1;
         }
 
-        foreach (var m in methods)
+        foreach (var (suite, m) in methods)
         {
-            try { m.Invoke(instance, null); }
+            try { m.Invoke(Activator.CreateInstance(suite), null); }
             catch (TargetInvocationException ex)
             {
-                UnityEngine.Debug.LogError($"{m.Name} THREW: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
+                UnityEngine.Debug.LogError($"{suite.Name}.{m.Name} THREW: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
             }
         }
 
