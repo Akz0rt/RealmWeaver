@@ -62,10 +62,15 @@ namespace WorldGen.Generation
         // shape there is, and nothing here may second-guess it. Two rules cover the cases where it is not
         // present or not trustworthy:
         //
-        //   (a) NO FOOTPRINT -> one cell, derived from the room's point. A freshly GENERATED town has this:
-        //       SettlementGenerator.BuildFloor does not populate Cells (block generation is a later task),
-        //       while a RELOADED town has single-cell footprints from SettlementFootprint.EnsureFootprints'
-        //       v10 migration. Both must render identically, and this is what makes them.
+        //   (a) NO FOOTPRINT -> one cell, derived from the room's point. This is now a DEGRADATION PATH, not
+        //       the ordinary case: every producer of a settlement room writes cells. SettlementGenerator.
+        //       BuildFloor stores each building's whole block footprint AND (from v11) each gate's one ring
+        //       cell; DungeonOps.AddRoom stores the clicked cell for a hand-placed building; a RELOADED town
+        //       gets single-cell footprints from SettlementFootprint.EnsureFootprints. What is left for this
+        //       rule is a room no producer touched — a hand-edited or truncated save whose Cells array
+        //       Decodes to nothing, a settlement floor whose SettlementParams was dropped (AddRoom gates the
+        //       cell write on it), or an in-memory fixture. Such a room still renders as the one cell its
+        //       point falls in rather than vanishing, which is the whole job.
         //
         //   (b) A SINGLE-CELL FOOTPRINT THAT DISAGREES WITH THE POINT IS STALE -> re-derived from the point.
         //       Moving a building writes Room.X/Y from eight editor call sites and does NOT (yet) rewrite
@@ -88,10 +93,11 @@ namespace WorldGen.Generation
         public static System.Collections.Generic.List<(int i, int j)> FootprintOf(Room r)
         {
             var point = (i: SettlementFootprint.CellOf(r.X), j: SettlementFootprint.CellOf(r.Y));
-            // r.Cells is null for EVERY building in a freshly generated town (block generation is a later
-            // task) and this function runs twice per building per rebuild (Allocate's fold, then Build's
-            // write) — skip Decode's own throwaway empty-list allocation for that hot case by handing it the
-            // shared s_noCells instead. This does NOT duplicate rule (a): an odd-length/corrupt array (not
+            // r.Cells is EMPTY only on the degradation path described in rule (a) above — a generated or
+            // reloaded town now carries cells on every building — but this function still runs twice per
+            // building per rebuild (Allocate's fold, then Build's write), so the null/empty test is kept
+            // ahead of Decode to skip its throwaway empty-list allocation whenever it does fire. This does
+            // NOT duplicate rule (a): an odd-length/corrupt array (not
             // null, not empty, but still Decodes to zero cells) still reaches Decode() below and falls through
             // to the SAME `cells.Count == 0` check two lines down, so that check stays the one and only place
             // rule (a) is decided — deliberately, so a mutant on it (MutFootprintNoNullFallback) still has

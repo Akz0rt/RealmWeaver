@@ -54,9 +54,14 @@ namespace WorldGen.Rendering
             // The previous band [0.41, 1.58] was derived — 0.8x the measured minimum, ~1.13x the measured
             // maximum — from a task-B sweep that ran against RECURSIVE SUBDIVISION, and this task replaced
             // that rule wholesale: streets are laid only where a house would otherwise have no frontage, which
-            // spends far less of the interior on street and lifted the achieved count by +23% / +47% / +59%
-            // at the three shipped sizes. A band whose stated derivation describes a layout that no longer
-            // exists is a band that has stopped constraining anything it claims to.
+            // spends far less of the interior on street and lifted the achieved count substantially at all
+            // three shipped sizes. (The task-C report quotes that lift as +23% / +47% / +59%; those three
+            // percentages were measured against the PRE-Task-D radii — Medium 6.4 and Large 9.1 cells — which
+            // Task D's calibration then moved to 7.0 and 10.0. They have NOT been re-derived at the shipped
+            // radii, so read them as the historical evidence that the layout changed, never as the current
+            // yield. The current per-size yield is SelfTestSizeCalibration's own 200-seed sweep, which prints
+            // min/median/max at exactly these radii.) A band whose stated derivation describes a layout that
+            // no longer exists is a band that has stopped constraining anything it claims to.
             //
             // THE MEASUREMENT THIS BAND IS SET FROM: targets {5,8,12,20,30,40,50,55,60,80,120} x seeds 1..60,
             // 660 towns, the SAME fixture shape Check() uses below (wall = SweepRadiusNorm(target), size =

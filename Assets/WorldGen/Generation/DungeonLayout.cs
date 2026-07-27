@@ -54,8 +54,18 @@ namespace WorldGen.Generation
         /// (i+0.5)*Pitch, which is CenterOf(i) — the same point ToTile(r.X) already produced.
         ///
         /// EVERYTHING ELSE — a gate (TypeId 0), a dungeon room, a building-interior room — keeps
-        /// EffectiveSize verbatim. A gate has no footprint to read, and SettlementFence rasterizes it as a
-        /// bare centre POINT regardless of its W/H, so nothing about the fence changes for gates either.</summary>
+        /// EffectiveSize verbatim. For a dungeon or building-interior room there is no footprint to read at
+        /// all. A GATE, HOWEVER, NOW HAS ONE and this branch deliberately does not use it: from v11
+        /// SettlementGenerator.BuildFloor stores the gate's single ring cell in Room.Cells (so the v11
+        /// recentring, which moves a town by moving CELLS, does not leave the gates behind), and the
+        /// `r.TypeId == 1` guard above still routes every gate down to EffectiveSize's 7x5-tile rect. That is
+        /// a DEFERRED change, not an oversight: widening the guard to TypeId 0 would swap a 7x5 rect for a
+        /// 3.84x3.84 one at every gate, which moves the road router's obstacle mask and therefore the DRAWN
+        /// street geometry of every walled town. It needs its own measured task (SelfTestRoads' fallback and
+        /// clearance assertions are what would decide it), not a comment-sized edit. Until then, note the
+        /// tile-space consequence already recorded above: a gate's 7x5 rect is 1.82 x 1.30 CELLS at the v11
+        /// pitch, so it inflates wider than the one-cell ring lane it stands in. SettlementFence is
+        /// unaffected either way — it rasterizes a gate as a bare centre POINT regardless of its W/H.</summary>
         public static LinkNode LinkNodeFor(Room r, bool settlement)
         {
             if (settlement && r.TypeId == 1)

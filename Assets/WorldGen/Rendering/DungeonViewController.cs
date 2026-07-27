@@ -775,8 +775,10 @@ namespace WorldGen.Rendering
                 var lattice = LatticeFor(lvl);   // null for a Building — captured BEFORE anything moves
                 if (dungeon.Kind != InteriorKind.Settlement)
                     BuildingGenerator.SettleDraggedRoom(dungeon, lvl, lastAnchorRoomId);
-                // Only lastAnchorRoomId can have moved: NudgeRoomOffOverlaps moves that room alone, and
-                // RealignUpperFloorsToColumn early-returns for a settlement's single floor.
+                // Only lastAnchorRoomId can ever have moved here: on the BUILDING branch above,
+                // NudgeRoomOffOverlaps moves that room alone; on the SETTLEMENT branch nothing moves at all.
+                // (RealignUpperFloorsToColumn, the settle's other half, early-returns for a settlement's
+                // single floor anyway — it was always a no-op for a town.) One room to re-snap either way.
                 SnapToLattice(lattice, lvl.GetRoom(lastAnchorRoomId));
             }
             else

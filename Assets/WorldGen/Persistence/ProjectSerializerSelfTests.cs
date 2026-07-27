@@ -1012,47 +1012,67 @@ namespace WorldGen.Persistence
             if (minJson.Contains("\"StreetCells\""))
             { Debug.LogError("FAIL settlement footprint fields: an unset StreetCells was written as a key — NullValueHandling.Ignore is not taking effect"); ok = false; }
 
-            // ---- 3. THE MIGRATION'S CALL SITE ITSELF (review finding, Task A1): load a v9-SHAPED fixture (a
-            // settlement building with X/Y set but NO Cells) through ProjectSerializer.Load — not by calling
+            // ---- 3. THE MIGRATION'S CALL SITE ITSELF (review finding, Task A1): load a FOOTPRINT-LESS
+            // settlement (buildings with X/Y set but NO Cells) through ProjectSerializer.Load — not by calling
             // SettlementFootprint.EnsureFootprints directly, the way SettlementSelfTests.
             // SelfTestFootprintMigration does — and confirm each building comes back with exactly ONE cell,
-            // at the cell its stored point falls in. This is the only test anywhere that exercises
-            // ProjectSerializer.cs's own `SettlementFootprint.EnsureFootprints(d)` call (beside
-            // RoomSizing.ApplyDefaults, in the Dungeons normalization loop): deleting that one line leaves
-            // every other self-test green, because the offline harness cannot compile
-            // Assets/WorldGen/Persistence at all, and SelfTestFootprintMigration calls EnsureFootprints
-            // directly, never through a load. -------
-            string v9Path = Path.Combine(Path.GetTempPath(), "settlement_footprint_v9_migration_selftest.dndproj");
-            var v9Floor = new InteriorFloor { NextRoomId = 3 };
-            v9Floor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.23f, Y = 0.61f });   // building, Cells UNSET (v9-shaped)
-            v9Floor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.81f, Y = 0.09f });   // a second building, a different cell
-            var v9Town = new InteriorData { OwnerPoiId = "poi-v9-town", Kind = InteriorKind.Settlement, Floors = { v9Floor } };
+            // at the cell its stored point falls in.
+            //
+            // WHICH BRANCH THIS PINS, precisely (it was written as "v9-shaped" and is not): the fixture is
+            // WRITTEN BY Save, so it is a format-11 file whose rooms merely happen to carry no cells. It
+            // therefore exercises EnsureFootprints' legacyLattice == FALSE branch — the one that method's own
+            // doc calls "should never fire in practice", the hand-edited / partially-written v11 file. That
+            // branch is worth pinning exactly BECAUSE it should never fire: getting it wrong writes a
+            // 0.07-pitch index into a v11 file that no later pass repairs (RecentreFloor and RederivePositions
+            // are both version-gated off at v11) while SettlementTileGrid.FootprintOf rule (b) masks it at
+            // render — wrong data at rest with no visible symptom.
+            //
+            // THE REAL LEGACY PATH IS COVERED ELSEWHERE, and cannot be covered from here: a Save-written
+            // fixture can never carry FormatVersion 10. SelfTestSettlementLegacySizeMigration's assertion 3
+            // does it with hand-written v10 JSON (legacy cell 8 -> recentred to (16,16), point 0.495).
+            //
+            // Between the two of them plus assertion 1b above, deleting ProjectSerializer.cs's own
+            // `SettlementFootprint.EnsureFootprints(d, legacyLattice)` call (beside RoomSizing.ApplyDefaults,
+            // in the Dungeons normalization loop) reddens three assertions — it used to redden none but this
+            // one, because the offline harness cannot compile Assets/WorldGen/Persistence at all and
+            // SelfTestFootprintMigration calls EnsureFootprints directly, never through a load. -------
+            string noCellsPath = Path.Combine(Path.GetTempPath(), "settlement_footprintless_migration_selftest.dndproj");
+            var noCellsFloor = new InteriorFloor { NextRoomId = 3 };
+            noCellsFloor.Rooms.Add(new Room { Id = 1, TypeId = 1, X = 0.23f, Y = 0.61f });   // building, Cells UNSET
+            noCellsFloor.Rooms.Add(new Room { Id = 2, TypeId = 1, X = 0.81f, Y = 0.09f });   // a second building, a different cell
+            var noCellsTown = new InteriorData { OwnerPoiId = "poi-nocells-town", Kind = InteriorKind.Settlement, Floors = { noCellsFloor } };
 
-            ProjectSerializer.Save(v9Path, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
+            ProjectSerializer.Save(noCellsPath, new GenerationParams { Seed = 1, Width = 10, Height = 10 },
                 new List<VoronoiCell>(), new List<PoiData>(), new NotesDocument(),
-                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { v9Town });
-            var v9Result = ProjectSerializer.Load(v9Path);
-            try { File.Delete(v9Path); } catch { }
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData> { noCellsTown });
+            var noCellsResult = ProjectSerializer.Load(noCellsPath);
+            try { File.Delete(noCellsPath); } catch { }
 
-            if (!v9Result.Success || v9Result.Dungeons.Count != 1)
-            { Debug.LogError("FAIL settlement footprint fields: the v9-shaped town did not load back"); ok = false; }
+            if (!noCellsResult.Success || noCellsResult.Dungeons.Count != 1)
+            { Debug.LogError("FAIL settlement footprint fields: the footprint-less town did not load back"); ok = false; }
             else
             {
-                var f = v9Result.Dungeons[0].Floors[0];
+                var f = noCellsResult.Dungeons[0].Floors[0];
                 var expectations = new (int id, float x, float y)[] { (1, 0.23f, 0.61f), (2, 0.81f, 0.09f) };
                 foreach (var (id, x, y) in expectations)
                 {
                     var r = f.Rooms.Find(rm => rm.Id == id);
                     var decoded = r == null ? null : SettlementFootprint.Decode(r.Cells);
-                    // LegacyCellOf, not CellOf: EnsureFootprints derives a MISSING footprint on the
-                    // pre-v11 0.07 pitch (see its doc) — a room with no cells can only have been authored
-                    // before the lattice changed, and DungeonOps.AddRoom writes the cell for every
-                    // settlement building added since.
-                    var wantCell = (SettlementFootprint.LegacyCellOf(x), SettlementFootprint.LegacyCellOf(y));
+                    // CellOf, NOT LegacyCellOf, and the file's own version is what decides it. ProjectSerializer
+                    // .Save always stamps FormatVersion = CurrentFormatVersion (11), so Load computes
+                    // `legacyLattice = data.FormatVersion <= 10` as FALSE and EnsureFootprints derives on the
+                    // CURRENT 0.03 pitch. Concretely, since nothing can ever run this file for us: 0.23 -> 7,
+                    // 0.61 -> 20, 0.81 -> 27, 0.09 -> 3 (floor(norm / 0.03)); the legacy 0.07 pitch would give
+                    // (3,8) and (11,1). This assertion demanded the legacy pair between commits a0654b9 (when
+                    // EnsureFootprints was unconditionally legacy and it was correct) and be7b36b (which added
+                    // the `legacyLattice` parameter and assertion 1b above, but did not revert this one) — a
+                    // red self-test on correct code, and two assertions in one file demanding opposite results
+                    // for the same situation.
+                    var wantCell = (SettlementFootprint.CellOf(x), SettlementFootprint.CellOf(y));
                     if (decoded == null || decoded.Count != 1 || decoded[0] != wantCell)
                     {
                         string gotDesc = decoded == null ? "null" : $"{decoded.Count} cells";
-                        Debug.LogError($"FAIL settlement footprint fields: building {id} migrated to {gotDesc}, want exactly one cell {wantCell} — the v10 load migration (ProjectSerializer.cs's EnsureFootprints call) did not run through Load");
+                        Debug.LogError($"FAIL settlement footprint fields: building {id} migrated to {gotDesc}, want exactly one cell {wantCell} — a footprint-less room in a file saved at format {ProjectSerializer.CurrentFormatVersion} must be stamped on the CURRENT lattice by ProjectSerializer.cs's EnsureFootprints call, which either did not run through Load or ran on the legacy 0.07 pitch ({(SettlementFootprint.LegacyCellOf(x), SettlementFootprint.LegacyCellOf(y))})");
                         ok = false;
                     }
                 }

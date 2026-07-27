@@ -115,11 +115,12 @@ namespace WorldGen.Rendering
             //
             // REPLACES (arc A, task 3) the Ц2.6 assertion that every gate hugged a PRELIMINARY fence derived
             // from the placed buildings. That mechanism no longer exists: BuildFloor does not derive a fence
-            // and does not call PlaceGates at all — SettlementBlocks opens a gate where a PRIMARY street runs
-            // out into the one-cell ring just inside the wall. The old assertion could only be kept by
-            // re-asserting a fence nothing builds; these two assert the rule that replaced it, and assert it
-            // MORE tightly (exact cell membership, plus a hand-derived distance bound) than a 1.5-tile
-            // proximity band did.
+            // and does not call PlaceGates at all — SettlementBlocks.PlaceGateCells picks the gates straight
+            // out of the RING STREET (the one-cell lap just inside the contour), spread by ANGLE around the
+            // ring's own centroid with a seeded phase, and the arterials are routed inward FROM them. The old
+            // assertion could only be kept by re-asserting a fence nothing builds; these two assert the rule
+            // that replaced it, and assert it MORE tightly (exact cell membership, plus a hand-derived
+            // distance bound) than a 1.5-tile proximity band did.
             //
             // (a) STORED: the gate room's point must land in a cell that is one of the floor's stored street
             //     cells. This also pins the round-trip CenterOf -> CellOf that every renderer depends on.
@@ -161,8 +162,14 @@ namespace WorldGen.Rendering
                 if (!ringSet.Contains(cell))
                 { Debug.LogError($"FAIL gates: gate room {r.Id} sits in cell ({cell.i},{cell.j}), which is NOT one of the {ringSet.Count} ring cells — it is inside the town, not on the wall ring"); ok = false; }
             }
-            // A walled town always opens at least the two ends of its primary street (SettlementBlocks
-            // .PlaceGates' fallback guarantees two even for a town too small to cut).
+            // A walled town of ANY size opens at least two gates, and there is no fallback pass that makes it
+            // so — the guarantee is the composition of two facts. (i) SettlementSizing.GateCount is >= 2 for
+            // every size class (2/3/4), so PlaceGateCells is always ASKED for at least two. (ii) It only ever
+            // drops one on a DEGENERATE ring — shorter than roughly 3 x gateCount cells, where every cell is
+            // within MinGateSeparationCells of every other (its own doc: an 8-cell ring, i.e. a 3x3 town).
+            // This fixture is Medium, wall radius 7.0 cells, a ring of ~40, so nothing is dropped. A future
+            // edit that lowered a GateCount row to 1, or shrank a radius to the degenerate regime, is exactly
+            // what this catches.
             if (gateRooms < 2)
             { Debug.LogError($"FAIL gates: a walled {cfg.Size} town produced {gateRooms} gate rooms, want >=2"); ok = false; }
 
@@ -337,25 +344,34 @@ namespace WorldGen.Rendering
             }
             if (gateNodes < 2)
             { Debug.LogError($"FAIL assembly: {gateNodes} gate nodes, want ≥2"); ok = false; }
-            // RE-DERIVED from 20 (arc A, task 3). The old 20 was HALF the 40-building target, and half was
-            // attainable when a building was one lattice cell and PlaceBuildings simply kept up to `target`
-            // of the ~68 cells the old count-derived radius held. A town is now blocks-and-streets: the
-            // one-cell ring plus the subdivision strips take roughly HALF the interior before a single house
-            // is placed, so half the target is no longer reachable at any seed — the number had to move or
-            // it would be asserting the old model.
+            // THE FLOOR IS THE SIZE TABLE'S OWN PROMISE, not a number chosen here (final-review fix). It used
+            // to be a hardcoded 12, documented as "0.8 x the measured minimum count at this fixture's own
+            // target, 15 (target 40's own row: 15..24 over seeds 1..60)". Every clause of that has expired:
+            // the measurement was taken under RECURSIVE SUBDIVISION (deleted — streets are laid by frontage
+            // now), at the old count-derived radius, for a fixture whose scale was an exact building COUNT
+            // (retired — this fixture is Size = Medium). Medium's measured minimum over the shipped 200-seed
+            // sweep is 42, so a floor of 12 left ~4x slack: a regression that HALVED Medium's yield would
+            // still have passed, which is a floor that has stopped constraining anything.
             //
-            // SAME RULE AS SelfTestBlocks' OWN MinRatio, just applied at this fixture's own scope rather than
-            // cross-target: both floors are 0.8 x a measured minimum, they were only ever UNDOCUMENTED as the
-            // same rule. SelfTestBlocks' MinRatio (0.20) is 0.8 x the GLOBAL measured minimum ratio across
-            // every swept target, 0.250 (task-A3-report.md §8, the "all" row). 12 here is 0.8 x the measured
-            // minimum count AT THIS FIXTURE'S OWN target, 15 (target 40's own row: 15..24 buildings over seeds
-            // 1..60) — a tighter number BECAUSE it is scoped to one target instead of nine. One rule, two
-            // scopes: the cross-target test needs the loose (global) form, a single-target fixture like this
-            // one can afford the tight (local) form, and both stay reachable from the same "0.8 x measured
-            // minimum" sentence rather than reading as two unrelated tolerances.
-            const int minBuildNodes = 12;
+            // GuaranteedMinBuildings(cfg.Size) instead of any new magic number, because it is the same
+            // quantity, already measured and already test-enforced. buildNodes here IS layout.Buildings.Count
+            // — SettlementGenerator.BuildFloor writes exactly one TypeId 1 room per footprint, in order — and
+            // SettlementBlocksSelfTests.SelfTestSizeCalibration asserts that count meets the guarantee on
+            // EVERY one of its 200 seeds at this exact contour (both go through SettlementSizing.
+            // WallRadiusNorm(size); SettlementGenerator.WallRadiusFor is a one-line delegation to it). For
+            // Medium the guarantee is 37 = floor(0.9 x the observed minimum 42) — a 10% margin below the
+            // worst seed the sweep has ever seen.
+            //
+            // WHAT THIS TEST ADDS OVER THAT SWEEP, and why it is not a duplicate: the sweep measures the
+            // LAYOUT (SettlementBlocks.Generate's footprints), this measures the ASSEMBLED FLOOR's ROOMS. A
+            // BuildFloor that dropped, filtered or mis-typed buildings on their way into lvl.Rooms fails here
+            // and nowhere else. It is also the only place the promise is checked at a seed OUTSIDE the sweep
+            // (this fixture is seed 2; the sweep runs 1000..1199) — so it holds the table honest as a
+            // PROMISE about the size class rather than about 200 particular seeds. If a future calibration
+            // lowers a guarantee, this floor follows it automatically instead of silently going slack.
+            int minBuildNodes = SettlementSizing.GuaranteedMinBuildings(cfg.Size);
             if (buildNodes < minBuildNodes)
-            { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥{minBuildNodes} for a 40-target town"); ok = false; }
+            { Debug.LogError($"FAIL assembly: {buildNodes} building nodes, want ≥{minBuildNodes} — SettlementSizing.GuaranteedMinBuildings({cfg.Size}), the size table's own measured promise"); ok = false; }
 
             // ---- 3. Links map StreetEdge indices to the RIGHT room ids (the load-bearing invariant) -----
             // Reconstruct the exact placement/layout/edges BuildFloor used (all deterministic from cfg alone
