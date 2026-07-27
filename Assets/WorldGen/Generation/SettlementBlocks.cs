@@ -6,13 +6,14 @@ namespace WorldGen.Generation
     /// absolute lattice (cell (0,0) spans normalized [0,Pitch)) — the same lattice Room.Cells,
     /// SettlementParams.StreetCells and SettlementTileGrid already speak.
     ///
-    /// STREETS include the ring; GATES are a SUBSET of the streets (a gate is the ring-street cell a
-    /// subdivision street runs out into), which is what makes "every street cell is reachable from a gate
-    /// through street cells only" a statement about this one list rather than two unrelated ones.</summary>
+    /// STREETS include the ring; GATES are a SUBSET of the streets (a gate is a ring-street cell), which is
+    /// what makes "every street cell is reachable from a gate through street cells only" a statement about
+    /// this one list rather than two unrelated ones.</summary>
     public sealed class BlockLayout
     {
-        /// <summary>Every street cell, ring included. Subdivision strips are exactly one cell wide; the ring
-        /// is 4-connected but only MOSTLY one cell wide — see <see cref="SettlementBlocks.RingStreet"/>.</summary>
+        /// <summary>Every street cell: the ring, the arterials and the frontage strips. Arterials and
+        /// frontage strips are exactly one cell wide; the ring is 4-connected but only MOSTLY one cell wide —
+        /// see <see cref="SettlementBlocks.RingStreet"/>.</summary>
         public List<(int i, int j)> StreetCells = new List<(int i, int j)>();
         /// <summary>One footprint per building — non-empty, 4-connected, pairwise disjoint, and each one
         /// 4-adjacent to at least one street cell (nothing is walled in).</summary>
@@ -21,62 +22,70 @@ namespace WorldGen.Generation
         public List<(int i, int j)> GateCells = new List<(int i, int j)>();
     }
 
-    /// <summary>BLOCK GENERATION: streets carve a walled interior into blocks, and each block is filled with
-    /// flush buildings. Pure, UnityEngine-free, deterministic in `seed` — the same discipline every other
-    /// stage of this generator already keeps. References only WallContour / SettlementFootprint / System.*.
+    /// <summary>BLOCK GENERATION: streets are laid where a house would otherwise have no frontage, and what
+    /// survives between them is filled with flush buildings. Pure, UnityEngine-free, deterministic in `seed` —
+    /// the same discipline every other stage of this generator already keeps. References only WallContour /
+    /// SettlementFootprint / SettlementSizing / System.*.
     ///
-    /// FIVE PASSES, IN THIS ORDER, each separately testable:
+    /// THE RULE THIS REPLACED, AND WHY. Until now the core was carved by RECURSIVE SUBDIVISION: cut the
+    /// interior in half with a one-cell street strip, recurse, stop when a block was at or below a target cell
+    /// count. That rule spends interior on streets whether or not anyone needs them — it cuts a block because
+    /// the block is BIG, not because a house in it cannot reach a road — and it produces the uniform square
+    /// blocks a real town does not have. The rule below is the opposite one: a street appears only where a
+    /// house would otherwise have no frontage, so the street budget is driven by the demand for frontage and
+    /// nothing else. Measured yield rises as a direct consequence (see task-C-report.md).
+    ///
+    /// SEVEN PASSES, IN THIS ORDER, each separately testable:
     ///   1. <see cref="InteriorCells"/> — the lattice cells whose CENTRE lies inside the contour, reduced to
     ///      the single largest 4-connected component (a jittered contour can in principle pinch off a stray).
     ///   2. <see cref="RingStreet"/> — the 4-connected ring just inside the contour: every interior cell with
     ///      a non-interior 4-neighbour, reconnected to one lap. This is the street every outermost block
-    ///      fronts onto, and it is what keeps a building from ever standing flush against the wall.
-    ///   3. <see cref="Subdivide"/> — recursive axis-aligned subdivision of what is left (the CORE) by
-    ///      one-cell street strips, until a block is at or below <see cref="BlockTargetCells"/>.
-    ///   4. <see cref="PlaceGates"/> — a gate where a subdivision street runs out into the ring.
-    ///   5. <see cref="FillBlock"/> — each block filled with disjoint, flush footprints of varied size.
+    ///      fronts onto, and it is what keeps a building from ever standing flush against the wall. Whatever
+    ///      the ring does not take is the CORE.
+    ///   3. <see cref="PlaceGateCells"/> — the ring cells that read as gates, spread by ANGLE.
+    ///   4. <see cref="Arterials"/> — from each gate, a Manhattan road inward to the town centre.
+    ///   5. <see cref="FrontageFill"/> — greedy strips until no core cell lacks a 4-adjacent street.
+    ///   6. <see cref="Blocks"/> — what is left after the streets, as 4-connected components.
+    ///   7. <see cref="FillBlock"/> — each block filled with disjoint, flush footprints of varied size.
     ///
-    /// SUBDIVISION STREETS ARE ONE CELL WIDE, ALWAYS. THE RING IS NOT — it is 4-connected, and only MOSTLY
-    /// one cell wide: measured over 540 towns (task-A3-report.md), 25.9% of ring cells are genuinely TWO
-    /// cells deep (all four orthogonal neighbours interior), stable at 21-27% across every town size from a
-    /// 5-building hamlet to an 80-building city. This is not slack to tighten: 4-connectivity and strict
+    /// ARTERIAL AND FRONTAGE STREETS ARE ONE CELL WIDE, ALWAYS. THE RING IS NOT — it is 4-connected, and only
+    /// MOSTLY one cell wide: measured over 540 towns (task-A3-report.md), 25.9% of ring cells are genuinely
+    /// TWO cells deep (all four orthogonal neighbours interior), stable at 21-27% across every town size from
+    /// a 5-building hamlet to an 80-building city. This is not slack to tighten: 4-connectivity and strict
     /// one-cell width are incompatible on a digitized disk (see <see cref="RingStreet"/>'s own doc for why).
-    /// A wider main axis is deliberately NOT in this arc: it would add a street-class concept nothing else
-    /// models yet, and it would arrive as a hidden default rather than a choice the DM made.
     ///
-    /// `targetBuildings` IS ADVISORY. It steers how big the buildings come out (see
-    /// <see cref="SizeClassFor"/>), never how many are emitted: the achieved count is whatever the geometry
-    /// yields. There is deliberately no exact-count contract — the previous attempt at one is what forced a
-    /// building cap that then had to be reverted.</summary>
+    /// THE STREET NETWORK IS ONE PIECE BY CONSTRUCTION, not by a repair pass. The ring is one 4-connected lap;
+    /// every gate is a ring cell; every arterial starts on a core cell 4-adjacent to its gate; and every
+    /// frontage strip must touch the network already laid at one of its two ends. So there is no way for a
+    /// street cell to exist that a gate cannot reach.
+    ///
+    /// `size` STEERS TWO THINGS AND NOTHING ELSE: how many gates the wall opens
+    /// (SettlementSizing.GateCount) and how BIG the buildings come out (SettlementSizing.TargetBuildings, read
+    /// only through <see cref="SizeClassFor"/>). It never sets how many buildings are emitted: the achieved
+    /// count is whatever the geometry yields. There is deliberately no exact-count contract — the previous
+    /// attempt at one is what forced a building cap that then had to be reverted.</summary>
     public static class SettlementBlocks
     {
-        /// <summary>A block stops subdividing at or below this many cells. 9 is a 3x3 city block: big enough
-        /// to read as a block of row-houses rather than a lone house, small enough that almost every cell in
-        /// it fronts a street (only a 3x3's own centre does not, and a two-cell building routinely swallows
-        /// that). Measured (task-A3-report.md) against 12/16/20: the achieved building count is FLAT across
-        /// that whole range (average ratio 0.466 / 0.484 / 0.494 / 0.490 at target 40) because the two costs
-        /// trade off — smaller blocks spend more of the interior on street strips, larger ones leave more
-        /// cells with no street frontage at all. 9 is chosen on STRUCTURE, not yield: it is the largest value
-        /// that still cuts a 20-building town at all (its core is ~12 cells), and a town with no internal
-        /// street is the schematic donut this arc exists to replace.</summary>
-        public const int BlockTargetCells = 9;
-
         /// <summary>Largest size class the fill will roll (see SizeClassFor). Capped so a very small town —
         /// where the cell budget per requested building is huge — still gets recognizable houses instead of
         /// one compound swallowing a whole block.</summary>
         public const int MaxSizeClass = 4;
 
-        /// <summary>The deepest subdivision level whose street strips open a GATE. 0 = the FIRST cut of the
-        /// core only — the town's main axis, and nothing below it. Not a cosmetic cap on a count: a gate is a
-        /// break in the town's defences, so the wall opens for the street a traveller would actually arrive
-        /// on, not for every alley that happens to dead-end at the wall. Measured (task-A3-report.md) over a
-        /// 9-target x 60-seed sweep: gating on EVERY subdivision street opened up to 17 gates on a large
-        /// town, depth &lt;= 1 up to 9, and depth 0 lands every town in 2..6 — the range
-        /// SettlementGenerator.GateCountFor (2..4) has always described, widened only where a ragged strip
-        /// end abuts more than one ring cell.</summary>
-        public const int GateCutDepth = 0;
+        /// <summary>No two gate cells may sit closer than this in CHEBYSHEV distance. 3 is the smallest value
+        /// that leaves a whole cell of wall between two gates on the diagonal as well as on an axis, i.e. the
+        /// smallest value at which two gates cannot read as one wide doorway. Stated in CELLS, not normalized
+        /// units, so it keeps its meaning if the lattice pitch moves again.</summary>
+        public const int MinGateSeparationCells = 3;
 
-        public static BlockLayout Generate(WallContour wall, int seed, int targetBuildings)
+        static readonly int[] StepI = { -1, 1, 0, 0 };
+        static readonly int[] StepJ = { 0, 0, -1, 1 };
+
+        /// <summary>The order FrontageFill offers a strip's four directions in: +i, −i, +j, −j. It is part of
+        /// the tie-break rule (see FrontageFill), so it is named here rather than written inline.</summary>
+        static readonly int[] FillDirI = { 1, -1, 0, 0 };
+        static readonly int[] FillDirJ = { 0, 0, 1, -1 };
+
+        public static BlockLayout Generate(WallContour wall, int seed, SettlementSize size)
         {
             var layout = new BlockLayout();
 
@@ -91,30 +100,40 @@ namespace WorldGen.Generation
 
             var core = new List<(int i, int j)>();
             foreach (var c in interior) if (!ringSet.Contains(c)) core.Add(c);
+            var coreSet = new HashSet<(int i, int j)>(core);
 
-            // ---- 3. recursive axis-aligned subdivision of the core ------------------------------------
-            // Its own Random, seeded from `seed` alone: the fill below takes a SEPARATE one, so a change to
-            // how many rolls the fill makes can never shift the subdivision (and vice versa).
-            var subStreets = new List<(int i, int j)>();
-            var primaryStreets = new List<(int i, int j)>();
-            var blocks = new List<List<(int i, int j)>>();
-            Subdivide(core, new System.Random(seed * 31 + 5), subStreets, primaryStreets, blocks);
+            // ---- 3. gates on the ring, spread by angle -------------------------------------------------
+            layout.GateCells.AddRange(PlaceGateCells(ring, SettlementSizing.GateCount(size), seed));
 
-            // ---- 4. gates where a PRIMARY subdivision street reaches the ring -------------------------
-            layout.GateCells.AddRange(PlaceGates(ring, primaryStreets, ringSet));
+            // The network as it grows. The ring is its seed, which is what makes every later pass — whose
+            // strips must touch the network — connected to every gate without a repair step.
+            var streetSet = new HashSet<(int i, int j)>(ring);
 
-            // Streets = ring ∪ subdivision strips, in one row-major order. Sorted, not concatenated: this
-            // list is SERIALIZED (SettlementParams.StreetCells), so a stable order keeps a re-generated town
-            // byte-comparable with itself.
+            // ---- 4. an arterial inward from each gate --------------------------------------------------
+            var centre = CentreCell(ring, core);
+            var arterials = Arterials(coreSet, layout.GateCells, centre);
+            foreach (var c in arterials) streetSet.Add(c);
+
+            // ---- 5. frontage fill: pave until nothing is stranded --------------------------------------
+            // FrontageFill ADDS its cells to `streetSet` as it goes (it has to — each strip is scored against
+            // the network the previous strips left behind), so `streetSet` is current after this call.
+            var filled = FrontageFill(coreSet, streetSet);
+
+            // Streets = ring ∪ arterials ∪ frontage strips, in one row-major order. Sorted, not concatenated:
+            // this list is SERIALIZED (SettlementParams.StreetCells), so a stable order keeps a re-generated
+            // town byte-comparable with itself.
             layout.StreetCells.AddRange(ring);
-            layout.StreetCells.AddRange(subStreets);
+            layout.StreetCells.AddRange(arterials);
+            layout.StreetCells.AddRange(filled);
             layout.StreetCells.Sort(RowMajor);
-            var streetSet = new HashSet<(int i, int j)>(layout.StreetCells);
 
-            // ---- 5. fill each block ------------------------------------------------------------------
+            // ---- 6. what is left is the blocks ---------------------------------------------------------
+            var blocks = Blocks(coreSet, streetSet);
+
+            // ---- 7. fill each block --------------------------------------------------------------------
             int blockCells = 0;
             foreach (var b in blocks) blockCells += b.Count;
-            int sizeClass = SizeClassFor(blockCells, targetBuildings);
+            int sizeClass = SizeClassFor(blockCells, SettlementSizing.TargetBuildings(size));
 
             blocks.Sort(ByLowestCell);            // deterministic block order → deterministic rng consumption
             var fillRng = new System.Random(seed * 977 + 41);
@@ -240,148 +259,341 @@ namespace WorldGen.Generation
             }
         }
 
-        // ---- pass 3: subdivision ---------------------------------------------------------------------
+        // ---- pass 3: gates ---------------------------------------------------------------------------
 
-        /// <summary>Carve the core into blocks with one-cell street strips, breadth-first so the widest cuts
-        /// land first (which is also what puts the gates on the town's main axes). A block at or below
-        /// BlockTargetCells is done; one too thin to cut on EITHER axis is done as well, whatever its cell
-        /// count, since a cut needs a whole cell left on both sides of the strip.
+        /// <summary>Gate cells on the ring, spread by ANGLE around the town centre with a seeded phase, and
+        /// never closer than <see cref="MinGateSeparationCells"/> to one another in Chebyshev distance.
         ///
-        /// TERMINATION: a cut index is always strictly between the block's own bbox lo and hi on that axis,
-        /// and the block by definition has a cell at lo and a cell at hi — so both sides come out non-empty
-        /// and every recursion step is on a STRICTLY smaller cell set. The `guard` counter is belt-and-braces
-        /// against a future edit breaking that argument, not a live bound.</summary>
-        public static void Subdivide(List<(int i, int j)> core, System.Random rng,
-                                     List<(int i, int j)> streets, List<(int i, int j)> primaryStreets,
-                                     List<List<(int i, int j)>> blocks)
-        {
-            if (core == null || core.Count == 0) return;
-
-            var pending = new List<(List<(int i, int j)> cells, int depth)>();
-            foreach (var comp in Components(core)) pending.Add((comp, 0));
-
-            int guard = 0, head = 0;
-            while (head < pending.Count && guard++ < 100000)
-            {
-                var (block, depth) = pending[head++];
-                if (block.Count <= BlockTargetCells) { blocks.Add(block); continue; }
-
-                var (minI, minJ, maxI, maxJ) = SettlementFootprint.Bounds(block);
-                // Cut the LONGER axis so blocks stay squarish rather than degenerating into slivers; a tie
-                // cuts a COLUMN (vertical strip) purely so the choice is fixed and not rng-dependent.
-                bool vertical = (maxI - minI) >= (maxJ - minJ);
-                // A PRIMARY street is one cut at depth <= GateCutDepth — the town's main axes, and the only
-                // ones that open a gate (see PlaceGates). Every cut, primary or not, still goes into
-                // `streets`: they are all one-cell streets and all carry traffic; the distinction is purely
-                // about where the wall opens.
-                var into = depth <= GateCutDepth ? primaryStreets : null;
-                if (!TryCut(block, vertical, depth, rng, streets, into, pending) &&
-                    !TryCut(block, !vertical, depth, rng, streets, into, pending))
-                    blocks.Add(block);                                // too thin to cut on either axis
-            }
-            // Anything the guard cut short is still a block, never silently dropped.
-            for (; head < pending.Count; head++) blocks.Add(pending[head].cells);
-        }
-
-        /// <summary>One axis-aligned cut. Returns false when the block's extent on that axis is under 3
-        /// cells, i.e. there is no index that leaves a cell on both sides. The cut index is the bbox midpoint
-        /// jittered by one cell either way (seeded), then clamped strictly inside — so two towns of the same
-        /// shape still get different block rhythms.</summary>
-        static bool TryCut(List<(int i, int j)> block, bool vertical, int depth, System.Random rng,
-                           List<(int i, int j)> streets, List<(int i, int j)> primaryStreets,
-                           List<(List<(int i, int j)> cells, int depth)> pending)
-        {
-            var (minI, minJ, maxI, maxJ) = SettlementFootprint.Bounds(block);
-            int lo = vertical ? minI : minJ, hi = vertical ? maxI : maxJ;
-            if (hi - lo < 2) return false;
-
-            int cut = lo + (hi - lo) / 2 + rng.Next(-1, 2);
-            if (cut <= lo) cut = lo + 1;
-            if (cut >= hi) cut = hi - 1;
-
-            var lower = new List<(int i, int j)>();
-            var upper = new List<(int i, int j)>();
-            foreach (var c in block)
-            {
-                int k = vertical ? c.i : c.j;
-                if (k < cut) lower.Add(c);
-                else if (k > cut) upper.Add(c);
-                else { streets.Add(c); primaryStreets?.Add(c); }
-            }
-            // Components, not the raw halves: a ragged block can fall into separate pieces across the cut,
-            // and each piece must get its own bbox (a shared one would put the next cut through open ground).
-            foreach (var comp in Components(lower)) pending.Add((comp, depth + 1));
-            foreach (var comp in Components(upper)) pending.Add((comp, depth + 1));
-            return true;
-        }
-
-        // ---- pass 4: gates ---------------------------------------------------------------------------
-
-        /// <summary>A gate is the RING cell a PRIMARY subdivision street (see GateCutDepth) runs out into —
-        /// the town opens where its main streets already reach the wall, so a gate is never a hole in a
-        /// random stretch of wall. Emitted in cut order (widest cuts first, since Subdivide is
-        /// breadth-first) and de-duplicated, so one ring cell fed by two streets is one gate.
+        /// ANGLE, NOT A PERIMETER WALK, and that is a consequence of the type rather than a preference: the
+        /// ring arrives here as a SET of cells, not an ordered lap, so there is no arc length to spread along
+        /// without first ordering it — and ordering a ring that is two cells deep in a quarter of its length
+        /// (see RingStreet) is its own tracing problem with its own failure modes. The angle from the ring's
+        /// own centroid is well defined for every cell in the set, needs no ordering, and lands gates on
+        /// opposite sides of town exactly the way an arc-length walk would on a convex contour.
         ///
-        /// FALLBACK, and it is a judgement call: a town too small to subdivide at all (a hamlet whose whole
-        /// core is under BlockTargetCells) produces no subdivision street and therefore no gate by the rule
-        /// above — yet a walled settlement with no way in is not a thing. Such a town gets a gate at the
-        /// first ring cell in row-major order, plus a SECOND at the last ring cell — normally the two extreme
-        /// ends of the ring, landing on opposite sides rather than side by side.
-        ///
-        /// THIS PROMISES TWO GATES BUT CAN DELIVER ONE: when the ring is small enough that its row-major
-        /// first and last cell are the SAME cell, "first" and "last" collapse and only one gate comes out.
-        /// Measured, not theorised: a ring under ~1 cell of radius reproduces this (a WallContour radius of
-        /// ~0.05 at the pre-v11 0.07 pitch). It is unreachable through SettlementGenerator.BuildFloor/Generate
-        /// — the SMALLEST size class is 4.7 cells (SettlementSizing.WallRadiusCells), safely above where the
-        /// collapse starts, and stated in CELLS rather than normalized units precisely so the claim survives a
-        /// pitch change — but this method is public and does not itself enforce that floor, so a caller
-        /// building a WallContour directly can still hit it. Left as a known one-gate edge case rather than
-        /// patched: fabricating a second gate on a ring this degenerate (small enough to have no distinct
-        /// "opposite side" left) would need a rule invented for a shape production code never builds.</summary>
-        public static List<(int i, int j)> PlaceGates(IReadOnlyList<(int i, int j)> ring,
-                                                     IReadOnlyList<(int i, int j)> primaryStreets,
-                                                     HashSet<(int i, int j)> ringSet)
+        /// A DROPPED GATE IS LEGAL; TWO GATES IN ONE DOORWAY IS NOT. When no ring cell is far enough from the
+        /// gates already placed, that gate is simply not placed, and the town comes out with fewer gates than
+        /// `gateCount` asked for. That is reachable only on a DEGENERATE ring — one shorter than roughly
+        /// 3 x gateCount cells, e.g. the 8-cell ring of a 3x3 town, where every cell is within Chebyshev 2 of
+        /// every other and only ONE gate can ever be placed. No size class production ships is anywhere near
+        /// that (the smallest wall radius is 4.7 cells, a ring of ~30), so the drop is a degenerate-input
+        /// contract rather than a behaviour towns exhibit. The alternative — placing the gate anyway — would
+        /// put two gates in what reads as a single wide doorway, which is a defect a DM can SEE.</summary>
+        public static List<(int i, int j)> PlaceGateCells(IReadOnlyList<(int i, int j)> ring, int gateCount, int seed)
         {
             var gates = new List<(int i, int j)>();
-            if (ring == null || ring.Count == 0 || ringSet == null) return gates;
+            if (ring == null || ring.Count == 0 || gateCount <= 0) return gates;
 
-            var seen = new HashSet<(int i, int j)>();
-            if (primaryStreets != null)
-                foreach (var s in primaryStreets)
-                {
-                    TakeGate(ringSet, seen, gates, (s.i - 1, s.j));
-                    TakeGate(ringSet, seen, gates, (s.i + 1, s.j));
-                    TakeGate(ringSet, seen, gates, (s.i, s.j - 1));
-                    TakeGate(ringSet, seen, gates, (s.i, s.j + 1));
-                }
-            if (gates.Count > 0) return gates;
+            double cx = 0, cy = 0;
+            foreach (var c in ring) { cx += c.i; cy += c.j; }
+            cx /= ring.Count; cy /= ring.Count;
 
-            var first = ring[0]; var last = ring[0];
-            foreach (var c in ring)
+            // Its own Random, seeded from `seed` alone, so a change to how many rolls any other pass makes
+            // can never shift where the gates land.
+            var rng = new System.Random(seed * 7919 + 13);
+            double phase = rng.NextDouble() * 2.0 * System.Math.PI;
+
+            for (int k = 0; k < gateCount; k++)
             {
-                if (RowMajor(c, first) < 0) first = c;
-                if (RowMajor(c, last) > 0) last = c;
+                double target = phase + k * 2.0 * System.Math.PI / gateCount;
+                bool have = false;
+                (int i, int j) best = default;
+                double bestDelta = 0;
+                foreach (var c in ring)
+                {
+                    if (TooCloseToAGate(c, gates)) continue;
+                    double delta = AngleDistance(System.Math.Atan2(c.j - cy, c.i - cx), target);
+                    // Strict <, then row-major on an exact tie — the two candidates' angles are computed by
+                    // the identical expression, so an exact tie is a real tie and not a rounding artefact.
+                    if (!have || delta < bestDelta || (delta == bestDelta && RowMajor(c, best) < 0))
+                    { best = c; bestDelta = delta; have = true; }
+                }
+                if (have) gates.Add(best);
             }
-            gates.Add(first);
-            if (last != first) gates.Add(last);
             return gates;
         }
 
-        static void TakeGate(HashSet<(int i, int j)> ringSet, HashSet<(int i, int j)> seen,
-                             List<(int i, int j)> gates, (int i, int j) c)
+        /// <summary>THE SEPARATION RULE, in one place so there is exactly one line to break. True when `c` is
+        /// too close to a gate already placed to be a gate itself.</summary>
+        static bool TooCloseToAGate((int i, int j) c, List<(int i, int j)> gates)
         {
-            if (!ringSet.Contains(c) || !seen.Add(c)) return;
-            gates.Add(c);
+            foreach (var g in gates)
+                if (Chebyshev(c, g) < MinGateSeparationCells) return true;
+            return false;
         }
 
-        // ---- pass 5: filling a block -----------------------------------------------------------------
+        static int Chebyshev((int i, int j) a, (int i, int j) b)
+        {
+            int di = a.i > b.i ? a.i - b.i : b.i - a.i;
+            int dj = a.j > b.j ? a.j - b.j : b.j - a.j;
+            return di > dj ? di : dj;
+        }
+
+        /// <summary>The absolute angular gap between two angles, folded into 0..π — so a gate whose angle is
+        /// just BELOW the target and one just above are equally near it, instead of the first reading as
+        /// nearly a full turn away.</summary>
+        static double AngleDistance(double a, double b)
+        {
+            double two = 2.0 * System.Math.PI;
+            double d = (a - b) % two;
+            if (d < 0) d += two;
+            if (d > System.Math.PI) d = two - d;
+            return d;
+        }
+
+        // ---- pass 4: arterials -----------------------------------------------------------------------
+
+        /// <summary>The core cell the town's arterials run to: the core cell nearest the RING's centroid.
+        /// PUBLIC so a self-test can name the same cell production does instead of re-deriving it — the
+        /// "arterials reach the middle of town" invariant is only worth asserting if the two agree about
+        /// which cell the middle is.
+        ///
+        /// The ring's centroid rather than the core's, because the ring is the town's outline and the core is
+        /// whatever the outline left over; on a lopsided contour the two differ by a cell or so and the
+        /// outline is the honest one. Falls back to the core's own centroid when the ring is empty (a
+        /// degenerate input), and to (0,0) when there is nothing at all to average.</summary>
+        public static (int i, int j) CentreCell(IReadOnlyList<(int i, int j)> ring,
+                                                IReadOnlyList<(int i, int j)> core)
+        {
+            var anchor = (ring != null && ring.Count > 0) ? ring : core;
+            if (anchor == null || anchor.Count == 0) return (0, 0);
+
+            double cx = 0, cy = 0;
+            foreach (var c in anchor) { cx += c.i; cy += c.j; }
+            cx /= anchor.Count; cy /= anchor.Count;
+
+            if (core == null || core.Count == 0)
+                return ((int)System.Math.Round(cx), (int)System.Math.Round(cy));
+
+            bool have = false;
+            (int i, int j) best = default;
+            double bestD = 0;
+            foreach (var c in core)
+            {
+                double dx = c.i - cx, dy = c.j - cy;
+                double d = dx * dx + dy * dy;
+                if (!have || d < bestD || (d == bestD && RowMajor(c, best) < 0)) { best = c; bestD = d; have = true; }
+            }
+            return best;
+        }
+
+        /// <summary>From the core cell just inside each gate, a Manhattan path with at most one turn to the
+        /// centre cell: first leg along the dominant axis of (centre − gate), second along the other. Returns
+        /// the cells in the order they were paved (the caller sorts row-major before serializing).
+        ///
+        /// WHAT THIS IS FOR, since it is NOT what makes the network connected (the ring already does that):
+        /// it is the road a traveller arriving at a gate actually drives in on. Without it the frontage fill
+        /// below would still produce a connected, fully-fronted network — of stubs and alleys hanging off the
+        /// ring, with no through route and no reason for a gate to be where it is. The two invariants it does
+        /// carry, and that nothing else in this file does, are: the core cell just inside every gate is a
+        /// STREET (a gate never opens onto the side of a house), and the town's centre cell is a STREET (the
+        /// main roads meet in the middle).
+        ///
+        /// STOPPING EARLY. An arterial stops on the first cell an EARLIER arterial already paved: the traffic
+        /// it carries is already served from there on, and running the second road alongside the first would
+        /// spend the core twice for one route. The RING it started from does not count as paved for this
+        /// purpose — it is not in `core` at all — or every arterial would stop at length zero. A cell that is
+        /// not in `core` (a ring cell where the contour pinches) is SKIPPED rather than paved, and the walk
+        /// carries on: a ring cell is already a street, so skipping it cannot open a gap in the road.</summary>
+        public static List<(int i, int j)> Arterials(HashSet<(int i, int j)> core,
+                                                     IReadOnlyList<(int i, int j)> gateCells,
+                                                     (int i, int j) centre)
+        {
+            var laid = new List<(int i, int j)>();
+            if (core == null || core.Count == 0 || gateCells == null) return laid;
+
+            var paved = new HashSet<(int i, int j)>();
+            foreach (var gate in gateCells)
+            {
+                var start = InwardStep(gate, core, centre);
+                if (!start.HasValue) continue;               // a gate with no core neighbour opens on nothing
+
+                int di = centre.i - gate.i, dj = centre.j - gate.j;
+                bool iFirst = System.Math.Abs(di) >= System.Math.Abs(dj);
+                foreach (var cell in LPath(start.Value, centre, iFirst))
+                {
+                    if (paved.Contains(cell)) break;         // an earlier arterial already carries this route
+                    if (!core.Contains(cell)) continue;      // a ring cell / outside — already street, or not ours
+                    paved.Add(cell);
+                    laid.Add(cell);
+                }
+            }
+            return laid;
+        }
+
+        /// <summary>The core cell an arterial starts from: the 4-neighbour of the gate that is in the core
+        /// and lies nearest the centre, ties row-major. Nearest-to-centre rather than a fixed compass order
+        /// because a gate on a diagonal stretch of wall has TWO inward neighbours and the road should set off
+        /// toward town, not sideways along it. Null when the gate has no core 4-neighbour at all.</summary>
+        static (int i, int j)? InwardStep((int i, int j) gate, HashSet<(int i, int j)> core, (int i, int j) centre)
+        {
+            bool have = false;
+            (int i, int j) best = default;
+            long bestD = 0;
+            for (int d = 0; d < 4; d++)
+            {
+                var n = (i: gate.i + StepI[d], j: gate.j + StepJ[d]);
+                if (!core.Contains(n)) continue;
+                long dx = n.i - centre.i, dy = n.j - centre.j;
+                long dd = dx * dx + dy * dy;
+                if (!have || dd < bestD || (dd == bestD && RowMajor(n, best) < 0)) { best = n; bestD = dd; have = true; }
+            }
+            return have ? best : ((int i, int j)?)null;
+        }
+
+        /// <summary>Every cell of the Manhattan path from `from` to `to` with at most one turn, `from` and
+        /// `to` included, running the named axis first.</summary>
+        static List<(int i, int j)> LPath((int i, int j) from, (int i, int j) to, bool iFirst)
+        {
+            var path = new List<(int i, int j)> { from };
+            var c = from;
+            for (int leg = 0; leg < 2; leg++)
+            {
+                bool alongI = (leg == 0) == iFirst;
+                if (alongI) while (c.i != to.i) { c.i += c.i < to.i ? 1 : -1; path.Add(c); }
+                else        while (c.j != to.j) { c.j += c.j < to.j ? 1 : -1; path.Add(c); }
+            }
+            return path;
+        }
+
+        // ---- pass 5: frontage fill -------------------------------------------------------------------
+
+        /// <summary>Pave until no core cell lacks a 4-adjacent street. THE ALGORITHMIC HEART OF THIS FILE: a
+        /// street exists here for exactly one reason, that some house would otherwise have had no frontage.
+        ///
+        /// CANDIDATES are axis-aligned runs of core cells that are not already street: from every such cell,
+        /// in all FOUR directions, truncated at the first cell that is street or not core, with every PREFIX
+        /// of a run its own candidate. A candidate must touch the existing network at ≥1 end (see
+        /// <see cref="TouchesNetwork"/>) — that is what keeps the streets one connected piece without a
+        /// repair pass afterwards.
+        ///
+        /// ALL FOUR DIRECTIONS, NOT THE TWO POSITIVE ONES, and the difference is visible in the finished
+        /// town. A prefix only ever touches the network through its OWN low end or through the far end of the
+        /// WHOLE run, so enumerating +i/+j alone would offer short strips hanging off the network on its low
+        /// side and, on the high side, only whole runs spanning the block. The fill would then grow stubs
+        /// off the −i/−j faces of the ring and long spans off the other two: an asymmetry with no reason
+        /// behind it, and more street than the frontage rule needs.
+        ///
+        /// SCORE = (unfronted core cells this strip would serve) / (cells it consumes), as a double. Served
+        /// counts a cell whether the strip runs THROUGH it (it becomes street, so it no longer needs
+        /// frontage) or merely PAST it (it gains a street 4-neighbour). Ties break by the ENUMERATION order —
+        /// the strip's own start cell row-major, then direction (+i, −i, +j, −j), then length — because the
+        /// comparison is strictly-greater, so the first of several equally efficient strips wins and, among
+        /// prefixes of one run, that is the shortest.
+        ///
+        /// A STRIP THAT ENDS ON THE UNFRONTED CELL ITSELF IS LEGAL, and it is what guarantees termination.
+        /// Take any unfronted cell u and walk +i from it: the run of core cells ends where the next cell is a
+        /// ring cell (the last interior cell in a row IS a ring cell, by RingStreet's own rule) or an
+        /// already-paved street — either way that far end touches the network, so the whole run is a legal
+        /// candidate, and it serves at least u. So a candidate with a positive score always exists while any
+        /// cell is unfronted, and every iteration paves at least one cell out of a finite core.
+        ///
+        /// THE "nothing to pave" BREAK IS NOT DEAD CODE. It is unreachable through Generate, by the argument
+        /// above — but only because the ring seeds the network. A caller that hands in an EMPTY street set
+        /// (the MutBlocksNoRingStreet mutant does exactly this) has no cell for any candidate to touch, so no
+        /// candidate is ever legal, and without the break this loop would spin forever instead of degrading.
+        ///
+        /// MUTATES `streets`: each strip is scored against the network the previous strips left behind, so
+        /// the set has to grow as we go. The caller gets the same set back, current.</summary>
+        public static List<(int i, int j)> FrontageFill(HashSet<(int i, int j)> core, HashSet<(int i, int j)> streets)
+        {
+            var paved = new List<(int i, int j)>();
+            if (core == null || core.Count == 0 || streets == null) return paved;
+
+            // Row-major, so the candidate sweep below is a pure function of the cell SET and never of a
+            // HashSet's enumeration order.
+            var ordered = new List<(int i, int j)>(core);
+            ordered.Sort(RowMajor);
+
+            var unfronted = new HashSet<(int i, int j)>();
+            var served = new HashSet<(int i, int j)>();
+            var run = new List<(int i, int j)>();
+            var bestRun = new List<(int i, int j)>();
+
+            int guard = 0;
+            while (guard++ < 100000)
+            {
+                unfronted.Clear();
+                foreach (var c in ordered)
+                    if (!streets.Contains(c) && !FrontsStreet(c, streets)) unfronted.Add(c);
+                if (unfronted.Count == 0) break;                       // every house has its frontage
+
+                double bestScore = 0;
+                bestRun.Clear();
+                foreach (var seed in ordered)
+                {
+                    if (streets.Contains(seed)) continue;
+                    for (int dir = 0; dir < 4; dir++)
+                    {
+                        int stepI = FillDirI[dir], stepJ = FillDirJ[dir];
+                        run.Clear();
+                        var c = seed;
+                        while (core.Contains(c) && !streets.Contains(c))
+                        { run.Add(c); c = (c.i + stepI, c.j + stepJ); }
+                        var before = (seed.i - stepI, seed.j - stepJ);
+                        bool nearTouch = streets.Contains(before);
+
+                        served.Clear();
+                        for (int k = 0; k < run.Count; k++)
+                        {
+                            AddIfUnfronted(served, unfronted, run[k]);
+                            for (int d = 0; d < 4; d++)
+                                AddIfUnfronted(served, unfronted, (run[k].i + StepI[d], run[k].j + StepJ[d]));
+
+                            var after = (run[k].i + stepI, run[k].j + stepJ);
+                            if (!TouchesNetwork(before, after, nearTouch, k == run.Count - 1, streets)) continue;
+
+                            double score = served.Count / (double)(k + 1);
+                            if (score <= bestScore) continue;          // strictly greater — see the tie rule
+                            bestScore = score;
+                            bestRun.Clear();
+                            for (int m = 0; m <= k; m++) bestRun.Add(run[m]);
+                        }
+                    }
+                }
+                if (bestRun.Count == 0) break;                          // see "nothing to pave" in the doc
+
+                foreach (var c in bestRun) { streets.Add(c); paved.Add(c); }
+            }
+            return paved;
+        }
+
+        /// <summary>Does this candidate strip touch the existing street network at ≥1 end? `before` is the
+        /// cell just off its low end and `after` the cell just off its high end; only the FULL run can touch
+        /// through `after`, because a shorter prefix's high end is the next core cell of the same run.</summary>
+        static bool TouchesNetwork((int i, int j) before, (int i, int j) after, bool nearTouch, bool isFullRun,
+                                   HashSet<(int i, int j)> streets)
+            => nearTouch || (isFullRun && streets.Contains(after));
+
+        static void AddIfUnfronted(HashSet<(int i, int j)> served, HashSet<(int i, int j)> unfronted,
+                                   (int i, int j) c)
+        {
+            if (unfronted.Contains(c)) served.Add(c);
+        }
+
+        // ---- pass 6: blocks --------------------------------------------------------------------------
+
+        /// <summary>The 4-connected components of what is left after the streets. Row-major sorted first, so
+        /// the component discovery order — and therefore the order the blocks are filled in — is a function
+        /// of the cell set alone and never of a HashSet's enumeration order.</summary>
+        public static List<List<(int i, int j)>> Blocks(HashSet<(int i, int j)> core, HashSet<(int i, int j)> streets)
+        {
+            var left = new List<(int i, int j)>();
+            if (core == null) return new List<List<(int i, int j)>>();
+            foreach (var c in core) if (streets == null || !streets.Contains(c)) left.Add(c);
+            left.Sort(RowMajor);
+            return Components(left);
+        }
+
+        // ---- pass 7: filling a block -----------------------------------------------------------------
 
         /// <summary>How big the buildings in this town come out, 1 (single cells, with the odd pair) up to
-        /// MaxSizeClass. THE ONE PLACE `targetBuildings` IS CONSULTED, and the only way it steers the result:
-        /// the buildable cell budget divided by the requested count is roughly the average area a building
-        /// may take if the count is to land near the request, so that ratio IS the size class. It cannot go
-        /// below 1 — nothing can manufacture cells — which is exactly why the achieved count is allowed to
-        /// come in under the request and why the count assertion is a band rather than an equality.</summary>
+        /// MaxSizeClass. THE ONE PLACE `targetBuildings` IS CONSULTED, and the only way the size class steers
+        /// the result: the buildable cell budget divided by the requested count is roughly the average area a
+        /// building may take if the count is to land near the request, so that ratio IS the size class. It
+        /// cannot go below 1 — nothing can manufacture cells — which is exactly why the achieved count is
+        /// allowed to come in under the request and why the count assertion is a band rather than an
+        /// equality.</summary>
         public static int SizeClassFor(int blockCells, int targetBuildings)
         {
             if (targetBuildings <= 0) return 1;
@@ -397,7 +609,9 @@ namespace WorldGen.Generation
         /// so "every building fronts a street" holds BY CONSTRUCTION rather than by a filter afterwards — the
         /// footprint always contains its own seed cell. Cells with no street frontage are never seeded; they
         /// are reachable only by a neighbouring house growing into them, and whatever is left over stays open
-        /// as the block's inner courtyard. That is the intended reading of a dense block, not a gap.
+        /// as the block's inner courtyard. Under the frontage rule above there are no such cells left in a
+        /// generated town — that is the whole point of it — but the guard stays: FillBlock is public and its
+        /// contract must not depend on who carved the block.
         ///
         /// RECTANGLES, GROWN. A rect is 4-connected and flush with its neighbours by construction, and
         /// growing one column/row at a time (each step taking the whole strip or none of it) keeps it a rect

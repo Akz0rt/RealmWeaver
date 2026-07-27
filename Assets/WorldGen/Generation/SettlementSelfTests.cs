@@ -372,7 +372,7 @@ namespace WorldGen.Rendering
             // wiring rather than a tautology.
             var exPlacement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f,
                 SettlementGenerator.WallRadiusFor(cfg.Size), SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var exLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
+            var exLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.Size);
             var exGates = new System.Collections.Generic.List<GatePoint>();
             foreach (var gc in exLayout.GateCells)   // cfg.HasWall is true for this fixture
                 exGates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
@@ -516,7 +516,7 @@ namespace WorldGen.Rendering
             // floor.Links against 3a's edge list now compares two different towns. This half therefore
             // re-derives the nodes the way BuildFloor does — SettlementBlocks.Generate, footprint
             // representatives, no gates for a village — and compares against THOSE.
-            var blLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
+            var blLayout = SettlementBlocks.Generate(exPlacement, cfg.Seed, cfg.Size);
             var blBuildings = new System.Collections.Generic.List<PlacedBuilding>();
             foreach (var fp in blLayout.Buildings)
             {
@@ -1025,7 +1025,17 @@ namespace WorldGen.Rendering
             // tile cell leaves a 1.84-tile lane, so there is far less room for two roads to share a stretch —
             // which is a consequence of the finer lattice, not of the discount. 28 is the FIRST discriminating
             // seed and is otherwise unremarkable.
-            var cfg = new SettlementConfig { Seed = 28, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
+            //
+            // Re-pinned 28->3 (arc C.2, task C): streets are laid where a house would otherwise have no
+            // frontage now, not by recursive subdivision, so every building, every gate and every lane moved
+            // again — and there are ~50% more buildings in the same wall, so the town seed 28 merged on no
+            // longer exists. Same discipline, SCANNED not picked: seeds 1..300, this exact fixture shape,
+            // real router vs the MutRoadsNoReuse build. The real router merges on 84 of 300 and 36 of those
+            // DISCRIMINATE — both figures UP on task B's 81/26 — so the reuse discount's merge behaviour is
+            // intact and this is a fixture ripple, not a regression. 3 is the FIRST discriminating seed
+            // (the full head of the list is 3, 9, 44, 45, 47, 51, 53, 62, 67, 79, 92, 96) and is otherwise
+            // unremarkable.
+            var cfg = new SettlementConfig { Seed = 3, Size = SettlementSize.Small, ActiveBuildings = 5, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
             var g = SettlementRoads.Build(nodes, edges);

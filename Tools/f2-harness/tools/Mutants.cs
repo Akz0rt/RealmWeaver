@@ -126,10 +126,17 @@ namespace WorldGen.Generation
 
                 ("MutBlocksNoRingStreet", "SettlementBlocks.Generate lays no ring street just inside the wall (so no gate can open on it either)",
                     () => new WorldGen.MutantTests.MutBlocksNoRingStreetSelfTests().SelfTestBlocks()),
-                ("MutBlocksNoSubdivision", "SettlementBlocks.Subdivide accepts every block uncut (one block for the whole interior)",
-                    () => new WorldGen.MutantTests.MutBlocksNoSubdivisionSelfTests().SelfTestBlocks()),
                 ("MutBlocksOverlapAllowed", "SettlementBlocks' fill drops the not-already-claimed term from Available (footprints overlap)",
                     () => new WorldGen.MutantTests.MutBlocksOverlapAllowedSelfTests().SelfTestBlocks()),
+
+                ("MutBlocksNoArterials", "SettlementBlocks.Arterials lays nothing (no road runs inward from a gate, none reaches the town centre)",
+                    () => new WorldGen.MutantTests.MutBlocksNoArterialsSelfTests().SelfTestFrontage()),
+                ("MutBlocksNoFrontageFill", "SettlementBlocks.FrontageFill paves nothing (core cells are left with no street 4-neighbour)",
+                    () => new WorldGen.MutantTests.MutBlocksNoFrontageFillSelfTests().SelfTestFrontage()),
+                ("MutBlocksFillIgnoresNetwork", "SettlementBlocks' frontage strips no longer have to touch the existing network (street islands)",
+                    () => new WorldGen.MutantTests.MutBlocksFillIgnoresNetworkSelfTests().SelfTestFrontage()),
+                ("MutBlocksGatesAdjacent", "SettlementBlocks.PlaceGateCells drops the MinGateSeparationCells term (two gates in one doorway)",
+                    () => new WorldGen.MutantTests.MutBlocksGatesAdjacentSelfTests().SelfTestFrontage()),
 
                 ("MutPoiMigrationNoop", "PoiMigration.NormalizeLegacyTypes returns immediately (a legacy Village POI is never rewritten to City)",
                     () => new WorldGen.MutantTests.MutPoiMigrationNoopSelfTests().SelfTestPoiLegacyTypes()),

@@ -100,6 +100,23 @@ namespace WorldGen.Generation
                         blocked[(y - minY) * gw + (x - minX)] = true;
             }
 
+            // HOW MANY INFLATED RECTS COVER EACH CELL. `blocked` above is their UNION, which answers "is
+            // anybody claiming this cell" but not "is anybody OTHER THAN these two claiming it" — and that
+            // second question is the whole of the own-endpoint carve below. Same loop bounds as the mask, so
+            // the two can never disagree about a cell.
+            var claimCount = new int[gw * gh];
+            foreach (var n in nodes)
+            {
+                float hw = n.W * 0.5f + RoadClearanceTiles, hh = n.H * 0.5f + RoadClearanceTiles;
+                int x0 = System.Math.Max(minX, (int)System.Math.Ceiling(n.CX - hw));
+                int x1 = System.Math.Min(maxX, (int)System.Math.Floor(n.CX + hw));
+                int y0 = System.Math.Max(minY, (int)System.Math.Ceiling(n.CY - hh));
+                int y1 = System.Math.Min(maxY, (int)System.Math.Floor(n.CY + hh));
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                        claimCount[(y - minY) * gw + (x - minX)]++;
+            }
+
             // A* state = cell × incoming direction (0..3; 4 = start, no direction yet).
             var best = new float[gw * gh * 5];
             var parent = new int[gw * gh * 5];
@@ -112,7 +129,7 @@ namespace WorldGen.Generation
             {
                 if (!byId.TryGetValue(edges[ei].A, out var A) || !byId.TryGetValue(edges[ei].B, out var B)) continue;
                 path.Clear();
-                if (!Route(A, B, blocked, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path))
+                if (!Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path))
                 {
                     // Graceful degradation (never fail the Build): the straight centre-to-centre line.
                     EmitPolyline(g, ei, A, B, new List<LinkPoint>
@@ -137,7 +154,7 @@ namespace WorldGen.Generation
             return g;
         }
 
-        static bool Route(LinkNode A, LinkNode B, bool[] blocked, HashSet<int> roads,
+        static bool Route(LinkNode A, LinkNode B, bool[] blocked, int[] claimCount, HashSet<int> roads,
                           float[] best, int[] parent, bool[] closed, Heap heap,
                           int minX, int minY, int maxX, int maxY,
                           int gw, List<(int x, int y)> outPath)
@@ -169,9 +186,8 @@ namespace WorldGen.Generation
                     int nx = cx + Dxs[d], ny = cy + Dys[d];
                     if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
                     int nc = (ny - minY) * gw + (nx - minX);
-                    // Passable: free cell, or inside ONE OF THIS EDGE'S OWN endpoint rects (the carve
-                    // that lets a road leave/enter its own building through the clearance ring).
-                    if (blocked[nc] && !InsideInflated(nx, ny, A) && !InsideInflated(nx, ny, B)) continue;
+                    // Passable: a free cell, or one the OWN-ENDPOINT CARVE forgives — see CarvedOpen.
+                    if (blocked[nc] && !CarvedOpen(nx, ny, nc, A, B, claimCount)) continue;
                     float step = roads.Contains(nc) ? RoadReuseFactor : 1f;
                     if (pd != 4 && pd != d) step += RoadTurnPenalty;
                     float ng = best[st] + step;
@@ -231,6 +247,32 @@ namespace WorldGen.Generation
         static bool InsideInflated(int x, int y, LinkNode n)
             => System.Math.Abs(x - n.CX) <= n.W * 0.5f + RoadClearanceTiles
             && System.Math.Abs(y - n.CY) <= n.H * 0.5f + RoadClearanceTiles;
+
+        /// <summary>THE OWN-ENDPOINT CARVE, and the one thing it must NOT forgive. A road has to leave its own
+        /// building and enter the one at the other end, so a masked cell is passable when THIS EDGE'S OWN two
+        /// endpoints are the only nodes claiming it — that claim is the clearance ring the road must cross to
+        /// reach a door, and forgiving it is what a door IS.
+        ///
+        /// BUT NEVER THROUGH SOMEBODY ELSE'S. Settlement buildings stand FLUSH — a footprint's cell bbox meets
+        /// its neighbour's with nothing between them — so an endpoint's inflated rect reaches a whole tile INTO
+        /// the next house along, and its clearance ring further still. The old carve forgave the mask on
+        /// "inside A's or B's inflated rect" ALONE, which therefore also forgave a third party's house and a
+        /// third party's clearance wherever those overlapped an endpoint's. That is exactly what SelfTestRoads'
+        /// assertions 2 and 5 forbid: they exempt an edge's OWN two endpoints and nothing else. `claimCount` is
+        /// what makes the distinction available — subtract this edge's own two and what is left is "how many
+        /// OTHER nodes claim this cell", which must be zero.
+        ///
+        /// MEASURED, not theorised (task-C-report.md): before this term, 18 of 40 Small towns and 14 of 15
+        /// Large ones routed a road clean through a third party's rect. It was never a property of the
+        /// frontage layout — those two numbers come from the SAME sweep run against the PRE-frontage
+        /// subdivision layout. The pinned SelfTestRoads seed simply happened to be one of the clean ones.</summary>
+        static bool CarvedOpen(int x, int y, int cell, LinkNode A, LinkNode B, int[] claimCount)
+        {
+            int others = claimCount[cell];
+            if (InsideInflated(x, y, A)) others--;
+            if (InsideInflated(x, y, B)) others--;
+            return others <= 0;
+        }
 
         /// <summary>Where the segment inside→outside crosses n's rect boundary (inPt is inside).</summary>
         static LinkPoint ClipExit(LinkPoint inPt, LinkPoint outPt, LinkNode n)

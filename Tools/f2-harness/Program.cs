@@ -94,6 +94,7 @@ static class Program
         tileGrid.SelfTestTileGridSanity();
         var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
         blocks.SelfTestBlocks();
+        blocks.SelfTestFrontage();
         blocks.SelfTestBlocksSanity();
         var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
         poiMigration.SelfTestPoiLegacyTypes();

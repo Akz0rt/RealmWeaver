@@ -163,8 +163,9 @@ namespace WorldGen.Generation
         /// <summary>Assemble one settlement floor from a BLOCK LAYOUT: gate rooms (TypeId 0) then building
         /// rooms (TypeId 1) in the SAME order the street stage indexes them (gates first), streets → links.
         ///
-        /// A BUILDING IS A FOOTPRINT NOW. SettlementBlocks.Generate carves the notional contour's interior
-        /// into blocks with one-cell streets and fills each block with flush, disjoint footprints; every
+        /// A BUILDING IS A FOOTPRINT NOW. SettlementBlocks.Generate lays one-cell streets through the notional
+        /// contour's interior wherever a house would otherwise have no frontage, and fills what is left
+        /// between them with flush, disjoint footprints; every
         /// building room carries its own cells on Room.Cells and every street cell is stored once on
         /// SettlementParams.StreetCells. Both are ABSOLUTE lattice indices (SettlementFootprint), the same
         /// frame SettlementTileGrid draws from, so the stored town and the drawn town cannot disagree.
@@ -173,9 +174,10 @@ namespace WorldGen.Generation
         /// treats a SINGLE-cell footprint that disagrees with the room's point as stale and re-derives it from
         /// the point, so a point in some other cell would silently relocate every one-cell house in town.
         ///
-        /// GATES COME FROM THE LAYOUT — the ring-street cells its primary streets run out into — not from a
-        /// preliminary fence any more (Ц2.6's SettlementFence.Derive → PlaceGates path). A wall-less village
-        /// gets none; it still gets its streets.
+        /// GATES COME FROM THE LAYOUT — ring-street cells spread by ANGLE around the town, SettlementSizing's
+        /// count of them (SettlementBlocks.PlaceGateCells) — not from a preliminary fence any more (Ц2.6's
+        /// SettlementFence.Derive → PlaceGates path). A wall-less village gets none; it still gets its
+        /// streets.
         ///
         /// STILL LIVE, AND STILL TASK 5's TO DELETE: SettlementStreets.GenerateStreets and the
         /// gates-then-buildings id↔index contract below. Links are what SettlementRoads routes the drawn
@@ -188,7 +190,7 @@ namespace WorldGen.Generation
             // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) that block
             // generation carves up — never stored, so nothing renders it directly.
             var placement = WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, WallRadiusFor(cfg.Size), WallSides, WallJitter);
-            var layout = SettlementBlocks.Generate(placement, cfg.Seed, SettlementSizing.TargetBuildings(cfg.Size));
+            var layout = SettlementBlocks.Generate(placement, cfg.Seed, cfg.Size);
 
             // A wall-less village has nothing to open a gate IN, so it takes none of the layout's.
             var gates = new List<GatePoint>();

@@ -974,14 +974,11 @@ New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoRingStreet' `
   'var ring = new List<(int i, int j)>();   // MUTANT: no ring street is laid at all' `
   'MutBlocksNoRingStreet.cs'
 
-# MutBlocksNoSubdivision: every block is accepted as-is on its first visit, so the core is never cut and the
-# whole interior comes out as ONE block. Caught by SelfTestBlocks assertion 5, which recovers the blocks as the
-# 4-connected components of (interior minus streets) and requires each to be at or below BlockTargetCells — the
-# single surviving block is several times that and the assertion names its exact cell count and bbox.
-New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoSubdivision' `
-  'if (block.Count <= BlockTargetCells) { blocks.Add(block); continue; }' `
-  'if (true) { blocks.Add(block); continue; }   // MUTANT: never subdivide — one block for the whole interior' `
-  'MutBlocksNoSubdivision.cs'
+# RETIRED (arc C.2, task C): MutBlocksNoSubdivision. It forced SettlementBlocks.Subdivide to accept every block
+# uncut, and Subdivide no longer exists — streets are laid where a house would otherwise have no frontage, not
+# by recursive halving — so there is no rule left for it to remove. The assertion it used to catch (every
+# recovered block at or below BlockTargetCells) went with it: a block's SIZE is not bounded any more, only its
+# DEPTH, which SelfTestFrontage pins as geometry.
 
 # MutBlocksOverlapAllowed: the fill's disjointness term is dropped from Available, so a cell already claimed by
 # one building is handed to the next as well — every block cell seeds its own building and the grown rects
@@ -991,8 +988,62 @@ New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksOverlapAllowed' `
   '=> blockSet.Contains(c);   /* MUTANT: the fill skips its disjointness check */' `
   'MutBlocksOverlapAllowed.cs'
 
-foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksNoSubdivision', 'MutBlocksOverlapAllowed')) {
+foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksOverlapAllowed')) {
   New-SettlementRebind 'SelfTestBlocks' $mc `
+    @('SettlementBlocks\.') `
+    @("WorldGen.Generation.$mc.SettlementBlocks.")
+}
+
+# ---- FRONTAGE-STREET MUTANTS (arc C.2, task C): four rules pinned by SelfTestFrontage. --------------------
+# Same file, same rebind shape as the three above — SelfTestFrontage likewise never names BlockLayout (every
+# layout it touches is captured through `var`), and SettlementSizing / SettlementGenerator / WallContour /
+# SettlementFootprint all live in unmutated files and resolve OUTWARD once SettlementBlocks.cs is renamespaced.
+
+# MutBlocksNoArterials: Arterials returns before it lays a single cell, so the only streets a town gets are its
+# ring and whatever the frontage fill hangs off it. Caught by SelfTestFrontage assertion 4 — the two properties
+# only the arterial pass delivers: the core cell just inside a gate is a street, and the town's centre cell is
+# a street.
+#
+# NOTE, and it is a correction to this task's brief rather than an oversight: the brief predicted the
+# ONE-NETWORK assertion would fire ("a gate is left with no street reaching it"). It cannot, and that is by
+# design — every gate is a RING cell, the ring is one 4-connected lap, and every frontage strip must touch the
+# network at an end, so the streets are one piece whether or not an arterial was ever laid. The arterials are a
+# LEGIBILITY rule (the road a traveller arrives on) and their invariants had to be stated as such.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoArterials' `
+  'var laid = new List<(int i, int j)>();' `
+  'var laid = new List<(int i, int j)>(); return laid;   // MUTANT: no arterial is ever laid' `
+  'MutBlocksNoArterials.cs'
+
+# MutBlocksNoFrontageFill: FrontageFill returns before it paves a single strip, so nothing bridges the gap
+# between the ring and the middle of a block. Caught by SelfTestFrontage assertion 1, which names the exact
+# stranded cell, and behind it assertion 5 (a block that surrounds one of its own cells on all four sides).
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksNoFrontageFill' `
+  'var paved = new List<(int i, int j)>();' `
+  'var paved = new List<(int i, int j)>(); return paved;   // MUTANT: no frontage strip is ever paved' `
+  'MutBlocksNoFrontageFill.cs'
+
+# MutBlocksFillIgnoresNetwork: the frontage fill's candidate strips no longer have to touch the street network
+# at either end, so the greedy is free to pave a strip floating in the middle of a block — which it does,
+# because a deep strip serves more unfronted cells per cell consumed than one hanging off the ring. Caught by
+# SelfTestFrontage assertion 2: the flood-fill from the first gate cannot reach the island.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksFillIgnoresNetwork' `
+  '=> nearTouch || (isFullRun && streets.Contains(after));' `
+  '=> true;   // MUTANT: a candidate strip no longer has to touch the existing network' `
+  'MutBlocksFillIgnoresNetwork.cs'
+
+# MutBlocksGatesAdjacent: the MinGateSeparationCells term is dropped from PlaceGateCells' TooCloseToAGate, so
+# two gates may land in what reads as one wide doorway. Caught by SelfTestFrontage assertion 7 — the 8-cell
+# ring of a 3x3 town, where every pair of ring cells is within Chebyshev 2 and the real rule can therefore
+# place exactly ONE gate out of the four asked for. A real town's ring is ~30 cells and its gates come out 9+
+# apart, so the sweep alone could never reach the regime this rule governs.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutBlocksGatesAdjacent' `
+  'if (Chebyshev(c, g) < MinGateSeparationCells) return true;' `
+  ';   // MUTANT: the MinGateSeparationCells term is dropped' `
+  'MutBlocksGatesAdjacent.cs'
+
+foreach ($mc in @('MutBlocksNoArterials', 'MutBlocksNoFrontageFill', 'MutBlocksFillIgnoresNetwork',
+                  'MutBlocksGatesAdjacent')) {
+  New-SettlementRebind 'SelfTestFrontage' $mc `
     @('SettlementBlocks\.') `
     @("WorldGen.Generation.$mc.SettlementBlocks.")
 }
@@ -1109,5 +1160,5 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 35 settlement mutants + 35 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 38 settlement mutants + 38 settlement rebound test copies into gen/"
 

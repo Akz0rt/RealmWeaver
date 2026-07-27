@@ -66,12 +66,20 @@ namespace WorldGen.Rendering
 
             // One full structural sweep of a generated layout. Called for several (seed, target) pairs below
             // so the invariants are pinned across towns, not on one lucky fixture.
+            //
+            // `target` STILL DRIVES THE WALL, AND ONLY THE WALL (arc C.2, task C). Generate takes a SIZE
+            // CLASS now, so the sweep bucket's `target` through SettlementSizing.FromLegacyTarget to get one
+            // — which means the number Generate reads for its own size class (TargetBuildings(size)) is NOT
+            // this `target`, and the two deliberately disagree for every swept target that is not one of the
+            // three shipped ones. That is the point of sweeping between the classes: the invariants below are
+            // structural and must hold for a contour of ANY scale, not only the three the table ships.
             void Check(int seed, int target)
             {
+                var size = SettlementSizing.FromLegacyTarget(target);
                 var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SweepRadiusNorm(target),
                                                SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-                var layout = SettlementBlocks.Generate(wall, seed, target);
-                string at = $"[seed {seed}, target {target}]";
+                var layout = SettlementBlocks.Generate(wall, seed, size);
+                string at = $"[seed {seed}, target {target}, size {size}]";
 
                 var streetSet = new System.Collections.Generic.HashSet<(int i, int j)>();
                 foreach (var c in layout.StreetCells) streetSet.Add(c);
@@ -145,25 +153,14 @@ namespace WorldGen.Rendering
                     if (!reached.Contains(c))
                     { Debug.LogError($"FAIL blocks {at}: street cell ({c.i},{c.j}) is unreachable from any gate through street cells ({reached.Count} of {streetSet.Count} street cells reached)"); ok = false; break; }
 
-                // ---- 5. SUBDIVISION ACTUALLY CARVES: NO BLOCK SURVIVES OVER THE TARGET SIZE ------------
-                // The blocks are not part of the layout's output, so they are RECOVERED here the only way
-                // they can be: the 4-connected components of (interior cells MINUS street cells). Two
-                // different blocks are never 4-adjacent — a cut always leaves its one-cell street strip
-                // between them — so those components ARE the blocks.
-                //
-                // The bound is EXACT, not a rule of thumb: subdivision stops either at
-                // SettlementBlocks.BlockTargetCells or because the block is too thin to cut on either axis,
-                // and "too thin on both axes" means both bbox extents are under 3, i.e. at most 2x2 = 4
-                // cells — already inside the bound. So no block may exceed it for any reason.
-                var interior = SettlementBlocks.InteriorCells(wall);
-                var unstreeted = new System.Collections.Generic.List<(int i, int j)>();
-                foreach (var c in interior) if (!streetSet.Contains(c)) unstreeted.Add(c);
-                foreach (var comp in SettlementBlocks.Components(unstreeted))
-                    if (comp.Count > SettlementBlocks.BlockTargetCells)
-                    {
-                        var bb = SettlementFootprint.Bounds(comp);
-                        Debug.LogError($"FAIL blocks {at}: a block of {comp.Count} cells (bbox {bb}) came through subdivision uncut, want <= {SettlementBlocks.BlockTargetCells} — the streets did not carve the interior"); ok = false; break;
-                    }
+                // ---- 5. (RETIRED, arc C.2 task C) THE BLOCK-SIZE CAP -----------------------------------
+                // What used to stand here required every recovered block to be at or below
+                // SettlementBlocks.BlockTargetCells — the recursive subdivision's own stopping rule, restated
+                // as an assertion. Subdivision is gone: streets are laid where a house would otherwise have
+                // no frontage, so a block's SIZE is not a property anything bounds any more. What replaced it
+                // is the frontage rule and the block-DEPTH property it implies, both asserted in
+                // SelfTestFrontage below (a 40-cell block is fine as long as no cell in it is more than one
+                // step from a street).
 
                 // ---- 6. THE ACHIEVED COUNT SITS IN THE STATED BAND -------------------------------------
                 // Scoped to target >= MinBandTarget — see the band's own doc above for why smaller targets
@@ -180,7 +177,7 @@ namespace WorldGen.Rendering
                 // Cell-for-cell, in order — not "the same counts". A shuffled-but-equal layout is still a
                 // regression: SettlementParams.StreetCells and Room.Cells are SERIALIZED, so a reordering
                 // rewrites every saved town's bytes.
-                var again = SettlementBlocks.Generate(wall, seed, target);
+                var again = SettlementBlocks.Generate(wall, seed, size);
                 if (again.StreetCells.Count != layout.StreetCells.Count)
                 { Debug.LogError($"FAIL blocks {at}: rerun has {again.StreetCells.Count} street cells vs {layout.StreetCells.Count} — not deterministic"); ok = false; }
                 else
@@ -217,8 +214,8 @@ namespace WorldGen.Rendering
             // (determinism included, vacuously).
             var wallA = WallContour.Rounded(13, 0.5f, 0.5f, SweepRadiusNorm(40),
                                             SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
-            var seedA = SettlementBlocks.Generate(wallA, 13, 40);
-            var seedB = SettlementBlocks.Generate(wallA, 14, 40);   // SAME wall, different seed
+            var seedA = SettlementBlocks.Generate(wallA, 13, SettlementSize.Medium);
+            var seedB = SettlementBlocks.Generate(wallA, 14, SettlementSize.Medium);   // SAME wall, different seed
             bool differs = seedA.Buildings.Count != seedB.Buildings.Count;
             for (int b = 0; !differs && b < seedA.Buildings.Count; b++)
             {
@@ -230,11 +227,229 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL blocks: seeds 13 and 14 produced identical building footprints on the same wall — the seed is inert"); ok = false; }
 
             // ---- 9. A DEGENERATE CONTOUR DEGRADES, IT DOES NOT THROW -------------------------------------
-            var empty = SettlementBlocks.Generate(null, 1, 40);
+            var empty = SettlementBlocks.Generate(null, 1, SettlementSize.Medium);
             if (empty.StreetCells.Count != 0 || empty.Buildings.Count != 0 || empty.GateCells.Count != 0)
             { Debug.LogError($"FAIL blocks: a null contour yielded {empty.StreetCells.Count} streets / {empty.Buildings.Count} buildings / {empty.GateCells.Count} gates, want an empty layout"); ok = false; }
 
             if (ok) Debug.Log("Settlement Blocks: PASS");
+        }
+
+        /// <summary>THE FRONTAGE RULE AND WHAT IT IMPLIES, over 12 seeds x 3 size classes. Everything here is
+        /// a property of the town's GEOMETRY — which cell is a street, which cell touches one — never of a
+        /// count or a ratio: a metric can be satisfied by the wrong shape, and this line of work has shipped
+        /// assertions that were.</summary>
+        [ContextMenu("Self-Test: Frontage Streets")]
+        public void SelfTestFrontage()
+        {
+            bool ok = true;
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            var seeds = new[] { 1, 2, 3, 5, 7, 11, 13, 17, 23, 29, 37, 41 };
+
+            foreach (var size in sizes)
+            {
+                // Per-size roll-up for task D's calibration sweep — printed once per size, never asserted on.
+                int achievedMin = int.MaxValue, achievedMax = 0, achievedSum = 0;
+
+                foreach (var seed in seeds)
+                {
+                    var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SettlementSizing.WallRadiusNorm(size),
+                                                   SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+                    var layout = SettlementBlocks.Generate(wall, seed, size);
+                    string at = $"[seed {seed}, size {size}]";
+
+                    var streetSet = new System.Collections.Generic.HashSet<(int i, int j)>();
+                    foreach (var c in layout.StreetCells) streetSet.Add(c);
+
+                    // The core is recovered the only way it can be — the interior minus the ring — because
+                    // the frontage rule is a statement about the CORE, and neither the core nor the ring is
+                    // part of the layout's output. Both helpers are the production ones, so this is a
+                    // re-derivation of the cell set, not a second implementation of the rule.
+                    var interior = SettlementBlocks.InteriorCells(wall);
+                    var interiorSet = new System.Collections.Generic.HashSet<(int i, int j)>(interior);
+                    var ring = SettlementBlocks.RingStreet(interior, interiorSet);
+                    var ringSet = new System.Collections.Generic.HashSet<(int i, int j)>(ring);
+                    var core = new System.Collections.Generic.List<(int i, int j)>();
+                    foreach (var c in interior) if (!ringSet.Contains(c)) core.Add(c);
+
+                    bool Fronts((int i, int j) c) =>
+                        streetSet.Contains((c.i - 1, c.j)) || streetSet.Contains((c.i + 1, c.j)) ||
+                        streetSet.Contains((c.i, c.j - 1)) || streetSet.Contains((c.i, c.j + 1));
+
+                    // ---- 1. FRONTAGE: NOTHING IS STRANDED ---------------------------------------------
+                    // The rule this whole pass exists for. A core cell is either a street itself or it has a
+                    // street 4-neighbour; there is no third case. Names the exact cell.
+                    foreach (var c in core)
+                        if (!streetSet.Contains(c) && !Fronts(c))
+                        { Debug.LogError($"FAIL frontage {at}: core cell ({c.i},{c.j}) is not a street and has no street 4-neighbour — a house there could not reach a road"); ok = false; break; }
+
+                    // ---- 2. ONE NETWORK ----------------------------------------------------------------
+                    // A flood-fill through STREET CELLS ONLY, started at the FIRST gate, must reach every
+                    // street cell and every other gate. Asserted as two separate failures so an island of
+                    // street and an unreachable gate never get reported as the same defect.
+                    if (layout.GateCells.Count == 0)
+                    { Debug.LogError($"FAIL frontage {at}: 0 gate cells — the reachability sweep below would be vacuous"); ok = false; }
+                    else
+                    {
+                        var reached = new System.Collections.Generic.HashSet<(int i, int j)>();
+                        var stack = new System.Collections.Generic.List<(int i, int j)> { layout.GateCells[0] };
+                        reached.Add(layout.GateCells[0]);
+                        while (stack.Count > 0)
+                        {
+                            var c = stack[stack.Count - 1]; stack.RemoveAt(stack.Count - 1);
+                            var n0 = (c.i - 1, c.j); var n1 = (c.i + 1, c.j);
+                            var n2 = (c.i, c.j - 1); var n3 = (c.i, c.j + 1);
+                            if (streetSet.Contains(n0) && reached.Add(n0)) stack.Add(n0);
+                            if (streetSet.Contains(n1) && reached.Add(n1)) stack.Add(n1);
+                            if (streetSet.Contains(n2) && reached.Add(n2)) stack.Add(n2);
+                            if (streetSet.Contains(n3) && reached.Add(n3)) stack.Add(n3);
+                        }
+                        foreach (var c in layout.StreetCells)
+                            if (!reached.Contains(c))
+                            { Debug.LogError($"FAIL frontage {at}: street cell ({c.i},{c.j}) is unreachable from gate ({layout.GateCells[0].i},{layout.GateCells[0].j}) through streets ({reached.Count} of {streetSet.Count} reached) — the network fell into islands"); ok = false; break; }
+                        foreach (var g in layout.GateCells)
+                            if (!reached.Contains(g))
+                            { Debug.LogError($"FAIL frontage {at}: gate cell ({g.i},{g.j}) is unreachable from gate ({layout.GateCells[0].i},{layout.GateCells[0].j}) through streets"); ok = false; break; }
+                    }
+
+                    // ---- 3. THE GATES ------------------------------------------------------------------
+                    // Exactly the count the size table names — a town this size has a ring of ~30 cells or
+                    // more, so no gate is ever dropped for want of room (the degenerate case that CAN drop
+                    // one is pinned on its own fixture at the end of this method).
+                    int wantGates = SettlementSizing.GateCount(size);
+                    if (layout.GateCells.Count != wantGates)
+                    { Debug.LogError($"FAIL frontage {at}: {layout.GateCells.Count} gate cells, want exactly {wantGates}"); ok = false; }
+                    for (int a = 0; a < layout.GateCells.Count; a++)
+                        for (int b = a + 1; b < layout.GateCells.Count; b++)
+                        {
+                            var ga = layout.GateCells[a]; var gb = layout.GateCells[b];
+                            int di = ga.i > gb.i ? ga.i - gb.i : gb.i - ga.i;
+                            int dj = ga.j > gb.j ? ga.j - gb.j : gb.j - ga.j;
+                            int cheb = di > dj ? di : dj;
+                            if (cheb < SettlementBlocks.MinGateSeparationCells)
+                            { Debug.LogError($"FAIL frontage {at}: gates ({ga.i},{ga.j}) and ({gb.i},{gb.j}) are {cheb} apart in Chebyshev, want >= {SettlementBlocks.MinGateSeparationCells} — they read as one wide doorway"); ok = false; }
+                        }
+
+                    // ---- 4. THE ARTERIALS ARE THERE --------------------------------------------------
+                    // Two things only the arterial pass delivers, both stated as geometry:
+                    //   (a) the core cell just inside a gate is a STREET, so the gate opens onto a road and
+                    //       not onto the side of a house;
+                    //   (b) the town's CENTRE cell is a street, so the roads from the gates meet in the
+                    //       middle instead of dying in the first block they hit.
+                    // Neither follows from the frontage rule or from one-network — the ring alone already
+                    // satisfies both of those — which is exactly why they are asserted separately.
+                    foreach (var g in layout.GateCells)
+                    {
+                        bool hasCoreNeighbour = false, opensOnStreet = false;
+                        var around = new (int i, int j)[] { (g.i - 1, g.j), (g.i + 1, g.j), (g.i, g.j - 1), (g.i, g.j + 1) };
+                        foreach (var n in around)
+                        {
+                            if (!interiorSet.Contains(n) || ringSet.Contains(n)) continue;   // not a core cell
+                            hasCoreNeighbour = true;
+                            if (streetSet.Contains(n)) opensOnStreet = true;
+                        }
+                        if (hasCoreNeighbour && !opensOnStreet)
+                        { Debug.LogError($"FAIL frontage {at}: gate ({g.i},{g.j}) has core 4-neighbours but not one of them is a street — the gate opens onto a building"); ok = false; }
+                    }
+                    var centre = SettlementBlocks.CentreCell(ring, core);
+                    if (core.Count > 0 && !streetSet.Contains(centre))
+                    { Debug.LogError($"FAIL frontage {at}: the town centre cell ({centre.i},{centre.j}) is not a street — no arterial reached the middle of town"); ok = false; }
+
+                    // ---- 5. BLOCK DEPTH ----------------------------------------------------------------
+                    // Stated as the GEOMETRY, not as a size cap or a ratio: no block may contain a cell whose
+                    // four orthogonal neighbours are all in that same block, because such a cell has no
+                    // frontage in any direction. That is the two-row property — a block is at most two cells
+                    // deep from a street on every axis — expressed as the one cell that would break it.
+                    var blockCells = new System.Collections.Generic.List<(int i, int j)>();
+                    foreach (var c in core) if (!streetSet.Contains(c)) blockCells.Add(c);
+                    var blocks = SettlementBlocks.Components(blockCells);
+                    // `depthReported` and not `ok`: this sweep must run on its own merits even when an
+                    // earlier section has already failed, or a mutant that trips section 1 would leave this
+                    // one silently unexercised and its non-vacuity unproven.
+                    bool depthReported = false;
+                    for (int b = 0; b < blocks.Count && !depthReported; b++)
+                    {
+                        var member = new System.Collections.Generic.HashSet<(int i, int j)>(blocks[b]);
+                        foreach (var c in blocks[b])
+                            if (member.Contains((c.i - 1, c.j)) && member.Contains((c.i + 1, c.j)) &&
+                                member.Contains((c.i, c.j - 1)) && member.Contains((c.i, c.j + 1)))
+                            {
+                                var bb = SettlementFootprint.Bounds(blocks[b]);
+                                Debug.LogError($"FAIL frontage {at}: block {b} ({blocks[b].Count} cells, bbox {bb}) surrounds cell ({c.i},{c.j}) on all four sides — that cell can never front a street"); ok = false; depthReported = true; break;
+                            }
+                    }
+
+                    // ---- 6. DETERMINISM -----------------------------------------------------------------
+                    // Cell-for-cell and in order, for all three lists. StreetCells and Buildings are
+                    // SERIALIZED, so a shuffled-but-equal layout still rewrites every saved town's bytes.
+                    var again = SettlementBlocks.Generate(wall, seed, size);
+                    if (again.StreetCells.Count != layout.StreetCells.Count)
+                    { Debug.LogError($"FAIL frontage {at}: rerun has {again.StreetCells.Count} street cells vs {layout.StreetCells.Count}"); ok = false; }
+                    else
+                        for (int k = 0; k < layout.StreetCells.Count; k++)
+                            if (again.StreetCells[k] != layout.StreetCells[k])
+                            { Debug.LogError($"FAIL frontage {at}: rerun street cell {k} is ({again.StreetCells[k].i},{again.StreetCells[k].j}) vs ({layout.StreetCells[k].i},{layout.StreetCells[k].j})"); ok = false; break; }
+                    if (again.GateCells.Count != layout.GateCells.Count)
+                    { Debug.LogError($"FAIL frontage {at}: rerun has {again.GateCells.Count} gates vs {layout.GateCells.Count}"); ok = false; }
+                    else
+                        for (int k = 0; k < layout.GateCells.Count; k++)
+                            if (again.GateCells[k] != layout.GateCells[k])
+                            { Debug.LogError($"FAIL frontage {at}: rerun gate {k} is ({again.GateCells[k].i},{again.GateCells[k].j}) vs ({layout.GateCells[k].i},{layout.GateCells[k].j})"); ok = false; break; }
+                    if (again.Buildings.Count != layout.Buildings.Count)
+                    { Debug.LogError($"FAIL frontage {at}: rerun has {again.Buildings.Count} buildings vs {layout.Buildings.Count}"); ok = false; }
+                    else
+                        for (int b = 0; b < layout.Buildings.Count; b++)
+                        {
+                            if (again.Buildings[b].Count != layout.Buildings[b].Count)
+                            { Debug.LogError($"FAIL frontage {at}: rerun building {b} has {again.Buildings[b].Count} cells vs {layout.Buildings[b].Count}"); ok = false; break; }
+                            bool same = true;
+                            for (int k = 0; k < layout.Buildings[b].Count; k++)
+                                if (again.Buildings[b][k] != layout.Buildings[b][k]) { same = false; break; }
+                            if (!same)
+                            { Debug.LogError($"FAIL frontage {at}: rerun building {b} occupies different cells"); ok = false; break; }
+                        }
+
+                    int achieved = layout.Buildings.Count;
+                    if (achieved < achievedMin) achievedMin = achieved;
+                    if (achieved > achievedMax) achievedMax = achieved;
+                    achievedSum += achieved;
+                }
+
+                // MEASUREMENT, NOT AN ASSERTION. Task D re-derives SettlementSizing's radii and guaranteed
+                // minimums from exactly these numbers, so they are printed rather than pinned — a band here
+                // would only have to move again the moment the table does.
+                Debug.Log($"Frontage yield [{size}]: target {SettlementSizing.TargetBuildings(size)}, achieved min {achievedMin} / avg {achievedSum / (float)seeds.Length:F1} / max {achievedMax} over {seeds.Length} seeds (guarantee claims {SettlementSizing.GuaranteedMinBuildings(size)})");
+            }
+
+            // ---- 7. THE SEPARATION RULE, ON THE ONLY RING THAT CAN EXERCISE IT --------------------------
+            // A real town's ring is ~30 cells or more and its gates come out 9+ cells apart, so the sweep
+            // above can never reach the regime MinGateSeparationCells governs — an assertion that only ever
+            // watched real towns would pass with the rule deleted. This is the degenerate ring the rule is
+            // FOR: the 8 cells around a 3x3 town, where every pair is within Chebyshev 2, so no second gate
+            // can legally be placed however the seeded phase falls. Asking for four gates must therefore
+            // yield exactly ONE — dropping a gate is the documented legal outcome; putting two gates in one
+            // doorway is not.
+            var tinyRing = new System.Collections.Generic.List<(int i, int j)>();
+            for (int j = -1; j <= 1; j++)
+                for (int i = -1; i <= 1; i++)
+                    if (i != 0 || j != 0) tinyRing.Add((i, j));
+            for (int s = 1; s <= 6; s++)
+            {
+                var tinyGates = SettlementBlocks.PlaceGateCells(tinyRing, 4, s);
+                for (int a = 0; a < tinyGates.Count; a++)
+                    for (int b = a + 1; b < tinyGates.Count; b++)
+                    {
+                        var ga = tinyGates[a]; var gb = tinyGates[b];
+                        int di = ga.i > gb.i ? ga.i - gb.i : gb.i - ga.i;
+                        int dj = ga.j > gb.j ? ga.j - gb.j : gb.j - ga.j;
+                        int cheb = di > dj ? di : dj;
+                        if (cheb < SettlementBlocks.MinGateSeparationCells)
+                        { Debug.LogError($"FAIL frontage [tiny ring, seed {s}]: gates ({ga.i},{ga.j}) and ({gb.i},{gb.j}) are {cheb} apart in Chebyshev, want >= {SettlementBlocks.MinGateSeparationCells}"); ok = false; }
+                    }
+                if (tinyGates.Count != 1)
+                { Debug.LogError($"FAIL frontage [tiny ring, seed {s}]: asked for 4 gates on an 8-cell ring and got {tinyGates.Count}, want exactly 1 — every other ring cell is within {SettlementBlocks.MinGateSeparationCells} of the first"); ok = false; }
+            }
+
+            if (ok) Debug.Log("Settlement Frontage Streets: PASS");
         }
 
         [ContextMenu("Self-Test: Blocks Sanity")]
@@ -243,7 +458,7 @@ namespace WorldGen.Rendering
             // Trailing non-reboundable sentinel: a plain smoke check so mutant-reboundable tests are never
             // last (sync.ps1's rebind scans forward for the NEXT method marker and would truncate otherwise).
             bool ok = true;
-            var layout = SettlementBlocks.Generate(new WallContour(), 1, 10);
+            var layout = SettlementBlocks.Generate(new WallContour(), 1, SettlementSize.Small);
             if (layout == null)
             { Debug.LogError("FAIL blocks-sanity: Generate returned null for an empty contour"); ok = false; }
             else if (layout.StreetCells == null || layout.Buildings == null || layout.GateCells == null)
