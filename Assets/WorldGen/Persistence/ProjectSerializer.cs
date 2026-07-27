@@ -124,14 +124,19 @@ namespace WorldGen.Persistence
                     : new List<InteriorData>()
             };
 
-            // Two UNGATED, idempotent normalizations, deliberately not guarded on FormatVersion: each one
-            // only fires on a field it finds unset, so re-running it over an already-normalized project is a
-            // no-op, whereas a version guard is a thing the NEXT format bump forgets to widen.
+            // Three UNGATED, idempotent normalizations, deliberately not guarded on FormatVersion: each one
+            // only fires on a field it finds unset (or, for the third, legacy), so re-running it over an
+            // already-normalized project is a no-op, whereas a version guard is a thing the NEXT format bump
+            // forgets to widen.
             //   • ApplyDefaults  — a room with a non-positive tile footprint gets its type default (v5-era).
             //   • EnsureFootprints — a SETTLEMENT BUILDING with no lattice footprint gets a single-cell one at
             //     the cell its stored point falls in (v10). Never overwrites an existing footprint, never
             //     touches SizeW/SizeH (those are TILES; one lattice cell is ~9 tiles — see that method's doc),
             //     and never touches a dungeon or a building interior.
+            //   • NormalizeLegacyTypes — a POI whose stored type is the removed PoiType.Village (legacy id 5)
+            //     becomes a City. Not version-gated for the same reason as its two neighbours above: it fires
+            //     only on data it finds legacy, and a version guard is what the next bump forgets to widen.
+            PoiMigration.NormalizeLegacyTypes(result.Pois);
             foreach (var d in result.Dungeons)
             {
                 RoomSizing.ApplyDefaults(d);

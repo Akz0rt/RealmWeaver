@@ -144,7 +144,7 @@ namespace WorldGen.Rendering
         public static InteriorProfile ForRoom(InteriorData d) => For(d.Kind);
 
         /// <summary>Maps a POI type to the interior kind it opens (Task 6): Dungeon POIs get a dungeon;
-        /// Tower/Temple/Fortress/Ruin get a building; City/Village get a settlement;
+        /// Tower/Temple/Fortress/Ruin get a building; City gets a settlement;
         /// everything else (Port/Encounter/Unknown) has no interior in this sub-project.</summary>
         public static InteriorKind? InteriorKindForPoiType(PoiType t)
         {
@@ -155,8 +155,7 @@ namespace WorldGen.Rendering
                 case PoiType.Temple:
                 case PoiType.Fortress:
                 case PoiType.Ruin: return InteriorKind.Building;
-                case PoiType.City:
-                case PoiType.Village: return InteriorKind.Settlement;
+                case PoiType.City: return InteriorKind.Settlement;
                 default: return null;   // Port/Encounter/Unknown → no interior (this sub-project)
             }
         }

@@ -844,8 +844,8 @@ namespace WorldGen.Rendering
             SetLevel(0);   // re-bind the view (RebuildLevelTabs/RefreshToolbar/RefreshBody/RevalidateAndRefresh) to the new floor
         }
 
-        /// <summary>Whether the CURRENT town has a wall, so a regenerate preserves that choice (a City stays
-        /// walled, a Village stays open) instead of re-deriving it from the POI type this screen doesn't see.
+        /// <summary>Whether the CURRENT town has a wall, so a regenerate preserves that choice (the DM's
+        /// «Со стеной» choice) instead of re-deriving it from the POI type this screen doesn't see.
         /// Reads the stored SettlementParams.HasWall flag: the wall itself is no longer stored (InteriorFloor.
         /// Wall was removed — the fence is derived), and the old `Floors[0].Wall != null` test this replaced
         /// was in fact ALWAYS false since nothing ever wrote that field.</summary>

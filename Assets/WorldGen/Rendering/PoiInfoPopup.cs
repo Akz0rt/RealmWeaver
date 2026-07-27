@@ -159,7 +159,6 @@ namespace WorldGen.Rendering
         {
             PoiType.City => "Город",
             PoiType.Fortress => "Крепость",
-            PoiType.Village => "Деревня",
             PoiType.Tower => "Башня",
             PoiType.Temple => "Храм",
             PoiType.Ruin => "Руины",

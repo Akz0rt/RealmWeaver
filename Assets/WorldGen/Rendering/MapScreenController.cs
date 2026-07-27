@@ -218,7 +218,6 @@ namespace WorldGen.Rendering
             switch (type)
             {
                 case PoiType.City:    return (20, 5);
-                case PoiType.Village: return (10, 3);
                 default:              return (10, 3);
             }
         }

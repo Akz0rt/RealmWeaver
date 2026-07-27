@@ -21,7 +21,8 @@ $files = @(
   'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementRoads.cs', 'SettlementFence.cs', 'SettlementSelfTests.cs',
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
   'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs',
-  'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs'
+  'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs',
+  'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
@@ -490,13 +491,16 @@ $tileGridTests = Get-Content (Join-Path $src 'SettlementTileGridSelfTests.cs') -
 # Fifth source: the block-generation mutants (below) are caught via SelfTestBlocks, which lives in
 # SettlementBlocksSelfTests.cs.
 $blocksTests = Get-Content (Join-Path $src 'SettlementBlocksSelfTests.cs') -Raw -Encoding UTF8
+# Sixth source: the POI-migration mutant (below) is caught via SelfTestPoiLegacyTypes, which lives in
+# PoiMigrationSelfTests.cs, not any of the five files above.
+$poiMigrationTests = Get-Content (Join-Path $src 'PoiMigrationSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
   # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
   # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
-  # $interiorTests, SelfTestBuilding falls through to $buildingTests, and SelfTestWallRing falls through to
-  # $tileGridTests.
+  # $interiorTests, SelfTestBuilding falls through to $buildingTests, SelfTestWallRing falls through to
+  # $tileGridTests, and SelfTestPoiLegacyTypes falls through to $poiMigrationTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
@@ -514,6 +518,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $blocksTests
     $origClass = 'SettlementBlocksSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $poiMigrationTests
+    $origClass = 'PoiMigrationSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -988,7 +996,23 @@ foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksNoSubdivision', 'MutBlocksO
     @("WorldGen.Generation.$mc.SettlementBlocks.")
 }
 
+# ---- POI MIGRATION MUTANT: the removed Village type must still normalize on load. ---------------------------
+# PoiMigration.cs defines ONE class and no data types (PoiData/PoiType live in the unmutated PoiData.cs and
+# resolve OUTWARD once this file is re-namespaced), so the single-class New-SettlementMutant / rebind-only-
+# "PoiMigration." shape (SettlementFootprint/SettlementRoads/InteriorOps above) is sound here.
+
+# MutPoiMigrationNoop: NormalizeLegacyTypes returns immediately, before ever inspecting a POI's type — a
+# legacy-Village POI is never rewritten to City. Caught by SelfTestPoiLegacyTypes' legacy-Village assertion.
+New-SettlementMutant 'PoiMigration.cs' 'MutPoiMigrationNoop' `
+  'if (pois == null) return;' `
+  'return;   // MUTANT: NormalizeLegacyTypes never runs' `
+  'MutPoiMigrationNoop.cs'
+
+New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
+  @('PoiMigration\.') `
+  @('WorldGen.Generation.MutPoiMigrationNoop.PoiMigration.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 29 settlement mutants + 29 settlement rebound test copies into gen/"
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 30 settlement mutants + 30 settlement rebound test copies into gen/"
 

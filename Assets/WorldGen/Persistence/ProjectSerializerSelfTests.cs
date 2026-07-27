@@ -176,7 +176,7 @@ namespace WorldGen.Persistence
             // null. Both share one file, so this checks VALUES only — the JSON-text omission check (part 2
             // below) needs a narrower file, since this POI A here legitimately writes a "Preview" key. -------
             var poiWithPreview = new PoiData { Type = PoiType.City, Name = "Город с превью", OwnerCellId = 0, Preview = new byte[] { 9, 8, 7 } };
-            var poiNoPreview = new PoiData { Type = PoiType.Village, Name = "Деревня без превью", OwnerCellId = 1 };
+            var poiNoPreview = new PoiData { Type = PoiType.City, Name = "Деревня без превью", OwnerCellId = 1 };
             var pois = new List<PoiData> { poiWithPreview, poiNoPreview };
 
             string path = Path.Combine(Application.temporaryCachePath, "poi_preview_roundtrip_selftest.json");
@@ -206,7 +206,7 @@ namespace WorldGen.Persistence
             // interiors/settlements, no other POI — so the only field in the whole file that could possibly
             // write a "Preview" key is POI B's own (null) one, making a plain substring check unambiguous. ---
             string minPath = Path.Combine(Application.temporaryCachePath, "poi_preview_nullkey_selftest.json");
-            var minPois = new List<PoiData> { new PoiData { Type = PoiType.Village, Name = "Деревня без превью", OwnerCellId = 1 } };
+            var minPois = new List<PoiData> { new PoiData { Type = PoiType.City, Name = "Деревня без превью", OwnerCellId = 1 } };
             ProjectSerializer.Save(minPath, genParams, new List<VoronoiCell>(), minPois, notes,
                 new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
             string minJson = File.ReadAllText(minPath);

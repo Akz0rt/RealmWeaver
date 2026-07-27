@@ -211,11 +211,11 @@ namespace WorldGen.Generation
             }
 
             bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
-            // Streets are marked regardless of HasWall: a wall-less village (every Village —
-            // MapScreenController sets HasWall = City-only) still gets streets, and those streets must
-            // render. Only the WALL/gate machinery below is conditional on HasWall — "Inside" is a wall-ring
-            // concept and simply doesn't exist without a wall, so when HasWall is false `inside` stays null
-            // and MarkRoads is told (via that null) not to apply an Inside test at all.
+            // Streets are marked regardless of HasWall: a wall-less town (the DM cleared «Со стеной» — this
+            // is not a consequence of its POI type) still gets streets, and those streets must render. Only
+            // the WALL/gate machinery below is conditional on HasWall — "Inside" is a wall-ring concept and
+            // simply doesn't exist without a wall, so when HasWall is false `inside` stays null and
+            // MarkRoads is told (via that null) not to apply an Inside test at all.
             bool[,] streetMask = StreetMask(g, streets);
 
             bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;

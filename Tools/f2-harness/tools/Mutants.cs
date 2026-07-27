@@ -130,6 +130,9 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutBlocksNoSubdivisionSelfTests().SelfTestBlocks()),
                 ("MutBlocksOverlapAllowed", "SettlementBlocks' fill drops the not-already-claimed term from Available (footprints overlap)",
                     () => new WorldGen.MutantTests.MutBlocksOverlapAllowedSelfTests().SelfTestBlocks()),
+
+                ("MutPoiMigrationNoop", "PoiMigration.NormalizeLegacyTypes returns immediately (a legacy Village POI is never rewritten to City)",
+                    () => new WorldGen.MutantTests.MutPoiMigrationNoopSelfTests().SelfTestPoiLegacyTypes()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

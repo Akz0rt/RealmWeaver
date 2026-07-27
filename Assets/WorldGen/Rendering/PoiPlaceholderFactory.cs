@@ -168,7 +168,6 @@ namespace WorldGen.Rendering
             {
                 case PoiType.City:      City(b); break;
                 case PoiType.Fortress:  Fortress(b); break;
-                case PoiType.Village:   Village(b); break;
                 case PoiType.Tower:     Tower(b); break;
                 case PoiType.Temple:    Temple(b); break;
                 case PoiType.Ruin:      Ruin(b); break;
@@ -199,14 +198,6 @@ namespace WorldGen.Rendering
             FillRect(b, M - 11, M - 28, M + 11, M + 28, IcoLight); Merlons(b, M - 11, M + 11, M + 28, 12, IcoLight);
             FillRect(b, M - 6, M - 28, M + 6, M - 6, IcoShade);                 // center gate
             VBar(b, M, M + 40, M + 62, 4, IcoLight); FillRect(b, M + 2, M + 51, M + 24, M + 62, Acc);
-        }
-
-        static void Village(Color32[] b) // two gabled houses
-        {
-            FillRect(b, M - 34, M - 24, M - 6, M + 2, IcoLight); TriUp(b, M - 20, M + 2, M + 22, 15, IcoLight);
-            FillRect(b, M - 23, M - 24, M - 15, M - 6, IcoShade);               // door
-            FillRect(b, M - 2, M - 24, M + 30, M - 2, IcoLight); TriUp(b, M + 14, M - 2, M + 14, 17, IcoLight);
-            FillRect(b, M + 8, M - 24, M + 16, M - 8, IcoShade);                // door
         }
 
         static void Tower(Color32[] b) // single battlemented tower + banner

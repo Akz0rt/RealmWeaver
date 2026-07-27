@@ -93,6 +93,9 @@ static class Program
         var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
         blocks.SelfTestBlocks();
         blocks.SelfTestBlocksSanity();
+        var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
+        poiMigration.SelfTestPoiLegacyTypes();
+        poiMigration.SelfTestPoiMigrationSentinel();
         Console.WriteLine(UnityEngine.Debug.Errors == 0
             ? "EDITOR SELF-TESTS: NO ERRORS"
             : $"EDITOR SELF-TESTS: {UnityEngine.Debug.Errors} ERRORS");

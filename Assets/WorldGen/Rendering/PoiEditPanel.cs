@@ -193,7 +193,7 @@ namespace WorldGen.Rendering
 
             var pickTypes = new (PoiType type, string label)[]
             {
-                (PoiType.City, "Город"), (PoiType.Fortress, "Креп."), (PoiType.Village, "Дер."),
+                (PoiType.City, "Город"), (PoiType.Fortress, "Креп."),
                 (PoiType.Tower, "Башня"), (PoiType.Temple, "Храм"), (PoiType.Ruin, "Руины"),
                 (PoiType.Dungeon, "Подзем."), (PoiType.Encounter, "Встр."),
                 (PoiType.Port, "Порт"),

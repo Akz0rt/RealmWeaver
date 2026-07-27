@@ -4,7 +4,7 @@ using Newtonsoft.Json;
 
 namespace WorldGen.Generation
 {
-    public enum PoiType { Unknown = 0, City = 1, Ruin = 2, Dungeon = 3, Fortress = 4, Village = 5, Tower = 6, Temple = 7, Encounter = 8, Port = 10 }
+    public enum PoiType { Unknown = 0, City = 1, Ruin = 2, Dungeon = 3, Fortress = 4, Tower = 6, Temple = 7, Encounter = 8, Port = 10 }
 
     public class PoiData
     {

@@ -374,7 +374,6 @@ namespace WorldGen.Rendering
                 case PoiType.Ruin:     return "Руины";
                 case PoiType.Dungeon:  return "Подземелье";
                 case PoiType.Fortress: return "Крепость";
-                case PoiType.Village:  return "Деревня";
                 case PoiType.Tower:    return "Башня";
                 case PoiType.Temple:   return "Храм";
                 case PoiType.Encounter: return "Встреча";

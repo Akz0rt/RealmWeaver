@@ -283,11 +283,11 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL roads: street-less gate reclassify missing — (-2,1) is {bare.At(-2,1)}, expected Gate (a gate does not depend on streets)"); ok = false; }
 
             // ---- an UNWALLED settlement (HasWall=false) must still get its streets. Reachable in production:
-            // MapScreenController sets HasWall = (poi.Type == PoiType.City), so every Village is unwalled, and
+            // a town is wall-less because the DM cleared «Со стеной», not because of its POI type, and
             // SettlementStreets still generates streets for gate-less towns (hub-seeded growth, see that
-            // file's class doc) — without this, every Village would render as houses with zero streets. Same
-            // building layout as `f` above but HasWall=false and no gate room, so this exercises MarkRoads'
-            // `inside == null` branch (no Inside test at all) rather than the walled branch above. ----
+            // file's class doc) — without this, a wall-less town would render as houses with zero streets.
+            // Same building layout as `f` above but HasWall=false and no gate room, so this exercises
+            // MarkRoads' `inside == null` branch (no Inside test at all) rather than the walled branch above. ----
             var openFloor = Floor(false, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
             openFloor.SettlementParams.StreetCells = SettlementFootprint.Encode(
                 new System.Collections.Generic.List<(int i, int j)> { (0,1), (1,1), (2,1) });
