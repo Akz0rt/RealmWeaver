@@ -245,9 +245,16 @@ namespace WorldGen.Rendering
         // GetComponent calls per frame into zero.
         readonly List<GridLineView> gridLines = new List<GridLineView>();
         readonly HashSet<int> highlighted = new HashSet<int>();
-        // Cell -> the room that owns it, keyed by DepthKey (unique per cell at this grid's scale). Rebuilt
-        // every reposition alongside the grid itself; used for per-building height, marks and dummy shading.
+        // Cell -> the room that owns it, keyed by DepthKey (unique per cell at this grid's scale). EVERY cell
+        // of every room's FOOTPRINT is keyed, not just its representative point — see RebuildCellRooms for the
+        // bug that keying-by-point caused. Rebuilt every reposition alongside the grid itself; used for
+        // per-building height, dummy shading, the selection outline, FACE SUPPRESSION (a cell asks whether its
+        // neighbour is itself) and the placement occupancy test.
         readonly Dictionary<long, Room> cellRooms = new Dictionary<long, Room>();
+        // Room id -> the DepthKey of its footprint's SettlementFootprint.Representative cell. Filled in the
+        // same pass as cellRooms so ConfigureTile can draw the two corner marks ONCE per building rather than
+        // once per cell, WITHOUT a fourth per-frame FootprintOf pass (Allocate and Build already make two).
+        readonly Dictionary<int, long> repCellByRoom = new Dictionary<int, long>();
 
         SettlementTileGrid grid;
 
@@ -423,7 +430,7 @@ namespace WorldGen.Rendering
             if (lvl == null)
             {
                 grid = null;
-                cellRooms.Clear();
+                ClearCellRooms();
                 HideFrom(0);
                 HideGridLines();   // grid == null: nothing to derive cw/ch from, so hide the pool directly
                 return;
@@ -434,7 +441,7 @@ namespace WorldGen.Rendering
             if (Projection.PxPerTile <= 0f)
             {
                 grid = null;
-                cellRooms.Clear();
+                ClearCellRooms();
                 HideFrom(0);
                 HideGridLines();   // same reasoning, via PxPerTile this time — no cw/ch to compute yet
                 return;
@@ -498,30 +505,115 @@ namespace WorldGen.Rendering
             return roads;
         }
 
-        /// <summary>Map each room onto its lattice cell so a Building tile can find its own room (height, dummy
-        /// shading, the two corner marks). Uses the grid's OWN CellI/CellJ — the identical call
-        /// SettlementTileGrid.Build used to place the cell — so the lookup is total for every Building cell.
-        /// Two rooms CAN snap to one cell (the lattice is coarse: one cell is ~9 fine tiles); the tie goes to
-        /// the visually front-most, i.e. larger Y, then larger Id, matching HitRoomId's own tie-break so the
-        /// tile you see and the room you click are the same one.</summary>
+        /// <summary>Map EVERY cell of every room's FOOTPRINT onto that room, so a Building tile can find its
+        /// own room (height, dummy shading, the corner marks, the selection outline, and whether its neighbour
+        /// is itself) no matter WHICH cell of a multi-cell building it happens to be.
+        ///
+        /// THE BUG THIS REPLACES, stated plainly because it is exactly what the DM reported with a screenshot.
+        /// This used to key a room by its representative POINT alone — DepthKey(CellI(r.X), CellJ(r.Y)) — so
+        /// for a multi-cell building every cell but one resolved to NO room. ConfigureTile then read those
+        /// cells as `dummy == false` and painted decorative filler in the ACTIVE building colour (a town
+        /// configured with 2 active buildings showed a dozen), and HeightCells fell back to BuildingHeightMin
+        /// on them, putting a STEP inside a single house. Keying every cell is also the precondition for face
+        /// suppression: without it no cell could ever tell that its neighbour is the same building.
+        ///
+        /// Uses <see cref="SettlementTileGrid.FootprintOf"/> — the SAME call SettlementTileGrid.Build makes to
+        /// write the Building tiles — so the map is total over every Building cell BY CONSTRUCTION, and it
+        /// inherits that method's rule (a) point fallback for a cell-less room and rule (b) re-derive of a
+        /// stale single-cell footprint. Nothing here decodes Room.Cells itself; doing so would be a second
+        /// reading of the same data, free to drift from the one that decides which tiles exist.
+        ///
+        /// GATES ARE IN THE MAP, AND INERT FOR DRAWING. ConfigureTile consults it only for TileType.Building,
+        /// and a gate (TypeId 0) writes no Building tile — Build writes those from TypeId==1 footprints only.
+        /// What genuinely needs gates here is <see cref="AnyRoomAtCell"/>: a gate's own cell commonly reads
+        /// Void or Road (its drawn Gate tile is the nearest WALL-RING cell, SettlementTileGrid.MarkGates), so
+        /// dropping gates would let «+ Здание» place a second room straight on top of one. <see cref="Precedes"/>'s
+        /// buildings-beat-gates term is what stops a Building tile ever resolving to a gate room.
+        ///
+        /// repCellByRoom is filled in the same pass — see its own field doc.</summary>
         void RebuildCellRooms(InteriorFloor lvl)
         {
-            cellRooms.Clear();
+            ClearCellRooms();
             if (grid == null || lvl == null) return;
             foreach (var r in lvl.Rooms)
             {
-                long key = SettlementTileGrid.DepthKey(grid.CellI(r.X), grid.CellJ(r.Y));
-                if (cellRooms.TryGetValue(key, out var prev) && prev != null && !Precedes(prev, r)) continue;
-                cellRooms[key] = r;
+                var fp = SettlementTileGrid.FootprintOf(r);
+                var rep = SettlementFootprint.Representative(fp);
+                repCellByRoom[r.Id] = SettlementTileGrid.DepthKey(rep.i, rep.j);
+                foreach (var c in fp)
+                {
+                    long key = SettlementTileGrid.DepthKey(c.i, c.j);
+                    if (cellRooms.TryGetValue(key, out var prev) && prev != null && !Precedes(prev, r)) continue;
+                    cellRooms[key] = r;
+                }
             }
         }
 
-        /// <summary>True if `candidate` should displace `held` as the room shown for a shared cell.</summary>
+        /// <summary>Drop both per-cell maps together. They are filled in one pass and must never be allowed to
+        /// describe different frames, so the two early-return paths in RepositionRooms clear them through this
+        /// one call rather than remembering to clear each.</summary>
+        void ClearCellRooms()
+        {
+            cellRooms.Clear();
+            repCellByRoom.Clear();
+        }
+
+        /// <summary>Ordering on the rooms contending for ONE cell. The winner is both the room that cell is
+        /// DRAWN as and the room a click on it SELECTS. True if `candidate` should displace `held`.
+        ///
+        /// BUILDINGS STRICTLY BEAT GATES. That term is not a preference — it is what guarantees ConfigureTile's
+        /// RoomAtCell on a Building tile can never hand back a gate room, which would draw the house at a
+        /// gate's height with no marks and hand a click on the house to the gate. A gate can only ever own a
+        /// cell no building claims. Then the visually FRONT-MOST (larger Y, i.e. nearer the viewer), then the
+        /// larger Id — purely so the answer is deterministic instead of list-order-dependent.
+        ///
+        /// THE ONE COPY OF THE RULE, deliberately: <see cref="RebuildCellRooms"/> (what a cell draws as) and
+        /// <see cref="HitRoomId"/> (what a click selects) both call this, so the tile you see and the room you
+        /// get agree by construction rather than by two comparisons kept in sync by hand.
+        ///
+        /// TEMPORARY — the whole Y/Id tie-break below the type term is scheduled for deletion. Two rooms
+        /// wanting one cell is an INVARIANT VIOLATION, not a tie: **Task 4** makes the validator report
+        /// overlapping footprints, and **Task 7** makes a drag REJECT a translation that would overlap. Neither
+        /// has landed, and the state is reachable TODAY — the anti-overlap nudge was already removed from the
+        /// settlement path (see DungeonViewController.OnDrag's own "THE ACCEPTED TRADE" note), so a DM drag can
+        /// genuinely produce overlapping footprints right now. Undefined rendering on a state the DM can reach
+        /// is worse than a tie-break that outlives its justification by two tasks. Remove it after Task 7, not
+        /// before.</summary>
         static bool Precedes(Room held, Room candidate)
-            => candidate.Y > held.Y || (candidate.Y == held.Y && candidate.Id > held.Id);
+        {
+            bool heldBuilding = held.TypeId == 1, candBuilding = candidate.TypeId == 1;
+            if (candBuilding != heldBuilding) return candBuilding;
+            return candidate.Y > held.Y || (candidate.Y == held.Y && candidate.Id > held.Id);
+        }
 
         Room RoomAtCell(int i, int j)
             => cellRooms.TryGetValue(SettlementTileGrid.DepthKey(i, j), out var r) ? r : null;
+
+        /// <summary>The face-suppression test: is cell (i,j) owned by the SAME room as `room`?
+        ///
+        /// `room` is non-null only on a Building tile (ConfigureTile passes null for every other type), so a
+        /// Wall, Gate, Road or Void tile can never suppress anything and the wall ring keeps every one of its
+        /// faces — which is what it must do, since two adjacent Wall cells share no room and the "is my
+        /// neighbour me" question is meaningless for them.
+        ///
+        /// A neighbour OUTSIDE the grid, one owned by nobody (Void/Road/Wall), and one owned by a DIFFERENT
+        /// room all answer false through the same dictionary miss or id mismatch. That is exactly right at the
+        /// grid's edges: there is nothing out there to hide the face behind, so the town's outer buildings
+        /// keep their south faces and east strips.</summary>
+        bool SameRoomAt(Room room, int i, int j)
+        {
+            if (room == null) return false;
+            var other = RoomAtCell(i, j);
+            return other != null && other.Id == room.Id;
+        }
+
+        /// <summary>Is (i,j) the cell that stands in for the WHOLE of `room` — its footprint's
+        /// SettlementFootprint.Representative? The two corner marks are drawn there and nowhere else, so a
+        /// 6-cell building carries one has-image dot and one has-interior dot rather than six of each.
+        /// O(1) off the map built in <see cref="RebuildCellRooms"/>; never re-derives a footprint.</summary>
+        bool IsRepresentativeCell(Room room, int i, int j)
+            => room != null && repCellByRoom.TryGetValue(room.Id, out long rep)
+               && rep == SettlementTileGrid.DepthKey(i, j);
 
         // ── Geometry ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -560,19 +652,33 @@ namespace WorldGen.Rendering
 
         /// <summary>The room standing on the clicked CELL, or 0 for a miss.
         ///
-        /// Returns 0, not -1, on a miss: the interface contract says 0 = background, and
-        /// DungeonViewController.OnPointerClick keys "clear the selection" on exactly `id == 0`. (The task
-        /// brief said -1; that would silently break background-click-clears-selection.)
+        /// FOOTPRINT CONTAINMENT, not the room's representative point. This is REQUIRED by the same defect
+        /// RebuildCellRooms fixes, even though sprite-accurate picking is a later arc: with a point test a
+        /// multi-cell building is clickable on exactly ONE of its cells and every other cell of the very same
+        /// house reads as background — so a click there CLEARS the selection (OnPointerClick keys that on
+        /// `id == 0`) and a press-drag there moves nothing. The DM would be dragging houses by a corner they
+        /// cannot see. A cell belongs to a room iff it is in SettlementTileGrid.FootprintOf(room), the identical
+        /// call that decided which Building tiles exist.
+        ///
+        /// Returns 0, not -1, on a miss: the interface contract says 0 = background. (The original task brief
+        /// said -1; that would silently break background-click-clears-selection.)
         ///
         /// EVERY room is a candidate, buildings (TypeId 1) and GATES (TypeId 0) alike — a gate is a draggable
-        /// room like any other, and filtering to buildings would make gates unselectable. Ties (two rooms
-        /// snapped to one coarse cell) resolve front-most-first, the same rule RebuildCellRooms uses to pick
-        /// which room the tile DRAWS as, so what you see and what you select agree.
+        /// room like any other, and filtering to buildings would make gates unselectable outright. Contention
+        /// for one cell resolves through <see cref="Precedes"/>, the SAME rule RebuildCellRooms uses to pick
+        /// which room a tile DRAWS as, so what you see and what you select agree by construction.
         ///
-        /// NOTE the known seam, left for the checkpoint rather than papered over with a heuristic: a Gate TILE
-        /// is the wall-ring cell NEAREST the gate room (SettlementTileGrid.MarkGates), which is not necessarily
-        /// the gate room's OWN cell. Clicking the gate room's cell always selects it; clicking a drawn Gate
-        /// tile that sits on a different cell will not.
+        /// SCANS <paramref name="lvl"/> RATHER THAN READING cellRooms, deliberately. The map would be O(1) and
+        /// is normally identical, but it describes the floor LAST DRAWN; this method's contract (IDungeonRenderer)
+        /// is that lvl "is the room list the answer is drawn from". Reading the map would need a freshness
+        /// guard whose failure mode is every click in the town dead — the worst possible regression on the task
+        /// whose whole purpose is making buildings clickable. The scan has no such path and costs ~80 rooms of
+        /// a few cells each, once per click.
+        ///
+        /// NOTE the known seam, left for arc 2 rather than papered over with a heuristic: a Gate TILE is the
+        /// wall-ring cell NEAREST the gate room (SettlementTileGrid.MarkGates), which is not necessarily the
+        /// gate room's own footprint cell. Clicking the gate room's own cell always selects it; clicking a drawn
+        /// Gate tile that sits elsewhere will not. This task neither fixes nor worsens that.
         ///
         /// <paramref name="lvl"/> must be non-null — the controller only ever calls this with its bound
         /// level — but a null is handled as a miss rather than a throw.</summary>
@@ -580,14 +686,23 @@ namespace WorldGen.Rendering
         {
             if (lvl == null) return 0;
             if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return 0;
-            int best = 0;
-            float bestY = float.MinValue;
+            Room best = null;
             foreach (var r in lvl.Rooms)
             {
-                if (grid.CellI(r.X) != i || grid.CellJ(r.Y) != j) continue;
-                if (r.Y > bestY || (r.Y == bestY && r.Id > best)) { bestY = r.Y; best = r.Id; }
+                if (!FootprintContains(SettlementTileGrid.FootprintOf(r), i, j)) continue;
+                if (best == null || Precedes(best, r)) best = r;
             }
-            return best;
+            return best != null ? best.Id : 0;
+        }
+
+        /// <summary>Linear membership test over a footprint. A settlement building holds a handful of cells
+        /// (the size classes top out well inside single digits), so a HashSet per room per click would cost
+        /// more to build than this costs to scan.</summary>
+        static bool FootprintContains(List<(int i, int j)> cells, int i, int j)
+        {
+            for (int k = 0; k < cells.Count; k++)
+                if (cells[k].i == i && cells[k].j == j) return true;
+            return false;
         }
 
         /// <summary>Area-local point -> normalized room position, SNAPPED to the cell centre so a dragged
@@ -688,24 +803,29 @@ namespace WorldGen.Rendering
             if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return false;
             nx = grid.CenterX(i);
             ny = grid.CenterY(j);
-            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny) && !AnyRoomAtCell(lvl, i, j);
+            placeable = IsPlaceable(grid.At(i, j)) && OnField(nx, ny) && !AnyRoomAtCell(i, j);
             return true;
         }
 
-        /// <summary>True if some room — of ANY type, a gate included — already maps to cell (i,j), via the
-        /// identical mapping <see cref="HitRoomId"/> uses (grid.CellI/CellJ). On a settlement floor only
-        /// TypeId 0 (gate) and TypeId 1 (building, active or dummy) rooms exist (SettlementGenerator,
-        /// DungeonOps.AddRoom); every TypeId 1 room already fails the tile-type rule above (it always owns a
-        /// Building tile, which Allocate's bbox guarantees is InBounds and Build's write order never lets a
-        /// later pass overwrite). So this term is reachable ONLY for a gate room's own cell — it adds no new
-        /// restriction beyond that.</summary>
-        bool AnyRoomAtCell(InteriorFloor lvl, int i, int j)
-        {
-            if (lvl == null) return false;
-            foreach (var r in lvl.Rooms)
-                if (grid.CellI(r.X) == i && grid.CellJ(r.Y) == j) return true;
-            return false;
-        }
+        /// <summary>True if some room — of ANY type, a gate included — already owns cell (i,j).
+        ///
+        /// Reads the cellRooms map, i.e. FOOTPRINT ownership, where it used to re-scan the floor by
+        /// representative point. Two reasons, and the first is the one that matters: this question is about
+        /// the PICTURE the DM is judging, and the map is precisely what that picture was drawn from — it is
+        /// rebuilt in the same RepositionRooms call that builds the grid, and TryAreaToCell already refuses
+        /// every path where `grid` is null, so a reachable call here always sees a map from the current frame.
+        /// Second, it drops an O(rooms) scan that ran on every hover frame while «+ Здание» was armed.
+        ///
+        /// On a settlement floor only TypeId 0 (gate) and TypeId 1 (building, active or dummy) rooms exist
+        /// (SettlementGenerator, DungeonOps.AddRoom); every TypeId 1 room's cells already fail the tile-type
+        /// rule above (they are Building tiles, which Allocate's bbox guarantees are InBounds and Build's write
+        /// order never lets a later pass overwrite). So this term is still reachable ONLY for a gate room's own
+        /// cell — a gate writes no tile of its own and its cell commonly reads Void or Road, which would pass
+        /// the tile-type test clean and let a second room land on top of it.
+        ///
+        /// <see cref="TryPlacementCell"/> keeps its `lvl` parameter, now unread: the signature is the
+        /// controller's call site, which is outside this task's file.</summary>
+        bool AnyRoomAtCell(int i, int j) => RoomAtCell(i, j) != null;
 
         /// <summary>Show the hover preview over the cell CONTAINING the normalized point (nx, ny) — in
         /// practice the cell centre <see cref="TryPlacementCell"/> just returned, so the round trip
@@ -978,7 +1098,11 @@ namespace WorldGen.Rendering
         ///   east strip          the right slice of that same face, drawn over it
         ///   top face            a cw x ch quad centred at (0, H)
         /// The front + top pair COVERS the ground footprint exactly, which is why an extruded tile draws no
-        /// separate ground quad; a flat tile (Road/Void) is just the same top face with H = 0.
+        /// separate ground quad; a flat tile (Road/Void) is just the same top face with H = 0. When the front
+        /// face is SUPPRESSED (see the face-suppression block below) that band is covered instead by the
+        /// same-room south neighbour, which is drawn later and reaches from its own south boundary up past
+        /// this cell's top face — so the coverage argument survives the suppression rather than being an
+        /// exception to it.
         ///
         /// The shadow is offset DOWN-RIGHT — toward the viewer and away from a north-west light. That matters
         /// for depth, not just taste: it spills onto cell (i+1, j+1), which is nearer and therefore painted
@@ -1013,41 +1137,86 @@ namespace WorldGen.Rendering
 
             Color face = FaceColor(type, dummy);
 
-            // Top face (also the whole visual for a flat tile).
+            // FACE SUPPRESSION — the part that decides whether the DM can read the town at all. A dividing
+            // face is drawn only where there is genuinely a division: the south face when the cell to the
+            // SOUTH belongs to a different room (or to none), the east strip likewise for the cell EAST. Two
+            // cells of ONE building draw no face between them, so a footprint extrudes as a single solid;
+            // two DIFFERENT buildings standing flush keep theirs, which is what stops a block reading as one
+            // undifferentiated mass. `room` is null for every non-Building tile, so SameRoomAt is false there
+            // and the wall ring keeps every face it ever had.
+            //
+            // WHICH OF THE TWO THE EYE ACTUALLY SEES (worth knowing before retuning either): the EAST strip is
+            // the visible one. A same-room south neighbour is drawn LATER (larger j = nearer = later in
+            // DrawOrder) and its own front+top together cover this cell's whole front band, so the south face
+            // was already invisible in that case — suppressing it is correctness and cost, not pixels. The
+            // east strip is NOT covered: the east neighbour's front starts at +0.48·cw while the strip runs
+            // from +0.291·cw, so ~0.19·cw of dark shading survives as a vertical bar down the middle of a
+            // two-cell-wide house. That bar is what made one wide building read as two narrow ones.
+            //
+            // Both of those arguments depend on every cell of a footprint resolving to the SAME room, which is
+            // what RebuildCellRooms now guarantees — until it did, non-representative cells fell back to
+            // BuildingHeightMin and a building was not even flat-topped.
+            bool joinSouth = SameRoomAt(room, i, j + 1);
+            bool joinEast = SameRoomAt(room, i + 1, j);
+            float ew = dw * eastFaceFraction;
+            bool drawFront = volume && !joinSouth;
+            bool drawEast = volume && !joinEast && ew > 0.5f;
+
+            // Top face (also the whole visual for a flat tile). NEVER suppressed — it is the roof, and a
+            // footprint's roof is the continuous surface that makes it read as one building.
             v.TopRt.sizeDelta = new Vector2(dw, dh);
             v.TopRt.anchoredPosition = new Vector2(0f, h);
             Paint(v.Top, volume ? sprites.RoofFor(type) : sprites.Resolve(sprites.GroundFor(type)), face);
 
-            if (volume)
+            if (drawFront)
             {
                 v.FrontRt.sizeDelta = new Vector2(dw, h);
                 v.FrontRt.anchoredPosition = new Vector2(0f, -ch * 0.5f + h * 0.5f);
                 Paint(v.Front, sprites.Resolve(sprites.wallSprite), Shade(face, frontShade));
+            }
 
-                float ew = dw * eastFaceFraction;
-                if (ew > 0.5f)
-                {
-                    v.EastRt.sizeDelta = new Vector2(ew, h);
-                    v.EastRt.anchoredPosition = new Vector2(dw * 0.5f - ew * 0.5f, -ch * 0.5f + h * 0.5f);
-                    Paint(v.East, sprites.Resolve(sprites.wallSprite), Shade(face, eastShade));
-                }
+            if (drawEast)
+            {
+                v.EastRt.sizeDelta = new Vector2(ew, h);
+                v.EastRt.anchoredPosition = new Vector2(dw * 0.5f - ew * 0.5f, -ch * 0.5f + h * 0.5f);
+                Paint(v.East, sprites.Resolve(sprites.wallSprite), Shade(face, eastShade));
+            }
 
+            if (volume)
+            {
+                // The drop shadow is NOT suppressed for an interior cell. It is a flat ground quad offset
+                // down-RIGHT, i.e. onto the (i+1, j+1) cell, which is painted LATER and therefore covers it
+                // whenever that neighbour is part of the same building — so an interior cell's shadow is
+                // already invisible, and gating it on the DIAGONAL neighbour would add a third lookup to buy
+                // nothing. Only the footprint's south/east boundary cells cast a shadow anyone can see.
                 v.ShadowRt.sizeDelta = new Vector2(dw * ShadowScale, dh * ShadowScale);
                 v.ShadowRt.anchoredPosition = new Vector2(cw * ShadowOffsetCells, -ch * ShadowOffsetCells);
                 Paint(v.Shadow, sprites.Resolve(sprites.shadowSprite), shadowColor, tintSprite: true);
             }
-            v.FrontRt.gameObject.SetActive(volume);
-            v.EastRt.gameObject.SetActive(volume && dw * eastFaceFraction > 0.5f);
+            v.FrontRt.gameObject.SetActive(drawFront);
+            v.EastRt.gameObject.SetActive(drawEast);
             v.ShadowRt.gameObject.SetActive(volume);
 
             // Marks: ACTIVE buildings only, exactly as the schematic gated them (settlement + TypeId 1 + not
-            // a dummy). Sized off the cell so they scale with the view instead of pinning to a magic pixel
+            // a dummy), and now ONCE PER BUILDING rather than once per cell — on the footprint's
+            // SettlementFootprint.Representative cell (smallest j, then smallest i, i.e. its back-left cell,
+            // whose roof is left all but fully visible by the cells in front of it). A six-cell house wearing
+            // six has-image dots would read as six houses, which is the very confusion this task exists to
+            // remove. Sized off the cell so they scale with the view instead of pinning to a magic pixel
             // count at every zoom.
-            bool markable = isSettlement && type == TileType.Building && room != null && room.TypeId == 1 && !dummy;
+            bool markable = isSettlement && type == TileType.Building && room != null && room.TypeId == 1 && !dummy
+                         && IsRepresentativeCell(room, i, j);
             float markPx = Mathf.Max(3f, cw * 0.26f);
             SetMark(v.PreviewMark, markable && room.Preview != null, markPx);
             SetMark(v.InteriorMark, markable && RoomsWithInterior != null && RoomsWithInterior.Contains(room.Id), markPx);
 
+            // The selection outline stays PER CELL, unlike the marks. Every cell of the selected building now
+            // carries v.RoomId (that is the whole point of the keying fix), so selecting a multi-cell house
+            // outlines its whole footprint rather than one cell of it — the honest reading of "this is
+            // selected". Cost: Outline duplicates each top face offset by 2px, so the internal cell seams of a
+            // selected building show a faint doubling. Left as-is for the Task 9 checkpoint rather than
+            // redesigned here — outlining only the footprint's BOUNDARY needs per-edge control the Outline
+            // component does not have, and that is a selection-visuals decision, not this task's.
             v.Highlight.enabled = v.RoomId != 0 && highlighted.Contains(v.RoomId);
         }
 
