@@ -192,17 +192,26 @@ namespace WorldGen.Rendering
                 // stepper clamps into RoomSizing's 1..MaxSide range and fires OnChanged, which runs
                 // RevalidateAndRefresh → viewController.BeginCascade(), so the room resizes and the cascade
                 // animates the whole floor to its re-settled positions.
-                var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
-                var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
-                sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
-                sizeCap.raycastTarget = false;
-                BuildStepper(sizeRow.transform, "W", room.SizeW.ToString(),
-                    () => ResizeRoom(room, -1, 0), () => ResizeRoom(room, 1, 0), true);
-                var sizeX = MakeText(sizeRow.transform, "×", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleCenter);
-                sizeX.gameObject.AddComponent<LayoutElement>().preferredWidth = 12f;
-                sizeX.raycastTarget = false;
-                BuildStepper(sizeRow.transform, "H", room.SizeH.ToString(),
-                    () => ResizeRoom(room, 0, -1), () => ResizeRoom(room, 0, 1), true);
+                //
+                // Task E (absorbing plan Task 8): gated OFF for a settlement room, mirroring the TypeRow
+                // gate just above. On a settlement floor this stepper edits tile-space SizeW/SizeH, which
+                // moves the derived fence and the block fit while the DRAWN tile never changes — the DM
+                // reported it as an inert stepper. Dungeons and building interiors are untouched: the row
+                // still renders exactly as before for both.
+                if (dungeon == null || dungeon.Kind != InteriorKind.Settlement)
+                {
+                    var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);
+                    var sizeCap = MakeText(sizeRow.transform, "Размер:", 10, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleLeft);
+                    sizeCap.gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
+                    sizeCap.raycastTarget = false;
+                    BuildStepper(sizeRow.transform, "W", room.SizeW.ToString(),
+                        () => ResizeRoom(room, -1, 0), () => ResizeRoom(room, 1, 0), true);
+                    var sizeX = MakeText(sizeRow.transform, "×", 11, ThemeRole.Mut, FontStyle.Normal, TextAnchor.MiddleCenter);
+                    sizeX.gameObject.AddComponent<LayoutElement>().preferredWidth = 12f;
+                    sizeX.raycastTarget = false;
+                    BuildStepper(sizeRow.transform, "H", room.SizeH.ToString(),
+                        () => ResizeRoom(room, 0, -1), () => ResizeRoom(room, 0, 1), true);
+                }
             }
 
             var titleField = BuildInputField(sec.transform, false, "Название комнаты");
@@ -470,38 +479,67 @@ namespace WorldGen.Rendering
 
         // ── Поселение (композиция) ──────────────────────────────────────────────
 
-        // Ц1.5 Task 7: the DM's total/active building counts for a settlement, edited with nothing
-        // selected (the section acts on the whole town, not a room) and only shown for Kind==Settlement
-        // (see the isSettlementBuilding-style gate in Rebuild()). Writes ONLY floor.SettlementParams —
-        // no Rebuild-triggering regeneration and no Authored flag (DungeonOps.HasAuthoredContent never
-        // looks at SettlementParams), matching BuildDummyToggleSection's "OnChanged only" shape above.
-        // «Сгенерировать заново» (DungeonEditorScreen.DoRegenerateSettlement) reads these same stored
-        // values, so a DM who dials in a count before regenerating gets it honoured.
+        // Ц1.5 Task 7 / Task E (size-and-frontage-streets plan, absorbing plan Task 8): the DM's
+        // settlement composition, edited with nothing selected (the section acts on the whole town, not
+        // a room) and only shown for Kind==Settlement (see the isSettlementBuilding-style gate in
+        // Rebuild()). Writes ONLY floor.SettlementParams — no Rebuild-triggering regeneration and no
+        // Authored flag (DungeonOps.HasAuthoredContent never looks at SettlementParams), matching
+        // BuildDummyToggleSection's "OnChanged only" shape above. «Сгенерировать заново»
+        // (DungeonEditorScreen.DoRegenerateSettlement) reads these same stored values (Size, HasWall,
+        // ActiveBuildings), so a DM who dials any of them in before regenerating gets it honoured —
+        // DungeonEditorScreen.HasWallForCurrent already reads SettlementParams.HasWall, so the wall
+        // toggle below needs no further wiring there.
+        //
+        // A SIZE CLASS, NOT A COUNT (v11), now a 3-WAY CHOICE (Task E) rather than a ◄►-stepped word —
+        // the same AddChoiceButton row the room-type picker uses (TypeRow, above), because a size class
+        // has exactly three values and a picker shows its state at a glance instead of asking the DM to
+        // step through it blind. SettlementSizing.GuaranteedMinBuildings is now MEASURED (Task D: 200
+        // fixed seeds per size, floor(0.9 x observed minimum) over the real generation path — see
+        // SettlementSizing's own class doc) and is shown below in the active-count caption: it was kept
+        // out of the UI pre-Task-D only because it was unproven (a Large town then achieved 61..94
+        // against a declared minimum of 90); that reason is gone now that a Large town measures
+        // 98..151, median 120, against a declared guarantee of 88.
         void BuildSettlementCompositionSection(Transform parent, InteriorFloor lvl)
         {
             if (lvl.SettlementParams == null)
                 lvl.SettlementParams = new SettlementParams { Size = SettlementSize.Medium, ActiveBuildings = 3 };
             var sp = lvl.SettlementParams;
 
+            // Task E: a save from before this task can carry an ActiveBuildings above the size's
+            // measured guarantee (the pre-Task-E stepper clamped to the higher, unreliable
+            // TargetBuildings instead). Bring it into range on display so the row never shows a
+            // value above its own «макс.» caption before the DM has touched the stepper even once.
+            int guarantee = SettlementSizing.GuaranteedMinBuildings(sp.Size);
+            if (sp.ActiveBuildings > guarantee) sp.ActiveBuildings = guarantee;
+
             var sec = AddSection(parent, "SettlementSection");
             AddInfoText(sec.transform, "ПОСЕЛЕНИЕ", 10, ThemeRole.Mut, FontStyle.Bold);
 
-            // A SIZE CLASS, NOT A COUNT (v11). The old «Всего зданий» stepper let the DM dial in an exact
-            // number the geometry could never deliver — a 40 that came back 18. The town's scale is one of
-            // three classes now, stepped through the same ◄ ► row; the count it implies is shown beneath as
-            // the ADVISORY figure it always was, marked «≈» so it never reads as a contract.
-            //
-            // SettlementSizing.GuaranteedMinBuildings IS DELIBERATELY NOT SHOWN HERE. Its values are
-            // PROVISIONAL until Task D calibrates them by measurement, and measurement (task-B-report.md §6:
-            // seeds 1..60) says the current ones are not kept — a Large town achieves 61..94 against a
-            // declared minimum of 90. Displaying a floor the generator misses is a worse lie than the exact
-            // count this control was built to retire, so the promise stays out of the UI until it is one.
-            BuildCompositionStepperRow(sec.transform, "Размер", SettlementSizing.Label(sp.Size),
-                () => StepSize(sp, -1), () => StepSize(sp, 1));
+            AddInfoText(sec.transform, "Размер города", 11, ThemeRole.Mut, FontStyle.Normal);
+            var sizeRow = AddRow(sec.transform, "SizeChoiceRow", 26f, 4f);
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            foreach (var size in sizes)
+                AddChoiceButton(sizeRow.transform, SettlementSizing.Label(size), sp.Size == size, () => SetSettlementSize(sp, size));
             AddInfoText(sec.transform, $"≈ {SettlementSizing.TargetBuildings(sp.Size)} зданий",
                 10, ThemeRole.Mut, FontStyle.Italic);
-            BuildCompositionStepperRow(sec.transform, "Из них активных", sp.ActiveBuildings.ToString(),
+
+            AddBoolToggle(sec.transform, "Со стеной", sp.HasWall, v => { sp.HasWall = v; Rebuild(); OnChanged?.Invoke(); });
+
+            // The honest active row: the caption states the size's MEASURED cap, and the stepper itself
+            // (StepActiveBuildings, below) refuses to go above it — no more dialing in a number only a
+            // lucky seed could deliver.
+            BuildCompositionStepperRow(sec.transform,
+                $"Из них активных (макс. {SettlementSizing.GuaranteedMinBuildings(sp.Size)})",
+                sp.ActiveBuildings.ToString(),
                 () => StepActiveBuildings(sp, -1), () => StepActiveBuildings(sp, 1));
+
+            // The ACHIEVED count for the town actually open right now — a readout, not an input, so it
+            // is counted straight off lvl.Rooms rather than trusted from ActiveBuildings/TargetBuildings
+            // (both of those are generation INPUTS, not what generation produced). No LINQ in this file.
+            int achieved = 0;
+            foreach (var r in lvl.Rooms)
+                if (r.TypeId == 1) achieved++;
+            AddInfoText(sec.transform, $"в городе {achieved} зданий", 10, ThemeRole.Mut, FontStyle.Italic);
         }
 
         // A labelled ◄ value ► row for a full-word caption, unlike BuildStepper's short "W"/"Эт." tags
@@ -524,26 +562,28 @@ namespace WorldGen.Rendering
             AddStepBtn(row.transform, "►", onNext, true);
         }
 
-        // Clamped to the three defined SettlementSize values — an enum field takes any int, and an
-        // out-of-range one would send every SettlementSizing switch down its `default` (Medium) branch while
-        // the stored value silently drifted further away with each press.
-        void StepSize(SettlementParams sp, int dir)
+        // Task E: choice-button handler for the 3-way size picker. Unlike the old StepSize's ±1 nudge,
+        // there is no "current index" to step from — the DM taps the class they want, so this sets
+        // sp.Size outright. Clamps ActiveBuildings to the NEW size's MEASURED guarantee (not its
+        // advisory target): a resized town cannot promise more active buildings than every seed at that
+        // size can actually deliver.
+        void SetSettlementSize(SettlementParams sp, SettlementSize size)
         {
-            int v = Mathf.Clamp((int)sp.Size + dir, (int)SettlementSize.Small, (int)SettlementSize.Large);
-            sp.Size = (SettlementSize)v;
-            // A smaller town cannot keep more active buildings than it aims to have at all.
-            int cap = SettlementSizing.TargetBuildings(sp.Size);
+            sp.Size = size;
+            int cap = SettlementSizing.GuaranteedMinBuildings(size);
             if (sp.ActiveBuildings > cap) sp.ActiveBuildings = cap;
             Rebuild();
             OnChanged?.Invoke();
         }
 
-        // Clamped 0..the size's own target — an active count can't exceed the town's own total, and can't go
-        // negative (SettlementGenerator already floors a negative ActiveBuildings to 0 defensively, but
-        // the stepper itself should never author an out-of-range value in the first place).
+        // Clamped 0..the size's MEASURED guarantee (Task E; was 0..TargetBuildings) — every seed at this
+        // size delivers at least that many active-eligible buildings, so the stepper can no longer author
+        // a count only a lucky seed could satisfy. Still can't go negative (SettlementGenerator already
+        // floors a negative ActiveBuildings to 0 defensively, but the stepper itself should never author
+        // an out-of-range value in the first place).
         void StepActiveBuildings(SettlementParams sp, int dir)
         {
-            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, SettlementSizing.TargetBuildings(sp.Size));
+            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, SettlementSizing.GuaranteedMinBuildings(sp.Size));
             Rebuild();
             OnChanged?.Invoke();
         }
