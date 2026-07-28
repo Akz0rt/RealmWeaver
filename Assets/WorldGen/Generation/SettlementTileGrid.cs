@@ -404,13 +404,27 @@ namespace WorldGen.Generation
             }
         }
 
-        /// <summary>The measured maximum spur length over the 200-seed x 3-size corpus (1 cell 61%, 2 cells
-        /// 29%, 3 cells 10%, never 4). Asserted, not assumed — see SelfTestGateSpur.</summary>
+        /// <summary>The maximum spur length OBSERVED over the 200-seed x 3-size GENERATED corpus (1 cell 61%,
+        /// 2 cells 29%, 3 cells 10%, never 4 there) — a CALIBRATION number, not a hard bound. GateSpurPath's
+        /// actual hard bound is GateSpurSearchCap (4), and it can legitimately return a 4-cell path: a hand-built
+        /// fixture already does — SelfTestRoadsAndGates' west gate, whose straight lane inward faces a
+        /// Building and must run 3 cells sideways along the courtyard before it can turn onto the street
+        /// network, produces exactly one. Nothing in GateSpurPath forbids that shape; the generated corpus
+        /// has simply never produced it (yet).
+        ///
+        /// SelfTestGateSpur's per-town budget assertion (spurCells &lt;= gates * MaxGateSpurCells) is
+        /// therefore a claim about GENERATED towns specifically, not about the algorithm. If a later change
+        /// (e.g. the block-forms work) shifts the corpus so a 4-cell spur shows up there, that assertion is
+        /// MEANT to fail — the fix is to look at why generation changed, not to quietly raise this
+        /// constant.</summary>
         public const int MaxGateSpurCells = 3;
 
-        /// <summary>BFS step cap. One notch above MaxGateSpurCells, so the cap has real headroom and the
-        /// "no path" branch never fires on a generated town — but it must exist, because a town can
-        /// legitimately have no roads at all and this pass must not walk the whole grid looking for one.</summary>
+        /// <summary>BFS step cap — the actual hard bound on GateSpurPath's search, one notch above
+        /// MaxGateSpurCells. That margin is thin, not roomy: MaxGateSpurCells is only a corpus calibration
+        /// (see its doc comment), and a hand-built fixture (SelfTestRoadsAndGates) already produces a 4-cell
+        /// spur — a real path length equal to this cap, not a hypothetical one. This cap exists at all
+        /// because a town can legitimately have no roads within reach, and this pass must not walk the whole
+        /// grid looking for one.</summary>
         const int GateSpurSearchCap = 4;
 
         static readonly int[] SpurStepA = { -1, 1, 0, 0 };
