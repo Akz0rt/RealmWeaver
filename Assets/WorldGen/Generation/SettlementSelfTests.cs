@@ -713,11 +713,18 @@ namespace WorldGen.Rendering
             // out-reach the fence and nothing pokes past. Seed 3 became one of those.
             //
             // SCANNED before re-pinning, the same discipline every pinned fixture in this file uses: seeds
-            // 1..60, this exact
-            // fixture shape (Medium / walled). The fence pokes past the room bounds on 51 of 60 — so the
-            // property is emphatically still there and this is a fixture ripple, not a regression. 1 is the
-            // FIRST poking seed (the head of the list is 1, 2, 4, 5, 6, 8, 9, 12, 13, 14) and is otherwise
-            // unremarkable.
+            // 1..60, this exact fixture shape (Medium / walled). The fence pokes past the room bounds on 51 of
+            // 60 — so the property is emphatically still there and this is a fixture ripple, not a regression.
+            // 1 is the FIRST poking seed (the head of the list is 1, 2, 4, 5, 6, 8, 9, 12, 13, 14) and is
+            // otherwise unremarkable.
+            //
+            // BOTH PARAGRAPHS ABOVE WERE MEASURED ON THE ROUTED-ROADS FENCE, i.e. before Task 5 (see
+            // DeriveTownFence's own doc). They are kept because their CONCLUSIONS survive, but read them as
+            // bounds rather than as current figures: the fence now folds the stored streets and is strictly
+            // LARGER on every measured seed, so 51-of-60 is a LOWER bound on how often it pokes past, and the
+            // gate mechanism that disqualified seed 3 is correspondingly weaker (a street cell one lane
+            // outside the outermost house now reaches past a gate's 7x5 rect on most sides). Seed 1 is
+            // re-verified green under the new fence; nothing else was re-scanned.
             var cfg = new SettlementConfig { Seed = 1, Size = SettlementSize.Medium, HasWall = true };
             var floor = SettlementGenerator.BuildFloor(cfg);
             var fence = DungeonLayout.DeriveTownFence(floor);
