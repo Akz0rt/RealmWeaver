@@ -701,6 +701,13 @@ namespace WorldGen.Rendering
                 foreach (var r in spreadFloor.Rooms) if (r.TypeId == 1) spreadBuildings.Add(r);
                 int spreadPlaced = spreadBuildings.Count;
                 int spreadGoal = spreadCfg.ActiveBuildings > spreadPlaced ? spreadPlaced : spreadCfg.ActiveBuildings;
+                // NON-VACUITY: with fewer than 2 buckets the loop below either does nothing (0) or checks a
+                // single bucket spanning the WHOLE emission order, which the old prefix rule also satisfies —
+                // a future edit that shrank this fixture's ActiveBuildings could silently stop testing
+                // anything. This fixture's own ActiveBuildings (5) keeps spreadGoal well above 2; this guard
+                // just makes that assumption an assertion instead of a silent precondition.
+                if (spreadGoal < 2)
+                { Debug.LogError($"FAIL active: seed {spreadSeed} spread fixture has spreadGoal {spreadGoal}, want >=2 — the bucket assertion below would be vacuous or too weak to distinguish spread from a prefix"); ok = false; }
                 for (int b = 0; b < spreadGoal; b++)
                 {
                     int lo = (int)((long)b * spreadPlaced / spreadGoal);
