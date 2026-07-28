@@ -126,6 +126,11 @@ namespace WorldGen.Generation
                 ("MutBlocksOverlapAllowed", "SettlementBlocks' fill drops the not-already-claimed term from Available (footprints overlap)",
                     () => new WorldGen.MutantTests.MutBlocksOverlapAllowedSelfTests().SelfTestBlocks()),
 
+                ("MutFillNoTruncate", "SettlementBlocks' fill takes a whole shape template regardless of availability (footprints overlap and spill out of their block)",
+                    () => new WorldGen.MutantTests.MutFillNoTruncateSelfTests().SelfTestBlockForms()),
+                ("MutFillSingleOnly", "SettlementBlocks' shape palette always rolls the single-cell template (every house is one cell again)",
+                    () => new WorldGen.MutantTests.MutFillSingleOnlySelfTests().SelfTestBlockForms()),
+
                 ("MutBlocksNoArterials", "SettlementBlocks.Arterials lays nothing (no road runs inward from a gate, none reaches the town centre)",
                     () => new WorldGen.MutantTests.MutBlocksNoArterialsSelfTests().SelfTestFrontage()),
                 ("MutBlocksNoFrontageFill", "SettlementBlocks.FrontageFill paves nothing (core cells are left with no street 4-neighbour)",

@@ -46,7 +46,8 @@ namespace WorldGen.Generation
     ///   4. <see cref="Arterials"/> — from each gate, a Manhattan road inward to the town centre.
     ///   5. <see cref="FrontageFill"/> — greedy strips until no core cell lacks a 4-adjacent street.
     ///   6. <see cref="Blocks"/> — what is left after the streets, as 4-connected components.
-    ///   7. <see cref="FillBlock"/> — each block filled with disjoint, flush footprints of varied size.
+    ///   7. <see cref="FillBlock"/> — each block filled with disjoint footprints drawn from a shape palette,
+    ///      truncated to whatever fits.
     ///
     /// ARTERIAL AND FRONTAGE STREETS ARE ONE CELL WIDE, ALWAYS. THE RING IS NOT — it is 4-connected, and only
     /// MOSTLY one cell wide: measured over 540 towns (task-A3-report.md), 25.9% of ring cells are genuinely
@@ -59,18 +60,14 @@ namespace WorldGen.Generation
     /// frontage strip must touch the network already laid at one of its two ends. So there is no way for a
     /// street cell to exist that a gate cannot reach.
     ///
-    /// `size` STEERS TWO THINGS AND NOTHING ELSE: how many gates the wall opens
-    /// (SettlementSizing.GateCount) and how BIG the buildings come out (SettlementSizing.TargetBuildings, read
-    /// only through <see cref="SizeClassFor"/>). It never sets how many buildings are emitted: the achieved
-    /// count is whatever the geometry yields. There is deliberately no exact-count contract — the previous
-    /// attempt at one is what forced a building cap that then had to be reverted.</summary>
+    /// `size` STEERS ONE THING NOW: how many gates the wall opens (SettlementSizing.GateCount). It never sets
+    /// how BIG the buildings come out any more (that is the shape palette in <see cref="FillBlock"/>, which
+    /// does not read `size` at all) nor how many buildings are emitted: the achieved count is whatever the
+    /// geometry yields. There is deliberately no exact-count contract — the previous attempt at one is what
+    /// forced a building cap that then had to be reverted. (Task 4 adds a further pass, after the fill loop,
+    /// that restores a guaranteed minimum count by splitting the largest footprints.)</summary>
     public static class SettlementBlocks
     {
-        /// <summary>Largest size class the fill will roll (see SizeClassFor). Capped so a very small town —
-        /// where the cell budget per requested building is huge — still gets recognizable houses instead of
-        /// one compound swallowing a whole block.</summary>
-        public const int MaxSizeClass = 4;
-
         /// <summary>No two gate cells may sit closer than this in CHEBYSHEV distance. 3 is the smallest value
         /// that leaves a whole cell of wall between two gates on the diagonal as well as on an axis, i.e. the
         /// smallest value at which two gates cannot read as one wide doorway. Stated in CELLS, not normalized
@@ -131,14 +128,10 @@ namespace WorldGen.Generation
             var blocks = Blocks(coreSet, streetSet);
 
             // ---- 7. fill each block --------------------------------------------------------------------
-            int blockCells = 0;
-            foreach (var b in blocks) blockCells += b.Count;
-            int sizeClass = SizeClassFor(blockCells, SettlementSizing.TargetBuildings(size));
-
             blocks.Sort(ByLowestCell);            // deterministic block order → deterministic rng consumption
             var fillRng = new System.Random(seed * 977 + 41);
             foreach (var b in blocks)
-                FillBlock(b, streetSet, fillRng, sizeClass, layout.Buildings);
+                FillBlock(b, streetSet, fillRng, layout.Buildings);
 
             return layout;
         }
@@ -597,23 +590,75 @@ namespace WorldGen.Generation
 
         // ---- pass 7: filling a block -----------------------------------------------------------------
 
-        /// <summary>How big the buildings in this town come out, 1 (single cells, with the odd pair) up to
-        /// MaxSizeClass. THE ONE PLACE `targetBuildings` IS CONSULTED, and the only way the size class steers
-        /// the result: the buildable cell budget divided by the requested count is roughly the average area a
-        /// building may take if the count is to land near the request, so that ratio IS the size class. It
-        /// cannot go below 1 — nothing can manufacture cells — which is exactly why the achieved count is
-        /// allowed to come in under the request and why the count assertion is a band rather than an
-        /// equality.</summary>
-        public static int SizeClassFor(int blockCells, int targetBuildings)
+        /// <summary>One entry of the shape palette. `Cells` is ORDERED and carries the invariant that EVERY
+        /// PREFIX of it is itself a 4-connected shape containing (0,0) — which is what makes truncation safe:
+        /// placement stops at the first unavailable cell and whatever it has taken is still a legal house.
+        /// That is the same graceful degradation the old strip growth gave for free, generalized from
+        /// rectangles to L, T and П.</summary>
+        readonly struct FootprintTemplate
         {
-            if (targetBuildings <= 0) return 1;
-            int k = (int)System.Math.Round(blockCells / (double)targetBuildings);
-            if (k < 1) k = 1;
-            if (k > MaxSizeClass) k = MaxSizeClass;
-            return k;
+            public readonly int Weight;
+            public readonly (int di, int dj)[] Cells;
+            public FootprintTemplate(int weight, params (int di, int dj)[] cells) { Weight = weight; Cells = cells; }
         }
 
-        /// <summary>Fill one block with disjoint, flush rectangular footprints, appending them to `into`.
+        /// <summary>The palette. Every template fits inside a 2x3 box, so every one of them fits a block two
+        /// rows deep — which is what blocks are, and what the DM asked to keep. Weights are out of
+        /// PaletteWeightTotal and were calibrated against the count guarantee, not against taste: block cells
+        /// are fixed at 22/61/139 per size, so mean footprint and building count are two names for one number.</summary>
+        static readonly FootprintTemplate[] Palette =
+        {
+            new FootprintTemplate(10, (0, 0)),                                              // Single
+            new FootprintTemplate(16, (0, 0), (1, 0)),                                      // PairH
+            new FootprintTemplate(16, (0, 0), (0, 1)),                                      // PairV
+            new FootprintTemplate(32, (0, 0), (1, 0), (1, 1)),                              // L3
+            new FootprintTemplate( 3, (0, 0), (1, 0), (2, 0)),                              // Line3
+            new FootprintTemplate( 8, (0, 0), (1, 0), (0, 1), (1, 1)),                      // Square4
+            new FootprintTemplate( 6, (0, 0), (1, 0), (2, 0), (1, 1)),                      // T4
+            new FootprintTemplate(24, (0, 0), (1, 0), (2, 0), (0, 1), (2, 1)),              // U5 (П)
+            new FootprintTemplate(13, (0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)),      // Rect6
+        };
+
+        /// <summary>Must equal the sum of every Palette weight — SelfTestBlocksSanity asserts it, so a
+        /// hand-edited weight that forgets this constant fails loudly instead of skewing the roll.</summary>
+        public const int PaletteWeightTotal = 128;
+
+        /// <summary>The sum PaletteWeightTotal is claimed to equal, computed straight off the live table —
+        /// PUBLIC purely so SelfTestBlocksSanity's sentinel (the doc comment above names it) can check the
+        /// claim against the table instead of trusting it.</summary>
+        public static int PaletteWeightSum()
+        {
+            int sum = 0;
+            for (int k = 0; k < Palette.Length; k++) sum += Palette[k].Weight;
+            return sum;
+        }
+
+        static FootprintTemplate PickTemplate(System.Random rng)
+        {
+            int roll = rng.Next(PaletteWeightTotal);
+            for (int k = 0; k < Palette.Length; k++)
+            {
+                roll -= Palette[k].Weight;
+                if (roll < 0) return Palette[k];
+            }
+            return Palette[0];
+        }
+
+        /// <summary>Rotate an offset by rot * 90 degrees. (0,0) is rotation-invariant, so the seed stays the
+        /// seed and the prefix invariant survives rotation unchanged.</summary>
+        static (int di, int dj) Rotate((int di, int dj) c, int rot)
+        {
+            switch (rot & 3)
+            {
+                case 1:  return (-c.dj, c.di);
+                case 2:  return (-c.di, -c.dj);
+                case 3:  return (c.dj, -c.di);
+                default: return c;
+            }
+        }
+
+        /// <summary>Fill one block with disjoint, 4-connected footprints drawn from the shape palette,
+        /// appending them to `into`.
         ///
         /// SEEDED ON FRONTAGE ONLY. A building starts at a block cell that already has a street 4-neighbour,
         /// so "every building fronts a street" holds BY CONSTRUCTION rather than by a filter afterwards — the
@@ -623,12 +668,14 @@ namespace WorldGen.Generation
         /// generated town — that is the whole point of it — but the guard stays: FillBlock is public and its
         /// contract must not depend on who carved the block.
         ///
-        /// RECTANGLES, GROWN. A rect is 4-connected and flush with its neighbours by construction, and
-        /// growing one column/row at a time (each step taking the whole strip or none of it) keeps it a rect
-        /// even when the block runs out under it. Row-major seed order makes the whole pass deterministic
-        /// given the block's own cell order.</summary>
+        /// TEMPLATES, TRUNCATED. A rolled template is walked cell by cell in its own fixed order; the walk
+        /// stops at the first cell that is not Available, and whatever prefix it took is kept. That prefix is
+        /// always a legal house because every prefix of a template is itself 4-connected and contains the seed
+        /// (see FootprintTemplate's own doc) — so a П that runs into a claimed cell simply comes out smaller,
+        /// never broken. Row-major seed order makes the whole pass deterministic given the block's own cell
+        /// order.</summary>
         public static void FillBlock(List<(int i, int j)> block, HashSet<(int i, int j)> streets,
-                                     System.Random rng, int sizeClass, List<List<(int i, int j)>> into)
+                                     System.Random rng, List<List<(int i, int j)>> into)
         {
             if (block == null || block.Count == 0 || into == null) return;
             var blockSet = new HashSet<(int i, int j)>(block);
@@ -639,70 +686,35 @@ namespace WorldGen.Generation
                 if (!Available(seed, blockSet, claimed)) continue;
                 if (!FrontsStreet(seed, streets)) continue;
 
-                var (w, h) = PickSize(rng, sizeClass);
-                int gw = 1, gh = 1;
-                bool grew = true;
-                while (grew && (gw < w || gh < h))
-                {
-                    grew = false;
-                    if (gw < w && StripAvailable(seed, gw, 0, gw, gh, blockSet, claimed)) { gw++; grew = true; }
-                    if (gh < h && StripAvailable(seed, 0, gh, gw, gh, blockSet, claimed)) { gh++; grew = true; }
-                }
+                // EXACTLY TWO DRAWS PER BUILDING PLACED, taken here — after the seed's own two guards and
+                // before the truncation walk, the same position in the sequence the single PickSize draw used
+                // to occupy. The roll sequence must never depend on how far the previous building got.
+                var tpl = PickTemplate(rng);
+                int rot = rng.Next(4);
 
-                var fp = new List<(int i, int j)>(gw * gh);
-                for (int dj = 0; dj < gh; dj++)
-                    for (int di = 0; di < gw; di++)
-                    {
-                        var c = (seed.i + di, seed.j + dj);
-                        claimed.Add(c);
-                        fp.Add(c);
-                    }
+                var fp = new List<(int i, int j)>(tpl.Cells.Length);
+                for (int k = 0; k < tpl.Cells.Length; k++)
+                {
+                    var (di, dj) = Rotate(tpl.Cells[k], rot);
+                    var c = (seed.i + di, seed.j + dj);
+                    if (!Available(c, blockSet, claimed)) break;   // TRUNCATE: every prefix is a legal house
+                    fp.Add(c);
+                }
+                foreach (var c in fp) claimed.Add(c);
                 into.Add(fp);
             }
         }
 
         /// <summary>A cell this footprint may take: inside the block AND not already claimed by another
         /// building. The `!claimed` term is THE disjointness rule of the fill — every footprint cell is
-        /// tested through here, both the seed and every grown strip, so there is exactly one line to break.</summary>
+        /// tested through here, both the seed and every walked template cell, so there is exactly one line to
+        /// break.</summary>
         static bool Available((int i, int j) c, HashSet<(int i, int j)> blockSet, HashSet<(int i, int j)> claimed)
             => blockSet.Contains(c) && !claimed.Contains(c);
-
-        /// <summary>True when the WHOLE next strip is available: the column at offset (dx, 0..gh-1) when
-        /// dx == gw, or the row at (0..gw-1, dy) when dy == gh. All-or-nothing is what keeps the footprint a
-        /// rectangle instead of a clipped L.</summary>
-        static bool StripAvailable((int i, int j) origin, int dx, int dy, int gw, int gh,
-                                   HashSet<(int i, int j)> blockSet, HashSet<(int i, int j)> claimed)
-        {
-            if (dx > 0)
-            {
-                for (int k = 0; k < gh; k++)
-                    if (!Available((origin.i + dx, origin.j + k), blockSet, claimed)) return false;
-                return true;
-            }
-            for (int k = 0; k < gw; k++)
-                if (!Available((origin.i + k, origin.j + dy), blockSet, claimed)) return false;
-            return true;
-        }
 
         static bool FrontsStreet((int i, int j) c, HashSet<(int i, int j)> streets)
             => streets != null && (streets.Contains((c.i - 1, c.j)) || streets.Contains((c.i + 1, c.j))
                                 || streets.Contains((c.i, c.j - 1)) || streets.Contains((c.i, c.j + 1)));
-
-        /// <summary>Roll one building's requested extent. ONE rng draw per building, always — so the roll
-        /// sequence does not depend on how far the previous building managed to grow. The tables are weighted
-        /// towards the class's own area but never uniform: a street of identical boxes is exactly the
-        /// schematic look this arc replaces.</summary>
-        static (int w, int h) PickSize(System.Random rng, int sizeClass)
-        {
-            int roll = rng.Next(8);
-            switch (sizeClass)
-            {
-                case 1:  return roll < 6 ? (1, 1) : (roll < 7 ? (2, 1) : (1, 2));                     // avg ~1.25
-                case 2:  return roll < 3 ? (2, 1) : (roll < 6 ? (1, 2) : (roll < 7 ? (2, 2) : (1, 1)));// avg ~2.0
-                case 3:  return roll < 3 ? (2, 2) : (roll < 5 ? (3, 1) : (roll < 7 ? (1, 3) : (2, 1)));// avg ~2.75
-                default: return roll < 3 ? (2, 2) : (roll < 5 ? (3, 2) : (roll < 7 ? (2, 3) : (3, 3)));// avg ~3.9
-            }
-        }
 
         // ---- shared helpers --------------------------------------------------------------------------
 

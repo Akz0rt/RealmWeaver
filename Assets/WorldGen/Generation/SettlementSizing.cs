@@ -66,9 +66,11 @@ namespace WorldGen.Generation
         /// disagree about how big a town is.</summary>
         public static float WallRadiusNorm(SettlementSize size) => WallRadiusCells(size) * SettlementFootprint.Pitch;
 
-        /// <summary>How many buildings this size AIMS at. Advisory all the way down (SettlementBlocks.Generate
-        /// consults it only through SizeClassFor, to decide how BIG the houses come out), which is exactly why
-        /// it is no longer a knob the DM sets and can be disappointed by.</summary>
+        /// <summary>How many buildings this size AIMS at. NO CALLER IN THE FILL any more (arc A, task 3
+        /// replaced SizeClassFor — the fill's sole reader — with a shape palette that does not consult `size`
+        /// at all), which is exactly why it is no longer a knob the DM sets and can be disappointed by. It
+        /// survives as the TABLE'S STATED INTENT — what a DM reads off the label — and as the anchor
+        /// SelfTestSizeCalibration's 200-seed sweep bands its achieved counts against.</summary>
         public static int TargetBuildings(SettlementSize size)
         {
             switch (size)

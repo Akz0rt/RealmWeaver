@@ -945,6 +945,30 @@ foreach ($mc in @('MutBlocksNoRingStreet', 'MutBlocksOverlapAllowed')) {
     @("WorldGen.Generation.$mc.SettlementBlocks.")
 }
 
+# ---- SHAPE-PALETTE MUTANTS (arc A, task 3): two rules pinned by SelfTestBlockForms. -------------------------
+# Same file, same rebind shape as the two above — SelfTestBlockForms never names BlockLayout either (every
+# layout it touches is captured through `var`), so a rebind of just `SettlementBlocks\.` is sound and complete.
+
+# MutFillNoTruncate: placement takes the WHOLE template regardless of availability, so footprints overlap each
+# other and spill outside their block. SelfTestBlockForms' disjointness and in-block claims must fail.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutFillNoTruncate' `
+  '                    if (!Available(c, blockSet, claimed)) break;   // TRUNCATE: every prefix is a legal house' `
+  '                    // MUTANT: availability never tested, the whole template is taken' `
+  'MutFillNoTruncate.cs'
+
+# MutFillSingleOnly: the palette always rolls the single-cell template, i.e. exactly the pre-arc behaviour the
+# DM reported as .11. SelfTestBlockForms' 25% multi-cell and 5% non-rect shares must fail.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutFillSingleOnly' `
+  '            int roll = rng.Next(PaletteWeightTotal);' `
+  '            int roll = -1; return Palette[0];   // MUTANT: always the single-cell template' `
+  'MutFillSingleOnly.cs'
+
+foreach ($mc in @('MutFillNoTruncate', 'MutFillSingleOnly')) {
+  New-SettlementRebind 'SelfTestBlockForms' $mc `
+    @('SettlementBlocks\.') `
+    @("WorldGen.Generation.$mc.SettlementBlocks.")
+}
+
 # ---- FRONTAGE-STREET MUTANTS (arc C.2, task C): four rules pinned by SelfTestFrontage. --------------------
 # Same file, same rebind shape as the three above — SelfTestFrontage likewise never names BlockLayout (every
 # layout it touches is captured through `var`), and SettlementSizing / SettlementGenerator / WallContour /

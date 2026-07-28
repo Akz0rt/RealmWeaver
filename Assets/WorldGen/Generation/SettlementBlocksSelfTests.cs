@@ -612,6 +612,106 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Size Calibration: PASS");
         }
 
+        /// <summary>What the shape palette actually produces (DM finding ·11). Every claim here is about the
+        /// ACHIEVED distribution, not the weight table: a template rolled at a block's edge truncates to its
+        /// first cell, so weights alone say nothing about what a town looks like.
+        ///
+        /// The two share thresholds are the anti-vacuity spine of this task — they are what MutFillSingleOnly
+        /// dies on. The structural claims (connected, disjoint, <= 6 cells, fronts a street) are what
+        /// MutFillNoTruncate dies on.</summary>
+        [ContextMenu("Self-Test: Block Forms")]
+        public void SelfTestBlockForms()
+        {
+            bool ok = true;
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            int total = 0, multiCell = 0, nonRect = 0;
+
+            foreach (var size in sizes)
+                for (int k = 0; k < 60; k++)
+                {
+                    int seed = 1000 + k;
+                    var wall = WallContour.Rounded(seed, 0.5f, 0.5f, SettlementSizing.WallRadiusNorm(size),
+                                                   SettlementGenerator.WallSides, SettlementGenerator.WallJitter);
+                    var layout = SettlementBlocks.Generate(wall, seed, size);
+                    var streets = new System.Collections.Generic.HashSet<(int i, int j)>(layout.StreetCells);
+                    var seen = new System.Collections.Generic.HashSet<(int i, int j)>();
+
+                    foreach (var fp in layout.Buildings)
+                    {
+                        total++;
+                        if (fp.Count == 0)
+                        {
+                            Debug.LogError($"SelfTestBlockForms: {size} seed {seed}: an EMPTY footprint");
+                            ok = false; continue;
+                        }
+                        if (fp.Count > 6)
+                        {
+                            Debug.LogError($"SelfTestBlockForms: {size} seed {seed}: footprint at {fp[0]} has "
+                                         + $"{fp.Count} cells, over the 6-cell cap");
+                            ok = false;
+                        }
+                        if (!SettlementFootprint.IsConnected4(fp))
+                        {
+                            Debug.LogError($"SelfTestBlockForms: {size} seed {seed}: footprint at {fp[0]} is "
+                                         + "not 4-connected");
+                            ok = false;
+                        }
+                        foreach (var c in fp)
+                            if (!seen.Add(c))
+                            {
+                                Debug.LogError($"SelfTestBlockForms: {size} seed {seed}: cell {c} claimed by "
+                                             + "two buildings");
+                                ok = false;
+                            }
+                        bool fronts = false;
+                        foreach (var c in fp)
+                            if (streets.Contains((c.i - 1, c.j)) || streets.Contains((c.i + 1, c.j))
+                             || streets.Contains((c.i, c.j - 1)) || streets.Contains((c.i, c.j + 1))) { fronts = true; break; }
+                        if (!fronts)
+                        {
+                            Debug.LogError($"SelfTestBlockForms: {size} seed {seed}: footprint at {fp[0]} has "
+                                         + "no street 4-neighbour — it is walled in");
+                            ok = false;
+                        }
+
+                        if (fp.Count >= 2) multiCell++;
+                        if (!IsFilledRect(fp)) nonRect++;
+                    }
+                }
+
+            float multiPct = total > 0 ? 100f * multiCell / total : 0f;
+            float nonRectPct = total > 0 ? 100f * nonRect / total : 0f;
+            if (multiPct < 25f)
+            {
+                Debug.LogError($"SelfTestBlockForms: only {multiPct:0.0}% of {total} buildings occupy 2+ cells, "
+                             + "under the 25% the palette is calibrated for");
+                ok = false;
+            }
+            if (nonRectPct < 5f)
+            {
+                Debug.LogError($"SelfTestBlockForms: only {nonRectPct:0.0}% of {total} buildings are "
+                             + "non-rectangular, under the 5% the palette is calibrated for");
+                ok = false;
+            }
+            Debug.Log($"Block forms: {total} buildings, {multiPct:0.0}% multi-cell, {nonRectPct:0.0}% non-rect");
+
+            if (ok) Debug.Log("Self-Test Block Forms: PASS");
+        }
+
+        // A footprint is a filled rectangle when its cell count equals its bounding box's area.
+        static bool IsFilledRect(System.Collections.Generic.List<(int i, int j)> fp)
+        {
+            int minI = int.MaxValue, maxI = int.MinValue, minJ = int.MaxValue, maxJ = int.MinValue;
+            foreach (var c in fp)
+            {
+                if (c.i < minI) minI = c.i;
+                if (c.i > maxI) maxI = c.i;
+                if (c.j < minJ) minJ = c.j;
+                if (c.j > maxJ) maxJ = c.j;
+            }
+            return fp.Count == (maxI - minI + 1) * (maxJ - minJ + 1);
+        }
+
         [ContextMenu("Self-Test: Blocks Sanity")]
         public void SelfTestBlocksSanity()
         {
@@ -623,6 +723,14 @@ namespace WorldGen.Rendering
             { Debug.LogError("FAIL blocks-sanity: Generate returned null for an empty contour"); ok = false; }
             else if (layout.StreetCells == null || layout.Buildings == null || layout.GateCells == null)
             { Debug.LogError("FAIL blocks-sanity: Generate returned a layout with a null list"); ok = false; }
+
+            // PaletteWeightTotal's own doc comment claims this check exists — a hand-edited palette weight
+            // that forgets to keep the constant in step must fail loudly here instead of silently skewing
+            // PickTemplate's roll (a weight sum below the constant leaves a dead zone Palette[0] absorbs, a
+            // sum above it makes some rolls land past the table).
+            int paletteSum = SettlementBlocks.PaletteWeightSum();
+            if (paletteSum != SettlementBlocks.PaletteWeightTotal)
+            { Debug.LogError($"FAIL blocks-sanity: Palette weights sum to {paletteSum}, but PaletteWeightTotal is {SettlementBlocks.PaletteWeightTotal}"); ok = false; }
 
             if (ok) Debug.Log("Settlement Blocks Sanity: PASS");
         }
