@@ -690,7 +690,6 @@ namespace WorldGen.Rendering
             // rule, the real output would diverge from this independently-computed set and the comparison
             // below fires.
             int[] spreadSeeds = { 501, 502, 503, 504, 505, 506 };
-            var seedActiveCellSets = new System.Collections.Generic.List<System.Collections.Generic.HashSet<(int i, int j)>>();
             foreach (int spreadSeed in spreadSeeds)
             {
                 var spreadCfg = new SettlementConfig { Seed = spreadSeed, Size = SettlementSize.Large, ActiveBuildings = 5, HasWall = true };
@@ -755,20 +754,67 @@ namespace WorldGen.Rendering
                 if (realActiveCells.Count != refActiveCells.Count || !realActiveCells.SetEquals(refActiveCells))
                 { Debug.LogError($"FAIL active: seed {spreadSeed} real active cells ({realActiveCells.Count}) do not match the independently re-derived farthest-point set ({refActiveCells.Count}) — the marking rule has drifted from greedy farthest-point sampling"); ok = false; }
 
-                seedActiveCellSets.Add(realActiveCells);
+                // ---- 6b. THE DM-VISIBLE PROPERTY ITSELF, NOT JUST AGREEMENT WITH A SECOND COPY OF THE RULE.
+                // 6 above proves production agrees with an independently re-derived farthest-point formula —
+                // it would still pass if the SAME misunderstanding were baked into both copies (e.g. both
+                // measuring distance on the wrong axis, or both drawing from the wrong candidate set); it
+                // says nothing about geometry on its own. This computes the cell BOUNDING BOX of every placed
+                // building and of the active ones alone, and requires the active box's span on EACH axis to
+                // cover at least a loose fraction of the full box's own span on that axis.
+                //
+                // ANCHORED TO THIS TOWN'S OWN MEASURED EXTENT, not a fixed cell count, so the bound survives
+                // a sizing change instead of silently going slack or flaking when SettlementSizing's table
+                // is re-measured. Farthest-point sampling pushes its picks toward the town's own hull
+                // regardless of which building the seeded roll starts from — that is what greedy farthest-
+                // point selection IS — so a loose (50%) fraction holds comfortably for the real rule without
+                // being tight enough to flake; see the report for the hand-mutation proof that the discarded
+                // one-per-emission-band rule fails this specific check on the i-axis while still passing it
+                // on j (the asymmetry IS the finding: that rule only ever constrained j).
+                int fullMinI = int.MaxValue, fullMaxI = int.MinValue, fullMinJ = int.MaxValue, fullMaxJ = int.MinValue;
+                for (int i = 0; i < spreadPlaced; i++)
+                {
+                    if (cellI[i] < fullMinI) fullMinI = cellI[i];
+                    if (cellI[i] > fullMaxI) fullMaxI = cellI[i];
+                    if (cellJ[i] < fullMinJ) fullMinJ = cellJ[i];
+                    if (cellJ[i] > fullMaxJ) fullMaxJ = cellJ[i];
+                }
+                int activeMinI = int.MaxValue, activeMaxI = int.MinValue, activeMinJ = int.MaxValue, activeMaxJ = int.MinValue;
+                for (int i = 0; i < spreadPlaced; i++)
+                {
+                    if (spreadBuildings[i].IsDummy) continue;
+                    if (cellI[i] < activeMinI) activeMinI = cellI[i];
+                    if (cellI[i] > activeMaxI) activeMaxI = cellI[i];
+                    if (cellJ[i] < activeMinJ) activeMinJ = cellJ[i];
+                    if (cellJ[i] > activeMaxJ) activeMaxJ = cellJ[i];
+                }
+                int fullSpanI = fullMaxI - fullMinI, fullSpanJ = fullMaxJ - fullMinJ;
+                int activeSpanI = activeMaxI - activeMinI, activeSpanJ = activeMaxJ - activeMinJ;
+                const float SpreadSpanFraction = 0.5f;
+                if (activeSpanI < fullSpanI * SpreadSpanFraction)
+                { Debug.LogError($"FAIL active: seed {spreadSeed} active i-span {activeSpanI} ({activeMinI}..{activeMaxI}) covers less than {SpreadSpanFraction:P0} of the full i-span {fullSpanI} ({fullMinI}..{fullMaxI}) — active buildings are clustered on the i-axis"); ok = false; }
+                if (activeSpanJ < fullSpanJ * SpreadSpanFraction)
+                { Debug.LogError($"FAIL active: seed {spreadSeed} active j-span {activeSpanJ} ({activeMinJ}..{activeMaxJ}) covers less than {SpreadSpanFraction:P0} of the full j-span {fullSpanJ} ({fullMinJ}..{fullMaxJ}) — active buildings are clustered on the j-axis"); ok = false; }
             }
 
-            // ---- 6b. THE SEEDED STARTING PICK IS ACTUALLY EXERCISED: at least two of the swept seeds must
-            // produce DIFFERENT active cell sets. Redundant with 6's per-seed exact-match check for most
-            // regressions (a hardcoded starting pick would already fail THAT comparison against the honestly-
-            // random reference, seed by seed) — kept anyway as a second, cheaper, more direct signal that the
-            // seeded roll is load-bearing rather than decorative.
-            bool anySpreadDifferent = false;
-            for (int a = 0; a < seedActiveCellSets.Count && !anySpreadDifferent; a++)
-                for (int b = a + 1; b < seedActiveCellSets.Count; b++)
-                    if (!seedActiveCellSets[a].SetEquals(seedActiveCellSets[b])) { anySpreadDifferent = true; break; }
-            if (!anySpreadDifferent && seedActiveCellSets.Count > 1)
-            { Debug.LogError("FAIL active: all swept seeds produced the IDENTICAL active cell set — the seeded starting pick looks hardcoded, not seed-dependent"); ok = false; }
+            // ---- 7. Perf: the farthest-point pass at its own worst case (activeGoal == buildings.Count, so
+            // every one of buildings.Count picks rescans every remaining candidate) must not blow up town
+            // generation. MEASURED, not Big-O reasoned: timed as a DELTA between a zero-active and a
+            // max-active run on the identical seed/size, since block generation and street routing dominate
+            // BuildFloor's overall cost and are unaffected by ActiveBuildings — subtracting them out isolates
+            // what this pass alone costs. Logged either way so the number is on record even when comfortably
+            // under threshold.
+            var perfZeroCfg = new SettlementConfig { Seed = 9, Size = SettlementSize.Large, ActiveBuildings = 0, HasWall = true };
+            var swZero = System.Diagnostics.Stopwatch.StartNew();
+            SettlementGenerator.Generate(perfZeroCfg, "poi-perf-zero");
+            swZero.Stop();
+            var perfMaxCfg = new SettlementConfig { Seed = 9, Size = SettlementSize.Large, ActiveBuildings = 1000000, HasWall = true };
+            var swMax = System.Diagnostics.Stopwatch.StartNew();
+            SettlementGenerator.Generate(perfMaxCfg, "poi-perf-max");
+            swMax.Stop();
+            long farthestPointMs = swMax.ElapsedMilliseconds - swZero.ElapsedMilliseconds;
+            Debug.Log($"Settlement Active/Dummy: farthest-point worst case (Large, activeGoal == buildings.Count) ~{farthestPointMs} ms (zero-active {swZero.ElapsedMilliseconds} ms, max-active {swMax.ElapsedMilliseconds} ms)");
+            if (farthestPointMs > 50)
+            { Debug.LogError($"FAIL active: farthest-point worst-case pass cost ~{farthestPointMs} ms (zero-active {swZero.ElapsedMilliseconds} ms vs max-active {swMax.ElapsedMilliseconds} ms), want well under a frame"); ok = false; }
 
             if (ok) Debug.Log("Settlement Active/Dummy: PASS");
         }
