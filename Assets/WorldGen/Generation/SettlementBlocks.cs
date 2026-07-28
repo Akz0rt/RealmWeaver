@@ -604,19 +604,23 @@ namespace WorldGen.Generation
 
         /// <summary>The palette. Every template fits inside a 2x3 box, so every one of them fits a block two
         /// rows deep — which is what blocks are, and what the DM asked to keep. Weights are out of
-        /// PaletteWeightTotal and were calibrated against the count guarantee, not against taste: block cells
-        /// are fixed at 22/61/139 per size, so mean footprint and building count are two names for one number.</summary>
+        /// PaletteWeightTotal and were calibrated against SelfTestBlockForms' 25% multi-cell / 5% non-rect
+        /// achieved-share thresholds, NOT against the count guarantee and not against taste: raising a
+        /// multi-cell template's weight raises mean footprint size, which — block cells being fixed per size —
+        /// lowers the achieved building count. That is why this palette leaves SelfTestSizeCalibration red;
+        /// restoring the guarantee is Task 4's job (a further split pass), not a reason to move these weights
+        /// back down.</summary>
         static readonly FootprintTemplate[] Palette =
         {
-            new FootprintTemplate( 5, (0, 0)),                                              // Single
-            new FootprintTemplate(10, (0, 0), (1, 0)),                                      // PairH
-            new FootprintTemplate(10, (0, 0), (0, 1)),                                      // PairV
-            new FootprintTemplate(35, (0, 0), (1, 0), (1, 1)),                              // L3
-            new FootprintTemplate( 1, (0, 0), (1, 0), (2, 0)),                              // Line3
-            new FootprintTemplate( 3, (0, 0), (1, 0), (0, 1), (1, 1)),                      // Square4
-            new FootprintTemplate( 8, (0, 0), (1, 0), (2, 0), (1, 1)),                      // T4
-            new FootprintTemplate(34, (0, 0), (1, 0), (2, 0), (0, 1), (2, 1)),              // U5 (П)
-            new FootprintTemplate(22, (0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)),      // Rect6
+            new FootprintTemplate(10, (0, 0)),                                              // Single
+            new FootprintTemplate(16, (0, 0), (1, 0)),                                      // PairH
+            new FootprintTemplate(16, (0, 0), (0, 1)),                                      // PairV
+            new FootprintTemplate(32, (0, 0), (1, 0), (1, 1)),                              // L3
+            new FootprintTemplate( 3, (0, 0), (1, 0), (2, 0)),                              // Line3
+            new FootprintTemplate( 8, (0, 0), (1, 0), (0, 1), (1, 1)),                      // Square4
+            new FootprintTemplate( 6, (0, 0), (1, 0), (2, 0), (1, 1)),                      // T4
+            new FootprintTemplate(24, (0, 0), (1, 0), (2, 0), (0, 1), (2, 1)),              // U5 (П)
+            new FootprintTemplate(13, (0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)),      // Rect6
         };
 
         /// <summary>Must equal the sum of every Palette weight — SelfTestBlocksSanity asserts it, so a
