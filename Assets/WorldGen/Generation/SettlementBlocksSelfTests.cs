@@ -532,20 +532,20 @@ namespace WorldGen.Rendering
         /// "Frontage yield" line) carries what a future regression needs to be readable rather than merely red:
         ///   - min / median / max ACHIEVED BUILDING COUNT, against the table's target and guarantee;
         ///   - min / median / max INTERIOR CELL COUNT (the buildable budget before streets eat any of it);
-        ///   - the FOOTPRINT-SIZE DISTRIBUTION (how many buildings landed at 1 / 2 / 3 / 4-or-more cells) —
-        ///     SizeClassFor's own tuning doc justifies it against 3x3 subdivision blocks that no longer exist,
-        ///     so this column is what tells a reader whether today's row-house-vs-compound mix still reads
-        ///     right. MEASURED (Task D): 100% of buildings land at 1-2 cells, 0% at 3 or 4+, at every one of
-        ///     the three shipped sizes — SizeClassFor's class stays at 1 everywhere. This is NOT a bug to
-        ///     retune here: SizeClassFor computes round(blockCells/target), and fitting the radius so achieved
-        ///     tracks target (the very thing this sweep does) forces blockCells/target toward class 1's OWN
-        ///     average footprint (~1.13-1.16 measured, ~1.25 nominal) — comfortably under the 1.5 ratio class 2
-        ///     needs. Lowering that threshold would flip every shipped size to class 2 and roughly HALVE the
-        ///     achieved count for the same blockCells (avg footprint ~2.0 instead of ~1.25), which would only
-        ///     be fixable by re-deriving every radius above around a deliberately different design goal (fewer,
-        ///     bigger buildings) — a scope decision for a follow-up task, not a threshold tweak this one can
-        ///     make safely. SettlementBlocks.cs (where SizeClassFor lives) is also outside this task's file
-        ///     list. See task-D-report.md for the full derivation;
+        ///   - the FOOTPRINT-SIZE DISTRIBUTION (how many buildings landed at 1 / 2 / 3 / 4-or-more cells) — this
+        ///     column used to be read against SizeClassFor's own tuning doc; SizeClassFor is gone (arc
+        ///     "settlement block forms and gates": Task 3 replaced the size-class rectangle grower with
+        ///     `Palette` + `PickTemplate`, a weighted table of L/T/П/rectangle shape templates rolled per
+        ///     building and truncated at the first unavailable cell; Task 4 added `EnforceMinimumCount`, which
+        ///     splits the largest footprints — largest first, back toward 1-cell — until a town clears
+        ///     GuaranteedMinBuildings). MEASURED (Task 5, this same 200-seed sweep): Small 1-cell 2458 / 2-cell
+        ///     535 / 3-cell 220 / 4plus-cell 40 (of 3253); Medium 1-cell 6422 / 2-cell 1555 / 3-cell 677 /
+        ///     4plus-cell 129 (of 8783); Large 1-cell 14183 / 2-cell 3526 / 3-cell 1628 / 4plus-cell 368 (of
+        ///     19705) — multi-cell share computed off these rows alone runs 24.4% / 26.9% / 28.0% (Small /
+        ///     Medium / Large). A SINGLE SIZE READ IN ISOLATION CAN SIT BELOW 25% (Small does): the 25%
+        ///     multi-cell / 5% non-rect thresholds are asserted by SelfTestBlockForms below against ITS OWN
+        ///     60-seed-per-size aggregate ACROSS all three sizes (27.1% multi-cell, 5.4% non-rect), not against
+        ///     this sweep's per-size rows or seed count — do not read one row above as a threshold violation;
         ///   - WALL-CLOCK for the 200 generations — FrontageFill's greedy re-enumerates every candidate strip
         ///     each iteration, so its cost is NOT the old subdivision sweep's cost and must be measured, not
         ///     assumed. MEASURED: comfortably under two seconds for all 600 generations combined — cheap enough
