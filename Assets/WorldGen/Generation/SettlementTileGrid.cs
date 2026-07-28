@@ -62,9 +62,11 @@ namespace WorldGen.Generation
         /// <summary>Chebyshev radius within which a street cell must find a BUILDING to keep the full
         /// courtyard. A street running through open ground — a connector road out to a house the DM moved
         /// clear of town — dilates by 1 instead, so it comes out as wall-road-wall rather than a five-wide
-        /// causeway (DM finding ·9). MEASURED when this landed: 7 of 54,995 street cells over 600 generated
-        /// towns (0.01%) are far enough to be narrowed, so a generated town's wall is unchanged except at
-        /// those isolated spots; SelfTestStreetCellsNearBuildings pins that rate.</summary>
+        /// causeway (DM finding ·9). MEASURED BY SelfTestStreetCellsNearBuildings itself, on its own 200-seed
+        /// x 3-size (600 town) corpus — the SAME sweep SelfTestSizeCalibration uses, so this figure is not a
+        /// one-off note that can drift from the code: 7 of 54,995 street cells (0.013%) are far enough to be
+        /// narrowed, so a generated town's wall is unchanged except at those isolated spots. Re-run that test
+        /// to reproduce; do not hand-edit this number without also checking what it prints.</summary>
         public const int OpenStreetNeighbourhood = 2;
 
         // The cell↔normalized mapping is SettlementFootprint's and nothing else's — one lattice for the data

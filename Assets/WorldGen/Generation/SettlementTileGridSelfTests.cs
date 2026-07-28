@@ -779,15 +779,18 @@ namespace WorldGen.Rendering
 
         /// <summary>The narrow rule's accepted risk, pinned so it cannot grow silently. A generated town's
         /// street cells are supposed to run beside its buildings; the few that do not will have their wall
-        /// pulled in by one cell. MEASURED when the rule was written: 7 of 54,995 street cells over 600
-        /// towns (0.01%), in 5 towns, at most 2 cells in one town.</summary>
+        /// pulled in by one cell. 200 seeds x 3 sizes (600 towns) — the SAME corpus SelfTestSizeCalibration
+        /// uses — measures 7 of 54,995 street cells (0.013%) far enough to be narrowed. THIS test's own
+        /// printed line is that figure's one and only source of truth: OpenStreetNeighbourhood's doc comment
+        /// quotes it, and if this corpus or the rule ever changes, re-run this test and update that comment
+        /// from what it actually prints — never adjust either number without the other.</summary>
         [ContextMenu("Self-Test: Street Cells Near Buildings")]
         public void SelfTestStreetCellsNearBuildings()
         {
             bool ok = true;
             long total = 0, far = 0;
             foreach (var size in new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large })
-                for (int k = 0; k < 60; k++)
+                for (int k = 0; k < 200; k++)
                 {
                     int seed = 1000 + k;
                     var cfg = new SettlementConfig { Seed = seed, Size = size, ActiveBuildings = 1, HasWall = true };
