@@ -608,15 +608,15 @@ namespace WorldGen.Generation
         /// are fixed at 22/61/139 per size, so mean footprint and building count are two names for one number.</summary>
         static readonly FootprintTemplate[] Palette =
         {
-            new FootprintTemplate(10, (0, 0)),                                              // Single
-            new FootprintTemplate(16, (0, 0), (1, 0)),                                      // PairH
-            new FootprintTemplate(16, (0, 0), (0, 1)),                                      // PairV
-            new FootprintTemplate(32, (0, 0), (1, 0), (1, 1)),                              // L3
-            new FootprintTemplate( 3, (0, 0), (1, 0), (2, 0)),                              // Line3
-            new FootprintTemplate( 8, (0, 0), (1, 0), (0, 1), (1, 1)),                      // Square4
-            new FootprintTemplate( 6, (0, 0), (1, 0), (2, 0), (1, 1)),                      // T4
-            new FootprintTemplate(24, (0, 0), (1, 0), (2, 0), (0, 1), (2, 1)),              // U5 (П)
-            new FootprintTemplate(13, (0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)),      // Rect6
+            new FootprintTemplate( 5, (0, 0)),                                              // Single
+            new FootprintTemplate(10, (0, 0), (1, 0)),                                      // PairH
+            new FootprintTemplate(10, (0, 0), (0, 1)),                                      // PairV
+            new FootprintTemplate(35, (0, 0), (1, 0), (1, 1)),                              // L3
+            new FootprintTemplate( 1, (0, 0), (1, 0), (2, 0)),                              // Line3
+            new FootprintTemplate( 3, (0, 0), (1, 0), (0, 1), (1, 1)),                      // Square4
+            new FootprintTemplate( 8, (0, 0), (1, 0), (2, 0), (1, 1)),                      // T4
+            new FootprintTemplate(34, (0, 0), (1, 0), (2, 0), (0, 1), (2, 1)),              // U5 (П)
+            new FootprintTemplate(22, (0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)),      // Rect6
         };
 
         /// <summary>Must equal the sum of every Palette weight — SelfTestBlocksSanity asserts it, so a
