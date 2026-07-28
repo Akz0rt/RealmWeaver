@@ -166,6 +166,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutSizingLargeOverflowsFieldSelfTests().SelfTestSizing()),
                 ("MutSizingGuaranteeTooHigh", "SettlementSizing.GuaranteedMinBuildings returns TargetBuildings for every size (a guarantee equal to the target — precisely the lie the pre-Task-D provisional table used to tell, which the 200-seed calibration sweep exists to catch)",
                     () => new WorldGen.MutantTests.MutSizingGuaranteeTooHighSelfTests().SelfTestSizeCalibration()),
+                ("MutFillNoMinimumRepair", "SettlementBlocks.EnforceMinimumCount splits nothing (a town can come in under the building guarantee the inspector shows)",
+                    () => new WorldGen.MutantTests.MutFillNoMinimumRepairSelfTests().SelfTestSizeCalibration()),
                 ("MutMigrationNoRecentre", "SettlementMigration.RecentreFloor returns immediately (a pre-v11 town is left in the corner the finer lattice put it in)",
                     () => new WorldGen.MutantTests.MutMigrationNoRecentreSelfTests().SelfTestSizeMigration()),
                 ("MutMigrationTruncatingHalf", "SettlementMigration.RecentreFloor's FloorHalf reverted to C#'s truncating / (a bbox summing odd AND negative recentres one cell off, then moves again on the next load)",

@@ -571,7 +571,7 @@ namespace WorldGen.Rendering
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var achieved = new System.Collections.Generic.List<int>(SeedCount);
                 var interiorCounts = new System.Collections.Generic.List<int>(SeedCount);
-                int f1 = 0, f2 = 0, f3 = 0, f4plus = 0;
+                int f1 = 0, f2 = 0, f3 = 0, f4plus = 0, repaired = 0;
 
                 for (int k = 0; k < SeedCount; k++)
                 {
@@ -584,6 +584,7 @@ namespace WorldGen.Rendering
                     int achievedCount = layout.Buildings.Count;
                     achieved.Add(achievedCount);
                     interiorCounts.Add(interior.Count);
+                    if (layout.RepairedBuildings > 0) repaired++;
 
                     foreach (var b in layout.Buildings)
                     {
@@ -607,6 +608,22 @@ namespace WorldGen.Rendering
                     + $"interior cells min {interiorCounts[0]} / median {Median(interiorCounts):F1} / max {interiorCounts[interiorCounts.Count - 1]}; "
                     + $"footprints 1-cell {f1} / 2-cell {f2} / 3-cell {f3} / 4plus-cell {f4plus} (of {totalBuildings} total); "
                     + $"{SeedCount} seeds in {sw.ElapsedMilliseconds} ms");
+
+                float repairPct = 100f * repaired / SeedCount;
+                if (repairPct > 15f)
+                {
+                    Debug.LogError($"SelfTestSizeCalibration: {size}: the minimum-count repair fired on "
+                                 + $"{repairPct:0.0}% of towns, over the 15% cap — the palette is too heavy "
+                                 + "for the guarantee and is being split back into single cells");
+                    ok = false;
+                }
+                if (repaired == 0)
+                {
+                    Debug.LogError($"SelfTestSizeCalibration: {size}: the repair NEVER fired across "
+                                 + $"{SeedCount} seeds, so the guarantee assertion cannot distinguish an "
+                                 + "enforced floor from a lucky corpus — MutFillNoMinimumRepair would survive");
+                    ok = false;
+                }
             }
 
             if (ok) Debug.Log("Settlement Size Calibration: PASS");

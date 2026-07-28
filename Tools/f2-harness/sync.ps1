@@ -969,6 +969,18 @@ foreach ($mc in @('MutFillNoTruncate', 'MutFillSingleOnly')) {
     @("WorldGen.Generation.$mc.SettlementBlocks.")
 }
 
+# MutFillNoMinimumRepair: the minimum-count repair returns without splitting anything, so a town whose palette
+# roll came out heavy stays under the guarantee the inspector shows. SelfTestSizeCalibration's per-town
+# guarantee assertion must fail.
+New-SettlementMutant 'SettlementBlocks.cs' 'MutFillNoMinimumRepair' `
+  '            if (buildings == null || guarantee <= 0) return 0;' `
+  '            if (true) return 0;   // MUTANT: nothing is ever split' `
+  'MutFillNoMinimumRepair.cs'
+
+New-SettlementRebind 'SelfTestSizeCalibration' 'MutFillNoMinimumRepair' `
+  @('SettlementBlocks\.') `
+  @('WorldGen.Generation.MutFillNoMinimumRepair.SettlementBlocks.')
+
 # ---- FRONTAGE-STREET MUTANTS (arc C.2, task C): four rules pinned by SelfTestFrontage. --------------------
 # Same file, same rebind shape as the three above — SelfTestFrontage likewise never names BlockLayout (every
 # layout it touches is captured through `var`), and SettlementSizing / SettlementGenerator / WallContour /

@@ -34,10 +34,13 @@ namespace WorldGen.Generation
     /// `targetBuildings` stays advisory all the way down (SettlementBlocks' class doc — the achieved count is
     /// whatever the geometry yields): these three radii only make the MEDIAN land near target, not every seed.
     ///
-    /// THE GUARANTEED MINIMUMS ARE LIKEWISE MEASURED, at floor(0.9 × the observed minimum) over the SAME
-    /// 200-seed sweep at the radii above (see GuaranteedMinBuildings for the three observed minimums). The one
-    /// property that was NEVER provisional, and that SelfTestSizing pins, is that a guarantee is STRICTLY BELOW
-    /// its target — a minimum equal to the target is precisely the lie the old TargetBuildings knob told.
+    /// THE GUARANTEED MINIMUMS WERE ORIGINALLY MEASURED the same way, at floor(0.9 × the observed minimum) over
+    /// the SAME 200-seed sweep at the radii above (see GuaranteedMinBuildings for the three observed minimums)
+    /// — but Task 4 turned that promise from an OBSERVED band into a floor SettlementBlocks.EnforceMinimumCount
+    /// makes true BY CONSTRUCTION, splitting the largest footprints until every town clears it; see
+    /// GuaranteedMinBuildings' own doc for why. The one property that was NEVER provisional, and that
+    /// SelfTestSizing pins, is that a guarantee is STRICTLY BELOW its target — a minimum equal to the target is
+    /// precisely the lie the old TargetBuildings knob told.
     ///
     /// THE FIELD BOUND IS NOT NEGOTIABLE. WallRadiusNorm(Large) + 0.5 must stay inside the drag clamp's
     /// 0.04..0.96 (DungeonViewController.DragClampMin/Max) — that bound is what forced
@@ -94,17 +97,20 @@ namespace WorldGen.Generation
         }
 
         /// <summary>The count the UI may PROMISE: at or below this, every seed delivers. Strictly below
-        /// TargetBuildings by construction (see the class doc). MEASURED (Task D): floor(0.9 x the observed
-        /// minimum) over SettlementBlocksSelfTests.SelfTestSizeCalibration's 200-seed sweep (seed = 1000+k,
-        /// k in 0..199) at the radii below —
-        ///     Small:  observed min 14  -> floor(0.9*14) = 12
-        ///     Medium: observed min 42  -> floor(0.9*42) = 37
-        ///     Large:  observed min 98  -> floor(0.9*98) = 88
-        /// — a 10% margin below the worst seed actually seen, not the ~0.75 x target guess this replaced. The
-        /// sweep itself is the contract (SelfTestSizeCalibration asserts every one of the 600 generations meets
-        /// its size's guarantee); a future radius or fill change that lowers the true minimum must fail that
-        /// sweep before it can ship, which is what turns this table's promise from an assertion into a
-        /// measurement.</summary>
+        /// TargetBuildings by construction (see the class doc).
+        ///
+        /// THE NUMBERS ARE Task D's ORIGINAL ONES (12 / 37 / 88 — floor(0.9 x the observed minimum) over
+        /// SettlementBlocksSelfTests.SelfTestSizeCalibration's 200-seed sweep, seed = 1000+k, k in 0..199, at
+        /// the radii the class doc names: Small observed min 14, Medium 42, Large 98), and the DM chose to keep
+        /// them when Task 3's shape palette pushed the fill's own achieved count below all three. But since
+        /// TASK 4 THE PROMISE IS NO LONGER MEASURED, IT IS ENFORCED: SettlementBlocks.EnforceMinimumCount runs
+        /// after every block is filled and splits the largest footprints, largest first, until the town holds
+        /// at least this many buildings, so a seed that used to land under the floor is topped up rather than
+        /// reported as a violation. SelfTestSizeCalibration's per-seed check is still the contract that pins
+        /// this — it now asserts the floor holds BECAUSE of the split pass, not as a fact about the fill's raw
+        /// yield — so a future edit that weakens or removes EnforceMinimumCount still fails that sweep before
+        /// it can ship. A future reader should call EnforceMinimumCount the source of truth for this promise,
+        /// not re-derive it from a sweep of the fill alone.</summary>
         public static int GuaranteedMinBuildings(SettlementSize size)
         {
             switch (size)

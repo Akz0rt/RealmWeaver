@@ -20,6 +20,10 @@ namespace WorldGen.Generation
         public List<List<(int i, int j)>> Buildings = new List<List<(int i, int j)>>();
         /// <summary>The ring-street cells that read as gates. Always a subset of StreetCells.</summary>
         public List<(int i, int j)> GateCells = new List<(int i, int j)>();
+        /// <summary>How many buildings EnforceMinimumCount had to manufacture by splitting. 0 on a town the
+        /// fill already got over the guarantee. Diagnostic only — no renderer reads it — but the calibration
+        /// sweep asserts on it in BOTH directions, so it is not decoration.</summary>
+        public int RepairedBuildings;
     }
 
     /// <summary>BLOCK GENERATION: streets are laid where a house would otherwise have no frontage, and what
@@ -35,7 +39,7 @@ namespace WorldGen.Generation
     /// house would otherwise have no frontage, so the street budget is driven by the demand for frontage and
     /// nothing else. Measured yield rises as a direct consequence (see task-C-report.md).
     ///
-    /// SEVEN PASSES, IN THIS ORDER, each separately testable:
+    /// EIGHT PASSES, IN THIS ORDER, each separately testable:
     ///   1. <see cref="InteriorCells"/> — the lattice cells whose CENTRE lies inside the contour, reduced to
     ///      the single largest 4-connected component (a jittered contour can in principle pinch off a stray).
     ///   2. <see cref="RingStreet"/> — the 4-connected ring just inside the contour: every interior cell with
@@ -48,6 +52,9 @@ namespace WorldGen.Generation
     ///   6. <see cref="Blocks"/> — what is left after the streets, as 4-connected components.
     ///   7. <see cref="FillBlock"/> — each block filled with disjoint footprints drawn from a shape palette,
     ///      truncated to whatever fits.
+    ///   8. <see cref="EnforceMinimumCount"/> (Task 4) — split the largest footprints, largest first, until the
+    ///      town holds at least SettlementSizing.GuaranteedMinBuildings(size) buildings. A no-op on a town the
+    ///      fill already got over the floor.
     ///
     /// ARTERIAL AND FRONTAGE STREETS ARE ONE CELL WIDE, ALWAYS. THE RING IS NOT — it is 4-connected, and only
     /// MOSTLY one cell wide: measured over 540 towns (task-A3-report.md), 25.9% of ring cells are genuinely
@@ -60,12 +67,13 @@ namespace WorldGen.Generation
     /// frontage strip must touch the network already laid at one of its two ends. So there is no way for a
     /// street cell to exist that a gate cannot reach.
     ///
-    /// `size` STEERS ONE THING NOW: how many gates the wall opens (SettlementSizing.GateCount). It never sets
-    /// how BIG the buildings come out any more (that is the shape palette in <see cref="FillBlock"/>, which
-    /// does not read `size` at all) nor how many buildings are emitted: the achieved count is whatever the
-    /// geometry yields. There is deliberately no exact-count contract — the previous attempt at one is what
-    /// forced a building cap that then had to be reverted. (Task 4 adds a further pass, after the fill loop,
-    /// that restores a guaranteed minimum count by splitting the largest footprints.)</summary>
+    /// `size` STEERS TWO THINGS NOW: how many gates the wall opens (SettlementSizing.GateCount), and — since
+    /// Task 4 — the floor EnforceMinimumCount enforces (SettlementSizing.GuaranteedMinBuildings). It never sets
+    /// how BIG the buildings come out (that is the shape palette in <see cref="FillBlock"/>, which does not
+    /// read `size` at all), and the fill itself still emits whatever the geometry yields — EnforceMinimumCount
+    /// only ever pushes that count UP to the floor, never down and never to an exact target. There is
+    /// deliberately no exact-count contract — the previous attempt at one is what forced a building cap that
+    /// then had to be reverted.</summary>
     public static class SettlementBlocks
     {
         /// <summary>No two gate cells may sit closer than this in CHEBYSHEV distance. 3 is the smallest value
@@ -132,6 +140,10 @@ namespace WorldGen.Generation
             var fillRng = new System.Random(seed * 977 + 41);
             foreach (var b in blocks)
                 FillBlock(b, streetSet, fillRng, layout.Buildings);
+
+            // ---- 8. enforce the guaranteed minimum count by splitting, if the fill came in under it --------
+            layout.RepairedBuildings = EnforceMinimumCount(layout.Buildings, streetSet,
+                                                           SettlementSizing.GuaranteedMinBuildings(size));
 
             return layout;
         }
@@ -719,6 +731,75 @@ namespace WorldGen.Generation
         static bool FrontsStreet((int i, int j) c, HashSet<(int i, int j)> streets)
             => streets != null && (streets.Contains((c.i - 1, c.j)) || streets.Contains((c.i + 1, c.j))
                                 || streets.Contains((c.i, c.j - 1)) || streets.Contains((c.i, c.j + 1)));
+
+        // ---- pass 8: enforce the guaranteed minimum count ---------------------------------------------
+
+        /// <summary>Split the largest footprints until the town holds at least `guarantee` buildings. Runs
+        /// once, after every block is filled; a no-op on a town the fill already got over the floor.
+        ///
+        /// WHY THIS EXISTS. Block cells are fixed by the size table, so mean footprint and building count are
+        /// two names for one number: any palette at all pushes the count down, and the count IS the
+        /// inspector's «макс. N». The DM chose to keep that promise, so it stops being an OBSERVED band
+        /// (floor(0.9 x the sweep's minimum), which only held while every house was one cell) and becomes a
+        /// floor this pass makes true by construction.
+        ///
+        /// DETERMINISTIC, NO RNG: largest first, ties by row-major representative. A split peels ONE cell,
+        /// walking the footprint in REVERSE placement order — the palette's prefix invariant means dropping
+        /// the last cell always leaves a connected remainder, so that is the right first candidate for free —
+        /// and taking the first cell that both leaves the remainder 4-connected and itself fronts a street.
+        /// Both halves then keep the "every building fronts a street" contract: the peeled cell by that test,
+        /// the remainder because it always keeps offset (0,0), which the fill only ever seeded on a
+        /// street-fronting cell.</summary>
+        static int EnforceMinimumCount(List<List<(int i, int j)>> buildings, HashSet<(int i, int j)> streets,
+                                       int guarantee)
+        {
+            if (buildings == null || guarantee <= 0) return 0;
+            var unsplittable = new HashSet<int>();
+            int made = 0;
+            while (buildings.Count < guarantee)
+            {
+                int best = -1;
+                for (int k = 0; k < buildings.Count; k++)
+                {
+                    if (buildings[k].Count < 2 || unsplittable.Contains(k)) continue;
+                    if (best < 0) { best = k; continue; }
+                    if (buildings[k].Count > buildings[best].Count) { best = k; continue; }
+                    if (buildings[k].Count == buildings[best].Count
+                     && RowMajor(SettlementFootprint.Representative(buildings[k]),
+                                 SettlementFootprint.Representative(buildings[best])) < 0) best = k;
+                }
+                if (best < 0) return made;          // nothing left that can legally be split
+                if (TrySplit(buildings, best, streets)) made++;
+                else unsplittable.Add(best);
+            }
+            return made;
+        }
+
+        /// <summary>Peel one street-fronting cell off buildings[idx] into its own 1-cell building, keeping the
+        /// remainder 4-connected. Appends, never inserts, so every index the caller holds stays valid.</summary>
+        static bool TrySplit(List<List<(int i, int j)>> buildings, int idx, HashSet<(int i, int j)> streets)
+        {
+            var fp = buildings[idx];
+            for (int k = fp.Count - 1; k >= 1; k--)      // never peel index 0 — that is the seed
+            {
+                if (!FrontsStreet(fp[k], streets)) continue;
+                var rest = new List<(int i, int j)>(fp);
+                rest.RemoveAt(k);
+                if (!SettlementFootprint.IsConnected4(rest)) continue;
+                // TESTED, NOT INFERRED. The remainder keeps the fill's seed cell (template offset (0,0), which
+                // is only ever placed on a street-fronting cell), so it "should" still front a street — but
+                // that argument rests on fp[0] still BEING the seed, which is true today and is exactly the
+                // kind of inference this arc has watched go quietly stale. One loop costs nothing.
+                bool restFronts = false;
+                foreach (var c in rest) if (FrontsStreet(c, streets)) { restFronts = true; break; }
+                if (!restFronts) continue;
+                var peeled = new List<(int i, int j)> { fp[k] };
+                buildings[idx] = rest;
+                buildings.Add(peeled);
+                return true;
+            }
+            return false;
+        }
 
         // ---- shared helpers --------------------------------------------------------------------------
 
