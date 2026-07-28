@@ -80,7 +80,10 @@ namespace WorldGen.Generation
                 var orphan = SmallestOrphanComponent(streets);
                 if (orphan == null) break;
                 var path = CarveBetween(orphan, streets, buildings);
-                if (path == null) break;                   // cannot be joined; stop rather than loop
+                // path.Count == 0 ("already touching") is unreachable today — orphan and target are
+                // disjoint by construction in CarveBetween — but stopping on it too is free insurance
+                // against a future refactor turning this loop into a spin if that ever stops being true.
+                if (path == null || path.Count == 0) break; // cannot be joined; stop rather than loop
                 // NOT a no-op here, unlike pass 1's identical-looking guard above: CarveBetween's own BFS
                 // starts ARE the orphan's cells, which are by construction already members of `streets`
                 // (an orphan is a component OF the street set), and Bfs's path reconstruction always walks
@@ -172,6 +175,22 @@ namespace WorldGen.Generation
         static List<(int i, int j)> Bfs(List<(int i, int j)> starts, HashSet<(int i, int j)> buildings,
                                         HashSet<(int i, int j)> target)
         {
+            // EFFECTIVE target: drop any member also claimed by a building. Below, `buildings.Contains(n)`
+            // is checked BEFORE `target.Contains(n)` on every candidate cell — that ordering exists so a
+            // building is never mistaken for open ground, but its side effect is that a target cell buried
+            // under a building can never terminate the search: it is skipped every time a neighbour tries
+            // to reach it, never marked seen, never returned. Grid coordinates are plain ints with no
+            // bounding box, so a target that is non-empty but ENTIRELY buried does not fail fast — it
+            // expands outward forever (measured: an unfixed EnsureAccess call did not return in 10+
+            // seconds on a one-cell fixture). Filtering ONCE, here, beats reordering the two checks below:
+            // reordering would still let the search wander indefinitely past every OTHER buried target
+            // before happening to find a reachable one, where filtering rules buried cells out up front.
+            // A FRESH set, not a mutation of the caller's `target`: CarveToNetwork passes its live
+            // `streets` set directly (not a copy), so writing to `target` in place would corrupt it.
+            var effectiveTarget = new HashSet<(int i, int j)>();
+            foreach (var t in target) if (!buildings.Contains(t)) effectiveTarget.Add(t);
+            target = effectiveTarget;
+
             if (target.Count == 0) return null;
             var prev = new Dictionary<(int i, int j), (int i, int j)>();
             var seen = new HashSet<(int i, int j)>();

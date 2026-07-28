@@ -277,6 +277,55 @@ namespace WorldGen.Rendering
                 }
             }
 
+            // 8. DEGENERATE: a building standing on its OWN street cell, and no other street exists — a
+            //    shape the validator already treats as representable rather than impossible (it REPORTS a
+            //    building coinciding with a street rather than forbidding it), and the exact shape Tasks
+            //    3-5's load path can hand this repair from a legacy or hand-edited save. Building (5,5)'s
+            //    only candidate target cell is (5,5) itself, buried under the building — so CarveToNetwork
+            //    must come back empty-handed instead of searching forever.
+            //
+            //    THIS IS THE SHAPE THAT HUNG BEFORE THE FIX. Confirmed with a bounded-timeout standalone
+            //    probe run against the unfixed Bfs (buildings.Contains(n) short-circuited before
+            //    target.Contains(n) was ever checked, so the one and only target cell could never
+            //    terminate the search, and with plain-int grid coordinates and no bounding box the
+            //    frontier had nothing to stop it): EnsureAccess did not return within 10 seconds on this
+            //    exact fixture. A synchronous self-test cannot assert "did not hang" directly — if the
+            //    defect regresses, this method never reaches the assertions below and the whole harness
+            //    run hangs with it, which is the detection mechanism a synchronous suite has for a true
+            //    hang. What IS checkable, and what this pins for regression once the call DOES return, is
+            //    that it reports nothing added and leaves the floor's stored streets byte-for-byte the
+            //    same — "returns what it could solve and nothing else."
+            {
+                var floor = Floor(Cells((5, 5)), (5, 5));
+                var beforeSet = new System.Collections.Generic.HashSet<(int i, int j)>(
+                    SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+
+                int added8 = SettlementStreetOps.EnsureAccess(floor);
+                if (added8 != 0)
+                {
+                    Debug.LogError($"SelfTestStreetAccess: building 1, buried under its own only street "
+                                 + $"cell (5,5), got {added8} cells added instead of being left alone");
+                    ok = false;
+                }
+
+                var afterSet = new System.Collections.Generic.HashSet<(int i, int j)>(
+                    SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+                foreach (var c in afterSet)
+                    if (!beforeSet.Contains(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: the buried-street fixture's stored streets "
+                                     + $"gained cell {c} when nothing should have been written");
+                        ok = false;
+                    }
+                foreach (var c in beforeSet)
+                    if (!afterSet.Contains(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: the buried-street fixture's stored streets "
+                                     + $"lost cell {c} when nothing should have been written");
+                        ok = false;
+                    }
+            }
+
             if (ok) Debug.Log("Self-Test Street Access: PASS");
         }
 
