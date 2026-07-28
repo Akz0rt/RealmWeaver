@@ -20,9 +20,12 @@ namespace WorldGen.Notes.Rendering
 
         void Awake()
         {
+            // The very first page is a SESSION SHEET, not an empty board. The whole point of shipping a prep
+            // method is that a first-time DM meets it immediately; leaving the template behind a sidebar
+            // button they have no reason to press would hide the one thing meant to teach them the craft.
             var group = CreateGroup("Заметки");
-            CreatePage(group.Id, "Страница 1");
-            OpenPage(group.Pages[0].Id);
+            var sheet = CreateSessionSheet(group.Id);
+            if (sheet != null) OpenPage(sheet.Id);
         }
 
         // ── Group CRUD ─────────────────────────────────────────────────────────
@@ -59,11 +62,30 @@ namespace WorldGen.Notes.Rendering
 
         // ── Page CRUD ──────────────────────────────────────────────────────────
 
-        public NotesPage CreatePage(string groupId, string name)
+        /// <summary>Creates a page of the given kind. The kind defaults to Board so every existing call site
+        /// keeps its current behaviour; callers that want a document say so explicitly.</summary>
+        public NotesPage CreatePage(string groupId, string name, PageKind kind = PageKind.Board)
         {
             var group = FindGroup(groupId);
             if (group == null) return null;
-            var page = new NotesPage { Name = name };
+            var page = new NotesPage { Name = name, Kind = kind };
+            group.Pages.Add(page);
+            OnDocumentChanged?.Invoke();
+            return page;
+        }
+
+        /// <summary>Creates a session sheet from the prep template, auto-named «Сессия N» where N is one past
+        /// the number of document pages already in that group.</summary>
+        public NotesPage CreateSessionSheet(string groupId)
+        {
+            var group = FindGroup(groupId);
+            if (group == null) return null;
+
+            int existing = 0;
+            foreach (var p in group.Pages)
+                if (p.Kind == PageKind.Document) existing++;
+
+            var page = NotesDocOps.CreateSessionSheet($"Сессия {existing + 1}");
             group.Pages.Add(page);
             OnDocumentChanged?.Invoke();
             return page;

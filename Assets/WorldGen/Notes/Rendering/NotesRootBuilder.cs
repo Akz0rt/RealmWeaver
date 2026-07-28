@@ -20,6 +20,7 @@ namespace WorldGen.Notes.Rendering
 
         public NotesDocumentController DocumentController { get; private set; }
         public NotesCanvasController CanvasController { get; private set; }
+        public DocumentPageView DocumentView { get; private set; }
 
         Font builtinFont;
 
@@ -133,6 +134,16 @@ namespace WorldGen.Notes.Rendering
             var toolbar = gameObject.AddComponent<NotesToolbar>();
             toolbar.Initialize(interaction, rightColumnGO.transform);
             interaction.toolbarRect = toolbar.RowRect;
+
+            // The document view is a SIBLING of CanvasViewport under the same RightColumn, and the two are
+            // shown mutually exclusively by page kind. NotesCanvasController is not touched at all — the
+            // switch is nothing more than which viewport GameObject is active.
+            DocumentView = gameObject.AddComponent<DocumentPageView>();
+            DocumentView.Initialize(DocumentController, rightColumnGO.GetComponent<RectTransform>(),
+                                    builtinFont, viewportGO);
+
+            var keyboard = gameObject.AddComponent<DocKeyboardController>();
+            keyboard.pageView = DocumentView;
 
             // NotesDocumentController.Awake() already opened its default page; render it now
             // rather than relying on subscription-order timing across components added this frame.
