@@ -232,6 +232,39 @@ namespace WorldGen.Generation
                 next++;
             }
             int activeCount = cfg.ActiveBuildings < 0 ? 0 : cfg.ActiveBuildings;
+
+            // SPREAD, NOT A PREFIX. DM report: a Large town with a small active count had every active
+            // building bunched in one corner. Root cause was here — buildings are emitted BLOCK BY BLOCK in
+            // a fixed spatial order (SettlementBlocks.Generate sorts blocks before filling them), and the old
+            // rule (`i >= activeCount`) made "active" mean "the first N buildings in emission order", which
+            // is always "every building in the first block or two".
+            //
+            // THE FIX PARTITIONS EMISSION ORDER INTO activeGoal CONTIGUOUS, ROUGHLY-EQUAL BUCKETS and rolls
+            // exactly one active pick inside each bucket. This is a STRUCTURAL guarantee, not a probabilistic
+            // one: for every bucket b in 0..activeGoal-1, EXACTLY one building whose emission index falls in
+            // that bucket's [lo,hi) range is marked active — on every seed, not merely a typical one. A
+            // uniform shuffle-then-take-first-N was considered and rejected for exactly this reason: it only
+            // makes "not clustered" typical (probability 1 - 1/C(buildings.Count, activeGoal) of avoiding the
+            // old prefix outright), so a self-test over it could only ever assert "these particular seeds
+            // happen to spread" rather than a property true of the rule itself.
+            //
+            // Seeded distinctly from every other pass already in this arc, so a change to how many rolls one
+            // of them makes can never shift which buildings THIS pass marks active: SettlementBlocks uses
+            // seed*7919+13 (gates) and seed*977+41 (fill); this file's own PlaceGates/PlaceBuildings (dead as
+            // far as generation is concerned, still self-tested directly — see BuildFloor's class doc) use
+            // seed*31+17 and seed*131+71.
+            int activeGoal = activeCount > buildings.Count ? buildings.Count : activeCount;
+            var isActiveBuilding = new bool[buildings.Count];
+            if (activeGoal > 0)
+            {
+                var activeRng = new System.Random(cfg.Seed * 3001 + 293);
+                for (int b = 0; b < activeGoal; b++)
+                {
+                    int lo = (int)((long)b * buildings.Count / activeGoal);
+                    int hi = (int)((long)(b + 1) * buildings.Count / activeGoal);
+                    isActiveBuilding[lo + activeRng.Next(hi - lo)] = true;
+                }
+            }
             for (int i = 0; i < buildings.Count; i++)
             {
                 idByIndex[gates.Count + i] = next;
@@ -239,7 +272,7 @@ namespace WorldGen.Generation
                 {
                     Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y,
                     Cells = SettlementFootprint.Encode(layout.Buildings[i]),
-                    IsDummy = i >= activeCount,
+                    IsDummy = !isActiveBuilding[i],
                 });
                 next++;
             }

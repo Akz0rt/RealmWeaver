@@ -643,6 +643,75 @@ namespace WorldGen.Rendering
             if (campActive != System.Math.Min(2, campPlaced))
             { Debug.LogError($"FAIL active: camp has {campActive} active, want min(2,{campPlaced})"); ok = false; }
 
+            // ---- 5. Edge cases on the request itself: zero and negative requests mark NO building active;
+            // a request above the placed count marks ALL of them active — the min(activeCount, placed)
+            // contract from both ends. -----------------------------------------------------------------
+            var zeroCfg = new SettlementConfig { Seed = 6, Size = SettlementSize.Small, ActiveBuildings = 0, HasWall = true };
+            var zeroFloor = SettlementGenerator.Generate(zeroCfg, "poi-zero").Floors[0];
+            int zeroActive = 0, zeroPlaced = 0;
+            foreach (var r in zeroFloor.Rooms) if (r.TypeId == 1) { zeroPlaced++; if (!r.IsDummy) zeroActive++; }
+            if (zeroActive != 0)
+            { Debug.LogError($"FAIL active: a zero request produced {zeroActive} active buildings (of {zeroPlaced}), want 0"); ok = false; }
+
+            var negCfg = new SettlementConfig { Seed = 6, Size = SettlementSize.Small, ActiveBuildings = -3, HasWall = true };
+            var negFloor = SettlementGenerator.Generate(negCfg, "poi-neg").Floors[0];
+            int negActive = 0, negPlaced = 0;
+            foreach (var r in negFloor.Rooms) if (r.TypeId == 1) { negPlaced++; if (!r.IsDummy) negActive++; }
+            if (negActive != 0)
+            { Debug.LogError($"FAIL active: a request of -3 produced {negActive} active buildings (of {negPlaced}), want 0 — the defensive floor must clamp a negative request to zero"); ok = false; }
+
+            var overCfg = new SettlementConfig { Seed = 6, Size = SettlementSize.Small, ActiveBuildings = 1000000, HasWall = true };
+            var overFloor = SettlementGenerator.Generate(overCfg, "poi-over").Floors[0];
+            int overActive = 0, overPlaced = 0;
+            foreach (var r in overFloor.Rooms) if (r.TypeId == 1) { overPlaced++; if (!r.IsDummy) overActive++; }
+            if (overActive != overPlaced)
+            { Debug.LogError($"FAIL active: a request of 1000000 produced {overActive} active of {overPlaced} placed, want ALL {overPlaced} active"); ok = false; }
+
+            // ---- 6. THE DM DEFECT ITSELF: active buildings are SPREAD across the emission order, never
+            // taken from one end of it. Buildings come out of block-by-block generation in a fixed spatial
+            // order, so emission index tracks POSITION IN THE TOWN — the bug report was every active
+            // building landing in one corner of a Large town with a small active count.
+            //
+            // THIS IS THE GEOMETRY THE RULE CHANGES, asserted directly and exactly — never a derived metric
+            // (a mean or a variance across positions would still pass with the underlying rule broken, this
+            // arc's own named failure mode). Generation partitions the placed buildings' emission order into
+            // as many contiguous, roughly-equal buckets as the (clamped) active request and puts exactly one
+            // active pick inside each bucket; this recomputes those SAME bucket boundaries purely from the
+            // floor's own room count — never reads an internal field this test cannot see — and checks EVERY
+            // bucket carries EXACTLY one active building.
+            //
+            // WHY THIS CANNOT FLAKE: it holds BY CONSTRUCTION, on every seed, not merely a typical one.
+            // Integer division guarantees each bucket is non-empty whenever the bucket count is no more than
+            // the placed count (the sweep below always keeps it far below the Large-size guarantee), and
+            // generation rolls exactly one pick per bucket — so "exactly one active per bucket" is a
+            // mathematical property of the algorithm, not an observation that could go either way on an
+            // unlucky seed. The handful of seeds below exist only to exercise several distinct town shapes,
+            // not to fish for one where a probabilistic property happens to hold.
+            //
+            // Fails hard against the discarded prefix rule: with several buckets over a Large town's 80+
+            // buildings, a prefix of the lowest indices lands entirely inside the FIRST bucket (which spans
+            // far more than the bucket count's worth of indices), so that bucket counts every active building
+            // at once and every later bucket counts zero — both wrong by this assertion's "exactly one" bar.
+            int[] spreadSeeds = { 501, 502, 503, 504, 505, 506 };
+            foreach (int spreadSeed in spreadSeeds)
+            {
+                var spreadCfg = new SettlementConfig { Seed = spreadSeed, Size = SettlementSize.Large, ActiveBuildings = 5, HasWall = true };
+                var spreadFloor = SettlementGenerator.Generate(spreadCfg, "poi-spread").Floors[0];
+                var spreadBuildings = new System.Collections.Generic.List<Room>();
+                foreach (var r in spreadFloor.Rooms) if (r.TypeId == 1) spreadBuildings.Add(r);
+                int spreadPlaced = spreadBuildings.Count;
+                int spreadGoal = spreadCfg.ActiveBuildings > spreadPlaced ? spreadPlaced : spreadCfg.ActiveBuildings;
+                for (int b = 0; b < spreadGoal; b++)
+                {
+                    int lo = (int)((long)b * spreadPlaced / spreadGoal);
+                    int hi = (int)((long)(b + 1) * spreadPlaced / spreadGoal);
+                    int activeInBucket = 0;
+                    for (int idx = lo; idx < hi; idx++) if (!spreadBuildings[idx].IsDummy) activeInBucket++;
+                    if (activeInBucket != 1)
+                    { Debug.LogError($"FAIL active: seed {spreadSeed} bucket {b} (emission indices {lo}..{hi - 1} of {spreadPlaced}) has {activeInBucket} active buildings, want exactly 1 — active buildings must be spread across the whole emission order, not clustered at one end"); ok = false; }
+                }
+            }
+
             if (ok) Debug.Log("Settlement Active/Dummy: PASS");
         }
 

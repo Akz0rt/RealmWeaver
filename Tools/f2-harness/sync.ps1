@@ -413,11 +413,23 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutGateAtCentre' `
 # false) regardless of ActiveBuildings/placed count. SelfTestActiveBuildings' exact active/dummy split
 # (assertion 1, plus the wall-less-camp check in part 4) must fail.
 New-SettlementMutant 'SettlementGenerator.cs' 'MutNoActiveMark' `
-  'IsDummy = i >= activeCount' `
+  'IsDummy = !isActiveBuilding[i]' `
   'IsDummy = false' `
   'MutNoActiveMark.cs'
 
-foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs')) {
+# MutActiveBuildingsPrefix: the DM-reported clustering bug, restored on purpose. The bucketed spread pick is
+# left computed (isActiveBuilding, activeGoal, activeRng all still assigned — dead but harmless) and only the
+# room's IsDummy line reverts to the old rule, "active" == "the first activeCount buildings in emission
+# order" — which SettlementBlocks.Generate's block-by-block fill always packs into one corner of the town.
+# Caught by SelfTestActiveBuildings' bucket-spread sweep: on every one of its swept seeds, the fixed-size
+# fixture always has activeGoal < buildings.Count buckets covering the WHOLE emission order, so at least one
+# bucket's [lo,hi) sits at hi > activeCount — a building this mutant would leave dummy.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutActiveBuildingsPrefix' `
+  'IsDummy = !isActiveBuilding[i]' `
+  'IsDummy = i >= activeCount   // MUTANT: active reverts to a prefix of emission order' `
+  'MutActiveBuildingsPrefix.cs'
+
+foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs', 'MutActiveBuildingsPrefix.cs')) {
   Repair-SettlementGeneratorCrossFileCall $outFile
 }
 
@@ -614,6 +626,12 @@ New-SettlementRebind 'SelfTestVillage' 'MutStreetsNoHub' `
 New-SettlementRebind 'SelfTestActiveBuildings' 'MutNoActiveMark' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutNoActiveMark.SettlementGenerator.', 'WorldGen.Generation.MutNoActiveMark.SettlementConfig')
+
+# MutActiveBuildingsPrefix is caught by the SAME method's bucket-spread sweep (a second, separate
+# SelfTests_<class>.cs output) — same shape as MutNoActiveMark just above.
+New-SettlementRebind 'SelfTestActiveBuildings' 'MutActiveBuildingsPrefix' `
+  @('SettlementGenerator\.', '\bSettlementConfig\b') `
+  @('WorldGen.Generation.MutActiveBuildingsPrefix.SettlementGenerator.', 'WorldGen.Generation.MutActiveBuildingsPrefix.SettlementConfig')
 
 # SettlementRoads.cs defines ONE class and no data types — its LinkNode/LinkEdge/LinkGeometry
 # parameters resolve outward to the REAL WorldGen.Generation types after re-namespacing, so a rebind
