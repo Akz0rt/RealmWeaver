@@ -99,9 +99,9 @@ namespace WorldGen.Rendering
         (float minX, float minY, float maxX, float maxY) fittedBounds;
         bool hasFittedBounds;
         // The LAST render graph handed to the renderer, from either build site (Refresh and RepositionNow) —
-        // i.e. always the same instance the renderer itself has cached as `lastRg`. Held so the resize re-fit
-        // can size a settlement to the roads that are ACTUALLY DRAWN without building a graph of its own; see
-        // RefitFromCache for why the two caches cannot disagree at the moment it is read.
+        // i.e. always the same instance the renderer itself has cached as `lastRg`. The fit no longer reads it
+        // (Task 5 — FitBoundsFor derives a settlement's extent from rooms + stored streets); it is kept as the
+        // controller's own record of what the renderer is currently holding.
         RenderGraph lastBuiltRg;
         int draggingRoomId;
         // The room the current settle should treat as the "just-moved" one: the last room the DM dragged
@@ -251,19 +251,12 @@ namespace WorldGen.Rendering
         /// (one lattice cell = SettlementGenerator.BuildingCell × TilesPerAxis = 3.84 tiles at the v11 pitch,
         /// 8.96 before it — the derivation is in cells so the pitch change does not invalidate it):
         ///   • the wall ring sits CourtyardCells+1 = 2 cells beyond the occupied seed (SettlementTileGrid.
-        ///     BuildWallRing's dilation radius);
-        ///   • on the CLEAN tier — which is what a bind draws — that seed includes the ROAD cells, and roads
-        ///     reach the gates, which sit a building half-width + SettlementFence.FenceMarginTiles outside the
-        ///     buildings, i.e. ONE more cell (SettlementRoads' own A* grid is bounded to the nodes' bbox +
-        ///     GridMargin 4 tiles, so nothing can bulge past that);
+        ///     BuildWallRing's dilation radius), and that seed is footprints ∪ STORED STREET CELLS — the ring
+        ///     street runs a full cell outside the outermost house, and the gates sit on it;
         ///   • each drawn tile extends half a cell past its own centre.
-        /// 2 + 1 + 0.5 = 3.5 cells past the outermost building CENTRE — which is exactly the
-        /// extent SettlementTileGrid.Allocate already allocates (its MarginCells is 3) taken ±half a cell. So
-        /// the fit is read straight off Allocate rather than re-deriving a margin here, and STILL no road
-        /// routing happens on the fit path (the old DeriveTownFence(includeRoads: true) call is gone — the
-        /// ring's INNER edge at ~17.9 tiles already strictly encloses that polyline at ~5 tiles, so it
-        /// contributed nothing but a ~12.5 ms road A* per bind). Task B4 hands Allocate the caller's ALREADY
-        /// ROUTED road segments so the fitted grid is the drawn grid — see the rg parameter.
+        /// 2 + 0.5 cells past the outermost occupied CELL — which is inside what SettlementTileGrid.Allocate
+        /// already allocates (its MarginCells is 3) taken ±half a cell. So the fit is read straight off
+        /// Allocate rather than re-deriving a margin here, and NOTHING is routed on the fit path.
         ///
         /// A WALL-LESS settlement (village/camp) keeps its room-bounds fit, widened by a full cell: it draws no
         /// ring, so the allocated grid's 3-cell margin would shrink it for nothing, but its building tiles are
@@ -277,18 +270,14 @@ namespace WorldGen.Rendering
         ///
         /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.
         ///
-        /// <paramref name="rg"/> (Task B4) is the render graph the caller is ABOUT to draw. It was introduced
-        /// to close the fit/draw grid asymmetry against the ROUTED-ROAD renderer this call site originally
-        /// fit against; that renderer call signature no longer exists. As of arc A, task 2,
-        /// SettlementTileGrid.Build(floor) takes no `roads` parameter at all — it calls
-        /// Allocate(floor.Rooms, null, streets) internally, folding footprints ∪ STORED STREET CELLS
-        /// (SettlementParams.StreetCells) into the cell bbox. This fit still calls
-        /// Allocate(lvl.Rooms, RoadsForFit(rg)) — footprints ∪ routed ROAD ENDPOINTS, no streets — so `rg`
-        /// remains what widens the fit past the buildings-only extent for the gate/road geometry described
-        /// below. Pass null (or a non-settlement binding) and the buildings-only extent is restored verbatim.
-        /// NOTHING IS ROUTED HERE: the segments are read out of the graph the caller already built, through
-        /// the renderer's own RoadsFromGraph, so this stays a pure O(rooms + segments) pass.</summary>
-        (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl, RenderGraph rg)
+        /// THE FIT IS NOW EXACTLY THE DRAWN GRID, not a superset of it (Task 5). This method used to take the
+        /// render graph and hand Allocate its ROUTED ROAD ENDPOINTS, a Task-B4
+        /// device for matching a renderer that folded routed roads into its own grid. That renderer stopped
+        /// doing so at arc A task 2 — SettlementTileGrid.Build calls Allocate(floor.Rooms, null, streets) —
+        /// and this task deleted the router that produced the roads. So the fit passes `null` roads and the
+        /// SAME stored street cells Build uses, which makes the two calls identical rather than merely
+        /// consistent. Still a pure O(rooms + streets) pass; still routes nothing.</summary>
+        (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
             {
@@ -302,33 +291,29 @@ namespace WorldGen.Rendering
                 const float T = DungeonLayout.TilesPerAxis;
                 float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 1.92 tiles at the v11 pitch
 
-                // Allocate ONLY — cheap (two passes over the rooms plus one over the road endpoints and one
-                // over the street cells, no dilate/flood-fill/A*) — but with the SAME road list AND the SAME
-                // street cells the renderer hands Build, so the fitted extent is the drawn extent and not a
-                // narrower one (see the rg param above). The union with the room bounds is kept for the same
-                // reason the pre-Task-8 fit unioned the fence in — a room can never be clipped — and it is
-                // what carries the degenerate case below.
+                // Allocate ONLY — cheap (two passes over the rooms plus one over the street cells, no
+                // dilate/flood-fill) — and with the IDENTICAL arguments SettlementTileGrid.Build passes:
+                // (lvl.Rooms, null, streets). The fitted extent is therefore the drawn extent exactly. The
+                // union with the room bounds is kept for the same reason the pre-Task-8 fit unioned the fence
+                // in — a room can never be clipped — and it is what carries the degenerate case below.
                 //
-                // THE STREET CELLS ARE PART OF THAT SAME "fitted extent IS the drawn extent" contract (arc
-                // C.1 Task 3). SettlementTileGrid.Build allocates over footprints ∪ STREETS; this fit
-                // allocated over footprints ∪ road endpoints only. That was harmless while
-                // SettlementParams.StreetCells was empty in production — it no longer is: the ring street
-                // rings the whole interior, a full cell OUTSIDE the outermost building, so the drawn grid
-                // would exceed the fitted one and the town would clip against the panel edge on every side.
+                // THE STREET CELLS ARE THAT CONTRACT (arc C.1 Task 3): the ring street rings the whole
+                // interior, a full cell OUTSIDE the outermost building, so a fit that ignored them would be
+                // narrower than the drawn grid and the town would clip against the panel edge on every side.
                 // Decoding here costs one pass over a few dozen ints, on a path that already walks every room.
                 //
                 // AND IT RUNS FOR A VILLAGE TOO — that is not scope creep, it is where the bug actually
                 // bites hardest: MapScreenController sets HasWall for a City only, so EVERY village takes
                 // the wall-less path, and a village stores exactly the same street cells (only the gates are
                 // suppressed). The wall-less branch used to pad the ROOM bounds by one whole cell, a margin
-                // derived when the only thing reaching past the buildings was a routed road (maxBuildingCentre
-                // + 7 tiles). Street cells reach further than that and by an amount no fixed pad can bound —
+                // derived when the only thing reaching past the buildings was a routed road. Street cells
+                // reach further than that and by an amount no fixed pad can bound —
                 // a lopsided town's ring can run several cells past its outermost house — so the pad is
                 // replaced by the same extent-derived union the walled path uses. That union is strictly
                 // wider than the old pad it replaces (Allocate's own MarginCells is 3 cells against the pad's
                 // 1), so nothing that used to fit can start clipping.
                 var streetsForFit = SettlementFootprint.Decode(lvl.SettlementParams?.StreetCells);
-                var g = SettlementTileGrid.Allocate(lvl.Rooms, RoadsForFit(rg), streetsForFit);
+                var g = SettlementTileGrid.Allocate(lvl.Rooms, null, streetsForFit);
                 // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
                 // NOT at the town: unioning that box in would drag the fit to the corner of the field.
                 // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
@@ -363,31 +348,15 @@ namespace WorldGen.Rendering
             return DungeonProjection.ContentBoundsTiles(lvl);
         }
 
-        /// <summary>The road segments the RENDERER will fold into its tile grid, or null when this binding
-        /// draws none — mirroring SettlementVolumeRenderer.RepositionRooms' own
-        /// `(isSettlement &amp;&amp; includeRoadsInFence) ? RoadsFromGraph(rg) : null` line by line, and calling the
-        /// very same conversion so the two cannot drift.
-        ///
-        /// COSTS NO ROUTING, and that is load-bearing: <paramref name="rg"/> is a graph the caller has ALREADY
-        /// built (Refresh builds exactly one per rebuild and hands the same instance to the fit, the
-        /// containment check and RebuildView), so this is an O(segments) re-frame — not a second pass through
-        /// the ~12.5 ms road A* the two-tier Fast/Clean signal exists to keep off drag frames. A null rg falls
-        /// back to the buildings-only extent, which is what the pre-Task-B4 fit always used.</summary>
-        IReadOnlyList<LinkSegment> RoadsForFit(RenderGraph rg)
-            => rg != null && SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean)
-                 ? SettlementVolumeRenderer.RoadsFromGraph(rg)
-                 : null;
-
         /// <summary>Re-arm the fit when what is now drawn no longer sits inside what the projection was
         /// actually fitted to. CONTAINMENT is the trigger, never "something changed": re-scaling on every edit
         /// would make the town jump under the cursor, which spec R6 forbids outright. Accepted, and intended:
         /// the view never zooms back IN when a town shrinks — only a rebind or a panel resize does that.
         ///
-        /// COST: one SettlementTileGrid.Allocate (two O(rooms) passes, one O(segments) pass and a W×H enum
+        /// COST: one SettlementTileGrid.Allocate (two O(rooms) passes, one O(streets) pass and a W×H enum
         /// array — a few hundred cells for a real town) plus four float compares, ONCE PER REBUILD. It routes
-        /// NOTHING: the segments come from the graph the caller already built (see RoadsForFit). It is
-        /// deliberately not on the per-frame path at all — drag samples and cascade frames go through
-        /// RepositionNow, which never reaches Refresh.
+        /// NOTHING. It is deliberately not on the per-frame path at all — drag samples and cascade frames go
+        /// through RepositionNow, which never reaches Refresh.
         ///
         /// NEVER MID-DRAG. draggingRoomId != 0 is the exact flag OnDrag/OnEndDrag gate on, and `cascading` is
         /// the settle animation's own — together they cover the whole window in which room positions are
@@ -413,13 +382,13 @@ namespace WorldGen.Rendering
         /// Здание», an auto-linked street, the wall ring re-derived around both). Panel resize is NOT narrowed
         /// this way: OnRectTransformDimensionsChange fixes a genuine clipping bug for every view, and it fires
         /// only when the rect really changed.</summary>
-        void RefitIfContentOverflows(InteriorFloor lvl, RenderGraph rg)
+        void RefitIfContentOverflows(InteriorFloor lvl)
         {
             if (!hasFittedBounds || pendingFit != PendingFit.None || lvl == null) return;
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
             if (draggingRoomId != 0 || cascading) return;
             const float eps = 1e-3f;
-            var b = FitBoundsFor(lvl, rg);
+            var b = FitBoundsFor(lvl);
             if (b.minX < fittedBounds.minX - eps || b.minY < fittedBounds.minY - eps ||
                 b.maxX > fittedBounds.maxX + eps || b.maxY > fittedBounds.maxY + eps)
                 pendingFit = PendingFit.Rebuild;   // the CONTENT grew — a repaint at a new scale is not enough
@@ -540,19 +509,16 @@ namespace WorldGen.Rendering
             bool swapped = want != null && !ReferenceEquals(want, renderer);
             SetRenderer(want);
             // SetRenderer already rebuilt through Refresh() when it actually swapped; a second Refresh here
-            // would re-route a settlement's roads (~12.5 ms) for nothing on every town open.
+            // would tear down and rebuild the whole view for nothing on every town open.
             if (!swapped) Refresh();
         }
 
         /// <summary>Full visual rebuild from the bound level — and THE one place a fit is applied (Task B4).
         ///
-        /// The render graph is now built BEFORE the fit, where it used to be built after, and the order is
-        /// load-bearing rather than cosmetic: for a settlement the fit has to size itself to the same tile grid
-        /// this very graph's road segments are about to widen (FitBoundsFor's rg param). BuildRenderGraph is
-        /// pure in `lvl` — it reads room positions and links and nothing about the projection — so moving it
-        /// ahead of ResolveProjection changes no output, and it is built EXACTLY ONCE either way: the same
-        /// instance feeds the fit, RebuildView, the containment check — and lastBuiltRg, so a later resize
-        /// re-fit can size itself to this same graph without building one of its own.
+        /// The render graph is built BEFORE the fit. That ordering was load-bearing while the fit read the
+        /// graph's routed road segments (Task B4); Task 5 removed that read, so it is now merely the natural
+        /// order — BuildRenderGraph is pure in `lvl` (it reads room positions and links and nothing about the
+        /// projection), and the ONE instance it builds feeds RebuildView and lastBuiltRg either way.
         ///
         /// THIS IS THE EXPENSIVE PATH, and only content changes should reach it: BuildRenderGraph is the
         /// 106 ms-at-20-rooms Clean route for a dungeon or building interior. A pure RESIZE goes through
@@ -568,12 +534,12 @@ namespace WorldGen.Rendering
                 return;
             }
 
-            var rg = lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean), SettlementRoadsFor(RoomLinkGeometry.RoutingMode.Clean));
+            var rg = lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean));
 
             bool justFitted = false;
             if (pendingFit != PendingFit.None)
             {
-                var b = FitBoundsFor(lvl, rg);
+                var b = FitBoundsFor(lvl);
                 if (renderer.ResolveProjection(b.minX, b.minY, b.maxX, b.maxY))
                 {
                     // A Refresh satisfies EITHER kind of pending fit — it rebuilds as well as re-fits — so the
@@ -592,9 +558,9 @@ namespace WorldGen.Rendering
             if (SelectedRoomId != 0 && lvl.GetRoom(SelectedRoomId) == null) SelectedRoomId = 0;
             renderer.RebuildView(dungeon, levelIndex, lvl, rg, font, OnJumpToLevel);
             RefreshHighlights();
-            // Skipped when this call just fitted: the bounds were computed from this very rg, so the check
+            // Skipped when this call just fitted: the bounds were computed from this very floor, so the check
             // could only re-derive them and find them equal to themselves.
-            if (!justFitted) RefitIfContentOverflows(lvl, rg);
+            if (!justFitted) RefitIfContentOverflows(lvl);
         }
 
         /// <summary>Consumes a pending fit, one frame after whatever armed it — down ONE of two paths, chosen
@@ -614,13 +580,13 @@ namespace WorldGen.Rendering
         /// at exactly 20 and a hand-grown dungeon not capped at all. That is a hang, not a jank. Deferring by a
         /// frame would not help: it still pays a full route at the end of every resize.
         ///
-        /// A settlement is the same shape and milder — RouteMode forces Fast, but SettlementRoadsFor(Clean) is
-        /// still true, so Refresh would pay one road grid A* (12.5 ms median, 17.5 max —
-        /// .superpowers/sdd/roads-perf-spike.md) plus a full rebuild per frame. Same fix, same path.
+        /// A settlement is the same shape and milder: it no longer routes anything at all (Task 5 retired the
+        /// road A* it used to pay per rebuild), but Refresh still tears down and rebuilds the whole tile view
+        /// per resized frame. Same fix, same path.
         ///
         /// The rect pre-check is what the removed ResolveProjection call used to give us for free, and it is
         /// kept for the same reason: while the panel is still {0,0} (the bind-time rect gotcha) there is
-        /// nothing to fit to, and falling through would rebuild — and, for a settlement, re-route — every
+        /// nothing to fit to, and falling through would rebuild every
         /// frame until layout catches up. It gates BOTH paths, since the cheap one cannot fit to a {0,0} rect
         /// either; RefitFromCache's own refusal branch is then only ever reached on a rect that changed
         /// between this check and the resolve.
@@ -650,9 +616,9 @@ namespace WorldGen.Rendering
 
         /// <summary>Apply a RESIZE-armed fit: re-scale the projection, then repaint what the renderer already
         /// holds. NO ROUTING HAPPENS ANYWHERE ON THIS PATH — that is its entire reason to exist, and it is
-        /// verifiable by inspection: there is no BuildRenderGraph call here, none in FitBoundsFor (RoadsForFit
-        /// is a pure O(segments) re-frame of an existing graph), and none in IDungeonRenderer.SetProjection,
-        /// which repaints from the renderer's own cached lvl/rg.
+        /// verifiable by inspection: there is no BuildRenderGraph call here, none in FitBoundsFor (which reads
+        /// rooms and stored street cells only), and none in IDungeonRenderer.SetProjection, which repaints
+        /// from the renderer's own cached lvl/rg.
         ///
         /// ResolveProjection THEN SetProjection, and the apparent redundancy is deliberate. ResolveProjection
         /// is the only thing that knows how to turn tile-space bounds + this renderer's rect into a projection
@@ -661,15 +627,11 @@ namespace WorldGen.Rendering
         /// cache primitive. Handing it back the projection ResolveProjection just stored is therefore a no-op
         /// assignment followed by exactly the redraw we want, and it needs no new interface member.
         ///
-        /// THE TWO CACHES CANNOT DISAGREE, which is what makes feeding the fit from lastBuiltRg sound. Every
-        /// site that builds a graph — Refresh and RepositionNow, the only two — stores the SAME INSTANCE into
-        /// lastBuiltRg and hands it to the renderer, which keeps it as its own lastRg. So the roads this fit
-        /// reads are literally the roads the repaint below rasterizes, and neither side routes to obtain them.
-        /// The one graph that is not settle-equivalent — a Fast, road-less drag/cascade frame — can never be
-        /// the one read here: LateUpdate's `draggingRoomId != 0 || cascading` guard holds the pending fit for
-        /// exactly the window in which such a graph is the newest, and every exit from that window (Update's
-        /// completion RepositionNow(Clean), BeginCascade's !anyMoved Refresh) replaces it with a Clean one
-        /// first.
+        /// THE FIT NO LONGER READS THE GRAPH AT ALL (Task 5): FitBoundsFor derives a settlement's extent from
+        /// the floor's rooms and STORED street cells, which is exactly what the renderer draws, so there is no
+        /// fit/draw cache to keep in step and no "is this graph settle-equivalent" question to answer. (It used
+        /// to read lastBuiltRg for the routed road endpoints; a Fast drag frame's road-less graph reaching this
+        /// method was the hazard, held off by LateUpdate's `draggingRoomId != 0 || cascading` guard.)
         ///
         /// A REFUSED fit (rect still {0,0}) leaves pendingFit armed and repaints nothing — LateUpdate's own
         /// pre-check makes that near-unreachable, and a retry next frame is the correct fallback either way.
@@ -677,7 +639,7 @@ namespace WorldGen.Rendering
         /// repainted, so it could only compare them with themselves.</summary>
         void RefitFromCache(InteriorFloor lvl)
         {
-            var b = FitBoundsFor(lvl, lastBuiltRg);
+            var b = FitBoundsFor(lvl);
             if (!renderer.ResolveProjection(b.minX, b.minY, b.maxX, b.maxY)) return;
             pendingFit = PendingFit.None;
             fittedBounds = b;
@@ -946,9 +908,8 @@ namespace WorldGen.Rendering
                 // already true, so RefitIfContentOverflows rejects it there, and nothing else redraws before
                 // the animation lands here. Deliberately AFTER the three clears above — the check guards on
                 // `cascading` too — and BEFORE OnCascadeSettled, so a host handler that rebuilds sees the fit
-                // already armed. lastBuiltRg is the graph RepositionNow just built one line up, i.e. the drawn
-                // one; the check routes nothing.
-                RefitIfContentOverflows(lvl, lastBuiltRg);
+                // already armed. The check routes nothing.
+                RefitIfContentOverflows(lvl);
                 // Rooms are now EXACTLY on their targets — the first moment the whole interior is
                 // self-consistent again (see BeginCascade's building branch). Fire last, after the state is
                 // cleared, so a handler that somehow re-enters cannot see a half-torn-down cascade.
@@ -959,16 +920,11 @@ namespace WorldGen.Rendering
         void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            // ONE signal drives both the map's roads and the fence's roads, so they can never disagree: false on
-            // Fast/drag frames (fence skips the road A*, per .superpowers/sdd/roads-perf-spike.md), true on the
-            // Clean settle. This is what keeps an 80-building walled-city drag off the 12.5 ms road router.
-            bool includeRoads = SettlementRoadsFor(mode);
-            // Cached for the resize re-fit, which must size itself to the graph the renderer is ACTUALLY
-            // holding — see RefitFromCache. Storing it at BOTH build sites (here and Refresh) is what keeps
-            // the two caches the same instance: a settle lands through this method, not through Refresh, so
-            // caching in Refresh alone would leave the fit reading a graph built from pre-animation positions.
-            lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode), includeRoads);
-            renderer.RepositionRooms(lvl, lastBuiltRg, includeRoads);
+            // Still cached at BOTH build sites (here and Refresh) so the renderer and this controller agree on
+            // which graph is the newest one — the resize repaint (IDungeonRenderer.SetProjection) redraws from
+            // the renderer's own copy of it. The FIT no longer reads it at all (see FitBoundsFor).
+            lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode));
+            renderer.RepositionRooms(lvl, lastBuiltRg);
         }
 
         // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
@@ -979,16 +935,12 @@ namespace WorldGen.Rendering
                  ? RoomLinkGeometry.RoutingMode.Fast
                  : requested;
 
-        // Ц1.6: settlements route ROADS on the settle path (bind + cascade-settle, the Clean-requests)
-        // ALWAYS; during live drag/cascade frames (the Fast-requests) only if the perf spike cleared the
-        // frame budget (.superpowers/sdd/roads-perf-spike.md). When false, drag frames keep the cheap
-        // L/Z scorer — roads may transiently cross houses WHILE DRAGGING and snap clean on settle,
-        // exactly the dungeon's own Fast[drag]/Clean[settle] pattern.
-        const bool RoadsDuringDrag = false;
-
-        bool SettlementRoadsFor(RoomLinkGeometry.RoutingMode requested)
-            => dungeon != null && dungeon.Kind == InteriorKind.Settlement
-               && (RoadsDuringDrag || requested == RoomLinkGeometry.RoutingMode.Clean);
+        // THE TWO-TIER ROAD SIGNAL IS GONE (Task 5). It read: a settlement routes ROADS
+        // (SettlementRoads' grid A*) on the settle path and skips them on drag frames, because that A* cost
+        // ~12.5–18 ms per build. There is no road router any more and a generated town has no links to route
+        // — streets are stored cells the tile grid draws directly — so there is no tier left to pick and
+        // nothing per-frame to keep the expensive one off. RouteMode below stays: it is a different guard, on
+        // RoomLinkGeometry's non-scaling Clean mode.
 
         // ── Commands ─────────────────────────────────────────────────────────────
 
@@ -1108,24 +1060,18 @@ namespace WorldGen.Rendering
         /// likewise handed that null room and no-ops. So nothing moves the new building after it is written —
         /// the DM's cell is final.
         ///
-        /// THE AUTO-LINK — KEPT FOR GRAPH CONNECTIVITY, NO LONGER FIXES THE WALL RING (final-review fix,
-        /// SECOND PASS: the original final-review fix below is now INERT for the bug it names; see the
-        /// correction that follows). DungeonOps.AddRoom creates a room with NO links, and a settlement's
-        /// ROUTED roads come from lvl.Links (SettlementRoads.Build over BuildRenderGraph's edge list) — every
-        /// building is still supposed to hang off the street tree (SettlementStreets' own invariant), and a
-        /// linkless building still breaks that regardless of the wall-ring correction below. So linking the
-        /// new building to its nearest neighbour is still the right call and stays exactly as it is.
-        ///
-        /// WHAT IS NO LONGER TRUE, and why this paragraph exists: this comment used to say the road that link
-        /// produces "rasterizes into the seed and merges the two clusters back into one ring." That was true
-        /// when it was written and is false now. SettlementTileGrid.Build dropped its `roads` parameter (arc
-        /// A, task 2): the wall ring's occupied seed is Building ∪ StreetCells (SettlementTileGrid.cs
-        /// Build/BuildWallRing), and StreetCells is written in exactly two places — SettlementGenerator.
-        /// BuildFloor (the generator) and SettlementMigration.RecentreFloor (translating an existing list on
-        /// load). NO EDITOR PATH WRITES IT. The link below is still created and its road is still routed, but
-        /// that route reaches only the render graph and FitBoundsFor's fit (see the REFIT note further down)
-        /// — never SettlementParams.StreetCells — so it never reaches the ring seed. The fix is inert for the
-        /// bug it was written to close.
+        /// THE AUTO-LINK — NOW WHOLLY VESTIGIAL, AND KEPT ONLY AS THE PLACE ITS REPLACEMENT GOES (Task 5).
+        /// It was added by the 2.5D arc's final review to merge a placed building's own wall ring back into
+        /// the town's, on the stated mechanism "the road that link produces rasterizes into the ring seed".
+        /// That mechanism died at arc A task 2 (SettlementTileGrid.Build dropped its `roads` parameter; the
+        /// seed is Building ∪ StreetCells, and NO EDITOR PATH WRITES StreetCells), and Task 5 removed the last
+        /// of it: there is no road router, a generated settlement carries no links, and nothing in the town
+        /// view reads lvl.Links at all — the tile grid draws stored cells and the volumetric renderer never
+        /// touches the render graph's segments. So the link below now affects NOTHING that is drawn. It is
+        /// still created because the graph-connectivity intent is right and because deleting it would erase
+        /// the marker for the arc-2 work that must replace it (an editor-side StreetCells writer); a
+        /// hand-linked town also still routes those links through RoomLinkGeometry.Fast for the flat
+        /// fallback renderer.
         ///
         /// TWO LIVE CONSEQUENCES, BOTH DEFERRED:
         /// - PLACEMENT: «+ Здание» on an empty cell well clear of town reads GREEN (TryAreaToCell has no
@@ -1145,10 +1091,9 @@ namespace WorldGen.Rendering
         /// build. Until then the auto-link below is graph-connectivity-only: correct for what it still does,
         /// silent about the wall ring it no longer touches.
         ///
-        /// The link is the GENERATOR's shape, not the DM's: authored stays false (AddCorridor's default), the
-        /// same as every SettlementStreets edge, so DungeonOps.HasAuthoredContent — and therefore the
-        /// «Перегенерировать» / «× Этаж» confirm — behaves exactly as it did before. Dummy buildings are
-        /// candidates like any other: generated streets connect them too.
+        /// The link is not the DM's authored one: authored stays false (AddCorridor's default), so
+        /// DungeonOps.HasAuthoredContent — and therefore the «Перегенерировать» / «× Этаж» confirm — behaves
+        /// exactly as it did before. Dummy buildings are candidates like any other.
         ///
         /// The write itself is already on the lattice: nx/ny are SettlementTileGrid.CenterX/CenterY of the
         /// target cell. The lattice cannot shift under it either — it is SettlementFootprint's ABSOLUTE one
@@ -1170,14 +1115,11 @@ namespace WorldGen.Rendering
             lastAnchorRoomId = 0;
             lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
-            // REFIT (final-review fix). The grid just grew — by the new building's own cell, by the ROUTED
-            // road SettlementRoads.Build lays for the auto-link above (which widens FitBoundsFor's fit through
-            // RoadsForFit/Allocate's road-endpoint fold even though — see the auto-link's own doc above — it
-            // draws no tile and never becomes a stored street), and by the 2-cell ring SettlementTileGrid.Build
-            // re-derives around the new Building cell (CourtyardCells + 1) — which, per that same doc, may now
-            // be the new building's OWN separate ring rather than a merge into the town's — and FitBoundsFor
-            // reads that extent straight off SettlementTileGrid.Allocate, so without this the new house (or
-            // its stretch of wall) can land outside the fitted panel. Set BEFORE Refresh deliberately: Refresh
+            // REFIT (final-review fix). The grid just grew — by the new building's own cell and by the 2-cell
+            // ring SettlementTileGrid.Build re-derives around it (CourtyardCells + 1), which per the auto-link
+            // doc above may be the new building's OWN separate ring rather than a merge into the town's — and
+            // FitBoundsFor reads that extent straight off SettlementTileGrid.Allocate, so without this the new
+            // house (or its stretch of wall) can land outside the fitted panel. Set BEFORE Refresh deliberately: Refresh
             // resolves a pending fit itself, so the rebuild below already draws at the new scale instead of
             // drawing once at the old one and being rebuilt again by LateUpdate. PLACEMENT ONLY — drag and
             // drag-end must NOT refit (the spec forbids rescaling under the cursor), which is why this lives
@@ -1193,8 +1135,8 @@ namespace WorldGen.Rendering
 
         /// <summary>The building (TypeId 1) room nearest the normalized point (nx, ny), or 0 when the floor
         /// holds no building at all. Plain squared Euclidean distance with ties broken by the LOWER room id —
-        /// the same "pure distance, ties by lower index" rule SettlementStreets' growth pass uses, so the edge
-        /// this picks is the one the street generator would have picked. Gates (TypeId 0) are deliberately not
+        /// the same "pure distance, ties by lower index" rule the retired street generator used, kept so the
+        /// pick stays deterministic and order-independent. Gates (TypeId 0) are deliberately not
         /// candidates: a gate is not a street tree node a building hangs off, and its own cell is not a
         /// Building cell, so linking to one would not seed the dilation blob the way a building does.</summary>
         static int NearestBuildingId(InteriorFloor lvl, float nx, float ny)

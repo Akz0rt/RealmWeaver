@@ -65,7 +65,6 @@ static class Program
         settlement.SelfTestWallContour();
         settlement.SelfTestGates();
         settlement.SelfTestBuildings();
-        settlement.SelfTestStreets();
         settlement.SelfTestAssembly();
         settlement.SelfTestVillage();
         settlement.SelfTestSettlementAuthored();
@@ -74,9 +73,6 @@ static class Program
         settlement.SelfTestWallBounds();
         settlement.SelfTestBuildingFootprintCorridors();
         settlement.SelfTestFence();
-        settlement.SelfTestRoads();
-        settlement.SelfTestRoadJunctions();
-        settlement.SelfTestRoadsPerf();
         settlement.SelfTestFootprint();
         settlement.SelfTestFootprintMigration();
         settlement.SelfTestSizing();

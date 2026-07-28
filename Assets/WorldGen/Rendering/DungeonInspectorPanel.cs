@@ -200,20 +200,15 @@ namespace WorldGen.Rendering
                 // footprint path when settlement && TypeId == 1 — a building's SizeW/SizeH is provably
                 // dead there, since the footprint (not this stepper) drives its drawn fit and the fence.
                 // A gate room falls through to DungeonProjection.EffectiveSize instead, which DOES read
-                // SizeW/SizeH, and that size DOES feed the road router's obstacle mask (LinkNodeFor's
-                // non-footprint branch) — so the stepper is not dead CODE for a gate the way it is for a
-                // building.
+                // SizeW/SizeH.
                 //
-                // BUT AT HEAD THE ROAD ROUTER'S OUTPUT IS NEVER DRAWN — the rationale above stops one hop
-                // short of what actually reaches the screen. SettlementRoads' routed segments reach only
-                // FitBoundsFor, through RoadsForFit (DungeonViewController.cs) — used solely to widen the
-                // FIT bounds so a road end doesn't land outside the panel. SettlementTileGrid.Build, which
-                // decides what actually renders, takes no roads at all (Building ∪ StreetCells only). So
-                // pressing W+/H+ on a gate changes the obstacle mask an invisible A* pass runs against, and
-                // the only visible effect is the town zooming OUT to keep that wider (invisible) route
-                // inside the fitted panel — the exact "inert stepper that zooms the town out" symptom
-                // hiding it for buildings exists to remove. Left VISIBLE anyway, because whether to hide it
-                // for gates too is the DM's call at the in-Editor checkpoint, not a decision to make here.
+                // AT HEAD IT IS DEAD FOR A GATE TOO, and more completely than before (Task 5). The gate's
+                // EffectiveSize rect used to feed the road router's obstacle mask and, through the routed
+                // segments, the FIT — so W+/H+ on a gate at least zoomed the town out. There is no router
+                // now, the fit reads rooms + stored street cells only, and the one remaining consumer of a
+                // gate node (SettlementFence) rasterizes a gate as a bare centre POINT regardless of its
+                // W/H. So the stepper is inert for a gate as well. Left VISIBLE anyway, because whether to
+                // hide it is the DM's call at the in-Editor checkpoint, not a decision to make here.
                 if (dungeon == null || dungeon.Kind != InteriorKind.Settlement || room.TypeId != 1)
                 {
                     var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);

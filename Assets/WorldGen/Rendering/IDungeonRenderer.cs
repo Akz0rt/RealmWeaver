@@ -93,12 +93,11 @@ namespace WorldGen.Rendering
         /// existing cards with none; SettlementVolumeRenderer re-derives its tile grid each call and reuses a
         /// pooled, appended-only set of tile views.
         ///
-        /// <paramref name="includeRoadsInFence"/> two-tiers the derived settlement fence exactly like the road
-        /// router: pass the SAME value the controller feeds SettlementRoadsFor(mode) to BuildRenderGraph — false
-        /// on Fast/drag frames (fence skips the ~12.5 ms road A*, still follows the live building/gate rects),
-        /// true on bind + settle (fence wraps the routed roads, matching the map). Ignored for non-settlement
-        /// views (they have no fence).</summary>
-        void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence);
+        /// ONE TIER. This used to carry an includeRoadsInFence flag, passed the controller's
+        /// SettlementRoadsFor(mode), so a settlement's derived fence could skip a ~12.5 ms road A* on drag
+        /// frames. The road router is gone (Task 5) and the fence is derived from rooms + stored street cells,
+        /// which is cheap on every frame — so there is no tier left to select and the flag went with it.</summary>
+        void RepositionRooms(InteriorFloor lvl, RenderGraph rg);
 
         /// <summary>Turn the selection/link highlight on or off for one room. `roomId` 0 = clear all.</summary>
         void SetHighlight(int roomId, bool on);

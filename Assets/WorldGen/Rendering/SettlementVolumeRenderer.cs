@@ -363,20 +363,15 @@ namespace WorldGen.Rendering
         /// nothing else, so the cached lvl/rg still describe the layout exactly; rebuilding through Refresh
         /// would re-run BuildRenderGraph once per resized frame, which measured 106 ms at 20 rooms.
         ///
-        /// includeRoadsInFence: true for PARITY with DungeonFlatRenderer.SetProjection — a resize (like the
-        /// pan/zoom this was originally written for) is a repaint of a STABLE layout, i.e. settle-equivalent,
-        /// not a drag frame. LIMITATION, now live rather than theoretical: this renderer reads the roads out
-        /// of the cached render graph rather than re-routing them (see RoadsFromGraph), so a repaint taken
-        /// immediately after a Fast drag frame — whose graph carries no roads — would draw without Road cells
-        /// until the next Clean rebuild. It cannot bite from the resize path: DungeonViewController.LateUpdate
-        /// holds the pending fit while `draggingRoomId != 0 || cascading`, and the only calls that leave a
-        /// road-less graph cached here are the Fast RepositionNow frames inside exactly that window — every
-        /// path OUT of it (BeginCascade's !anyMoved Refresh, Update's completion RepositionNow(Clean)) ends
-        /// on a Clean, roads-included graph before the flag can be consumed.</summary>
+        /// NO TIER TO GET WRONG ANY MORE (Task 5). This used to pass includeRoadsInFence: true for parity with
+        /// the flat renderer, and carried a live limitation with it: the tile grid took its Road cells from the
+        /// cached render graph, so a repaint taken right after a Fast drag frame (whose graph carried no roads)
+        /// would draw without them. The grid reads STORED street cells now and the flag is gone, so a repaint
+        /// is identical whenever it is taken.</summary>
         public void SetProjection(DungeonProjection p)
         {
             Projection = p;
-            RepositionRooms(lastLvl, lastRg, includeRoadsInFence: true);
+            RepositionRooms(lastLvl, lastRg);
         }
 
         // ── Build / reposition ───────────────────────────────────────────────────────────────────────────
@@ -386,11 +381,8 @@ namespace WorldGen.Rendering
         /// pool survives a rebind and only the CONTENT is re-derived. `font` and `onJumpToLevel` are unused —
         /// the volumetric view carries no per-room label or floor-jump badge (a settlement has exactly one
         /// floor, and 40-80 labelled cards is what the schematic did badly); they stay in the signature
-        /// because the interface owns it.
-        ///
-        /// RebuildView is always the settle-equivalent CLEAN path (DungeonViewController.Refresh routes with
-        /// SettlementRoadsFor(Clean)), so roads are included — same reasoning as the flat renderer's own
-        /// hard-coded true.</summary>
+        /// because the interface owns it. `rg` is likewise unused by this renderer — a settlement's tiles come
+        /// from SettlementTileGrid.Build(lvl), never from the routed graph.</summary>
         public void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
                                 System.Action<int> onJumpToLevel)
         {
@@ -404,25 +396,18 @@ namespace WorldGen.Rendering
             // controller re-shows it on the very next frame if the mode is still armed, so clearing here costs
             // nothing and closes the one window where a leftover could be seen.
             HidePlacementHighlight();
-            RepositionRooms(lvl, rg, includeRoadsInFence: true);
+            RepositionRooms(lvl, rg);
         }
 
         /// <summary>Cheap per-frame repaint from the CURRENT room positions — every drag sample and cascade
         /// frame. "Cheap" here means no allocation of GameObjects and no destroy: the tile grid itself IS
         /// re-derived, because moving a building changes which cells are Building, which cells the wall ring
-        /// runs through, and where the gates land. That derive is a few hundred cells of dilate + flood-fill,
-        /// far below the cost of the road A* it is deliberately kept clear of.
+        /// runs through, and where the gates land. That derive is a few hundred cells of dilate + flood-fill.
         ///
-        /// ONE TIER now. <paramref name="includeRoadsInFence"/> used to pick between a buildings-only grid
-        /// (Fast/drag, skipping a ~12.5 ms road A*) and one with the routed roads rasterized in
-        /// (Clean/bind/settle). SettlementTileGrid.Build reads STORED street cells instead of routing
-        /// anything, so both tiers now produce the identical grid and the flag is INERT for the tile grid
-        /// THIS METHOD DRAWS. It stays on the signature because it is part of the shared
-        /// <see cref="IDungeonRenderer.RepositionRooms"/> contract — DungeonFlatRenderer's implementation of
-        /// the SAME interface method still honours it (RebuildTownWall → DungeonLayout.DeriveTownFence), so
-        /// this renderer cannot drop the parameter unilaterally without breaking that shared signature; this
-        /// renderer itself never calls DeriveTownFence.</summary>
-        public void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence)
+        /// ONE TIER, and the flag that used to select one is gone with the road router (Task 5): the grid is
+        /// built from the floor's rooms and its STORED street cells on every frame, so a drag sample and a
+        /// bind produce the identical grid.</summary>
+        public void RepositionRooms(InteriorFloor lvl, RenderGraph rg)
         {
             EnsureBuilt();
             lastLvl = lvl;
@@ -447,12 +432,8 @@ namespace WorldGen.Rendering
                 return;
             }
 
-            // SettlementTileGrid.Build takes no roads any more: streets are STORED cells
-            // (SettlementParams.StreetCells), so there is nothing left for the includeRoadsInFence flag to
-            // switch between here and the grid is the same one on every tier. The parameter itself stays —
-            // it is part of the IDungeonRenderer.RepositionRooms contract (DungeonFlatRenderer's
-            // implementation still honours it via RebuildTownWall/DeriveTownFence) — but it is now INERT for
-            // the tile grid THIS method builds; this renderer never calls DeriveTownFence itself.
+            // SettlementTileGrid.Build takes no roads: streets are STORED cells (SettlementParams.StreetCells)
+            // and the grid reads them itself, so `rg` reaches nothing this method draws.
             grid = SettlementTileGrid.Build(lvl);
             RebuildCellRooms(lvl);
 
@@ -476,33 +457,6 @@ namespace WorldGen.Rendering
                 used++;
             }
             HideFrom(used);
-        }
-
-        /// <summary>Roads for the tile grid, taken from the render graph the controller already routed instead
-        /// of routing a second time. Two conversions matter and both are silent if wrong:
-        ///   - FRAME: RenderGraph segments are NORMALIZED (DungeonLayout.ToLayout runs ToNorm on them), while
-        ///     SettlementTileGrid rasterizes in TILE space (it divides by TilesPerAxis itself). Hence the *T.
-        ///     Dropping it collapses every road onto a single cell; adding it twice throws them 128x away.
-        ///   - TYPE: RenderSegment -> LinkSegment. EdgeIndex is left 0; SettlementTileGrid never reads it.
-        /// Junction-splitting in the render graph is harmless here — a segment cut into collinear pieces
-        /// rasterizes to the same cell set as the whole.
-        ///
-        /// PUBLIC (Task B4), and this is the point: DungeonViewController.FitBoundsFor must size the view to
-        /// the SAME grid this renderer draws, which means feeding SettlementTileGrid.Allocate the same road
-        /// list. Sharing this one conversion is what makes "the fit and the draw agree" structural instead of
-        /// two copies free to drift on either of the two silent conversions above. It routes NOTHING — it is a
-        /// pure O(segments) re-frame of a graph the caller has already built.</summary>
-        public static List<LinkSegment> RoadsFromGraph(RenderGraph rg)
-        {
-            const float T = DungeonLayout.TilesPerAxis;
-            var roads = new List<LinkSegment>(rg.Segments.Count);
-            foreach (var s in rg.Segments)
-                roads.Add(new LinkSegment
-                {
-                    A = new LinkPoint { X = s.A.X * T, Y = s.A.Y * T },
-                    B = new LinkPoint { X = s.B.X * T, Y = s.B.Y * T },
-                });
-            return roads;
         }
 
         /// <summary>Map EVERY cell of every room's FOOTPRINT onto that room, so a Building tile can find its
@@ -765,13 +719,15 @@ namespace WorldGen.Rendering
         /// walled city the diagonal corners of Allocate's 3-cell margin band are already that far from the
         /// nearest building, and they pass every test here.
         ///
-        /// The thing that closes it is on the COMMIT side, not here: DungeonViewController.PlaceHoveredBuilding
-        /// AUTO-LINKS the new room to the nearest existing building. SettlementRoads then routes a street along
-        /// that link, the street rasterizes into cells, those cells join BuildWallRing's dilation seed, and the
-        /// two clusters merge into ONE ring — with a street to the new house as the same side effect. Without
-        /// the link there is no road (DungeonOps.AddRoom creates a room with no links at all), so nothing would
-        /// ever bridge the gap and the lone house would stay sealed in its own wall, permanently. Placement
-        /// therefore stays permissive HERE and is made whole THERE; do not "simplify" either half alone.
+        /// NOTHING CLOSES IT TODAY, AND THAT IS AN OPEN DEFECT, NOT A DESIGN (corrected again at Task 5). The
+        /// commit side used to be the answer: DungeonViewController.PlaceHoveredBuilding auto-links the new
+        /// room to its nearest neighbour, a road was routed along that link, the road rasterized into cells,
+        /// and those cells joined BuildWallRing's dilation seed so the two clusters merged into ONE ring. Two
+        /// separate changes killed that chain — the tile grid stopped taking roads (arc A task 2; the seed is
+        /// Building ∪ StreetCells, which no editor path writes) and Task 5 deleted the router. So a building
+        /// founded well clear of town really does end up sealed in its own 5x5 ring, permanently, and the
+        /// auto-link no longer prevents it. The fix is an editor-side StreetCells writer and belongs to the
+        /// next arc; until then this is a known, DM-visible consequence of a permissive placement rule.
         ///
         /// Static and type-only on purpose: the caller (DungeonViewController) must never make its own
         /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are

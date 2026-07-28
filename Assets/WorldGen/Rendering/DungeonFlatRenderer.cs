@@ -141,21 +141,17 @@ namespace WorldGen.Rendering
         /// at a new scale is complete, and only the once-per-structure work (card GameObjects, badge strips,
         /// BuildBuildingCorridors for the contour) is skipped, none of which a resize invalidates.
         ///
-        /// No building moves, so this is a settle-equivalent redraw, not a drag frame: include roads so the
-        /// fence is the accurate, road-wrapping one (a stable layout re-routes to the same roads).
-        ///
-        /// ONE RESIDUAL, and it is unreachable in the shipped host: `true` also makes RebuildTownWall derive
-        /// the fence with roads, and THAT call does route (DungeonLayout.DeriveTownFence runs SettlementRoads'
-        /// grid A*, ~12.5 ms). It only runs for `isSettlement`, and a settlement is drawn by
-        /// SettlementVolumeRenderer — this renderer sees one only in a host that installed no volumetric
-        /// renderer at all (DungeonViewController.RendererForKind's degradation fallback; DungeonEditorScreen
-        /// always installs both). In that configuration a resize drag would pay that A* per frame, matching
-        /// what its own drag-settle already pays per settle. Dungeons and building interiors — the Kinds this
-        /// renderer actually draws — have isSettlement false and route nothing here.</summary>
+        /// THE SETTLEMENT FENCE COSTS NOTHING HERE ANY MORE (Task 5). RebuildTownWall → DeriveTownFence used to
+        /// run SettlementRoads' grid A* (~12.5 ms) whenever this method redrew a settlement, which is why the
+        /// call carried an includeRoadsInFence flag. The fence now rasterizes rooms + the floor's STORED street
+        /// cells and routes nothing, so this path is cheap for every Kind. (It was in any case unreachable for
+        /// a settlement in the shipped host: a town is drawn by SettlementVolumeRenderer, and this renderer
+        /// sees one only where no volumetric renderer was installed — RendererForKind's degradation fallback;
+        /// DungeonEditorScreen always installs both.)</summary>
         public void SetProjection(DungeonProjection p)
         {
             Projection = p;
-            RepositionRooms(lastLvl, lastRg, includeRoadsInFence: true);
+            RepositionRooms(lastLvl, lastRg);
         }
 
         public void RebuildView(InteriorData dungeon, int levelIndex, InteriorFloor lvl, RenderGraph rg, Font font,
@@ -204,12 +200,10 @@ namespace WorldGen.Rendering
             foreach (var j in lastRg.Junctions) junctionRects.Add(BuildJunctionRect());
             foreach (var r in lvl.Rooms) BuildCard(dungeon, levelIndex, r, font, onJumpToLevel);
 
-            // RebuildView is the structural (bind / level-switch / edit) rebuild — always the settle-equivalent
-            // Clean path (Refresh routes the graph with SettlementRoadsFor(Clean)), so the fence wraps roads too.
-            RepositionRooms(lvl, lastRg, includeRoadsInFence: true);
+            RepositionRooms(lvl, lastRg);
         }
 
-        public void RepositionRooms(InteriorFloor lvl, RenderGraph rg, bool includeRoadsInFence)
+        public void RepositionRooms(InteriorFloor lvl, RenderGraph rg)
         {
             lastLvl = lvl; lastRg = rg ?? new RenderGraph();
             if (lvl == null) return;
@@ -262,7 +256,7 @@ namespace WorldGen.Rendering
             // dispatch on the stored HasWall flag and let RebuildTownWall handle a null/degenerate fence
             // cleanly rather than throwing — the pool then simply stays at whatever RebuildView left it
             // (empty, since townWallRects.Clear() runs there).
-            if (isSettlement && lvl.SettlementParams?.HasWall == true) RebuildTownWall(lvl, includeRoadsInFence);
+            if (isSettlement && lvl.SettlementParams?.HasWall == true) RebuildTownWall(lvl);
         }
 
         /// <summary>Draw each room's 4 walls as thin strokes, leaving a <see cref="DoorGapTiles"/>-wide gap where a
@@ -344,10 +338,10 @@ namespace WorldGen.Rendering
         /// TILE space (unlike the old normalized wall), so its points feed AddTownWallEdge WITHOUT the ×T the
         /// gate positions still need. Derive can return null (a wall-less config that slipped past the dispatch
         /// guard, zero buildings, or a degenerate trace) — n falls to 0 and the pool empties, no throw.</summary>
-        void RebuildTownWall(InteriorFloor lvl, bool includeRoads)
+        void RebuildTownWall(InteriorFloor lvl)
         {
             townWallSegBuf.Clear();
-            var wall = DungeonLayout.DeriveTownFence(lvl, includeRoads);
+            var wall = DungeonLayout.DeriveTownFence(lvl);
             int n = wall?.Points?.Count ?? 0;
             if (n < 2) { SyncPool(townWallRects, 0, BuildTownWallRect); return; }
             int T = DungeonLayout.TilesPerAxis;

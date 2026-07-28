@@ -31,24 +31,6 @@ namespace WorldGen.Generation
         public const int WallSides = 9;
         public const float WallJitter = 0.12f;
 
-        /// <summary>Nominal footprint (tiles, both axes) a placed building projects as when the preliminary
-        /// fence is derived from it (Ц2.6: gates are spaced on a fence traced around the ACTUAL buildings, not
-        /// the raw notional wall). Pinned to <see cref="DungeonProjection.EffectiveSize"/>'s default for a
-        /// fresh <see cref="Room"/>: TypeId defaults to 1 ("Normal" — the same TypeId BuildFloor assigns every
-        /// building room below), SizeW/H default to 0 ("unset"), so EffectiveSize falls through to
-        /// RoomSizing.Default(1)'s default case — (6,6), both sides already inside RoomSizing.Clamp's 1..16
-        /// range unchanged. 6 is therefore the exact size a building room would render/pack at if it ever
-        /// went through the normal room-sizing path, so the preliminary fence hugs buildings at the same
-        /// nominal scale the rest of the codebase already assumes for a TypeId-1 room.
-        ///
-        /// NO LONGER CALLED BY ANYTHING (arc A, task 3). BuildFloor does not derive a preliminary fence any
-        /// more — gates come out of SettlementBlocks — and the road/fence adapter now sizes a settlement
-        /// building from its FOOTPRINT (DungeonLayout.LinkNodeFor), which is the whole point of that change:
-        /// a multi-cell house is 3.84 tiles per cell, not 6 tiles total. Left compiling, and left DOCUMENTED
-        /// as dead, because Task 5 is STILL PENDING to remove this whole preliminary-gate path along with
-        /// SettlementStreets (see BuildFloor's own doc below for the up-to-date state of that task).</summary>
-        public const float NominalBuildingTiles = 6f;
-
         /// <summary>Wall radius (normalized) for a size class. A one-line delegation to SettlementSizing on
         /// purpose: the table is the ONE place a town's scale is decided, and the old count→radius formula
         /// (0.16 + 0.0045·count, clamped at 0.45) is exactly the kind of second opinion that made the stored
@@ -124,7 +106,7 @@ namespace WorldGen.Generation
         /// before Task D re-measured WallRadiusCells) fills the panel exactly as a 0.45-radius one used to.
         ///
         /// EVERY TILE-SPACE RATIO MOVED WITH IT: one cell is BuildingCell * DungeonLayout.TilesPerAxis =
-        /// 3.84 tiles, down from 8.96. See SettlementRoads.RoadClearanceTiles and DungeonLayout.LinkNodeFor
+        /// 3.84 tiles, down from 8.96. See DungeonLayout.LinkNodeFor and SettlementFence.FenceMarginTiles
         /// for the two places that ratio is load-bearing. SettlementFootprint.LegacyPitch keeps the old value
         /// for the v11 migration, which must read pre-v11 coordinates on the lattice they were authored on.</summary>
         public const float BuildingCell = 0.03f;
@@ -163,7 +145,7 @@ namespace WorldGen.Generation
         }
 
         /// <summary>Assemble one settlement floor from a BLOCK LAYOUT: gate rooms (TypeId 0) then building
-        /// rooms (TypeId 1) in the SAME order the street stage indexes them (gates first), streets → links.
+        /// rooms (TypeId 1), in that order.
         ///
         /// A BUILDING IS A FOOTPRINT NOW. SettlementBlocks.Generate lays one-cell streets through the notional
         /// contour's interior wherever a house would otherwise have no frontage, and fills what is left
@@ -181,12 +163,19 @@ namespace WorldGen.Generation
         /// SettlementFence.Derive → PlaceGates path). A wall-less village gets none; it still gets its
         /// streets.
         ///
-        /// STILL LIVE, AND STILL TASK 5's TO DELETE: SettlementStreets.GenerateStreets and the
-        /// gates-then-buildings id↔index contract below. Links are what SettlementRoads routes the drawn
-        /// roads from, and a link-less floor routes nothing at all, so the contract cannot go until
-        /// SettlementStreets itself does. PlaceBuildings, PlaceGates and GateCountFor, by contrast, are no
-        /// longer called from here at all — they compile, they are still self-tested directly, and they are
-        /// dead as far as generation is concerned.</summary>
+        /// A SETTLEMENT FLOOR CARRIES NO LINKS AT ALL (Task 5). It used to: a street stage
+        /// (SettlementStreets) produced a spanning tree over gates+buildings and every edge of it became a
+        /// Link, which a grid-A* router (SettlementRoads) then re-routed into drawn road polylines on every
+        /// rebuild. Streets are STORED CELLS now — SettlementParams.StreetCells, laid once by
+        /// SettlementBlocks and drawn straight by SettlementTileGrid — so those links described a street
+        /// network nothing reads and cost one ~18 ms A* per settlement Refresh. Both stages and the links are
+        /// gone. Link itself is untouched and still means what it always did for a DUNGEON or a BUILDING
+        /// INTERIOR; the editor can still create one in a town by hand («+ Здание» auto-links a placed
+        /// building to its nearest neighbour, DungeonViewController.PlaceHoveredBuilding), and a town SAVED
+        /// before this change still loads its links — nothing rejects or strips them.
+        ///
+        /// PlaceBuildings, PlaceGates and GateCountFor are not called from here either — they compile, they
+        /// are still self-tested directly, and they are dead as far as generation is concerned.</summary>
         public static InteriorFloor BuildFloor(SettlementConfig cfg)
         {
             // Placement region: a NOTIONAL contour (identical Rounded call regardless of HasWall) that block
@@ -200,9 +189,9 @@ namespace WorldGen.Generation
                 foreach (var gc in layout.GateCells)
                     gates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
 
-            // The street stage still works in POINTS (Task 5 is STILL PENDING to replace it wholesale — see
-            // this method's own class doc above), so each footprint is handed to it as its representative
-            // cell's centre — the same point the room below carries.
+            // Each footprint's POINT is its representative cell's centre — the same point the room below
+            // carries, and the one every consumer that still reads Room.X/Y (hit-testing, the lattice snap,
+            // the fence adapter's non-footprint fallback) resolves it to.
             var buildings = new List<PlacedBuilding>(layout.Buildings.Count);
             foreach (var fp in layout.Buildings)
             {
@@ -210,15 +199,12 @@ namespace WorldGen.Generation
                 buildings.Add(new PlacedBuilding { X = SettlementFootprint.CenterOf(rep.i), Y = SettlementFootprint.CenterOf(rep.j) });
             }
 
-            var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);
-
             var floor = new InteriorFloor();
-            // Node index i (gates first, then buildings) → room id (i+1). Ids are stable and dense.
-            var idByIndex = new int[gates.Count + buildings.Count];
+            // Room ids are assigned gates-first, then buildings, and stay stable and dense — the order the
+            // whole codebase (and SelfTestAssembly's independent re-derivation) reads a settlement floor in.
             int next = 1;
             for (int i = 0; i < gates.Count; i++)
             {
-                idByIndex[i] = next;
                 // A GATE CARRIES ITS CELL TOO (v11). `gates` is built one-for-one from layout.GateCells in
                 // order just above (and only when HasWall, which is also the only way this loop runs at all),
                 // so index i names the same gate in both lists. Storing it makes a gate translatable by
@@ -311,7 +297,6 @@ namespace WorldGen.Generation
             }
             for (int i = 0; i < buildings.Count; i++)
             {
-                idByIndex[gates.Count + i] = next;
                 floor.Rooms.Add(new Room
                 {
                     Id = next, TypeId = 1, X = buildings[i].X, Y = buildings[i].Y,
@@ -321,8 +306,8 @@ namespace WorldGen.Generation
                 next++;
             }
             floor.NextRoomId = next;
-            foreach (var e in edges)
-                floor.Links.Add(new Link { RoomA = idByIndex[e.A], RoomB = idByIndex[e.B] });
+            // NO LINKS — see this method's own doc. floor.Links stays the empty list InteriorFloor starts
+            // with, and SelfTestAssembly asserts exactly that.
             floor.SettlementParams = new SettlementParams
             {
                 Size = cfg.Size,

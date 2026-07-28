@@ -284,8 +284,8 @@ namespace WorldGen.Rendering
 
             // ---- an UNWALLED settlement (HasWall=false) must still get its streets. Reachable in production:
             // a town is wall-less because the DM cleared «Со стеной», not because of its POI type, and
-            // SettlementStreets still generates streets for gate-less towns (hub-seeded growth, see that
-            // file's class doc) — without this, a wall-less town would render as houses with zero streets.
+            // SettlementBlocks lays the same streets either way (HasWall only suppresses the GATES —
+            // SettlementGenerator.BuildFloor) — without this, a wall-less town would render with zero streets.
             // Same building layout as `f` above but HasWall=false and no gate room, so this exercises
             // MarkRoads' `inside == null` branch (no Inside test at all) rather than the walled branch above. ----
             var openFloor = Floor(false, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));

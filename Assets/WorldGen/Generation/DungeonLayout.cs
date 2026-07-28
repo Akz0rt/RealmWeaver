@@ -26,9 +26,10 @@ namespace WorldGen.Generation
         static float ToTile(float norm) => norm * TilesPerAxis;
         static float ToNorm(float tile) => tile / TilesPerAxis;
 
-        /// <summary>THE ONE ADAPTER from a Room to the tile-space rect the ROAD ROUTER and the FENCE read.
-        /// Both call it, and so does SettlementSelfTests' own RoadNodes, so the three can never disagree
-        /// about how big a building is.
+        /// <summary>THE ONE ADAPTER from a Room to the tile-space rect the FENCE reads. DeriveTownFence calls
+        /// it, SettlementSelfTests' fence fixtures call it, and nothing else projects a settlement room to a
+        /// rect — so they cannot disagree about how big a building is. (Until Task 5 the ROAD ROUTER was the
+        /// other caller; it is gone, and with it the only per-frame consumer of this adapter.)
         ///
         /// WHY IT EXISTS (arc A, task 3). Every caller used to build its LinkNode straight from
         /// DungeonProjection.EffectiveSize, which for a settlement building room (TypeId 1, SizeW/H unset)
@@ -41,15 +42,16 @@ namespace WorldGen.Generation
         ///
         /// NOTE WHAT STILL READS EffectiveSize FOR A SETTLEMENT, and is out of this adapter's reach: a GATE
         /// (TypeId 0) keeps RoomSizing.Default(0) = 7x5 tiles, which at the v11 pitch is 1.82 x 1.30 CELLS
-        /// rather than the 0.78 x 0.56 it was — so a gate now inflates into the road router's obstacle mask
-        /// wider than the ring lane it stands in. SelfTestRoads' fallback/clearance assertions are what
-        /// actually decide whether that matters; see task-B-report.md's tile-space audit.
+        /// rather than the 0.78 x 0.56 it was. That used to matter because the road router inflated it into
+        /// an obstacle mask wider than the ring lane the gate stands in; with the router gone the only thing
+        /// that reads a gate node at all is SettlementFence, which rasterizes a gate as a bare centre POINT
+        /// regardless of its W/H — so the 7x5 is now inert.
         ///
         /// A SETTLEMENT BUILDING therefore projects as its FOOTPRINT's cell bounding box, in tiles. The bbox
-        /// (not the exact cell set) because both consumers want a rect: SettlementRoads rasterizes an
-        /// inflated rect mask and SettlementFence rasterizes an inflated rect. An L-shaped footprint is
+        /// (not the exact cell set) because the consumer wants a rect: SettlementFence rasterizes an
+        /// inflated rect. An L-shaped footprint is
         /// consequently read as its filled bbox — deliberately conservative: the fence wraps a little more
-        /// than the house and roads keep a little further off it, which is the safe direction for both.
+        /// than the house, which is the safe direction.
         /// Note the single-cell case is EXACTLY unchanged in position: a footprint {(i,j)} has bbox centre
         /// (i+0.5)*Pitch, which is CenterOf(i) — the same point ToTile(r.X) already produced.
         ///
@@ -58,14 +60,11 @@ namespace WorldGen.Generation
         /// all. A GATE, HOWEVER, NOW HAS ONE and this branch deliberately does not use it: from v11
         /// SettlementGenerator.BuildFloor stores the gate's single ring cell in Room.Cells (so the v11
         /// recentring, which moves a town by moving CELLS, does not leave the gates behind), and the
-        /// `r.TypeId == 1` guard above still routes every gate down to EffectiveSize's 7x5-tile rect. That is
-        /// a DEFERRED change, not an oversight: widening the guard to TypeId 0 would swap a 7x5 rect for a
-        /// 3.84x3.84 one at every gate, which moves the road router's obstacle mask and therefore the DRAWN
-        /// street geometry of every walled town. It needs its own measured task (SelfTestRoads' fallback and
-        /// clearance assertions are what would decide it), not a comment-sized edit. Until then, note the
-        /// tile-space consequence already recorded above: a gate's 7x5 rect is 1.82 x 1.30 CELLS at the v11
-        /// pitch, so it inflates wider than the one-cell ring lane it stands in. SettlementFence is
-        /// unaffected either way — it rasterizes a gate as a bare centre POINT regardless of its W/H.</summary>
+        /// `r.TypeId == 1` guard above still sends every gate down to EffectiveSize's 7x5-tile rect. It no
+        /// longer costs anything: the only consumer left is SettlementFence, which rasterizes a gate as a
+        /// bare centre POINT regardless of its W/H, so the 7x5 never reaches a raster. (While the road router
+        /// existed this WAS a live deferral — a gate inflated into its obstacle mask wider than the one-cell
+        /// ring lane it stands in.)</summary>
         public static LinkNode LinkNodeFor(Room r, bool settlement)
         {
             if (settlement && r.TypeId == 1)
@@ -90,8 +89,8 @@ namespace WorldGen.Generation
         }
 
         /// <summary>True when this floor is a SETTLEMENT floor — the gate on LinkNodeFor's footprint path.
-        /// Read off the floor's own SettlementParams rather than off any caller-supplied flag, so the road
-        /// router and the fence cannot end up disagreeing about which model they are in.</summary>
+        /// Read off the floor's own SettlementParams rather than off any caller-supplied flag, so no caller
+        /// can put the adapter in the wrong model.</summary>
         static bool IsSettlementFloor(InteriorFloor lvl) => lvl != null && lvl.SettlementParams != null;
 
         // RoomLinkGeometry works in TILE space; LayoutPoint (and Room.X/Y) are normalized 0..1.
@@ -260,7 +259,7 @@ namespace WorldGen.Generation
         /// <summary>Corridor rendering geometry with junctions resolved: each DM corridor is split at every
         /// point where it crosses another DM corridor, and a junction point is emitted at each crossing.
         /// DERIVED — not stored. Only DM corridors are crossed (no recursion on the split sub-segments).</summary>
-        public static RenderGraph BuildRenderGraph(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean, bool settlementRoads = false)
+        public static RenderGraph BuildRenderGraph(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
         {
             var g = new RenderGraph();
             if (lvl == null) return g;
@@ -280,16 +279,15 @@ namespace WorldGen.Generation
             var linkEdges = new List<LinkEdge>(lvl.Links.Count);
             foreach (var c in lvl.Links) linkEdges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
 
-            // Ц1.6: a settlement routes ROADS (SettlementRoads' fixed-grid A*) — RoomLinkGeometry's
-            // Clean is non-scaling at town size (20–34 s @60) and Fast may cross houses. The flag comes
-            // only from DungeonViewController (the seam that knows Kind); default false keeps dungeons,
-            // buildings, battle-grid projection and the self-tests byte-identical.
-            //
-            // Ц2.6: the fence is DERIVED FROM the roads (SettlementFence.Derive), so it is no longer a
-            // road obstacle — roads route avoiding ONLY buildings, and Build takes no wall parameter.
-            var routed = settlementRoads
-                ? SettlementRoads.Build(nodes, linkEdges)
-                : RoomLinkGeometry.Build(nodes, linkEdges, mode);
+            // ONE ROUTER for every model now (Task 5). A settlement used to take a second one — SettlementRoads'
+            // fixed-grid A* — because its links were a generated STREET network that RoomLinkGeometry could not
+            // route at town scale (Clean measured 20–34 s at 60 nodes) and that Fast would run through houses.
+            // A generated settlement has no links at all any more (streets are stored cells,
+            // SettlementParams.StreetCells), so there is no street network here to route: lvl.Links is empty
+            // for a fresh town and holds only what the DM authored otherwise. DungeonViewController still
+            // forces Fast for a settlement (RouteMode) so a hand-linked town cannot reach the non-scaling
+            // Clean path.
+            var routed = RoomLinkGeometry.Build(nodes, linkEdges, mode);
             foreach (var d in routed.Doors) g.Doors.Add(ToLayout(d));   // door points → renderer's wall gaps
 
             var segs = new List<(LayoutPoint a, LayoutPoint b)>();
@@ -339,8 +337,8 @@ namespace WorldGen.Generation
         /// LinkGeometry.Segments — no junction-splitting; the union is the same either way). Built with the
         /// SAME rooms→LinkNodes / links→LinkEdges adapter BuildRenderGraph feeds the router, so the floor-0
         /// contour (FloorFootprint) wraps exactly the corridors the map draws. Clean by default — a settled-
-        /// layout derive, matching the contour's once-per-RebuildView cadence; a building never routes roads,
-        /// so there is no settlementRoads path here. Empty for a null/empty floor. Never stored (boxes move
+        /// layout derive, matching the contour's once-per-RebuildView cadence. Empty for a null/empty floor.
+        /// Never stored (boxes move
         /// every frame); route, then derive — no circularity, since building corridors ignore the contour.</summary>
         public static IReadOnlyList<LinkSegment> BuildBuildingCorridors(InteriorFloor lvl,
             RoomLinkGeometry.RoutingMode mode = RoomLinkGeometry.RoutingMode.Clean)
@@ -357,53 +355,79 @@ namespace WorldGen.Generation
             return RoomLinkGeometry.Build(nodes, edges, mode).Segments;
         }
 
-        /// <summary>THE settlement fence, DERIVED (never stored — the field was removed): the ONE place the
-        /// renderer (RebuildTownWall), the fit (FitBoundsFor) and the wall-bounds self-test get the fence, so
-        /// they can never disagree about where it is. Returns null unless this floor is a walled settlement
-        /// (SettlementParams?.HasWall == true) — a wall-less village/camp, a dungeon or a building has no fence.
+        /// <summary>THE settlement fence, DERIVED (never stored — the field was removed): the ONE place a
+        /// caller gets the fence, so two of them can never disagree about where it is. Returns null unless this
+        /// floor is a walled settlement (SettlementParams?.HasWall == true) — a wall-less village/camp, a
+        /// dungeon or a building has no fence.
         ///
-        /// Splits the floor's rooms into buildings (TypeId 1) and gates (TypeId 0), routes the streets as ROADS
-        /// with the SAME node/edge adapter BuildRenderGraph feeds SettlementRoads (EffectiveSize footprints in
-        /// TILE space, links → edges), then traces the fence around the inflated union of buildings + gates +
-        /// those roads (SettlementFence.Derive). Because the roads here are built the identical way the renderer
-        /// builds them, the fence wraps exactly the roads the map draws. TILE space out (SettlementFence's
-        /// convention), UNLIKE the old normalized stored wall — so a caller must NOT re-scale by TilesPerAxis.
+        /// WHO STILL CALLS IT, honestly stated. TWO callers: DungeonFlatRenderer.RebuildTownWall and
+        /// SettlementSelfTests.SelfTestWallBounds. The renderer one is UNREACHABLE IN THE SHIPPED HOST — a
+        /// settlement is drawn by SettlementVolumeRenderer, which builds SettlementTileGrid and derives its own
+        /// Wall ring; the flat renderer only ever sees a settlement in a host that installed no volumetric
+        /// renderer (RendererForKind's degradation fallback), and DungeonEditorScreen code-constructs both.
+        /// FitBoundsFor stopped calling this at Task 8 of the 2.5D arc (it fits the tile grid instead). So the
+        /// fence survives as the flat renderer's fallback drawing and as a tested derivation, NOT as something
+        /// on any per-frame path.
         ///
-        /// <paramref name="includeRoads"/> two-tiers the fence exactly like the road router (RoadsDuringDrag /
-        /// SettlementRoadsFor, see .superpowers/sdd/roads-perf-spike.md): the roads are a grid-A* build measured
-        /// at ~12.5 ms median / 17.5 ms max at the 80-building cap, far too costly to pay on every drag frame.
-        /// Pass FALSE on Fast/drag frames — the fence then rasterizes buildings + gates only (both cheap) with
-        /// NO SettlementRoads.Build, so the wall still follows the dragged buildings live but skips the A*. Pass
-        /// TRUE on bind + settle, where the fence wraps the routed roads too, matching what the map draws there.
-        /// Because includeRoads is fed the SAME SettlementRoadsFor(mode) the render graph uses, the fence never
-        /// disagrees with the map about whether the roads are enclosed.</summary>
-        public static WallContour DeriveTownFence(InteriorFloor lvl, bool includeRoads)
+        /// Splits the floor's rooms into buildings (TypeId 1) and gates (TypeId 0) through LinkNodeFor, folds
+        /// the floor's STORED STREET CELLS in as one cell-sized rect each, and traces the fence around the
+        /// inflated union (SettlementFence.Derive). TILE space out (SettlementFence's convention), UNLIKE the
+        /// old normalized stored wall — so a caller must NOT re-scale by TilesPerAxis.
+        ///
+        /// THE STREETS ARE WHAT THE ROADS USED TO BE, AND FOLDING THEM IS A MEASURED CHOICE, NOT A GUESS
+        /// (Task 5). Until this task the third input was the ROUTED roads: SettlementRoads.Build over
+        /// lvl.Links, re-run on every derive at ~12.5–18 ms, which is why the method carried an includeRoads
+        /// flag two-tiering it against drag frames. Both are gone. What replaces them has to be the streets
+        /// themselves, because those are what the town is now MADE of and what the drawn wall ring is seeded
+        /// from: SettlementTileGrid.Build dilates Building ∪ StreetCells (see BuildWallRing), so a fence that
+        /// ignored the streets would wrap a different town than the one on screen.
+        ///
+        /// MEASURED on generated walled towns, 5 seeds × Small/Medium/Large, counting stored street cells
+        /// whose centre falls OUTSIDE the derived fence:
+        ///   • with the old ROUTED roads: 9–38 cells outside (the router only ever laid lanes between linked
+        ///     nodes, so most of the stored network was never wrapped at all);
+        ///   • with nothing folded: 14–41 outside, and the point list differs from the roads one on every
+        ///     seed — so the roads were load-bearing and dropping them silently would have been a change;
+        ///   • with the streets folded, as here: 0 outside on every seed, buildings likewise 0 outside.
+        /// The fence therefore encloses MORE than it used to, not less, and now agrees with the tile grid
+        /// about what the town covers. SelfTestWallBounds asserts both halves — every stored street cell
+        /// inside, and (the non-vacuity control) a buildings+gates-only fence leaving at least one outside.
+        ///
+        /// A street cell is folded as a RECT (pitch × pitch at the cell centre, inflated by marginTiles like
+        /// every other building rect), not as a degenerate road segment: it is the same shape the tile grid
+        /// seeds from, and it cannot depend on how SettlementFence samples a zero-length capsule.</summary>
+        public static WallContour DeriveTownFence(InteriorFloor lvl)
         {
             if (lvl == null || lvl.SettlementParams == null || !lvl.SettlementParams.HasWall) return null;
 
             // LinkNodeFor, not EffectiveSize: the fence must wrap the buildings' actual FOOTPRINTS, or a
             // multi-cell house pokes out through its own town wall (see LinkNodeFor). Always the settlement
             // path here — this method returns null above for anything that is not a walled settlement floor.
-            var nodes = new List<LinkNode>(lvl.Rooms.Count);
             var buildings = new List<LinkNode>();
             var gates = new List<LinkNode>();
             foreach (var r in lvl.Rooms)
             {
                 var node = LinkNodeFor(r, settlement: true);
-                nodes.Add(node);
                 if (r.TypeId == 1) buildings.Add(node); else gates.Add(node);   // gate = TypeId 0 (rasterized as a point)
             }
+            // No buildings, no town, no fence — SettlementFence.Derive's own rule, kept explicit here so that
+            // folding the streets in below cannot resurrect a fence around a building-less floor.
+            if (buildings.Count == 0) return null;
 
-            // Drag frames (includeRoads == false) skip the grid A* entirely — no edges built, no roads routed.
-            // The fence still hugs the live building/gate rects (their rasterization is the cheap part).
-            IReadOnlyList<LinkSegment> roads = System.Array.Empty<LinkSegment>();
-            if (includeRoads)
-            {
-                var edges = new List<LinkEdge>(lvl.Links.Count);
-                foreach (var c in lvl.Links) edges.Add(new LinkEdge { A = c.RoomA, B = c.RoomB });
-                roads = SettlementRoads.Build(nodes, edges).Segments;
-            }
-            return SettlementFence.Derive(buildings, gates, roads, SettlementFence.FenceMarginTiles);
+            // The stored streets, one cell-sized rect each (see the method doc for the measurement). Id is
+            // unused by SettlementFence — it rasterizes CX/CY/W/H and nothing else — so these carry 0 rather
+            // than pretending to be rooms.
+            const float pitchT = SettlementFootprint.Pitch * TilesPerAxis;   // 3.84 tiles per cell (v11)
+            foreach (var c in SettlementFootprint.Decode(lvl.SettlementParams.StreetCells))
+                buildings.Add(new LinkNode
+                {
+                    Id = 0,
+                    CX = SettlementFootprint.CenterOf(c.i) * TilesPerAxis,
+                    CY = SettlementFootprint.CenterOf(c.j) * TilesPerAxis,
+                    W = pitchT, H = pitchT,
+                });
+
+            return SettlementFence.Derive(buildings, gates, System.Array.Empty<LinkSegment>(), SettlementFence.FenceMarginTiles);
         }
 
         /// <summary>Proper crossing of open segments p1p2 × p3p4 (shared endpoints / collinear touches don't

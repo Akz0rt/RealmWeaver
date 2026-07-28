@@ -18,7 +18,7 @@ $files = @(
   'DungeonValidator.cs', 'DungeonData.cs', 'DungeonOps.cs', 'CompactLayoutSelfTests.cs',
   'BuildingGeneratorSelfTests.cs', 'DungeonGraphSelfTests.cs',
   'BattleGridData.cs', 'BattleGridGenerator.cs', 'BattleGridOps.cs', 'BattleGridUndo.cs', 'BattleGridSelfTests.cs',
-  'WallContour.cs', 'SettlementGenerator.cs', 'SettlementStreets.cs', 'SettlementRoads.cs', 'SettlementFence.cs', 'SettlementSelfTests.cs',
+  'WallContour.cs', 'SettlementGenerator.cs', 'SettlementFence.cs', 'SettlementSelfTests.cs',
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
   'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs',
   'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs',
@@ -352,7 +352,7 @@ foreach ($bm in @('MutFirstTouch', 'MutFillDiagonal')) {
   Set-Content -Path (Join-Path $gen "SelfTests_$bm.cs") -Value ($before + $method + $after) -Encoding UTF8
 }
 
-# ---- SETTLEMENT MUTANTS: four rules pinned by SettlementGenerator/SettlementStreets. -----------------------
+# ---- SETTLEMENT MUTANTS: the rules pinned by SettlementGenerator's own self-tests. -------------------------
 # Same discipline as New-BattleMutant: read straight from the real source, throw if the pattern is gone,
 # re-namespace (class name unchanged, only nested), write to gen/.
 function New-SettlementMutant([string]$srcFile, [string]$className, [string]$from, [string]$to, [string]$outFile) {
@@ -380,25 +380,14 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutNoWallClearance' `
   'if (wall.Contains(cx, cy))' `
   'MutNoWallClearance.cs'
 
-# MutNoInsideFilter/MutNoWallClearance/MutGateAtCentre all nest the WHOLE of SettlementGenerator.cs — including
-# its own BuildFloor/Generate methods, which internally call SettlementStreets.GenerateStreets(placement,
-# buildings, gates, cfg.Seed). SettlementStreets.cs is NOT mutated for these three, so that call's parameter
-# types (PlacedBuilding/GatePoint) still mean the REAL, top-level WorldGen.Generation ones — but BuildFloor's
-# local `buildings`/`gates` are now the NESTED PlacedBuilding/GatePoint (PlaceBuildings/PlaceGates are declared
-# in the SAME file, so they return the nested types once the file is renamespaced). IReadOnlyList<T> does not
-# covary over a struct T, so this is a hard COMPILE ERROR baked into the mutant source itself, unrelated to
-# whichever rule the mutant actually changes. None of the three catching tests (SelfTestBuildings x2,
-# SelfTestGates) call BuildFloor/Generate at all, so the fix stubs out that one dead call rather than touching
-# the rule under test.
-function Repair-SettlementGeneratorCrossFileCall([string]$outFile) {
-  $p = Join-Path $gen $outFile
-  $t = Get-Content $p -Raw -Encoding UTF8
-  $from = 'var edges = SettlementStreets.GenerateStreets(placement, buildings, gates, cfg.Seed);'
-  if ($t -notmatch [regex]::Escape($from)) { throw "cross-file repair pattern not found in $outFile" }
-  $stub = 'var edges = new List<StreetEdge>();   // MUTANT-NEST STUB: BuildFloor/Generate are dead code for this mutants catching test, and SettlementStreets.cs is unmutated here so its GenerateStreets cannot accept this nested PlacedBuilding/GatePoint'
-  $t = $t -replace [regex]::Escape($from), $stub
-  Set-Content -Path $p -Value $t -Encoding UTF8
-}
+# NO CROSS-FILE REPAIR IS NEEDED ANY MORE (Task 5). The mutants that nest the WHOLE of SettlementGenerator.cs
+# used to need one: BuildFloor called SettlementStreets.GenerateStreets(placement, buildings, gates, seed) with
+# its own file-local — and therefore NESTED — PlacedBuilding/GatePoint, against a GenerateStreets whose
+# parameter types stayed the REAL top-level ones (SettlementStreets.cs was never mutated alongside), and
+# IReadOnlyList<T> does not covary over a struct T — a hard compile error baked into every such mutant source.
+# Repair-SettlementGeneratorCrossFileCall stubbed that one dead call out. BuildFloor makes no cross-file call
+# with those types now, so the function and its loop are gone; if a future edit reintroduces one, the mutant
+# builds will fail loudly at compile time rather than silently.
 
 # MutGateAtCentre: PointAtArcLength returns the wall centre (0.5,0.5) — every wall contour the self-tests
 # build (WallContour.Rounded(cfg.Seed, 0.5f, 0.5f, ...) — BuildWall itself was removed in Task 9, this was its
@@ -442,79 +431,16 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutActiveBuildingsFixedFirst' `
   'int first = 0;   // MUTANT: seeded starting pick hardcoded, activeRng never consulted' `
   'MutActiveBuildingsFixedFirst.cs'
 
-foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs', 'MutActiveBuildingsPrefix.cs', 'MutActiveBuildingsFixedFirst.cs')) {
-  Repair-SettlementGeneratorCrossFileCall $outFile
-}
-
-# MutStreetsNoGrowth: GenerateStreets' Prim-style spanning-growth loop is disabled (its while condition forced
-# false), leaving only the gate-to-farthest-building trunks — most buildings never get an edge at all.
-# SelfTestStreets case 2 (every building reachable from some gate) must fail.
-New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoGrowth' `
-  'while (remaining > 0)' `
-  'while (false)   // MUTANT: Prim growth disabled, trunks only' `
-  'MutStreetsNoGrowth.cs'
-
-# MutStreetsNoHub: in the gate-less (nGates == 0) branch, the hub building is never marked connected —
-# `remaining` is still set to nBuild - 1, but the growth loop's outer scan finds no connected node to grow
-# from, so it breaks on its first iteration and every building stays isolated. SelfTestVillage assertion 3
-# (hub connectivity) must fail.
-New-SettlementMutant 'SettlementStreets.cs' 'MutStreetsNoHub' `
-  'connected[hub] = true;' `
-  '// MUTANT: hub never marked connected — gate-less growth seeds from nothing' `
-  'MutStreetsNoHub.cs'
-
-# MutRoadsNoAvoid: SettlementRoads' obstacle mask never marks a cell — A* routes straight through
-# houses. SelfTestRoads assertion 2 (no segment enters a foreign rect) must fail.
-New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoAvoid' `
-  'blocked[(y - minY) * gw + (x - minX)] = true;' `
-  'blocked[(y - minY) * gw + (x - minX)] = false;   // MUTANT: mask never set' `
-  'MutRoadsNoAvoid.cs'
-
-# MutRoadsNoReuse: the reuse discount removed — every road pays full price everywhere, so branches
-# take their own parallel lanes instead of merging into arterials. SelfTestRoadJunctions' >=3-shared-
-# cell lane stretch must fail.
-New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoReuse' `
-  'float step = roads.Contains(nc) ? RoadReuseFactor : 1f;' `
-  'float step = 1f;   // MUTANT: no reuse discount' `
-  'MutRoadsNoReuse.cs'
-
-# MutRoadsNoClearance: the obstacle-mask inflation drops its + RoadClearanceTiles term, so a road may hug
-# a building right up to its bare rect (0 clearance) instead of keeping RoadClearanceTiles away.
-# SelfTestRoads assertion 5 (every routed cell keeps >= RoadClearanceTiles from every building) must fail.
-New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoClearance' `
-  'float hw = n.W * 0.5f + RoadClearanceTiles, hh = n.H * 0.5f + RoadClearanceTiles;' `
-  'float hw = n.W * 0.5f, hh = n.H * 0.5f;   // MUTANT: no clearance inflation' `
-  'MutRoadsNoClearance.cs'
-
-# MutRoadsNoCarveRetry: Build's PERMISSIVE RETRY removed, so an edge whose endpoint centre cell is claimed by
-# a third party — a building dragged clean ON TOP of another one — has its strict pass fail and falls straight
-# through to the centre-to-centre line. Caught by SelfTestRoads' overlap fixture (assertion 7a): that fixture's
-# two endpoints differ on BOTH axes, so the fallback line is diagonal by construction and the diagonal check
-# names the exact segment. The rest of the suite is silent — no GENERATED town ever needs the retry (measured:
-# zero retries over 40 Small and 15 Large towns), which is precisely why the fixture had to be synthetic.
-New-SettlementMutant 'SettlementRoads.cs' 'MutRoadsNoCarveRetry' `
-  'if (!routed) { path.Clear(); routed = Route(A, B, blocked, claimCount, roads, best, parent, closed, heap, minX, minY, maxX, maxY, gw, path, strict: false); }' `
-  ';   // MUTANT: no permissive retry — an unroutable strict pass falls straight to the centre-to-centre line' `
-  'MutRoadsNoCarveRetry.cs'
-
-# MutRoadsNoArterials: SettlementStreets' gate-gate arterial pass skipped — gates fall back to being
-# mere seed points. SelfTestStreets' arterial-net span assertion must fail.
-New-SettlementMutant 'SettlementStreets.cs' 'MutRoadsNoArterials' `
-  'if (nGates > 1)' `
-  'if (false)   // MUTANT: no gate-gate arterials' `
-  'MutRoadsNoArterials.cs'
-
 # ---- SETTLEMENT MUTANT-BOUND SELF-TESTS ---------------------------------------------------------------------
 # SettlementGenerator.cs bundles FOUR types into one file: SettlementConfig, GatePoint, PlacedBuilding AND
 # SettlementGenerator. Re-namespacing it for a mutant moves all four together. SelfTestGates/SelfTestBuildings
 # both name SettlementConfig explicitly (GatePoint/PlacedBuilding never are — every call site captures them
 # through `var`, exactly like BattleGridGenerator's GridPoint above), so their rebind must cover both
-# SettlementGenerator. and SettlementConfig — but ONLY within the one method Mutants.cs actually runs. A
-# blanket file-wide rebind would ALSO retype SelfTestStreets/SelfTestAssembly, which hand the (now-mutant)
-# GatePoint/PlacedBuilding lists to SettlementStreets.GenerateStreets — a method whose parameter types stay
-# the REAL WorldGen.Generation.GatePoint/PlacedBuilding when SettlementStreets.cs is not itself mutated.
-# IReadOnlyList<T> does not covary over a struct T, so that mismatch would surface as a COMPILE ERROR, not a
-# failing assertion — the same trap BattleGridOps's SelfTestOps scoping (above) exists to dodge.
+# SettlementGenerator. and SettlementConfig — but ONLY within the one method Mutants.cs actually runs. The
+# method-scoped rewrite is not a nicety: a blanket file-wide rebind would retype every OTHER test in the file
+# too, and any of them that hands a (now-mutant) GatePoint/PlacedBuilding to a method in an UNMUTATED file
+# would fail to compile rather than fail an assertion — IReadOnlyList&lt;T&gt; does not covary over a struct T.
+# That is the same trap BattleGridOps's SelfTestOps scoping (above) exists to dodge.
 $settlementTests = Get-Content (Join-Path $src 'SettlementSelfTests.cs') -Raw -Encoding UTF8
 # Same rebind shape, second source: InteriorOps' mutant (below) is caught via SelfTestInteriorOps, which lives
 # in InteriorOpsSelfTests.cs, not SettlementSelfTests.cs.
@@ -597,45 +523,22 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   Set-Content -Path (Join-Path $gen "SelfTests_$mutantClass.cs") -Value ($before + $method + $after) -Encoding UTF8
 }
 
-# MutNoInsideFilter / MutNoWallClearance both mutate PlaceBuildings and are caught by SelfTestBuildings, which
-# never touches SettlementStreets — safe to rebind SettlementGenerator./SettlementConfig within just this method.
+# MutNoInsideFilter / MutNoWallClearance both mutate PlaceBuildings and are caught by SelfTestBuildings —
+# safe to rebind SettlementGenerator./SettlementConfig within just this method.
 foreach ($mc in @('MutNoInsideFilter', 'MutNoWallClearance')) {
   New-SettlementRebind 'SelfTestBuildings' $mc `
     @('SettlementGenerator\.', '\bSettlementConfig\b') `
     @("WorldGen.Generation.$mc.SettlementGenerator.", "WorldGen.Generation.$mc.SettlementConfig")
 }
 
-# MutGateAtCentre mutates PointAtArcLength and is caught by SelfTestGates, which likewise never touches
-# SettlementStreets.
+# MutGateAtCentre mutates PointAtArcLength and is caught by SelfTestGates — same shape.
 New-SettlementRebind 'SelfTestGates' 'MutGateAtCentre' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutGateAtCentre.SettlementGenerator.', 'WorldGen.Generation.MutGateAtCentre.SettlementConfig')
 
-# MutStreetsNoGrowth mutates GenerateStreets (SettlementStreets.cs, which does NOT bundle SettlementConfig/
-# GatePoint/PlacedBuilding/SettlementGenerator — those stay real). Caught by SelfTestStreets: its wall/gates/
-# buildings must keep coming from the REAL SettlementGenerator (so PlaceBuildings/PlaceGates still run), but
-# its edges must come from the MUTATED SettlementStreets — so ONLY "SettlementStreets." is rebound here.
-New-SettlementRebind 'SelfTestStreets' 'MutStreetsNoGrowth' `
-  @('SettlementStreets\.') `
-  @('WorldGen.Generation.MutStreetsNoGrowth.SettlementStreets.')
-
-# MutStreetsNoHub mutates GenerateStreets' gate-less branch. SelfTestVillage's assertions 1/2/4 go through
-# SettlementGenerator.Generate()/BuildFloor — which lives in the PRISTINE, never-rebound SettlementGenerator.cs
-# copy and so always calls the REAL SettlementStreets — so a mutant of SettlementStreets.cs alone can only be
-# observed through a call SelfTestVillage makes to SettlementStreets DIRECTLY (its assertion-3 reconstruction:
-# exPlacement/exBuildings via the real SettlementGenerator, exEdges via SettlementStreets.GenerateStreets).
-# That is exactly the same shape as SelfTestStreets/MutStreetsNoGrowth above — so ONLY "SettlementStreets." is
-# rebound here too; SettlementConfig/SettlementGenerator stay real.
-New-SettlementRebind 'SelfTestVillage' 'MutStreetsNoHub' `
-  @('SettlementStreets\.') `
-  @('WorldGen.Generation.MutStreetsNoHub.SettlementStreets.')
-
 # MutNoActiveMark mutates BuildFloor's active/dummy marking directly and is caught by SelfTestActiveBuildings,
-# which calls SettlementGenerator.Generate()/BuildFloor (so the same cross-file-call stub as MutNoInsideFilter/
-# MutNoWallClearance/MutGateAtCentre above applies — BuildFloor's GenerateStreets call is stubbed to an empty
-# edge list, which is harmless here: SelfTestActiveBuildings reads only floor.Rooms and floor.SettlementParams,
-# never floor.Links) and never touches SettlementStreets directly — safe to rebind SettlementGenerator./
-# SettlementConfig within just this method, exactly like MutNoInsideFilter/MutNoWallClearance above.
+# which calls SettlementGenerator.Generate()/BuildFloor — safe to rebind SettlementGenerator./SettlementConfig
+# within just this method, exactly like MutNoInsideFilter/MutNoWallClearance above.
 New-SettlementRebind 'SelfTestActiveBuildings' 'MutNoActiveMark' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutNoActiveMark.SettlementGenerator.', 'WorldGen.Generation.MutNoActiveMark.SettlementConfig')
@@ -652,40 +555,11 @@ New-SettlementRebind 'SelfTestActiveBuildings' 'MutActiveBuildingsFixedFirst' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutActiveBuildingsFixedFirst.SettlementGenerator.', 'WorldGen.Generation.MutActiveBuildingsFixedFirst.SettlementConfig')
 
-# SettlementRoads.cs defines ONE class and no data types — its LinkNode/LinkEdge/LinkGeometry
-# parameters resolve outward to the REAL WorldGen.Generation types after re-namespacing, so a rebind
-# of just "SettlementRoads." is sound (no IReadOnlyList<T> struct-covariance trap here; the fixture
-# still comes from the real SettlementGenerator).
-New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoAvoid' `
-  @('SettlementRoads\.') `
-  @('WorldGen.Generation.MutRoadsNoAvoid.SettlementRoads.')
-
-# A SECOND rebind of SelfTestRoads (separate SelfTests_<class>.cs output) — MutRoadsNoClearance is caught
-# by the SAME method's building-clearance assertion (5), not by a different one.
-New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoClearance' `
-  @('SettlementRoads\.') `
-  @('WorldGen.Generation.MutRoadsNoClearance.SettlementRoads.')
-
-# A THIRD rebind of SelfTestRoads — MutRoadsNoCarveRetry is caught by that same method's overlap fixture
-# (assertion 7), not by a different one, exactly like MutRoadsNoClearance above.
-New-SettlementRebind 'SelfTestRoads' 'MutRoadsNoCarveRetry' `
-  @('SettlementRoads\.') `
-  @('WorldGen.Generation.MutRoadsNoCarveRetry.SettlementRoads.')
-
-New-SettlementRebind 'SelfTestRoadJunctions' 'MutRoadsNoReuse' `
-  @('SettlementRoads\.') `
-  @('WorldGen.Generation.MutRoadsNoReuse.SettlementRoads.')
-
-# Same shape as MutStreetsNoGrowth: only SettlementStreets. is rebound; the generator stays real.
-New-SettlementRebind 'SelfTestStreets' 'MutRoadsNoArterials' `
-  @('SettlementStreets\.') `
-  @('WorldGen.Generation.MutRoadsNoArterials.SettlementStreets.')
-
 # ---- SETTLEMENT FENCE MUTANTS: three rules pinned by SettlementFence.Derive (the three fence mutants). -----
 # Same discipline as New-SettlementMutant. SettlementFence.cs defines ONE class and no data types
 # (LinkNode/LinkSegment/LinkPoint live in RoomLinkGeometry.cs, WallContour/WallPoint in WallContour.cs,
 # neither mutated here), so re-namespacing it and rebinding just "SettlementFence." is sound — the same
-# single-class shape SettlementRoads/InteriorOps use above.
+# single-class shape InteriorOps uses below.
 
 # MutFenceNoFill: InsideFromOutsideFill's final classification collapsed to the raw pre-fill town raster —
 # the outside BFS still runs but its result is discarded, so any enclosed empty pocket (never itself
@@ -737,7 +611,7 @@ New-SettlementMutant 'InteriorOps.cs' 'MutNoOwnedCleanup' `
   'MutNoOwnedCleanup.cs'
 
 # InteriorOps.cs defines ONE class and no data types (InteriorData lives in DungeonData.cs, unmutated) — the
-# same sound-rebind shape as SettlementRoads, so a rebind of just "InteriorOps." is sound.
+# same sound-rebind shape as SettlementFence above, so a rebind of just "InteriorOps." is sound.
 New-SettlementRebind 'SelfTestInteriorOps' 'MutNoOwnedCleanup' `
   @('InteriorOps\.') `
   @('WorldGen.Generation.MutNoOwnedCleanup.InteriorOps.')
@@ -748,7 +622,7 @@ New-SettlementRebind 'SelfTestInteriorOps' 'MutNoOwnedCleanup' `
 # corridor that bows outside it. Caught by SelfTestBuildingFootprintCorridors' midpoint-inside assertion (the
 # corridor midpoint, which sits in the open gap, now reads OUTSIDE the rooms+corridor footprint). FloorFootprint.cs
 # defines ONE class and no data types (InteriorFloor/LinkSegment live elsewhere, unmutated and resolved outward),
-# so the single-class New-SettlementMutant / rebind-only-"FloorFootprint." shape (SettlementRoads/InteriorOps) is sound.
+# so the single-class New-SettlementMutant / rebind-only-"FloorFootprint." shape (SettlementFence/InteriorOps) is sound.
 New-SettlementMutant 'FloorFootprint.cs' 'MutFootprintNoCorridors' `
   'if (corridors != null)' `
   'if (false)   // MUTANT: routed corridor legs never folded into the footprint arrangement' `
@@ -767,7 +641,7 @@ New-SettlementRebind 'SelfTestBuildingFootprintCorridors' 'MutFootprintNoCorrido
 # once (PowerShell -replace is global by default). Caught by BuildingGeneratorSelfTests' wall-gap assertion
 # (SelfTestBuilding, section 14): a flush-packed upper-floor room, inflated by the gap, pokes past the
 # full-margin contour. BuildingGenerator.cs defines ONE class and no data types, so the single-class
-# New-SettlementMutant / rebind-only-"BuildingGenerator." shape (SettlementRoads/InteriorOps/FloorFootprint) is
+# New-SettlementMutant / rebind-only-"BuildingGenerator." shape (SettlementFence/InteriorOps/FloorFootprint) is
 # sound.
 New-SettlementMutant 'BuildingGenerator.cs' 'MutUpperFloorNoGap' `
   'FloorFootprint.ContourMargin - UpperFloorWallGapTiles' `
@@ -956,7 +830,7 @@ New-SettlementRebind 'SelfTestHeight' 'MutHeightConstant' `
 # ---- FOOTPRINT MUTANTS (arc A, task 1): three rules pinned by SettlementFootprint. ---------------------------
 # SettlementFootprint.cs defines ONE class and no data types — InteriorData/InteriorFloor/Room live in the
 # unmutated DungeonData.cs and resolve OUTWARD once the file is re-namespaced — so the single-class
-# New-SettlementMutant / rebind-only-"SettlementFootprint." shape (SettlementRoads/InteriorOps/FloorFootprint
+# New-SettlementMutant / rebind-only-"SettlementFootprint." shape (SettlementFence/InteriorOps/FloorFootprint
 # above) is sound here: no second bare type to rebind (unlike SettlementTileGrid's TileType) and no
 # IReadOnlyList<T> struct-covariance trap (unlike SettlementGenerator's PlacedBuilding/GatePoint).
 
@@ -1156,7 +1030,7 @@ New-SettlementRebind 'SelfTestSizeCalibration' 'MutSizingGuaranteeTooHigh' `
 # SettlementMigration.cs defines ONE class and no data types (InteriorData/InteriorFloor/Room live in the
 # unmutated DungeonData.cs, SettlementFootprint in its own unmutated file — both resolve OUTWARD), so the
 # single-class New-SettlementMutant / rebind-only-"SettlementMigration." shape is sound here, exactly like
-# SettlementFootprint/SettlementRoads/InteriorOps above. No IReadOnlyList<T> struct-covariance trap: every
+# SettlementFootprint/SettlementFence/InteriorOps above. No IReadOnlyList<T> struct-covariance trap: every
 # cell list it exchanges is List<(int,int)>, a value tuple of ints, identical in both namespaces.
 
 # MutMigrationNoRecentre: RecentreFloor returns before it folds a single cell, so a legacy town is left
@@ -1194,8 +1068,8 @@ New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationTruncatingHalf' `
 # that would scatter a legacy town's houses 2.33x apart and open a gap between every pair that stood flush.
 # Caught by SelfTestSizeMigration's gate-cell assertion on fixture 1 (loaded with legacyLattice: true): the
 # gate's point 0.60/0.66 is legacy cell (8,9) and current cell (20,22). Mutates SettlementFootprint.cs, so
-# this is a SECOND rebind of SelfTestSizeMigration against a different file (the SelfTestRoads/
-# MutRoadsNoAvoid+MutRoadsNoClearance precedent).
+# this is a SECOND rebind of SelfTestSizeMigration against a different file (the same shape as
+# SelfTestActiveBuildings' three rebinds above).
 New-SettlementMutant 'SettlementFootprint.cs' 'MutMigrationCurrentPitch' `
   'var cell = legacyLattice ? (LegacyCellOf(r.X), LegacyCellOf(r.Y)) : (CellOf(r.X), CellOf(r.Y));' `
   'var cell = (CellOf(r.X), CellOf(r.Y));   // MUTANT: a LEGACY point always read on the CURRENT lattice' `
@@ -1225,7 +1099,7 @@ New-SettlementRebind 'SelfTestSizeMigration' 'MutMigrationAlwaysLegacyPitch' `
 # ---- POI MIGRATION MUTANT: the removed Village type must still normalize on load. ---------------------------
 # PoiMigration.cs defines ONE class and no data types (PoiData/PoiType live in the unmutated PoiData.cs and
 # resolve OUTWARD once this file is re-namespaced), so the single-class New-SettlementMutant / rebind-only-
-# "PoiMigration." shape (SettlementFootprint/SettlementRoads/InteriorOps above) is sound here.
+# "PoiMigration." shape (SettlementFootprint/SettlementFence/InteriorOps above) is sound here.
 
 # MutPoiMigrationNoop: NormalizeLegacyTypes returns immediately, before ever inspecting a POI's type — a
 # legacy-Village POI is never rewritten to City. Caught by SelfTestPoiLegacyTypes' legacy-Village assertion.
@@ -1244,7 +1118,7 @@ New-SettlementRebind 'SelfTestPoiLegacyTypes' 'MutPoiMigrationNoop' `
 # the other three never appear in it, and adding a pattern for them would make New-SettlementRebind throw for
 # want of a match. Nothing else is at risk from the bundling: the mutant copy's own BuildRenderGraph returns its
 # NESTED RenderGraph, and no unmutated file (nor the rebound test) ever receives one. Everything DungeonLayout.cs
-# calls — RoomLinkGeometry, DungeonProjection, SettlementRoads, SettlementFence, SettlementTileGrid,
+# calls — RoomLinkGeometry, DungeonProjection, SettlementFence, SettlementTileGrid,
 # SettlementFootprint, Room/InteriorFloor/Link — lives in an unmutated file and resolves OUTWARD once this file
 # is re-namespaced, so no cross-file stub is needed. LinkNode is RoomLinkGeometry's and stays REAL, so the
 # LinkNodes the rebound fixture hands the REAL SettlementFence carry no covariance trap.
@@ -1264,6 +1138,27 @@ New-SettlementMutant 'DungeonLayout.cs' 'MutFenceIgnoresFootprint' `
 New-SettlementRebind 'SelfTestFence' 'MutFenceIgnoresFootprint' `
   @('DungeonLayout\.') `
   @('WorldGen.Generation.MutFenceIgnoresFootprint.DungeonLayout.')
+
+# MutFenceNoStreets (task 5): DeriveTownFence stops folding the floor's STORED street cells into the rasterized
+# union — Decode is handed null, which its own contract turns into an empty list, so the fence is traced around
+# buildings + gates alone. That is EXACTLY the fence the task's measurement rejected: on the SelfTestWallBounds
+# fixture (seed 1 / Medium / walled) 21 of 78 stored street cells fall outside it, so section 3a's "every stored
+# street cell is inside the derived fence" assertion fires and names the first offender. Section 3b — the
+# control, which derives that buildings+gates-only fence itself and demands it leave at least one cell outside —
+# keeps passing under the mutant (it never calls DeriveTownFence), which is what makes 3a's failure the signal.
+# The locator matches exactly once in the file.
+New-SettlementMutant 'DungeonLayout.cs' 'MutFenceNoStreets' `
+  'SettlementFootprint.Decode(lvl.SettlementParams.StreetCells)' `
+  'SettlementFootprint.Decode(null)   /* MUTANT: the stored streets are not folded into the fence */' `
+  'MutFenceNoStreets.cs'
+
+# SelfTestWallBounds names DungeonLayout. (DeriveTownFence, TilesPerAxis, LinkNodeFor) and nothing else from
+# that file's other three types — same rebind shape as MutFenceIgnoresFootprint above. Everything else it
+# touches (SettlementGenerator, SettlementFence, SettlementFootprint, DungeonProjection, WallContour) stays
+# REAL, so the LinkNodes its own control fence is built from carry no covariance trap.
+New-SettlementRebind 'SelfTestWallBounds' 'MutFenceNoStreets' `
+  @('DungeonLayout\.') `
+  @('WorldGen.Generation.MutFenceNoStreets.DungeonLayout.')
 
 # ---- THE SETTLEMENT VALIDATION RULES (task 4): four rules pinned by DungeonValidator.SettlementIssues. ------
 # DungeonValidator.cs bundles THREE types in one namespace block — enum IssueSeverity, class DungeonIssue AND
@@ -1337,8 +1232,8 @@ foreach ($mc in @('MutValidatorNoOverlapRule', 'MutValidatorNoStreetRule',
 # enclosed), and each must be shown to fire.
 #
 # WHY THESE ARE SEPARATE CLASSES rather than a second rebind of MutTileGridNoGates / MutGridStreetsNotSeeded
-# above, which is what the SelfTestRoads-x3 precedent might suggest: those three rebind DIFFERENT mutant classes
-# against ONE test method. This is the opposite shape — the SAME mutation caught by a SECOND test method, in a
+# above, which is what the SelfTestActiveBuildings-x3 precedent might suggest: those three rebind DIFFERENT
+# mutant classes against ONE test method. This is the opposite shape — the SAME mutation caught by a SECOND test method, in a
 # DIFFERENT source file. New-SettlementRebind names its output gen/SelfTests_<mutantClass>.cs and the class
 # inside it ${mutantClass}SelfTests, so reusing the class name would overwrite the SettlementTileGridSelfTests-
 # derived copy with a SettlementSelfTests-derived one, and the existing catch
@@ -1376,5 +1271,11 @@ foreach ($mc in @('MutGateOpeningNoGates', 'MutGateOpeningStreetsNotSeeded')) {
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
-Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + 46 settlement mutants + 46 settlement rebound test copies into gen/"
+# The two settlement counts are COUNTED, not quoted: the literal 46 that stood here was already 8 short of the
+# real figure before Task 5 removed seven mutants and added one, and a hand-maintained number that nobody can
+# check is worse than no number. Everything else is still a literal — those groups have not changed in a long
+# time. A settlement mutant writes gen/<Name>.cs and gen/SelfTests_<Name>.cs, so the second count is over the
+# rebound copies that are NOT the packer's 14 or the battle grid's 4.
+$settlementMutants = (Get-ChildItem $gen -Filter 'SelfTests_*.cs').Count - 14 - 4
+Write-Host "synced $($files.Count) sources + $($variants.Count) variants + 10 mutants + 2 traces + 14 rebound test copies + 4 battle-grid mutants + 4 battle-grid rebound test copies + $settlementMutants settlement mutants + $settlementMutants settlement rebound test copies into gen/"
 
