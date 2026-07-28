@@ -222,13 +222,52 @@ namespace WorldGen.Rendering
             //    current street set), so half 1 alone never leaves the network in two pieces — this is the
             //    one fixture where NEITHER building needs a new carve and only half 2 (one component) forces
             //    a repair, which is exactly what an "orphan components never joined" mutant would miss.
+            //    It is ALSO the fixture that caught a real accounting bug on review: CarveBetween's BFS
+            //    starts from the orphan's OWN cells, which are already street, and its path always walks
+            //    back through — and includes — its own start, so an unguarded append reported the
+            //    pre-existing cell (1,0) as if newly added (measured before the fix: EnsureAccess returned
+            //    9 where the stored array only grew by 8). The checks below pin MissingAccess's contract
+            //    directly: no duplicate within its own returned list, no already-street cell counted as
+            //    new, and the reported count matching the OBSERVED growth of the stored array — not just
+            //    self-consistency between MissingAccess and EnsureAccess, which would stay equal even if
+            //    both over-counted the same way.
             {
                 var floor = Floor(Cells((1, 0), (10, 0)), (1, 1), (10, 1));
+                var before = new System.Collections.Generic.HashSet<(int i, int j)>(
+                    SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+
+                var missing = SettlementStreetOps.MissingAccess(floor);
+                var seenInMissing = new System.Collections.Generic.HashSet<(int i, int j)>();
+                foreach (var c in missing)
+                {
+                    if (!seenInMissing.Add(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: MissingAccess returned duplicate cell {c} "
+                                     + "for the two-stub fixture");
+                        ok = false;
+                    }
+                    if (before.Contains(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: MissingAccess counted already-street cell "
+                                     + $"{c} as newly added for the two-stub fixture");
+                        ok = false;
+                    }
+                }
+
                 int added = SettlementStreetOps.EnsureAccess(floor);
                 if (added <= 0)
                 {
                     Debug.LogError($"SelfTestStreetAccess: two disconnected street stubs got {added} cells — "
                                  + "the orphan components were never joined");
+                    ok = false;
+                }
+                var after = SettlementFootprint.Decode(floor.SettlementParams.StreetCells);
+                int grew = after.Count - before.Count;
+                if (added != grew)
+                {
+                    Debug.LogError($"SelfTestStreetAccess: EnsureAccess reported {added} cells added but "
+                                 + $"the stored streets only grew by {grew} — an already-street cell was "
+                                 + "double-counted");
                     ok = false;
                 }
                 if (!InvariantHolds(floor, out string why7))

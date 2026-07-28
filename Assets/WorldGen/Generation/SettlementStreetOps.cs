@@ -20,6 +20,8 @@ namespace WorldGen.Generation
         static readonly int[] DJ = { 0, 0, -1, 1 };
 
         /// <summary>The street cells that would have to be ADDED for the invariant to hold. Writes nothing.
+        /// The returned list is DUPLICATE-FREE and sorted row-major — later callers (Task 4's drag preview,
+        /// any future undo-diff or DM-facing count) are entitled to rely on both.
         ///
         /// VIOLATIONS ARE RE-DERIVED AFTER EACH CARVE, not collected once up front: carving a road for one
         /// building can also connect an orphan component, so a batch computed in advance would over-carve
@@ -53,8 +55,7 @@ namespace WorldGen.Generation
             {
                 var seedCell = FirstFreeNeighbour(perRoom[0], buildings);
                 if (seedCell == null) return added;        // fully boxed in — nothing safe to do
-                streets.Add(seedCell.Value);
-                added.Add(seedCell.Value);
+                if (streets.Add(seedCell.Value)) added.Add(seedCell.Value);
             }
 
             // 1. every building fronts a street
@@ -64,7 +65,13 @@ namespace WorldGen.Generation
                 if (Fronts(fp, streets)) continue;
                 var path = CarveToNetwork(fp, buildings, streets);
                 if (path == null) continue;                // boxed in; leave the floor as it is
-                foreach (var c in path) { streets.Add(c); added.Add(c); }
+                // Gated on streets.Add's OWN return value, not a second bookkeeping set: "already in
+                // streets" is the exact, single source of truth for "not actually new," and streets is
+                // already the HashSet paying for that check. Provably a no-op HERE (CarveToNetwork's own
+                // starts are the footprint's non-street neighbours — see Fronts above, which is why the
+                // carve ran at all — so nothing this BFS returns can already be in streets); kept for the
+                // same reason the guard below is NOT optional.
+                foreach (var c in path) if (streets.Add(c)) added.Add(c);
             }
 
             // 2. one component. Re-derived each time for the same reason as above.
@@ -74,7 +81,15 @@ namespace WorldGen.Generation
                 if (orphan == null) break;
                 var path = CarveBetween(orphan, streets, buildings);
                 if (path == null) break;                   // cannot be joined; stop rather than loop
-                foreach (var c in path) { streets.Add(c); added.Add(c); }
+                // NOT a no-op here, unlike pass 1's identical-looking guard above: CarveBetween's own BFS
+                // starts ARE the orphan's cells, which are by construction already members of `streets`
+                // (an orphan is a component OF the street set), and Bfs's path reconstruction always walks
+                // back to — and includes — the start it began from (it has no `prev` entry to stop the
+                // walk any earlier). Every successful orphan-join therefore touches one already-street
+                // cell, and without this guard it would silently ride along as if newly added — exactly
+                // the discrepancy an empirical check caught (EnsureAccess returning 9 where only 8 cells
+                // were actually new).
+                foreach (var c in path) if (streets.Add(c)) added.Add(c);
             }
 
             added.Sort(RowMajor);
