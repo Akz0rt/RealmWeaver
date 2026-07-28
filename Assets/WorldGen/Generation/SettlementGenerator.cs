@@ -170,9 +170,11 @@ namespace WorldGen.Generation
         /// SettlementBlocks and drawn straight by SettlementTileGrid — so those links described a street
         /// network nothing reads and cost one ~18 ms A* per settlement Refresh. Both stages and the links are
         /// gone. Link itself is untouched and still means what it always did for a DUNGEON or a BUILDING
-        /// INTERIOR; the editor can still create one in a town by hand («+ Здание» auto-links a placed
-        /// building to its nearest neighbour, DungeonViewController.PlaceHoveredBuilding), and a town SAVED
-        /// before this change still loads its links — nothing rejects or strips them.
+        /// INTERIOR — and no EDITOR path creates one in a town either: «+ Здание» no longer auto-links a
+        /// placed building (DungeonViewController.PlaceHoveredBuilding) and «Связать» is not offered for a
+        /// settlement at all (DungeonEditorScreen.RefreshToolbar + DungeonViewController.SupportsLinking).
+        /// A town's connectivity is its STREET CELLS. A town SAVED before this change still loads its links
+        /// — nothing rejects or strips them, and the inspector's КОРИДОРЫ section can still delete them.
         ///
         /// PlaceBuildings, PlaceGates and GateCountFor are not called from here either — they compile, they
         /// are still self-tested directly, and they are dead as far as generation is concerned.</summary>

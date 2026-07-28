@@ -114,8 +114,12 @@ namespace WorldGen.Generation
         // load-bearing rather than tidy: every write in this file is bounds-guarded (InBounds), so a footprint
         // whose far cells fall outside an under-sized extent is dropped SILENTLY, with no error anywhere —
         // the same class of bug as a road cell the wall could never wrap, which is what the fine-fence arc
-        // had to fix. `roads` (optional, and no longer passed by Build — see below) additionally folds routed
-        // road ENDPOINTS in, for the view-fit call site.
+        // had to fix.
+        //
+        // NO `roads` PARAMETER ANY MORE (Task 5). It folded a routed road segment's ENDPOINTS into the extent,
+        // for a view fit that had to match a renderer which rasterized those roads. Neither side exists: the
+        // grid reads STORED street cells (the `streets` fold above), and DungeonViewController.FitBoundsFor
+        // now calls this with the IDENTICAL arguments Build does, so the fitted extent IS the drawn extent.
         //
         // ORIGIN vs EXTENT — the distinction this method now turns on. The EXTENT still depends on what is
         // placed (it is the occupied bbox plus MarginCells, and it must be, or a building would fall off the
@@ -126,7 +130,6 @@ namespace WorldGen.Generation
         // renumbers (and, whenever it moved off-pitch, slides). OriginI/OriginJ stay: they are the array's
         // offset into the absolute lattice, not a redefinition of it.
         public static SettlementTileGrid Allocate(System.Collections.Generic.IReadOnlyList<Room> buildings,
-            System.Collections.Generic.IReadOnlyList<LinkSegment> roads = null,
             System.Collections.Generic.IReadOnlyList<(int i, int j)> streets = null)
         {
             var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell };
@@ -148,37 +151,19 @@ namespace WorldGen.Generation
                 if (r.TypeId != 1) continue;
                 foreach (var c in FootprintOf(r)) Fold(c.i, c.j);
             }
-            // Streets count towards `any`, unlike the road ENDPOINTS below: a street cell is stored data that
-            // must be representable in its own right, whereas a routed road is derived and its fold is only
-            // ever a widening of an extent the buildings already established.
+            // Streets count towards `any`: a street cell is stored data that must be representable in its own
+            // right, so a floor with streets and no buildings still gets a real grid rather than the 1x1 below.
             if (streets != null)
                 foreach (var c in streets) Fold(c.i, c.j);
 
             if (!any)
             {
-                // Nothing placed at all: a minimal 1x1 None grid, no throw. Roads are NOT folded in on this
-                // path — the pre-existing empty-input contract, unchanged.
+                // Nothing placed at all: a minimal 1x1 None grid, no throw. The pre-existing empty-input
+                // contract, unchanged.
                 g.OriginI = 0; g.OriginJ = 0; g.W = 1; g.H = 1;
                 g.Cells = new TileType[1, 1];
                 return g;
             }
-
-            // Fold in every road segment's ENDPOINTS. A LinkSegment is a straight line, so both X and Y are
-            // monotonic along it — every intermediate point's cell coordinates are already bounded by the two
-            // endpoints' own, so folding just the endpoints is exact for bbox purposes and far cheaper.
-            // Endpoints are TILE space (RoomLinkGeometry convention); divide by TilesPerAxis first.
-            //
-            // NOTE: Build no longer passes this — streets are stored cells now, not routed segments — so the
-            // only live caller is DungeonViewController.FitBoundsFor, which sizes the VIEW to the routed road
-            // network so a road leaving the buildings' bbox is not fitted off-panel. That means this fold has
-            // no self-test coverage of its own any more; it is not dead, and deleting it as "unused" would
-            // silently narrow the fit.
-            if (roads != null)
-                foreach (var seg in roads)
-                {
-                    Fold(g.CellI(seg.A.X / DungeonLayout.TilesPerAxis), g.CellJ(seg.A.Y / DungeonLayout.TilesPerAxis));
-                    Fold(g.CellI(seg.B.X / DungeonLayout.TilesPerAxis), g.CellJ(seg.B.Y / DungeonLayout.TilesPerAxis));
-                }
 
             g.OriginI = minCellI - MarginCells;
             g.OriginJ = minCellJ - MarginCells;
@@ -207,7 +192,7 @@ namespace WorldGen.Generation
             // Decode ONCE and hand the same list to Allocate (extent) and StreetMask (cells): the extent must
             // be sized for exactly the cells that will be written, or a street outside it is dropped silently.
             var streets = SettlementFootprint.Decode(floor.SettlementParams?.StreetCells);
-            var g = Allocate(floor.Rooms, null, streets);
+            var g = Allocate(floor.Rooms, streets);
             foreach (var r in floor.Rooms)
             {
                 if (r.TypeId != 1) continue;

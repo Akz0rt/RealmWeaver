@@ -439,7 +439,7 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutActiveBuildingsFixedFirst' `
 # SettlementGenerator. and SettlementConfig — but ONLY within the one method Mutants.cs actually runs. The
 # method-scoped rewrite is not a nicety: a blanket file-wide rebind would retype every OTHER test in the file
 # too, and any of them that hands a (now-mutant) GatePoint/PlacedBuilding to a method in an UNMUTATED file
-# would fail to compile rather than fail an assertion — IReadOnlyList&lt;T&gt; does not covary over a struct T.
+# would fail to compile rather than fail an assertion — IReadOnlyList<T> does not covary over a struct T.
 # That is the same trap BattleGridOps's SelfTestOps scoping (above) exists to dodge.
 $settlementTests = Get-Content (Join-Path $src 'SettlementSelfTests.cs') -Raw -Encoding UTF8
 # Same rebind shape, second source: InteriorOps' mutant (below) is caught via SelfTestInteriorOps, which lives

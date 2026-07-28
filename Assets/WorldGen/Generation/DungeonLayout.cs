@@ -383,15 +383,21 @@ namespace WorldGen.Generation
         /// ignored the streets would wrap a different town than the one on screen.
         ///
         /// MEASURED on generated walled towns, 5 seeds × Small/Medium/Large, counting stored street cells
-        /// whose centre falls OUTSIDE the derived fence:
+        /// whose centre falls OUTSIDE the derived fence. The two lines that carry evidential weight are these:
         ///   • with the old ROUTED roads: 9–38 cells outside (the router only ever laid lanes between linked
         ///     nodes, so most of the stored network was never wrapped at all);
-        ///   • with nothing folded: 14–41 outside, and the point list differs from the roads one on every
-        ///     seed — so the roads were load-bearing and dropping them silently would have been a change;
-        ///   • with the streets folded, as here: 0 outside on every seed, buildings likewise 0 outside.
-        /// The fence therefore encloses MORE than it used to, not less, and now agrees with the tile grid
-        /// about what the town covers. SelfTestWallBounds asserts both halves — every stored street cell
-        /// inside, and (the non-vacuity control) a buildings+gates-only fence leaving at least one outside.
+        ///   • with nothing folded: 14–41 outside, and the point list differs from the roads one on EVERY
+        ///     seed — which is what proves the roads were load-bearing, i.e. that dropping them without a
+        ///     replacement would have silently changed the fence's shape rather than left it alone.
+        /// The third case — streets folded, as here — measures 0 outside on every seed, but say plainly what
+        /// that is worth: it is STRUCTURALLY GUARANTEED, not an empirical finding. A street cell rasterized as
+        /// its own pitch × pitch rect is town raster by construction, so the outside flood-fill can never
+        /// reach it and it cannot come out outside the traced boundary. What actually justifies choosing the
+        /// streets is the pair above plus the tile grid's own seed (Building ∪ StreetCells): the fence folds
+        /// what the drawn wall ring is dilated from. SelfTestWallBounds still asserts both halves — every
+        /// stored street cell inside, and (the non-vacuity control) a buildings+gates-only fence leaving at
+        /// least one outside — because the ASSERTION is what catches the fold being removed, which is exactly
+        /// what MutFenceNoStreets does.
         ///
         /// A street cell is folded as a RECT (pitch × pitch at the cell centre, inflated by marginTiles like
         /// every other building rect), not as a degenerate road segment: it is the same shape the tile grid

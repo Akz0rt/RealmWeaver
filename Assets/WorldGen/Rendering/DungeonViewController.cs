@@ -98,11 +98,6 @@ namespace WorldGen.Rendering
         // is what re-arms the fit.
         (float minX, float minY, float maxX, float maxY) fittedBounds;
         bool hasFittedBounds;
-        // The LAST render graph handed to the renderer, from either build site (Refresh and RepositionNow) —
-        // i.e. always the same instance the renderer itself has cached as `lastRg`. The fit no longer reads it
-        // (Task 5 — FitBoundsFor derives a settlement's extent from rooms + stored streets); it is kept as the
-        // controller's own record of what the renderer is currently holding.
-        RenderGraph lastBuiltRg;
         int draggingRoomId;
         // The room the current settle should treat as the "just-moved" one: the last room the DM dragged
         // (OnEndDrag) or a freshly added room (AddRoomAtCenter). For a BUILDING it's the room BeginCascade
@@ -273,7 +268,7 @@ namespace WorldGen.Rendering
         /// THE FIT IS NOW EXACTLY THE DRAWN GRID, not a superset of it (Task 5). This method used to take the
         /// render graph and hand Allocate its ROUTED ROAD ENDPOINTS, a Task-B4
         /// device for matching a renderer that folded routed roads into its own grid. That renderer stopped
-        /// doing so at arc A task 2 — SettlementTileGrid.Build calls Allocate(floor.Rooms, null, streets) —
+        /// doing so at arc A task 2 — SettlementTileGrid.Build calls Allocate(floor.Rooms, streets) —
         /// and this task deleted the router that produced the roads. So the fit passes `null` roads and the
         /// SAME stored street cells Build uses, which makes the two calls identical rather than merely
         /// consistent. Still a pure O(rooms + streets) pass; still routes nothing.</summary>
@@ -293,7 +288,7 @@ namespace WorldGen.Rendering
 
                 // Allocate ONLY — cheap (two passes over the rooms plus one over the street cells, no
                 // dilate/flood-fill) — and with the IDENTICAL arguments SettlementTileGrid.Build passes:
-                // (lvl.Rooms, null, streets). The fitted extent is therefore the drawn extent exactly. The
+                // (rooms, streets). The fitted extent is therefore the drawn extent exactly. The
                 // union with the room bounds is kept for the same reason the pre-Task-8 fit unioned the fence
                 // in — a room can never be clipped — and it is what carries the degenerate case below.
                 //
@@ -313,7 +308,7 @@ namespace WorldGen.Rendering
                 // wider than the old pad it replaces (Allocate's own MarginCells is 3 cells against the pad's
                 // 1), so nothing that used to fit can start clipping.
                 var streetsForFit = SettlementFootprint.Decode(lvl.SettlementParams?.StreetCells);
-                var g = SettlementTileGrid.Allocate(lvl.Rooms, null, streetsForFit);
+                var g = SettlementTileGrid.Allocate(lvl.Rooms, streetsForFit);
                 // W == H == 1 is Allocate's documented "no buildings at all" grid, anchored at (0,0) and
                 // NOT at the town: unioning that box in would drag the fit to the corner of the field.
                 // Nothing is drawn in that state anyway, so fall through to the rooms' own bounds.
@@ -379,7 +374,7 @@ namespace WorldGen.Rendering
         /// the drag clamp lets a room travel out to 0.96 normalized — so every outward drag would rescale the
         /// dungeon on settle, where today it fits once per bind and holds (spec R6). A settlement, by
         /// contrast, is the case the DM actually hit, and its content can grow without any drag at all («+
-        /// Здание», an auto-linked street, the wall ring re-derived around both). Panel resize is NOT narrowed
+        /// Здание» and the wall ring re-derived around it). Panel resize is NOT narrowed
         /// this way: OnRectTransformDimensionsChange fixes a genuine clipping bug for every view, and it fires
         /// only when the rect really changed.</summary>
         void RefitIfContentOverflows(InteriorFloor lvl)
@@ -518,7 +513,7 @@ namespace WorldGen.Rendering
         /// The render graph is built BEFORE the fit. That ordering was load-bearing while the fit read the
         /// graph's routed road segments (Task B4); Task 5 removed that read, so it is now merely the natural
         /// order — BuildRenderGraph is pure in `lvl` (it reads room positions and links and nothing about the
-        /// projection), and the ONE instance it builds feeds RebuildView and lastBuiltRg either way.
+        /// projection), and it is built EXACTLY ONCE either way — the one instance feeds RebuildView.
         ///
         /// THIS IS THE EXPENSIVE PATH, and only content changes should reach it: BuildRenderGraph is the
         /// 106 ms-at-20-rooms Clean route for a dungeon or building interior. A pure RESIZE goes through
@@ -529,12 +524,11 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null)
             {
-                lastBuiltRg = new RenderGraph();
-                renderer.RebuildView(dungeon, levelIndex, null, lastBuiltRg, font, OnJumpToLevel);
+                renderer.RebuildView(dungeon, levelIndex, null, new RenderGraph(), font, OnJumpToLevel);
                 return;
             }
 
-            var rg = lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean));
+            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(RoomLinkGeometry.RoutingMode.Clean));
 
             bool justFitted = false;
             if (pendingFit != PendingFit.None)
@@ -627,11 +621,12 @@ namespace WorldGen.Rendering
         /// cache primitive. Handing it back the projection ResolveProjection just stored is therefore a no-op
         /// assignment followed by exactly the redraw we want, and it needs no new interface member.
         ///
-        /// THE FIT NO LONGER READS THE GRAPH AT ALL (Task 5): FitBoundsFor derives a settlement's extent from
-        /// the floor's rooms and STORED street cells, which is exactly what the renderer draws, so there is no
-        /// fit/draw cache to keep in step and no "is this graph settle-equivalent" question to answer. (It used
-        /// to read lastBuiltRg for the routed road endpoints; a Fast drag frame's road-less graph reaching this
-        /// method was the hazard, held off by LateUpdate's `draggingRoomId != 0 || cascading` guard.)
+        /// THE FIT NO LONGER READS A RENDER GRAPH AT ALL (Task 5): FitBoundsFor derives a settlement's extent
+        /// from the floor's rooms and STORED street cells, which is exactly what the renderer draws, so there
+        /// is no fit/draw cache to keep in step and no "is this graph settle-equivalent" question to answer.
+        /// (It used to read a controller-held `lastBuiltRg` for the routed road endpoints; a Fast drag frame's
+        /// road-less graph reaching this method was the hazard, held off by LateUpdate's
+        /// `draggingRoomId != 0 || cascading` guard. That field is gone with the read.)
         ///
         /// A REFUSED fit (rect still {0,0}) leaves pendingFit armed and repaints nothing — LateUpdate's own
         /// pre-check makes that near-unreachable, and a retry next frame is the correct fallback either way.
@@ -920,11 +915,12 @@ namespace WorldGen.Rendering
         void RepositionNow(InteriorFloor lvl, RoomLinkGeometry.RoutingMode mode)
         {
             if (renderer == null || lvl == null) return;
-            // Still cached at BOTH build sites (here and Refresh) so the renderer and this controller agree on
-            // which graph is the newest one — the resize repaint (IDungeonRenderer.SetProjection) redraws from
-            // the renderer's own copy of it. The FIT no longer reads it at all (see FitBoundsFor).
-            lastBuiltRg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode));
-            renderer.RepositionRooms(lvl, lastBuiltRg);
+            // A LOCAL, not a field. The controller used to cache the last-built graph (lastBuiltRg) because the
+            // FIT read it for the routed road endpoints; Task 5 removed that read, and the renderer keeps its
+            // own copy (`lastRg`) for the resize repaint — so there was nothing left for a controller-side
+            // cache to answer.
+            var rg = DungeonLayout.BuildRenderGraph(lvl, RouteMode(mode));
+            renderer.RepositionRooms(lvl, rg);
         }
 
         // A settlement's link graph is large (40–80 nodes); BuildRenderGraph's Clean mode measured 20–34 s
@@ -939,14 +935,28 @@ namespace WorldGen.Rendering
         // (SettlementRoads' grid A*) on the settle path and skips them on drag frames, because that A* cost
         // ~12.5–18 ms per build. There is no road router any more and a generated town has no links to route
         // — streets are stored cells the tile grid draws directly — so there is no tier left to pick and
-        // nothing per-frame to keep the expensive one off. RouteMode below stays: it is a different guard, on
-        // RoomLinkGeometry's non-scaling Clean mode.
+        // nothing per-frame to keep the expensive one off. RouteMode just above stays: it is a different
+        // guard, on RoomLinkGeometry's non-scaling Clean mode.
 
         // ── Commands ─────────────────────────────────────────────────────────────
 
+        /// <summary>Can this binding hand-link two rooms at all — i.e. should «Связать» exist? EVERYTHING
+        /// EXCEPT A SETTLEMENT (Task 5, second pass). A dungeon corridor and a building-interior corridor are
+        /// real, drawn things the DM authors; a town's connectivity is its STREET CELLS, and the DM's own
+        /// ruling is that houses do not link ("direct links between houses — which are real for corridors in
+        /// buildings and dungeons — are not needed in towns; you can get from any house to any other").
+        ///
+        /// GATED HERE, not only in the toolbar, and deliberately so: DungeonEditorScreen no longer builds the
+        /// button for a settlement, but SetLinkMode is public and RefreshBody calls it (with false) on every
+        /// floor switch. Refusing to ARM here means no future caller — a shortcut key, a context menu, a host
+        /// that rebuilds its own toolbar — can reintroduce town links behind this decision's back. Turning the
+        /// mode OFF is always honoured, so the floor-switch reset still works for every Kind.</summary>
+        public bool SupportsLinking
+            => dungeon == null || dungeon.Kind != InteriorKind.Settlement;
+
         public void SetLinkMode(bool on)
         {
-            LinkMode = on;
+            LinkMode = on && SupportsLinking;
             pendingLinkId = 0;
             RefreshHighlights();
         }
@@ -1060,40 +1070,27 @@ namespace WorldGen.Rendering
         /// likewise handed that null room and no-ops. So nothing moves the new building after it is written —
         /// the DM's cell is final.
         ///
-        /// THE AUTO-LINK — NOW WHOLLY VESTIGIAL, AND KEPT ONLY AS THE PLACE ITS REPLACEMENT GOES (Task 5).
-        /// It was added by the 2.5D arc's final review to merge a placed building's own wall ring back into
-        /// the town's, on the stated mechanism "the road that link produces rasterizes into the ring seed".
-        /// That mechanism died at arc A task 2 (SettlementTileGrid.Build dropped its `roads` parameter; the
-        /// seed is Building ∪ StreetCells, and NO EDITOR PATH WRITES StreetCells), and Task 5 removed the last
-        /// of it: there is no road router, a generated settlement carries no links, and nothing in the town
-        /// view reads lvl.Links at all — the tile grid draws stored cells and the volumetric renderer never
-        /// touches the render graph's segments. So the link below now affects NOTHING that is drawn. It is
-        /// still created because the graph-connectivity intent is right and because deleting it would erase
-        /// the marker for the arc-2 work that must replace it (an editor-side StreetCells writer); a
-        /// hand-linked town also still routes those links through RoomLinkGeometry.Fast for the flat
-        /// fallback renderer.
+        /// NO AUTO-LINK ANY MORE, AND THE RATIONALE IT HAD IS RETIRED RATHER THAN DROPPED (Task 5, second
+        /// pass). The line used to read `if (neighbourId != 0) DungeonOps.AddCorridor(lvl, room.Id,
+        /// neighbourId);`, added by the 2.5D arc's final review to merge a placed building's own wall ring
+        /// back into the town's. Its stated mechanism was "the road that link produces rasterizes into the
+        /// ring seed" — and that died at arc A task 2, when SettlementTileGrid.Build dropped its `roads`
+        /// parameter and the seed became Building ∪ StreetCells, which NO editor path writes. Task 5 finished
+        /// the job: there is no road router, so the link produced no road at all. It was therefore creating
+        /// a graph edge that nothing read, in a model where the DM has explicitly said edges do not belong
+        /// («direct links between houses are not needed in towns; you can get from any house to any other»).
+        /// A town's connectivity is its STREET CELLS, not its Link list.
         ///
-        /// TWO LIVE CONSEQUENCES, BOTH DEFERRED:
-        /// - PLACEMENT: «+ Здание» on an empty cell well clear of town reads GREEN (TryAreaToCell has no
-        ///   bounds check; SettlementTileGrid.At returns None out of bounds; IsPlaceable(None) is true) and
-        ///   produces a house inside its own private 5x5 wall ring with no street and no gate — permanent
-        ///   across save/reload, because nothing ever retro-writes that building's cell into StreetCells
-        ///   either.
-        /// - LOADING AN OLD SAVE: a migrated v9 town has ZERO StreetCells (the field did not exist yet), so
-        ///   its ring is seeded from sparse buildings alone; a rim building whose nearest neighbour is far
-        ///   enough away (the same ≥6-cells-one-axis / ≥5-cells-both distance the CourtyardCells + 1 = 2
-        ///   dilation fails to bridge) gets its own separate ring on load, with no DM action at all.
-        ///
-        /// NOT FIXED HERE, DELIBERATELY: closing either consequence means inventing an EDITOR-SIDE StreetCells
-        /// writer — a placed building would need to carve or extend a stored street the way SettlementBlocks
-        /// does at generation time, and picking that rule (straight line to the nearest street? a local rerun
-        /// of the frontage fill?) is a real design decision, not a comment fix. That is the next arc's to
-        /// build. Until then the auto-link below is graph-connectivity-only: correct for what it still does,
-        /// silent about the wall ring it no longer touches.
-        ///
-        /// The link is not the DM's authored one: authored stays false (AddCorridor's default), so
-        /// DungeonOps.HasAuthoredContent — and therefore the «Перегенерировать» / «× Этаж» confirm — behaves
-        /// exactly as it did before. Dummy buildings are candidates like any other.
+        /// WHAT THE REMOVAL DOES NOT FIX, stated plainly so the gap is not lost with the line: «+ Здание» on
+        /// an empty cell well clear of town still reads GREEN (TryAreaToCell has no bounds check;
+        /// SettlementTileGrid.At returns None out of bounds; IsPlaceable(None) is true) and still produces a
+        /// house sealed in its own private 5x5 wall ring, permanent across save/reload — and a migrated v9
+        /// town, which has ZERO StreetCells, can grow such a ring around a rim building on LOAD with no DM
+        /// action. Those were already the state of the world before this line went (the merge it promised had
+        /// not worked since arc A task 2). Closing them means an EDITOR-SIDE StreetCells writer — a placed
+        /// building carving or extending a stored street the way SettlementBlocks does at generation time —
+        /// and choosing that rule (straight line to the nearest street? a local rerun of the frontage fill?)
+        /// is the next arc's design decision, not something a link could ever have stood in for.
         ///
         /// The write itself is already on the lattice: nx/ny are SettlementTileGrid.CenterX/CenterY of the
         /// target cell. The lattice cannot shift under it either — it is SettlementFootprint's ABSOLUTE one
@@ -1104,14 +1101,8 @@ namespace WorldGen.Rendering
             var lvl = BoundLevel;
             if (lvl == null || !hoverValid || !hoverPlaceable) return;   // stay armed, change nothing
 
-            // Nearest neighbour resolved BEFORE the add, against the hovered cell centre — which is where the
-            // new room is about to be written. Taking it first is what makes "the new room is never its own
-            // neighbour" structural rather than a filter that could be dropped later.
-            int neighbourId = NearestBuildingId(lvl, hoverNx, hoverNy);
+            // The room and NOTHING else — no link (see the doc above).
             var room = DungeonOps.AddRoom(lvl, hoverNx, hoverNy);
-            // 0 = this is the floor's FIRST building: a one-building town needs no street, and there is
-            // nothing to be walled off from.
-            if (neighbourId != 0) DungeonOps.AddCorridor(lvl, room.Id, neighbourId);
             lastAnchorRoomId = 0;
             lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
@@ -1131,26 +1122,6 @@ namespace WorldGen.Rendering
             Refresh();
             SelectRoom(room.Id);
             OnGraphMutated?.Invoke();
-        }
-
-        /// <summary>The building (TypeId 1) room nearest the normalized point (nx, ny), or 0 when the floor
-        /// holds no building at all. Plain squared Euclidean distance with ties broken by the LOWER room id —
-        /// the same "pure distance, ties by lower index" rule the retired street generator used, kept so the
-        /// pick stays deterministic and order-independent. Gates (TypeId 0) are deliberately not
-        /// candidates: a gate is not a street tree node a building hangs off, and its own cell is not a
-        /// Building cell, so linking to one would not seed the dilation blob the way a building does.</summary>
-        static int NearestBuildingId(InteriorFloor lvl, float nx, float ny)
-        {
-            int best = 0;
-            float bestD2 = float.MaxValue;
-            foreach (var r in lvl.Rooms)
-            {
-                if (r.TypeId != 1) continue;
-                float dx = r.X - nx, dy = r.Y - ny;
-                float d2 = dx * dx + dy * dy;
-                if (d2 < bestD2 || (d2 == bestD2 && r.Id < best)) { bestD2 = d2; best = r.Id; }
-            }
-            return best;
         }
 
         /// <summary>Removes the selected room (DungeonOps also strips its corridors and any secrets

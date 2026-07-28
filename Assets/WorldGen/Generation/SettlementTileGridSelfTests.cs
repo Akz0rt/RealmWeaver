@@ -202,17 +202,13 @@ namespace WorldGen.Rendering
             // relying on a rasterizer to land on them.
             var f = Floor(true, (0,0),(2,0),(0,1),(2,1),(0,2),(2,2));
 
-            // Allocate's `roads` fold (SettlementTileGrid.cs, the LinkSegment loop right before OriginI/
-            // OriginJ are set) is no longer exercised transitively through Build — streets are stored cells
-            // now, not routed segments — so Build never passes `roads` any more and this fold would otherwise
-            // have NO test coverage at all. Its only live caller is DungeonViewController.FitBoundsFor. Pin it
-            // directly: a LinkSegment reaching to world cell (1,20) — far past the buildings-only extent
-            // (bbox j 0..2 + MarginCells 3 tops out at j=5) — must widen Allocate's own extent to include it.
-            var farRoad = new System.Collections.Generic.List<LinkSegment> { new LinkSegment {
-                A = new LinkPoint { X = (ax + 0*c)*T, Y = (ay + 1*c)*T },
-                B = new LinkPoint { X = (ax + 1*c)*T, Y = (ay + 20*c)*T }, EdgeIndex = 0 } };
-            if (!SettlementTileGrid.Allocate(f.Rooms, farRoad).InBounds(1, 20))
-            { Debug.LogError("FAIL roads: Allocate(rooms, roads) did not fold the far road endpoint (1,20) into the extent — the roads fold has silently gone dead"); ok = false; }
+            // THE `roads` FOLD THIS SECTION USED TO PIN IS GONE (Task 5). Allocate took an optional list of
+            // routed LinkSegments and folded their endpoints into the extent, for a view fit that had to match
+            // a renderer rasterizing those roads. Build stopped passing it at arc A task 2 and FitBoundsFor
+            // stopped at Task 5, leaving a parameter with no production caller and this assertion as its only
+            // exerciser — so the parameter went and the assertion with it. What replaces it, and what actually
+            // matters, is the STREET-cell fold asserted further down: same "an occupied cell outside the
+            // buildings' bbox must still be representable" property, on the data the grid really reads.
 
             // The street cell list, in three deliberate parts:
             //   (a) (0,1),(1,1),(2,1) — the crossing. (0,1) and (2,1) are ALSO building cells, on purpose:

@@ -720,14 +720,17 @@ namespace WorldGen.Rendering
         /// nearest building, and they pass every test here.
         ///
         /// NOTHING CLOSES IT TODAY, AND THAT IS AN OPEN DEFECT, NOT A DESIGN (corrected again at Task 5). The
-        /// commit side used to be the answer: DungeonViewController.PlaceHoveredBuilding auto-links the new
+        /// commit side used to claim the answer: DungeonViewController.PlaceHoveredBuilding auto-linked the new
         /// room to its nearest neighbour, a road was routed along that link, the road rasterized into cells,
         /// and those cells joined BuildWallRing's dilation seed so the two clusters merged into ONE ring. Two
         /// separate changes killed that chain — the tile grid stopped taking roads (arc A task 2; the seed is
-        /// Building ∪ StreetCells, which no editor path writes) and Task 5 deleted the router. So a building
-        /// founded well clear of town really does end up sealed in its own 5x5 ring, permanently, and the
-        /// auto-link no longer prevents it. The fix is an editor-side StreetCells writer and belongs to the
-        /// next arc; until then this is a known, DM-visible consequence of a permissive placement rule.
+        /// Building ∪ StreetCells, which no editor path writes) and Task 5 deleted the router — so the link
+        /// stopped closing anything long before it was itself removed (Task 5 again: a town has no links).
+        /// A building founded well clear of town therefore ends up sealed in its own 5x5 ring, permanently.
+        /// The fix is an editor-side StreetCells writer — the new building's cell, and a carved street
+        /// reaching it, written into SettlementParams.StreetCells so the ring seed and the drawn streets both
+        /// see it — and it belongs to the next arc. Until then this is a known, DM-visible consequence of a
+        /// permissive placement rule; a graph edge was never going to substitute for stored geometry.
         ///
         /// Static and type-only on purpose: the caller (DungeonViewController) must never make its own
         /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are

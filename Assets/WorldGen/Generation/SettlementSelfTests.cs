@@ -780,12 +780,19 @@ namespace WorldGen.Rendering
                 }
                 var bareFence = SettlementFence.Derive(bareBuildings, bareGates,
                     new System.Collections.Generic.List<LinkSegment>(), SettlementFence.FenceMarginTiles);
-                int outside = 0;
-                if (bareFence != null && bareFence.IsClosedSane())
+                // The control fence must EXIST before its cell count means anything: a null/degenerate derive
+                // would leave `outside` at 0 and make the check below report the exact opposite of what
+                // happened ("already encloses all N"). Separate assertion, separate message.
+                if (bareFence == null || !bareFence.IsClosedSane())
+                { Debug.LogError($"FAIL wallbounds: the buildings+gates-only CONTROL fence came back {(bareFence == null ? "null" : "not-sane")} from {bareBuildings.Count} buildings + {bareGates.Count} gates — the non-vacuity check below cannot run"); ok = false; }
+                else
+                {
+                    int outside = 0;
                     foreach (var c in streetCells)
                         if (!bareFence.Contains(SettlementFootprint.CenterOf(c.i) * T, SettlementFootprint.CenterOf(c.j) * T)) outside++;
-                if (outside == 0)
-                { Debug.LogError($"FAIL wallbounds: a buildings+gates-only fence already encloses all {streetCells.Count} street cells — the street fold in DeriveTownFence is not load-bearing, so assertion 3a proves nothing"); ok = false; }
+                    if (outside == 0)
+                    { Debug.LogError($"FAIL wallbounds: a buildings+gates-only fence already encloses all {streetCells.Count} street cells — the street fold in DeriveTownFence is not load-bearing, so assertion 3a proves nothing"); ok = false; }
+                }
             }
 
             if (ok) Debug.Log("Settlement Wall Bounds: PASS");

@@ -513,7 +513,14 @@ namespace WorldGen.Rendering
                 }
                 else
                     AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
-                linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
+                // «Связать» is NOT offered for a TOWN (Task 5). A corridor between two rooms is a real, drawn
+                // thing in a dungeon or a building interior; a town's connectivity is its street cells, and
+                // houses do not link — the DM's own ruling. The controller refuses to arm the mode for a
+                // settlement anyway (DungeonViewController.SupportsLinking), so this is the affordance half of
+                // one decision, not a second opinion. linkToggleImg stays null on that branch and ToggleLinkMode
+                // (its only reader) already null-checks it.
+                if (!settlement)
+                    linkToggleImg = AddToolbarButton(toolbarBar, "Связать", 90f, ThemeRole.Elev, ToggleLinkMode);
                 AddToolbarButton(toolbarBar, "Удалить", 90f, ThemeRole.Elev, RequestDeleteSelected);
                 // Settlement-only regenerate (spec §7): re-roll the WHOLE town from a new seed. A settlement
                 // has no per-floor «Перегенерировать» (it is always free-edit, never generate-only), so this
