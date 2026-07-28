@@ -212,7 +212,11 @@ namespace WorldGen.Generation
             bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;
 
             MarkRoads(g, streetMask, inside);
-            if (hasWall) MarkGates(g, floor.Rooms);
+            if (hasWall)
+            {
+                MarkGates(g, floor.Rooms);
+                MarkGateSpurs(g);   // AFTER MarkGates: there is nothing to spur from until the gates exist
+            }
 
             return g;
         }
@@ -397,6 +401,97 @@ namespace WorldGen.Generation
                         if (d2 < bestD2) { bestD2 = d2; bestA = a; bestB = b; }
                     }
                 if (bestA >= 0) g.Cells[bestA, bestB] = TileType.Gate;
+            }
+        }
+
+        /// <summary>The measured maximum spur length over the 200-seed x 3-size corpus (1 cell 61%, 2 cells
+        /// 29%, 3 cells 10%, never 4). Asserted, not assumed — see SelfTestGateSpur.</summary>
+        public const int MaxGateSpurCells = 3;
+
+        /// <summary>BFS step cap. One notch above MaxGateSpurCells, so the cap has real headroom and the
+        /// "no path" branch never fires on a generated town — but it must exist, because a town can
+        /// legitimately have no roads at all and this pass must not walk the whole grid looking for one.</summary>
+        const int GateSpurSearchCap = 4;
+
+        static readonly int[] SpurStepA = { -1, 1, 0, 0 };
+        static readonly int[] SpurStepB = { 0, 0, -1, 1 };
+
+        /// <summary>The Void cells that would have to be painted Road for the gate at array cell (gateA,
+        /// gateB) to open straight onto a road. EMPTY when the gate already has a Road 4-neighbour — which is
+        /// what makes both this method and MarkGateSpurs idempotent, and is the exact property SelfTestGateSpur
+        /// asserts on an already-built grid. NULL when no road is reachable within GateSpurSearchCap steps.
+        ///
+        /// WALKS VOID ONLY, never Building, Wall, Gate or None. The courtyard is one cell deep but 4-connected
+        /// all the way round, so when the cell straight inward from a gate faces a Building the search runs
+        /// SIDEWAYS along the courtyard to the nearest cell that faces a road — a short lane hugging the wall,
+        /// which is the intended result and the reason the painted path (1-3 cells) is usually shorter than the
+        /// straight-line gate-to-road distance (2-4 cells) would suggest.</summary>
+        public static System.Collections.Generic.List<(int a, int b)> GateSpurPath(SettlementTileGrid g,
+                                                                                   int gateA, int gateB)
+        {
+            if (g == null) return null;
+            var prev = new System.Collections.Generic.Dictionary<(int, int), (int a, int b)>();
+            var dist = new System.Collections.Generic.Dictionary<(int, int), int> { [(gateA, gateB)] = 0 };
+            var queue = new System.Collections.Generic.List<(int a, int b)> { (gateA, gateB) };
+
+            for (int head = 0; head < queue.Count; head++)
+            {
+                var cur = queue[head];
+                int d = dist[(cur.a, cur.b)];
+                if (HasRoadNeighbour(g, cur.a, cur.b))
+                {
+                    var path = new System.Collections.Generic.List<(int a, int b)>();
+                    var walk = cur;
+                    while (walk.a != gateA || walk.b != gateB)
+                    {
+                        path.Add(walk);
+                        walk = prev[(walk.a, walk.b)];
+                    }
+                    path.Reverse();
+                    return path;
+                }
+                if (d >= GateSpurSearchCap) continue;
+                for (int k = 0; k < 4; k++)
+                {
+                    int na = cur.a + SpurStepA[k], nb = cur.b + SpurStepB[k];
+                    if (na < 0 || nb < 0 || na >= g.W || nb >= g.H) continue;
+                    if (g.Cells[na, nb] != TileType.Void) continue;
+                    if (dist.ContainsKey((na, nb))) continue;
+                    dist[(na, nb)] = d + 1;
+                    prev[(na, nb)] = (cur.a, cur.b);
+                    queue.Add((na, nb));
+                }
+            }
+            return null;
+        }
+
+        static bool HasRoadNeighbour(SettlementTileGrid g, int a, int b)
+        {
+            for (int k = 0; k < 4; k++)
+            {
+                int na = a + SpurStepA[k], nb = b + SpurStepB[k];
+                if (na < 0 || nb < 0 || na >= g.W || nb >= g.H) continue;
+                if (g.Cells[na, nb] == TileType.Road) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Paint every gate's spur. DERIVED, like the wall itself: these cells are recomputed on every
+        /// Build and never enter SettlementParams.StreetCells, so the DM cannot erase one and a gate that moves
+        /// takes its spur with it. Only ever rewrites Void, which sits below Road in the Building > Gate > Wall
+        /// > Road > Void > None precedence, so no existing precedence argument changes.</summary>
+        static void MarkGateSpurs(SettlementTileGrid g)
+        {
+            var gates = new System.Collections.Generic.List<(int a, int b)>();
+            for (int a = 0; a < g.W; a++)
+                for (int b = 0; b < g.H; b++)
+                    if (g.Cells[a, b] == TileType.Gate) gates.Add((a, b));
+
+            foreach (var gate in gates)
+            {
+                var path = GateSpurPath(g, gate.a, gate.b);
+                if (path == null) continue;
+                foreach (var c in path) g.Cells[c.a, c.b] = TileType.Road;
             }
         }
 

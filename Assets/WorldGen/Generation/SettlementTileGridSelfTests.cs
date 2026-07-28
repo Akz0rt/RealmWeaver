@@ -598,6 +598,120 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Footprint Tiles: PASS");
         }
 
+        /// <summary>Every gate opens onto a road (DM finding ·3). The one-cell courtyard between the wall and
+        /// the built-up area stays; a short lane is painted from each gate through it to the nearest road, and
+        /// nowhere else.
+        ///
+        /// WHY THE CORPUS ASSERTION IS "PATH IS EMPTY ON A BUILT GRID" rather than "a Road exists somewhere
+        /// near the gate": GateSpurPath returns an EMPTY list exactly when the gate already has a Road
+        /// 4-neighbour, so re-asking it on a grid Build has already spurred proves BOTH that the pass ran and
+        /// that it is idempotent, in one assertion that cannot pass while the pass is neutered.</summary>
+        [ContextMenu("Self-Test: Gate Spur")]
+        public void SelfTestGateSpur()
+        {
+            bool ok = true;
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            int gatesSeen = 0;
+
+            foreach (var size in sizes)
+                for (int k = 0; k < 20; k++)
+                {
+                    int seed = 1000 + k;
+                    var cfg = new SettlementConfig { Seed = seed, Size = size, ActiveBuildings = 1, HasWall = true };
+                    var floor = SettlementGenerator.Generate(cfg, "poi").Floors[0];
+                    var g = SettlementTileGrid.Build(floor);
+
+                    int footprintCells = 0;
+                    foreach (var r in floor.Rooms)
+                        if (r.TypeId == 1) footprintCells += SettlementTileGrid.FootprintOf(r).Count;
+                    int buildingTiles = 0;
+                    for (int a = 0; a < g.W; a++)
+                        for (int b = 0; b < g.H; b++)
+                            if (g.Cells[a, b] == TileType.Building) buildingTiles++;
+                    if (buildingTiles != footprintCells)
+                    {
+                        Debug.LogError($"SelfTestGateSpur: {size} seed {seed}: the spur ate a building — "
+                                     + $"{buildingTiles} Building tiles for {footprintCells} footprint cells");
+                        ok = false;
+                    }
+
+                    // "там где ворота и только там": every Road tile is either a STORED street cell or sits
+                    // within MaxGateSpurCells of a gate. Bounds the spur's length AND its reach in one claim,
+                    // on the real corpus — a fixture cannot, because where the wall ring lands for a given
+                    // hand-placed gate is not something a test should be pinning by hand.
+                    var stored = new System.Collections.Generic.HashSet<(int i, int j)>(
+                        SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+                    var gateCells = new System.Collections.Generic.List<(int i, int j)>();
+                    for (int a = 0; a < g.W; a++)
+                        for (int b = 0; b < g.H; b++)
+                            if (g.Cells[a, b] == TileType.Gate) gateCells.Add((a + g.OriginI, b + g.OriginJ));
+                    int spurCells = 0;
+                    for (int a = 0; a < g.W; a++)
+                        for (int b = 0; b < g.H; b++)
+                        {
+                            if (g.Cells[a, b] != TileType.Road) continue;
+                            var w = (i: a + g.OriginI, j: b + g.OriginJ);
+                            if (stored.Contains(w)) continue;
+                            spurCells++;
+                            int near = int.MaxValue;
+                            foreach (var gc in gateCells)
+                            {
+                                int d = System.Math.Abs(gc.i - w.i) + System.Math.Abs(gc.j - w.j);
+                                if (d < near) near = d;
+                            }
+                            if (near > SettlementTileGrid.MaxGateSpurCells)
+                            {
+                                Debug.LogError($"SelfTestGateSpur: {size} seed {seed}: Road at world cell "
+                                             + $"({w.i},{w.j}) is neither a stored street nor within "
+                                             + $"{SettlementTileGrid.MaxGateSpurCells} of a gate (nearest {near})");
+                                ok = false;
+                            }
+                        }
+                    // THE PRIMARY BOUND, and the reason the distance test above is not enough on its own: a
+                    // small town's ring is short enough that most of its courtyard sits within 3 cells of SOME
+                    // gate, so "near a gate" alone would let a pass that paved the whole courtyard through.
+                    // Total painted cells cannot exceed one spur per gate at its measured maximum length.
+                    int spurBudget = gateCells.Count * SettlementTileGrid.MaxGateSpurCells;
+                    if (spurCells > spurBudget)
+                    {
+                        Debug.LogError($"SelfTestGateSpur: {size} seed {seed}: {spurCells} Road cells are not "
+                                     + $"stored streets, over the budget of {gateCells.Count} gates x "
+                                     + $"{SettlementTileGrid.MaxGateSpurCells} cells = {spurBudget}");
+                        ok = false;
+                    }
+
+                    for (int a = 0; a < g.W; a++)
+                        for (int b = 0; b < g.H; b++)
+                        {
+                            if (g.Cells[a, b] != TileType.Gate) continue;
+                            gatesSeen++;
+                            var again = SettlementTileGrid.GateSpurPath(g, a, b);
+                            if (again == null)
+                            {
+                                Debug.LogError($"SelfTestGateSpur: {size} seed {seed}: gate at array cell "
+                                             + $"({a},{b}) reaches no road at all");
+                                ok = false;
+                            }
+                            else if (again.Count != 0)
+                            {
+                                Debug.LogError($"SelfTestGateSpur: {size} seed {seed}: gate at array cell "
+                                             + $"({a},{b}) still wants {again.Count} more cells painted after "
+                                             + "Build — the spur pass did not run or is not idempotent");
+                                ok = false;
+                            }
+                        }
+                }
+
+            if (gatesSeen < 60)
+            {
+                Debug.LogError($"SelfTestGateSpur: only {gatesSeen} gates drawn across 60 towns — the corpus "
+                             + "assertion above is near-vacuous; expected at least 60");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Gate Spur: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

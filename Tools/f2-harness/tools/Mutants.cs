@@ -93,6 +93,9 @@ namespace WorldGen.Generation
                 ("MutGridStreetsNotSeeded", "SettlementTileGrid.Build marks the stored street cells Road but never folds them into the wall ring's occupied seed (the wall stops wrapping a street)",
                     () => new WorldGen.MutantTests.MutGridStreetsNotSeededSelfTests().SelfTestRoadsAndGates()),
 
+                ("MutGateSpurNone", "SettlementTileGrid.Build's gate-spur pass skipped (the courtyard stays between every gate and the road network)",
+                    () => new WorldGen.MutantTests.MutGateSpurNoneSelfTests().SelfTestGateSpur()),
+
                 ("MutGridOneCellPerRoom", "SettlementTileGrid.Build writes only a footprint's REPRESENTATIVE cell instead of every cell (a building is a point again)",
                     () => new WorldGen.MutantTests.MutGridOneCellPerRoomSelfTests().SelfTestFootprintTiles()),
                 ("MutGridExtentIgnoresFootprint", "SettlementTileGrid.Allocate folds only a footprint's REPRESENTATIVE cell into the extent (far cells fall out of bounds and are silently dropped by the InBounds guards)",

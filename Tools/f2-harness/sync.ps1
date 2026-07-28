@@ -738,6 +738,18 @@ foreach ($mc in @('MutTileGridNoGates', 'MutTileGridRoadIgnoresBuilding', 'MutGr
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# MutGateSpurNone: the gate-spur pass is skipped, so the one-cell courtyard stays between every gate and the
+# road network — exactly the state DM finding .3 reported. SelfTestGateSpur's "path is empty on a built grid"
+# assertion must fail.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateSpurNone' `
+  '                MarkGateSpurs(g);   // AFTER MarkGates: there is nothing to spur from until the gates exist' `
+  '                // MUTANT: gate spurs never painted' `
+  'MutGateSpurNone.cs'
+
+New-SettlementRebind 'SelfTestGateSpur' 'MutGateSpurNone' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutGateSpurNone.SettlementTileGrid.', 'WorldGen.Generation.MutGateSpurNone.TileType')
+
 # ---- TILE GRID FOOTPRINT MUTANTS (arc A, task 2): a building is a FOOTPRINT of cells, not a point. ----------
 # Same bundling as every other SettlementTileGrid mutant above (TileType + SettlementTileGrid share the file),
 # so the rebind needs the same two patterns. SettlementFootprint.cs is NOT mutated here and is not in the same

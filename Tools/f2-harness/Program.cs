@@ -89,6 +89,7 @@ static class Program
         tileGrid.SelfTestDepth();
         tileGrid.SelfTestHeight();
         tileGrid.SelfTestFootprintTiles();
+        tileGrid.SelfTestGateSpur();
         tileGrid.SelfTestTileGridSanity();
         var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
         blocks.SelfTestBlocks();
