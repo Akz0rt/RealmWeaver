@@ -200,10 +200,20 @@ namespace WorldGen.Rendering
                 // footprint path when settlement && TypeId == 1 — a building's SizeW/SizeH is provably
                 // dead there, since the footprint (not this stepper) drives its drawn fit and the fence.
                 // A gate room falls through to DungeonProjection.EffectiveSize instead, which DOES read
-                // SizeW/SizeH, and that size feeds the road router's obstacle mask — so a gate's stepper
-                // is a working control (e.g. shrinking an oversized default against its ring lane) and
-                // must stay visible. Dungeons and building interiors are untouched: the row still renders
-                // exactly as before for both (TypeId is irrelevant off a settlement floor).
+                // SizeW/SizeH, and that size DOES feed the road router's obstacle mask (LinkNodeFor's
+                // non-footprint branch) — so the stepper is not dead CODE for a gate the way it is for a
+                // building.
+                //
+                // BUT AT HEAD THE ROAD ROUTER'S OUTPUT IS NEVER DRAWN — the rationale above stops one hop
+                // short of what actually reaches the screen. SettlementRoads' routed segments reach only
+                // FitBoundsFor, through RoadsForFit (DungeonViewController.cs) — used solely to widen the
+                // FIT bounds so a road end doesn't land outside the panel. SettlementTileGrid.Build, which
+                // decides what actually renders, takes no roads at all (Building ∪ StreetCells only). So
+                // pressing W+/H+ on a gate changes the obstacle mask an invisible A* pass runs against, and
+                // the only visible effect is the town zooming OUT to keep that wider (invisible) route
+                // inside the fitted panel — the exact "inert stepper that zooms the town out" symptom
+                // hiding it for buildings exists to remove. Left VISIBLE anyway, because whether to hide it
+                // for gates too is the DM's call at the in-Editor checkpoint, not a decision to make here.
                 if (dungeon == null || dungeon.Kind != InteriorKind.Settlement || room.TypeId != 1)
                 {
                     var sizeRow = AddRow(sec.transform, "SizeRow", 22f, 4f);

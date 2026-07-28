@@ -467,8 +467,10 @@ namespace WorldGen.Rendering
             // ---- 1. NO gate rooms; a substantial building count is STILL placed ------------------------
             // (InteriorFloor.Wall was removed — a wall-less village has no perimeter to store; "no wall" is now
             // structural, so what remains to check is that a HasWall=false town produces zero gate rooms below.)
-            // This is the bug under fix: today BuildFloor derives placement from the (null) wall, so a
-            // village yields 0 buildings, 0 gates, 0 streets — a completely empty map.
+            // FIXED LONG AGO — kept as HISTORY, not a live warning: BuildFloor used to derive placement from
+            // the (null) wall, so a wall-less village yielded 0 buildings, 0 gates, 0 streets, a completely
+            // empty map. The building-count floor a few lines down is what now pins the fix in place; if a
+            // future change regressed it, an empty map is exactly the failure mode that floor would catch.
             int gateNodes = 0, buildNodes = 0;
             foreach (var r in floor.Rooms)
             {
@@ -479,15 +481,22 @@ namespace WorldGen.Rendering
             }
             if (gateNodes != 0)
             { Debug.LogError($"FAIL village: {gateNodes} gate rooms in a wall-less village, want 0"); ok = false; }
-            // RE-DERIVED from 20, identically to SelfTestAssembly's own floor (arc A, task 3) — same model
-            // change, same measured envelope (target 40 → 15..24 buildings over seeds 1..60). This fixture
-            // (seed 4) happens to land on 21 and would still have squeaked past 20, which is precisely why
-            // it is being moved: a threshold that survives by one building is pinning luck, not a rule.
+            // THE FLOOR IS THE SIZE TABLE'S OWN PROMISE, not a number chosen here — the SAME final-review fix
+            // as SelfTestAssembly's identical floor above, applied a second time. It too used to be a
+            // hardcoded 12, parked on the reasoning that this test and its mutant retire together with
+            // SettlementStreets at "Task 5" — but Task 5 never ran (nothing on this branch deleted
+            // SettlementStreets), so the park expired. This fixture's cfg.Size is Medium too (see the cfg
+            // above), so the SAME guarantee applies: Medium's measured minimum over the shipped 200-seed sweep
+            // is 42 (SettlementSizing's own class doc), so a floor of 12 left it ~3.5x slack — a regression
+            // cutting Medium's yield by two-thirds would still have passed here.
             //
-            // SAME RULE AS SelfTestBlocks' OWN MinRatio, same reasoning as SelfTestAssembly's identical floor
-            // just above: both are 0.8 x a measured minimum, only at different scope (cross-target 0.250 for
-            // MinRatio vs this-target 15 for the 12 here) — one rule, two scopes, not two tolerances.
-            const int minVillageBuildings = 12;
+            // GuaranteedMinBuildings(cfg.Size) instead of any new magic number, for the same reason as
+            // SelfTestAssembly: it is the same quantity, already measured and already test-enforced by
+            // SettlementBlocksSelfTests' own size-calibration sweep on every one of its 200 seeds at this
+            // exact contour. What THIS fixture (seed 4, wall-less) adds over that sweep and over
+            // SelfTestAssembly: it holds the promise through the GATE-LESS BuildFloor branch (HasWall =
+            // false), which neither the sweep nor SelfTestAssembly's gated fixture ever exercises.
+            int minVillageBuildings = SettlementSizing.GuaranteedMinBuildings(cfg.Size);
             if (buildNodes < minVillageBuildings)
             { Debug.LogError($"FAIL village: a village produced only {buildNodes} buildings, want >={minVillageBuildings}"); ok = false; }
 
@@ -1166,21 +1175,25 @@ namespace WorldGen.Rendering
         [ContextMenu("Self-Test: Settlement Roads Perf")]
         public void SelfTestRoadsPerf()
         {
-            // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the 80-building cap
-            // must stay under the settle-path budget. 50 ms mirrors SelfTestStreets' bound; the per-frame
-            // budget (if RoadsDuringDrag) was measured separately by the spike.
+            // THE acceptance gate from the Ц1.6 spec (§2.4): a full road Build at the size table's LARGEST
+            // fixture must stay under the settle-path budget. 50 ms mirrors SelfTestStreets' bound; the
+            // per-frame budget (if RoadsDuringDrag) was measured separately by the spike. STALE NUMBER FIXED:
+            // this used to be pinned at an "80-building cap" that no longer exists — the fixture below is
+            // Size = Large, whose measured yield runs 98..151 buildings over the shipped 200-seed sweep
+            // (median 120, DungeonInspectorPanel's own size-table comment quotes the same range), well past
+            // the retired cap.
             var cfg = new SettlementConfig { Seed = 9, Size = SettlementSize.Large, ActiveBuildings = 10, HasWall = true };   // SelfTestStreets' bigCfg shape
             var floor = SettlementGenerator.BuildFloor(cfg);
             var nodes = RoadNodes(floor); var edges = RoadEdges(floor);
 
             // Ц2.6: the wall is no longer a road obstacle, so there is no wall sweep cost left to pay here —
-            // the gate now times the plain building-obstacle Build at the largest grid (80-building cap).
+            // the gate now times the plain building-obstacle Build at the largest size class the table has.
             SettlementRoads.Build(nodes, edges);             // warm-up
             var sw = System.Diagnostics.Stopwatch.StartNew();
             SettlementRoads.Build(nodes, edges);
             sw.Stop();
             if (sw.ElapsedMilliseconds >= 50)
-                Debug.LogError($"FAIL roads perf: Build at 80 buildings took {sw.ElapsedMilliseconds} ms, want <50");
+                Debug.LogError($"FAIL roads perf: Build at {nodes.Count} buildings took {sw.ElapsedMilliseconds} ms, want <50");
             else
                 Debug.Log($"Settlement Roads Perf: PASS ({sw.ElapsedMilliseconds} ms)");
         }

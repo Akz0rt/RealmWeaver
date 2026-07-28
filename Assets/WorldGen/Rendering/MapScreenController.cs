@@ -223,7 +223,13 @@ namespace WorldGen.Rendering
         ///
         /// HasWall is likewise no longer derived from the POI type (see the call site, which passes true): the
         /// wall is the DM's own «Со стеной» choice, stored on SettlementParams.HasWall, and deriving a default
-        /// from a type that no longer varies would just be a second opinion about it.</summary>
+        /// from a type that no longer varies would just be a second opinion about it.
+        ///
+        /// `type` IS READ BY NOTHING BELOW — kept in the signature anyway rather than dropped, because the
+        /// one call site already has poi.Type sitting in hand (it is reading poi.* to build the whole config)
+        /// and passing it costs nothing; dropping the parameter would be a pure signature-churn edit with no
+        /// behaviour change, not a bug fix, so it is left alone until an actual second settlement POI type
+        /// gives it something to read again.</summary>
         static (SettlementSize size, int active) SettlementDefaults(PoiType type) => (SettlementSize.Medium, 5);
 
         /// <summary>Wired to DungeonEditorScreen.OnCloseRequested (the top-strip back button) — the SAME

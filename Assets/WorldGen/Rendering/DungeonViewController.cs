@@ -1108,20 +1108,42 @@ namespace WorldGen.Rendering
         /// likewise handed that null room and no-ops. So nothing moves the new building after it is written —
         /// the DM's cell is final.
         ///
-        /// THE AUTO-LINK, AND WHY IT IS NOT OPTIONAL (final-review fix). DungeonOps.AddRoom creates a room with
-        /// NO links. A settlement's streets are routed from lvl.Links (SettlementRoads.Build over
-        /// BuildRenderGraph's edge list), so a linkless building gets no street — and, worse, no ROAD CELLS.
-        /// SettlementTileGrid.BuildWallRing dilates the occupied seed (buildings ∪ road cells) by
-        /// CourtyardCells + 1 = 2 and flood-fills the outside: two clusters whose nearest cells are ≥ 6 apart on
-        /// one axis, or ≥ 5 apart on BOTH, stay disconnected, and each grows its OWN wall ring (that pass has no
-        /// equivalent of SettlementFence.BridgeStrays — a documented limitation). The placeable region reaches
-        /// that far: SettlementVolumeRenderer.TryPlacementCell accepts any on-field cell that is not
-        /// Building/Wall/Gate, which on a big walled city includes the diagonal corners of Allocate's 3-cell
-        /// margin band. So a linkless placement out there would be a lone house sealed in its own little wall
-        /// with no street, and NOTHING would ever repair it — the Clean tier can only fold a road into the seed
-        /// if a road exists. Linking the new building to the nearest existing one restores the generator's own
-        /// invariant (every building hangs off the street tree, SettlementStreets), and the road that link
-        /// produces rasterizes into the seed and merges the two clusters back into one ring.
+        /// THE AUTO-LINK — KEPT FOR GRAPH CONNECTIVITY, NO LONGER FIXES THE WALL RING (final-review fix,
+        /// SECOND PASS: the original final-review fix below is now INERT for the bug it names; see the
+        /// correction that follows). DungeonOps.AddRoom creates a room with NO links, and a settlement's
+        /// ROUTED roads come from lvl.Links (SettlementRoads.Build over BuildRenderGraph's edge list) — every
+        /// building is still supposed to hang off the street tree (SettlementStreets' own invariant), and a
+        /// linkless building still breaks that regardless of the wall-ring correction below. So linking the
+        /// new building to its nearest neighbour is still the right call and stays exactly as it is.
+        ///
+        /// WHAT IS NO LONGER TRUE, and why this paragraph exists: this comment used to say the road that link
+        /// produces "rasterizes into the seed and merges the two clusters back into one ring." That was true
+        /// when it was written and is false now. SettlementTileGrid.Build dropped its `roads` parameter (arc
+        /// A, task 2): the wall ring's occupied seed is Building ∪ StreetCells (SettlementTileGrid.cs
+        /// Build/BuildWallRing), and StreetCells is written in exactly two places — SettlementGenerator.
+        /// BuildFloor (the generator) and SettlementMigration.RecentreFloor (translating an existing list on
+        /// load). NO EDITOR PATH WRITES IT. The link below is still created and its road is still routed, but
+        /// that route reaches only the render graph and FitBoundsFor's fit (see the REFIT note further down)
+        /// — never SettlementParams.StreetCells — so it never reaches the ring seed. The fix is inert for the
+        /// bug it was written to close.
+        ///
+        /// TWO LIVE CONSEQUENCES, BOTH DEFERRED:
+        /// - PLACEMENT: «+ Здание» on an empty cell well clear of town reads GREEN (TryAreaToCell has no
+        ///   bounds check; SettlementTileGrid.At returns None out of bounds; IsPlaceable(None) is true) and
+        ///   produces a house inside its own private 5x5 wall ring with no street and no gate — permanent
+        ///   across save/reload, because nothing ever retro-writes that building's cell into StreetCells
+        ///   either.
+        /// - LOADING AN OLD SAVE: a migrated v9 town has ZERO StreetCells (the field did not exist yet), so
+        ///   its ring is seeded from sparse buildings alone; a rim building whose nearest neighbour is far
+        ///   enough away (the same ≥6-cells-one-axis / ≥5-cells-both distance the CourtyardCells + 1 = 2
+        ///   dilation fails to bridge) gets its own separate ring on load, with no DM action at all.
+        ///
+        /// NOT FIXED HERE, DELIBERATELY: closing either consequence means inventing an EDITOR-SIDE StreetCells
+        /// writer — a placed building would need to carve or extend a stored street the way SettlementBlocks
+        /// does at generation time, and picking that rule (straight line to the nearest street? a local rerun
+        /// of the frontage fill?) is a real design decision, not a comment fix. That is the next arc's to
+        /// build. Until then the auto-link below is graph-connectivity-only: correct for what it still does,
+        /// silent about the wall ring it no longer touches.
         ///
         /// The link is the GENERATOR's shape, not the DM's: authored stays false (AddCorridor's default), the
         /// same as every SettlementStreets edge, so DungeonOps.HasAuthoredContent — and therefore the
@@ -1148,13 +1170,18 @@ namespace WorldGen.Rendering
             lastAnchorRoomId = 0;
             lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
-            // REFIT (final-review fix). The grid just grew — by the new building's own cell, by its street, and
-            // by the 2-cell ring re-derived around both — and FitBoundsFor reads that extent straight off
-            // SettlementTileGrid.Allocate, so without this the new house (or its stretch of wall) can land
-            // outside the fitted panel. Set BEFORE Refresh deliberately: Refresh resolves a pending fit itself,
-            // so the rebuild below already draws at the new scale instead of drawing once at the old one and
-            // being rebuilt again by LateUpdate. PLACEMENT ONLY — drag and drag-end must NOT refit (the spec
-            // forbids rescaling under the cursor), which is why this lives here and not in OnDrag/OnEndDrag.
+            // REFIT (final-review fix). The grid just grew — by the new building's own cell, by the ROUTED
+            // road SettlementRoads.Build lays for the auto-link above (which widens FitBoundsFor's fit through
+            // RoadsForFit/Allocate's road-endpoint fold even though — see the auto-link's own doc above — it
+            // draws no tile and never becomes a stored street), and by the 2-cell ring SettlementTileGrid.Build
+            // re-derives around the new Building cell (CourtyardCells + 1) — which, per that same doc, may now
+            // be the new building's OWN separate ring rather than a merge into the town's — and FitBoundsFor
+            // reads that extent straight off SettlementTileGrid.Allocate, so without this the new house (or
+            // its stretch of wall) can land outside the fitted panel. Set BEFORE Refresh deliberately: Refresh
+            // resolves a pending fit itself, so the rebuild below already draws at the new scale instead of
+            // drawing once at the old one and being rebuilt again by LateUpdate. PLACEMENT ONLY — drag and
+            // drag-end must NOT refit (the spec forbids rescaling under the cursor), which is why this lives
+            // here and not in OnDrag/OnEndDrag.
             // Rebuild, not FromCache: a building was ADDED, so the cached graph no longer describes the town.
             pendingFit = PendingFit.Rebuild;
             // Same order AddRoomAtCenter uses, and it matters: RebuildView clears the renderer's highlight set,

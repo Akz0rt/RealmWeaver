@@ -45,7 +45,8 @@ namespace WorldGen.Generation
         /// more — gates come out of SettlementBlocks — and the road/fence adapter now sizes a settlement
         /// building from its FOOTPRINT (DungeonLayout.LinkNodeFor), which is the whole point of that change:
         /// a multi-cell house is 3.84 tiles per cell, not 6 tiles total. Left compiling, and left DOCUMENTED
-        /// as dead, because Task 5 removes this whole preliminary-gate path along with SettlementStreets.</summary>
+        /// as dead, because Task 5 is STILL PENDING to remove this whole preliminary-gate path along with
+        /// SettlementStreets (see BuildFloor's own doc below for the up-to-date state of that task).</summary>
         public const float NominalBuildingTiles = 6f;
 
         /// <summary>Wall radius (normalized) for a size class. A one-line delegation to SettlementSizing on
@@ -199,8 +200,9 @@ namespace WorldGen.Generation
                 foreach (var gc in layout.GateCells)
                     gates.Add(new GatePoint { X = SettlementFootprint.CenterOf(gc.i), Y = SettlementFootprint.CenterOf(gc.j) });
 
-            // The street stage still works in POINTS (Task 5 replaces it wholesale), so each footprint is
-            // handed to it as its representative cell's centre — the same point the room below carries.
+            // The street stage still works in POINTS (Task 5 is STILL PENDING to replace it wholesale — see
+            // this method's own class doc above), so each footprint is handed to it as its representative
+            // cell's centre — the same point the room below carries.
             var buildings = new List<PlacedBuilding>(layout.Buildings.Count);
             foreach (var fp in layout.Buildings)
             {
