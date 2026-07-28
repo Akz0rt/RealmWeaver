@@ -667,32 +667,30 @@ namespace WorldGen.Rendering
             if (overActive != overPlaced)
             { Debug.LogError($"FAIL active: a request of 1000000 produced {overActive} active of {overPlaced} placed, want ALL {overPlaced} active"); ok = false; }
 
-            // ---- 6. THE DM DEFECT ITSELF: active buildings are SPREAD across the emission order, never
-            // taken from one end of it. Buildings come out of block-by-block generation in a fixed spatial
-            // order, so emission index tracks POSITION IN THE TOWN — the bug report was every active
+            // ---- 6. THE DM DEFECT ITSELF, IN BOTH AXES: active buildings are spread by real 2D lattice
+            // distance across the town, never clustered near one wall — the bug report was every active
             // building landing in one corner of a Large town with a small active count.
             //
-            // THIS IS THE GEOMETRY THE RULE CHANGES, asserted directly and exactly — never a derived metric
-            // (a mean or a variance across positions would still pass with the underlying rule broken, this
-            // arc's own named failure mode). Generation partitions the placed buildings' emission order into
-            // as many contiguous, roughly-equal buckets as the (clamped) active request and puts exactly one
-            // active pick inside each bucket; this recomputes those SAME bucket boundaries purely from the
-            // floor's own room count — never reads an internal field this test cannot see — and checks EVERY
-            // bucket carries EXACTLY one active building.
+            // A first cut of this fix (and this test) partitioned EMISSION ORDER into contiguous bands and
+            // put one active pick per band. That was caught on review as only a partial fix: buildings are
+            // emitted in ROW-MAJOR order (SettlementBlocks' block sort is j-then-i), so a band of emission
+            // order is literally a horizontal STRIP — the old test could pass while every active pick still
+            // hugged the same wall on the OTHER axis. Generation now marks activity by greedy farthest-point
+            // sampling over the buildings' lattice cells instead (see BuildFloor's own doc), and this section
+            // re-derives THAT rule directly rather than a 1-axis proxy of it.
             //
-            // WHY THIS CANNOT FLAKE: it holds BY CONSTRUCTION, on every seed, not merely a typical one.
-            // Integer division guarantees each bucket is non-empty whenever the bucket count is no more than
-            // the placed count (the sweep below always keeps it far below the Large-size guarantee), and
-            // generation rolls exactly one pick per bucket — so "exactly one active per bucket" is a
-            // mathematical property of the algorithm, not an observation that could go either way on an
-            // unlucky seed. The handful of seeds below exist only to exercise several distinct town shapes,
-            // not to fish for one where a probabilistic property happens to hold.
-            //
-            // Fails hard against the discarded prefix rule: with several buckets over a Large town's 80+
-            // buildings, a prefix of the lowest indices lands entirely inside the FIRST bucket (which spans
-            // far more than the bucket count's worth of indices), so that bucket counts every active building
-            // at once and every later bucket counts zero — both wrong by this assertion's "exactly one" bar.
+            // RE-DERIVES THE EXACT RULE INDEPENDENTLY — the SAME idiom SelfTestAssembly/SelfTestGates/
+            // SelfTestVillage already use elsewhere in this file (reconstruct the SAME deterministic pipeline
+            // from primitives, then compare element-for-element against the real BuildFloor output) rather
+            // than trusting a derived metric (a span or a variance across positions would still read "spread
+            // enough" with the underlying rule broken — this arc's own named failure mode). The reference
+            // below is built ONLY from the floor's own room cells and the SAME seed formula BuildFloor uses
+            // for this pass (cfg.Seed*3001+293) — it never reads BuildFloor's internal isActiveBuilding array
+            // — so if a future edit dropped the RNG, hardcoded the starting pick, or reverted to any 1-axis
+            // rule, the real output would diverge from this independently-computed set and the comparison
+            // below fires.
             int[] spreadSeeds = { 501, 502, 503, 504, 505, 506 };
+            var seedActiveCellSets = new System.Collections.Generic.List<System.Collections.Generic.HashSet<(int i, int j)>>();
             foreach (int spreadSeed in spreadSeeds)
             {
                 var spreadCfg = new SettlementConfig { Seed = spreadSeed, Size = SettlementSize.Large, ActiveBuildings = 5, HasWall = true };
@@ -701,23 +699,76 @@ namespace WorldGen.Rendering
                 foreach (var r in spreadFloor.Rooms) if (r.TypeId == 1) spreadBuildings.Add(r);
                 int spreadPlaced = spreadBuildings.Count;
                 int spreadGoal = spreadCfg.ActiveBuildings > spreadPlaced ? spreadPlaced : spreadCfg.ActiveBuildings;
-                // NON-VACUITY: with fewer than 2 buckets the loop below either does nothing (0) or checks a
-                // single bucket spanning the WHOLE emission order, which the old prefix rule also satisfies —
-                // a future edit that shrank this fixture's ActiveBuildings could silently stop testing
-                // anything. This fixture's own ActiveBuildings (5) keeps spreadGoal well above 2; this guard
-                // just makes that assumption an assertion instead of a silent precondition.
+                // NON-VACUITY: fewer than 2 picks says nothing about spread at all. This fixture's own
+                // ActiveBuildings (5) keeps spreadGoal well above 2; this guard makes that assumption an
+                // assertion instead of a silent precondition.
                 if (spreadGoal < 2)
-                { Debug.LogError($"FAIL active: seed {spreadSeed} spread fixture has spreadGoal {spreadGoal}, want >=2 — the bucket assertion below would be vacuous or too weak to distinguish spread from a prefix"); ok = false; }
-                for (int b = 0; b < spreadGoal; b++)
+                { Debug.LogError($"FAIL active: seed {spreadSeed} spread fixture has spreadGoal {spreadGoal}, want >=2 — the farthest-point re-derivation below needs at least two picks to say anything about spread"); ok = false; continue; }
+
+                var cellI = new int[spreadPlaced];
+                var cellJ = new int[spreadPlaced];
+                for (int i = 0; i < spreadPlaced; i++)
                 {
-                    int lo = (int)((long)b * spreadPlaced / spreadGoal);
-                    int hi = (int)((long)(b + 1) * spreadPlaced / spreadGoal);
-                    int activeInBucket = 0;
-                    for (int idx = lo; idx < hi; idx++) if (!spreadBuildings[idx].IsDummy) activeInBucket++;
-                    if (activeInBucket != 1)
-                    { Debug.LogError($"FAIL active: seed {spreadSeed} bucket {b} (emission indices {lo}..{hi - 1} of {spreadPlaced}) has {activeInBucket} active buildings, want exactly 1 — active buildings must be spread across the whole emission order, not clustered at one end"); ok = false; }
+                    cellI[i] = SettlementFootprint.CellOf(spreadBuildings[i].X);
+                    cellJ[i] = SettlementFootprint.CellOf(spreadBuildings[i].Y);
                 }
+
+                // Independent re-derivation: same greedy farthest-point algorithm, same seed formula, computed
+                // here from scratch — see the section comment above for why this is not circular.
+                var refActive = new bool[spreadPlaced];
+                var refRng = new System.Random(spreadSeed * 3001 + 293);
+                int refFirst = refRng.Next(spreadPlaced);
+                refActive[refFirst] = true;
+                var minDist = new long[spreadPlaced];
+                for (int x = 0; x < spreadPlaced; x++)
+                {
+                    long dx = cellI[x] - cellI[refFirst], dy = cellJ[x] - cellJ[refFirst];
+                    minDist[x] = dx * dx + dy * dy;
+                }
+                for (int picked = 1; picked < spreadGoal; picked++)
+                {
+                    int best = -1; long bestDist = -1;
+                    for (int x = 0; x < spreadPlaced; x++)
+                    {
+                        if (refActive[x]) continue;
+                        if (minDist[x] > bestDist) { bestDist = minDist[x]; best = x; }
+                    }
+                    refActive[best] = true;
+                    for (int x = 0; x < spreadPlaced; x++)
+                    {
+                        if (refActive[x]) continue;
+                        long dx = cellI[x] - cellI[best], dy = cellJ[x] - cellJ[best];
+                        long d = dx * dx + dy * dy;
+                        if (d < minDist[x]) minDist[x] = d;
+                    }
+                }
+
+                // Compare EXACTLY, cell for cell — the literal set the rule is supposed to produce, not a
+                // count or a span of it.
+                var realActiveCells = new System.Collections.Generic.HashSet<(int i, int j)>();
+                var refActiveCells = new System.Collections.Generic.HashSet<(int i, int j)>();
+                for (int i = 0; i < spreadPlaced; i++)
+                {
+                    if (!spreadBuildings[i].IsDummy) realActiveCells.Add((cellI[i], cellJ[i]));
+                    if (refActive[i]) refActiveCells.Add((cellI[i], cellJ[i]));
+                }
+                if (realActiveCells.Count != refActiveCells.Count || !realActiveCells.SetEquals(refActiveCells))
+                { Debug.LogError($"FAIL active: seed {spreadSeed} real active cells ({realActiveCells.Count}) do not match the independently re-derived farthest-point set ({refActiveCells.Count}) — the marking rule has drifted from greedy farthest-point sampling"); ok = false; }
+
+                seedActiveCellSets.Add(realActiveCells);
             }
+
+            // ---- 6b. THE SEEDED STARTING PICK IS ACTUALLY EXERCISED: at least two of the swept seeds must
+            // produce DIFFERENT active cell sets. Redundant with 6's per-seed exact-match check for most
+            // regressions (a hardcoded starting pick would already fail THAT comparison against the honestly-
+            // random reference, seed by seed) — kept anyway as a second, cheaper, more direct signal that the
+            // seeded roll is load-bearing rather than decorative.
+            bool anySpreadDifferent = false;
+            for (int a = 0; a < seedActiveCellSets.Count && !anySpreadDifferent; a++)
+                for (int b = a + 1; b < seedActiveCellSets.Count; b++)
+                    if (!seedActiveCellSets[a].SetEquals(seedActiveCellSets[b])) { anySpreadDifferent = true; break; }
+            if (!anySpreadDifferent && seedActiveCellSets.Count > 1)
+            { Debug.LogError("FAIL active: all swept seeds produced the IDENTICAL active cell set — the seeded starting pick looks hardcoded, not seed-dependent"); ok = false; }
 
             if (ok) Debug.Log("Settlement Active/Dummy: PASS");
         }

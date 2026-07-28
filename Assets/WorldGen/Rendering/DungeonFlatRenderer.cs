@@ -511,13 +511,13 @@ namespace WorldGen.Rendering
             rt.pivot = new Vector2(0.5f, 0.5f);
 
             // Dummy building (Ц1.5, Task 5): a settlement building placed purely as decorative filler
-            // (SettlementGenerator picks min(ActiveBuildings, buildingCount) buildings active, spread across
-            // the emission order rather than taken from one end of it, and marks the rest IsDummy — see
-            // BuildFloor's own doc for why a prefix of the emission order used to bunch every active building
-            // into one corner of the town). Gated on Kind==Settlement (isSettlement) so dungeon/building
-            // cards — where IsDummy is never set — are byte-for-byte unaffected; TypeId==1 excludes a gate
-            // (TypeId 0 is never a dummy per Room.IsDummy's own doc comment, but the check costs nothing extra
-            // here).
+            // (SettlementGenerator picks min(ActiveBuildings, buildingCount) buildings active by greedy
+            // farthest-point sampling over their lattice cells — spread in BOTH axes, not merely non-adjacent
+            // in emission order — and marks the rest IsDummy; see BuildFloor's own doc for why an emission-
+            // order prefix, and later a 1-axis emission-order band, both used to bunch active buildings
+            // together instead). Gated on Kind==Settlement (isSettlement) so dungeon/building cards — where
+            // IsDummy is never set — are byte-for-byte unaffected; TypeId==1 excludes a gate (TypeId 0 is
+            // never a dummy per Room.IsDummy's own doc comment, but the check costs nothing extra here).
             bool isDummyBuilding = isSettlement && r.IsDummy && r.TypeId == 1;
 
             var img = go.AddComponent<Image>();

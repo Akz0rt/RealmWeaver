@@ -584,9 +584,11 @@ namespace WorldGen.Rendering
             var fieldLayout = field.GetComponent<LayoutElement>();
             fieldLayout.flexibleWidth = 0f;
             fieldLayout.preferredWidth = 64f;
-            // Centred to match the neighbouring stepper rows' value column (BuildStepper's valTxt uses
-            // TextAnchor.MiddleCenter) — BuildInputField's own default (UpperLeft) is left alone since it is
-            // shared with the room Title/Body/label text fields, which want left-aligned prose, not a number.
+            // Centred (DM request): this field shows a single number in a narrow fixed-width column, the
+            // same presentation BuildStepper's centred valTxt uses for a stepper's value elsewhere in this
+            // panel — a left-top anchor reads oddly for a short number in a box this size. BuildInputField's
+            // own default (UpperLeft) is left alone since it is shared with the room Title/Body/label text
+            // fields, which want left-aligned prose, not a number.
             field.textComponent.alignment = TextAnchor.MiddleCenter;
             field.text = sp.ActiveBuildings.ToString();
             field.onEndEdit.AddListener(v => CommitActiveBuildingsTyped(sp, v));

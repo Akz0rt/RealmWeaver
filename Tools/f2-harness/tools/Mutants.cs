@@ -66,6 +66,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutNoActiveMarkSelfTests().SelfTestActiveBuildings()),
                 ("MutActiveBuildingsPrefix", "SettlementGenerator.BuildFloor's active pick reverts to a prefix of emission order (IsDummy = i >= activeCount) — the DM-reported one-corner clustering bug",
                     () => new WorldGen.MutantTests.MutActiveBuildingsPrefixSelfTests().SelfTestActiveBuildings()),
+                ("MutActiveBuildingsFixedFirst", "SettlementGenerator.BuildFloor's farthest-point starting pick hardcoded to building 0 (activeRng never consulted)",
+                    () => new WorldGen.MutantTests.MutActiveBuildingsFixedFirstSelfTests().SelfTestActiveBuildings()),
                 ("MutRoadsNoAvoid",     "SettlementRoads' obstacle mask never marks a cell (roads route through houses)",
                     () => new WorldGen.MutantTests.MutRoadsNoAvoidSelfTests().SelfTestRoads()),
                 ("MutRoadsNoReuse",     "SettlementRoads' reuse discount removed (branches never merge into arterial lanes)",

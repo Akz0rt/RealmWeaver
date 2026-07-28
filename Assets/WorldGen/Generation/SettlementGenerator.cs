@@ -233,20 +233,33 @@ namespace WorldGen.Generation
             }
             int activeCount = cfg.ActiveBuildings < 0 ? 0 : cfg.ActiveBuildings;
 
-            // SPREAD, NOT A PREFIX. DM report: a Large town with a small active count had every active
-            // building bunched in one corner. Root cause was here — buildings are emitted BLOCK BY BLOCK in
-            // a fixed spatial order (SettlementBlocks.Generate sorts blocks before filling them), and the old
-            // rule (`i >= activeCount`) made "active" mean "the first N buildings in emission order", which
-            // is always "every building in the first block or two".
+            // SPREAD IN BOTH AXES, NOT A PREFIX OF EMISSION ORDER. DM report: a Large town with a small
+            // active count had every active building bunched in one corner. Root cause was here — buildings
+            // are emitted BLOCK BY BLOCK in a fixed spatial order (SettlementBlocks.Generate sorts blocks
+            // before filling them), and the old rule (`i >= activeCount`) made "active" mean "the first N
+            // buildings in emission order", which is always "every building in the first block or two".
             //
-            // THE FIX PARTITIONS EMISSION ORDER INTO activeGoal CONTIGUOUS, ROUGHLY-EQUAL BUCKETS and rolls
-            // exactly one active pick inside each bucket. This is a STRUCTURAL guarantee, not a probabilistic
-            // one: for every bucket b in 0..activeGoal-1, EXACTLY one building whose emission index falls in
-            // that bucket's [lo,hi) range is marked active — on every seed, not merely a typical one. A
-            // uniform shuffle-then-take-first-N was considered and rejected for exactly this reason: it only
-            // makes "not clustered" typical (probability 1 - 1/C(buildings.Count, activeGoal) of avoiding the
-            // old prefix outright), so a self-test over it could only ever assert "these particular seeds
-            // happen to spread" rather than a property true of the rule itself.
+            // A FIRST FIX (bucketing emission order into activeGoal contiguous bands, one active pick per
+            // band) was tried and REJECTED on review: SettlementBlocks visits blocks in ROW-MAJOR order (j
+            // then i — SettlementBlocks.cs's ByLowestCell/RowMajor sort), so a contiguous emission-index band
+            // is literally a horizontal STRIP of the town. That only constrains the j-coordinate; nothing
+            // stops every active pick from landing near the same wall on the i-axis.
+            //
+            // FIXED INSTEAD WITH GREEDY FARTHEST-POINT SAMPLING over the buildings' actual LATTICE CELLS (not
+            // their emission index): pick one seeded starting building, then repeatedly add whichever
+            // remaining building is farthest — by squared cell distance — from EVERY building already picked,
+            // breaking ties by the lower emission index (stable; matches the row-major convention the rest
+            // of this file uses, and only ever matters on an exact tie). This is the classic greedy k-center /
+            // farthest-first-traversal construction, and it constrains BOTH axes by construction: each pick
+            // maximizes real 2D separation, not a 1D position in a fixed traversal order.
+            //
+            // MEASURABLE, NOT A MAGIC NUMBER: SelfTestActiveBuildings re-derives this exact algorithm
+            // independently (same seed formula, off the floor's own room cells, never reading this method's
+            // internals) and compares the resulting active CELL SET element-for-element against what
+            // BuildFloor actually produced — so a future edit that dropped the RNG, hardcoded the starting
+            // pick, or collapsed back to a 1-axis rule diverges from the re-derivation and is caught, not
+            // merely a metric (a span or a variance) that could still read "spread enough" with the rule
+            // broken.
             //
             // Seeded distinctly from every other pass already in this arc, so a change to how many rolls one
             // of them makes can never shift which buildings THIS pass marks active: SettlementBlocks uses
@@ -257,12 +270,43 @@ namespace WorldGen.Generation
             var isActiveBuilding = new bool[buildings.Count];
             if (activeGoal > 0)
             {
-                var activeRng = new System.Random(cfg.Seed * 3001 + 293);
-                for (int b = 0; b < activeGoal; b++)
+                var buildingCellI = new int[buildings.Count];
+                var buildingCellJ = new int[buildings.Count];
+                for (int i = 0; i < buildings.Count; i++)
                 {
-                    int lo = (int)((long)b * buildings.Count / activeGoal);
-                    int hi = (int)((long)(b + 1) * buildings.Count / activeGoal);
-                    isActiveBuilding[lo + activeRng.Next(hi - lo)] = true;
+                    var rep = SettlementFootprint.Representative(layout.Buildings[i]);
+                    buildingCellI[i] = rep.i;
+                    buildingCellJ[i] = rep.j;
+                }
+                var activeRng = new System.Random(cfg.Seed * 3001 + 293);
+                int first = activeRng.Next(buildings.Count);
+                isActiveBuilding[first] = true;
+                // minDistToActive[x] tracks the running minimum squared cell distance from building x to the
+                // active set built so far, updated incrementally so each of the remaining activeGoal-1 picks
+                // costs O(buildings.Count) rather than recomputing every distance to every active pick from
+                // scratch at every step.
+                var minDistToActive = new long[buildings.Count];
+                for (int x = 0; x < buildings.Count; x++)
+                {
+                    long dx = buildingCellI[x] - buildingCellI[first], dy = buildingCellJ[x] - buildingCellJ[first];
+                    minDistToActive[x] = dx * dx + dy * dy;
+                }
+                for (int picked = 1; picked < activeGoal; picked++)
+                {
+                    int best = -1; long bestDist = -1;
+                    for (int x = 0; x < buildings.Count; x++)
+                    {
+                        if (isActiveBuilding[x]) continue;
+                        if (minDistToActive[x] > bestDist) { bestDist = minDistToActive[x]; best = x; }
+                    }
+                    isActiveBuilding[best] = true;
+                    for (int x = 0; x < buildings.Count; x++)
+                    {
+                        if (isActiveBuilding[x]) continue;
+                        long dx = buildingCellI[x] - buildingCellI[best], dy = buildingCellJ[x] - buildingCellJ[best];
+                        long d = dx * dx + dy * dy;
+                        if (d < minDistToActive[x]) minDistToActive[x] = d;
+                    }
                 }
             }
             for (int i = 0; i < buildings.Count; i++)

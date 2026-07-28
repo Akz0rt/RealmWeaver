@@ -417,19 +417,32 @@ New-SettlementMutant 'SettlementGenerator.cs' 'MutNoActiveMark' `
   'IsDummy = false' `
   'MutNoActiveMark.cs'
 
-# MutActiveBuildingsPrefix: the DM-reported clustering bug, restored on purpose. The bucketed spread pick is
-# left computed (isActiveBuilding, activeGoal, activeRng all still assigned — dead but harmless) and only the
-# room's IsDummy line reverts to the old rule, "active" == "the first activeCount buildings in emission
-# order" — which SettlementBlocks.Generate's block-by-block fill always packs into one corner of the town.
-# Caught by SelfTestActiveBuildings' bucket-spread sweep: on every one of its swept seeds, the fixed-size
-# fixture always has activeGoal < buildings.Count buckets covering the WHOLE emission order, so at least one
-# bucket's [lo,hi) sits at hi > activeCount — a building this mutant would leave dummy.
+# MutActiveBuildingsPrefix: the DM-reported clustering bug, restored on purpose. The farthest-point pick is
+# left computed (isActiveBuilding, activeGoal, activeRng, the whole FPS loop all still run — dead but
+# harmless) and only the room's IsDummy line reverts to the old rule, "active" == "the first activeCount
+# buildings in emission order" — which SettlementBlocks.Generate's block-by-block fill always packs into one
+# corner of the town. Caught by SelfTestActiveBuildings section 6's farthest-point re-derivation: the prefix
+# set it produces is (with overwhelming probability, verified for every swept seed) NOT the set the honest
+# greedy farthest-point reference computes, so the exact-cell-set comparison fails.
 New-SettlementMutant 'SettlementGenerator.cs' 'MutActiveBuildingsPrefix' `
   'IsDummy = !isActiveBuilding[i]' `
   'IsDummy = i >= activeCount   // MUTANT: active reverts to a prefix of emission order' `
   'MutActiveBuildingsPrefix.cs'
 
-foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs', 'MutActiveBuildingsPrefix.cs')) {
+# MutActiveBuildingsFixedFirst: the seeded starting pick hardcoded to building 0, ignoring activeRng
+# entirely — the exact "later pass simplifies the seemingly-unused RNG away" regression flagged on review.
+# Every subsequent farthest-point pick still runs for real off that wrong start, so this is NOT the same
+# failure as MutActiveBuildingsPrefix (the resulting set can still look "spread," just anchored at the wrong
+# point) — it needs its own mutant. Caught by section 6's exact-cell-set comparison: the independent
+# reference in the test genuinely calls activeRng.Next(...), so on any swept seed where the real random
+# first pick is not building 0 (verified true for all six), production's fixed-start set diverges from the
+# reference's honestly-random-start set.
+New-SettlementMutant 'SettlementGenerator.cs' 'MutActiveBuildingsFixedFirst' `
+  'int first = activeRng.Next(buildings.Count);' `
+  'int first = 0;   // MUTANT: seeded starting pick hardcoded, activeRng never consulted' `
+  'MutActiveBuildingsFixedFirst.cs'
+
+foreach ($outFile in @('MutNoInsideFilter.cs', 'MutNoWallClearance.cs', 'MutGateAtCentre.cs', 'MutNoActiveMark.cs', 'MutActiveBuildingsPrefix.cs', 'MutActiveBuildingsFixedFirst.cs')) {
   Repair-SettlementGeneratorCrossFileCall $outFile
 }
 
@@ -627,11 +640,17 @@ New-SettlementRebind 'SelfTestActiveBuildings' 'MutNoActiveMark' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutNoActiveMark.SettlementGenerator.', 'WorldGen.Generation.MutNoActiveMark.SettlementConfig')
 
-# MutActiveBuildingsPrefix is caught by the SAME method's bucket-spread sweep (a second, separate
+# MutActiveBuildingsPrefix is caught by the SAME method's farthest-point re-derivation (a second, separate
 # SelfTests_<class>.cs output) — same shape as MutNoActiveMark just above.
 New-SettlementRebind 'SelfTestActiveBuildings' 'MutActiveBuildingsPrefix' `
   @('SettlementGenerator\.', '\bSettlementConfig\b') `
   @('WorldGen.Generation.MutActiveBuildingsPrefix.SettlementGenerator.', 'WorldGen.Generation.MutActiveBuildingsPrefix.SettlementConfig')
+
+# MutActiveBuildingsFixedFirst is caught by the SAME method's farthest-point re-derivation too (a third,
+# separate SelfTests_<class>.cs output) — same shape again.
+New-SettlementRebind 'SelfTestActiveBuildings' 'MutActiveBuildingsFixedFirst' `
+  @('SettlementGenerator\.', '\bSettlementConfig\b') `
+  @('WorldGen.Generation.MutActiveBuildingsFixedFirst.SettlementGenerator.', 'WorldGen.Generation.MutActiveBuildingsFixedFirst.SettlementConfig')
 
 # SettlementRoads.cs defines ONE class and no data types — its LinkNode/LinkEdge/LinkGeometry
 # parameters resolve outward to the REAL WorldGen.Generation types after re-namespacing, so a rebind
