@@ -19,18 +19,19 @@ namespace WorldGen.Rendering
             {
                 new PoiData { Type = (PoiType)PoiMigration.LegacyVillageTypeId, Name = "Старая деревня" },
                 new PoiData { Type = PoiType.Tower,  Name = "Башня" },
+                new PoiData { Type = PoiType.Temple, Name = "Храм" },
                 new PoiData { Type = PoiType.Port,   Name = "Порт" },
             };
             PoiMigration.NormalizeLegacyTypes(pois);
 
             if (pois[0].Type != PoiType.City)
             { Debug.LogError($"FAIL poi migration: a legacy Village loaded as {(int)pois[0].Type}, want City({(int)PoiType.City})"); ok = false; }
-            if (pois[1].Type != PoiType.Tower || pois[2].Type != PoiType.Port)
-            { Debug.LogError($"FAIL poi migration: renumbered a bystander — Tower became {(int)pois[1].Type}, Port became {(int)pois[2].Type}"); ok = false; }
+            if (pois[1].Type != PoiType.Tower || pois[2].Type != PoiType.Temple || pois[3].Type != PoiType.Port)
+            { Debug.LogError($"FAIL poi migration: renumbered a bystander — Tower became {(int)pois[1].Type}, Temple became {(int)pois[2].Type}, Port became {(int)pois[3].Type}"); ok = false; }
 
             // Idempotent: running it again changes nothing.
             PoiMigration.NormalizeLegacyTypes(pois);
-            if (pois[0].Type != PoiType.City || pois[1].Type != PoiType.Tower || pois[2].Type != PoiType.Port)
+            if (pois[0].Type != PoiType.City || pois[1].Type != PoiType.Tower || pois[2].Type != PoiType.Temple || pois[3].Type != PoiType.Port)
             { Debug.LogError("FAIL poi migration: a second pass changed an already-normalized list"); ok = false; }
 
             // A null list must not throw — a corrupt save can deserialize Pois as null.
@@ -43,8 +44,11 @@ namespace WorldGen.Rendering
         public void SelfTestPoiMigrationSentinel()
         {
             // Trailing sentinel: never mutant-rebound, so the rebind's method scan always has a terminator
-            // after the real test above. Asserts nothing.
-            Debug.Log("Poi Migration Sentinel: PASS");
+            // after the real test above. Asserts nothing — it exists solely so a mutant-reboundable test
+            // is never this file's last method. It still logs (rather than doing nothing) so a console
+            // scan confirms this method ran at all, but the line below deliberately does NOT say PASS —
+            // a line that can never go red must never look like a passing test.
+            Debug.Log("Poi Migration Sentinel: no-op terminator (asserts nothing, not a test result)");
         }
     }
 }

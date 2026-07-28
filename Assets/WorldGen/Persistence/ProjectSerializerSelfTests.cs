@@ -602,8 +602,13 @@ namespace WorldGen.Persistence
                 var b3 = f.Rooms.Find(x => x.Id == 3);
                 if (b2 == null || b2.Preview == null || b2.Preview.Length != 3 || b2.Preview[0] != 9)
                 { Debug.LogError("FAIL settlement save: building 2's Preview bytes were lost"); ok = false; }
-                if (b3 != null && b3.Preview != null)
-                { Debug.LogError("FAIL settlement save: building 3 (no image) loaded with a non-null Preview"); ok = false; }
+                if (b3 == null || b3.Preview != null)
+                {
+                    Debug.LogError(b3 == null
+                        ? "FAIL settlement save: building 3 (no image) did not load at all"
+                        : $"FAIL settlement save: building 3 (no image) loaded with a non-null Preview ({b3.Preview.Length} bytes)");
+                    ok = false;
+                }
             }
 
             // ---- 2. A null Preview key is OMITTED from the file, not merely null-safe on load -----------
@@ -913,8 +918,13 @@ namespace WorldGen.Persistence
             var cells = room == null ? null : SettlementFootprint.Decode(room.Cells);
             if (cells == null || cells.Count != 1 || cells[0] != (16, 16))
             { Debug.LogError($"FAIL legacy size: room 1 came back with {(cells == null ? "no" : cells.Count.ToString())} cells{(cells != null && cells.Count > 0 ? " at " + cells[0] : "")}, want exactly one at (16,16) — EnsureFootprints (legacy cell 8) then RecentreFloor (+8) through Load"); ok = false; }
-            if (room != null && (System.Math.Abs(room.X - 0.495f) > 1e-4f || System.Math.Abs(room.Y - 0.495f) > 1e-4f))
-            { Debug.LogError($"FAIL legacy size: room 1's point came back ({room.X:F4},{room.Y:F4}), want (0.4950,0.4950) — RederivePositions did not run through Load"); ok = false; }
+            if (room == null || System.Math.Abs(room.X - 0.495f) > 1e-4f || System.Math.Abs(room.Y - 0.495f) > 1e-4f)
+            {
+                Debug.LogError(room == null
+                    ? "FAIL legacy size: room 1 did not load at all"
+                    : $"FAIL legacy size: room 1's point came back ({room.X:F4},{room.Y:F4}), want (0.4950,0.4950) — RederivePositions did not run through Load");
+                ok = false;
+            }
 
             // ---- 4. THE KEY IS GONE FROM THE NEXT SAVE. DefaultValueHandling.Ignore + the migration zeroing
             // the field is what keeps a v11 file from carrying a knob nothing writes. Repo-grep confirms
