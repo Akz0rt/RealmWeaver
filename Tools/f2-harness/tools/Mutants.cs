@@ -86,6 +86,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutTileGridNoWallRingSelfTests().SelfTestWallRing()),
                 ("MutTileGridNoVoid", "SettlementTileGrid.Build's Void assignment neutered (courtyard cells stay None)",
                     () => new WorldGen.MutantTests.MutTileGridNoVoidSelfTests().SelfTestWallRing()),
+                ("MutSpurWideDilation", "SettlementTileGrid's wall ring dilates every street cell by the full courtyard radius (a connector road out to an outlying house is a five-wide causeway again)",
+                    () => new WorldGen.MutantTests.MutSpurWideDilationSelfTests().SelfTestSpurWidth()),
                 ("MutTileGridNoGates", "SettlementTileGrid.Build's gate-reclassify write neutered (a gate never turns its nearest Wall cell into Gate)",
                     () => new WorldGen.MutantTests.MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()),
                 ("MutTileGridRoadIgnoresBuilding", "SettlementTileGrid.Build's road marking drops the Building/Wall precedence guard (a road overwrites whatever tile is already there); named for the Building half since the Wall half is provably unreachable and is not what this mutant is caught by",

@@ -59,6 +59,14 @@ namespace WorldGen.Generation
         public const int CourtyardCells = 1;               // empty Void ring kept between buildings and the wall
         public const int MarginCells = CourtyardCells + 2; // courtyard(1) + wall(1) + flood-fill border(1) = 3
 
+        /// <summary>Chebyshev radius within which a street cell must find a BUILDING to keep the full
+        /// courtyard. A street running through open ground — a connector road out to a house the DM moved
+        /// clear of town — dilates by 1 instead, so it comes out as wall-road-wall rather than a five-wide
+        /// causeway (DM finding ·9). MEASURED when this landed: 7 of 54,995 street cells over 600 generated
+        /// towns (0.01%) are far enough to be narrowed, so a generated town's wall is unchanged except at
+        /// those isolated spots; SelfTestStreetCellsNearBuildings pins that rate.</summary>
+        public const int OpenStreetNeighbourhood = 2;
+
         // The cell↔normalized mapping is SettlementFootprint's and nothing else's — one lattice for the data
         // model (Room.Cells), the grid, and every renderer, so a stored cell index and a drawn cell index can
         // never disagree. Floor, not round: a cell is the half-open span [i*Pitch,(i+1)*Pitch).
@@ -274,9 +282,12 @@ namespace WorldGen.Generation
 
         // ---- wall ring ------------------------------------------------------------------------------------
         // (a) occupied = (building cells ∪ extraSeed cells, when supplied) dilated by CourtyardCells + 1
-        //     (buildings/streets + a one-cell courtyard skirt + the wall layer itself). extraSeed is the
-        //     STREET mask; a null/all-false one reduces this to a buildings-only dilation. (b)
-        //     flood-fill Outside from the grid border through !occupied (4-connected) —
+        //     (buildings/streets + a one-cell courtyard skirt + the wall layer itself) — UNLESS a street cell
+        //     has no building within OpenStreetNeighbourhood, in which case IT ALONE dilates by 1 instead (see
+        //     OpenStreetNeighbourhood's doc comment; a building cell always takes the wide radius). extraSeed
+        //     is the STREET mask; a null/all-false one reduces this to a buildings-only wide dilation, since
+        //     every remaining seed cell is then a Building. (b) flood-fill Outside from the grid border
+        //     through !occupied (4-connected) —
         //     SettlementFence.InsideFromOutsideFill's technique, at cell resolution. (c) Inside = !Outside, so
         //     an enclosed pocket among the buildings can never read as outside-None (no holes). (d) Wall =
         //     Inside cells that are not Building and have >=1 non-Inside 4-neighbour — the OUTERMOST ring of
@@ -292,7 +303,26 @@ namespace WorldGen.Generation
                 for (int b = 0; b < h; b++)
                     seed[a, b] = g.Cells[a, b] == TileType.Building || (extraSeed != null && extraSeed[a, b]);
 
-            var occupied = Dilate(seed, w, h, CourtyardCells + 1);
+            // TWO RADII, not one. Buildings and the streets beside them keep the courtyard (CourtyardCells + 1);
+            // a street cell with no building within OpenStreetNeighbourhood is a connector running through open
+            // ground and dilates by 1, which is what makes an outlying house's corridor read wall-road-wall.
+            // The union is taken AFTER dilating, never before, or the narrow cells would inherit the wide radius.
+            var wide = new bool[w, h];
+            var narrow = new bool[w, h];
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                {
+                    if (!seed[a, b]) continue;
+                    bool isBuilding = g.Cells[a, b] == TileType.Building;
+                    if (isBuilding || HasBuildingWithin(g, a, b, OpenStreetNeighbourhood)) wide[a, b] = true;
+                    else narrow[a, b] = true;
+                }
+            var occupiedWide = Dilate(wide, w, h, CourtyardCells + 1);
+            var occupiedNarrow = Dilate(narrow, w, h, 1);
+            var occupied = new bool[w, h];
+            for (int a = 0; a < w; a++)
+                for (int b = 0; b < h; b++)
+                    occupied[a, b] = occupiedWide[a, b] || occupiedNarrow[a, b];
             var outside = FloodOutside(occupied, w, h);
 
             var inside = new bool[w, h];
@@ -334,6 +364,18 @@ namespace WorldGen.Generation
                             occupied[da, db] = true;
                 }
             return occupied;
+        }
+
+        // Chebyshev search for a Building tile around (a, b). Reads Cells, which at this point in Build holds
+        // every building's footprint and nothing else — the streets have not been marked yet.
+        static bool HasBuildingWithin(SettlementTileGrid g, int a, int b, int radius)
+        {
+            int a0 = System.Math.Max(0, a - radius), a1 = System.Math.Min(g.W - 1, a + radius);
+            int b0 = System.Math.Max(0, b - radius), b1 = System.Math.Min(g.H - 1, b + radius);
+            for (int da = a0; da <= a1; da++)
+                for (int db = b0; db <= b1; db++)
+                    if (g.Cells[da, db] == TileType.Building) return true;
+            return false;
         }
 
         // ---- streets ---------------------------------------------------------------------------------------

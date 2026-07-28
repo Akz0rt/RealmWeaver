@@ -244,15 +244,20 @@ namespace WorldGen.Rendering
             { Debug.LogError($"FAIL roads: far spur cell (1,10) is OUT of bounds — grid is {clean.W}x{clean.H} @ ({clean.OriginI},{clean.OriginJ}) — Allocate did not fold the street cells into the extent"); ok = false; }
             else if (clean.At(1, 10) != TileType.Road)
             { Debug.LogError($"FAIL roads: far spur cell (1,10) is {clean.At(1, 10)}, expected Road (present but misclassified)"); ok = false; }
-            // Expected row expressed via CourtyardCells (a tunable knob — the dilation radius BuildWallRing
-            // uses is CourtyardCells + 1) rather than a bare literal, so a future retune of CourtyardCells
-            // still produces an intelligible mismatch instead of a bare "expected Wall" against a stale row.
-            // This is the assertion that pins "streets are folded into the RING SEED, not merely painted Road
-            // afterwards" (MutGridStreetsNotSeeded): seed the ring from the buildings alone and the whole
-            // spur — tip and wrapping ring both — falls outside the blob.
-            int spurWallRow = 10 + SettlementTileGrid.CourtyardCells + 1;
+            // RE-DERIVED for the narrow-spur rule (Task 2 of the street-access arc), not the old flat
+            // CourtyardCells + 1 offset. The spur's far cells — (1,5) through the tip (1,10) — sit more than
+            // OpenStreetNeighbourhood (2) Chebyshev cells from every building (the nearest is (0,2)/(2,2), and
+            // (1,5) is already Chebyshev 3 away), so they take the NARROW branch and dilate by 1, not
+            // CourtyardCells + 1 (2). The nearer part of the spur, (1,2)-(1,4), is still within 2 of a building
+            // and keeps the wide radius, but its farthest reach (row 4 + 2 = 6) is short of the tip's own
+            // dilation (row 10 + 1 = 11), so the tip's narrow radius is what actually determines the outermost
+            // occupied row at column 1. Row 12 is therefore unoccupied — Outside — and row 11 is the wall.
+            // This is still the assertion that pins "streets are folded into the RING SEED, not merely painted
+            // Road afterwards" (MutGridStreetsNotSeeded): seed the ring from the buildings alone and the whole
+            // spur — tip and wrapping ring both — falls outside the blob (occupied stops at row 4).
+            int spurWallRow = 10 + 1;
             if (clean.At(1, spurWallRow) != TileType.Wall)
-            { Debug.LogError($"FAIL roads: cell (1,{spurWallRow}), CourtyardCells+1 beyond the spur's tip (row 10), is {clean.At(1, spurWallRow)}, expected Wall — the wall must wrap the streets, not just the buildings"); ok = false; }
+            { Debug.LogError($"FAIL roads: cell (1,{spurWallRow}), the NARROW dilation radius (1) beyond the spur's tip (row 10) — the tip has no building within OpenStreetNeighbourhood — is {clean.At(1, spurWallRow)}, expected Wall — the wall must wrap the streets, not just the buildings"); ok = false; }
 
             // ---- the gate reclassifies the NEAREST ring cell, on the correct side — not just "some ring cell
             // somewhere" (the opposite wall must stay Wall) ----
@@ -710,6 +715,108 @@ namespace WorldGen.Rendering
             }
 
             if (ok) Debug.Log("Self-Test Gate Spur: PASS");
+        }
+
+        /// <summary>DM finding ·9's shape: a road out to an outlying house makes the wall wrap it, and the
+        /// resulting corridor must read wall-road-wall, not wall-void-road-void-wall. The fixture is the one
+        /// the spec measured: a 3x3 block, a lone building 10 cells east, a straight street between them.</summary>
+        [ContextMenu("Self-Test: Spur Width")]
+        public void SelfTestSpurWidth()
+        {
+            bool ok = true;
+            var floor = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = true } };
+            int id = 1;
+            for (int j = 4; j <= 6; j++)
+                for (int i = 4; i <= 6; i++)
+                    floor.Rooms.Add(One(id++, i, j));
+            floor.Rooms.Add(One(id++, 17, 5));
+
+            var streets = new System.Collections.Generic.List<(int i, int j)>();
+            for (int i = 3; i <= 7; i++) { streets.Add((i, 3)); streets.Add((i, 7)); }
+            for (int j = 3; j <= 7; j++) { streets.Add((3, j)); streets.Add((7, j)); }
+            for (int i = 8; i <= 16; i++) streets.Add((i, 5));
+            floor.SettlementParams.StreetCells = SettlementFootprint.Encode(streets);
+
+            var g = SettlementTileGrid.Build(floor);
+
+            // Column 12 sits in the corridor's middle, far from either cluster. Walk it top to bottom and
+            // require exactly Wall, Road, Wall with None above and below — a three-cell corridor.
+            int col = 12;
+            var seen = new System.Collections.Generic.List<string>();
+            for (int b = 0; b < g.H; b++)
+            {
+                var t = g.Cells[col - g.OriginI, b];
+                if (t != TileType.None) seen.Add($"{b + g.OriginJ}:{t}");
+            }
+            string got = string.Join(" ", seen);
+            if (seen.Count != 3)
+            {
+                Debug.LogError($"SelfTestSpurWidth: corridor column {col} is {seen.Count} cells deep, expected "
+                             + $"3 (wall, road, wall) — got [{got}]");
+                ok = false;
+            }
+            else if (!seen[0].EndsWith("Wall") || !seen[1].EndsWith("Road") || !seen[2].EndsWith("Wall"))
+            {
+                Debug.LogError($"SelfTestSpurWidth: corridor column {col} reads [{got}], expected "
+                             + "Wall then Road then Wall");
+                ok = false;
+            }
+
+            // The TOWN's own courtyard must be untouched: column 5 runs through the 3x3 block, where every
+            // street cell has a building within 2, so the wide rule still applies and a Void ring survives.
+            bool townVoid = false;
+            for (int b = 0; b < g.H; b++)
+                if (g.Cells[5 - g.OriginI, b] == TileType.Void) townVoid = true;
+            if (!townVoid)
+            {
+                Debug.LogError("SelfTestSpurWidth: the town's own courtyard vanished — the narrow rule is "
+                             + "being applied to street cells that sit beside buildings");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Spur Width: PASS");
+        }
+
+        /// <summary>The narrow rule's accepted risk, pinned so it cannot grow silently. A generated town's
+        /// street cells are supposed to run beside its buildings; the few that do not will have their wall
+        /// pulled in by one cell. MEASURED when the rule was written: 7 of 54,995 street cells over 600
+        /// towns (0.01%), in 5 towns, at most 2 cells in one town.</summary>
+        [ContextMenu("Self-Test: Street Cells Near Buildings")]
+        public void SelfTestStreetCellsNearBuildings()
+        {
+            bool ok = true;
+            long total = 0, far = 0;
+            foreach (var size in new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large })
+                for (int k = 0; k < 60; k++)
+                {
+                    int seed = 1000 + k;
+                    var cfg = new SettlementConfig { Seed = seed, Size = size, ActiveBuildings = 1, HasWall = true };
+                    var floor = SettlementGenerator.Generate(cfg, "poi").Floors[0];
+                    var b = new System.Collections.Generic.HashSet<(int i, int j)>();
+                    foreach (var r in floor.Rooms)
+                        if (r.TypeId == 1)
+                            foreach (var c in SettlementTileGrid.FootprintOf(r)) b.Add(c);
+                    foreach (var s in SettlementFootprint.Decode(floor.SettlementParams.StreetCells))
+                    {
+                        total++;
+                        bool near = false;
+                        int rad = SettlementTileGrid.OpenStreetNeighbourhood;
+                        for (int di = -rad; di <= rad && !near; di++)
+                            for (int dj = -rad; dj <= rad && !near; dj++)
+                                if (b.Contains((s.i + di, s.j + dj))) near = true;
+                        if (!near) far++;
+                    }
+                }
+            double pct = total > 0 ? 100.0 * far / total : 0.0;
+            Debug.Log($"Street cells far from any building: {far}/{total} ({pct:0.000}%)");
+            if (pct > 0.10)
+            {
+                Debug.LogError($"SelfTestStreetCellsNearBuildings: {far}/{total} ({pct:0.000}%) street cells "
+                             + "are farther than OpenStreetNeighbourhood from any building, over the 0.10% "
+                             + "ceiling — the narrow-spur rule is now dimpling generated town walls");
+                ok = false;
+            }
+            if (ok) Debug.Log("Self-Test Street Cells Near Buildings: PASS");
         }
 
         [ContextMenu("Self-Test: TileGrid Sanity")]

@@ -708,6 +708,21 @@ foreach ($mc in @('MutTileGridNoFloodFill', 'MutTileGridNoWallRing', 'MutTileGri
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# ---- TILE GRID NARROW-SPUR MUTANT (Task 2 of the street-access arc): the narrow radius is neutered. ---------
+# Same bundling as every other SettlementTileGrid mutant above (TileType + SettlementTileGrid share the file),
+# so the rebind needs the same two patterns.
+
+# MutSpurWideDilation: every street cell takes the wide radius again, so a connector corridor is back to five
+# cells wide. SelfTestSpurWidth's three-cell column must fail.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutSpurWideDilation' `
+  '                    if (isBuilding || HasBuildingWithin(g, a, b, OpenStreetNeighbourhood)) wide[a, b] = true;' `
+  '                    if (true) wide[a, b] = true;   // MUTANT: every seed cell takes the wide radius' `
+  'MutSpurWideDilation.cs'
+
+New-SettlementRebind 'SelfTestSpurWidth' 'MutSpurWideDilation' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutSpurWideDilation.SettlementTileGrid.', 'WorldGen.Generation.MutSpurWideDilation.TileType')
+
 # ---- TILE GRID ROADS/GATES MUTANTS (Task 3): two rules pinned by SettlementTileGrid.Build's road/gate pass. --
 # Same bundling as the three wall-ring mutants above (TileType + SettlementTileGrid share the file), so the
 # rebind needs the same two patterns.
