@@ -618,6 +618,29 @@ namespace WorldGen.Rendering
             return true;
         }
 
+        /// <summary>Nearest Wall or Gate cell to WORLD cell (i, j) — THE SAME RULE SettlementTileGrid.MarkGates
+        /// uses, deliberately duplicated rather than approximated: squared Euclidean distance between cell
+        /// CENTRES, scanned column-major with a strict `<` so the first candidate encountered wins a tie. Two
+        /// different answers to "which wall cell is nearest" is exactly the seam that made a gate un-clickable
+        /// in the first place — the drag would move the room onto cell X while MarkGates drew the tile on cell
+        /// Y. False when the grid holds no Wall or Gate cell at all (a wall-less town).</summary>
+        public bool TryNearestWallCell(int i, int j, out int wallI, out int wallJ)
+        {
+            wallI = 0; wallJ = 0;
+            if (grid == null) return false;
+            float px = grid.CenterX(i), py = grid.CenterY(j);
+            float bestD2 = float.MaxValue; bool any = false;
+            for (int a = 0; a < grid.W; a++)
+                for (int b = 0; b < grid.H; b++)
+                {
+                    if (grid.Cells[a, b] != TileType.Wall && grid.Cells[a, b] != TileType.Gate) continue;
+                    float dx = grid.CenterX(a + grid.OriginI) - px, dy = grid.CenterY(b + grid.OriginJ) - py;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; wallI = a + grid.OriginI; wallJ = b + grid.OriginJ; any = true; }
+                }
+            return any;
+        }
+
         // ── Hit-test and screen -> norm (renderer-owned since Task 6) ────────────────────────────────────
 
         /// <summary>The room standing on the clicked CELL, or 0 for a miss.
@@ -645,10 +668,10 @@ namespace WorldGen.Rendering
         /// whose whole purpose is making buildings clickable. The scan has no such path and costs ~80 rooms of
         /// a few cells each, once per click.
         ///
-        /// NOTE the known seam, left for arc 2 rather than papered over with a heuristic: a Gate TILE is the
-        /// wall-ring cell NEAREST the gate room (SettlementTileGrid.MarkGates), which is not necessarily the
-        /// gate room's own footprint cell. Clicking the gate room's own cell always selects it; clicking a drawn
-        /// Gate tile that sits elsewhere will not. This task neither fixes nor worsens that.
+        /// A GATE'S DRAWN TILE, closed (Task 2 of the block-forms/gates arc): a Gate TILE is the wall-ring cell
+        /// NEAREST the gate room (SettlementTileGrid.MarkGates), not the gate room's own footprint cell, so the
+        /// FootprintOf scan above misses it. The fallback past the loop below resolves that tile through
+        /// SettlementTileGrid.GateRoomAt, the map MarkGates fills for exactly this.
         ///
         /// <paramref name="lvl"/> must be non-null — the controller only ever calls this with its bound
         /// level — but a null is handled as a miss rather than a throw.</summary>
@@ -662,7 +685,14 @@ namespace WorldGen.Rendering
                 if (!FootprintContains(SettlementTileGrid.FootprintOf(r), i, j)) continue;
                 if (best == null || Precedes(best, r)) best = r;
             }
-            return best != null ? best.Id : 0;
+            if (best != null) return best.Id;
+            // A drawn Gate tile is the wall-ring cell NEAREST its gate room, not the room's own cell, so the
+            // footprint scan above cannot find it. Reading `grid` here is safe where reading it for BUILDINGS
+            // would not be: this line is reached only where the scan already missed, so a stale grid can
+            // mis-select a gate but can never break a building click.
+            if (grid != null && grid.GateRoomAt.TryGetValue(SettlementTileGrid.DepthKey(i, j), out int gateRoom))
+                return gateRoom;
+            return 0;
         }
 
         /// <summary>Linear membership test over a footprint. A settlement building holds a handful of cells

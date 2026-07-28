@@ -41,6 +41,15 @@ namespace WorldGen.Generation
         public int W, H, OriginI, OriginJ; // array is W×H; world cell (i,j) at (i-OriginI, j-OriginJ)
         public float Cell;
 
+        /// <summary>Which gate ROOM each drawn Gate cell belongs to, keyed by DepthKey over WORLD cell
+        /// indices. The drawn tile and the room are 2-4 cells apart (MarkGates puts the tile on the nearest
+        /// wall-ring cell, the room sits on the ring street), so without this map a click on the visible gate
+        /// resolves to nothing. When two gate rooms collapse onto one cell — an accepted outcome, see
+        /// MarkGates — the last writer wins, deterministically, because MarkGates walks `rooms` in list
+        /// order.</summary>
+        public readonly System.Collections.Generic.Dictionary<long, int> GateRoomAt
+            = new System.Collections.Generic.Dictionary<long, int>();
+
         public const int CourtyardCells = 1;               // empty Void ring kept between buildings and the wall
         public const int MarginCells = CourtyardCells + 2; // courtyard(1) + wall(1) + flood-fill border(1) = 3
 
@@ -400,7 +409,11 @@ namespace WorldGen.Generation
                         float d2 = dx * dx + dy * dy;
                         if (d2 < bestD2) { bestD2 = d2; bestA = a; bestB = b; }
                     }
-                if (bestA >= 0) g.Cells[bestA, bestB] = TileType.Gate;
+                if (bestA >= 0)
+                {
+                    g.Cells[bestA, bestB] = TileType.Gate;
+                    g.GateRoomAt[DepthKey(bestA + g.OriginI, bestB + g.OriginJ)] = r.Id;
+                }
             }
         }
 

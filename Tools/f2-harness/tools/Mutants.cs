@@ -96,6 +96,9 @@ namespace WorldGen.Generation
                 ("MutGateSpurNone", "SettlementTileGrid.Build's gate-spur pass skipped (the courtyard stays between every gate and the road network)",
                     () => new WorldGen.MutantTests.MutGateSpurNoneSelfTests().SelfTestGateSpur()),
 
+                ("MutGateHitNoGateRoom", "SettlementTileGrid.MarkGates draws the Gate tile but never records the room it belongs to (a click on the visible gate selects nothing)",
+                    () => new WorldGen.MutantTests.MutGateHitNoGateRoomSelfTests().SelfTestGateHandles()),
+
                 ("MutGridOneCellPerRoom", "SettlementTileGrid.Build writes only a footprint's REPRESENTATIVE cell instead of every cell (a building is a point again)",
                     () => new WorldGen.MutantTests.MutGridOneCellPerRoomSelfTests().SelfTestFootprintTiles()),
                 ("MutGridExtentIgnoresFootprint", "SettlementTileGrid.Allocate folds only a footprint's REPRESENTATIVE cell into the extent (far cells fall out of bounds and are silently dropped by the InBounds guards)",

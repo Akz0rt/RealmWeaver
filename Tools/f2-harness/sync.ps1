@@ -750,6 +750,17 @@ New-SettlementRebind 'SelfTestGateSpur' 'MutGateSpurNone' `
   @('SettlementTileGrid\.', '\bTileType\b') `
   @('WorldGen.Generation.MutGateSpurNone.SettlementTileGrid.', 'WorldGen.Generation.MutGateSpurNone.TileType')
 
+# MutGateHitNoGateRoom: MarkGates draws the Gate tile but never records which room owns it, so the renderer's
+# HitRoomId fallback has nothing to look up and a click on the visible gate selects nothing again.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateHitNoGateRoom' `
+  '                    g.GateRoomAt[DepthKey(bestA + g.OriginI, bestB + g.OriginJ)] = r.Id;' `
+  '                    // MUTANT: the gate cell is never attributed to its room' `
+  'MutGateHitNoGateRoom.cs'
+
+New-SettlementRebind 'SelfTestGateHandles' 'MutGateHitNoGateRoom' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutGateHitNoGateRoom.SettlementTileGrid.', 'WorldGen.Generation.MutGateHitNoGateRoom.TileType')
+
 # ---- TILE GRID FOOTPRINT MUTANTS (arc A, task 2): a building is a FOOTPRINT of cells, not a point. ----------
 # Same bundling as every other SettlementTileGrid mutant above (TileType + SettlementTileGrid share the file),
 # so the rebind needs the same two patterns. SettlementFootprint.cs is NOT mutated here and is not in the same

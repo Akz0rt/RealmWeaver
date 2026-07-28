@@ -1803,6 +1803,84 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Gate Opening: PASS");
         }
 
+        /// <summary>A gate is where the DM sees it (DM finding ·10). Two independent claims:
+        ///   (1) the drawn Gate tile resolves to the gate ROOM through SettlementTileGrid.GateRoomAt — the
+        ///       tile and the room are 2-4 cells apart, so before this the click landed on nothing;
+        ///   (2) that mapping AGREES with a nearest-wall-cell search run the same way MarkGates runs it, so a
+        ///       drag that snaps to "the nearest wall cell" cannot land somewhere MarkGates would not redraw.
+        /// Claim (2) is asserted here rather than in the renderer because the renderer needs a Unity Canvas and
+        /// this suite does not: the search is replicated verbatim below and pinned against GateRoomAt, so a
+        /// future edit to either rule breaks this test rather than the DM's click.</summary>
+        [ContextMenu("Self-Test: Gate Handles")]
+        public void SelfTestGateHandles()
+        {
+            bool ok = true;
+            var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
+            int gatesChecked = 0;
+
+            foreach (var size in sizes)
+                for (int k = 0; k < 20; k++)
+                {
+                    int seed = 1000 + k;
+                    var cfg = new SettlementConfig { Seed = seed, Size = size, ActiveBuildings = 1, HasWall = true };
+                    var floor = SettlementGenerator.Generate(cfg, "poi").Floors[0];
+                    var g = SettlementTileGrid.Build(floor);
+
+                    foreach (var r in floor.Rooms)
+                    {
+                        if (r.TypeId != 0) continue;
+                        gatesChecked++;
+
+                        bool found = false;
+                        for (int a = 0; a < g.W && !found; a++)
+                            for (int b = 0; b < g.H && !found; b++)
+                            {
+                                if (g.Cells[a, b] != TileType.Gate) continue;
+                                long key = SettlementTileGrid.DepthKey(a + g.OriginI, b + g.OriginJ);
+                                if (g.GateRoomAt.TryGetValue(key, out int id) && id == r.Id) found = true;
+                            }
+                        if (!found)
+                        {
+                            Debug.LogError($"SelfTestGateHandles: {size} seed {seed}: gate room {r.Id} owns no "
+                                         + "drawn Gate cell — a click on the visible gate selects nothing");
+                            ok = false;
+                            continue;
+                        }
+
+                        // The same search TryNearestWallCell performs, on the gate's own stored cell.
+                        var fp = SettlementTileGrid.FootprintOf(r);
+                        if (fp.Count == 0) { Debug.LogError($"SelfTestGateHandles: gate room {r.Id} has no cell"); ok = false; continue; }
+                        int bestA = -1, bestB = -1; float bestD2 = float.MaxValue;
+                        for (int a = 0; a < g.W; a++)
+                            for (int b = 0; b < g.H; b++)
+                            {
+                                if (g.Cells[a, b] != TileType.Wall && g.Cells[a, b] != TileType.Gate) continue;
+                                float dx = g.CenterX(a + g.OriginI) - g.CenterX(fp[0].i);
+                                float dy = g.CenterY(b + g.OriginJ) - g.CenterY(fp[0].j);
+                                float d2 = dx * dx + dy * dy;
+                                if (d2 < bestD2) { bestD2 = d2; bestA = a; bestB = b; }
+                            }
+                        long nearestKey = SettlementTileGrid.DepthKey(bestA + g.OriginI, bestB + g.OriginJ);
+                        if (!g.GateRoomAt.TryGetValue(nearestKey, out int owner) || owner != r.Id)
+                        {
+                            Debug.LogError($"SelfTestGateHandles: {size} seed {seed}: nearest wall cell to gate "
+                                         + $"room {r.Id} is array cell ({bestA},{bestB}), which GateRoomAt does "
+                                         + "not attribute to that room — the drag snap and MarkGates disagree");
+                            ok = false;
+                        }
+                    }
+                }
+
+            if (gatesChecked < 60)
+            {
+                Debug.LogError($"SelfTestGateHandles: only {gatesChecked} gates checked across 60 towns — "
+                             + "expected at least 60");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Gate Handles: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Sentinel")]
         public void SelfTestSettlementSentinel()
         {

@@ -1325,7 +1325,11 @@ namespace WorldGen.Rendering
             if (room == null) return;
             dragOriginCells = SettlementTileGrid.FootprintOf(room);
             if (dragOriginCells.Count == 0) return;   // nothing to translate — leave the room alone
-            dragAnchorCell = (ai, aj);
+            // A GATE anchors on its OWN cell, not on the pressed one. Every other room type translates by
+            // "the press cell follows the pointer", which needs the press cell as the anchor; a gate instead
+            // LANDS ON the wall cell nearest the pointer (see TranslateFootprintTo), and that is only the
+            // right cell if the delta is measured from the gate's own cell.
+            dragAnchorCell = room.TypeId == 0 ? dragOriginCells[0] : (ai, aj);
             dragFootprint = true;
         }
 
@@ -1357,6 +1361,15 @@ namespace WorldGen.Rendering
         {
             var vol = renderer as SettlementVolumeRenderer;
             if (vol == null || !vol.TryAreaToCell(areaLocal, out int ci, out int cj)) return;
+            // A GATE NEVER LEAVES THE WALL (DM finding ·10). The pointer names a cell anywhere in the town;
+            // the gate goes to the wall cell nearest it, so the gesture SLIDES the gate along the ring. When
+            // there is no wall to slide along the gate simply does not move — the same silent refusal every
+            // other blocked translation gets.
+            if (room.TypeId == 0)
+            {
+                if (!vol.TryNearestWallCell(ci, cj, out int wi, out int wj)) return;
+                ci = wi; cj = wj;
+            }
             var delta = (i: ci - dragAnchorCell.i, j: cj - dragAnchorCell.j);
             if (delta == dragAppliedDelta) return;   // same cell as last time — nothing to re-decide
             var moved = SettlementFootprint.Translate(dragOriginCells, delta.i, delta.j);
