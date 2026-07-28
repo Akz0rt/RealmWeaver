@@ -1358,8 +1358,9 @@ namespace WorldGen.Rendering
                         if (!fenceG.Contains(tx, ty))
                         { Debug.LogError($"FAIL fence[G]: building {r.Id} footprint cell ({c.i},{c.j}) — tile x={tx} y={ty} — is OUTSIDE the derived fence"); ok = false; }
                     }
-                // NON-VACUITY of the enclosure test itself: a point two cells past the bar's far end must
-                // read OUTSIDE, or "inside" would be saying nothing about where the fence actually runs.
+                // NON-VACUITY of the enclosure test itself: a point THREE cells past the bar's far end (cell
+                // 13 + 2 = 15's centre, plus one more cell) must read OUTSIDE, or "inside" would be saying
+                // nothing about where the fence actually runs.
                 float outX = SettlementFootprint.CenterOf(13 + 2) * DungeonLayout.TilesPerAxis + cellT;
                 float outY = SettlementFootprint.CenterOf(10) * DungeonLayout.TilesPerAxis;
                 if (fenceG.Contains(outX, outY))
@@ -2022,19 +2023,43 @@ namespace WorldGen.Rendering
                         for (int b = 0; b < grid.H; b++)
                             if (grid.Cells[a, b] == TileType.Gate) gateTiles++;
 
-                    // ONE OPENING PER GATE, EXACTLY. Not ">= 1": the failure this catches is two gates
-                    // collapsing onto the SAME nearest ring cell, which leaves a town with fewer doors than
-                    // gates and no error anywhere. The count is also the reason the gate pass cannot be
-                    // silently neutered — 0 tiles fails here too.
+                    // ONE OPENING PER GATE, EXACTLY — and this is DELIBERATELY STRICTER THAN THE RULE IT
+                    // TESTS, so read this before "fixing" a failure. SettlementTileGrid.MarkGates' own doc
+                    // permits two gate rooms to collapse onto one ring cell ("at this resolution, two gates
+                    // sharing one cell genuinely ARE one opening") — that is the price of making the search
+                    // idempotent by accepting Gate as well as Wall as a candidate.
+                    //
+                    // The strict form is kept anyway, as a CANARY on gate separation. Collapse is unreachable
+                    // for a generated town: SettlementBlocks.MinGateSeparationCells keeps gate cells >= 3
+                    // apart in Chebyshev, and this was measured at 0 collapses over 120 towns across all
+                    // three size classes. So if this ever fires, the thing that changed is the ring geometry
+                    // or the gate spacing, not the gate pass — and that is exactly what a fixed-seed test
+                    // should surface. THE CORRECT RESPONSE TO A FAILURE HERE IS TO RELAX THIS TO >= 1 per
+                    // gate (keeping the counts in the message), not to change MarkGates.
+                    //
+                    // The count also fails at 0 tiles, which is what catches the gate pass being neutered
+                    // outright (MutGateOpeningNoGates).
                     if (gateTiles != gateRooms)
                     { Debug.LogError($"FAIL gate-opening: {size} seed {seed} has {gateRooms} gate room(s) but {gateTiles} Gate tile(s) — the wall does not open once per gate"); ok = false; }
 
                     // AND EACH OPENING IS THE GATE'S OWN. A count alone would pass if every gate in town
-                    // opened the ring on the far side. The bound is DERIVED, not fitted: a gate stands on a
-                    // ring-STREET cell, i.e. on the outer edge of the occupied blob the wall ring is dilated
-                    // from, and that dilation is CourtyardCells + 1 with the Wall itself one layer beyond —
-                    // SettlementTileGrid.MarginCells (= CourtyardCells + 2) cells of Chebyshev reach in the
-                    // outward direction. Measured worst case over 120 generated towns: exactly MarginCells.
+                    // opened the ring on the far side.
+                    //
+                    // THE BOUND IS MEASURED, NOT DERIVED, AND IT HAS ZERO HEADROOM — stated plainly because
+                    // an earlier draft of this comment claimed a derivation, and the derivation does not
+                    // actually reach 3. BuildWallRing dilates the seed (buildings UNION streets, so a gate's
+                    // own ring-street cell is IN it) by CourtyardCells + 1 = 2 and writes Wall to the
+                    // outermost layer of the resulting inside region, which puts the ring 2 cells from a seed
+                    // cell — not 3. The measured worst case over 120 generated towns, all three size classes,
+                    // is exactly 3, so the extra cell comes from ring geometry the dilation argument does not
+                    // capture (a gate cell that is not itself on the blob's outer edge in the direction of
+                    // its nearest Wall).
+                    //
+                    // SettlementTileGrid.MarginCells (= CourtyardCells + 2 = 3) is used as the bound because
+                    // it moves with CourtyardCells, not because it is the derivation's answer. Zero headroom
+                    // means this WILL fire on a legitimate retune of the courtyard or the ring; re-measure and
+                    // re-state the number then rather than padding it now — a padded bound would stop saying
+                    // anything about where the opening is.
                     foreach (var r in floor.Rooms)
                     {
                         if (r.TypeId != 0) continue;
