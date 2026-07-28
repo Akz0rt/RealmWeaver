@@ -618,27 +618,19 @@ namespace WorldGen.Rendering
             return true;
         }
 
-        /// <summary>Nearest Wall or Gate cell to WORLD cell (i, j) — THE SAME RULE SettlementTileGrid.MarkGates
-        /// uses, deliberately duplicated rather than approximated: squared Euclidean distance between cell
-        /// CENTRES, scanned column-major with a strict `<` so the first candidate encountered wins a tie. Two
-        /// different answers to "which wall cell is nearest" is exactly the seam that made a gate un-clickable
-        /// in the first place — the drag would move the room onto cell X while MarkGates drew the tile on cell
-        /// Y. False when the grid holds no Wall or Gate cell at all (a wall-less town).</summary>
+        /// <summary>Nearest Wall or Gate cell to WORLD cell (i, j) — a thin wrapper over
+        /// <see cref="SettlementTileGrid.NearestWallCell"/>, THE SAME RULE SettlementTileGrid.MarkGates uses
+        /// (final-arc-review fix: this used to be a hand-duplicated copy of that search; the two are now
+        /// literally one implementation, compiled and mutation-tested in Generation, so a future divergence
+        /// here is structurally impossible rather than merely absent today). Two different answers to "which
+        /// wall cell is nearest" is exactly the seam that made a gate un-clickable in the first place — the
+        /// drag would move the room onto cell X while MarkGates drew the tile on cell Y. False when the grid
+        /// holds no Wall or Gate cell at all (a wall-less town).</summary>
         public bool TryNearestWallCell(int i, int j, out int wallI, out int wallJ)
         {
             wallI = 0; wallJ = 0;
             if (grid == null) return false;
-            float px = grid.CenterX(i), py = grid.CenterY(j);
-            float bestD2 = float.MaxValue; bool any = false;
-            for (int a = 0; a < grid.W; a++)
-                for (int b = 0; b < grid.H; b++)
-                {
-                    if (grid.Cells[a, b] != TileType.Wall && grid.Cells[a, b] != TileType.Gate) continue;
-                    float dx = grid.CenterX(a + grid.OriginI) - px, dy = grid.CenterY(b + grid.OriginJ) - py;
-                    float d2 = dx * dx + dy * dy;
-                    if (d2 < bestD2) { bestD2 = d2; wallI = a + grid.OriginI; wallJ = b + grid.OriginJ; any = true; }
-                }
-            return any;
+            return SettlementTileGrid.NearestWallCell(grid, i, j, out wallI, out wallJ);
         }
 
         // ── Hit-test and screen -> norm (renderer-owned since Task 6) ────────────────────────────────────
@@ -696,8 +688,9 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Linear membership test over a footprint. A settlement building holds a handful of cells
-        /// (the size classes top out well inside single digits), so a HashSet per room per click would cost
-        /// more to build than this costs to scan.</summary>
+        /// (the shape palette's templates cap at 6 cells — SettlementBlocks.Palette, "Rect6" — well inside
+        /// single digits), so a HashSet per room per click would cost more to build than this costs to
+        /// scan.</summary>
         static bool FootprintContains(List<(int i, int j)> cells, int i, int j)
         {
             for (int k = 0; k < cells.Count; k++)
@@ -873,12 +866,16 @@ namespace WorldGen.Rendering
         /// .BuildWallRing dilates that seed and rings it. For a NEW building the ring is independent of the
         /// candidate, so testing against it is meaningful. For a MOVE it is self-referential: the ring is
         /// derived partly FROM the mover's own current cells, so the proposed cells would be judged against a
-        /// pre-move artifact that the very move is about to redraw. And for a GATE it is simply wrong — a gate
-        /// room's own cell is a ring-STREET cell, which sits >= 2 cells inside the dilation and therefore
-        /// never reads Wall (it reads Road), while every cell of the ring the gate exists to open reads
-        /// Wall/Gate. Applying the tile-type rule to a move would freeze every gate in town off its own wall,
-        /// permanently. The DISCRIMINATING CHECK for this method: a gate must be draggable one cell onto the
-        /// ring and back.
+        /// pre-move artifact that the very move is about to redraw. And for a GATE it is simply wrong — ON A
+        /// FRESHLY GENERATED TOWN a gate room's own cell is a ring-STREET cell, which sits >= 2 cells inside
+        /// the dilation and therefore never reads Wall (it reads Road), while every cell of the ring the gate
+        /// exists to open reads Wall/Gate. (Qualified since the block-forms/gates arc's Task 2: a drag
+        /// normalizes the gate room's stored cell onto the wall/gate cell itself — see SettlementTileGrid's
+        /// GateRoomAt doc — so a PREVIOUSLY-dragged gate's own cell reads Wall or Gate instead. That does not
+        /// change this method's behaviour, since the tile-type rule stays absent for a gate either way; it
+        /// only narrows which towns "never reads Wall" describes.) Applying the tile-type rule to a move would
+        /// freeze every gate in town off its own wall, permanently. The DISCRIMINATING CHECK for this method:
+        /// a gate must be draggable one cell onto the ring and back.
         ///
         /// ITS DATA-SIDE TWIN IS DungeonValidator.SettlementIssues' overlap rule (Task 4), and the two are
         /// DELIBERATELY NOT one shared predicate. They agree on the term that matters — a cell claimed by
@@ -991,7 +988,8 @@ namespace WorldGen.Rendering
             public Image Shadow, Front, East, Top;
             public GameObject PreviewMark, InteriorMark;
             public Outline Highlight;
-            public int RoomId;   // 0 when this cell carries no room (Void/Road, or an orphaned Wall cell)
+            public int RoomId;   // 0 when this cell carries no room (Void/Road, or an orphaned Wall cell);
+                                  // a Gate cell carries its gate room's id too, resolved via GateRoomAt
         }
 
         /// <summary>Pool slot k, grown on demand. Slots are only ever APPENDED to tilesLayer, so slot index
@@ -1209,7 +1207,21 @@ namespace WorldGen.Rendering
             v.Root.anchoredPosition = Project(i, j);
 
             var room = type == TileType.Building ? RoomAtCell(i, j) : null;
-            v.RoomId = room != null ? room.Id : 0;
+            // A Gate tile's drawn cell is never the gate room's own footprint cell (MarkGates puts the tile on
+            // the nearest wall-ring cell), so `room` above is correctly null here and stays null — only
+            // v.RoomId is resolved separately, through GateRoomAt, the same map HitRoomId's fallback reads.
+            // `room` itself must NOT become the gate room: it also feeds `dummy` (gate rooms are TypeId 0, so
+            // the TypeId==1 term keeps this false either way), HeightCells (the Gate case ignores its `room`
+            // argument entirely and returns GateHeight unconditionally), the SameRoomAt face-suppression pair
+            // below (a gate room is not what "same building" means, and feeding it in could wrongly suppress a
+            // wall/gate face if some neighbour cell happened to map to that same gate room's OWN cell in
+            // cellRooms) and `markable` (already gated on `type == TileType.Building`, so a Gate never reaches
+            // it regardless). None of the four would do anything useful with a gate room — v.RoomId is the only
+            // one of the five uses that needs it, because it is the only one that drives selection.
+            int gateRoomId = 0;
+            if (type == TileType.Gate && grid != null)
+                grid.GateRoomAt.TryGetValue(SettlementTileGrid.DepthKey(i, j), out gateRoomId);
+            v.RoomId = room != null ? room.Id : gateRoomId;
             bool dummy = isSettlement && room != null && room.IsDummy && room.TypeId == 1;
 
             float h = HeightCells(type, room) * cw * heightScale;

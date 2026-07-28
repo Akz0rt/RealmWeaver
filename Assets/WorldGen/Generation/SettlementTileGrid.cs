@@ -42,10 +42,16 @@ namespace WorldGen.Generation
         public float Cell;
 
         /// <summary>Which gate ROOM each drawn Gate cell belongs to, keyed by DepthKey over WORLD cell
-        /// indices. The drawn tile and the room are 2-4 cells apart (MarkGates puts the tile on the nearest
-        /// wall-ring cell, the room sits on the ring street), so without this map a click on the visible gate
-        /// resolves to nothing. When two gate rooms collapse onto one cell — an accepted outcome, see
-        /// MarkGates — the last writer wins, deterministically, because MarkGates walks `rooms` in list
+        /// indices. On a FRESHLY GENERATED town the drawn tile and the room are 2-4 cells apart (MarkGates
+        /// puts the tile on the nearest wall-ring cell, the room sits on the ring street), so without this map
+        /// a click on the visible gate resolves to nothing. After a drag (block-forms/gates arc, Task 2) they
+        /// are 0 cells apart — the drag retargets the gate room's stored cell to the nearest Wall/Gate cell,
+        /// so MarkGates re-picks that SAME cell at distance 0 on the next rebuild, which is the mechanism that
+        /// makes a gate stop moving under the DM's hand, not an exception to the 2-4 figure above. This map
+        /// stays correct and still worth consulting either way: whether the gap is 2-4 cells or 0, a click
+        /// resolves through GateRoomAt rather than through a footprint scan that only a post-drag gate's
+        /// coincident cell would satisfy. When two gate rooms collapse onto one cell — an accepted outcome,
+        /// see MarkGates — the last writer wins, deterministically, because MarkGates walks `rooms` in list
         /// order.</summary>
         public readonly System.Collections.Generic.Dictionary<long, int> GateRoomAt
             = new System.Collections.Generic.Dictionary<long, int>();
@@ -377,12 +383,57 @@ namespace WorldGen.Generation
                 }
         }
 
-        // For every stored gate room (TypeId == 0), find the ring cell whose CENTRE is nearest the gate's
-        // normalized position (plain Euclidean distance over every current Wall/Gate cell — the ring is small
-        // enough per settlement that an O(W*H) scan per gate costs nothing measurable) and reclassify it to
-        // Gate. Runs whenever HasWall. No separate Inside test needed: scanning for
-        // TileType.Wall/Gate already implies Inside (BuildWallRing only ever writes Wall to Inside cells, and
-        // a Gate cell only ever comes from THIS method retargeting a former Wall cell).
+        /// <summary>THE ONE PLACE "nearest Wall-or-Gate cell to a world cell" is answered — hoisted here
+        /// (final-arc-review fix) so <see cref="MarkGates"/> below and
+        /// SettlementVolumeRenderer.TryNearestWallCell share exactly ONE implementation instead of two
+        /// hand-kept-in-sync copies. The duplication was the precise shape of DM finding ·10's seam: a
+        /// divergent renderer copy would move a dragged gate room onto cell X while MarkGates drew the tile on
+        /// cell Y, and — because the offline harness never compiles Assets/WorldGen/Rendering/* — a future
+        /// `&lt;` -&gt; `&lt;=` in that copy would have passed every committed test. Hoisting the rule into
+        /// Generation (which the harness DOES compile) closes that gap: <c>MutNearestWallCellTie</c> mutates
+        /// THIS method, and both callers inherit the guard.
+        ///
+        /// Squared Euclidean distance between CELL CENTRES (plain Euclidean over every current Wall/Gate cell
+        /// — the ring is small enough per settlement that an O(W*H) scan per gate costs nothing measurable),
+        /// scanned column-major over (a, b) with a strict `&lt;` so the FIRST candidate encountered wins an
+        /// exact tie. `(i, j)` and the two out parameters are all WORLD cell indices — the same space every
+        /// other public member of this class works in. False (wallI/wallJ left at 0) when the grid holds no
+        /// Wall or Gate cell at all (a wall-less town).</summary>
+        public static bool NearestWallCell(SettlementTileGrid g, int i, int j, out int wallI, out int wallJ)
+        {
+            wallI = 0; wallJ = 0;
+            if (g == null) return false;
+            float px = g.CenterX(i), py = g.CenterY(j);
+            float bestD2 = float.MaxValue; bool any = false;
+            for (int a = 0; a < g.W; a++)
+                for (int b = 0; b < g.H; b++)
+                {
+                    if (g.Cells[a, b] != TileType.Wall && g.Cells[a, b] != TileType.Gate) continue;
+                    float dx = g.CenterX(a + g.OriginI) - px, dy = g.CenterY(b + g.OriginJ) - py;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; wallI = a + g.OriginI; wallJ = b + g.OriginJ; any = true; }
+                }
+            return any;
+        }
+
+        // For every stored gate room (TypeId == 0), find the ring cell nearest the gate room and reclassify
+        // it to Gate, through NearestWallCell above. Runs whenever HasWall. No separate Inside test needed:
+        // scanning for TileType.Wall/Gate already implies Inside (BuildWallRing only ever writes Wall to
+        // Inside cells, and a Gate cell only ever comes from THIS method retargeting a former Wall cell).
+        //
+        // QUANTIZED BEFORE THE SEARCH, WHERE THIS USED TO MEASURE FROM r.X/r.Y DIRECTLY — a behaviour change
+        // for any r.X/r.Y that is NOT exactly a cell centre, so it is called out rather than assumed away.
+        // NearestWallCell's signature takes WORLD CELL INDICES, so the gate room's continuous (r.X, r.Y) is
+        // first floored to its cell (CellI/CellJ) and the search then measures from THAT cell's centre
+        // (CenterX/CenterY of it), not from r.X/r.Y itself. Task 2's review verified structurally that a gate
+        // room's stored position is ALWAYS exactly a cell centre — both writers, SettlementGenerator.cs:192
+        // (CenterOf(gc.i/j) at generation) and DungeonViewController's TranslateFootprintTo (CenterOf(rep.i)
+        // after a drag) — and CellOf(CenterOf(k)) == k round-trips exactly (SettlementFootprint.CellOf's own
+        // doc), so for every gate room this arc's data can produce, CenterX(CellI(r.X)) == r.X bit-for-bit and
+        // the quantize-then-measure path returns the identical answer the old direct measurement did. It would
+        // NOT be identical for a gate room whose position is off-lattice (a state nothing here is known to
+        // produce, but nothing here proves impossible either) — such a room would now be measured from the
+        // cell it rounds down into rather than its true continuous position.
         //
         // DESIGN DECISION: candidates are Wall OR Gate, not Wall alone, so the search is idempotent across
         // multiple gate rooms. One grid cell is 3.84 fine tiles (0.03 normalized) at the v11 pitch — 8.96 at
@@ -398,22 +449,10 @@ namespace WorldGen.Generation
             foreach (var r in rooms)
             {
                 if (r.TypeId != 0) continue;
-                int bestA = -1, bestB = -1;
-                float bestD2 = float.MaxValue;
-                for (int a = 0; a < g.W; a++)
-                    for (int b = 0; b < g.H; b++)
-                    {
-                        if (g.Cells[a, b] != TileType.Wall && g.Cells[a, b] != TileType.Gate) continue;
-                        float cx = g.CenterX(a + g.OriginI), cy = g.CenterY(b + g.OriginJ);
-                        float dx = cx - r.X, dy = cy - r.Y;
-                        float d2 = dx * dx + dy * dy;
-                        if (d2 < bestD2) { bestD2 = d2; bestA = a; bestB = b; }
-                    }
-                if (bestA >= 0)
-                {
-                    g.Cells[bestA, bestB] = TileType.Gate;
-                    g.GateRoomAt[DepthKey(bestA + g.OriginI, bestB + g.OriginJ)] = r.Id;
-                }
+                int gi = g.CellI(r.X), gj = g.CellJ(r.Y);
+                if (!NearestWallCell(g, gi, gj, out int wallI, out int wallJ)) continue;
+                g.Cells[wallI - g.OriginI, wallJ - g.OriginJ] = TileType.Gate;
+                g.GateRoomAt[DepthKey(wallI, wallJ)] = r.Id;
             }
         }
 

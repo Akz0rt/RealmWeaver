@@ -45,8 +45,14 @@ namespace WorldGen.Rendering
             // the reverted building cap). The band is asymmetric on purpose, because the two sides are bounded
             // by different things:
             //
-            //   UPPER — the fill's size class scales with the cell budget (SizeClassFor), so a town with far
-            //     more cells than the DM asked for buildings gets BIGGER buildings rather than more of them.
+            //   UPPER — SizeClassFor is GONE (arc "settlement block forms and gates"). The fill now draws each
+            //     footprint from SettlementBlocks.Palette / PickTemplate, a FIXED weight table that does not
+            //     scale with the cell budget, so a town with far more cells than the DM asked for gets roughly
+            //     proportionally MORE buildings, not bigger ones — the achieved count is the palette's own
+            //     (roughly constant) mean footprint size applied to however many cells the contour yields.
+            //     EnforceMinimumCount (Task 4's split pass) does not explain the upper edge either: it only
+            //     ever pushes the count UP toward SettlementSizing.GuaranteedMinBuildings(size) by peeling
+            //     cells off the largest footprints, never creates a cell, and never lowers the count.
             //   LOWER — nothing can manufacture cells. The contour's interior is ~2.89 * r_cells^2 cells and
             //     the ring street eats the whole boundary (~6*r_cells) before a single house is placed.
             //
@@ -86,10 +92,14 @@ namespace WorldGen.Rendering
             //
             // `target` STILL DRIVES THE WALL, AND ONLY THE WALL (arc C.2, task C). Generate takes a SIZE
             // CLASS now, so the sweep bucket's `target` through SettlementSizing.FromLegacyTarget to get one
-            // — which means the number Generate reads for its own size class (TargetBuildings(size)) is NOT
-            // this `target`, and the two deliberately disagree for every swept target that is not one of the
-            // three shipped ones. That is the point of sweeping between the classes: the invariants below are
-            // structural and must hold for a contour of ANY scale, not only the three the table ships.
+            // — and since Task 4 (the block-forms/gates arc's split pass), the only SIZE-KEYED number Generate
+            // reads at all is SettlementSizing.GuaranteedMinBuildings(size) (SettlementBlocks.cs:145-146),
+            // which is NOT this `target`, and the two deliberately disagree for every swept target that is not
+            // one of the three shipped ones. TargetBuildings(size) is NOT read by Generate any more — it keeps
+            // its role as the table's STATED INTENT and as this sweep's own band anchor (see the `MinRatio` /
+            // `MaxRatio` band above and SelfTestSizeCalibration's log line), nothing the fill itself consults.
+            // That is the point of sweeping between the classes: the invariants below are structural and must
+            // hold for a contour of ANY scale, not only the three the table ships.
             void Check(int seed, int target)
             {
                 var size = SettlementSizing.FromLegacyTarget(target);
@@ -629,6 +639,22 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Settlement Size Calibration: PASS");
         }
 
+        /// <summary>Rotate a template offset by rot * 90 degrees — the SAME four cases as
+        /// SettlementBlocks.Rotate (private there), reimplemented here because the palette invariant this
+        /// feeds (SelfTestBlockForms' prefix check) is a claim about GRID GEOMETRY: 4-connectivity and "contains
+        /// the origin" are preserved by ANY 90-degree rotation about (0,0), so this only needs to BE a genuine
+        /// rotation, not the identical implementation, for the assertion below to mean what it says.</summary>
+        static (int di, int dj) RotateOffset((int di, int dj) c, int rot)
+        {
+            switch (rot & 3)
+            {
+                case 1:  return (-c.dj, c.di);
+                case 2:  return (-c.di, -c.dj);
+                case 3:  return (c.dj, -c.di);
+                default: return c;
+            }
+        }
+
         /// <summary>What the shape palette actually produces (DM finding ·11). Every claim here is about the
         /// ACHIEVED distribution, not the weight table: a template rolled at a block's edge truncates to its
         /// first cell, so weights alone say nothing about what a town looks like.
@@ -642,6 +668,47 @@ namespace WorldGen.Rendering
             bool ok = true;
             var sizes = new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large };
             int total = 0, multiCell = 0, nonRect = 0;
+
+            // ---- THE PALETTE'S PREFIX INVARIANT, ASSERTED DIRECTLY (final-arc review finding) --------------
+            // SettlementBlocks.Palette's own class doc claims every prefix of every template is a 4-connected
+            // shape containing (0,0) — the property that makes FillBlock's truncate-at-first-unavailable-cell
+            // safe. Until now that claim lived only in a comment: the three assertions in the achieved-fill
+            // loop below (fp.Count == 0, IsConnected4(fp), fp.Count > 6) would catch its CONSEQUENCE on a
+            // rolled-and-truncated footprint, but none of them can fail today because the shipped palette
+            // happens to satisfy the invariant AND because a single 60-seed-per-size sweep is not guaranteed
+            // to truncate every template at every length. This checks the DATA directly instead — every
+            // template, every prefix length, all 4 rotations — so a future template edit that breaks the
+            // invariant fails HERE, not on whichever future seed happens to truncate it mid-shape.
+            for (int t = 0; t < SettlementBlocks.TemplateCount; t++)
+            {
+                var cells = SettlementBlocks.TemplateCells(t);
+                for (int rot = 0; rot < 4; rot++)
+                {
+                    for (int len = 1; len <= cells.Length; len++)
+                    {
+                        var prefix = new System.Collections.Generic.List<(int i, int j)>(len);
+                        for (int k = 0; k < len; k++)
+                        {
+                            var (di, dj) = RotateOffset(cells[k], rot);
+                            prefix.Add((di, dj));
+                        }
+                        if (!SettlementFootprint.IsConnected4(prefix))
+                        {
+                            Debug.LogError($"SelfTestBlockForms: palette template {t} rot {rot} prefix length "
+                                         + $"{len} is NOT 4-connected");
+                            ok = false;
+                        }
+                        bool hasOrigin = false;
+                        foreach (var c in prefix) if (c.i == 0 && c.j == 0) { hasOrigin = true; break; }
+                        if (!hasOrigin)
+                        {
+                            Debug.LogError($"SelfTestBlockForms: palette template {t} rot {rot} prefix length "
+                                         + $"{len} does not contain (0,0)");
+                            ok = false;
+                        }
+                    }
+                }
+            }
 
             foreach (var size in sizes)
                 for (int k = 0; k < 60; k++)

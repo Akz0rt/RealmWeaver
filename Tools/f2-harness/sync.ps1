@@ -706,7 +706,7 @@ foreach ($mc in @('MutTileGridNoFloodFill', 'MutTileGridNoWallRing', 'MutTileGri
 # MutTileGridNoGates: the gate-reclassify write neutered — a gate room's nearest Wall ring cell never becomes
 # TileType.Gate. Caught by SelfTestRoadsAndGates' west-wall-cell-is-Gate assertion (OVERRIDE 2).
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutTileGridNoGates' `
-  'g.Cells[bestA, bestB] = TileType.Gate;' `
+  'g.Cells[wallI - g.OriginI, wallJ - g.OriginJ] = TileType.Gate;' `
   ';   // MUTANT: gate reclassify never applied' `
   'MutTileGridNoGates.cs'
 
@@ -753,13 +753,28 @@ New-SettlementRebind 'SelfTestGateSpur' 'MutGateSpurNone' `
 # MutGateHitNoGateRoom: MarkGates draws the Gate tile but never records which room owns it, so the renderer's
 # HitRoomId fallback has nothing to look up and a click on the visible gate selects nothing again.
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateHitNoGateRoom' `
-  '                    g.GateRoomAt[DepthKey(bestA + g.OriginI, bestB + g.OriginJ)] = r.Id;' `
-  '                    // MUTANT: the gate cell is never attributed to its room' `
+  '                g.GateRoomAt[DepthKey(wallI, wallJ)] = r.Id;' `
+  '                // MUTANT: the gate cell is never attributed to its room' `
   'MutGateHitNoGateRoom.cs'
 
 New-SettlementRebind 'SelfTestGateHandles' 'MutGateHitNoGateRoom' `
   @('SettlementTileGrid\.', '\bTileType\b') `
   @('WorldGen.Generation.MutGateHitNoGateRoom.SettlementTileGrid.', 'WorldGen.Generation.MutGateHitNoGateRoom.TileType')
+
+# MutNearestWallCellTie: NearestWallCell's strict `<` flipped to `<=`, so a LATER equidistant candidate wins a
+# tie instead of the first one encountered — the exact divergence Finding 4 of the final-arc review named as
+# unguarded (MarkGates and SettlementVolumeRenderer.TryNearestWallCell now share this ONE implementation, but
+# nothing pinned the tie rule ITSELF). Only reachable when a real corpus town has a genuine equidistant tie for
+# SOME gate's nearest wall/gate cell; whether SelfTestGateHandles' 60-gate sweep contains one is reported by
+# the harness run, not assumed here.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutNearestWallCellTie' `
+  'if (d2 < bestD2) { bestD2 = d2; wallI = a + g.OriginI; wallJ = b + g.OriginJ; any = true; }' `
+  'if (d2 <= bestD2) { bestD2 = d2; wallI = a + g.OriginI; wallJ = b + g.OriginJ; any = true; }   // MUTANT: a later tie wins' `
+  'MutNearestWallCellTie.cs'
+
+New-SettlementRebind 'SelfTestGateHandles' 'MutNearestWallCellTie' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutNearestWallCellTie.SettlementTileGrid.', 'WorldGen.Generation.MutNearestWallCellTie.TileType')
 
 # ---- TILE GRID FOOTPRINT MUTANTS (arc A, task 2): a building is a FOOTPRINT of cells, not a point. ----------
 # Same bundling as every other SettlementTileGrid mutant above (TileType + SettlementTileGrid share the file),
@@ -1310,7 +1325,7 @@ foreach ($mc in @('MutValidatorNoOverlapRule', 'MutValidatorNoStreetRule',
 # GENERATED-town claims — gateTiles falls to 0 in every town, so the one-opening-per-gate count fires, and with
 # no Gate tile anywhere the nearest-Gate-tile search finds none and the Chebyshev bound fires too.
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutGateOpeningNoGates' `
-  'g.Cells[bestA, bestB] = TileType.Gate;' `
+  'g.Cells[wallI - g.OriginI, wallJ - g.OriginJ] = TileType.Gate;' `
   ';   // MUTANT: gate reclassify never applied' `
   'MutGateOpeningNoGates.cs'
 

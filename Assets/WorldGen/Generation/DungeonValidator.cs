@@ -140,12 +140,17 @@ namespace WorldGen.Generation
         /// BUILDINGS ONLY (TypeId == 1), every rule, and that scope is load-bearing rather than tidy. A GATE
         /// room (TypeId 0) carries a one-cell footprint too since v11 (SettlementGenerator.BuildFloor stores
         /// its ring cell so the recentring migration, which moves a town by moving CELLS, cannot leave the
-        /// gates behind) — but that cell IS a street cell BY CONSTRUCTION: a gate is a ring-street cell picked
-        /// by SettlementBlocks.PlaceGateCells, which is exactly what makes it a gap in the wall the streets
-        /// run out through. Rule 4 applied to gates would therefore fire on EVERY gate of EVERY town ever
-        /// generated — measured: 360 gates over 120 towns, all three size classes, 360 of them on a street
-        /// cell. A rule that fires on every correct town is not a rule, it is noise that teaches the DM to
-        /// ignore the panel.
+        /// gates behind) — but that cell IS a street cell BY CONSTRUCTION ON A FRESHLY GENERATED TOWN: a gate
+        /// is a ring-street cell picked by SettlementBlocks.PlaceGateCells, which is exactly what makes it a
+        /// gap in the wall the streets run out through. Rule 4 applied to gates would therefore fire on EVERY
+        /// gate of EVERY freshly generated town — measured: 360 gates over 120 towns, all three size classes,
+        /// 360 of them on a street cell. QUALIFIED since the block-forms/gates arc's Task 2 (gate drag): after
+        /// a drag, the gate room's stored cell is instead a Wall/Gate cell (the drag normalizes it there — see
+        /// SettlementTileGrid's GateRoomAt doc), which is not a street cell either, so a dragged gate would
+        /// not trip Rule 4 even if Rule 4 were widened to cover it — the exclusion's CONCLUSION stands, only
+        /// the "always a street cell" premise behind it has narrowed to "freshly generated". A rule that fires
+        /// on every correct freshly-generated town is not a rule, it is noise that teaches the DM to ignore
+        /// the panel.
         ///
         /// WHAT THIS SCOPE GIVES UP, stated rather than hidden: a GATE dropped onto a building's footprint is
         /// not reported here. It is still refused at the edit — SettlementVolumeRenderer.RebuildCellRooms maps

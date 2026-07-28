@@ -649,6 +649,22 @@ namespace WorldGen.Generation
             return sum;
         }
 
+        /// <summary>How many templates the palette holds — the minimum read surface a self-test needs to
+        /// assert FootprintTemplate's own prefix invariant directly (every prefix of every template, at every
+        /// rotation, is 4-connected and contains (0,0)), without exposing the live array itself.</summary>
+        public static int TemplateCount => Palette.Length;
+
+        /// <summary>Template `k`'s ordered offset list, as a FRESH COPY — a self-test may want to mutate or
+        /// rotate its own working copy, and handing out the live array would let it (accidentally or not)
+        /// corrupt the palette every other test and every generation afterwards reads.</summary>
+        public static (int di, int dj)[] TemplateCells(int k)
+        {
+            var src = Palette[k].Cells;
+            var copy = new (int di, int dj)[src.Length];
+            System.Array.Copy(src, copy, src.Length);
+            return copy;
+        }
+
         static FootprintTemplate PickTemplate(System.Random rng)
         {
             int roll = rng.Next(PaletteWeightTotal);

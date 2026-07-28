@@ -98,6 +98,8 @@ namespace WorldGen.Generation
 
                 ("MutGateHitNoGateRoom", "SettlementTileGrid.MarkGates draws the Gate tile but never records the room it belongs to (a click on the visible gate selects nothing)",
                     () => new WorldGen.MutantTests.MutGateHitNoGateRoomSelfTests().SelfTestGateHandles()),
+                ("MutNearestWallCellTie", "SettlementTileGrid.NearestWallCell's strict < flipped to <= (a later equidistant candidate wins a tie instead of the first) — the shared implementation MarkGates and SettlementVolumeRenderer.TryNearestWallCell both now call",
+                    () => new WorldGen.MutantTests.MutNearestWallCellTieSelfTests().SelfTestGateHandles()),
 
                 ("MutGridOneCellPerRoom", "SettlementTileGrid.Build writes only a footprint's REPRESENTATIVE cell instead of every cell (a building is a point again)",
                     () => new WorldGen.MutantTests.MutGridOneCellPerRoomSelfTests().SelfTestFootprintTiles()),
