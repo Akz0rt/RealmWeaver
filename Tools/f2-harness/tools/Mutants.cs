@@ -142,6 +142,11 @@ namespace WorldGen.Generation
                 ("MutBlocksGatesAdjacent", "SettlementBlocks.PlaceGateCells drops the MinGateSeparationCells term (two gates in one doorway)",
                     () => new WorldGen.MutantTests.MutBlocksGatesAdjacentSelfTests().SelfTestFrontage()),
 
+                ("MutAccessNoCarve", "SettlementStreetOps.MissingAccess never carves (no edit is ever repaired — a moved or placed building keeps no street)",
+                    () => new WorldGen.MutantTests.MutAccessNoCarveSelfTests().SelfTestStreetAccess()),
+                ("MutAccessIgnoresConnectivity", "SettlementStreetOps enforces only 'every building fronts a street', never 'the network is one piece' (a house can be served by an island lane)",
+                    () => new WorldGen.MutantTests.MutAccessIgnoresConnectivitySelfTests().SelfTestStreetAccess()),
+
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
                 ("MutFenceNoStreets", "DungeonLayout.DeriveTownFence stops folding the floor's STORED street cells into the fence (it wraps buildings + gates only — the fence the Task 5 measurement rejected, which leaves 21 of 78 street cells outside on the pinned fixture)",

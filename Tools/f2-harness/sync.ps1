@@ -22,6 +22,7 @@ $files = @(
   'InteriorOps.cs', 'InteriorOpsSelfTests.cs',
   'SettlementTileGrid.cs', 'SettlementTileGridSelfTests.cs', 'SettlementFootprint.cs',
   'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs',
+  'SettlementStreetOps.cs', 'SettlementStreetOpsSelfTests.cs',
   'SettlementSizing.cs', 'SettlementMigration.cs',
   'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs'
 )
@@ -457,13 +458,17 @@ $blocksTests = Get-Content (Join-Path $src 'SettlementBlocksSelfTests.cs') -Raw 
 # Sixth source: the POI-migration mutant (below) is caught via SelfTestPoiLegacyTypes, which lives in
 # PoiMigrationSelfTests.cs, not any of the five files above.
 $poiMigrationTests = Get-Content (Join-Path $src 'PoiMigrationSelfTests.cs') -Raw -Encoding UTF8
+# Seventh source: the street-access mutants (below) are caught via SelfTestStreetAccess, which lives in
+# SettlementStreetOpsSelfTests.cs, not any of the six files above.
+$streetOpsTests = Get-Content (Join-Path $src 'SettlementStreetOpsSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
   # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
   # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
   # $interiorTests, SelfTestBuilding falls through to $buildingTests, SelfTestWallRing falls through to
-  # $tileGridTests, and SelfTestPoiLegacyTypes falls through to $poiMigrationTests.
+  # $tileGridTests, SelfTestPoiLegacyTypes falls through to $poiMigrationTests, and SelfTestStreetAccess
+  # falls through to $streetOpsTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
@@ -485,6 +490,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $poiMigrationTests
     $origClass = 'PoiMigrationSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $streetOpsTests
+    $origClass = 'SettlementStreetOpsSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -1048,6 +1057,32 @@ foreach ($mc in @('MutBlocksNoArterials', 'MutBlocksNoFrontageFill', 'MutBlocksF
   New-SettlementRebind 'SelfTestFrontage' $mc `
     @('SettlementBlocks\.') `
     @("WorldGen.Generation.$mc.SettlementBlocks.")
+}
+
+# ---- STREET ACCESS MUTANTS (settlement-street-access, task 1): two rules pinned by SettlementStreetOps. ----
+# SettlementStreetOps.cs defines ONE class and no data types (InteriorFloor/Room live in the unmutated
+# DungeonData.cs, SettlementFootprint/SettlementTileGrid in their own unmutated files — all resolve OUTWARD),
+# so the single-class New-SettlementMutant / rebind-only-"SettlementStreetOps." shape (SettlementFence/
+# InteriorOps/FloorFootprint above) is sound here.
+
+# MutAccessNoCarve: MissingAccess returns nothing, so no edit is ever repaired — the exact state DM finding
+# .4 reported. SelfTestStreetAccess' moved-building and street-less cases must fail.
+New-SettlementMutant 'SettlementStreetOps.cs' 'MutAccessNoCarve' `
+  '            var added = new List<(int i, int j)>();' `
+  '            var added = new List<(int i, int j)>(); if (floor != null) return added;   // MUTANT: never carves' `
+  'MutAccessNoCarve.cs'
+
+# MutAccessIgnoresConnectivity: only half 1 of the invariant is enforced, so a house can be served by an
+# island lane. SelfTestStreetAccess' one-component assertion must fail.
+New-SettlementMutant 'SettlementStreetOps.cs' 'MutAccessIgnoresConnectivity' `
+  '                var orphan = SmallestOrphanComponent(streets);' `
+  '                List<(int i, int j)> orphan = null;   // MUTANT: orphan components never joined' `
+  'MutAccessIgnoresConnectivity.cs'
+
+foreach ($mc in @('MutAccessNoCarve', 'MutAccessIgnoresConnectivity')) {
+  New-SettlementRebind 'SelfTestStreetAccess' $mc `
+    @('SettlementStreetOps\.') `
+    @("WorldGen.Generation.$mc.SettlementStreetOps.")
 }
 
 # ---- SIZE-CLASS + v11 LATTICE MIGRATION MUTANTS (arc C.2, task B): three rules pinned by SettlementSizing

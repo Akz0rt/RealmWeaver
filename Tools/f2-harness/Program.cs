@@ -98,6 +98,9 @@ static class Program
         blocks.SelfTestSizeCalibration();
         blocks.SelfTestBlockForms();
         blocks.SelfTestBlocksSanity();
+        var streetOps = new WorldGen.Rendering.SettlementStreetOpsSelfTests();
+        streetOps.SelfTestStreetAccess();
+        streetOps.SelfTestStreetOpsSentinel();
         var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
         poiMigration.SelfTestPoiLegacyTypes();
         poiMigration.SelfTestPoiMigrationSentinel();
