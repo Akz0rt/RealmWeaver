@@ -333,7 +333,16 @@ namespace WorldGen.Workspace.Rendering
             var vlg = go.AddComponent<VerticalLayoutGroup>();
             vlg.childControlWidth = true;
             vlg.childForceExpandWidth = true;
-            vlg.childControlHeight = false;   // each row carries its own fixed preferredHeight (RowHeight).
+            // TRUE, not false: this is the group that must APPLY each row's own preferredHeight (RowHeight)
+            // to its actual rect — with childControlHeight=false, Unity's layout pass calls the
+            // position-only SetChildAlongAxisWithScale overload, which stacks children using their
+            // preferredHeight but never writes it into rect.sizeDelta, leaving every row at whatever height
+            // its freshly-created RectTransform already had. Mirrors the panel's own vlg 70 lines up
+            // (BuildPopup: childControlHeight = true; childForceExpandHeight = false) — "control height, but
+            // don't force-expand it past the child's own preferredHeight" is the correct shape for a
+            // fixed-row-height list, the same shape NavigatorView.cs/NotesTreeSidebar.cs/
+            // GenerationProgressUI.cs all use by leaving this field at Unity's own default (true).
+            vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
             vlg.spacing = 0f;
 
