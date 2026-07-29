@@ -67,10 +67,14 @@ namespace WorldGen.Generation
                 if (path == null) continue;                // boxed in; leave the floor as it is
                 // Gated on streets.Add's OWN return value, not a second bookkeeping set: "already in
                 // streets" is the exact, single source of truth for "not actually new," and streets is
-                // already the HashSet paying for that check. Provably a no-op HERE (CarveToNetwork's own
-                // starts are the footprint's non-building neighbours, none of which fronted a street — see
-                // Fronts above, which is why the carve ran at all — so nothing this BFS returns can already
-                // be in streets); kept for the same reason the guard below is NOT optional.
+                // already the HashSet paying for that check. Provably a no-op HERE — NOT because a start is
+                // never adjacent to a street (it can be: building (0,0) with a street at (2,0) gives start
+                // (1,0), which FRONTS it) but because Bfs itself never lets a street cell reach the returned
+                // path: `target.Contains(n)` is checked BEFORE a candidate neighbour is ever queued, and a
+                // cell for which it is true ends the search right there — it is never added to `q` and so
+                // never becomes an ancestor the path walks back through. So nothing CarveToNetwork's Bfs call
+                // returns can already be in `streets`; kept for the same reason the guard below is NOT
+                // optional.
                 foreach (var c in path) if (streets.Add(c)) added.Add(c);
             }
 

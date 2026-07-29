@@ -247,32 +247,37 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 7. TWO DISCONNECTED STREET STUBS, each already serving its own building. Every other case's
-            //    frontage carve happens to land ON the existing network (CarveToNetwork's BFS target IS the
-            //    current street set), so half 1 alone never leaves the network in two pieces — this is the
-            //    one fixture where NEITHER building needs a new carve and only half 2 (one component) forces
-            //    a repair, which is exactly what an "orphan components never joined" mutant would miss.
-            //    It is ALSO the fixture that caught a real accounting bug on review: CarveBetween's BFS
-            //    starts from the orphan's OWN cells, which are already street, and its path always walks
-            //    back through — and includes — its own start, so an unguarded append reported the
-            //    pre-existing cell (1,0) as if newly added (measured before the fix: EnsureAccess returned
-            //    9 where the stored array only grew by 8). The checks below pin MissingAccess's contract
-            //    directly: no duplicate within its own returned list, no already-street cell counted as
-            //    new, and the reported count matching the OBSERVED growth of the stored array — not just
-            //    self-consistency between MissingAccess and EnsureAccess, which would stay equal even if
-            //    both over-counted the same way.
+            // 7. THREE INITIALLY-DISCONNECTED STREET COMPONENTS and three buildings, only ONE of which needs
+            //    a new pass-1 carve. (1,1) fronts (1,0) and (10,1) fronts (10,0) directly, so pass 1 does
+            //    nothing for either — every OTHER case's frontage carve happens to land ON the existing
+            //    network (CarveToNetwork's BFS target IS the current street set), so half 1 alone never
+            //    leaves the network in more than one piece by itself; here the (1,0) and (10,0) stubs stay
+            //    untouched by pass 1 and so still need half 2 (one component) to join them, which is exactly
+            //    what an "orphan components never joined" mutant would miss. (5,10) is the exception: it does
+            //    NOT front the third stored stub, (5,3), so pass 1 DOES carve for it, producing a third
+            //    component that half 2 must also fold in.
             //
-            //    A THIRD BUILDING, (5,10), is folded into this SAME fixture for the row-major assertion
-            //    below, and it has to be a third one rather than reusing (1,1)/(10,1): those two already
-            //    front their own stub, so pass 1 never carves for them, and their pass-2 join always runs
-            //    from the row-major-SMALLER orphan toward the larger one — an inherently ASCENDING path, so
-            //    `added` comes out already sorted with or without MissingAccess's own final `Sort`, and an
-            //    assertion added only against that geometry would be vacuous (verified: with the final Sort
-            //    temporarily removed, this exact two-stub fixture still passed a row-major check). (5,10)
-            //    does not front the pre-existing stub at (5,3), so it forces an actual pass-1 carve, and
-            //    that carve runs NORTH-TO-SOUTH-REVERSED — from the building's high-j frontage down to the
-            //    low-j street — i.e. DESCENDING j, landing in `added` BEFORE pass 2's ascending j=0 cells in
-            //    insertion order. Only the final `Sort` fixes that ordering; confirmed empirically: with
+            //    THE ORIGINAL TWO-STUB CORE — (1,0)/(10,0), fronted by (1,1)/(10,1) — is ALSO the fixture
+            //    that caught a real accounting bug on review: CarveBetween's BFS starts from the orphan's OWN
+            //    cells, which are already street, and its path always walks back through — and includes —
+            //    its own start, so an unguarded append reported the pre-existing cell (1,0) as if newly added
+            //    (measured before the fix: EnsureAccess returned 9 where the stored array only grew by 8).
+            //    The checks below pin MissingAccess's contract directly: no duplicate within its own returned
+            //    list, no already-street cell counted as new, and the reported count matching the OBSERVED
+            //    growth of the stored array — not just self-consistency between MissingAccess and
+            //    EnsureAccess, which would stay equal even if both over-counted the same way.
+            //
+            //    (5,10) AND (5,3) were added later, for the row-major assertion below, and had to force an
+            //    actual pass-1 carve rather than reuse (1,1)/(10,1): those two already front their own stub,
+            //    so pass 1 never carves for them, and their pass-2 join always runs from the row-major-
+            //    SMALLER orphan toward the larger one — an inherently ASCENDING path, so `added` comes out
+            //    already sorted with or without MissingAccess's own final `Sort`, and an assertion checked
+            //    only against that geometry would be vacuous (verified: with the final Sort temporarily
+            //    removed, the original two-stub-only fixture still passed a row-major check). (5,10) not
+            //    fronting (5,3) forces the pass-1 carve described above, and that carve runs
+            //    NORTH-TO-SOUTH-REVERSED — from the building's high-j frontage down to the low-j street —
+            //    i.e. DESCENDING j, landing in `added` BEFORE pass 2's ascending j=0 cells in insertion
+            //    order. Only the final `Sort` fixes that ordering; confirmed empirically: with
             //    `added.Sort(RowMajor)` temporarily removed, this fixture's `missing` list failed the
             //    row-major check below 10 times over, e.g. "MissingAccess returned (5, 9) before (5, 8) …
             //    which is not row-major order" — and with the Sort restored the same fixture passes clean.
