@@ -195,7 +195,11 @@ namespace WorldGen.Workspace.Rendering
             var closeGlyphGO = new GameObject("Glyph", typeof(RectTransform));
             closeGlyphGO.transform.SetParent(closeGO.transform, false);
             var closeGlyph = closeGlyphGO.AddComponent<Text>();
-            closeGlyph.text = "✕";
+            // "×" (U+00D7), not "✕" (U+2715) — matches NotesTreeSidebar.AddRenameAndDelete's own delete
+            // glyph exactly. LegacyRuntime.ttf is Arial-derived and carries U+00D7; U+2715 is not a
+            // guaranteed hit, and an absent glyph would render blank on a button that is ALREADY invisible
+            // by default (hover-revealed), giving no visible signal that anything is wrong.
+            closeGlyph.text = "×";
             closeGlyph.font = builtinFont;
             closeGlyph.fontSize = 12;
             closeGlyph.alignment = TextAnchor.MiddleCenter;

@@ -26,7 +26,9 @@ namespace WorldGen.Workspace.Rendering
         public WorkspaceController Controller { get; private set; }
 
         /// <summary>The two tab strips, exposed the same way Controller is — Task 8 reaches these to wire
-        /// TabStripView.OnRequestQuickOpen, without GetComponentsInChildren/index-guessing at the call site.</summary>
+        /// TabStripView.OnRequestQuickOpen, without GetComponentsInChildren/index-guessing at the call site.
+        /// Unlike Controller, these do NOT get recovered after a Play-mode script reload — see Awake()'s
+        /// comment on why a recovery attempt here would be worse than useless.</summary>
         public TabStripView PrimaryTabStrip { get; private set; }
         public TabStripView SecondaryTabStrip { get; private set; }
 
@@ -40,16 +42,26 @@ namespace WorldGen.Workspace.Rendering
             // survive the reload; only re-running Awake() is new, so recover the Controller
             // reference here rather than leaving it null — the auto-property's backing field does
             // NOT survive the reload (it is not a serialized Unity field), even though the component
-            // it points at does. TabStripView instances are recovered the same way, keyed by their
-            // own PaneIndex rather than assumed order.
+            // it points at does. Recovering Controller this way is genuinely useful: WorkspaceController's
+            // OWN Awake() re-runs on the same reload and rebuilds a fresh, USABLE (if reset) Layout.
+            //
+            // PrimaryTabStrip/SecondaryTabStrip are deliberately NOT recovered the same way. A naive
+            // GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
+            // instance — PaneIndex is a plain auto-property, the exact construct this comment just said
+            // does not survive reload, so it reads 0 on BOTH surviving strips post-reload. But fixing the
+            // lookup (e.g. by GameObject name, which DOES survive) would still recover a functionally DEAD
+            // object: TabStripView has no Awake() of its own that re-wires anything, so its `controller`
+            // field, its `OnLayoutChanged` subscription, and every tab/close/plus Button's runtime
+            // AddListener callback are all gone too (none of that is Unity-serialized, exactly like
+            // Layout). A non-null-but-inert reference is worse than leaving these two properties null —
+            // Task 8 assigning OnRequestQuickOpen onto a dead strip would silently do nothing, which is
+            // harder to notice than a null reference. This is the same known gap WorkspaceController's own
+            // Awake() documents for Layout, extended to the tab strips: Task 11 owns fixing it, by
+            // rebuilding the whole shell (or at minimum re-running TabStripView.Create) on restore, not by
+            // a partial reference recovery here.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
-                foreach (var strip in GetComponentsInChildren<TabStripView>(true))
-                {
-                    if (strip.PaneIndex == 0) PrimaryTabStrip = strip;
-                    else if (strip.PaneIndex == 1) SecondaryTabStrip = strip;
-                }
                 return;
             }
 
