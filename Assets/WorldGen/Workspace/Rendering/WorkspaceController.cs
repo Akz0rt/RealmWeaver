@@ -164,6 +164,30 @@ namespace WorldGen.Workspace.Rendering
         /// NotesLayoutController.SaveSplitFraction's own drag-end-always-saves behaviour.</summary>
         public void CommitSplitRatio() => RaiseChanged();
 
+        // ── Navigator collapse (wired by NavigatorView to its header button) ─────
+
+        /// <summary>Writes Layout.NavigatorCollapsed directly rather than adding a WorkspaceOps op, the same
+        /// exception SetSplitRatioLive takes for SplitRatio and for the same reason: WorkspaceLayout's own doc
+        /// comment says "no op in this layer moves it", because NavigatorCollapsed is a free bool with no
+        /// cross-field invariant to protect. That is NOT the same situation Task 5's review sent back —
+        /// PaneState.ActiveIndex had to move to WorkspaceOps.SetActiveTab because the ops layer owns "in
+        /// range, -1 iff empty", an invariant a Rendering-layer write could violate. NavigatorCollapsed has no
+        /// such invariant; there is nothing for WorkspaceOps to protect. Unlike the drag-live/drag-commit split
+        /// for SplitRatio, a collapse toggle is one discrete click, not a per-frame gesture, so there is no
+        /// "live" phase here — it raises OnLayoutChanged immediately, matching CommitSplitRatio's timing.
+        ///
+        /// LOAD-BEARING FOR TASK 11: this method does not touch any pixel itself — NavigatorView.Rebuild is
+        /// what turns NavigatorCollapsed/NavigatorWidth into columnLayoutElement.preferredWidth, and it only
+        /// runs when OnLayoutChanged fires. Any future path that changes either field (a WorkspacePrefs
+        /// restore, say) MUST raise OnLayoutChanged afterward, or the navigator column will silently stay
+        /// the wrong width until something unrelated happens to trigger a rebuild.</summary>
+        public void SetNavigatorCollapsed(bool collapsed)
+        {
+            if (Layout.NavigatorCollapsed == collapsed) return;
+            Layout.NavigatorCollapsed = collapsed;
+            RaiseChanged();
+        }
+
         // ── Applying Layout onto the built hierarchy ──────────────────────────────
 
         /// <summary>The single place Layout.Secondary/SplitRatio become pixels: shows/hides the secondary

@@ -13,15 +13,25 @@ namespace WorldGen.Workspace.Rendering
     /// split Primary|Secondary). Attach to an empty GameObject; not yet wired into any scene — that
     /// is Task 11, the only task allowed to touch the scene.
     ///
-    /// Scope for this task is deliberately narrow (see the plan's Task 5 step 6): navigator column
-    /// as an empty sized container, the two pane containers, and the one divider that matters here —
-    /// the Primary|Secondary seam driving SplitRatio. The navigator's OWN resize handle
-    /// (NavigatorWidth) belongs to Task 7 ("collapses the column ... persisting NavigatorCollapsed
-    /// and NavigatorWidth"), so the navigator column here is fixed-width, not draggable.
+    /// Scope for Task 5 was deliberately narrow (see the plan's Task 5 step 6): navigator column as
+    /// an empty sized container, the two pane containers, and the one divider that matters here —
+    /// the Primary|Secondary seam driving SplitRatio. Task 7 is what fills the navigator column with
+    /// NavigatorView (tree, search, collapse toggle) — see BuildNavigatorColumn's own comment. There
+    /// is still only the one divider Task 5 built: no step in this plan wires a drag gesture to
+    /// NavigatorWidth, only the collapse toggle Task 7 Step 4 asks for.
     /// </summary>
     public class WorkspaceBuilder : MonoBehaviour
     {
         const float DividerWidth = 6f;
+
+        [Header("External refs")]
+        [Tooltip("The document NavigatorView renders. NotesRootBuilder owns the live NotesDocumentController " +
+                 "(and keeps owning it after Task 9 — see that task's Step 4); this is an external reference " +
+                 "the same way NotesRootBuilder.mapCamera is, assigned in the scene by Task 11. Null here is " +
+                 "the expected state through Tasks 7-10: WorkspaceBuilder is not yet wired into any scene, so " +
+                 "nothing can assign it yet. NavigatorView is null-tolerant — it still builds its chrome " +
+                 "(header, search, empty scroll) and just renders no groups until this is assigned.")]
+        public NotesDocumentController documentController;
 
         public WorkspaceController Controller { get; private set; }
 
@@ -31,6 +41,9 @@ namespace WorldGen.Workspace.Rendering
         /// comment on why a recovery attempt here would be worse than useless.</summary>
         public TabStripView PrimaryTabStrip { get; private set; }
         public TabStripView SecondaryTabStrip { get; private set; }
+
+        /// <summary>Same non-recovery caveat as PrimaryTabStrip/SecondaryTabStrip — see Awake()'s comment.</summary>
+        public NavigatorView Navigator { get; private set; }
 
         void Awake()
         {
@@ -45,20 +58,21 @@ namespace WorldGen.Workspace.Rendering
             // it points at does. Recovering Controller this way is genuinely useful: WorkspaceController's
             // OWN Awake() re-runs on the same reload and rebuilds a fresh, USABLE (if reset) Layout.
             //
-            // PrimaryTabStrip/SecondaryTabStrip are deliberately NOT recovered the same way. A naive
-            // GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
+            // PrimaryTabStrip/SecondaryTabStrip/Navigator are deliberately NOT recovered the same way. A
+            // naive GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
             // instance — PaneIndex is a plain auto-property, the exact construct this comment just said
             // does not survive reload, so it reads 0 on BOTH surviving strips post-reload. But fixing the
             // lookup (e.g. by GameObject name, which DOES survive) would still recover a functionally DEAD
             // object: TabStripView has no Awake() of its own that re-wires anything, so its `controller`
             // field, its `OnLayoutChanged` subscription, and every tab/close/plus Button's runtime
             // AddListener callback are all gone too (none of that is Unity-serialized, exactly like
-            // Layout). A non-null-but-inert reference is worse than leaving these two properties null —
-            // Task 8 assigning OnRequestQuickOpen onto a dead strip would silently do nothing, which is
-            // harder to notice than a null reference. This is the same known gap WorkspaceController's own
-            // Awake() documents for Layout, extended to the tab strips: Task 11 owns fixing it, by
-            // rebuilding the whole shell (or at minimum re-running TabStripView.Create) on restore, not by
-            // a partial reference recovery here.
+            // Layout) — and NavigatorView is built the same imperative way, with the same gap. A
+            // non-null-but-inert reference is worse than leaving these properties null — Task 8 assigning
+            // OnRequestQuickOpen onto a dead strip would silently do nothing, which is harder to notice than
+            // a null reference. This is the same known gap WorkspaceController's own Awake() documents for
+            // Layout, extended to the tab strips and the navigator: Task 11 owns fixing it, by rebuilding
+            // the whole shell (or at minimum re-running the affected Create methods) on restore, not by a
+            // partial reference recovery here.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
@@ -99,16 +113,19 @@ namespace WorldGen.Workspace.Rendering
             rootLayout.childForceExpandHeight = true;
             rootLayout.spacing = 0f;
 
-            // The navigator column's own RectTransform isn't referenced further here — Task 7 fills its
-            // contents. The pane container's tab strips ARE needed further (Task 8 wires their «+» hook),
-            // so BuildPaneContainer's other two return values are kept.
-            BuildNavigatorColumn(rootRowGO.transform, Controller.Layout.NavigatorWidth);
+            // NavigatorView.Create fills the column BuildNavigatorColumn just sized, and immediately
+            // overwrites navLayoutElement.preferredWidth from Layout.NavigatorCollapsed/NavigatorWidth in
+            // its own first Rebuild() — so the value BuildNavigatorColumn seeds it with here is only a
+            // harmless placeholder for the same reason BuildPane's flexibleWidth placeholder comment gives.
+            var (navRect, navLayoutElement) = BuildNavigatorColumn(rootRowGO.transform, Controller.Layout.NavigatorWidth);
+            Navigator = NavigatorView.Create(navRect, navLayoutElement, Controller, documentController);
+
             var (_, primaryStrip, secondaryStrip) = BuildPaneContainer(rootRowGO.transform, Controller);
             PrimaryTabStrip = primaryStrip;
             SecondaryTabStrip = secondaryStrip;
         }
 
-        static RectTransform BuildNavigatorColumn(Transform parent, float navigatorWidth)
+        static (RectTransform rect, LayoutElement element) BuildNavigatorColumn(Transform parent, float navigatorWidth)
         {
             var navGO = new GameObject("NavigatorColumn", typeof(RectTransform));
             navGO.transform.SetParent(parent, false);
@@ -124,7 +141,7 @@ namespace WorldGen.Workspace.Rendering
             navLayoutElement.flexibleWidth = 0f;
             navLayoutElement.preferredWidth = navigatorWidth;
 
-            return navGO.GetComponent<RectTransform>();
+            return (navGO.GetComponent<RectTransform>(), navLayoutElement);
         }
 
         static (RectTransform paneContainerRect, TabStripView primaryStrip, TabStripView secondaryStrip)
