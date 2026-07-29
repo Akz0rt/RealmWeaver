@@ -506,12 +506,13 @@ namespace WorldGen.Rendering
             // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings left on the
             // renderer. DEFENSIVE: no live path was found where this actually fires with a stale non-null
             // PreviewBuildings (ActiveBrush only ever changes through SetBrush, which — given its own
-            // unconditional clear — already drops PreviewBuildings on every transition away from a brush), but
-            // the renderer instance itself is NOT per-floor (SetRenderers installs the flat/volume pair once
-            // for this controller's whole lifetime), so IF something ever left it stale, the shape of the
-            // resulting bug would be exactly sub-project B's — phantom houses on the next floor's first
-            // reposition. Kept unconditional per the task brief, belt-and-suspenders alongside SetBrush's own
-            // clear rather than in place of it.
+            // unconditional clear — already drops PreviewBuildings on every transition away from a brush).
+            // `renderer` here is whichever of the flat/volume pair is CURRENTLY ACTIVE (SetRenderer can swap
+            // it mid-lifetime, and neither renderer is per-floor — SetRenderers installs the pair once for
+            // this controller's whole lifetime), so this line reaches the volume renderer only while it is the
+            // active one — which is exactly when a stale PreviewBuildings would matter, since a flat renderer
+            // never reads the property at all. Kept unconditional per the task brief, belt-and-suspenders
+            // alongside SetBrush's own clear rather than in place of it.
             if (renderer is SettlementVolumeRenderer volBind) volBind.PreviewBuildings = null;
             // A brush armed in one interior must not survive into another (task review Critical): without
             // this, dragging into a building interior with a settlement brush still armed would make
@@ -1064,6 +1065,15 @@ namespace WorldGen.Rendering
             if (ActiveBrush == brush) return;
             ActiveBrush = brush;
             hoverValid = false;
+            // Captured BEFORE strokeCells is nulled below (review Important 3): strokeCells != null here means
+            // OnBeginDrag's brush branch DID push a snapshot for this exact gesture — it always calls
+            // undo.PushSnapshot immediately before creating strokeCells, with no path between them that could
+            // skip the push, and strokeCells is written non-null nowhere else in this class. A stroke abandoned
+            // HERE (Esc, or switching straight from one brush to another) never commits through OnEndDrag —
+            // ActiveBrush is already something else by the time the release arrives — so if one was pushed it
+            // must be discarded, or the DM's next Ctrl+Z silently restores an identical state and appears to do
+            // nothing (Task 3a's own comment below named this symptom before Discard existed to fix it).
+            bool hadStroke = strokeCells != null;
             // An in-flight stroke (press, drag, then Esc/toggle-off before release) must not survive the
             // brush changing (task review Important): OnEndDrag never runs its commit for it (ActiveBrush is
             // already something else by the time the release arrives), so without this strokeCells and its
@@ -1072,14 +1082,40 @@ namespace WorldGen.Rendering
             // still non-null and append from the stale strokeLastCell, painting from an abandoned stroke's
             // end with no snapshot behind it.
             strokeCells = null;
+            if (hadStroke) undo.Discard();
             // Clearing only strokeCells above would be INERT (sub-project B's exact bug, in the same shape):
             // the renderer holds its OWN reference (PreviewBuildings, set directly from strokeCells at
             // OnBeginDrag/OnDrag) and keeps drawing the abandoned stroke's cells until something else rebuilds
             // it. Unconditional like strokeCells just above — not gated on `brush == SettlementBrush.None`
             // the way HidePlacementHighlight below is — because switching straight from one brush to ANOTHER
-            // (not through None) must drop it too.
-            if (renderer is SettlementVolumeRenderer volSb) volSb.PreviewBuildings = null;
+            // (not through None) must drop it too. Captured as hadPreview BEFORE clearing (review Important
+            // 2): PreviewBuildings != null here means a stroke was actually DRAWING (Building brush only —
+            // Road/Erase set it null on every sample, see OnBeginDrag/OnDrag), and clearing it here with
+            // nothing else ever repainting afterward (see below) would otherwise leave the abandoned stroke's
+            // cells on screen.
+            bool hadPreview = false;
+            if (renderer is SettlementVolumeRenderer volSb) { hadPreview = volSb.PreviewBuildings != null; volSb.PreviewBuildings = null; }
             if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
+            // Review Important 2: clearing PreviewBuildings above is not enough by itself — nothing else
+            // repaints afterward. Update is `UpdatePlacement(); if (!cascading) return;`, so an unrelated
+            // cascade is the only other thing that could rebuild; OnActiveBrushChanged below only refreshes
+            // the toolbar button (DungeonEditorScreen.RefreshBrushButton); and OnEndDrag's own brush branch is
+            // skipped from here on, since ActiveBrush is no longer non-None by the time the release arrives.
+            // So without this, an abandoned stroke's cells — and the wall ring re-derived around them — would
+            // stay drawn until some unrelated edit happened to rebuild.
+            //
+            // Gated on hadPreview, and the gate is NOT cosmetic — it is what keeps this safe on the ONE path
+            // that calls SetBrush with a MISMATCHED binding: Bind's `SetBrush(SettlementBrush.None)` runs
+            // AFTER `this.dungeon` is reassigned to the NEW dungeon but BEFORE `this.levelIndex` is reassigned
+            // (traced in Bind: `this.dungeon = dungeon;` near its top, `this.levelIndex = levelIndex;` only
+            // after this call), so BoundLevel computed here in that one case is `newDungeon.Floors[oldIndex]`
+            // — genuinely the wrong floor, or out of range. Bind's own PreviewBuildings clear (beside
+            // undo.Clear(), unconditional, before this call) already nulls the SAME renderer's PreviewBuildings
+            // first, so by the time this line reads it here hadPreview is already false and the repaint below
+            // cannot fire against that mismatched pair. Every OTHER caller of SetBrush (ToggleBrush, the Esc
+            // branch in UpdatePlacement) leaves dungeon/levelIndex/boundLevel all mutually consistent, so
+            // BoundLevel there is simply the floor on screen.
+            if (hadPreview && BoundLevel != null) RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
             OnActiveBrushChanged?.Invoke(brush);
         }
 
@@ -1738,20 +1774,47 @@ namespace WorldGen.Rendering
             // commit, leaking strokeCells and stranding the snapshot OnBeginDrag already pushed.
             if (ActiveBrush != SettlementBrush.None)
             {
+                // HOISTED ABOVE the commit block below (review Important 1): Refresh()/OnGraphMutated there
+                // rebuild the grid — through RepositionRooms -> SettlementTileGrid.Build(lvl, PreviewStreets,
+                // PreviewBuildings) — while PreviewBuildings still aliases strokeCells, so every cell
+                // PaintBuilding REFUSED (dropped by the 4-connectivity repair, by gate ownership, or by the
+                // off-field bound) would draw as a Building tile, wall ring included, until some unrelated
+                // edit repaints. This branch RETURNS before ever reaching the general clear further down (see
+                // the doc at the top of this method), so it cannot be relied on to clean this up either.
+                // strokeCells itself stays exactly where it was below — PaintBuilding still needs it.
+                if (renderer is SettlementVolumeRenderer volEndBrush) volEndBrush.PreviewBuildings = null;
                 var lvlE = BoundLevel;
+                // A snapshot was pushed for THIS stroke iff strokeCells is non-null here: OnBeginDrag's brush
+                // branch always calls undo.PushSnapshot immediately before creating strokeCells, with no path
+                // between them that could skip the push, and nothing else in this class ever assigns
+                // strokeCells a non-null value. Captured BEFORE strokeCells is nulled below.
+                bool pushedSnapshot = strokeCells != null;
+                bool changed = false;
                 if (strokeCells != null && strokeCells.Count > 0 && lvlE != null)
                 {
-                    if (ActiveBrush == SettlementBrush.Building) SettlementBrushOps.PaintBuilding(lvlE, strokeCells);
-                    CommitSettlementStreets();
-                    Refresh();
-                    OnGraphMutated?.Invoke();
+                    // Same `changed` test DabBrush uses (review Important 3): Road/Erase have no op yet, so
+                    // they always read false here, matching DabBrush's own fall-through. Gating the WHOLE
+                    // commit block on it — not just the discard below — means a refused/no-op stroke costs no
+                    // wasted CommitSettlementStreets/Refresh/OnGraphMutated either, the same shape DabBrush
+                    // already established for a single dab.
+                    changed = ActiveBrush == SettlementBrush.Building
+                           && SettlementBrushOps.PaintBuilding(lvlE, strokeCells) != null;
+                    if (changed)
+                    {
+                        CommitSettlementStreets();
+                        Refresh();
+                        OnGraphMutated?.Invoke();
+                    }
                 }
+                // A stroke that changed nothing must not leave its snapshot on the stack (review Important 3):
+                // Esc/brush-switch abandonment is handled by SetBrush's own Discard below, but a stroke that
+                // reaches HERE with nothing committed — the whole stroke refused, lvlE null, or a Road/Erase
+                // drag — must discard too, or the DM's next Ctrl+Z silently restores an identical state and
+                // appears to do nothing. Gated on pushedSnapshot, NOT on `!changed` alone: if OnBeginDrag's own
+                // guard failed (no press cell resolved), no snapshot was ever pushed for this gesture, and an
+                // unconditional Discard here would drop an unrelated, earlier snapshot instead.
+                if (pushedSnapshot && !changed) undo.Discard();
                 strokeCells = null;
-                // This branch RETURNS before ever reaching the general clear below (see the doc at the top of
-                // this method), so PreviewBuildings must be dropped HERE — clearing only the controller's
-                // strokeCells above would be INERT, the renderer holds its own reference and would keep
-                // drawing the just-committed (or abandoned) stroke on every later reposition.
-                if (renderer is SettlementVolumeRenderer volEndBrush) volEndBrush.PreviewBuildings = null;
                 return;
             }
 
