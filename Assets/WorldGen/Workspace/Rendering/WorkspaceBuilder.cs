@@ -45,6 +45,12 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Same non-recovery caveat as PrimaryTabStrip/SecondaryTabStrip — see Awake()'s comment.</summary>
         public NavigatorView Navigator { get; private set; }
 
+        /// <summary>Task 8's Ctrl+K palette — a persistent component (see its own class doc for why, over a
+        /// static Show/Close pair like NavContextMenu/ConfirmDialog), attached to this GameObject so its
+        /// Update() polls the chord for the lifetime of the shell. Same non-recovery caveat as
+        /// PrimaryTabStrip/SecondaryTabStrip/Navigator below — see Awake()'s comment.</summary>
+        public QuickOpenPopup QuickOpenPopup { get; private set; }
+
         void Awake()
         {
             // A script recompile while already in Play Mode re-invokes Awake() on existing
@@ -58,19 +64,23 @@ namespace WorldGen.Workspace.Rendering
             // it points at does. Recovering Controller this way is genuinely useful: WorkspaceController's
             // OWN Awake() re-runs on the same reload and rebuilds a fresh, USABLE (if reset) Layout.
             //
-            // PrimaryTabStrip/SecondaryTabStrip/Navigator are deliberately NOT recovered the same way. A
-            // naive GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
+            // PrimaryTabStrip/SecondaryTabStrip/Navigator/QuickOpenPopup are deliberately NOT recovered the
+            // same way. A naive GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
             // instance — PaneIndex is a plain auto-property, the exact construct this comment just said
             // does not survive reload, so it reads 0 on BOTH surviving strips post-reload. But fixing the
             // lookup (e.g. by GameObject name, which DOES survive) would still recover a functionally DEAD
             // object: TabStripView has no Awake() of its own that re-wires anything, so its `controller`
             // field, its `OnLayoutChanged` subscription, and every tab/close/plus Button's runtime
             // AddListener callback are all gone too (none of that is Unity-serialized, exactly like
-            // Layout) — and NavigatorView is built the same imperative way, with the same gap. A
-            // non-null-but-inert reference is worse than leaving these properties null — Task 8 assigning
-            // OnRequestQuickOpen onto a dead strip would silently do nothing, which is harder to notice than
-            // a null reference. This is the same known gap WorkspaceController's own Awake() documents for
-            // Layout, extended to the tab strips and the navigator: Task 11 owns fixing it, by rebuilding
+            // Layout) — and NavigatorView is built the same imperative way, with the same gap.
+            // QuickOpenPopup has the mirror-image version of this same gap: its own `controller` field is
+            // gone too (see QuickOpenPopup.Update's `if (controller == null) return;` guard, which exists
+            // precisely for this case), so a naively-recovered instance would poll Keyboard.current forever
+            // and never actually be able to open anything. A non-null-but-inert reference is worse than
+            // leaving these properties null — Task 8 assigning OnRequestQuickOpen onto a dead strip would
+            // silently do nothing, which is harder to notice than a null reference. This is the same known
+            // gap WorkspaceController's own Awake() documents for Layout, extended to the tab strips, the
+            // navigator, and the quick-open popup: Task 11 owns fixing it, by rebuilding
             // the whole shell (or at minimum re-running the affected Create methods) on restore, not by a
             // partial reference recovery here.
             if (transform.childCount > 0)
@@ -123,6 +133,19 @@ namespace WorldGen.Workspace.Rendering
             var (_, primaryStrip, secondaryStrip) = BuildPaneContainer(rootRowGO.transform, Controller);
             PrimaryTabStrip = primaryStrip;
             SecondaryTabStrip = secondaryStrip;
+
+            // Attached last, once both strips exist — wires the «+» hook Task 6 left unassigned
+            // (TabStripView.OnRequestQuickOpen's own doc comment: "clicking «+» invokes this ... and
+            // otherwise does nothing until Task 8 assigns it"). Method-group assignment straight to the
+            // Action<int> delegate; OpenForPane itself focuses the requesting pane before opening, which is
+            // how a per-pane «+» ends up landing its result in THAT pane rather than merely the focused one
+            // (see QuickOpenPopup's own class doc). Note pane 1's «+» is unreachable while the workspace is
+            // unsplit regardless — ReflowPanes deactivates the WHOLE secondary pane GameObject, strip
+            // included, whenever Layout.Secondary is null — so WorkspaceOps.Focus's own "ignore a
+            // nonexistent pane" guard is defence in depth here, not what actually keeps this safe day to day.
+            QuickOpenPopup = QuickOpenPopup.Attach(gameObject, Controller, documentController);
+            PrimaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
+            SecondaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
         }
 
         static (RectTransform rect, LayoutElement element) BuildNavigatorColumn(Transform parent, float navigatorWidth)
