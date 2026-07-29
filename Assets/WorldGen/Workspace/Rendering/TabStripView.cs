@@ -132,6 +132,19 @@ namespace WorldGen.Workspace.Rendering
             var tabGO = new GameObject($"Tab_{index}_{tab.Title}", typeof(RectTransform));
             tabGO.transform.SetParent(transform, false);
 
+            // Clips every CHILD of tabGO (title, close button/glyph) to tabGO's own, ACTUAL post-layout
+            // rect — not tabGO's own Image below, which RectMask2D never affects on the GameObject it sits
+            // on, only on descendants. This is the structural backstop TruncateTitle's arithmetic budget
+            // (see below) cannot provide by itself: the strip's HorizontalLayoutGroup can compress a tab
+            // well below MaxTabWidth once the pane holds enough tabs (childControlWidth=true,
+            // minWidth/flexibleWidth=0 on every tab — see TabStripView.Create), and a title truncated to
+            // fit the COMPILE-TIME MaxTabWidth budget can still overflow a tab that landed SMALLER than
+            // that at runtime. Review Finding 1's residual: without this mask, that overflow drew straight
+            // over the neighbouring tab. A strip-level mask would stop text escaping the strip but not text
+            // drawing over a NEIGHBOURING tab within the same strip, which is the actual symptom — the mask
+            // has to sit on each tab, not the strip.
+            tabGO.AddComponent<RectMask2D>();
+
             var bg = tabGO.AddComponent<Image>();
             ThemeService.Tag(bg, active ? ThemeRole.Bg : ThemeRole.Panel);
 
@@ -161,12 +174,15 @@ namespace WorldGen.Workspace.Rendering
             title.raycastTarget = false;   // clicks must reach tabBtn, not the label.
             ThemeService.Tag(title, active ? ThemeRole.Txt : ThemeRole.Mut);
 
-            // MaxTabWidth is a HARD ceiling (the tab never grows past it), so the title's own on-screen
-            // budget is fixed regardless of how long tab.Title actually is: TruncateTitle guarantees
-            // title.preferredWidth <= maxTextWidth afterward, so a too-long title can never draw outside
-            // this rect over the close button, the neighbouring tab, or the "+" button (review Finding 1 —
-            // HorizontalWrapMode.Overflow above only controls WRAPPING, it does not clip, so an untruncated
-            // string would have drawn straight through all of that with nothing to stop it).
+            // Shrinks the COMMON case tidily: maxTextWidth assumes the tab gets its full MaxTabWidth
+            // ceiling, which holds whenever the strip has room to grant every tab its own preferred width.
+            // This alone does NOT guarantee containment — once enough tabs are open that the strip's
+            // HorizontalLayoutGroup compresses a tab below this compile-time budget, even an
+            // already-truncated title can be wider than the tab actually ends up. The tabGO RectMask2D
+            // added above is what makes containment unconditional: it clips to the tab's REAL,
+            // post-layout rect regardless of how far the layout group squeezed it, so this arithmetic
+            // truncation only needs to get the ellipsis to look right, not to be the thing standing
+            // between a title and its neighbours.
             float maxTextWidth = MaxTabWidth - TitlePaddingLeft - CloseReserve;
             string displayTitle = TruncateTitle(title, tab.Title, maxTextWidth);
             title.text = displayTitle;
@@ -237,10 +253,16 @@ namespace WorldGen.Workspace.Rendering
         /// whatever this method returns, so the caller does not need to re-assign it. A linear scan rather
         /// than a binary search: tab titles in this project (page/settlement/dungeon names) are short, so
         /// the extra remeasure calls cost nothing per rebuild, and a straight-line scan is easier for a
-        /// reviewer to verify by inspection than a binary-search off-by-one. Chosen over a RectMask2D clip
-        /// (review Finding 1 offered either) because clipping mid-glyph gives no visual sign that a title
-        /// was cut off, where an ellipsis is the conventional signal (browser/editor tab strips do the
-        /// same) and needs no extra component on the tab.</summary>
+        /// reviewer to verify by inspection than a binary-search off-by-one.
+        ///
+        /// This handles the common case (an overlong TITLE) tidily with a conventional ellipsis, which
+        /// reads better than a hard clip mid-glyph — but it is arithmetic against a compile-time budget, not
+        /// a guarantee: it cannot know how far the strip's HorizontalLayoutGroup will actually compress this
+        /// tab once enough tabs are open (that depends on every OTHER tab's width too, at rebuild time).
+        /// BuildTab's tabGO RectMask2D is the structural backstop for THAT case — it clips to the tab's
+        /// real, post-layout rect regardless of what this method predicted. Keep both: this method for a
+        /// readable ellipsis in the ordinary case, the mask so containment holds even when this method's
+        /// prediction turns out wrong.</summary>
         static string TruncateTitle(Text measurer, string full, float maxWidth)
         {
             measurer.text = full;
