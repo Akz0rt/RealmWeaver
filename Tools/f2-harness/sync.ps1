@@ -723,6 +723,28 @@ New-SettlementRebind 'SelfTestSpurWidth' 'MutSpurWideDilation' `
   @('SettlementTileGrid\.', '\bTileType\b') `
   @('WorldGen.Generation.MutSpurWideDilation.SettlementTileGrid.', 'WorldGen.Generation.MutSpurWideDilation.TileType')
 
+# MutSpurWideDilationRoadsAndGates: the IDENTICAL mutation (same find/replace pair as MutSpurWideDilation just
+# above) under a SECOND, distinct class — required because New-SettlementRebind writes exactly ONE output file
+# per mutant class (gen/SelfTests_<mutantClass>.cs), keyed only by class name; a second
+# New-SettlementRebind under the SAME 'MutSpurWideDilation' class name (tried and inspected before choosing
+# this shape — task review, street-access arc) silently OVERWRITES the first call's file. The overwritten file
+# still contains SelfTestSpurWidth as a method (carried through verbatim in $before/$after, since
+# New-SettlementRebind's rebindPatterns are applied only to the ONE method it extracts), but with its body
+# never rewritten to the nested mutant type — it keeps calling the REAL SettlementTileGrid and passes
+# regardless of the mutation, exactly the silently-vacuous-claim defect this task review exists to catch.
+# Same precedent as MutGateOpeningNoGates/MutTileGridNoGates below (same mutation, second catching test, in a
+# different source file — "a distinct class per (mutation, catching test) pair is the only shape that works").
+# Never printed as its own case in Mutants.cs: the ONE printed "MutSpurWideDilation" case calls both this
+# class's SelfTestRoadsAndGates and the class above's SelfTestSpurWidth, so a failure in either kills it.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutSpurWideDilationRoadsAndGates' `
+  '                    if (isBuilding || HasBuildingWithin(g, a, b, OpenStreetNeighbourhood)) wide[a, b] = true;' `
+  '                    if (true) wide[a, b] = true;   // MUTANT: every seed cell takes the wide radius' `
+  'MutSpurWideDilationRoadsAndGates.cs'
+
+New-SettlementRebind 'SelfTestRoadsAndGates' 'MutSpurWideDilationRoadsAndGates' `
+  @('SettlementTileGrid\.', '\bTileType\b') `
+  @('WorldGen.Generation.MutSpurWideDilationRoadsAndGates.SettlementTileGrid.', 'WorldGen.Generation.MutSpurWideDilationRoadsAndGates.TileType')
+
 # ---- TILE GRID ROADS/GATES MUTANTS (Task 3): two rules pinned by SettlementTileGrid.Build's road/gate pass. --
 # Same bundling as the three wall-ring mutants above (TileType + SettlementTileGrid share the file), so the
 # rebind needs the same two patterns.

@@ -811,10 +811,15 @@ namespace WorldGen.Rendering
                     }
                 }
             double pct = total > 0 ? 100.0 * far / total : 0.0;
-            Debug.Log($"Street cells far from any building: {far}/{total} ({pct:0.000}%)");
+            // InvariantCulture, not the interpolated {pct:0.000} default: this machine's locale renders a
+            // decimal comma (0,013%), while OpenStreetNeighbourhood's doc comment and this method's own doc
+            // comment both quote the figure with a decimal POINT (0.013%) — same number, different glyph, and
+            // a reader diffing the printed line against either comment would see what looks like a mismatch.
+            string pctStr = pct.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture);
+            Debug.Log($"Street cells far from any building: {far}/{total} ({pctStr}%)");
             if (pct > 0.10)
             {
-                Debug.LogError($"SelfTestStreetCellsNearBuildings: {far}/{total} ({pct:0.000}%) street cells "
+                Debug.LogError($"SelfTestStreetCellsNearBuildings: {far}/{total} ({pctStr}%) street cells "
                              + "are farther than OpenStreetNeighbourhood from any building, over the 0.10% "
                              + "ceiling — the narrow-spur rule is now dimpling generated town walls");
                 ok = false;

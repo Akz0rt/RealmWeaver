@@ -86,8 +86,9 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutTileGridNoWallRingSelfTests().SelfTestWallRing()),
                 ("MutTileGridNoVoid", "SettlementTileGrid.Build's Void assignment neutered (courtyard cells stay None)",
                     () => new WorldGen.MutantTests.MutTileGridNoVoidSelfTests().SelfTestWallRing()),
-                ("MutSpurWideDilation", "SettlementTileGrid's wall ring dilates every street cell by the full courtyard radius (a connector road out to an outlying house is a five-wide causeway again)",
-                    () => new WorldGen.MutantTests.MutSpurWideDilationSelfTests().SelfTestSpurWidth()),
+                ("MutSpurWideDilation", "SettlementTileGrid's wall ring dilates every street cell by the full courtyard radius (a connector road out to an outlying house is a five-wide causeway again); TWO independently-rebound classes over the SAME mutation (MutSpurWideDilation for the hand-built spur fixture, MutSpurWideDilationRoadsAndGates for the pre-existing roads/gates fixture whose re-derived spurWallRow this rule also determines) — see sync.ps1's comment on why one rebind per class is required, not one rebind per test",
+                    () => { new WorldGen.MutantTests.MutSpurWideDilationSelfTests().SelfTestSpurWidth();
+                            new WorldGen.MutantTests.MutSpurWideDilationRoadsAndGatesSelfTests().SelfTestRoadsAndGates(); }),
                 ("MutTileGridNoGates", "SettlementTileGrid.Build's gate-reclassify write neutered (a gate never turns its nearest Wall cell into Gate)",
                     () => new WorldGen.MutantTests.MutTileGridNoGatesSelfTests().SelfTestRoadsAndGates()),
                 ("MutTileGridRoadIgnoresBuilding", "SettlementTileGrid.Build's road marking drops the Building/Wall precedence guard (a road overwrites whatever tile is already there); named for the Building half since the Wall half is provably unreachable and is not what this mutant is caught by",
