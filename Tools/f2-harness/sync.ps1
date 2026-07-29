@@ -1524,7 +1524,12 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutPlaceRefusesWall' `
   'MutPlaceRefusesWall.cs'
 
 # MutPaintIgnoresOnField: PaintBuilding keeps cells whose centre lies past the 0..1 field, which the cascade
-# then Clamp01s to the edge on every later drag. SelfTestBrushStrokes' case 10 must fail (3 cells, not 1).
+# then Clamp01s to the edge on every later drag. SelfTestBrushStrokes' case 10 must fail — but NOT on its
+# cell COUNT, which is the trap in reading this: with every cell surviving the filter, kept[0] becomes the
+# stroke's isolated first cell (-1,0), and ComponentContainingFirst collapses the footprint onto that one
+# cell, so the count is 1 either way. What fails is case 10's off-field loop (a claimed cell with a negative
+# centre) and its has32 claim (the only genuinely on-field cell is gone). Stated exactly because the count
+# reading was in this comment before case 10 grew its (-1,0) cell, and was wrong the moment it did.
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresOnField' `
   '                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;' `
   '                // MUTANT: the on-field bound is ignored' `
