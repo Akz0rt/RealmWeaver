@@ -197,9 +197,9 @@ namespace WorldGen.Rendering
             //    right over it. Reversing the insertion order is what a hidden dependence on incidental
             //    enumeration order cannot survive.
             //
-            //    The fixture is case 7's shape (two EQUAL-SIZED, already-served orphan stubs — the one
-            //    geometry here where SmallestOrphanComponent must break a genuine size tie), at coordinates
-            //    chosen empirically to exercise it. Reversing case 7's own (1,0)/(10,0) was tried FIRST and
+            //    The fixture is TWO EQUAL-SIZED, already-served orphan stubs — the shape where
+            //    SmallestOrphanComponent must break a genuine size tie — at coordinates chosen empirically
+            //    to exercise it. Reversing case 7's ORIGINAL two-stub pair, (1,0)/(10,0), was tried FIRST and
             //    does NOT diverge, even under a deliberately injected order-dependence bug: for only two
             //    non-colliding int-pair hashes, HashSet<(int,int)> enumeration order depends on hash-bucket
             //    placement, not insertion order, so both builds enumerate in the same relative order either
