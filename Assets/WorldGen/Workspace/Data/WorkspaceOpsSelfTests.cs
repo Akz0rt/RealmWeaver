@@ -126,6 +126,48 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Workspace Close And Collapse: PASS" : "Self-Test Workspace Close And Collapse: FAIL");
         }
 
+        [ContextMenu("Self-Test: Workspace Set Active Tab")]
+        public void SelfTestSetActiveTab()
+        {
+            bool ok = true;
+            var l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", false);
+            // Primary is now [Карта мира, A, *B] — ActiveIndex 2.
+            int activeBefore = l.Primary.ActiveIndex;
+
+            // An absent pane (no Secondary exists here) is refused outright, and Primary is untouched.
+            bool absentPaneOk = WorkspaceOps.SetActiveTab(l, 1, 0);
+            if (absentPaneOk)
+            { Debug.LogError($"FAIL setActive: SetActiveTab on an absent pane returned {absentPaneOk}, want false"); ok = false; }
+            if (l.Primary.ActiveIndex != activeBefore)
+            { Debug.LogError($"FAIL setActive: an absent-pane call left Primary.ActiveIndex at {l.Primary.ActiveIndex}, want unchanged {activeBefore}"); ok = false; }
+
+            // An out-of-range index on a real pane is refused too — both above and below the valid range.
+            bool tooHighOk = WorkspaceOps.SetActiveTab(l, 0, 99);
+            if (tooHighOk)
+            { Debug.LogError($"FAIL setActive: SetActiveTab(0, 99) returned {tooHighOk}, want false (only {l.Primary.Tabs.Count} tabs)"); ok = false; }
+            bool negativeOk = WorkspaceOps.SetActiveTab(l, 0, -1);
+            if (negativeOk)
+            { Debug.LogError($"FAIL setActive: SetActiveTab(0, -1) returned {negativeOk}, want false"); ok = false; }
+            if (l.Primary.ActiveIndex != activeBefore)
+            { Debug.LogError($"FAIL setActive: an out-of-range call left Primary.ActiveIndex at {l.Primary.ActiveIndex}, want unchanged {activeBefore}"); ok = false; }
+
+            // Re-requesting the already-active index changes nothing, and says so via its return value.
+            bool sameOk = WorkspaceOps.SetActiveTab(l, 0, activeBefore);
+            if (sameOk)
+            { Debug.LogError($"FAIL setActive: re-activating the already-active index {activeBefore} returned {sameOk}, want false (no change)"); ok = false; }
+
+            // A valid call actually moves ActiveIndex and reports that it did.
+            bool movedOk = WorkspaceOps.SetActiveTab(l, 0, 0);
+            if (!movedOk)
+            { Debug.LogError($"FAIL setActive: SetActiveTab(0, 0) returned {movedOk}, want true"); ok = false; }
+            if (l.Primary.ActiveIndex != 0 || Dump(l.Primary) != "*Карта мира,A,B")
+            { Debug.LogError($"FAIL setActive: primary = [{Dump(l.Primary)}], want «*Карта мира,A,B»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Set Active Tab: PASS" : "Self-Test Workspace Set Active Tab: FAIL");
+        }
+
         [ContextMenu("Self-Test: Workspace Move And Prune")]
         public void SelfTestMoveAndPrune()
         {

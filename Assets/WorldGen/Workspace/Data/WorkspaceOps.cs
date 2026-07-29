@@ -126,6 +126,23 @@ namespace WorldGen.Workspace.Data
             return true;
         }
 
+        /// <summary>Activates a tab within its pane. Same validation shape as CloseTab: an absent pane or an
+        /// out-of-range index mutates nothing and returns false. Unlike CloseTab, no tab is removed, so
+        /// neither FixActiveIndexAfterRemoval nor NormalizeSplit applies here — this call cannot make a pane
+        /// empty or unbalance the split, only move which of its existing tabs is active. Returns false (no
+        /// mutation) when index already equals ActiveIndex, so callers can use the return value to decide
+        /// whether anything actually changed.</summary>
+        public static bool SetActiveTab(WorkspaceLayout l, int pane, int index)
+        {
+            if (l == null) return false;
+            PaneState p = PaneAt(l, pane);
+            if (p?.Tabs == null || index < 0 || index >= p.Tabs.Count) return false;
+            if (index == p.ActiveIndex) return false;
+
+            p.ActiveIndex = index;
+            return true;
+        }
+
         /// <summary>Moves one tab, possibly across panes. Creates the destination pane the same way Open's
         /// inOtherPane does if it does not exist yet. The moved tab becomes the active tab wherever it lands
         /// — a tab you just dragged is the one you meant to look at.</summary>

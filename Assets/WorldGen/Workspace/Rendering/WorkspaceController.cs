@@ -6,10 +6,12 @@ namespace WorldGen.Workspace.Rendering
 {
     /// <summary>
     /// Owns the in-memory WorkspaceLayout and is the ONLY place that mutates it. Every structural
-    /// change (open/close/focus) routes through WorkspaceOps — this class never touches Tabs lists
-    /// itself. The two scalar fields WorkspaceOps deliberately has no op for (SplitRatio,
-    /// PaneState.ActiveIndex — see their doc comments on WorkspaceLayout/PaneState, "no op in this
-    /// layer moves it") are set directly here, which is the one place that is meant to happen.
+    /// change (open/close/activate/focus) routes through WorkspaceOps — this class never touches
+    /// Tabs lists, or PaneState.ActiveIndex, itself; WorkspaceOps.SetActiveTab owns that scalar the
+    /// same way CloseTab owns removal (see WorkspaceLayout.cs:27-28: "WorkspaceOps.
+    /// FixActiveIndexAfterRemoval is the one place that keeps this true" — SetActiveTab is the other
+    /// place). SplitRatio is the one genuine exception: its own doc comment on WorkspaceLayout says
+    /// "no op in this layer moves it", so it is set directly here — see SetSplitRatioLive below.
     ///
     /// WorkspaceBuilder builds the RectTransform/LayoutElement hierarchy and hands the pieces this
     /// class needs to Initialize(); from then on this class applies Layout onto them and reports
@@ -29,7 +31,15 @@ namespace WorldGen.Workspace.Rendering
 
         void Awake()
         {
-            Layout = WorkspaceOps.NewDefault();
+            // A Play-mode script recompile re-invokes Awake() on this already-existing component
+            // (WorkspaceBuilder documents the same trap for itself, including recovering ITS
+            // reference to this component). Unconditionally reassigning here would silently reset
+            // whatever tabs/split/focus the user had back to NewDefault() on every recompile. Only
+            // assigning when still null keeps whatever this object already held — which is NOT full
+            // restoration (that needs the serialized layout back from PlayerPrefs, which does not
+            // exist until Task 11's WorkspacePrefs), just "don't actively destroy it" in the
+            // meantime.
+            if (Layout == null) Layout = WorkspaceOps.NewDefault();
         }
 
         /// <summary>Wires the RectTransforms/LayoutElements WorkspaceBuilder just constructed, then applies
@@ -84,17 +94,12 @@ namespace WorldGen.Workspace.Rendering
             RaiseChanged();
         }
 
-        /// <summary>Activates a tab within its pane. There is no WorkspaceOps op for this — ActiveIndex is a
-        /// scalar, not a list — so the range check here IS what keeps it valid; WorkspaceOps.PaneAt supplies
-        /// the pane, and the explicit 0..Tabs.Count-1 bound is exactly the invariant
-        /// FixActiveIndexAfterRemoval documents as "-1 only for an empty pane, otherwise a real index",
-        /// which this call preserves rather than violates.</summary>
+        /// <summary>Activates a tab within its pane, through WorkspaceOps.SetActiveTab — the tested op that
+        /// validates the pane and index range and reports whether anything actually changed (false for an
+        /// absent pane, an out-of-range index, or re-activating the already-active tab).</summary>
         public void SetActive(int pane, int index)
         {
-            PaneState p = WorkspaceOps.PaneAt(Layout, pane);
-            if (p?.Tabs == null || index < 0 || index >= p.Tabs.Count || index == p.ActiveIndex) return;
-
-            p.ActiveIndex = index;
+            if (!WorkspaceOps.SetActiveTab(Layout, pane, index)) return;
             RaiseChanged();
         }
 
