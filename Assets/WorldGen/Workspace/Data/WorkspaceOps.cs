@@ -208,7 +208,12 @@ namespace WorldGen.Workspace.Data
         const float MinNavigatorWidth = 160f;
         const float MaxNavigatorWidth = 420f;
 
-        static float ClampSplitRatio(float v) => v < MinSplitRatio ? MinSplitRatio : (v > MaxSplitRatio ? MaxSplitRatio : v);
+        /// <summary>Public (not just used by TryDeserialize on read): the Rendering-layer drag handle that
+        /// live-moves SplitRatio is "whatever op moves it" per the field's own doc comment on WorkspaceLayout,
+        /// and must clamp with these exact bounds. Promoted rather than duplicated as a second literal
+        /// 0.25/0.75 pair in Unity code — the same reasoning Task 2 used to promote NotesDocOps.Escape instead
+        /// of writing a second escaper.</summary>
+        public static float ClampSplitRatio(float v) => v < MinSplitRatio ? MinSplitRatio : (v > MaxSplitRatio ? MaxSplitRatio : v);
         static float ClampNavigatorWidth(float v) => v < MinNavigatorWidth ? MinNavigatorWidth : (v > MaxNavigatorWidth ? MaxNavigatorWidth : v);
 
         /// <summary>Hand-rolled tab-separated shape, same reason and same escaper as NotesDocOps.SerializeBlocks:
