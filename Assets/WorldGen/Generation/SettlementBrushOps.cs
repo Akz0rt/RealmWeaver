@@ -81,7 +81,7 @@ namespace WorldGen.Generation
             // validator reports, so keep only the component containing the FIRST surviving cell — the piece
             // the DM started drawing. The rest of the stroke is simply not painted, which is the same answer
             // the placement rule gives for the obstacle itself.
-            var kill = LargestOrFirstComponent(kept);
+            var kill = ComponentContainingFirst(kept);
 
             var room = new Room
             {
@@ -115,9 +115,11 @@ namespace WorldGen.Generation
         static int RowMajor((int i, int j) a, (int i, int j) b)
             => a.j != b.j ? a.j.CompareTo(b.j) : a.i.CompareTo(b.i);
 
-        /// <summary>The 4-connected component containing the first cell. Deterministic: the input order is the
-        /// stroke's own order, and the first cell is where the DM started.</summary>
-        static List<(int i, int j)> LargestOrFirstComponent(List<(int i, int j)> cells)
+        /// <summary>The 4-connected component that contains <c>cells[0]</c> — nothing here compares
+        /// component sizes, ever; whichever piece holds the first cell is the one returned, however large or
+        /// small the others are. Deterministic because the input order is the stroke's own order, and the
+        /// first cell is where the DM started drawing.</summary>
+        static List<(int i, int j)> ComponentContainingFirst(List<(int i, int j)> cells)
         {
             var set = new HashSet<(int i, int j)>(cells);
             var comp = new List<(int i, int j)> { cells[0] };
