@@ -107,6 +107,9 @@ static class Program
         var brushOps = new WorldGen.Rendering.SettlementBrushOpsSelfTests();
         brushOps.SelfTestBrushStrokes();
         brushOps.SelfTestBrushOpsSentinel();
+        var settlementUndo = new WorldGen.Rendering.SettlementUndoSelfTests();
+        settlementUndo.SelfTestSettlementUndo();
+        settlementUndo.SelfTestSettlementUndoSentinel();
         var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
         poiMigration.SelfTestPoiLegacyTypes();
         poiMigration.SelfTestPoiMigrationSentinel();

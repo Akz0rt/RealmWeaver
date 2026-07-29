@@ -157,6 +157,9 @@ namespace WorldGen.Generation
                 ("MutBrushNoComponentRepair", "SettlementBrushOps.PaintBuilding skips the connectivity repair — a stroke severed by a dropped obstacle keeps every remaining cell instead of only the component the DM started from",
                     () => new WorldGen.MutantTests.MutBrushNoComponentRepairSelfTests().SelfTestBrushStrokes()),
 
+                ("MutUndoNoRestore", "SettlementUndo.TryUndo pops the stack and reports success without restoring the floor",
+                    () => new WorldGen.MutantTests.MutUndoNoRestoreSelfTests().SelfTestSettlementUndo()),
+
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
                 ("MutFenceNoStreets", "DungeonLayout.DeriveTownFence stops folding the floor's STORED street cells into the fence (it wraps buildings + gates only — the fence the Task 5 measurement rejected, which leaves 21 of 78 street cells outside on the pinned fixture)",

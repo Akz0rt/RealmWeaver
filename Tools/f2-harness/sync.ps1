@@ -25,7 +25,8 @@ $files = @(
   'SettlementStreetOps.cs', 'SettlementStreetOpsSelfTests.cs',
   'SettlementSizing.cs', 'SettlementMigration.cs',
   'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs',
-  'SettlementBrushOps.cs', 'SettlementBrushOpsSelfTests.cs'
+  'SettlementBrushOps.cs', 'SettlementBrushOpsSelfTests.cs',
+  'SettlementUndo.cs', 'SettlementUndoSelfTests.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
@@ -465,6 +466,9 @@ $streetOpsTests = Get-Content (Join-Path $src 'SettlementStreetOpsSelfTests.cs')
 # Eighth source: the brush mutants (below) are caught via SelfTestBrushStrokes, which lives in
 # SettlementBrushOpsSelfTests.cs, not any of the seven files above.
 $brushOpsTests = Get-Content (Join-Path $src 'SettlementBrushOpsSelfTests.cs') -Raw -Encoding UTF8
+# Ninth source: the undo mutant (below) is caught via SelfTestSettlementUndo, which lives in
+# SettlementUndoSelfTests.cs, not any of the eight files above.
+$undoTests = Get-Content (Join-Path $src 'SettlementUndoSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
@@ -472,7 +476,8 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
   # $interiorTests, SelfTestBuilding falls through to $buildingTests, SelfTestWallRing falls through to
   # $tileGridTests, SelfTestPoiLegacyTypes falls through to $poiMigrationTests, SelfTestStreetAccess falls
-  # through to $streetOpsTests, and SelfTestBrushStrokes falls through to $brushOpsTests.
+  # through to $streetOpsTests, SelfTestBrushStrokes falls through to $brushOpsTests, and
+  # SelfTestSettlementUndo falls through to $undoTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
@@ -502,6 +507,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $brushOpsTests
     $origClass = 'SettlementBrushOpsSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $undoTests
+    $origClass = 'SettlementUndoSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -1475,6 +1484,35 @@ foreach ($mc in @('MutBrushNoInterpolation', 'MutBrushIgnoresPlaceable', 'MutBru
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")
 }
+
+# ---- UNDO MUTANT (settlement-brushes, task 2): the one rule pinned by SettlementUndo.TryUndo. --------------
+# SettlementUndo.cs defines ONE class and no data types (InteriorFloor/Room/Portal live in the unmutated
+# DungeonData.cs, SettlementFootprint in its own unmutated file — both resolve OUTWARD), so the single-class
+# New-SettlementMutant / rebind-only-"SettlementUndo." shape (SettlementFence/InteriorOps/FloorFootprint above)
+# is sound here.
+
+# MutUndoNoRestore: TryUndo pops and reports success without restoring anything.
+New-SettlementMutant 'SettlementUndo.cs' 'MutUndoNoRestore' `
+  '            floor.Rooms.Clear();' `
+  '            if (e != null) return true;   // MUTANT: nothing is restored
+            floor.Rooms.Clear();' `
+  'MutUndoNoRestore.cs'
+
+# ONE PATTERN, not the brief's two ('SettlementUndo\.' plus '\bSettlementUndo\b'), and this is a correction to
+# the brief rather than an oversight: SelfTestSettlementUndo names SettlementUndo BOTH ways — `new
+# SettlementUndo()` (bare) and `SettlementUndo.MaxDepth` (dotted) — but unlike every other two-pattern rebind
+# above (SettlementConfig/SettlementGenerator, TileType/SettlementTileGrid, ...), both spellings here name the
+# SAME identifier. Running the brief's two patterns in sequence double-substitutes: pattern 1 turns
+# "SettlementUndo.MaxDepth" into "WorldGen.Generation.MutUndoNoRestore.SettlementUndo.MaxDepth", and pattern 2's
+# bare `\bSettlementUndo\b` then matches AGAIN inside that very output (still bounded by dots on both sides),
+# nesting the namespace a second time and producing an unresolvable
+# "WorldGen.Generation.MutUndoNoRestore.WorldGen.Generation.MutUndoNoRestore.SettlementUndo" — confirmed by
+# actually running the brief's two-pattern version first. A single bare-word pattern handles both spellings
+# with no overlap: `\b` is satisfied by "(" (bare constructor) and by "." (dotted access) alike, and it does
+# NOT match inside "SettlementUndoSelfTests" or "SelfTestSettlementUndo" (no boundary either side there).
+New-SettlementRebind 'SelfTestSettlementUndo' 'MutUndoNoRestore' `
+  @('\bSettlementUndo\b') `
+  @('WorldGen.Generation.MutUndoNoRestore.SettlementUndo')
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
