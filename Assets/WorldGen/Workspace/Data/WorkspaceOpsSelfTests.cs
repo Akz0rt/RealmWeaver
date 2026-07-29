@@ -206,18 +206,18 @@ namespace WorldGen.Workspace.Data
             else
             {
                 if (Dump(back.Primary) != Dump(l.Primary) || Dump(back.Secondary) != Dump(l.Secondary))
-                { Debug.LogError($"FAIL persist: [{Dump(back.Primary)}] / [{Dump(back.Secondary)}]"); ok = false; }
+                { Debug.LogError($"FAIL persist: back = [{Dump(back.Primary)}] / [{Dump(back.Secondary)}], want [{Dump(l.Primary)}] / [{Dump(l.Secondary)}]"); ok = false; }
                 if (back.FocusedPane != l.FocusedPane)
                 { Debug.LogError($"FAIL persist: focus {back.FocusedPane}, want {l.FocusedPane}"); ok = false; }
                 if (System.Math.Abs(back.SplitRatio - 0.62f) > 0.001f || !back.NavigatorCollapsed
                     || System.Math.Abs(back.NavigatorWidth - 300f) > 0.001f)
                 {
-                    Debug.LogError($"FAIL persist: settings back = ratio {back.SplitRatio}, collapsed {back.NavigatorCollapsed}, width {back.NavigatorWidth} — want ratio 0.62, collapsed True, width 300");
+                    Debug.LogError($"FAIL persist: settings back = ratio {back.SplitRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)}, collapsed {back.NavigatorCollapsed}, width {back.NavigatorWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)} — want ratio 0.62, collapsed True, width 300");
                     ok = false;
                 }
                 var dungeon = back.Secondary.Tabs[0].Surface;
                 if (dungeon.Kind != SurfaceKind.Dungeon || dungeon.Id != "poi-7")
-                { Debug.LogError($"FAIL persist: surface came back {dungeon.Kind}/{dungeon.Id}"); ok = false; }
+                { Debug.LogError($"FAIL persist: surface came back {dungeon.Kind}/{dungeon.Id}, want Dungeon/poi-7"); ok = false; }
             }
 
             // A title carrying a tab or newline must not corrupt the payload.
@@ -246,9 +246,25 @@ namespace WorldGen.Workspace.Data
                 if (WorkspaceOps.TryDeserialize(junk, out _))
                 { Debug.LogError($"FAIL persist: «{junk.Replace("\n", "\\n")}» must be refused"); ok = false; }
 
-            // Out-of-range stored values are clamped, not trusted.
-            WorkspaceOps.TryDeserialize(WorkspaceOps.Serialize(l).Replace("0.62", "9.9"), out var wild);
-            if (wild != null && (wild.SplitRatio > 0.75f || wild.SplitRatio < 0.25f))
+            // Out-of-range stored values are clamped, not trusted. Guarded so the check cannot pass having
+            // exercised nothing: first pin that the payload really does carry the literal "0.62" the Replace
+            // below depends on (if Serialize's float format ever changes, Replace silently becomes a no-op
+            // and this assertion would otherwise test nothing), then require TryDeserialize to actually
+            // SUCCEED with a clamped value — not merely "did not report an out-of-range ratio," which a null
+            // `wild` (a refused parse) would satisfy just as emptily.
+            string clampPayload = WorkspaceOps.Serialize(l);
+            if (!clampPayload.Contains("0.62"))
+            {
+                Debug.LogError($"FAIL persist: clamp test's own payload has no literal \"0.62\" to mutate, want it present — [{clampPayload}]");
+                ok = false;
+            }
+            string mutatedPayload = clampPayload.Replace("0.62", "9.9");
+            if (!WorkspaceOps.TryDeserialize(mutatedPayload, out var wild) || wild == null)
+            {
+                Debug.LogError($"FAIL persist: TryDeserialize returned false/null for an out-of-range-but-otherwise-valid payload, want true with SplitRatio clamped — [{mutatedPayload}]");
+                ok = false;
+            }
+            else if (wild.SplitRatio > 0.75f || wild.SplitRatio < 0.25f)
             {
                 Debug.LogError($"FAIL persist: SplitRatio {wild.SplitRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)} was not clamped, want within 0.25..0.75");
                 ok = false;
