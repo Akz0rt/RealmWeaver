@@ -46,14 +46,16 @@ namespace WorldGen.Workspace.Data
         public int FocusedPane;
 
         /// <summary>Fraction of width given to Primary when split. Default 0.5, meant to stay clamped to
-        /// 0.25..0.75 by whatever drives the drag handle — this layer does not clamp it itself, it has no op
-        /// that would move it.</summary>
+        /// 0.25..0.75 by whatever drives the drag handle — no op in this layer moves it, so nothing here
+        /// clamps it on write. WorkspaceOps.TryDeserialize DOES clamp it on READ, since a stored value comes
+        /// from PlayerPrefs, which is a plain user-writable file and cannot be trusted.</summary>
         public float SplitRatio = 0.5f;
 
         public bool NavigatorCollapsed;
 
         /// <summary>Pixel width of the navigator when expanded. Default 236, meant to stay clamped to
-        /// 160..420 by whatever drives its resize handle, for the same reason SplitRatio is not clamped here.</summary>
+        /// 160..420 by whatever drives its resize handle, for the same reason SplitRatio is not clamped on
+        /// write here — and, like SplitRatio, clamped on READ by WorkspaceOps.TryDeserialize.</summary>
         public float NavigatorWidth = 236f;
     }
 }

@@ -616,14 +616,18 @@ namespace WorldGen.Notes.Data
         }
 
         /// <summary>Tabs separate fields and newlines separate records, so both must be escaped inside a text
-        /// value — a multi-line row would otherwise corrupt the whole payload.</summary>
-        static string Escape(string value)
+        /// value — a multi-line row would otherwise corrupt the whole payload. Public because
+        /// WorkspaceOps.Serialize (workspace layout persistence) reuses this exact escaper rather than
+        /// hand-rolling a second one that would have to agree with it forever — do not re-privatize.</summary>
+        public static string Escape(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
             return value.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\n", "\\n");
         }
 
-        static string Unescape(string value)
+        /// <summary>Public for the same reason as Escape above — WorkspaceOps.TryDeserialize calls this one
+        /// too.</summary>
+        public static string Unescape(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
             var sb = new StringBuilder(value.Length);

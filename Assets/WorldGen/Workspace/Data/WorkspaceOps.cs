@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using WorldGen.Notes.Data;
 
 namespace WorldGen.Workspace.Data
 {
@@ -191,6 +195,156 @@ namespace WorldGen.Workspace.Data
                 dropped++;
             }
             return dropped;
+        }
+
+        // ── Persistence ────────────────────────────────────────────────────────
+
+        const string PersistHeader = "WORKSPACE/1";
+        const int TabFieldCount = 5;        // pane, kind, id, active, title
+        const int SettingsFieldCount = 4;   // focusedPane, splitRatio, navigatorCollapsed, navigatorWidth
+
+        const float MinSplitRatio = 0.25f;
+        const float MaxSplitRatio = 0.75f;
+        const float MinNavigatorWidth = 160f;
+        const float MaxNavigatorWidth = 420f;
+
+        static float ClampSplitRatio(float v) => v < MinSplitRatio ? MinSplitRatio : (v > MaxSplitRatio ? MaxSplitRatio : v);
+        static float ClampNavigatorWidth(float v) => v < MinNavigatorWidth ? MinNavigatorWidth : (v > MaxNavigatorWidth ? MaxNavigatorWidth : v);
+
+        /// <summary>Hand-rolled tab-separated shape, same reason and same escaper as NotesDocOps.SerializeBlocks:
+        /// this layer must stay free of Newtonsoft to keep compiling in the offline harness, which stubs only
+        /// Newtonsoft's attributes. Header, then one line per tab (both panes, Primary first) reading
+        /// pane/kind/id/active/title, then a trailing settings line reading
+        /// focusedPane/splitRatio/navigatorCollapsed/navigatorWidth. "active" is a per-TAB flag (which tab in
+        /// its pane is the active one), not an index — mirroring "one line per tab."</summary>
+        public static string Serialize(WorkspaceLayout l)
+        {
+            if (l == null) return "";
+
+            var sb = new StringBuilder();
+            sb.Append(PersistHeader);
+            AppendPaneLines(sb, l.Primary, 0);
+            AppendPaneLines(sb, l.Secondary, 1);
+
+            sb.Append('\n')
+              .Append(l.FocusedPane.ToString(CultureInfo.InvariantCulture)).Append('\t')
+              .Append(l.SplitRatio.ToString("0.####", CultureInfo.InvariantCulture)).Append('\t')
+              .Append(l.NavigatorCollapsed ? '1' : '0').Append('\t')
+              .Append(l.NavigatorWidth.ToString("0.####", CultureInfo.InvariantCulture));
+
+            return sb.ToString();
+        }
+
+        static void AppendPaneLines(StringBuilder sb, PaneState p, int paneIndex)
+        {
+            if (p?.Tabs == null) return;
+            for (int i = 0; i < p.Tabs.Count; i++)
+            {
+                var t = p.Tabs[i];
+                sb.Append('\n')
+                  .Append(paneIndex).Append('\t')
+                  .Append(t.Surface.Kind).Append('\t')
+                  .Append(NotesDocOps.Escape(t.Surface.Id)).Append('\t')
+                  .Append(i == p.ActiveIndex ? '1' : '0').Append('\t')
+                  .Append(NotesDocOps.Escape(t.Title));
+            }
+        }
+
+        /// <summary>Parses a payload written by Serialize. Returns false on anything malformed rather than
+        /// throwing — this comes from PlayerPrefs, a plain user-writable file that anything could have written.
+        /// SplitRatio and NavigatorWidth are clamped HERE, on read, rather than trusted from storage — see the
+        /// comments on WorkspaceLayout.SplitRatio/NavigatorWidth. A stray FocusedPane == 1 with no surviving
+        /// Secondary is likewise corrected back to 0, the same "never a dangling pane reference" guarantee
+        /// Focus() enforces at runtime.</summary>
+        public static bool TryDeserialize(string payload, out WorkspaceLayout layout)
+        {
+            layout = null;
+            if (string.IsNullOrEmpty(payload)) return false;
+
+            string[] lines = payload.Replace("\r\n", "\n").Split('\n');
+            if (lines.Length < 2 || lines[0] != PersistHeader) return false;
+
+            string[] settingsFields = lines[lines.Length - 1].Split('\t');
+            if (settingsFields.Length != SettingsFieldCount) return false;
+
+            if (!int.TryParse(settingsFields[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int focusedPane))
+                return false;
+            if (!float.TryParse(settingsFields[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float splitRatio))
+                return false;
+            bool navigatorCollapsed = settingsFields[2] == "1";
+            if (!float.TryParse(settingsFields[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float navigatorWidth))
+                return false;
+
+            var primaryTabs = new List<TabState>();
+            var secondaryTabs = new List<TabState>();
+            int primaryActive = -1;
+            int secondaryActive = -1;
+
+            for (int i = 1; i < lines.Length - 1; i++)
+            {
+                if (lines[i].Length == 0) continue;
+                string[] f = lines[i].Split('\t');
+                if (f.Length != TabFieldCount) return false;
+
+                if (!int.TryParse(f[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int pane) || (pane != 0 && pane != 1))
+                    return false;
+                if (!TryParseSurfaceKind(f[1], out SurfaceKind kind))
+                    return false;
+
+                var tab = new TabState
+                {
+                    Surface = new SurfaceRef { Kind = kind, Id = NotesDocOps.Unescape(f[2]) ?? "" },
+                    Title = NotesDocOps.Unescape(f[4]) ?? "",
+                };
+                bool active = f[3] == "1";
+
+                if (pane == 0) { primaryTabs.Add(tab); if (active) primaryActive = primaryTabs.Count - 1; }
+                else { secondaryTabs.Add(tab); if (active) secondaryActive = secondaryTabs.Count - 1; }
+            }
+
+            var primary = new PaneState
+            {
+                Tabs = primaryTabs,
+                ActiveIndex = primaryTabs.Count == 0 ? -1 : (primaryActive >= 0 ? primaryActive : 0),
+            };
+            PaneState secondary = null;
+            if (secondaryTabs.Count > 0)
+            {
+                secondary = new PaneState
+                {
+                    Tabs = secondaryTabs,
+                    ActiveIndex = secondaryActive >= 0 ? secondaryActive : 0,
+                };
+            }
+
+            layout = new WorkspaceLayout
+            {
+                Primary = primary,
+                Secondary = secondary,
+                FocusedPane = (focusedPane == 1 && secondary != null) ? 1 : 0,
+                SplitRatio = ClampSplitRatio(splitRatio),
+                NavigatorCollapsed = navigatorCollapsed,
+                NavigatorWidth = ClampNavigatorWidth(navigatorWidth),
+            };
+            return true;
+        }
+
+        /// <summary>Explicit switch on the enum's written name, mirroring NotesDocOps.TryParseKind — NOT
+        /// Enum.TryParse, which would happily accept a bare numeral like "7" and let an unrecognized kind
+        /// through a hand-edited PlayerPrefs value.</summary>
+        static bool TryParseSurfaceKind(string raw, out SurfaceKind kind)
+        {
+            switch (raw)
+            {
+                case "Page":              kind = SurfaceKind.Page;             return true;
+                case "WorldMap":          kind = SurfaceKind.WorldMap;         return true;
+                case "Settlement":        kind = SurfaceKind.Settlement;       return true;
+                case "BuildingInterior":  kind = SurfaceKind.BuildingInterior; return true;
+                case "Dungeon":           kind = SurfaceKind.Dungeon;          return true;
+                case "BattleGrid":        kind = SurfaceKind.BattleGrid;       return true;
+            }
+            kind = SurfaceKind.Page;
+            return false;
         }
 
         // ── Invariants ─────────────────────────────────────────────────────────

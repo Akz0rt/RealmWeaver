@@ -190,5 +190,71 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Workspace Move And Prune: PASS" : "Self-Test Workspace Move And Prune: FAIL");
         }
+
+        [ContextMenu("Self-Test: Workspace Persistence")]
+        public void SelfTestPersistence()
+        {
+            bool ok = true;
+            var l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "Сессия 1", false);
+            WorkspaceOps.Open(l, new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = "poi-7" }, "Пепельный Курган", true);
+            l.SplitRatio = 0.62f; l.NavigatorCollapsed = true; l.NavigatorWidth = 300f;
+
+            string payload = WorkspaceOps.Serialize(l);
+            if (!WorkspaceOps.TryDeserialize(payload, out var back))
+            { Debug.LogError($"FAIL persist: TryDeserialize returned false, want true, for a payload we just produced — [{payload}]"); ok = false; }
+            else
+            {
+                if (Dump(back.Primary) != Dump(l.Primary) || Dump(back.Secondary) != Dump(l.Secondary))
+                { Debug.LogError($"FAIL persist: [{Dump(back.Primary)}] / [{Dump(back.Secondary)}]"); ok = false; }
+                if (back.FocusedPane != l.FocusedPane)
+                { Debug.LogError($"FAIL persist: focus {back.FocusedPane}, want {l.FocusedPane}"); ok = false; }
+                if (System.Math.Abs(back.SplitRatio - 0.62f) > 0.001f || !back.NavigatorCollapsed
+                    || System.Math.Abs(back.NavigatorWidth - 300f) > 0.001f)
+                {
+                    Debug.LogError($"FAIL persist: settings back = ratio {back.SplitRatio}, collapsed {back.NavigatorCollapsed}, width {back.NavigatorWidth} — want ratio 0.62, collapsed True, width 300");
+                    ok = false;
+                }
+                var dungeon = back.Secondary.Tabs[0].Surface;
+                if (dungeon.Kind != SurfaceKind.Dungeon || dungeon.Id != "poi-7")
+                { Debug.LogError($"FAIL persist: surface came back {dungeon.Kind}/{dungeon.Id}"); ok = false; }
+            }
+
+            // A title carrying a tab or newline must not corrupt the payload.
+            var tricky = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(tricky, Page("x"), "имя\tс табом\nи переносом", false);
+            WorkspaceOps.TryDeserialize(WorkspaceOps.Serialize(tricky), out var back2);
+            if (back2 == null || back2.Primary.Tabs.Count < 2 || back2.Primary.Tabs[1].Title != "имя\tс табом\nи переносом")
+            {
+                string actualTitle = back2 == null ? "<parse failed>"
+                    : back2.Primary.Tabs.Count < 2 ? $"<only {back2.Primary.Tabs.Count} tab(s) came back>"
+                    : back2.Primary.Tabs[1].Title;
+                Debug.LogError($"FAIL persist: title back = «{actualTitle}», want «имя\tс табом\nи переносом»");
+                ok = false;
+            }
+
+            // The plain "nonsense" junk above is refused by the settings line's int/float parses failing
+            // outright — it does not by itself prove the FIELD-COUNT checks matter. These two add fields the
+            // existing fields still parse cleanly around, so only a field-count check catches them: one
+            // settings line with a trailing extra field, one tab line with a trailing extra field.
+            foreach (string junk in new[]
+            {
+                "", "мусор", "WORKSPACE/1\nnonsense",
+                "WORKSPACE/1\n0\t0.5\t0\t236\textra",
+                "WORKSPACE/1\n0\tPage\ta\t1\ttitle\textra\n0\t0.5\t0\t236",
+            })
+                if (WorkspaceOps.TryDeserialize(junk, out _))
+                { Debug.LogError($"FAIL persist: «{junk.Replace("\n", "\\n")}» must be refused"); ok = false; }
+
+            // Out-of-range stored values are clamped, not trusted.
+            WorkspaceOps.TryDeserialize(WorkspaceOps.Serialize(l).Replace("0.62", "9.9"), out var wild);
+            if (wild != null && (wild.SplitRatio > 0.75f || wild.SplitRatio < 0.25f))
+            {
+                Debug.LogError($"FAIL persist: SplitRatio {wild.SplitRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)} was not clamped, want within 0.25..0.75");
+                ok = false;
+            }
+
+            Debug.Log(ok ? "Self-Test Workspace Persistence: PASS" : "Self-Test Workspace Persistence: FAIL");
+        }
     }
 }
