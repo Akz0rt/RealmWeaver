@@ -766,33 +766,18 @@ namespace WorldGen.Rendering
         /// judgement about a cell, so the green/red the DM sees and the accept/reject the click applies are
         /// literally the same expression evaluated twice.
         ///
-        /// FOUNDING ONLY, NEVER MOVING (Task 7). This rule is consumed by <see cref="AreCellsPlaceable"/> and
-        /// by nothing else; a DRAG goes through <see cref="AreCellsFree"/>, which deliberately does NOT apply
-        /// it. See AreCellsFree for the derivation — in short, Wall/Gate are DERIVED from (buildings ∪
-        /// streets), so testing a MOVE against them is self-referential, and for a gate it is simply wrong.</summary>
+        /// FOUNDING AND MOVING NOW AGREE ABOUT DERIVED TILES (checkpoint-1 amendment, Task 3a). Wall and Gate
+        /// are refused by NEITHER verdict any more — both are DERIVED from (buildings ∪ streets) and
+        /// re-derive around whatever is founded or moved, so refusing them here was never more than a
+        /// self-referential test. This rule is still consumed by <see cref="AreCellsPlaceable"/> alone; a DRAG
+        /// goes through <see cref="AreCellsFree"/>, which still does not call it — not because a move needs a
+        /// different Wall/Gate answer any more, but because AreCellsFree's own ownership term already refuses
+        /// a Building cell (RoomAtCell resolves it to the room standing there, and only the mover is exempt
+        /// from its own footprint). What still separates the two verdicts is exactly that MOVER EXEMPTION:
+        /// <see cref="AreCellsPlaceable"/> always calls with moverRoomId 0 (no room is exempt — there is no
+        /// room yet), while <see cref="AreCellsFree"/> exempts whichever room is being dragged from its own
+        /// cells.</summary>
         public static bool IsPlaceable(TileType type) => SettlementVolumeRendererPlacement.IsPlaceable(type);
-
-        /// <summary>Is a normalized position inside the 0..1 field a room may legally occupy? A SECOND axis of
-        /// the placement test, alongside the tile-type rule above, and it is not decoration:
-        ///
-        /// DungeonViewController.Update's cascade re-reads each room's CURRENT X/Y every animation frame and
-        /// writes back Mathf.Clamp01 of the smoothed value. A room stored outside 0..1 is therefore pinned to
-        /// the field edge for the WHOLE of every later cascade (any drag of any building starts one) and only
-        /// snaps back when the animation's final exact-target write lands — a visible teleport of the building
-        /// away from the cell the DM chose, which is precisely the surprise click-to-place exists to remove.
-        /// (Worse readings exist: with `cur` re-read from the clamped value the remaining-distance test can
-        /// fail to converge, leaving the cascade running.)
-        ///
-        /// This IS reachable, and only through this new path. Allocate pads the grid by MarginCells = 3 cells
-        /// (0.21 normalized) beyond the outermost building, and SettlementGenerator places a large town's
-        /// buildings out to radius 0.45 from centre 0.5 — so a 40-60 building city genuinely draws, and lets
-        /// the DM click, cells at a NEGATIVE normalized X. Nothing else can write such a room: generation stays
-        /// inside the placement contour, drags clamp to 0.04..0.96 and then snap out by at most half a cell,
-        /// and AddRoomAtCenter writes the canvas centre.
-        ///
-        /// Bound is 0..1 EXACTLY, not the drag clamp's 0.04..0.96 — Clamp01 is the invariant being protected,
-        /// and borrowing a drag-feel constant would hide why the limit is where it is.</summary>
-        static bool OnField(float nx, float ny) => nx >= 0f && nx <= 1f && ny >= 0f && ny <= 1f;
 
         /// <summary>Area-local point → the cell under it: its CENTRE as a normalized room position (exactly
         /// what <see cref="TryAreaToNorm"/> answers — same call, same snap) plus whether a building may be
@@ -835,9 +820,11 @@ namespace WorldGen.Rendering
         /// and what the click applies can never be two different judgements.
         ///
         /// It is <see cref="AreCellsFree"/> (on-field, and no cell owned by any existing room — mover id 0
-        /// means "no room is exempt") PLUS the tile-type rule <see cref="IsPlaceable"/>. That extra term is
-        /// what keeps a new house out of the wall ring, and it is meaningful HERE precisely because the ring
-        /// is derived from buildings the candidate is not one of.</summary>
+        /// means "no room is exempt") PLUS the tile-type rule <see cref="IsPlaceable"/>. That extra term keeps
+        /// a new house out of ANOTHER HOUSE — it no longer keeps one out of the wall ring, since checkpoint-1
+        /// amended IsPlaceable to refuse only Building (see its own doc). What keeps a house off a GATE
+        /// room's own cell is not this term at all — a gate writes no Building tile of its own — it is
+        /// <see cref="AreCellsFree"/>'s room-ownership term, unchanged by this task.</summary>
         public bool AreCellsPlaceable(IReadOnlyList<(int i, int j)> cells)
         {
             if (!AreCellsFree(cells, 0)) return false;
@@ -855,7 +842,8 @@ namespace WorldGen.Rendering
         ///   • ON FIELD. Every proposed cell's CENTRE must lie in 0..1. This replaces the old drag clamp
         ///     (DragClampMin/Max) for a settlement, and it is the honest version of it: the clamp squeezed a
         ///     POINT back onto the board, which for a multi-cell building would have said nothing about where
-        ///     its far cells ended up. See <see cref="OnField"/> for why 0..1 exactly (the cascade's Clamp01).
+        ///     its far cells ended up. See <see cref="SettlementVolumeRendererPlacement.OnFieldCell"/> for why
+        ///     0..1 exactly (the cascade's Clamp01).
         ///   • NO CELL OWNED BY ANOTHER ROOM. cellRooms is FOOTPRINT ownership over every room of every type,
         ///     gates included, so this one term rejects building-onto-building, building-onto-gate, and
         ///     gate-onto-building alike. The last of those is not decoration: <see cref="Precedes"/> makes a
@@ -905,7 +893,7 @@ namespace WorldGen.Rendering
             for (int k = 0; k < cells.Count; k++)
             {
                 var (i, j) = cells[k];
-                if (!OnField(grid.CenterX(i), grid.CenterY(j))) return false;
+                if (!SettlementVolumeRendererPlacement.OnFieldCell(i, j)) return false;
                 var owner = RoomAtCell(i, j);
                 if (owner != null && owner.Id != moverRoomId) return false;
             }

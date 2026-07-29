@@ -194,11 +194,15 @@ namespace WorldGen.Rendering
             // 6. THE CONNECTIVITY REPAIR ACTUALLY FIRES. A building at (1,1) sits in the MIDDLE of a bent
             //    stroke (0,0)-(0,1)-(1,1)-(2,1)-(2,2), so dropping the occupied cell genuinely SEVERS it into
             //    two components: {(0,0),(0,1)} and {(2,1),(2,2)}. EVERY non-obstacle cell here is one of the
-            //    obstacle's own 8 neighbours (Chebyshev distance 1), which the settlement's wall ring always
-            //    leaves as plain Void — a straight stroke reaching Chebyshev distance 2 from a LONE building
-            //    would instead run into the wall ring itself (BuildWallRing dilates by CourtyardCells + 1 = 2
-            //    cells, and the ring sits exactly at that outer edge), which drops those cells for an
-            //    unrelated reason and defeats the fixture; keeping every cell at distance 1 avoids that trap.
+            //    obstacle's own 8 neighbours (Chebyshev distance 1). Keeping every cell at distance 1 is now
+            //    merely HISTORICAL, not load-bearing: under the OLD three-term placement rule a straight
+            //    stroke reaching Chebyshev distance 2 from a lone building would have run into the wall ring
+            //    itself (BuildWallRing dilates by CourtyardCells + 1 = 2 cells, and the ring sits exactly at
+            //    that outer edge) and been dropped for an unrelated reason, defeating this fixture — but the
+            //    ring is placeable now (checkpoint-1 amendment; see case 9), so a distance-2 cell would no
+            //    longer be dropped at all and this fixture would simply need a different fourth obstacle to
+            //    stay non-vacuous, not a different distance. Kept at distance 1 anyway, unchanged, since
+            //    nothing requires moving it.
             //    Without the repair — the kept cells used as-is — the painted footprint would be all four
             //    remaining cells, split across the gap and NOT 4-connected. WITH the repair, only the
             //    component containing the first cell (0,0) — the piece the DM started drawing — survives:
@@ -271,6 +275,91 @@ namespace WorldGen.Rendering
                 {
                     Debug.LogError("SelfTestBrushStrokes: PaintRoad counted an existing cell as new");
                     ok = false;
+                }
+            }
+
+            // 9. DRAW THROUGH THE WALL — the town GROWS (DM requirement, checkpoint 1). The wall is DERIVED,
+            //    so founding a building on a wall cell is legal: the ring re-derives one cell further out.
+            //    A lone building at (0,0) rings itself at Chebyshev distance exactly 2 (BuildWallRing dilates
+            //    the seed by CourtyardCells + 1 = 2 and walls the outer edge of that), so the stroke
+            //    (1,0)-(2,0)-(3,0) runs Void -> WALL -> outside-the-ring. Under the OLD three-term rule (2,0)
+            //    was dropped, the stroke severed, and ComponentContainingFirst kept the single cell (1,0).
+            //    THE grid.At ASSERTION IS THE PRECONDITION, not decoration: without it this case would pass
+            //    for the wrong reason the day the ring's radius or the margin changes, and would then be
+            //    asserting nothing at all.
+            {
+                var floor = Floor(null, (0, 0));
+                var g9 = SettlementTileGrid.Build(floor);
+                if (g9.At(2, 0) != TileType.Wall)
+                {
+                    Debug.LogError($"SelfTestBrushStrokes: the fixture's cell (2,0) reads {g9.At(2, 0)}, "
+                                 + "expected Wall — the wall-crossing case is not testing what it claims to");
+                    ok = false;
+                }
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((1, 0), (2, 0), (3, 0)));
+                if (room == null)
+                {
+                    Debug.LogError("SelfTestBrushStrokes: a stroke crossing the derived wall painted nothing");
+                    ok = false;
+                }
+                else
+                {
+                    var fp = SettlementTileGrid.FootprintOf(room);
+                    if (fp.Count != 3)
+                    {
+                        Debug.LogError($"SelfTestBrushStrokes: a stroke crossing the wall produced {fp.Count} "
+                                     + "cells, expected 3 — the wall is derived, so a stroke may cross it and "
+                                     + "the town simply grows");
+                        ok = false;
+                    }
+                    bool crossed = false, outside = false;
+                    foreach (var c in fp) { if (c == (2, 0)) crossed = true; if (c == (3, 0)) outside = true; }
+                    if (!crossed)
+                    {
+                        Debug.LogError("SelfTestBrushStrokes: the painted building does not include the wall "
+                                     + "cell (2,0) — the stroke was cut at the wall");
+                        ok = false;
+                    }
+                    if (!outside)
+                    {
+                        Debug.LogError("SelfTestBrushStrokes: the painted building does not include (3,0), "
+                                     + "outside the old ring — the town did not expand");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 10. OFF-FIELD CELLS ARE REFUSED. Room positions live in normalized 0..1 and the cascade
+            //     Clamp01s every room every animation frame, so a building stored past the edge is pinned
+            //     there on every later drag. Cell i = 33 has centre (33 + 0.5) * 0.03 = 1.005, just past the
+            //     field; i = 32 has 0.975, just inside. The panel really does draw such cells (Allocate pads
+            //     MarginCells = 3 past the outermost building), and requirement 2 above aims the DM outward.
+            {
+                var floor = Floor(null);
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((32, 0), (33, 0), (34, 0)));
+                if (room == null)
+                {
+                    Debug.LogError("SelfTestBrushStrokes: a stroke ending off-field painted nothing at all — "
+                                 + "its on-field cell (32,0) should still have been kept");
+                    ok = false;
+                }
+                else
+                {
+                    var fp = SettlementTileGrid.FootprintOf(room);
+                    foreach (var c in fp)
+                        if (SettlementFootprint.CenterOf(c.i) > 1f || SettlementFootprint.CenterOf(c.j) > 1f)
+                        {
+                            Debug.LogError($"SelfTestBrushStrokes: the painted building claimed cell {c}, "
+                                         + $"whose centre ({SettlementFootprint.CenterOf(c.i)}, "
+                                         + $"{SettlementFootprint.CenterOf(c.j)}) lies off the 0..1 field");
+                            ok = false;
+                        }
+                    if (fp.Count != 1)
+                    {
+                        Debug.LogError($"SelfTestBrushStrokes: the off-field stroke produced {fp.Count} cells, "
+                                     + "expected 1 — only (32,0) is on the field");
+                        ok = false;
+                    }
                 }
             }
 

@@ -72,6 +72,7 @@ namespace WorldGen.Generation
             var keptSet = new HashSet<(int i, int j)>();
             foreach (var c in cells)
             {
+                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;
                 if (!SettlementVolumeRendererPlacement.IsPlaceable(grid.At(c.i, c.j))) continue;
                 if (keptSet.Add(c)) kept.Add(c);
             }
@@ -142,12 +143,33 @@ namespace WorldGen.Generation
     }
 
     /// <summary>The placement rule, moved out of SettlementVolumeRenderer so the harness can compile it.
-    /// A cell may be painted or placed on unless a building, a wall or a gate already occupies it; Road and
-    /// Void are legal, which is why painting a building over a lane is allowed and merely earns the
+    ///
+    /// ONLY A BUILDING REFUSES A CELL (checkpoint-1 amendment). Wall and Gate tiles are DERIVED, every
+    /// rebuild, from (building footprints ∪ stored street cells): founding a house on a wall cell does not
+    /// collide with anything, it makes BuildWallRing re-derive the ring one cell further out, which is
+    /// exactly how the DM expands a town by drawing. Refusing them made the town's own wall a hard border
+    /// the brush could not cross. This is the same reasoning AreCellsFree already applied to MOVES — see its
+    /// doc — now applied to FOUNDING as well, so the two verdicts differ only in the mover exemption.
+    ///
+    /// Road and Void are legal, which is why painting a building over a lane is allowed and merely earns the
     /// validator's existing warning.</summary>
     public static class SettlementVolumeRendererPlacement
     {
-        public static bool IsPlaceable(TileType type)
-            => type != TileType.Building && type != TileType.Wall && type != TileType.Gate;
+        public static bool IsPlaceable(TileType type) => type != TileType.Building;
+
+        /// <summary>Is the cell's CENTRE inside the 0..1 field a room may legally occupy? The second axis of
+        /// the founding verdict, shared verbatim with SettlementVolumeRenderer.AreCellsFree so a brush and a
+        /// drag can never disagree about where the board ends.
+        ///
+        /// It is not theoretical: DungeonViewController's cascade re-reads each room's X/Y every animation
+        /// frame and writes back Mathf.Clamp01 of it, so a room stored off-field is pinned to the edge for
+        /// the whole of every later cascade. Allocate pads the drawn grid by MarginCells = 3 cells past the
+        /// outermost building and a large town reaches 0.95, so cells past 1.0 are genuinely drawn and
+        /// genuinely clickable.</summary>
+        public static bool OnFieldCell(int i, int j)
+        {
+            float nx = SettlementFootprint.CenterOf(i), ny = SettlementFootprint.CenterOf(j);
+            return nx >= 0f && nx <= 1f && ny >= 0f && ny <= 1f;
+        }
     }
 }
