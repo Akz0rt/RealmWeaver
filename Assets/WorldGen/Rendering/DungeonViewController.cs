@@ -501,6 +501,14 @@ namespace WorldGen.Rendering
             // An undo stack that survived a bind to a different interior would let Ctrl+Z restore rooms into
             // the wrong town (DM findings ·1, ·7, ·8). Verified by grep this is the ONLY writer of `dungeon`.
             undo.Clear();
+            // UNCONDITIONAL, same reason as undo.Clear() just above: SetBrush(SettlementBrush.None) below
+            // early-returns the instant ActiveBrush is ALREADY None (its very first line), which is the common
+            // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings left on the
+            // renderer by an abandoned stroke. The renderer instance itself is NOT per-floor (SetRenderers
+            // installs the flat/volume pair once for this controller's whole lifetime), so a leak here would
+            // show as phantom houses drawing on the very first reposition of whatever floor this call is about
+            // to bind to — the shape of bug this task's brief names explicitly.
+            if (renderer is SettlementVolumeRenderer volBind) volBind.PreviewBuildings = null;
             // A brush armed in one interior must not survive into another (task review Critical): without
             // this, dragging into a building interior with a settlement brush still armed would make
             // OnBeginDrag's brush branch fire there, fail its own settlement guard, and return BEFORE
@@ -1060,6 +1068,13 @@ namespace WorldGen.Rendering
             // still non-null and append from the stale strokeLastCell, painting from an abandoned stroke's
             // end with no snapshot behind it.
             strokeCells = null;
+            // Clearing only strokeCells above would be INERT (sub-project B's exact bug, in the same shape):
+            // the renderer holds its OWN reference (PreviewBuildings, set directly from strokeCells at
+            // OnBeginDrag/OnDrag) and keeps drawing the abandoned stroke's cells until something else rebuilds
+            // it. Unconditional like strokeCells just above — not gated on `brush == SettlementBrush.None`
+            // the way HidePlacementHighlight below is — because switching straight from one brush to ANOTHER
+            // (not through None) must drop it too.
+            if (renderer is SettlementVolumeRenderer volSb) volSb.PreviewBuildings = null;
             if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
             OnActiveBrushChanged?.Invoke(brush);
         }
@@ -1111,6 +1126,21 @@ namespace WorldGen.Rendering
                     if (lvlU != null && undo.TryUndo(lvlU)) { Refresh(); OnGraphMutated?.Invoke(); }
                 }
             }
+
+            // A LIVE STROKE OWNS THE FEEDBACK. The stroke's own preview cells are already in the renderer's
+            // grid (see SettlementVolumeRenderer.PreviewBuildings), so AreCellsPlaceable below would paint the
+            // cell under the cursor RED over the DM's own drawing — a refusal that is not real, since the
+            // commit re-derives the grid WITHOUT the preview. The preview shows what is being drawn; a second,
+            // contradictory affordance on top of it can only confuse.
+            //
+            // Placed AFTER both Esc checks above rather than immediately beside the armed-mode gate at the top
+            // of this method: Esc is read ONLY here (OnDrag carries no keyboard check of its own), including
+            // on a frame where the pointer does not move at all, so an early return ahead of the brush-Esc
+            // check would silently swallow Esc for the whole duration of a held-but-motionless stroke. Placed
+            // after it instead, this changes nothing about Esc: SetBrush(None) above already returns first
+            // whenever Esc actually fires, and clears strokeCells itself (see SetBrush) before this line could
+            // ever run again with it still set.
+            if (strokeCells != null) { if (renderer is SettlementVolumeRenderer hideV) hideV.HidePlacementHighlight(); return; }
 
             // The binding can change under an armed mode (a rebind to a different interior, a renderer swap).
             // One guard covers every such case, and disarming is the honest answer: the cell lattice the mode
@@ -1212,6 +1242,59 @@ namespace WorldGen.Rendering
             // so SelectRoom must come AFTER Refresh or the new building would be created unselected.
             Refresh();
             SelectRoom(room.Id);
+            OnGraphMutated?.Invoke();
+        }
+
+        /// <summary>The cell a brush's hover highlight is showing RIGHT NOW — the same (hoverNx, hoverNy,
+        /// hoverValid) UpdatePlacement already resolves and stores every frame while a brush is armed (its gate
+        /// admits ActiveBrush != None, not just PlacementArmed), converted back to a cell index through
+        /// <see cref="SettlementFootprint.CellOf"/> — the exact inverse of the CenterOf round trip
+        /// TryPlacementCell relies on (grid.CellI/CellJ ARE SettlementFootprint.CellOf; see their own one-line
+        /// bodies), so this recovers precisely the cell TryAreaToCell resolved this same frame, without ever
+        /// re-deriving it from Mouse.current.
+        ///
+        /// NOT gated on hoverPlaceable, unlike PlaceHoveredBuilding's own check — DELIBERATELY: DabBrush must
+        /// see the cell whether it is painted green OR red, because a dab on a red (occupied) cell painting
+        /// nothing is the exact case Discard exists for (see SettlementUndo.Discard's own doc). Filtering here
+        /// would make DabBrush return before ever pushing a snapshot, so that path would never exercise
+        /// Discard at all.</summary>
+        bool TryHoveredCell(out int i, out int j)
+        {
+            i = 0; j = 0;
+            if (!hoverValid) return false;
+            i = SettlementFootprint.CellOf(hoverNx);
+            j = SettlementFootprint.CellOf(hoverNy);
+            return true;
+        }
+
+        /// <summary>A single press-and-release with a brush armed paints ONE cell (DM ruling, checkpoint 1):
+        /// the green quad under the cursor promised it, and a dab that painted nothing was the one thing the
+        /// walk's section D asked about.
+        ///
+        /// It reads the STORED hover cell — the cell that is painted green or red right now — not a fresh
+        /// sample of this event's position, exactly as PlaceHoveredBuilding does and for the same reason: the
+        /// DM commits what they are looking at.
+        ///
+        /// The snapshot is pushed BEFORE the mutation and DISCARDED when there was none. A dab on an occupied
+        /// cell must not cost a Ctrl+Z, and the second click of a double-click always lands on a cell the
+        /// first click just filled — so the no-op path is the common one, not the exotic one.
+        ///
+        /// Road and Erase reach here too (ActiveBrush != None routes every brush's click through this method)
+        /// and fall through as no-ops today: `changed` is gated on ActiveBrush == Building, so neither op runs
+        /// and the push is discarded unconditionally — their own ops land in Tasks 4-5.</summary>
+        void DabBrush()
+        {
+            var lvl = BoundLevel;
+            var vol = renderer as SettlementVolumeRenderer;
+            if (lvl?.SettlementParams == null || vol == null) return;
+            if (!TryHoveredCell(out int i, out int j)) return;
+            var one = new List<(int i, int j)> { (i, j) };
+            undo.PushSnapshot(lvl);
+            bool changed = ActiveBrush == SettlementBrush.Building
+                        && SettlementBrushOps.PaintBuilding(lvl, one) != null;
+            if (!changed) { undo.Discard(); return; }
+            CommitSettlementStreets();
+            Refresh();
             OnGraphMutated?.Invoke();
         }
 
@@ -1350,15 +1433,14 @@ namespace WorldGen.Rendering
             // Mouse.current.leftButton). Scoped to the ARMED branch only — an unarmed right-click still selects
             // exactly as before; this must not touch that path.
             //
-            // A BRUSH CONSUMES THE CLICK TOO, but does NOTHING with it (task review Important): the brush owns
-            // the DRAG (OnBeginDrag/OnDrag/OnEndDrag), not the click, so a press-release below the drag
-            // threshold must not fall through to select a room or — worse, on a double-click — navigate into
-            // a building's interior mid-painting. Whether a single dab should paint one cell is a DM decision
-            // for the checkpoint, not implemented here.
+            // A BRUSH CONSUMES THE CLICK TOO (task review Important): the brush owns the DRAG
+            // (OnBeginDrag/OnDrag/OnEndDrag), not the click, so a press-release below the drag threshold must
+            // not fall through to select a room or — worse, on a double-click — navigate into a building's
+            // interior mid-painting. DM ruling, checkpoint 1: a single dab paints ONE cell — see DabBrush.
             if (PlacementArmed || ActiveBrush != SettlementBrush.None)
             {
                 if (data.button != PointerEventData.InputButton.Left) return;
-                if (ActiveBrush != SettlementBrush.None) return;   // consumed — brush click does nothing
+                if (ActiveBrush != SettlementBrush.None) { DabBrush(); return; }
                 PlaceHoveredBuilding();
                 return;
             }
@@ -1430,6 +1512,14 @@ namespace WorldGen.Rendering
                 strokeCells = new List<(int i, int j)>();
                 strokeLastCell = (bi, bj);
                 SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, strokeLastCell);
+                // The live preview (task 3b): drawn as Building, never written to the floor until the release
+                // commits it. BY REFERENCE, like dragStreetPreview — strokeCells keeps growing and the
+                // renderer re-reads it on every rebuild, so no copy is made. Road/Erase feed null: neither has
+                // an op yet (Tasks 4-5), and Building's own preview must not still be showing once the DM has
+                // switched brushes mid-drag (this is the FIRST sample of a brand new stroke, so there is
+                // nothing stale to inherit either way).
+                volB.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
+                RepositionNow(lvlB, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
 
@@ -1468,7 +1558,7 @@ namespace WorldGen.Rendering
             // `=> DisarmPlacement();`, which early-returns on `!PlacementArmed` and so would never run on
             // this path at all.
             dragStreetPreview = null;
-            if (renderer is SettlementVolumeRenderer volReset) volReset.PreviewStreets = null;
+            if (renderer is SettlementVolumeRenderer volReset) { volReset.PreviewStreets = null; volReset.PreviewBuildings = null; }
             if (draggingRoomId == 0) return;
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
             var vol = renderer as SettlementVolumeRenderer;
@@ -1556,6 +1646,13 @@ namespace WorldGen.Rendering
                 if ((di2, dj2) == strokeLastCell) return;
                 SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, (di2, dj2));
                 strokeLastCell = (di2, dj2);
+                // Same live preview as OnBeginDrag's brush branch above, sampled again on every drag frame:
+                // strokeCells is handed over BY REFERENCE and keeps growing, and strokeLastCell is an ABSOLUTE
+                // lattice index (SettlementFootprint's lattice, not an array offset), so the grid's extent
+                // growing mid-stroke cannot corrupt interpolation — no re-anchoring needed, the same property
+                // PreviewStreets already relies on during a footprint drag.
+                volD.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
+                RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
 
@@ -1633,6 +1730,11 @@ namespace WorldGen.Rendering
                     OnGraphMutated?.Invoke();
                 }
                 strokeCells = null;
+                // This branch RETURNS before ever reaching the general clear below (see the doc at the top of
+                // this method), so PreviewBuildings must be dropped HERE — clearing only the controller's
+                // strokeCells above would be INERT, the renderer holds its own reference and would keep
+                // drawing the just-committed (or abandoned) stroke on every later reposition.
+                if (renderer is SettlementVolumeRenderer volEndBrush) volEndBrush.PreviewBuildings = null;
                 return;
             }
 
@@ -1661,8 +1763,11 @@ namespace WorldGen.Rendering
             dragStreetPreview = null;
             // Renderer-held preview state is EXTERNAL to this controller (same convention as
             // RoomsWithInterior) and nothing else clears it — without this the last drag's preview cells
-            // would keep drawing as phantom streets on every subsequent RepositionRooms.
-            if (renderer is SettlementVolumeRenderer v) v.PreviewStreets = null;
+            // would keep drawing as phantom streets on every subsequent RepositionRooms. PreviewBuildings
+            // dropped alongside it for the same reason, even though this path is a ROOM drag (a brush stroke
+            // never reaches here — see the brush branch's own return, above): defensive, matching
+            // ArmFootprintDrag's identical pair of resets on the OTHER gesture-start side.
+            if (renderer is SettlementVolumeRenderer v) { v.PreviewStreets = null; v.PreviewBuildings = null; }
             OnGraphMutated?.Invoke();
         }
 

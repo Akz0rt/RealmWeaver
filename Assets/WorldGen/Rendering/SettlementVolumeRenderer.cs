@@ -223,6 +223,14 @@ namespace WorldGen.Rendering
         /// SettlementTileGrid.Build.</summary>
         public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewStreets { get; set; }
 
+        /// <summary>Cells the BRUSH is drawing right now, drawn as Building but never written to the floor —
+        /// the twin of <see cref="PreviewStreets"/>, and set by DungeonViewController on every stroke sample.
+        /// The wall ring re-derives around them (SettlementTileGrid.Build writes them before BuildWallRing),
+        /// so the DM watches the town's own wall grow to enclose the stroke before releasing the brush.
+        /// EXTERNAL STATE, exactly like PreviewStreets: nothing here clears it, and a controller that forgets
+        /// to leaves phantom houses drawing on every later reposition.</summary>
+        public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewBuildings { get; set; }
+
         // ── State ────────────────────────────────────────────────────────────────────────────────────────
 
         const string TilesLayerName = "TilesLayer";
@@ -441,7 +449,7 @@ namespace WorldGen.Rendering
             // reaches nothing this method draws — and is additionally handed PreviewStreets, the drag's
             // uncommitted preview road (sub-project B): drawn exactly like a stored street, but never written
             // back to the floor (see PreviewStreets' own doc).
-            grid = SettlementTileGrid.Build(lvl, PreviewStreets);
+            grid = SettlementTileGrid.Build(lvl, PreviewStreets, PreviewBuildings);
             RebuildCellRooms(lvl);
 
             float cw = CellWidthPx;
