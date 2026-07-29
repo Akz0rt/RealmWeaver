@@ -1606,6 +1606,57 @@ foreach ($mc in @('MutPreviewBuildingsIgnored', 'MutPreviewBuildingsNotInExtent'
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# ---- ERASER MUTANTS (settlement-brushes, task 4): the two rules pinned by CanErase, plus the re-evaluation
+# rule pinned by Erase's re-ask-after-every-removal. All three are caught via SelfTestEraseRefusal, which
+# lives in SettlementBrushOpsSelfTests.cs (the eighth source above) — same single-pattern rebind shape as the
+# other SettlementBrushOps mutants: SettlementStreetOps/SettlementFootprint/SettlementTileGrid all live in
+# unmutated files and resolve OUTWARD once SettlementBrushOps.cs is re-namespaced, and the test's own
+# `SettlementStreetOps.MissingAccess(floor)` call (case 5's post-stroke check) must keep judging the mutant's
+# OUTPUT with the REAL repair logic, not a mutated copy of it — so `SettlementStreetOps.` is deliberately left
+# out of the rebind pattern list, exactly as SelfTestBrushStrokes never names SettlementVolumeRendererPlacement.
+
+# MutEraseAllowsStranding: CanErase's street half always allows, so a lane that is a house's only access can
+# be erased anyway. SelfTestEraseRefusal case 1 ("was allowed") must fail — and case 5 also fires (removing
+# both cells of the two-cell-wide lane now succeeds), reported as a second symptom of the same cause, not a
+# separate rule.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseAllowsStranding' `
+  '            bool safe = SettlementStreetOps.MissingAccess(floor).Count == 0;' `
+  '            bool safe = true;   // MUTANT: a lane can always be erased' `
+  'MutEraseAllowsStranding.cs'
+
+# MutEraseSplitsBuilding: CanErase's building half always allows, so erasing a middle cell may sever a
+# building into two disconnected pieces. SelfTestEraseRefusal case 3's middle-cell claim must fail. The
+# building branch returns before the street rule ever runs and case 3's fixture is a three-cell building with
+# no street rule in play (fp.Count == 3, never 1), so nothing above masks this mutant and nothing below is
+# reachable for it to mask in turn.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitsBuilding' `
+  '                return SettlementFootprint.IsConnected4(rest);' `
+  '                return true;   // MUTANT: a building may be split' `
+  'MutEraseSplitsBuilding.cs'
+
+# MutEraseStaleCheck: Erase decides every cell's safety UP FRONT, against the floor as it stood when the
+# stroke began, instead of re-asking CanErase after every removal. A single-line locator cannot express this
+# (there is no single statement that IS "decide in advance" — the precompute needs its own statement AND the
+# loop's guard needs to read from it instead of calling CanErase live), so the locator spans the loop's
+# opening three lines and rewrites all three: `stale` is populated by asking CanErase once per cell against
+# the UNMODIFIED floor, before the removal loop runs at all, and the loop's own guard reads `stale` instead of
+# ever calling CanErase again. SelfTestEraseRefusal case 5 must fail on the "removed N, expected exactly 1"
+# claim: (5,4) and (6,4) are BOTH individually safe on the intact floor (each still fronts the shared two-cell
+# building via the other column), so `stale` holds both and this mutant erases 2, not 1 — the exact gap
+# between "each cell is safe alone" and "both together are not" that the re-ask rule exists to close. Cases
+# 1/2/4 do not distinguish stale from fresh (the floor never changes between two safe/refused verdicts in any
+# of them), so this must be the only case that fails.
+$mutEraseStaleFrom = "            int removed = 0;`n            foreach (var cell in ordered)`n            {`n                if (!CanErase(floor, cell)) continue;"
+$mutEraseStaleTo   = "            int removed = 0;`n            var stale = new HashSet<(int i, int j)>();`n            foreach (var c in ordered) if (CanErase(floor, c)) stale.Add(c);   // MUTANT: decided before any removal, against the floor as it stood when the stroke began`n            foreach (var cell in ordered)`n            {`n                if (!stale.Contains(cell)) continue;"
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseStaleCheck' `
+  $mutEraseStaleFrom $mutEraseStaleTo 'MutEraseStaleCheck.cs'
+
+foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseSplitsBuilding', 'MutEraseStaleCheck')) {
+  New-SettlementRebind 'SelfTestEraseRefusal' $mc `
+    @('SettlementBrushOps\.') `
+    @("WorldGen.Generation.$mc.SettlementBrushOps.")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
 # The two settlement counts are COUNTED, not quoted: the literal 46 that stood here was already 8 short of the

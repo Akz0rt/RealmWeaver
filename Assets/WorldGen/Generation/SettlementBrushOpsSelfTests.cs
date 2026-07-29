@@ -440,6 +440,126 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Brush Strokes: PASS");
         }
 
+        /// <summary>What the eraser refuses, and why. Each case names the rule it pins.</summary>
+        [ContextMenu("Self-Test: Erase Refusal")]
+        public void SelfTestEraseRefusal()
+        {
+            bool ok = true;
+
+            // 1. A LANE THAT IS A HOUSE'S ONLY ACCESS IS REFUSED.
+            {
+                var floor = Floor(Cells((5, 4)), (5, 5));
+                if (SettlementBrushOps.CanErase(floor, (5, 4)))
+                {
+                    Debug.LogError("SelfTestEraseRefusal: erasing (5,4) was allowed, but it is the only street "
+                                 + "cell serving the building at (5,5)");
+                    ok = false;
+                }
+                if (SettlementBrushOps.Erase(floor, Cells((5, 4))) != 0)
+                {
+                    Debug.LogError("SelfTestEraseRefusal: Erase removed a cell CanErase refuses");
+                    ok = false;
+                }
+            }
+
+            // 2. A SPARE LANE CELL IS ALLOWED — otherwise case 1 would pass for a version that refuses
+            //    everything, which is the vacuity trap this arc keeps hitting.
+            {
+                var floor = Floor(Cells((5, 4), (6, 4)), (5, 5));
+                if (!SettlementBrushOps.CanErase(floor, (6, 4)))
+                {
+                    Debug.LogError("SelfTestEraseRefusal: erasing the spare cell (6,4) was refused, but (5,4) "
+                                 + "still serves the building");
+                    ok = false;
+                }
+                if (SettlementBrushOps.Erase(floor, Cells((6, 4))) != 1)
+                {
+                    Debug.LogError("SelfTestEraseRefusal: Erase did not remove the spare cell (6,4)");
+                    ok = false;
+                }
+            }
+
+            // 3. A MIDDLE CELL OF A MULTI-CELL BUILDING IS REFUSED; an END cell is allowed.
+            {
+                var floor = Floor(Cells((2, 1), (3, 1), (4, 1)));
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((2, 2), (3, 2), (4, 2)));
+                if (room == null) { Debug.LogError("SelfTestEraseRefusal: the three-cell fixture did not paint"); ok = false; }
+                else
+                {
+                    if (SettlementBrushOps.CanErase(floor, (3, 2)))
+                    {
+                        Debug.LogError("SelfTestEraseRefusal: erasing the middle cell (3,2) was allowed — the "
+                                     + "remainder would be two disconnected pieces");
+                        ok = false;
+                    }
+                    if (!SettlementBrushOps.CanErase(floor, (4, 2)))
+                    {
+                        Debug.LogError("SelfTestEraseRefusal: erasing the end cell (4,2) was refused");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 4. ERASING THE LAST CELL DELETES THE BUILDING.
+            {
+                var floor = Floor(Cells((5, 4)), (5, 5), (9, 9));
+                int before = floor.Rooms.Count;
+                if (SettlementBrushOps.Erase(floor, Cells((9, 9))) != 1)
+                {
+                    Debug.LogError("SelfTestEraseRefusal: erasing a one-cell building's only cell removed nothing");
+                    ok = false;
+                }
+                if (floor.Rooms.Count != before - 1)
+                {
+                    Debug.LogError($"SelfTestEraseRefusal: the room count went from {before} to "
+                                 + $"{floor.Rooms.Count}; the emptied building should have been deleted");
+                    ok = false;
+                }
+            }
+
+            // 5. THE RE-EVALUATION RULE. A lane TWO CELLS WIDE is load-bearing as a pair while neither cell
+            //    is alone. A stroke over both must remove exactly one.
+            //
+            //    THE FIXTURE MUST GENUINELY MAKE EACH CELL SAFE ALONE (a stale check and a fresh check must
+            //    actually DISAGREE somewhere, or the assertion is vacuous). The brief's original fixture —
+            //    two SEPARATE one-cell buildings at (5,5) and (6,5), each fronted by its own private street
+            //    cell — does not do that: (5,5) is 4-adjacent only to (5,4), never to (6,4), so erasing
+            //    EITHER street cell alone already strands its own building and CanErase refuses BOTH on the
+            //    still-intact floor. Neither cell is ever removed, the floor never changes between the two
+            //    checks, and a stale (decide-everything-up-front) implementation agrees with a fresh one —
+            //    confirmed empirically: run against that fixture, Erase returned 0, not 1.
+            //
+            //    The genuine redundancy needs ONE building whose footprint spans both columns, so each
+            //    street cell alone still fronts it via the OTHER column. Built with PaintBuilding (not the
+            //    shared Floor() buildings param, which always stamps one room per cell) so the two cells
+            //    land in a SINGLE room: {(5,5),(6,5)}, fronted by (5,4) and (6,4) respectively.
+            {
+                var floor = Floor(Cells((5, 4), (6, 4)));
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((5, 5), (6, 5)));
+                if (room == null) { Debug.LogError("SelfTestEraseRefusal: the two-cell fixture did not paint"); ok = false; }
+                else
+                {
+                    int removed = SettlementBrushOps.Erase(floor, Cells((5, 4), (6, 4)));
+                    if (removed != 1)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: a stroke over a two-cell-wide lane removed {removed} "
+                                     + "cells, expected exactly 1 — the second removal must be tested against the "
+                                     + "floor as it stands AFTER the first, not as it was when the stroke began");
+                        ok = false;
+                    }
+                    var missing = SettlementStreetOps.MissingAccess(floor);
+                    if (missing.Count != 0)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: after the stroke the repair wants {missing.Count} "
+                                     + "cells back — the erase broke the invariant");
+                        ok = false;
+                    }
+                }
+            }
+
+            if (ok) Debug.Log("Self-Test Erase Refusal: PASS");
+        }
+
         /// <summary>Trailing sentinel — see the arc's trailing-sentinel rule. Asserts nothing.</summary>
         [ContextMenu("Self-Test: Brush Ops Sentinel")]
         public void SelfTestBrushOpsSentinel()

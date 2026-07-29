@@ -175,6 +175,13 @@ namespace WorldGen.Generation
                 ("MutPreviewBuildingsNotInExtent", "SettlementTileGrid.Allocate's extent fold skips the preview cells, so a preview cell past the buildings' margin is silently dropped even though Build still tries to write it",
                     () => new WorldGen.MutantTests.MutPreviewBuildingsNotInExtentSelfTests().SelfTestPreviewBuildings()),
 
+                ("MutEraseAllowsStranding", "SettlementBrushOps.CanErase's street half always allows, so a lane that is a house's only access can be erased anyway",
+                    () => new WorldGen.MutantTests.MutEraseAllowsStrandingSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseSplitsBuilding", "SettlementBrushOps.CanErase's building half always allows, so erasing a middle cell may sever a building into two disconnected pieces",
+                    () => new WorldGen.MutantTests.MutEraseSplitsBuildingSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseStaleCheck", "SettlementBrushOps.Erase decides every cell's safety up front against the floor as it stood when the stroke began, instead of re-asking CanErase after every removal",
+                    () => new WorldGen.MutantTests.MutEraseStaleCheckSelfTests().SelfTestEraseRefusal()),
+
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
                 ("MutFenceNoStreets", "DungeonLayout.DeriveTownFence stops folding the floor's STORED street cells into the fence (it wraps buildings + gates only — the fence the Task 5 measurement rejected, which leaves 21 of 78 street cells outside on the pinned fixture)",

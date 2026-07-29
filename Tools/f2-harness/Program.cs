@@ -107,6 +107,7 @@ static class Program
         streetOps.SelfTestStreetOpsSentinel();
         var brushOps = new WorldGen.Rendering.SettlementBrushOpsSelfTests();
         brushOps.SelfTestBrushStrokes();
+        brushOps.SelfTestEraseRefusal();
         brushOps.SelfTestBrushOpsSentinel();
         var settlementUndo = new WorldGen.Rendering.SettlementUndoSelfTests();
         settlementUndo.SelfTestSettlementUndo();

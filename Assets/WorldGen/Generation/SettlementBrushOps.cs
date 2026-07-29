@@ -154,6 +154,98 @@ namespace WorldGen.Generation
         static int RowMajor((int i, int j) a, (int i, int j) b)
             => a.j != b.j ? a.j.CompareTo(b.j) : a.i.CompareTo(b.i);
 
+        /// <summary>Why the eraser's hover is red. Two halves, one for each thing a cell can be.
+        ///
+        /// A STREET CELL is refused exactly when removing it would make sub-project B's repair put it back.
+        /// That is the rule, not an approximation of it: SettlementStreetOps.EnsureAccess runs after every
+        /// edit, so a cell whose removal MissingAccess would immediately undo cannot be erased in any
+        /// meaningful sense — and letting it through would not leave the town broken, it would leave the DM
+        /// watching a DIFFERENT, minimal road appear somewhere else.
+        ///
+        /// A BUILDING CELL is refused when the remainder would not be 4-connected, which
+        /// DungeonValidator.SettlementIssues reports as an Error. Erasing the LAST cell is allowed — that is
+        /// how a building is removed.</summary>
+        public static bool CanErase(InteriorFloor floor, (int i, int j) cell)
+        {
+            if (floor?.SettlementParams == null) return false;
+
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId != 1) continue;
+                var fp = SettlementTileGrid.FootprintOf(r);
+                if (!Contains(fp, cell)) continue;
+                if (fp.Count == 1) return true;                       // erasing it deletes the building
+                var rest = new List<(int i, int j)>(fp);
+                rest.Remove(cell);
+                return SettlementFootprint.IsConnected4(rest);
+            }
+
+            var streets = new List<(int i, int j)>(SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+            if (!streets.Remove(cell)) return false;                  // nothing here to erase
+            var saved = floor.SettlementParams.StreetCells;
+            floor.SettlementParams.StreetCells = streets.Count > 0 ? SettlementFootprint.Encode(streets) : null;
+            bool safe = SettlementStreetOps.MissingAccess(floor).Count == 0;
+            floor.SettlementParams.StreetCells = saved;               // ALWAYS restored, on both branches
+            return safe;
+        }
+
+        /// <summary>Remove building cells and street cells under the stroke, skipping any cell CanErase
+        /// refuses. Returns how many cells were removed.
+        ///
+        /// RE-ASKS CanErase AFTER EVERY REMOVAL, against the floor as it stands — never against the floor as
+        /// it was when the stroke began. Two cells that are each individually safe can be fatal together: a
+        /// lane two cells wide is load-bearing as a pair while neither cell is alone. Evaluating the whole
+        /// stroke up front would let one gesture break the invariant that the repair then silently re-carves
+        /// somewhere else, which is the exact outcome CanErase exists to prevent.</summary>
+        public static int Erase(InteriorFloor floor, IReadOnlyList<(int i, int j)> cells)
+        {
+            if (floor?.SettlementParams == null || cells == null) return 0;
+            var ordered = new List<(int i, int j)>(cells);
+            ordered.Sort(RowMajor);
+            int removed = 0;
+            foreach (var cell in ordered)
+            {
+                if (!CanErase(floor, cell)) continue;
+                if (RemoveBuildingCell(floor, cell)) { removed++; continue; }
+                if (RemoveStreetCell(floor, cell)) removed++;
+            }
+            return removed;
+        }
+
+        static bool Contains(List<(int i, int j)> cells, (int i, int j) c)
+        {
+            for (int k = 0; k < cells.Count; k++) if (cells[k].Equals(c)) return true;
+            return false;
+        }
+
+        static bool RemoveBuildingCell(InteriorFloor floor, (int i, int j) cell)
+        {
+            for (int k = 0; k < floor.Rooms.Count; k++)
+            {
+                var r = floor.Rooms[k];
+                if (r.TypeId != 1) continue;
+                var fp = SettlementTileGrid.FootprintOf(r);
+                if (!Contains(fp, cell)) continue;
+                var rest = new List<(int i, int j)>(fp);
+                rest.Remove(cell);
+                if (rest.Count == 0) { floor.Rooms.RemoveAt(k); return true; }
+                r.Cells = SettlementFootprint.Encode(rest);
+                var rep = SettlementFootprint.Representative(rest);
+                r.X = SettlementFootprint.CenterOf(rep.i);
+                r.Y = SettlementFootprint.CenterOf(rep.j);
+                return true;
+            }
+            return false;
+        }
+
+        static bool RemoveStreetCell(InteriorFloor floor, (int i, int j) cell)
+        {
+            var streets = new List<(int i, int j)>(SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+            if (!streets.Remove(cell)) return false;
+            floor.SettlementParams.StreetCells = streets.Count > 0 ? SettlementFootprint.Encode(streets) : null;
+            return true;
+        }
+
         /// <summary>The 4-connected component that contains <c>cells[0]</c> — nothing here compares
         /// component sizes, ever; whichever piece holds the first cell is the one returned, however large or
         /// small the others are. Deterministic because the input order is the stroke's own order, and the
