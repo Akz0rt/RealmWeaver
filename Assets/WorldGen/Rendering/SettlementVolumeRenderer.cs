@@ -770,8 +770,7 @@ namespace WorldGen.Rendering
         /// by nothing else; a DRAG goes through <see cref="AreCellsFree"/>, which deliberately does NOT apply
         /// it. See AreCellsFree for the derivation — in short, Wall/Gate are DERIVED from (buildings ∪
         /// streets), so testing a MOVE against them is self-referential, and for a gate it is simply wrong.</summary>
-        public static bool IsPlaceable(TileType type)
-            => type != TileType.Building && type != TileType.Wall && type != TileType.Gate;
+        public static bool IsPlaceable(TileType type) => SettlementVolumeRendererPlacement.IsPlaceable(type);
 
         /// <summary>Is a normalized position inside the 0..1 field a room may legally occupy? A SECOND axis of
         /// the placement test, alongside the tile-type rule above, and it is not decoration:

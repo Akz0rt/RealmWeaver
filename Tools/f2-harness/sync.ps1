@@ -24,7 +24,8 @@ $files = @(
   'SettlementBlocks.cs', 'SettlementBlocksSelfTests.cs',
   'SettlementStreetOps.cs', 'SettlementStreetOpsSelfTests.cs',
   'SettlementSizing.cs', 'SettlementMigration.cs',
-  'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs'
+  'PoiData.cs', 'PoiMigrationSelfTests.cs', 'PoiMigration.cs',
+  'SettlementBrushOps.cs', 'SettlementBrushOpsSelfTests.cs'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $gen $f) }
 
@@ -461,14 +462,17 @@ $poiMigrationTests = Get-Content (Join-Path $src 'PoiMigrationSelfTests.cs') -Ra
 # Seventh source: the street-access mutants (below) are caught via SelfTestStreetAccess, which lives in
 # SettlementStreetOpsSelfTests.cs, not any of the six files above.
 $streetOpsTests = Get-Content (Join-Path $src 'SettlementStreetOpsSelfTests.cs') -Raw -Encoding UTF8
+# Eighth source: the brush mutants (below) are caught via SelfTestBrushStrokes, which lives in
+# SettlementBrushOpsSelfTests.cs, not any of the seven files above.
+$brushOpsTests = Get-Content (Join-Path $src 'SettlementBrushOpsSelfTests.cs') -Raw -Encoding UTF8
 
 function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string[]]$rebindPatterns, [string[]]$rebindTo) {
   $marker = "public void $methodName()"
   # Pick whichever source file actually defines this [ContextMenu] method — every existing caller's method
   # lives in $settlementTests, so this stays a no-op for them; SelfTestInteriorOps falls through to
   # $interiorTests, SelfTestBuilding falls through to $buildingTests, SelfTestWallRing falls through to
-  # $tileGridTests, SelfTestPoiLegacyTypes falls through to $poiMigrationTests, and SelfTestStreetAccess
-  # falls through to $streetOpsTests.
+  # $tileGridTests, SelfTestPoiLegacyTypes falls through to $poiMigrationTests, SelfTestStreetAccess falls
+  # through to $streetOpsTests, and SelfTestBrushStrokes falls through to $brushOpsTests.
   $srcText = $settlementTests
   $origClass = 'SettlementSelfTests'
   if ($srcText.IndexOf($marker) -lt 0) {
@@ -494,6 +498,10 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
   if ($srcText.IndexOf($marker) -lt 0) {
     $srcText = $streetOpsTests
     $origClass = 'SettlementStreetOpsSelfTests'
+  }
+  if ($srcText.IndexOf($marker) -lt 0) {
+    $srcText = $brushOpsTests
+    $origClass = 'SettlementBrushOpsSelfTests'
   }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
@@ -1413,6 +1421,48 @@ foreach ($mc in @('MutGateOpeningNoGates', 'MutGateOpeningStreetsNotSeeded')) {
   New-SettlementRebind 'SelfTestGateOpening' $mc `
     @('SettlementTileGrid\.', '\bTileType\b') `
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
+# ---- BRUSH MUTANTS (settlement-brushes, task 1): two rules pinned by SettlementBrushOps. -------------------
+# SettlementBrushOps.cs bundles TWO types in one namespace block — class SettlementBrushOps AND class
+# SettlementVolumeRendererPlacement — but SelfTestBrushStrokes never names SettlementVolumeRendererPlacement
+# (every call to IsPlaceable happens inside SettlementBrushOps.PaintBuilding itself, never from the test), so
+# a rebind of just `SettlementBrushOps\.` is sound and complete — the same single-pattern shape SelfTestHeight
+# uses above, and for the same reason: adding a second, unused pattern would make New-SettlementRebind throw.
+# TileType/SettlementTileGrid/SettlementFootprint/InteriorFloor/Room/RoomSizing all live in unmutated files
+# and resolve OUTWARD once SettlementBrushOps.cs is re-namespaced, and every list here is List<(int,int)> — a
+# value tuple of ints, identical in both namespaces — so there is no IReadOnlyList<T> struct-covariance trap.
+
+# MutBrushNoInterpolation: AppendSegment appends only the endpoint, so a fast drag paints a dotted line and
+# the footprint is not 4-connected. SelfTestBrushStrokes' cell-count and contiguity claims must fail.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutBrushNoInterpolation' `
+  '            int ci = from.i, cj = from.j;' `
+  '            Push(into, to); if (into != null) return;   // MUTANT: no interpolation
+            int ci = from.i, cj = from.j;' `
+  'MutBrushNoInterpolation.cs'
+
+# MutBrushIgnoresPlaceable: PaintBuilding keeps every cell of the stroke, including one another building
+# already owns. SelfTestBrushStrokes' case 5 must fail.
+#
+# THE LOCATOR IS THE `continue` LINE, NOT THE WHOLE LOOP BODY — a deliberate departure from this task's brief,
+# which paired the placement test and the dedup test in one short-circuited `if (IsPlaceable(...) &&
+# keptSet.Add(c)) kept.Add(c);` expression and then wrote a locator for that exact line. The two never
+# actually matched (the brief's Step 3 code carries `&& keptSet.Add(c)`, its Step 5 locator does not), which
+# is caught here rather than passed through: New-SettlementMutant's pattern-match guard would have hard-failed
+# on the mismatch, and folding the two tests into one expression would have made THIS mutant remove BOTH
+# rules at once — a stroke over an occupied cell would also stop deduplicating, so a failure could not be
+# blamed on the placement rule alone. Splitting the guard into two statements (SettlementBrushOps.cs,
+# PaintBuilding) keeps the two mutants surgical: this one removes only the `continue`, so every cell reaches
+# the dedup test regardless of what tile it lands on.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutBrushIgnoresPlaceable' `
+  '                if (!SettlementVolumeRendererPlacement.IsPlaceable(grid.At(c.i, c.j))) continue;' `
+  '                // MUTANT: the placement rule is ignored' `
+  'MutBrushIgnoresPlaceable.cs'
+
+foreach ($mc in @('MutBrushNoInterpolation', 'MutBrushIgnoresPlaceable')) {
+  New-SettlementRebind 'SelfTestBrushStrokes' $mc `
+    @('SettlementBrushOps\.') `
+    @("WorldGen.Generation.$mc.SettlementBrushOps.")
 }
 
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',

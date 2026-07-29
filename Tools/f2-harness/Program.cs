@@ -104,6 +104,9 @@ static class Program
         var streetOps = new WorldGen.Rendering.SettlementStreetOpsSelfTests();
         streetOps.SelfTestStreetAccess();
         streetOps.SelfTestStreetOpsSentinel();
+        var brushOps = new WorldGen.Rendering.SettlementBrushOpsSelfTests();
+        brushOps.SelfTestBrushStrokes();
+        brushOps.SelfTestBrushOpsSentinel();
         var poiMigration = new WorldGen.Rendering.PoiMigrationSelfTests();
         poiMigration.SelfTestPoiLegacyTypes();
         poiMigration.SelfTestPoiMigrationSentinel();

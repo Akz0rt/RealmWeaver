@@ -150,6 +150,11 @@ namespace WorldGen.Generation
                 ("MutAccessIgnoresConnectivity", "SettlementStreetOps enforces only 'every building fronts a street', never 'the network is one piece' (a house can be served by an island lane)",
                     () => new WorldGen.MutantTests.MutAccessIgnoresConnectivitySelfTests().SelfTestStreetAccess()),
 
+                ("MutBrushNoInterpolation", "SettlementBrushOps.AppendSegment appends only the sampled endpoint (a fast drag paints a dotted, disconnected footprint)",
+                    () => new WorldGen.MutantTests.MutBrushNoInterpolationSelfTests().SelfTestBrushStrokes()),
+                ("MutBrushIgnoresPlaceable", "SettlementBrushOps.PaintBuilding keeps cells another building, a wall or a gate already occupies",
+                    () => new WorldGen.MutantTests.MutBrushIgnoresPlaceableSelfTests().SelfTestBrushStrokes()),
+
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
                 ("MutFenceNoStreets", "DungeonLayout.DeriveTownFence stops folding the floor's STORED street cells into the fence (it wraps buildings + gates only — the fence the Task 5 measurement rejected, which leaves 21 of 78 street cells outside on the pinned fixture)",
