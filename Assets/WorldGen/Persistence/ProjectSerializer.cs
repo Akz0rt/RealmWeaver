@@ -178,9 +178,13 @@ namespace WorldGen.Persistence
                 // building far enough from its neighbours then grows its own private wall ring on load with no
                 // DM action at all. EnsureAccess is idempotent, so a healthy save pays one pass and changes
                 // nothing.
-                if (d.Kind == InteriorKind.Settlement)
+                //
+                // The d.Floors == null and f == null guards mirror EnsureFootprints' own, one statement above:
+                // a hand-edited file can carry a null Levels/floor list, and unlike the version-gated block
+                // below, this call is ungated, so it is the first thing on every load that would dereference it.
+                if (d.Kind == InteriorKind.Settlement && d.Floors != null)
                     foreach (var f in d.Floors)
-                        if (f.SettlementParams != null) SettlementStreetOps.EnsureAccess(f);
+                        if (f != null && f.SettlementParams != null) SettlementStreetOps.EnsureAccess(f);
             }
 
             // v11 lattice migration. VERSION-GATED, unlike its three neighbours above, and BOTH passes are:
