@@ -817,10 +817,10 @@ namespace WorldGen.Rendering
             // a reader diffing the printed line against either comment would see what looks like a mismatch.
             string pctStr = pct.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture);
             Debug.Log($"Street cells far from any building: {far}/{total} ({pctStr}%)");
-            if (pct > 0.10)
+            if (pct > 0.05)
             {
                 Debug.LogError($"SelfTestStreetCellsNearBuildings: {far}/{total} ({pctStr}%) street cells "
-                             + "are farther than OpenStreetNeighbourhood from any building, over the 0.10% "
+                             + "are farther than OpenStreetNeighbourhood from any building, over the 0.05% "
                              + "ceiling — the narrow-spur rule is now dimpling generated town walls");
                 ok = false;
             }

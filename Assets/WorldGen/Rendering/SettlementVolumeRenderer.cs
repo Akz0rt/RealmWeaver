@@ -437,8 +437,10 @@ namespace WorldGen.Rendering
                 return;
             }
 
-            // SettlementTileGrid.Build takes no roads: streets are STORED cells (SettlementParams.StreetCells)
-            // and the grid reads them itself, so `rg` reaches nothing this method draws.
+            // SettlementTileGrid.Build reads its STORED streets itself (SettlementParams.StreetCells) — `rg`
+            // reaches nothing this method draws — and is additionally handed PreviewStreets, the drag's
+            // uncommitted preview road (sub-project B): drawn exactly like a stored street, but never written
+            // back to the floor (see PreviewStreets' own doc).
             grid = SettlementTileGrid.Build(lvl, PreviewStreets);
             RebuildCellRooms(lvl);
 

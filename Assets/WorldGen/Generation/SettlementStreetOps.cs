@@ -68,9 +68,9 @@ namespace WorldGen.Generation
                 // Gated on streets.Add's OWN return value, not a second bookkeeping set: "already in
                 // streets" is the exact, single source of truth for "not actually new," and streets is
                 // already the HashSet paying for that check. Provably a no-op HERE (CarveToNetwork's own
-                // starts are the footprint's non-street neighbours — see Fronts above, which is why the
-                // carve ran at all — so nothing this BFS returns can already be in streets); kept for the
-                // same reason the guard below is NOT optional.
+                // starts are the footprint's non-building neighbours, none of which fronted a street — see
+                // Fronts above, which is why the carve ran at all — so nothing this BFS returns can already
+                // be in streets); kept for the same reason the guard below is NOT optional.
                 foreach (var c in path) if (streets.Add(c)) added.Add(c);
             }
 
@@ -106,8 +106,15 @@ namespace WorldGen.Generation
         {
             var add = MissingAccess(floor);
             if (add.Count == 0) return 0;
-            var all = new List<(int i, int j)>(SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
-            var seen = new HashSet<(int i, int j)>(all);
+            // `all` is DEDUPED AS IT IS BUILT, starting from the stored array itself — not only from `add`
+            // against it. A hand-edited or otherwise malformed save can already carry a duplicate cell in
+            // StreetCells; seeding `seen` from a `Decode`d list that keeps such a duplicate and only guarding
+            // the NEW cells against it would let that pre-existing duplicate survive the write, which is
+            // exactly what "duplicate-free" promises it will not do.
+            var seen = new HashSet<(int i, int j)>();
+            var all = new List<(int i, int j)>();
+            foreach (var c in SettlementFootprint.Decode(floor.SettlementParams.StreetCells))
+                if (seen.Add(c)) all.Add(c);
             foreach (var c in add) if (seen.Add(c)) all.Add(c);
             all.Sort(RowMajor);
             floor.SettlementParams.StreetCells = SettlementFootprint.Encode(all);
@@ -175,23 +182,50 @@ namespace WorldGen.Generation
         static List<(int i, int j)> Bfs(List<(int i, int j)> starts, HashSet<(int i, int j)> buildings,
                                         HashSet<(int i, int j)> target)
         {
-            // EFFECTIVE target: drop any member also claimed by a building. Below, `buildings.Contains(n)`
-            // is checked BEFORE `target.Contains(n)` on every candidate cell — that ordering exists so a
-            // building is never mistaken for open ground, but its side effect is that a target cell buried
-            // under a building can never terminate the search: it is skipped every time a neighbour tries
-            // to reach it, never marked seen, never returned. Grid coordinates are plain ints with no
-            // bounding box, so a target that is non-empty but ENTIRELY buried does not fail fast — it
-            // expands outward forever (measured: an unfixed EnsureAccess call did not return in 10+
-            // seconds on a one-cell fixture). Filtering ONCE, here, beats reordering the two checks below:
-            // reordering would still let the search wander indefinitely past every OTHER buried target
-            // before happening to find a reachable one, where filtering rules buried cells out up front.
-            // A FRESH set, not a mutation of the caller's `target`: CarveToNetwork passes its live
-            // `streets` set directly (not a copy), so writing to `target` in place would corrupt it.
+            // A TARGET CAN BE UNREACHABLE TWO WAYS, and this method closes BOTH — the final whole-branch
+            // review found the second one survived the first fix.
+            //
+            // (1) BURIED: a target cell has a building standing ON it. Below, `buildings.Contains(n)` is
+            // checked BEFORE `target.Contains(n)` on every candidate cell — that ordering exists so a
+            // building is never mistaken for open ground, but its side effect is that a buried target cell
+            // can never terminate the search: it is skipped every time a neighbour tries to reach it, never
+            // marked seen, never returned. Filtered out HERE, once, into a fresh set — not a mutation of the
+            // caller's `target`, since CarveToNetwork passes its live `streets` set directly (not a copy) and
+            // writing to `target` in place would corrupt it — rather than reordering the two checks in the
+            // loop below, which would still let the search wander past every OTHER buried target before
+            // happening to find a reachable one.
+            //
+            // (2) ENCLOSED: every surviving (non-buried) target cell sits inside a region 4-connected
+            // movement cannot leave — e.g. a street cell ringed by buildings on its whole 8-neighbourhood: no
+            // building stands ON it, so filter (1) keeps it, but every orthogonal approach is a building.
+            // Filter (1) does nothing for this shape. With grid coordinates as plain ints and no bounding
+            // box, the search does not fail fast here either — it expands outward over the unbounded lattice
+            // forever (reproduced with a 10-second watchdog: an unfixed call did not return on exactly this
+            // shape). Closed by bounding the frontier below to the bbox of (buildings u target u starts),
+            // inflated by 1 cell, and refusing to expand past it: that inflation ring is entirely
+            // building-free and 4-connected, so any path that would have left the box can be rerouted along
+            // the ring at no greater length — no reachable target becomes unreachable and no shortest path
+            // gets longer, only a genuinely unreachable search now fails fast instead of running forever.
             var effectiveTarget = new HashSet<(int i, int j)>();
             foreach (var t in target) if (!buildings.Contains(t)) effectiveTarget.Add(t);
             target = effectiveTarget;
 
             if (target.Count == 0) return null;
+
+            int minI = int.MaxValue, maxI = int.MinValue, minJ = int.MaxValue, maxJ = int.MinValue;
+            void Fold(int i, int j)
+            {
+                if (i < minI) minI = i;
+                if (i > maxI) maxI = i;
+                if (j < minJ) minJ = j;
+                if (j > maxJ) maxJ = j;
+            }
+            foreach (var b in buildings) Fold(b.i, b.j);
+            foreach (var t in target) Fold(t.i, t.j);
+            foreach (var s in starts) Fold(s.i, s.j);
+            minI--; maxI++; minJ--; maxJ++;
+            bool InBox((int i, int j) c) => c.i >= minI && c.i <= maxI && c.j >= minJ && c.j <= maxJ;
+
             var prev = new Dictionary<(int i, int j), (int i, int j)>();
             var seen = new HashSet<(int i, int j)>();
             var q = new List<(int i, int j)>();
@@ -207,7 +241,7 @@ namespace WorldGen.Generation
                 for (int k = 0; k < 4; k++)
                 {
                     var n = (i: cur.i + DI[k], j: cur.j + DJ[k]);
-                    if (buildings.Contains(n) || !seen.Add(n)) continue;
+                    if (!InBox(n) || buildings.Contains(n) || !seen.Add(n)) continue;
                     prev[n] = cur;
                     if (target.Contains(n))
                     {

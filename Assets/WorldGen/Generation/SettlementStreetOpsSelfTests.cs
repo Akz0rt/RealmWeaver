@@ -161,7 +161,9 @@ namespace WorldGen.Rendering
             }
 
             // 4. A LEGACY TOWN WITH NO STREETS AT ALL — the v9 shape, and the common case rather than a
-            //    degenerate one. The bootstrap must invent a network and connect everything to it.
+            //    degenerate one. The bootstrap must invent a network and connect everything to it, and —
+            //    since this is exactly the shape the load path exercises on EVERY legacy file, so its
+            //    bootstrap firing exactly ONCE per load matters — a second call must add nothing.
             {
                 var floor = Floor(null, (0, 0), (0, 1), (5, 5));
                 int added = SettlementStreetOps.EnsureAccess(floor);
@@ -176,12 +178,40 @@ namespace WorldGen.Rendering
                     Debug.LogError($"SelfTestStreetAccess: street-less town after repair — {why4}");
                     ok = false;
                 }
+                if (SettlementStreetOps.EnsureAccess(floor) != 0)
+                {
+                    Debug.LogError("SelfTestStreetAccess: a second EnsureAccess on the bootstrapped v9 town "
+                                 + "added more cells — the bootstrap path is not idempotent");
+                    ok = false;
+                }
             }
 
-            // 5. DETERMINISM. The same floor twice must yield the same cells, in the same order.
+            // 5. DETERMINISM UNDER REVERSED INSERTION ORDER. Two floors describing the SAME town — same
+            //    buildings, same street cells — but built with its rooms and its street cells appended in
+            //    REVERSED order the second time, must still yield identical MissingAccess output. An
+            //    IDENTICALLY-constructed second copy (the shape this case used to be) does not test this:
+            //    for (int, int) tuples .NET's hashing is not randomised, so a HashSet's enumeration order is
+            //    itself a deterministic function of insertion order — a bug that let some decision ride along
+            //    with HashSet enumeration, instead of an explicit row-major tie-break, would still return the
+            //    same list both times on two identically-ordered builds, and this case would have passed
+            //    right over it. Reversing the insertion order is what a hidden dependence on incidental
+            //    enumeration order cannot survive.
+            //
+            //    The fixture is case 7's shape (two EQUAL-SIZED, already-served orphan stubs — the one
+            //    geometry here where SmallestOrphanComponent must break a genuine size tie), at coordinates
+            //    chosen empirically to exercise it. Reversing case 7's own (1,0)/(10,0) was tried FIRST and
+            //    does NOT diverge, even under a deliberately injected order-dependence bug: for only two
+            //    non-colliding int-pair hashes, HashSet<(int,int)> enumeration order depends on hash-bucket
+            //    placement, not insertion order, so both builds enumerate in the same relative order either
+            //    way. (2,2)/(9,9) DOES diverge under the same injected bug — confirmed by running both pairs
+            //    against a temporarily-broken SmallestOrphanComponent (its sort and its tie-break both
+            //    removed, so a genuine size tie rides along with whatever order the streets HashSet happens
+            //    to enumerate): (1,0)/(10,0) still passed; (2,2)/(9,9) failed with "MissingAccess is not
+            //    deterministic — cell 1 was (4, 2) one run and (3, 3) the next". So this is the pair that
+            //    actually exercises the property, not one that merely looks like it does.
             {
-                var a = Floor(Cells((1, 0)), (1, 1), (7, 7));
-                var b = Floor(Cells((1, 0)), (1, 1), (7, 7));
+                var a = Floor(Cells((2, 2), (9, 9)), (2, 3), (9, 8));
+                var b = Floor(Cells((9, 9), (2, 2)), (9, 8), (2, 3));
                 var ca = SettlementStreetOps.MissingAccess(a);
                 var cb = SettlementStreetOps.MissingAccess(b);
                 if (ca.Count != cb.Count)
@@ -231,34 +261,64 @@ namespace WorldGen.Rendering
             //    new, and the reported count matching the OBSERVED growth of the stored array — not just
             //    self-consistency between MissingAccess and EnsureAccess, which would stay equal even if
             //    both over-counted the same way.
+            //
+            //    A THIRD BUILDING, (5,10), is folded into this SAME fixture for the row-major assertion
+            //    below, and it has to be a third one rather than reusing (1,1)/(10,1): those two already
+            //    front their own stub, so pass 1 never carves for them, and their pass-2 join always runs
+            //    from the row-major-SMALLER orphan toward the larger one — an inherently ASCENDING path, so
+            //    `added` comes out already sorted with or without MissingAccess's own final `Sort`, and an
+            //    assertion added only against that geometry would be vacuous (verified: with the final Sort
+            //    temporarily removed, this exact two-stub fixture still passed a row-major check). (5,10)
+            //    does not front the pre-existing stub at (5,3), so it forces an actual pass-1 carve, and
+            //    that carve runs NORTH-TO-SOUTH-REVERSED — from the building's high-j frontage down to the
+            //    low-j street — i.e. DESCENDING j, landing in `added` BEFORE pass 2's ascending j=0 cells in
+            //    insertion order. Only the final `Sort` fixes that ordering; confirmed empirically: with
+            //    `added.Sort(RowMajor)` temporarily removed, this fixture's `missing` list failed the
+            //    row-major check below 10 times over, e.g. "MissingAccess returned (5, 9) before (5, 8) …
+            //    which is not row-major order" — and with the Sort restored the same fixture passes clean.
             {
-                var floor = Floor(Cells((1, 0), (10, 0)), (1, 1), (10, 1));
+                var floor = Floor(Cells((1, 0), (10, 0), (5, 3)), (1, 1), (10, 1), (5, 10));
                 var before = new System.Collections.Generic.HashSet<(int i, int j)>(
                     SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
 
                 var missing = SettlementStreetOps.MissingAccess(floor);
                 var seenInMissing = new System.Collections.Generic.HashSet<(int i, int j)>();
+                (int i, int j)? prevMissing = null;
                 foreach (var c in missing)
                 {
                     if (!seenInMissing.Add(c))
                     {
                         Debug.LogError($"SelfTestStreetAccess: MissingAccess returned duplicate cell {c} "
-                                     + "for the two-stub fixture");
+                                     + "for the two-stub-plus-descending-carve fixture");
                         ok = false;
                     }
                     if (before.Contains(c))
                     {
                         Debug.LogError($"SelfTestStreetAccess: MissingAccess counted already-street cell "
-                                     + $"{c} as newly added for the two-stub fixture");
+                                     + $"{c} as newly added for the two-stub-plus-descending-carve fixture");
                         ok = false;
                     }
+                    // ROW-MAJOR, pinned directly: the doc promises it and nothing previously asserted it.
+                    // Row-major here means j primary, i secondary — the same key RowMajor uses internally.
+                    if (prevMissing != null)
+                    {
+                        var p = prevMissing.Value;
+                        bool inOrder = p.j < c.j || (p.j == c.j && p.i <= c.i);
+                        if (!inOrder)
+                        {
+                            Debug.LogError($"SelfTestStreetAccess: MissingAccess returned {p} before {c} for "
+                                         + "the two-stub-plus-descending-carve fixture, which is not row-major order");
+                            ok = false;
+                        }
+                    }
+                    prevMissing = c;
                 }
 
                 int added = SettlementStreetOps.EnsureAccess(floor);
                 if (added <= 0)
                 {
-                    Debug.LogError($"SelfTestStreetAccess: two disconnected street stubs got {added} cells — "
-                                 + "the orphan components were never joined");
+                    Debug.LogError($"SelfTestStreetAccess: two disconnected street stubs plus a descending "
+                                 + $"carve got {added} cells — the orphan components were never joined");
                     ok = false;
                 }
                 var after = SettlementFootprint.Decode(floor.SettlementParams.StreetCells);
@@ -272,7 +332,7 @@ namespace WorldGen.Rendering
                 }
                 if (!InvariantHolds(floor, out string why7))
                 {
-                    Debug.LogError($"SelfTestStreetAccess: after bridging two street stubs — {why7}");
+                    Debug.LogError($"SelfTestStreetAccess: after bridging the three components — {why7}");
                     ok = false;
                 }
             }
@@ -321,6 +381,57 @@ namespace WorldGen.Rendering
                     if (!afterSet.Contains(c))
                     {
                         Debug.LogError($"SelfTestStreetAccess: the buried-street fixture's stored streets "
+                                     + $"lost cell {c} when nothing should have been written");
+                        ok = false;
+                    }
+            }
+
+            // 9. AN ENCLOSED STREET CELL — the SECOND way a target can be unreachable, and the one the
+            //    buried-target filter above (case 8) does NOT close: a street cell ringed by buildings on
+            //    its whole 8-neighbourhood has no building sitting ON it, so the filter keeps it as a live
+            //    target, but 4-connected movement can never cross the diagonal ring to reach it. The 4
+            //    ORTHOGONAL ring buildings front (5,5) directly and need no carve; the 4 CORNER ring
+            //    buildings and the building well outside the ring do, and each of their searches goes
+            //    looking for the one surviving target from the unbounded OUTSIDE region.
+            //
+            //    THIS IS THE SHAPE THE FINAL WHOLE-BRANCH REVIEW'S 10-SECOND WATCHDOG CAUGHT, and it HUNG
+            //    before the bounded-frontier fix: confirmed by running this exact fixture (street (5,5)
+            //    ringed by 8 buildings, plus a 9th building at (20,20)) against the pre-fix Bfs on a
+            //    background thread with a 10-second join timeout — it did not return
+            //    ("A enclosed-street ring: DID NOT RETURN within 10011 ms"). What is checkable once the
+            //    call DOES return: the sealed cell truly cannot be reached from outside its own ring by
+            //    4-connected movement, so CarveToNetwork correctly
+            //    reports "boxed in" for every building that needs it and EnsureAccess adds nothing, leaving
+            //    the stored streets byte-for-byte unchanged — the same "returns what it could solve and
+            //    nothing else" contract as case 8, reached by the other route.
+            {
+                var floor = Floor(Cells((5, 5)),
+                    (4, 4), (4, 5), (4, 6), (5, 4), (5, 6), (6, 4), (6, 5), (6, 6), (20, 20));
+                var beforeSet9 = new System.Collections.Generic.HashSet<(int i, int j)>(
+                    SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+
+                int added9 = SettlementStreetOps.EnsureAccess(floor);
+                if (added9 != 0)
+                {
+                    Debug.LogError($"SelfTestStreetAccess: the sealed-ring fixture got {added9} cells added "
+                                 + "— a street cell ringed by buildings on its whole 8-neighbourhood must be "
+                                 + "unreachable from outside the ring");
+                    ok = false;
+                }
+
+                var afterSet9 = new System.Collections.Generic.HashSet<(int i, int j)>(
+                    SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+                foreach (var c in afterSet9)
+                    if (!beforeSet9.Contains(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: the sealed-ring fixture's stored streets "
+                                     + $"gained cell {c} when nothing should have been written");
+                        ok = false;
+                    }
+                foreach (var c in beforeSet9)
+                    if (!afterSet9.Contains(c))
+                    {
+                        Debug.LogError($"SelfTestStreetAccess: the sealed-ring fixture's stored streets "
                                      + $"lost cell {c} when nothing should have been written");
                         ok = false;
                     }

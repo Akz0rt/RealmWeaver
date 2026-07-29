@@ -211,6 +211,17 @@ namespace WorldGen.Persistence
             // has no cells for RecentreFloor to move and the town would recentre around whatever subset
             // happened to be footprinted. The `> 0` guard on the legacy count is what makes the size
             // bucketing safe to run on a floor that never carried the old knob at all.
+            //
+            // A ONE-CELL COSMETIC SEAM WITH THE STREET-ACCESS LOOP ABOVE (settlement-street-access,
+            // sub-project B), noted here because it is this block's own input that shifts: on a v9 floor
+            // (zero stored street cells) EnsureAccess bootstraps ONE street cell before this runs, and
+            // RecentreFloor folds every stored street cell into the bbox it centres on. So a legacy town's
+            // recentred landing position can differ by up to one cell from what it would have been before
+            // that bootstrap existed — the bootstrap cell sits adjacent to the row-major-first building,
+            // which can nudge the bbox's own row-major-first extreme outward by one. One-way (nothing
+            // reverses it) and cosmetic (it moves the whole town by a shared integer delta, same as any other
+            // RecentreFloor translation) — not a correctness defect, just a fact worth knowing before
+            // diffing two loads of the same old file taken before and after this branch.
             if (legacyLattice)
                 foreach (var d in result.Dungeons)
                 {

@@ -143,8 +143,16 @@ namespace WorldGen.Generation
         //
         // NO `roads` PARAMETER ANY MORE (Task 5). It folded a routed road segment's ENDPOINTS into the extent,
         // for a view fit that had to match a renderer which rasterized those roads. Neither side exists: the
-        // grid reads STORED street cells (the `streets` fold above), and DungeonViewController.FitBoundsFor
-        // now calls this with the IDENTICAL arguments Build does, so the fitted extent IS the drawn extent.
+        // grid reads STORED street cells (the `streets` fold above).
+        //
+        // Build MAY ADDITIONALLY RECEIVE A PREVIEW SET (sub-project B, settlement-street-access): a drag's
+        // uncommitted extra streets, unioned into Build's `streets` before it ever reaches Allocate. This
+        // method has no equivalent parameter, and DungeonViewController.FitBoundsFor deliberately never folds
+        // the preview in either — the view must not rescale under the cursor mid-drag, so the fit is allowed
+        // to lag the drawn extent by exactly the preview's cells until the next rebuild (RefitIfContentOverflows
+        // is itself gated off for the whole drag). The fitted extent is therefore a subset of the drawn one
+        // during a drag, not identical to it — see FitBoundsFor's own doc for why that gap is bounded and
+        // accepted rather than a bug.
         //
         // ORIGIN vs EXTENT — the distinction this method now turns on. The EXTENT still depends on what is
         // placed (it is the occupied bbox plus MarginCells, and it must be, or a building would fall off the

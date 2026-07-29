@@ -270,13 +270,17 @@ namespace WorldGen.Rendering
         ///
         /// Dungeons: the current floor's own bounds — byte-identical to the pre-contour per-floor fit.
         ///
-        /// THE FIT IS NOW EXACTLY THE DRAWN GRID, not a superset of it (Task 5). This method used to take the
-        /// render graph and hand Allocate its ROUTED ROAD ENDPOINTS, a Task-B4
-        /// device for matching a renderer that folded routed roads into its own grid. That renderer stopped
-        /// doing so at arc A task 2 — SettlementTileGrid.Build calls Allocate(floor.Rooms, streets) —
-        /// and this task deleted the router that produced the roads. So the fit passes `null` roads and the
-        /// SAME stored street cells Build uses, which makes the two calls identical rather than merely
-        /// consistent. Still a pure O(rooms + streets) pass; still routes nothing.</summary>
+        /// THE FIT IS THE STORED-STREETS GRID, not a superset built from routed roads (Task 5). This method
+        /// used to take the render graph and hand Allocate its ROUTED ROAD ENDPOINTS, a Task-B4 device for
+        /// matching a renderer that folded routed roads into its own grid. That renderer stopped doing so at
+        /// arc A task 2 — SettlementTileGrid.Build calls Allocate(floor.Rooms, streets) — and this task
+        /// deleted the router that produced the roads. So the fit passes `null` roads and the SAME stored
+        /// street cells Build uses.
+        ///
+        /// NO LONGER IDENTICAL TO BUILD'S OWN Allocate CALL, though (settlement-street-access, sub-project
+        /// B): Build may additionally fold in a drag's PREVIEW streets, which this fit deliberately never
+        /// sees — see the call site below for why. Still a pure O(rooms + streets) pass; still routes
+        /// nothing.</summary>
         (float minX, float minY, float maxX, float maxY) FitBoundsFor(InteriorFloor lvl)
         {
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && dungeon.Floors.Count > 0)
@@ -292,10 +296,15 @@ namespace WorldGen.Rendering
                 float halfCell = SettlementGenerator.BuildingCell * 0.5f * T;   // 1.92 tiles at the v11 pitch
 
                 // Allocate ONLY — cheap (two passes over the rooms plus one over the street cells, no
-                // dilate/flood-fill) — and with the IDENTICAL arguments SettlementTileGrid.Build passes:
-                // (rooms, streets). The fitted extent is therefore the drawn extent exactly. The
-                // union with the room bounds is kept for the same reason the pre-Task-8 fit unioned the fence
-                // in — a room can never be clipped — and it is what carries the degenerate case below.
+                // dilate/flood-fill) — with the STORED street cells only, deliberately not the extras a live
+                // drag preview may add: SettlementTileGrid.Build folds those in before its own Allocate call,
+                // so during a drag the drawn extent is a strict superset of this fitted one. That gap is
+                // bounded and intended, not a bug — RefitIfContentOverflows (below) is gated off for the
+                // whole drag, exactly as it must be for a footprint drag or a cascade, so the panel is never
+                // rescaled under the cursor; the preview lane and any wall it grows may run past the fitted
+                // panel until the next rebuild, the same way a dragged building already can. The union with
+                // the room bounds is kept for the same reason the pre-Task-8 fit unioned the fence in — a
+                // room can never be clipped — and it is what carries the degenerate case below.
                 //
                 // THE STREET CELLS ARE THAT CONTRACT (arc C.1 Task 3): the ring street rings the whole
                 // interior, a full cell OUTSIDE the outermost building, so a fit that ignored them would be
@@ -1149,7 +1158,13 @@ namespace WorldGen.Rendering
         ///
         /// No-ops on anything that is not a settlement, and on a settlement with no SettlementParams. The
         /// repair itself is SettlementStreetOps.EnsureAccess, which is idempotent — calling this after an
-        /// edit that changed nothing costs one pass and writes nothing.</summary>
+        /// edit that changed nothing costs one pass and writes nothing, PROVIDED the floor already satisfied
+        /// the invariant. That proviso matters here specifically: a migrated v9 town carries ZERO stored
+        /// street cells, so the FIRST time any of these three sites fires on it, this is not a no-op at
+        /// all — it bootstraps and writes a whole street network (see MissingAccess's bootstrap). Load
+        /// already ran this once by the time the DM can reach these sites, so in practice they see the
+        /// already-repaired floor, but a caller must not assume "changed nothing" implies "writes
+        /// nothing" from this doc alone.</summary>
         void CommitSettlementStreets()
         {
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
@@ -1339,6 +1354,15 @@ namespace WorldGen.Rendering
             dragAnchorCell = (0, 0);
             dragAppliedDelta = (0, 0);
             dragOriginCells = null;
+            // Same two clears OnEndDrag does on the teardown side (final-review fix). A drag interrupted
+            // before OnEndDrag — the pointer leaving this hit-plate mid-gesture, same shape as the
+            // draggingRoomId-stranding case OnEndDrag's own comment names — used to leave the LAST drag's
+            // preview road on a renderer this controller shares across every interior it binds to, so an
+            // unrelated town's next repaint would still draw a phantom street. Not in OnDisable: that is
+            // `=> DisarmPlacement();`, which early-returns on `!PlacementArmed` and so would never run on
+            // this path at all.
+            dragStreetPreview = null;
+            if (renderer is SettlementVolumeRenderer volReset) volReset.PreviewStreets = null;
             if (draggingRoomId == 0) return;
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
             var vol = renderer as SettlementVolumeRenderer;
