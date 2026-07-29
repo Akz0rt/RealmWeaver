@@ -181,6 +181,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutEraseSplitsBuildingSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseStaleCheck", "SettlementBrushOps.Erase decides every cell's safety up front against the floor as it stood when the stroke began, instead of re-asking CanErase after every removal",
                     () => new WorldGen.MutantTests.MutEraseStaleCheckSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseNoRestore", "SettlementBrushOps.CanErase's trial street removal is never restored, so a mere query permanently corrupts StreetCells (review finding M2 — the restore-purity invariant)",
+                    () => new WorldGen.MutantTests.MutEraseNoRestoreSelfTests().SelfTestEraseRefusal()),
 
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),

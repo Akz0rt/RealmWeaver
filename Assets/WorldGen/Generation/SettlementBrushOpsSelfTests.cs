@@ -455,9 +455,11 @@ namespace WorldGen.Rendering
                                  + "cell serving the building at (5,5)");
                     ok = false;
                 }
-                if (SettlementBrushOps.Erase(floor, Cells((5, 4))) != 0)
+                int removed1 = SettlementBrushOps.Erase(floor, Cells((5, 4)));
+                if (removed1 != 0)
                 {
-                    Debug.LogError("SelfTestEraseRefusal: Erase removed a cell CanErase refuses");
+                    Debug.LogError($"SelfTestEraseRefusal: Erase removed {removed1} cell(s) CanErase refuses, "
+                                 + "expected 0");
                     ok = false;
                 }
             }
@@ -472,9 +474,11 @@ namespace WorldGen.Rendering
                                  + "still serves the building");
                     ok = false;
                 }
-                if (SettlementBrushOps.Erase(floor, Cells((6, 4))) != 1)
+                int removed2 = SettlementBrushOps.Erase(floor, Cells((6, 4)));
+                if (removed2 != 1)
                 {
-                    Debug.LogError("SelfTestEraseRefusal: Erase did not remove the spare cell (6,4)");
+                    Debug.LogError($"SelfTestEraseRefusal: Erase removed {removed2} cell(s) for the spare cell "
+                                 + "(6,4), expected 1");
                     ok = false;
                 }
             }
@@ -486,6 +490,19 @@ namespace WorldGen.Rendering
                 if (room == null) { Debug.LogError("SelfTestEraseRefusal: the three-cell fixture did not paint"); ok = false; }
                 else
                 {
+                    // PRECONDITION, not decoration (review finding I1): the middle-vs-end distinction only
+                    // means anything on a footprint that actually HAS a middle. Read back through
+                    // SettlementTileGrid.FootprintOf — the canonical read, and one that stays UNMUTATED even
+                    // inside a rebound copy of this test, so it is trustworthy as a guard on the mutated call
+                    // above it.
+                    var fp3 = SettlementTileGrid.FootprintOf(room);
+                    if (fp3.Count != 3)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the three-cell fixture painted {fp3.Count} cells, "
+                                     + "expected 3 — with fewer cells (3,2) may no longer be a genuine middle "
+                                     + "cell and the middle-vs-end distinction stops being tested");
+                        ok = false;
+                    }
                     if (SettlementBrushOps.CanErase(floor, (3, 2)))
                     {
                         Debug.LogError("SelfTestEraseRefusal: erasing the middle cell (3,2) was allowed — the "
@@ -504,9 +521,11 @@ namespace WorldGen.Rendering
             {
                 var floor = Floor(Cells((5, 4)), (5, 5), (9, 9));
                 int before = floor.Rooms.Count;
-                if (SettlementBrushOps.Erase(floor, Cells((9, 9))) != 1)
+                int removed4 = SettlementBrushOps.Erase(floor, Cells((9, 9)));
+                if (removed4 != 1)
                 {
-                    Debug.LogError("SelfTestEraseRefusal: erasing a one-cell building's only cell removed nothing");
+                    Debug.LogError($"SelfTestEraseRefusal: erasing a one-cell building's only cell removed "
+                                 + $"{removed4} cell(s), expected 1");
                     ok = false;
                 }
                 if (floor.Rooms.Count != before - 1)
@@ -539,6 +558,28 @@ namespace WorldGen.Rendering
                 if (room == null) { Debug.LogError("SelfTestEraseRefusal: the two-cell fixture did not paint"); ok = false; }
                 else
                 {
+                    // PRECONDITION, not decoration (review finding I1): the stale-vs-fresh discrimination
+                    // above rests entirely on the painted footprint being BOTH lane cells, not one. Nothing
+                    // else in this case would notice a one-cell degradation — a building fronted by a single
+                    // street cell still gives removed == 1 and MissingAccess == 0 for an unrelated reason
+                    // (case 1/2's shape), so stale would silently equal fresh again and the arc's central
+                    // fixture would re-vacuate with no signal anywhere. This PaintBuilding call IS reached
+                    // through the rebind (`SettlementBrushOps.` is in MutEraseStaleCheck's rebind pattern), so
+                    // the guard is read back through SettlementTileGrid.FootprintOf — the canonical read,
+                    // which stays UNMUTATED even inside a rebound copy — and checked by CELL, not merely by
+                    // count, so a same-count wrong pair could not slip past it either.
+                    var fp5 = SettlementTileGrid.FootprintOf(room);
+                    bool has55 = false, has65 = false;
+                    foreach (var c in fp5) { if (c == (5, 5)) has55 = true; if (c == (6, 5)) has65 = true; }
+                    if (fp5.Count != 2 || !has55 || !has65)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the two-cell fixture painted {fp5.Count} cells "
+                                     + $"(has (5,5): {has55}, has (6,5): {has65}), expected exactly "
+                                     + "{(5,5),(6,5)} — with one cell the two lane cells stop being "
+                                     + "independently sufficient and the stale-versus-fresh check cannot "
+                                     + "diverge");
+                        ok = false;
+                    }
                     int removed = SettlementBrushOps.Erase(floor, Cells((5, 4), (6, 4)));
                     if (removed != 1)
                     {

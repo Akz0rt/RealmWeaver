@@ -1651,7 +1651,24 @@ $mutEraseStaleTo   = "            int removed = 0;`n            var stale = new 
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseStaleCheck' `
   $mutEraseStaleFrom $mutEraseStaleTo 'MutEraseStaleCheck.cs'
 
-foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseSplitsBuilding', 'MutEraseStaleCheck')) {
+# MutEraseNoRestore (review finding M2): CanErase's trial removal is never restored, so a CALL THAT MERELY
+# ASKS "can I erase this?" permanently corrupts StreetCells — the worst-shaped bug in this file, since it
+# fires from a predicate the eraser's hover (Task 5) calls every frame, on cells the DM never actually erased.
+# Traced two ways, and BOTH are already covered by an existing assertion with no mutant of its own until now:
+#   - Deleting the restore outright leaves case 2's CanErase((6,4)) returning true (street rule reads
+#     MissingAccess == 0 before ever restoring) but StreetCells stays {(5,4)} — the FOLLOWING
+#     Erase(floor, Cells((6,4))) then finds streets.Remove((6,4)) false and returns 0: case 2a2 fires
+#     ("Erase did not remove the spare cell (6,4)").
+#   - This single-line deletion is the shape review finding M2 asked to pin: it removes the restore on BOTH
+#     the safe and unsafe branches at once (there is only one restore statement, after the branch that
+#     computes `safe`), so the mutant exercises the "restore deleted outright" trace above. Expected killer:
+#     case 2a2.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseNoRestore' `
+  '            floor.SettlementParams.StreetCells = saved;               // ALWAYS restored, on both branches' `
+  '            // MUTANT: the restore is skipped — a trial removal corrupts StreetCells permanently' `
+  'MutEraseNoRestore.cs'
+
+foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseSplitsBuilding', 'MutEraseStaleCheck', 'MutEraseNoRestore')) {
   New-SettlementRebind 'SelfTestEraseRefusal' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")
