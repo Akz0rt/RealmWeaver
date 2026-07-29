@@ -159,6 +159,44 @@ namespace WorldGen.Rendering
                 }
             }
 
+            // 5. A PORTAL FIELD MUTATED IN PLACE, ON A ROOM THE STROKE NEVER TOUCHES, MUST SURVIVE UNDO.
+            //    Portal is a MUTABLE class, and DungeonInspectorPanel.BuildSecretRow edits an EXISTING
+            //    portal's fields IN PLACE (Kind/Bidirectional/Label/TargetFloorIndex/TargetRoomId) — a path
+            //    that is NOT gated off for a settlement building or a gate, only for a dummy building. A
+            //    snapshot whose Portals copy clones the LIST but shares the Portal OBJECTS would still see a
+            //    later in-place edit through that shared reference: undo would restore whatever the portal
+            //    reads NOW, not what it read at push time — the same class of bug as case 4, one field deeper.
+            {
+                var floor = Floor(Cells((0, 0)), (5, 5));
+                var authored = floor.GetRoom(1);
+                var portal = new Portal { Kind = PortalKind.SecretDoor, Label = "старая" };
+                authored.Portals.Add(portal);
+                var undo = new SettlementUndo();
+                undo.PushSnapshot(floor);
+                portal.Label = "новая";   // IN-PLACE edit after the snapshot, exactly what BuildSecretRow does
+                SettlementBrushOps.PaintBuilding(floor, Cells((2, 2), (3, 2)));
+                if (!undo.TryUndo(floor))
+                {
+                    Debug.LogError("SelfTestSettlementUndo: TryUndo returned false with one snapshot pushed (case 5)");
+                    ok = false;
+                }
+                var restored = floor.GetRoom(1);
+                if (restored == null || restored.Portals.Count != 1)
+                {
+                    string got = restored == null ? "<room missing>" : $"{restored.Portals.Count} portal(s)";
+                    Debug.LogError($"SelfTestSettlementUndo: after undo the untouched building has {got}, "
+                                 + "expected exactly 1 portal");
+                    ok = false;
+                }
+                else if (restored.Portals[0].Label != "старая")
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: after undo the untouched building's portal Label "
+                                 + $"is \"{restored.Portals[0].Label}\", expected \"старая\" — an in-place edit "
+                                 + "made AFTER the snapshot leaked through a shared Portal reference");
+                    ok = false;
+                }
+            }
+
             if (ok) Debug.Log("Self-Test Settlement Undo: PASS");
         }
 

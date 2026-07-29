@@ -21,16 +21,23 @@ namespace WorldGen.Generation
     /// strictly worse failure than no undo at all: the DM has no reason to suspect an unrelated action wiped a
     /// building's name, description or photo.
     ///
-    /// Grid and Preview are carried BY REFERENCE, deliberately, not cloned: nothing in this codebase mutates
-    /// them in place through a settlement floor's own rooms (DungeonInspectorPanel only ever assigns a new
-    /// BattleGrid/byte[] wholesale — `room.Preview = shrunk` / `= null` — never edits one in place), so sharing
-    /// the reference is exactly as safe as cloning and skips cloning a 512px PNG or a battle grid 64 layers
-    /// deep, which is precisely the cost the snapshot-not-delta argument above exists to avoid. Portals, by
-    /// contrast, IS cloned: elsewhere in the codebase (dungeon/building interiors) it genuinely is mutated in
-    /// place (DungeonOps.AddSecretPassage/RemoveSecret, BuildingGenerator's stair wiring all call .Add/.Remove
-    /// on the live list) — unreachable for a settlement floor's own rooms today, but Room is one shared type,
-    /// and a List<Portal> is cheap enough that cloning it costs nothing, so it is cloned as a shallow copy
-    /// rather than trusted to stay untouched.
+    /// Grid and Preview are carried BY REFERENCE, deliberately, not cloned: re-confirmed (not just inherited
+    /// from an earlier pass) that nothing in this codebase mutates either one in place through a settlement
+    /// floor's own rooms. BattleGridScreen only ever assigns `room.Grid` a freshly-built model wholesale
+    /// (`room.Grid = view.Buffer.ToModel()` — the live, in-place-editable state lives in a SEPARATE
+    /// GridBuffer, never in room.Grid itself), and DungeonInspectorPanel only ever assigns `room.Preview` a
+    /// new byte[] wholesale (`= shrunk` / `= null`). So sharing the reference is exactly as safe as cloning,
+    /// and skips cloning a 512px PNG or a battle grid 64 layers deep — precisely the cost the
+    /// snapshot-not-delta argument above exists to avoid.
+    ///
+    /// Portals is DEEP-cloned — every Portal object copied field-by-field into a new instance, not just the
+    /// LIST shallow-copied — and this is the fix for a real defect a task review caught: Portal is a mutable
+    /// class, and DungeonInspectorPanel.BuildSecretRow edits an EXISTING portal's fields IN PLACE (Kind/
+    /// Hidden/TargetFloorIndex/TargetRoomId/Bidirectional/Label), on a path that is NOT gated off for a
+    /// settlement building or a gate (only a dummy building skips it). A shallow list-copy shares the Portal
+    /// OBJECTS, so an in-place edit made after PushSnapshot would still be visible through the snapshot's own
+    /// copy — undo would restore whatever the portal reads NOW, not what it read at push time. Confirmed
+    /// load-bearing (SelfTestSettlementUndo case 5) against exactly the shallow-copy version before this fix.
     ///
     /// Cells is cloned because the ops DO produce a fresh array per paint (SettlementFootprint.Encode), so a
     /// clone is cheap insurance against a future op that writes into an existing one in place instead.
@@ -43,10 +50,19 @@ namespace WorldGen.Generation
 
         class Entry
         {
-            public Room[] Rooms;      // copies: value fields copied, Grid/Preview/Portals carried per-field (see class doc)
+            public Room[] Rooms;      // copies: value fields copied, Grid/Preview by reference, Portals deep-cloned (see class doc)
             public int NextRoomId;
             public int[] Streets;     // a copy of the encoded array, or null
         }
+
+        // A deep copy of one portal — every field Portal actually declares. Not a reference: BuildSecretRow
+        // edits an existing Portal's fields in place (see class doc), so a shared Portal object would let a
+        // later in-place edit leak back into an already-pushed snapshot.
+        static Portal ClonePortal(Portal p) => new Portal
+        {
+            Kind = p.Kind, Hidden = p.Hidden, TargetFloorIndex = p.TargetFloorIndex,
+            TargetRoomId = p.TargetRoomId, Bidirectional = p.Bidirectional, Label = p.Label,
+        };
 
         readonly List<Entry> stack = new List<Entry>();
 
@@ -67,7 +83,7 @@ namespace WorldGen.Generation
                     X = r.X, Y = r.Y, SizeW = r.SizeW, SizeH = r.SizeH, IsDummy = r.IsDummy,
                     Cells = r.Cells == null ? null : (int[])r.Cells.Clone(),
                     Grid = r.Grid, Preview = r.Preview,
-                    Portals = r.Portals == null ? null : new List<Portal>(r.Portals),
+                    Portals = r.Portals == null ? null : r.Portals.ConvertAll(ClonePortal),
                 };
             }
             var streets = floor.SettlementParams.StreetCells;
