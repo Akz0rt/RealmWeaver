@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Workspace.Data;
@@ -52,6 +53,8 @@ namespace WorldGen.Workspace.Rendering
         RectTransform secondaryPaneRect;
         RectTransform dividerRect;
 
+        SurfaceRegistry surfaceRegistry;
+
         void Awake()
         {
             // `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
@@ -85,6 +88,17 @@ namespace WorldGen.Workspace.Rendering
             dividerRect = dividerRectTransform;
 
             ReflowPanes();
+        }
+
+        /// <summary>Wires the surface registry (Task 9) and runs the first sync immediately — WorkspaceBuilder
+        /// calls this AFTER registering every host it built (page, map), which is necessarily after
+        /// Initialize/ReflowPanes have already applied the default Layout. Without an immediate sync here,
+        /// the workspace's default WorldMap tab (WorkspaceOps.NewDefault) would sit there un-Shown until
+        /// the next unrelated layout change happened to trigger one.</summary>
+        public void SetSurfaceRegistry(SurfaceRegistry registry)
+        {
+            surfaceRegistry = registry;
+            SyncSurfaces();
         }
 
         // ── Interface WorkspaceController produces ───────────────────────────────
@@ -211,6 +225,60 @@ namespace WorldGen.Workspace.Rendering
             dividerRect.anchorMax = new Vector2(ratio, 1f);
         }
 
-        void RaiseChanged() => OnLayoutChanged?.Invoke();
+        void RaiseChanged()
+        {
+            SyncSurfaces();
+            OnLayoutChanged?.Invoke();
+        }
+
+        // ── Surfaces (Task 9) ──────────────────────────────────────────────────
+
+        /// <summary>Shows each pane's active surface through its registered host, and Hides every registered
+        /// host that no pane wants any more. Re-reads PaneContent(pane) fresh on every call rather than
+        /// caching it, which is what makes a Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work
+        /// for free: PaneContent(0) already returns the correct NEW physical container after a promotion, and
+        /// ISurfaceHost.Show is required to re-parent unconditionally every call — see SurfaceRegistry.cs's
+        /// own class doc.
+        ///
+        /// Iterates with the FOCUSED pane's Show() called LAST: if both panes' active tabs happen to share a
+        /// SurfaceKind (the single-host-per-kind limitation ISurfaceHost's signature accepts — see
+        /// PageSurfaceHost's own doc), the LAST Show() wins the one real host's parent, and this ordering
+        /// makes that always be the pane the user is actually looking at, rather than pane 1 always winning
+        /// by coincidence of iteration order.</summary>
+        void SyncSurfaces()
+        {
+            if (surfaceRegistry == null) return;
+
+            int[] order = Layout.FocusedPane == 1 ? new[] { 0, 1 } : new[] { 1, 0 };
+            var shownKinds = new HashSet<SurfaceKind>();
+
+            foreach (int pane in order)
+            {
+                SurfaceRef active = ActiveSurfaceOf(pane);
+                RectTransform paneContent = PaneContent(pane);
+                if (active == null || paneContent == null) continue;
+
+                ISurfaceHost host = surfaceRegistry.For(active.Kind);
+                if (host == null) continue;   // not registered yet — Task 10 registers the rest.
+
+                host.Show(paneContent, active.Id);
+                shownKinds.Add(active.Kind);
+            }
+
+            foreach (var host in surfaceRegistry.All)
+                if (!shownKinds.Contains(host.Kind))
+                    host.Hide();
+        }
+
+        /// <summary>The surface the pane's active tab points at, or null for an absent pane / an empty pane.
+        /// Same shape as NavigatorView.ActiveSurface, kept separate rather than shared — this one takes an
+        /// explicit pane index (both panes, one at a time) where NavigatorView only ever asks about the
+        /// FOCUSED pane.</summary>
+        SurfaceRef ActiveSurfaceOf(int pane)
+        {
+            PaneState p = WorkspaceOps.PaneAt(Layout, pane);
+            if (p?.Tabs == null || p.ActiveIndex < 0 || p.ActiveIndex >= p.Tabs.Count) return null;
+            return p.Tabs[p.ActiveIndex].Surface;
+        }
     }
 }

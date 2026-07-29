@@ -19,19 +19,31 @@ namespace WorldGen.Workspace.Rendering
     /// NavigatorView (tree, search, collapse toggle) — see BuildNavigatorColumn's own comment. There
     /// is still only the one divider Task 5 built: no step in this plan wires a drag gesture to
     /// NavigatorWidth, only the collapse toggle Task 7 Step 4 asks for.
+    ///
+    /// Task 9 wires the SurfaceRegistry last in Awake (see the end of the method): it re-points
+    /// documentController at the live NotesRootBuilder already in the scene (EnsureDocumentController)
+    /// and registers the page/map hosts, so a tab's active surface actually renders instead of the
+    /// content area sitting empty. See SurfaceRegistry.cs for what each host does and does not cover yet.
     /// </summary>
     public class WorkspaceBuilder : MonoBehaviour
     {
         const float DividerWidth = 6f;
 
         [Header("External refs")]
-        [Tooltip("The document NavigatorView renders. NotesRootBuilder owns the live NotesDocumentController " +
-                 "(and keeps owning it after Task 9 — see that task's Step 4); this is an external reference " +
-                 "the same way NotesRootBuilder.mapCamera is, assigned in the scene by Task 11. Null here is " +
-                 "the expected state through Tasks 7-10: WorkspaceBuilder is not yet wired into any scene, so " +
-                 "nothing can assign it yet. NavigatorView is null-tolerant — it still builds its chrome " +
-                 "(header, search, empty scroll) and just renders no groups until this is assigned.")]
+        [Tooltip("The document NavigatorView/QuickOpenPopup render. Left unassigned in the Inspector — Task 9 " +
+                 "auto-discovers the live NotesRootBuilder already in the scene (FindFirstObjectByType) and " +
+                 "reads its DocumentController, so the SAME instance is used everywhere without requiring a " +
+                 "scene edit this task is not allowed to make (see EnsureDocumentController). An explicit " +
+                 "Inspector assignment, once WorkspaceBuilder itself is wired into the scene (Task 11), still " +
+                 "wins over discovery.")]
         public NotesDocumentController documentController;
+
+        [Header("External refs — WorldMap surface")]
+        [Tooltip("Overrides for MapSurfaceHost's auto-discovery (FindFirstObjectByType<WorldMapRenderer>/" +
+                 "PoiEditPanel/MapLegendUI). Left null/empty until Task 11 (or a manual test) has a reason to " +
+                 "pin a specific instance instead of whatever discovery finds.")]
+        public Camera mapCamera;
+        public GameObject[] mapChrome;
 
         public WorkspaceController Controller { get; private set; }
 
@@ -91,6 +103,10 @@ namespace WorldGen.Workspace.Rendering
 
             EnsureEventSystemExists();
 
+            // Resolves the live NotesRootBuilder BEFORE anything below reads documentController — see
+            // EnsureDocumentController's own doc for why this must not construct a second NotesDocumentController.
+            NotesRootBuilder notesRoot = EnsureDocumentController();
+
             // WorkspaceController owns Layout independently of any Unity view state, so it is built
             // first — NavigatorColumn's initial width below reads Controller.Layout.NavigatorWidth.
             Controller = gameObject.AddComponent<WorkspaceController>();
@@ -146,6 +162,38 @@ namespace WorldGen.Workspace.Rendering
             QuickOpenPopup = QuickOpenPopup.Attach(gameObject, Controller, documentController);
             PrimaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
             SecondaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
+
+            // Surfaces (Task 9) — built last, once Controller/panes exist to hand hosts a real container and
+            // SetSurfaceRegistry can run its first sync against a fully-Initialize()'d Layout. Page is
+            // registered only when a live NotesRootBuilder was actually found; the map host is always
+            // registered — MapSurfaceHost.Create tolerates a null camera/empty chrome (nothing to Show/Hide),
+            // the same null-tolerance NavigatorView/QuickOpenPopup already extend to a null documentController.
+            var registry = new SurfaceRegistry();
+            if (notesRoot != null) registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+            registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome));
+            Controller.SetSurfaceRegistry(registry);
+        }
+
+        /// <summary>Finds the NotesRootBuilder already living in the scene (this predates the workspace-shell
+        /// plan) and, if `documentController` was not assigned in the Inspector, points it at THAT SAME
+        /// instance's NotesDocumentController — never constructs a new one. WorkspaceBuilder itself is not
+        /// wired into the scene until Task 11, so there is no Inspector slot to drag a NotesRootBuilder
+        /// reference into before then; FindFirstObjectByType is what lets this resolve correctly the moment a
+        /// human (or Task 11) attaches this component anywhere in a scene that already has NotesRootBuilder in
+        /// it — no scene edit required for Task 9 itself.
+        ///
+        /// Calls NotesRootBuilder.EnsureBuilt() explicitly rather than trusting its own Awake() already ran:
+        /// Unity does not guarantee Awake ordering across components on different GameObjects, and this method
+        /// runs from INSIDE WorkspaceBuilder's own Awake, so NotesRootBuilder's Awake may not have fired yet.
+        /// EnsureBuilt is idempotent (see its own doc), so calling it here is always safe.</summary>
+        NotesRootBuilder EnsureDocumentController()
+        {
+            var notesRoot = FindFirstObjectByType<NotesRootBuilder>();
+            if (notesRoot == null) return null;
+
+            notesRoot.EnsureBuilt();
+            if (documentController == null) documentController = notesRoot.DocumentController;
+            return notesRoot;
         }
 
         static (RectTransform rect, LayoutElement element) BuildNavigatorColumn(Transform parent, float navigatorWidth)
