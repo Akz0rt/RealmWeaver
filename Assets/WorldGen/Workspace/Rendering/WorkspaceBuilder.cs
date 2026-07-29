@@ -25,6 +25,11 @@ namespace WorldGen.Workspace.Rendering
 
         public WorkspaceController Controller { get; private set; }
 
+        /// <summary>The two tab strips, exposed the same way Controller is — Task 8 reaches these to wire
+        /// TabStripView.OnRequestQuickOpen, without GetComponentsInChildren/index-guessing at the call site.</summary>
+        public TabStripView PrimaryTabStrip { get; private set; }
+        public TabStripView SecondaryTabStrip { get; private set; }
+
         void Awake()
         {
             // A script recompile while already in Play Mode re-invokes Awake() on existing
@@ -35,10 +40,16 @@ namespace WorldGen.Workspace.Rendering
             // survive the reload; only re-running Awake() is new, so recover the Controller
             // reference here rather than leaving it null — the auto-property's backing field does
             // NOT survive the reload (it is not a serialized Unity field), even though the component
-            // it points at does.
+            // it points at does. TabStripView instances are recovered the same way, keyed by their
+            // own PaneIndex rather than assumed order.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
+                foreach (var strip in GetComponentsInChildren<TabStripView>(true))
+                {
+                    if (strip.PaneIndex == 0) PrimaryTabStrip = strip;
+                    else if (strip.PaneIndex == 1) SecondaryTabStrip = strip;
+                }
                 return;
             }
 
@@ -76,11 +87,13 @@ namespace WorldGen.Workspace.Rendering
             rootLayout.childForceExpandHeight = true;
             rootLayout.spacing = 0f;
 
-            // Neither returned RectTransform is referenced further here — Task 7 fills the navigator
-            // column's contents, and the pane container is already fully wired to Controller inside
-            // BuildPaneContainer.
+            // The navigator column's own RectTransform isn't referenced further here — Task 7 fills its
+            // contents. The pane container's tab strips ARE needed further (Task 8 wires their «+» hook),
+            // so BuildPaneContainer's other two return values are kept.
             BuildNavigatorColumn(rootRowGO.transform, Controller.Layout.NavigatorWidth);
-            BuildPaneContainer(rootRowGO.transform, Controller);
+            var (_, primaryStrip, secondaryStrip) = BuildPaneContainer(rootRowGO.transform, Controller);
+            PrimaryTabStrip = primaryStrip;
+            SecondaryTabStrip = secondaryStrip;
         }
 
         static RectTransform BuildNavigatorColumn(Transform parent, float navigatorWidth)
@@ -102,7 +115,8 @@ namespace WorldGen.Workspace.Rendering
             return navGO.GetComponent<RectTransform>();
         }
 
-        static RectTransform BuildPaneContainer(Transform parent, WorkspaceController controller)
+        static (RectTransform paneContainerRect, TabStripView primaryStrip, TabStripView secondaryStrip)
+            BuildPaneContainer(Transform parent, WorkspaceController controller)
         {
             var paneContainerGO = new GameObject("PaneContainer", typeof(RectTransform));
             paneContainerGO.transform.SetParent(parent, false);
@@ -124,8 +138,10 @@ namespace WorldGen.Workspace.Rendering
             paneContainerLayoutElement.preferredWidth = 0f;
             paneContainerLayoutElement.flexibleWidth = 1f;   // absorbs every pixel NavigatorColumn didn't take.
 
-            var (primaryRect, primaryElement) = BuildPane(paneContainerGO.transform, "PrimaryPane");
-            var (secondaryRect, secondaryElement) = BuildPane(paneContainerGO.transform, "SecondaryPane");
+            var (primaryRect, primaryElement, primaryContentRect, primaryStrip) =
+                BuildPane(paneContainerGO.transform, "PrimaryPane", controller, 0);
+            var (secondaryRect, secondaryElement, secondaryContentRect, secondaryStrip) =
+                BuildPane(paneContainerGO.transform, "SecondaryPane", controller, 1);
 
             // Created LAST so it sits frontmost among PaneContainer's children — DraggableDivider.Create's
             // own doc: "a UI sibling created later always wins raycasts over one created earlier there".
@@ -140,25 +156,37 @@ namespace WorldGen.Workspace.Rendering
                 controller.SetSplitRatioLive(controller.Layout.SplitRatio + dx / Mathf.Max(1f, paneContainerRect.rect.width));
             divider.OnDragEnd += controller.CommitSplitRatio;
 
-            controller.Initialize(primaryRect, primaryElement, secondaryRect, secondaryElement, dividerRect);
+            controller.Initialize(
+                new WorkspaceController.PaneHandles(primaryRect, primaryElement, primaryContentRect),
+                new WorkspaceController.PaneHandles(secondaryRect, secondaryElement, secondaryContentRect),
+                dividerRect);
 
-            return paneContainerRect;
+            return (paneContainerRect, primaryStrip, secondaryStrip);
         }
 
-        /// <summary>One pane container: a plain Bg-tagged rect. Task 5 leaves it exactly this bare on
-        /// purpose (scope discipline) — Task 6 adds a tab strip above a narrower content child, Task 9
-        /// parents surfaces into it. minWidth/preferredWidth are pinned to 0 so flexibleWidth (set by
-        /// WorkspaceController.ReflowPanes from SplitRatio) is the ONLY thing deciding this pane's width;
-        /// left at -1 it would still work while empty, but the moment Task 6 adds a strip with its own
-        /// preferred size, an un-pinned preferredWidth would eat into the flexible pool and the ratio would
-        /// silently stop being the ratio.</summary>
-        static (RectTransform rect, LayoutElement element) BuildPane(Transform parent, string name)
+        /// <summary>One pane: a VerticalLayoutGroup stacking a fixed-height TabStripView on top of a
+        /// flexible-height ContentArea. Task 5 left this bare on purpose (scope discipline); Task 6 is what
+        /// carves the strip off the top — TabStripView.Create is called FIRST (so it lands as the first,
+        /// topmost child) and ContentArea second. The outer pane rect's own LayoutElement keeps
+        /// minWidth/preferredWidth pinned to 0 exactly as Task 5 set it: flexibleWidth (set by
+        /// WorkspaceController.ReflowPanes from SplitRatio) is still the ONLY thing deciding this pane's
+        /// width — that pin is what stops the tab strip's own fixed preferredHeight/width opinions from
+        /// leaking into the pane's WIDTH the way Task 5's own comment warned about.</summary>
+        static (RectTransform rect, LayoutElement element, RectTransform contentRect, TabStripView tabStrip)
+            BuildPane(Transform parent, string name, WorkspaceController controller, int paneIndex)
         {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
 
             var img = go.AddComponent<Image>();
             ThemeService.Tag(img, ThemeRole.Bg);
+
+            var vLayout = go.AddComponent<VerticalLayoutGroup>();
+            vLayout.childControlWidth = true;
+            vLayout.childForceExpandWidth = true;    // strip and content both stretch to the pane's full width.
+            vLayout.childControlHeight = true;
+            vLayout.childForceExpandHeight = false;   // strip keeps its own fixed preferredHeight; ContentArea's
+            vLayout.spacing = 0f;                     // flexibleHeight=1 (below) is what claims the rest.
 
             var element = go.AddComponent<LayoutElement>();
             element.minWidth = 0f;
@@ -168,7 +196,18 @@ namespace WorldGen.Workspace.Rendering
             // ReflowPanes immediately).
             element.flexibleWidth = 1f;
 
-            return (go.GetComponent<RectTransform>(), element);
+            var tabStrip = TabStripView.Create(go.transform, controller, paneIndex);
+
+            var contentGO = new GameObject("ContentArea", typeof(RectTransform));
+            contentGO.transform.SetParent(go.transform, false);
+            var contentImg = contentGO.AddComponent<Image>();
+            ThemeService.Tag(contentImg, ThemeRole.Bg);
+            var contentElement = contentGO.AddComponent<LayoutElement>();
+            contentElement.minHeight = 0f;
+            contentElement.preferredHeight = 0f;
+            contentElement.flexibleHeight = 1f;
+
+            return (go.GetComponent<RectTransform>(), element, contentGO.GetComponent<RectTransform>(), tabStrip);
         }
 
         static void Stretch(RectTransform rect)

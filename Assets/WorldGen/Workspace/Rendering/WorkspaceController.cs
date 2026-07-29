@@ -19,6 +19,25 @@ namespace WorldGen.Workspace.Rendering
     /// </summary>
     public class WorkspaceController : MonoBehaviour
     {
+        /// <summary>The three RectTransform/LayoutElement handles WorkspaceBuilder hands over per pane.
+        /// PaneRect is the WHOLE pane (tab strip + content, sized by PaneElement.flexibleWidth from
+        /// SplitRatio); ContentRect is the narrower child below the tab strip that PaneContent(int) returns.
+        /// A plain struct rather than three more Initialize parameters, now that Task 6 needs a ContentRect
+        /// distinct from PaneRect for the first time.</summary>
+        public readonly struct PaneHandles
+        {
+            public readonly RectTransform PaneRect;
+            public readonly LayoutElement PaneElement;
+            public readonly RectTransform ContentRect;
+
+            public PaneHandles(RectTransform paneRect, LayoutElement paneElement, RectTransform contentRect)
+            {
+                PaneRect = paneRect;
+                PaneElement = paneElement;
+                ContentRect = contentRect;
+            }
+        }
+
         public WorkspaceLayout Layout { get; private set; }
 
         public event System.Action OnLayoutChanged;
@@ -27,6 +46,10 @@ namespace WorldGen.Workspace.Rendering
         LayoutElement primaryLayoutElement;
         RectTransform secondaryContent;
         LayoutElement secondaryLayoutElement;
+        // Only Secondary needs a whole-pane show/hide handle — ReflowPanes toggles this GameObject (tab
+        // strip AND content together) off when there is no split. Primary has no equivalent field because
+        // it is never hidden, so nothing here would ever read it.
+        RectTransform secondaryPaneRect;
         RectTransform dividerRect;
 
         void Awake()
@@ -52,14 +75,13 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Wires the RectTransforms/LayoutElements WorkspaceBuilder just constructed, then applies
         /// the freshly-created default Layout onto them once so the initial frame is already correct
         /// (single pane, secondary + divider hidden) instead of waiting for the first mutation.</summary>
-        public void Initialize(RectTransform primaryContentRect, LayoutElement primaryElement,
-                                RectTransform secondaryContentRect, LayoutElement secondaryElement,
-                                RectTransform dividerRectTransform)
+        public void Initialize(PaneHandles primary, PaneHandles secondary, RectTransform dividerRectTransform)
         {
-            primaryContent = primaryContentRect;
-            primaryLayoutElement = primaryElement;
-            secondaryContent = secondaryContentRect;
-            secondaryLayoutElement = secondaryElement;
+            primaryContent = primary.ContentRect;
+            primaryLayoutElement = primary.PaneElement;
+            secondaryContent = secondary.ContentRect;
+            secondaryLayoutElement = secondary.PaneElement;
+            secondaryPaneRect = secondary.PaneRect;
             dividerRect = dividerRectTransform;
 
             ReflowPanes();
@@ -72,10 +94,13 @@ namespace WorldGen.Workspace.Rendering
         /// absent (returns null) whenever Layout.Secondary is null, matching WorkspaceOps.PaneAt's own
         /// "null means absent" contract.
         ///
-        /// Task 5 returns the pane container RectTransform itself — the whole pane IS the content area for
-        /// now. Task 6 will carve a tab strip off the top of each pane and must re-point this at the
-        /// narrower content child it creates; that child does not exist yet, by design (scope discipline:
-        /// build only the containers this task owns).</summary>
+        /// Returns the pane's ContentArea child — the narrower rect BELOW the tab strip TabStripView now
+        /// occupies, not the whole pane (Task 5 returned the whole pane; Task 6 re-points this here, per
+        /// Task 5's own handoff note). WorkspaceOps.NormalizeSplit can still promote Secondary into
+        /// Primary's slot; PaneContent(0)/PaneContent(1) keep naming the same PHYSICAL containers regardless
+        /// (Task 5's carried note to Task 9, still open, now pointing at these narrower rects): whoever
+        /// hosts a surface here must re-parent it on promotion rather than assume index 0 always means the
+        /// same logical pane's tabs.</summary>
         public RectTransform PaneContent(int pane)
         {
             if (pane == 0) return primaryContent;
@@ -151,8 +176,8 @@ namespace WorldGen.Workspace.Rendering
             if (primaryLayoutElement == null) return;
 
             bool split = Layout.Secondary != null;
-            secondaryContent.gameObject.SetActive(split);
-            dividerRect.gameObject.SetActive(split);
+            secondaryPaneRect.gameObject.SetActive(split);   // hides the WHOLE pane (tab strip + content)
+            dividerRect.gameObject.SetActive(split);          // together, not just the content area.
 
             float ratio = Layout.SplitRatio;
             primaryLayoutElement.flexibleWidth = split ? ratio : 1f;
