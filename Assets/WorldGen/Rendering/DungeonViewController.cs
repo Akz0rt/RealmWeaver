@@ -1084,17 +1084,25 @@ namespace WorldGen.Rendering
             strokeCells = null;
             if (hadStroke) undo.Discard();
             // Clearing only strokeCells above would be INERT (sub-project B's exact bug, in the same shape):
-            // the renderer holds its OWN reference (PreviewBuildings, set directly from strokeCells at
-            // OnBeginDrag/OnDrag) and keeps drawing the abandoned stroke's cells until something else rebuilds
-            // it. Unconditional like strokeCells just above — not gated on `brush == SettlementBrush.None`
-            // the way HidePlacementHighlight below is — because switching straight from one brush to ANOTHER
-            // (not through None) must drop it too. Captured as hadPreview BEFORE clearing (review Important
-            // 2): PreviewBuildings != null here means a stroke was actually DRAWING (Building brush only —
-            // Road/Erase set it null on every sample, see OnBeginDrag/OnDrag), and clearing it here with
-            // nothing else ever repainting afterward (see below) would otherwise leave the abandoned stroke's
-            // cells on screen.
+            // the renderer holds its OWN reference (PreviewBuildings/PreviewStreets, set directly from
+            // strokeCells at OnBeginDrag/OnDrag) and keeps drawing the abandoned stroke's cells until
+            // something else rebuilds it. Unconditional like strokeCells just above — not gated on
+            // `brush == SettlementBrush.None` the way HidePlacementHighlight below is — because switching
+            // straight from one brush to ANOTHER (not through None) must drop it too. Captured as hadPreview
+            // BEFORE clearing (review Important 2, extended Task 5): EITHER field non-null here means a
+            // stroke was actually DRAWING — PreviewBuildings for the Building brush, PreviewStreets for the
+            // Road brush; the Erase brush sets neither on any sample (Step 4's own doc — both channels are
+            // ADDITIVE, a removal cannot be expressed through them) — and clearing them here with nothing else
+            // ever repainting afterward (see below) would otherwise leave the abandoned stroke's cells on
+            // screen. Missing this for PreviewStreets specifically would mean Esc mid-road-stroke leaves the
+            // lane drawn with nothing left to repaint it away.
             bool hadPreview = false;
-            if (renderer is SettlementVolumeRenderer volSb) { hadPreview = volSb.PreviewBuildings != null; volSb.PreviewBuildings = null; }
+            if (renderer is SettlementVolumeRenderer volSb)
+            {
+                hadPreview = volSb.PreviewBuildings != null || volSb.PreviewStreets != null;
+                volSb.PreviewBuildings = null;
+                volSb.PreviewStreets = null;
+            }
             if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
             // Review Important 2: clearing PreviewBuildings above is not enough by itself — nothing else
             // repaints afterward. Update is `UpdatePlacement(); if (!cascading) return;`, so an unrelated
@@ -1104,17 +1112,25 @@ namespace WorldGen.Rendering
             // So without this, an abandoned stroke's cells — and the wall ring re-derived around them — would
             // stay drawn until some unrelated edit happened to rebuild.
             //
-            // Gated on hadPreview, and the gate is NOT cosmetic — it is what keeps this safe on the ONE path
-            // that calls SetBrush with a MISMATCHED binding: Bind's `SetBrush(SettlementBrush.None)` runs
-            // AFTER `this.dungeon` is reassigned to the NEW dungeon but BEFORE `this.levelIndex` is reassigned
+            // Gated on hadPreview, and the gate is NOT cosmetic — it matters on the ONE path that calls
+            // SetBrush with a MISMATCHED binding: Bind's `SetBrush(SettlementBrush.None)` runs AFTER
+            // `this.dungeon` is reassigned to the NEW dungeon but BEFORE `this.levelIndex` is reassigned
             // (traced in Bind: `this.dungeon = dungeon;` near its top, `this.levelIndex = levelIndex;` only
             // after this call), so BoundLevel computed here in that one case is `newDungeon.Floors[oldIndex]`
-            // — genuinely the wrong floor, or out of range. Bind's own PreviewBuildings clear (beside
-            // undo.Clear(), unconditional, before this call) already nulls the SAME renderer's PreviewBuildings
-            // first, so by the time this line reads it here hadPreview is already false and the repaint below
-            // cannot fire against that mismatched pair. Every OTHER caller of SetBrush (ToggleBrush, the Esc
-            // branch in UpdatePlacement) leaves dungeon/levelIndex/boundLevel all mutually consistent, so
-            // BoundLevel there is simply the floor on screen.
+            // — genuinely the wrong floor, or out of range. For a Building stroke, Bind's own PreviewBuildings
+            // clear (beside undo.Clear(), unconditional, before this call) already nulls the SAME renderer's
+            // PreviewBuildings first, so by the time this line reads it here that half of hadPreview is
+            // already false. Bind does NOT similarly pre-clear PreviewStreets (Task 5 did not extend it,
+            // deliberately — see below), so a Road stroke live at the exact instant of a reentrant Bind could
+            // in principle leave hadPreview true here and fire RepositionNow(BoundLevel, Fast) against that
+            // wrong floor. TRACED AND HARMLESS: this whole method runs synchronously inside Bind, which always
+            // calls Refresh() itself immediately afterward (either directly, when the renderer did not swap,
+            // or through SetRenderer when it did) — no frame is ever presented between this RepositionNow and
+            // that Refresh, so a stray read of the wrong floor's rooms is invisible and overwritten before
+            // anything renders. Not worth adding a second pre-clear in Bind for a window that cannot be seen.
+            // Every OTHER caller of SetBrush (ToggleBrush, the Esc branch in UpdatePlacement) leaves
+            // dungeon/levelIndex/boundLevel all mutually consistent, so BoundLevel there is simply the floor
+            // on screen and this whole paragraph does not apply.
             if (hadPreview && BoundLevel != null) RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
             OnActiveBrushChanged?.Invoke(brush);
         }
@@ -1218,6 +1234,26 @@ namespace WorldGen.Rendering
                 vol.HidePlacementHighlight();
                 return;
             }
+
+            // THE ERASER ASKS A DIFFERENT QUESTION. TryPlacementCell answered "may a building be FOUNDED
+            // here"; for the eraser, green must mean "this cell can GO" — red means the street repair would
+            // put it straight back, or the building would fall into two disconnected pieces. Overridden here
+            // rather than inside TryPlacementCell because founding is that method's whole contract and three
+            // other callers depend on it.
+            //
+            // KNOWN AND DELIBERATE, do not "fix" it: CanErase also returns false for a cell holding nothing at
+            // all, so the eraser shows RED over empty ground. That is truthful ("this dab will do nothing")
+            // but it reads as "forbidden", and whether it should instead show no quad at all is a matter of
+            // feel — it is on the checkpoint-2 walk as a question for the DM, not a defect to invent a third
+            // affordance for.
+            //
+            // The ROAD brush is deliberately NOT covered here — it keeps TryPlacementCell's founding verdict,
+            // so it shows red over a building's cell even though PaintRoad does not itself refuse such a cell
+            // (a street cell under a house is inert: the grid gives Building precedence and MarkRoads skips
+            // Building cells, so it is untidy in the data but harmless). Adding a PaintRoad-side rule for that
+            // is a new test and a new mutant, ledgered as a question for the whole-branch review.
+            if (ActiveBrush == SettlementBrush.Erase && vol.TryAreaToCell(local, out int ei, out int ej))
+                placeable = SettlementBrushOps.CanErase(lvl, (ei, ej));
 
             hoverValid = true; hoverNx = nx; hoverNy = ny; hoverPlaceable = placeable;
             vol.ShowPlacementHighlight(nx, ny, placeable);
@@ -1332,9 +1368,10 @@ namespace WorldGen.Rendering
         /// cell must not cost a Ctrl+Z, and the second click of a double-click always lands on a cell the
         /// first click just filled — so the no-op path is the common one, not the exotic one.
         ///
-        /// Road and Erase reach here too (ActiveBrush != None routes every brush's click through this method)
-        /// and fall through as no-ops today: `changed` is gated on ActiveBrush == Building, so neither op runs
-        /// and the push is discarded unconditionally — their own ops land in Tasks 4-5.</summary>
+        /// Road and Erase reach here too (ActiveBrush != None routes every brush's click through this method),
+        /// each through its OWN op on the same single-cell list (Task 5) — the same shape OnEndDrag's brush
+        /// arm now uses for a whole stroke, so a tap and a drag can never disagree about what counts as
+        /// "changed" for the same brush.</summary>
         void DabBrush()
         {
             var lvl = BoundLevel;
@@ -1343,8 +1380,13 @@ namespace WorldGen.Rendering
             if (!TryHoveredCell(out int i, out int j)) return;
             var one = new List<(int i, int j)> { (i, j) };
             undo.PushSnapshot(lvl);
-            bool changed = ActiveBrush == SettlementBrush.Building
-                        && SettlementBrushOps.PaintBuilding(lvl, one) != null;
+            bool changed = false;
+            switch (ActiveBrush)
+            {
+                case SettlementBrush.Building: changed = SettlementBrushOps.PaintBuilding(lvl, one) != null; break;
+                case SettlementBrush.Road:     changed = SettlementBrushOps.PaintRoad(lvl, one) > 0; break;
+                case SettlementBrush.Erase:    changed = SettlementBrushOps.Erase(lvl, one) > 0; break;
+            }
             if (!changed) { undo.Discard(); return; }
             CommitSettlementStreets();
             Refresh();
@@ -1572,6 +1614,12 @@ namespace WorldGen.Rendering
                 // switched brushes mid-drag (this is the FIRST sample of a brand new stroke, so there is
                 // nothing stale to inherit either way).
                 volB.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
+                // The Road brush's own live channel (Task 5) — sub-project B's PreviewStreets, fed the same
+                // way PreviewBuildings is: BY REFERENCE, so the renderer re-reads the growing list on every
+                // rebuild. Safe alongside dragStreetPreview's own writes to the same property: a brush stroke
+                // and a footprint drag can never overlap, because this branch RETURNS before draggingRoomId is
+                // ever assigned, so ArmFootprintDrag (the only other writer) never runs for this gesture.
+                volB.PreviewStreets = ActiveBrush == SettlementBrush.Road ? strokeCells : null;
                 RepositionNow(lvlB, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
@@ -1705,6 +1753,7 @@ namespace WorldGen.Rendering
                 // growing mid-stroke cannot corrupt interpolation — no re-anchoring needed, the same property
                 // PreviewStreets already relies on during a footprint drag.
                 volD.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
+                volD.PreviewStreets = ActiveBrush == SettlementBrush.Road ? strokeCells : null;
                 RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
@@ -1776,13 +1825,20 @@ namespace WorldGen.Rendering
             {
                 // HOISTED ABOVE the commit block below (review Important 1): Refresh()/OnGraphMutated there
                 // rebuild the grid — through RepositionRooms -> SettlementTileGrid.Build(lvl, PreviewStreets,
-                // PreviewBuildings) — while PreviewBuildings still aliases strokeCells, so every cell
-                // PaintBuilding REFUSED (dropped by the 4-connectivity repair, by gate ownership, or by the
-                // off-field bound) would draw as a Building tile, wall ring included, until some unrelated
-                // edit repaints. This branch RETURNS before ever reaching the general clear further down (see
-                // the doc at the top of this method), so it cannot be relied on to clean this up either.
-                // strokeCells itself stays exactly where it was below — PaintBuilding still needs it.
-                if (renderer is SettlementVolumeRenderer volEndBrush) volEndBrush.PreviewBuildings = null;
+                // PreviewBuildings) — while PreviewBuildings (Building brush) or PreviewStreets (Road brush)
+                // still aliases strokeCells, so every cell PaintBuilding/PaintRoad REFUSED (dropped by the
+                // 4-connectivity repair, by gate ownership, or by the off-field bound) would draw as a live
+                // tile, wall ring included, until some unrelated edit repaints. This branch RETURNS before
+                // ever reaching the general clear further down (see the doc at the top of this method), so it
+                // cannot be relied on to clean this up either. Both cleared here, on the same line, for the
+                // same reason — Task 3b's review found this exact defect for PreviewBuildings alone, and
+                // PreviewStreets is the twin channel with the twin hazard. strokeCells itself stays exactly
+                // where it was below — PaintBuilding/PaintRoad/Erase still need it.
+                if (renderer is SettlementVolumeRenderer volEndBrush)
+                {
+                    volEndBrush.PreviewBuildings = null;
+                    volEndBrush.PreviewStreets = null;
+                }
                 var lvlE = BoundLevel;
                 // A snapshot was pushed for THIS stroke iff strokeCells is non-null here: OnBeginDrag's brush
                 // branch always calls undo.PushSnapshot immediately before creating strokeCells, with no path
@@ -1792,13 +1848,28 @@ namespace WorldGen.Rendering
                 bool changed = false;
                 if (strokeCells != null && strokeCells.Count > 0 && lvlE != null)
                 {
-                    // Same `changed` test DabBrush uses (review Important 3): Road/Erase have no op yet, so
-                    // they always read false here, matching DabBrush's own fall-through. Gating the WHOLE
-                    // commit block on it — not just the discard below — means a refused/no-op stroke costs no
-                    // wasted CommitSettlementStreets/Refresh/OnGraphMutated either, the same shape DabBrush
-                    // already established for a single dab.
-                    changed = ActiveBrush == SettlementBrush.Building
-                           && SettlementBrushOps.PaintBuilding(lvlE, strokeCells) != null;
+                    // `changed` must be true EXACTLY when the floor was mutated, because it now drives three
+                    // separate things: the commit/repaint block below, OnGraphMutated, and the undo discard
+                    // further down. A Road stroke that painted cells but reported false would leave the town
+                    // unrepainted AND drop its own snapshot — the road would appear only after some unrelated
+                    // edit, and Ctrl+Z would refuse to take it back. So each arm's verdict is the op's OWN
+                    // report of what it did, never a re-derivation: PaintBuilding returns the room or null,
+                    // PaintRoad returns how many NEW street cells it added, Erase returns how many it removed.
+                    // Gating the WHOLE commit block on it — not just the discard below — means a refused/no-op
+                    // stroke costs no wasted CommitSettlementStreets/Refresh/OnGraphMutated either, the same
+                    // shape DabBrush already established for a single dab.
+                    switch (ActiveBrush)
+                    {
+                        case SettlementBrush.Building:
+                            changed = SettlementBrushOps.PaintBuilding(lvlE, strokeCells) != null;
+                            break;
+                        case SettlementBrush.Road:
+                            changed = SettlementBrushOps.PaintRoad(lvlE, strokeCells) > 0;
+                            break;
+                        case SettlementBrush.Erase:
+                            changed = SettlementBrushOps.Erase(lvlE, strokeCells) > 0;
+                            break;
+                    }
                     if (changed)
                     {
                         CommitSettlementStreets();

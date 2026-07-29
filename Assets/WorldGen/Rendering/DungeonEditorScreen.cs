@@ -73,10 +73,16 @@ namespace WorldGen.Rendering
         Text addBuildingBtnLabel;
         Text placementHintLabel;
         string addBuildingBtnBaseLabel = "";   // «+ Здание» — the profile term, restored when the mode disarms
-        // «Кисть: здание» (Task 3 of the brush arc) — settlements only, same re-capture-on-every-RefreshToolbar
-        // convention as the three fields above.
+        // «Кисть: здание» / «Кисть: дорога» / «Ластик» (the brush arc) — settlements only, same
+        // re-capture-on-every-RefreshToolbar convention as the three fields above. One Image+Text pair per
+        // brush (Task 5): RefreshBrushButton needs to flip the ARMED one's label and restore the other two,
+        // which needs a handle on all three, not just the one that existed before Road/Erase shipped.
         Image brushBuildingBtnImg;
         Text brushBuildingBtnLabel;
+        Image brushRoadBtnImg;
+        Text brushRoadBtnLabel;
+        Image brushEraseBtnImg;
+        Text brushEraseBtnLabel;
         int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
         int currentUpperCap = DefaultRooms;  // probed packable max for the current upper floor (set in RefreshToolbar)
         int regenCounter = 0;   // DoRegenerateSettlement: bumped every press so a repeated press on the SAME
@@ -459,6 +465,8 @@ namespace WorldGen.Rendering
             linkToggleImg = null; upperCountLabel = null; regenMsgLabel = null;
             addBuildingBtnImg = null; addBuildingBtnLabel = null; placementHintLabel = null;
             brushBuildingBtnImg = null; brushBuildingBtnLabel = null;
+            brushRoadBtnImg = null; brushRoadBtnLabel = null;
+            brushEraseBtnImg = null; brushEraseBtnLabel = null;
             viewController?.SetLinkMode(false);   // link mode is per-floor — a floor switch exits it
             // Placement mode is per-binding for the same reason, and disarming here is what makes the freshly
             // built button below correct BY CONSTRUCTION: it is created in its unarmed look, and the mode it
@@ -521,6 +529,15 @@ namespace WorldGen.Rendering
                     brushBuildingBtnImg = AddToolbarButton(toolbarBar, "Кисть: здание", 130f, ThemeRole.Elev,
                                                             () => viewController?.ToggleBrush(DungeonViewController.SettlementBrush.Building),
                                                             out brushBuildingBtnLabel);
+                    // Task 5: the Road and Erase brushes' own toolbar toggles, siblings of the Building one
+                    // just above — same ToggleBrush entry point, same out-overload so RefreshBrushButton can
+                    // repaint each one's armed/unarmed state independently.
+                    brushRoadBtnImg = AddToolbarButton(toolbarBar, "Кисть: дорога", 130f, ThemeRole.Elev,
+                                                        () => viewController?.ToggleBrush(DungeonViewController.SettlementBrush.Road),
+                                                        out brushRoadBtnLabel);
+                    brushEraseBtnImg = AddToolbarButton(toolbarBar, "Ластик", 100f, ThemeRole.Elev,
+                                                         () => viewController?.ToggleBrush(DungeonViewController.SettlementBrush.Erase),
+                                                         out brushEraseBtnLabel);
                 }
                 else
                     AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
@@ -571,18 +588,34 @@ namespace WorldGen.Rendering
                 placementHintLabel.text = armed ? "Кликните по тайлу: зелёный — свободно, красный — нельзя" : "";
         }
 
-        /// <summary>Repaint «Кисть: здание» for the armed/unarmed state — wired to
+        /// <summary>Repaint all THREE brush toggles for the armed/unarmed state — wired to
         /// DungeonViewController.OnActiveBrushChanged, same shape as RefreshPlacementButton above for «+
-        /// Здание». No-ops on a dungeon/building toolbar, where these fields are null.</summary>
+        /// Здание». Written when there was exactly one brush button (Building); Task 5 added Road and Erase
+        /// as siblings, so this now has to flip the label of whichever ONE is armed and restore the other
+        /// TWO — never assume only one call site's fields need touching, since arming any brush disarms
+        /// whatever else was armed (SettlementBrush is a single enum, not three independent bools) and this
+        /// is the only place that state reaches the toolbar. No-ops per-button on a dungeon/building toolbar,
+        /// where all three field pairs are null.</summary>
         void RefreshBrushButton(DungeonViewController.SettlementBrush brush)
         {
-            bool armed = brush == DungeonViewController.SettlementBrush.Building;
-            if (brushBuildingBtnImg != null)
-                ThemeService.Tag(brushBuildingBtnImg, armed ? ThemeRole.Accent : ThemeRole.Elev);
-            if (brushBuildingBtnLabel != null)
+            SetBrushButtonArmed(brushBuildingBtnImg, brushBuildingBtnLabel, "Кисть: здание",
+                                 brush == DungeonViewController.SettlementBrush.Building);
+            SetBrushButtonArmed(brushRoadBtnImg, brushRoadBtnLabel, "Кисть: дорога",
+                                 brush == DungeonViewController.SettlementBrush.Road);
+            SetBrushButtonArmed(brushEraseBtnImg, brushEraseBtnLabel, "Ластик",
+                                 brush == DungeonViewController.SettlementBrush.Erase);
+        }
+
+        /// <summary>One brush toggle's armed/unarmed paint — the shared body RefreshBrushButton applies to
+        /// each of the three buttons, so the «Отмена (Esc)» convention can't drift between them.</summary>
+        static void SetBrushButtonArmed(Image img, Text label, string baseLabel, bool armed)
+        {
+            if (img != null)
+                ThemeService.Tag(img, armed ? ThemeRole.Accent : ThemeRole.Elev);
+            if (label != null)
             {
-                brushBuildingBtnLabel.text = armed ? "Отмена (Esc)" : "Кисть: здание";
-                ThemeService.Tag(brushBuildingBtnLabel, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
+                label.text = armed ? "Отмена (Esc)" : baseLabel;
+                ThemeService.Tag(label, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
             }
         }
 
