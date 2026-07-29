@@ -150,8 +150,8 @@ namespace WorldGen.Generation
         // method has no PARAMETER of its own for the STREET preview specifically, only the one already-unioned
         // `streets` list. The BUILDING preview (Task 3a, checkpoint 1) is different: `extraCells` below IS a
         // parameter of this method, kept separate from `buildings` rather than pre-unioned into it, because a
-        // preview building has no Room to fold into that list — see PaintBuilding/Build's own extraBuildings
-        // param for the caller side. DungeonViewController.FitBoundsFor deliberately never folds either preview
+        // preview building has no Room to fold into that list — see Build's own extraBuildings param (below)
+        // for the caller side. DungeonViewController.FitBoundsFor deliberately never folds either preview
         // into the FIT — the view must not rescale under the cursor mid-drag, so the fit is allowed to lag the
         // drawn extent by exactly the preview's cells until the next rebuild (RefitIfContentOverflows is itself
         // gated off for the whole drag). The fitted extent is therefore a subset of the drawn one during a

@@ -51,9 +51,15 @@ namespace WorldGen.Generation
             into.Add(c);
         }
 
-        /// <summary>Paint ONE building from a stroke's cells. Cells the placement rule rejects are dropped, so
-        /// a stroke crossing a wall paints the cells on both sides of it and not the wall itself. Returns the
-        /// new room, or null when no cell survived — and then the floor is untouched.
+        /// <summary>Paint ONE building from a stroke's cells. A cell is dropped when it fails any of THREE
+        /// independent rules — off the 0..1 field, a Building tile already stands there, or a NON-BUILDING
+        /// room (in practice a gate) already owns it — and dropping a middle cell can sever the stroke, so only
+        /// the 4-connected component containing the FIRST surviving cell is kept (the connectivity repair below).
+        /// A stroke crossing the town's own derived wall PAINTS the wall cell (Wall and Gate are placeable now
+        /// — checkpoint-1 amendment — because they are derived and re-derive around whatever is founded),
+        /// which is exactly how the DM grows a town by drawing; it no longer stops "on both sides and not the
+        /// wall itself" the way the retired rule did. Returns the new room, or null when no cell survived —
+        /// and then the floor is untouched.
         ///
         /// NO SIZE CAP (DM ruling): the 6-cell cap and the shape palette are GENERATION rules. The result is
         /// still 4-connected, because AppendSegment's cells are and because dropping cells can only split a
@@ -63,17 +69,49 @@ namespace WorldGen.Generation
             if (floor?.SettlementParams == null || cells == null || cells.Count == 0) return null;
             var grid = SettlementTileGrid.Build(floor);
 
+            // ROOM OWNERSHIP (checkpoint-1 amendment, closing a hole the other two rules cannot). On a FRESHLY
+            // GENERATED town a gate room's own cell is a ring-street cell reading Road, so the tile-type rule
+            // alone never let a stroke land on it — the old three-term IsPlaceable additionally refused
+            // Wall/Gate, which was doing that job for the one case that matters: a PREVIOUSLY-DRAGGED gate's
+            // own cell is normalized onto the wall/gate cell (SettlementTileGrid.GateRoomAt's own doc) and
+            // therefore reads Wall or Gate. Narrowing IsPlaceable to "refuses only Building" opened that cell
+            // back up, and Precedes makes a founded Building strictly beat a Gate for a shared cell — the gate
+            // would become permanently unselectable and undraggable, with nothing in DungeonValidator's
+            // TypeId==1-scoped settlement rules ever reporting it. Built ONCE, over every NON-BUILDING room —
+            // TypeId != 1, gates in practice — through SettlementTileGrid.FootprintOf, the SAME canonical read
+            // every other founding/ownership test in this arc uses; this never decodes Room.Cells itself.
+            //
+            // TypeId == 1 (Building) ROOMS ARE DELIBERATELY EXCLUDED FROM `owned`, not merely uninteresting to
+            // include. Build's own footprint-write loop marks Building from the EXACT SAME `floor.Rooms` list
+            // through the EXACT SAME FootprintOf call, so every cell a building room owns already reads
+            // TileType.Building on `grid` — the tile-type rule below is already the guard for it. Folding
+            // TypeId == 1 rooms into `owned` too would not add coverage; it would make the tile-type rule
+            // STRUCTURALLY DEAD CODE inside this method specifically: `grid.At(c) == Building` would then imply
+            // `owned.Contains(c)` unconditionally (both sets are the same FootprintOf over the same rooms, one
+            // merely narrowed by a TypeId filter), so a mutant that deletes the tile-type check could never be
+            // caught by any assertion over the painted footprint — confirmed empirically, not just reasoned:
+            // an earlier version of this rule included TypeId == 1 and silently made
+            // MutBrushIgnoresPlaceable (which deletes exactly that check) undetectable by cases 5 and 7. The
+            // two rules must stay extensionally DISJOINT for their mutants to stay independently killable.
+            var owned = new HashSet<(int i, int j)>();
+            foreach (var r in floor.Rooms)
+            {
+                if (r.TypeId == 1) continue;   // covered by the tile-type rule below; see the proof above
+                foreach (var c in SettlementTileGrid.FootprintOf(r)) owned.Add(c);
+            }
+
             // DEDUPED HERE, not in AppendSegment: a stroke is a PATH and may list a self-crossed cell twice.
-            // The placement test and the dedup test are kept as TWO separate statements (not one short-
-            // circuited `&&` expression) so a mutant can remove the placement rule ALONE — folding them into
-            // one expression would make "ignore placement" and "ignore dedup" the same single edit, and a
-            // mutant naming only the placement rule would silently also break dedup.
+            // Every rule below is its OWN statement (never folded into one short-circuited `&&` expression) so
+            // a mutant can remove any ONE of them alone — folding them together would make several different
+            // regressions the same single edit, and a mutant naming only one rule would silently also break
+            // the others.
             var kept = new List<(int i, int j)>();
             var keptSet = new HashSet<(int i, int j)>();
             foreach (var c in cells)
             {
                 if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;
                 if (!SettlementVolumeRendererPlacement.IsPlaceable(grid.At(c.i, c.j))) continue;
+                if (owned.Contains(c)) continue;
                 if (keptSet.Add(c)) kept.Add(c);
             }
             if (kept.Count == 0) return null;
@@ -165,7 +203,10 @@ namespace WorldGen.Generation
         /// frame and writes back Mathf.Clamp01 of it, so a room stored off-field is pinned to the edge for
         /// the whole of every later cascade. Allocate pads the drawn grid by MarginCells = 3 cells past the
         /// outermost building and a large town reaches 0.95, so cells past 1.0 are genuinely drawn and
-        /// genuinely clickable.</summary>
+        /// genuinely clickable.
+        ///
+        /// Bound is 0..1 EXACTLY, not the drag clamp's 0.04..0.96 — Clamp01 is the invariant being protected,
+        /// and borrowing a drag-feel constant would hide why the limit is where it is.</summary>
         public static bool OnFieldCell(int i, int j)
         {
             float nx = SettlementFootprint.CenterOf(i), ny = SettlementFootprint.CenterOf(j);

@@ -1530,7 +1530,33 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresOnField' `
   '                // MUTANT: the on-field bound is ignored' `
   'MutPaintIgnoresOnField.cs'
 
-foreach ($mc in @('MutPlaceRefusesWall', 'MutPaintIgnoresOnField')) {
+# MutOnFieldNoLowerBound: OnFieldCell drops only its LOWER x-bound, so a NEGATIVE normalized X (the direction
+# the deleted renderer doc flagged as the one actually reachable in production — a large city's margin band)
+# is no longer refused, while the upper bound (and both y-bound terms) stay intact. MutPaintIgnoresOnField
+# above deletes the WHOLE on-field call and is caught by case 10's `> 1f` claims alone; this mutant instead
+# targets the specific half review finding M1 named as unpinned — a partial mutation that a whole-line-deletion
+# mutant cannot distinguish from a correct rule. SelfTestBrushStrokes' extended case 10 (the (-1,0) cell) must
+# fail: (-1,0) survives placement, becomes kept[0] (it is not 4-adjacent to anything else in the stroke), and
+# the connectivity repair then collapses the whole footprint onto that one off-field cell instead of (32,0).
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutOnFieldNoLowerBound' `
+  '            return nx >= 0f && nx <= 1f && ny >= 0f && ny <= 1f;' `
+  '            return nx <= 1f && ny >= 0f && ny <= 1f;   // MUTANT: a negative normalized X is no longer refused' `
+  'MutOnFieldNoLowerBound.cs'
+
+# MutPaintIgnoresRoomOwnership: PaintBuilding's new room-ownership rule (checkpoint-1 reversal, finding I3)
+# deleted — a stroke may found a Building on top of any NON-BUILDING room's own cell (in practice a gate's).
+# On a town whose gate was previously dragged (so the gate's own cell is normalized onto the wall/gate cell
+# and reads Wall/Gate rather than Road), IsPlaceable alone no longer refuses that cell either (checkpoint-1's
+# own amendment), so nothing would stop the founded Building from claiming it and — via Precedes — permanently
+# hiding the gate from drawing and clicking. SelfTestBrushStrokes' case 11 must fail: the painted footprint
+# claims cell (2,0), the gate room's own cell.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresRoomOwnership' `
+  '                if (owned.Contains(c)) continue;' `
+  '                // MUTANT: the room-ownership rule is ignored' `
+  'MutPaintIgnoresRoomOwnership.cs'
+
+foreach ($mc in @('MutPlaceRefusesWall', 'MutPaintIgnoresOnField', 'MutOnFieldNoLowerBound',
+                  'MutPaintIgnoresRoomOwnership')) {
   New-SettlementRebind 'SelfTestBrushStrokes' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

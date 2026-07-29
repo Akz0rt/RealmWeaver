@@ -329,14 +329,24 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 10. OFF-FIELD CELLS ARE REFUSED. Room positions live in normalized 0..1 and the cascade
-            //     Clamp01s every room every animation frame, so a building stored past the edge is pinned
-            //     there on every later drag. Cell i = 33 has centre (33 + 0.5) * 0.03 = 1.005, just past the
-            //     field; i = 32 has 0.975, just inside. The panel really does draw such cells (Allocate pads
-            //     MarginCells = 3 past the outermost building), and requirement 2 above aims the DM outward.
+            // 10. OFF-FIELD CELLS ARE REFUSED, on BOTH sides of the field. Room positions live in normalized
+            //     0..1 and the cascade Clamp01s every room every animation frame, so a building stored past
+            //     the edge is pinned there on every later drag. Cell i = 33 has centre (33 + 0.5) * 0.03 =
+            //     1.005, just past the field; i = 32 has 0.975, just inside; i = -1 has -0.015, just past the
+            //     field on the NEGATIVE side — the direction the deleted renderer doc explicitly called out as
+            //     the one actually reachable in production (a large city's margin band reaches negative
+            //     normalized X). The panel really does draw such cells (Allocate pads MarginCells = 3 past the
+            //     outermost building), and requirement 2 above aims the DM outward.
+            //     THE OFF-FIELD CELL IS LISTED FIRST, deliberately, and deliberately NOT 4-adjacent to (32,0):
+            //     ComponentContainingFirst keeps the component containing kept[0], the FIRST cell that
+            //     SURVIVES the placement filter — not the first cell of the argument list. If a broken
+            //     lower-bound check ever let (-1,0) survive, it would become kept[0] (nothing else in this
+            //     stroke is within reach of it), and the WHOLE painted footprint would collapse onto that one
+            //     isolated off-field cell instead of (32,0) — a stronger, more specific signal than a bare
+            //     cell-count check, which a same-size wrong answer (1 cell either way) could still satisfy.
             {
                 var floor = Floor(null);
-                var room = SettlementBrushOps.PaintBuilding(floor, Cells((32, 0), (33, 0), (34, 0)));
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((-1, 0), (32, 0), (33, 0), (34, 0)));
                 if (room == null)
                 {
                     Debug.LogError("SelfTestBrushStrokes: a stroke ending off-field painted nothing at all — "
@@ -347,7 +357,8 @@ namespace WorldGen.Rendering
                 {
                     var fp = SettlementTileGrid.FootprintOf(room);
                     foreach (var c in fp)
-                        if (SettlementFootprint.CenterOf(c.i) > 1f || SettlementFootprint.CenterOf(c.j) > 1f)
+                        if (SettlementFootprint.CenterOf(c.i) > 1f || SettlementFootprint.CenterOf(c.j) > 1f
+                         || SettlementFootprint.CenterOf(c.i) < 0f || SettlementFootprint.CenterOf(c.j) < 0f)
                         {
                             Debug.LogError($"SelfTestBrushStrokes: the painted building claimed cell {c}, "
                                          + $"whose centre ({SettlementFootprint.CenterOf(c.i)}, "
@@ -360,6 +371,69 @@ namespace WorldGen.Rendering
                                      + "expected 1 — only (32,0) is on the field");
                         ok = false;
                     }
+                    bool has32 = false;
+                    foreach (var c in fp) if (c == (32, 0)) has32 = true;
+                    if (!has32)
+                    {
+                        Debug.LogError("SelfTestBrushStrokes: the painted building does not include (32,0), "
+                                     + "the stroke's only genuinely on-field cell — a broken lower-bound check "
+                                     + "let the off-field cell (-1,0) survive placement, and the connectivity "
+                                     + "repair then collapsed the whole footprint onto that isolated cell "
+                                     + "instead");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 11. ROOM OWNERSHIP: A STROKE MAY NOT CLAIM A NON-BUILDING ROOM'S OWN CELL — in practice a gate's
+            //     (checkpoint-1 amendment, closing the hole narrowing IsPlaceable opened). A PREVIOUSLY-DRAGGED
+            //     gate's own stored cell is normalized onto the wall/gate cell itself (SettlementTileGrid.GateRoomAt's own
+            //     doc), so it reads Wall — or, once MarkGates retargets it, Gate — rather than the Road a
+            //     freshly generated gate's own cell would read. Narrowing IsPlaceable to "refuses only
+            //     Building" (case 9) reopened that cell: without a room-ownership rule a stroke could found a
+            //     Building there, and Precedes makes a founded Building strictly beat a Gate for a shared cell,
+            //     permanently hiding the gate from both drawing and clicking.
+            //     Reuses case 9's exact shape — a lone building at (0,0) rings itself at Chebyshev distance 2,
+            //     so (2,0) is the ring cell — plus a gate room (TypeId 0) whose own (X,Y) sits at (2,0)'s
+            //     centre, simulating the previously-dragged normalization. Built INLINE, not through the shared
+            //     `Floor` helper above, which only ever stamps TypeId==1 (Building) rooms.
+            //     THE g11.At ASSERTION IS THE PRECONDITION, exactly like case 9's: without it this case would
+            //     pass for the wrong reason if the ring's radius, MarkGates, or this fixture ever changed.
+            {
+                var floor11 = new InteriorFloor { SettlementParams = new SettlementParams { HasWall = true } };
+                floor11.Rooms.Add(new Room
+                {
+                    Id = 1, TypeId = 1,
+                    X = SettlementFootprint.CenterOf(0), Y = SettlementFootprint.CenterOf(0),
+                    Cells = SettlementFootprint.Encode(Cells((0, 0)))
+                });
+                floor11.Rooms.Add(new Room
+                {
+                    Id = 2, TypeId = 0,
+                    X = SettlementFootprint.CenterOf(2), Y = SettlementFootprint.CenterOf(0),
+                });
+                floor11.NextRoomId = 3;
+
+                var g11 = SettlementTileGrid.Build(floor11);
+                if (g11.At(2, 0) != TileType.Gate)
+                {
+                    Debug.LogError($"SelfTestBrushStrokes: the fixture's gate cell (2,0) reads {g11.At(2, 0)}, "
+                                 + "expected Gate — the previously-dragged-gate case is not testing what it "
+                                 + "claims to");
+                    ok = false;
+                }
+                var room11 = SettlementBrushOps.PaintBuilding(floor11, Cells((1, 0), (2, 0), (3, 0)));
+                if (room11 != null)
+                {
+                    var fp11 = SettlementTileGrid.FootprintOf(room11);
+                    foreach (var c in fp11)
+                        if (c == (2, 0))
+                        {
+                            Debug.LogError("SelfTestBrushStrokes: the painted building claimed cell (2,0), "
+                                         + "the gate room's own cell — the gate would become permanently "
+                                         + "unselectable and undraggable");
+                            ok = false;
+                        }
                 }
             }
 

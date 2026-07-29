@@ -855,21 +855,25 @@ namespace WorldGen.Rendering
         /// 1x2 strip it already stands on, and the identity translation proposes all of them. Exemption is by
         /// ROOM ID off the same map, so it costs nothing and cannot disagree with what is drawn.
         ///
-        /// WHY THE TILE-TYPE RULE (<see cref="IsPlaceable"/>) IS DELIBERATELY ABSENT HERE. Wall and Gate tiles
-        /// are DERIVED, every rebuild, from (building footprints ∪ stored street cells) — SettlementTileGrid
-        /// .BuildWallRing dilates that seed and rings it. For a NEW building the ring is independent of the
-        /// candidate, so testing against it is meaningful. For a MOVE it is self-referential: the ring is
-        /// derived partly FROM the mover's own current cells, so the proposed cells would be judged against a
-        /// pre-move artifact that the very move is about to redraw. And for a GATE it is simply wrong — ON A
-        /// FRESHLY GENERATED TOWN a gate room's own cell is a ring-STREET cell, which sits >= 2 cells inside
-        /// the dilation and therefore never reads Wall (it reads Road), while every cell of the ring the gate
-        /// exists to open reads Wall/Gate. (Qualified since the block-forms/gates arc's Task 2: a drag
-        /// normalizes the gate room's stored cell onto the wall/gate cell itself — see SettlementTileGrid's
-        /// GateRoomAt doc — so a PREVIOUSLY-dragged gate's own cell reads Wall or Gate instead. That does not
-        /// change this method's behaviour, since the tile-type rule stays absent for a gate either way; it
-        /// only narrows which towns "never reads Wall" describes.) Applying the tile-type rule to a move would
-        /// freeze every gate in town off its own wall, permanently. The DISCRIMINATING CHECK for this method:
-        /// a gate must be draggable one cell onto the ring and back.
+        /// WHY THE TILE-TYPE RULE (<see cref="IsPlaceable"/>) IS ABSENT HERE — RESTATED after checkpoint-1,
+        /// because the argument this paragraph used to make no longer holds. It used to say: for a NEW
+        /// building the wall ring is independent of the candidate, so testing the candidate's cells against it
+        /// is meaningful, while for a MOVE it is self-referential (the ring is derived partly FROM the mover's
+        /// own current cells) and for a GATE it is simply wrong. That whole distinction was about what
+        /// <see cref="IsPlaceable"/> did with Wall/Gate tiles — and checkpoint-1 narrowed
+        /// <see cref="IsPlaceable"/> to refuse ONLY Building (see its own doc), so there is no Wall/Gate case
+        /// left for founding and moving to disagree about: NEITHER verdict tests against them any more.
+        /// Calling <see cref="IsPlaceable"/> here would therefore be redundant, not wrong: the ownership term
+        /// above (owner not null, and not the mover, off `cellRooms`) already refuses ANY cell another room
+        /// owns — Building tile or not — through `RoomAtCell`, including a gate's own cell whatever tile it
+        /// currently reads. What the ownership term buys that a bare tile-type test never
+        /// could is the MOVER EXEMPTION itself: a translating room must be allowed back onto its OWN current
+        /// cells, and <see cref="IsPlaceable"/> has no concept of "except the mover" to grant that. So the
+        /// founding-vs-moving distinction this paragraph used to draw over Wall/Gate has collapsed entirely
+        /// into that one exemption — see the <see cref="IsPlaceable"/> doc for the same point from the other
+        /// side. THE DISCRIMINATING CHECK for this method is unchanged by the amendment: a gate must be
+        /// draggable one cell onto the ring and back, in both directions, purely through the ownership term
+        /// above and never through a tile-type refusal.
         ///
         /// ITS DATA-SIDE TWIN IS DungeonValidator.SettlementIssues' overlap rule (Task 4), and the two are
         /// DELIBERATELY NOT one shared predicate. They agree on the term that matters — a cell claimed by
@@ -1094,7 +1098,7 @@ namespace WorldGen.Rendering
         /// cells up to i-1 on its own (a cell's east edge is the NEXT boundary index). Stopping at i1+1 frames
         /// cells i0..i1 but leaves a ground (Void/Road) cell at i1+1 with only its near edge drawn — a real
         /// possibility since SettlementTileGrid's own allocated bounds are computed independently of this
-        /// field-relative span (see the near-symmetric case OnField's own doc calls out: MarginCells beyond
+        /// field-relative span (see the near-symmetric case OnFieldCell's own doc calls out: MarginCells beyond
         /// the outermost building can push cells past the field edge on the i0/j0 side too, which this
         /// asymmetric +1 does NOT extend for — worst case there remains the same sub-pixel panel-background
         /// hairline this fixes on the i1/j1 side, left as-is since only the i1/j1 case was in scope here).
