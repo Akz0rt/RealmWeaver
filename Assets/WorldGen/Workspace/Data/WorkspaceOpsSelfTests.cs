@@ -32,7 +32,11 @@ namespace WorldGen.Workspace.Data
             // NewDefault's exact numeric contract — later tasks (split drag, navigator resize, persistence)
             // read every one of these, so a dropped field initializer must fail loudly here.
             if (l.Primary == null || l.Primary.Tabs.Count != 1 || l.Primary.ActiveIndex != 0)
-            { Debug.LogError("FAIL open: NewDefault must start with one active tab in Primary"); ok = false; }
+            {
+                string actual = l.Primary == null ? "null" : $"{l.Primary.Tabs.Count} tab(s), ActiveIndex {l.Primary.ActiveIndex}";
+                Debug.LogError($"FAIL open: NewDefault primary = [{actual}], want 1 tab, ActiveIndex 0");
+                ok = false;
+            }
             else
             {
                 var seed = l.Primary.Tabs[0];
@@ -42,11 +46,11 @@ namespace WorldGen.Workspace.Data
                 { Debug.LogError($"FAIL open: seed tab title «{seed.Title}», want «Карта мира»"); ok = false; }
             }
             if (l.Secondary != null)
-            { Debug.LogError("FAIL open: NewDefault must not start split"); ok = false; }
+            { Debug.LogError($"FAIL open: NewDefault secondary = [{Dump(l.Secondary)}], want null (no split)"); ok = false; }
             if (l.FocusedPane != 0)
             { Debug.LogError($"FAIL open: NewDefault focus = {l.FocusedPane}, want 0"); ok = false; }
             if (l.NavigatorCollapsed)
-            { Debug.LogError("FAIL open: NewDefault must start with the navigator expanded"); ok = false; }
+            { Debug.LogError($"FAIL open: NewDefault NavigatorCollapsed = {l.NavigatorCollapsed}, want false"); ok = false; }
             if (System.Math.Abs(l.SplitRatio - 0.5f) > 0.0001f)
             { Debug.LogError($"FAIL open: NewDefault SplitRatio = {l.SplitRatio}, want 0.5"); ok = false; }
             if (System.Math.Abs(l.NavigatorWidth - 236f) > 0.0001f)
@@ -147,6 +151,42 @@ namespace WorldGen.Workspace.Data
             foreach (var t in l.Primary.Tabs)
                 if (t.Surface.Id == "gone")
                 { Debug.LogError("FAIL prune: a dead tab survived"); ok = false; }
+
+            // R7 through the collapse door — pruning the SECONDARY down to nothing must collapse the split
+            // and fall focus back to 0, exactly like CloseTab/MoveTab emptying it (R3), not leave an empty
+            // Secondary sitting there unpruned-looking.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("gone-only"), "Мертва", true);   // Secondary = [gone-only], focus -> 1
+            int droppedCollapse = WorkspaceOps.PruneMissing(l, s => s.Kind != SurfaceKind.Page || s.Id != "gone-only");
+            if (droppedCollapse != 1)
+            { Debug.LogError($"FAIL prune: droppedCollapse = {droppedCollapse}, want 1 (R7)"); ok = false; }
+            if (l.Secondary != null)
+            { Debug.LogError($"FAIL prune: emptying the secondary via prune must collapse the split (R7/R3), secondary = [{Dump(l.Secondary)}]"); ok = false; }
+            if (l.FocusedPane != 0)
+            { Debug.LogError($"FAIL prune: focus = {l.FocusedPane} after prune-collapse, want 0 (R7/R3)"); ok = false; }
+
+            // R7 across BOTH panes — the returned count must include what Secondary lost too, and survivors
+            // in BOTH panes must be checked, not just Primary's.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("gone-p"), "МертваП", false);   // Primary = [Карта мира, gone-p]
+            WorkspaceOps.Open(l, Page("kept-p"), "ЖиваП", false);     // Primary = [Карта мира, gone-p, kept-p]
+            WorkspaceOps.Open(l, Page("gone-s"), "МертваС", true);    // Secondary = [gone-s], focus -> 1
+            WorkspaceOps.Open(l, Page("kept-s"), "ЖиваС", false);     // lands in the focused pane: Secondary
+            int droppedBoth = WorkspaceOps.PruneMissing(l, s => s.Kind != SurfaceKind.Page || (s.Id != "gone-p" && s.Id != "gone-s"));
+            if (droppedBoth != 2)
+            { Debug.LogError($"FAIL prune: dropped {droppedBoth} across both panes, want 2 — Secondary's dead tab must be counted too (R7)"); ok = false; }
+            if (l.Secondary == null || l.Primary.Tabs.Count != 2 || l.Secondary.Tabs.Count != 1)
+            { Debug.LogError($"FAIL prune: after pruning both panes, primary = [{Dump(l.Primary)}], secondary = [{Dump(l.Secondary)}], want 2 tabs / 1 tab surviving"); ok = false; }
+            else
+            {
+                foreach (var t in l.Primary.Tabs)
+                    if (t.Surface.Id == "gone-p")
+                    { Debug.LogError("FAIL prune: a dead tab survived in Primary"); ok = false; }
+                foreach (var t in l.Secondary.Tabs)
+                    if (t.Surface.Id == "gone-s")
+                    { Debug.LogError("FAIL prune: a dead tab survived in Secondary"); ok = false; }
+            }
 
             Debug.Log(ok ? "Self-Test Workspace Move And Prune: PASS" : "Self-Test Workspace Move And Prune: FAIL");
         }
