@@ -848,8 +848,10 @@ namespace WorldGen.Rendering
             // (buildings AND stored streets both top out at i=3), so the incidental reach is 3 + 3 = 6 —
             // (6,3) sat exactly ON that edge. (10,3), four cells past it, cannot be reached by margin alone;
             // it is in bounds ONLY if the extras are genuinely folded into Allocate's extent. Kept CONTIGUOUS
-            // (4,3)..(10,3) — a real street, not a stray point — so (4,3)-(6,3) still fall inside the
-            // extras-less `without` grid below and keep the non-vacuity diff check live without widening it.
+            // (4,3)..(10,3) — a real street, not a stray point — so it still reads as one plausible road
+            // rather than an isolated far cell. (The non-vacuity diff check below is widened to withExtras'
+            // own extent for a related reason — see its comment — so it sees (10,3) too, not just the near
+            // cells this contiguity happens to keep inside without's smaller bbox.)
             var extras = new System.Collections.Generic.List<(int i, int j)>
                 { (4, 3), (5, 3), (6, 3), (7, 3), (8, 3), (9, 3), (10, 3) };
             var withExtras = SettlementTileGrid.Build(floor, extras);
@@ -881,13 +883,20 @@ namespace WorldGen.Rendering
                 ok = false;
             }
 
-            // A null extras list must be exactly today's behaviour: the two grids differ only where an extra sits.
+            // A null extras list must be exactly today's behaviour: the two grids differ only where an extra
+            // sits. Iterate withExtras' OWN extent, not without's — withExtras' fold is over buildings ∪
+            // stored ∪ extras, so its [min-Margin, max+Margin] range is always a SUPERSET of without's on both
+            // axes (Allocate's Fold can only widen minCellI/maxCellI, never narrow them, as more cells join
+            // it), and without.At() self-guards an out-of-range query back to None. Iterating the smaller
+            // grid instead (as an earlier version of this test did) would never even LOOK AT a far preview
+            // cell like (10,3) — task-review finding — so this loop bound is load-bearing, not cosmetic:
+            // narrowed back to without's extent, this check goes vacuous the moment every extra sits past
+            // without's own bbox (confirmed by hand against a far-only extras list while fixing this).
             int diffs = 0;
-            for (int a = 0; a < without.W; a++)
-                for (int b = 0; b < without.H; b++)
+            for (int a = 0; a < withExtras.W; a++)
+                for (int b = 0; b < withExtras.H; b++)
                 {
-                    int wi = a + without.OriginI, wj = b + without.OriginJ;
-                    if (!withExtras.InBounds(wi, wj)) continue;
+                    int wi = a + withExtras.OriginI, wj = b + withExtras.OriginJ;
                     if (withExtras.At(wi, wj) != without.At(wi, wj)) diffs++;
                 }
             if (diffs == 0)
