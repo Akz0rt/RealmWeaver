@@ -36,6 +36,13 @@ namespace WorldGen.Workspace.Data
             return null;
         }
 
+        static string PageGroupIdOf(NotesDocument doc, string title)
+        {
+            foreach (var g in doc.Groups)
+                if (g.Title == title) return g.Id;
+            return null;
+        }
+
         [ContextMenu("Self-Test: Navigator Tree")]
         public void SelfTestTree()
         {
@@ -88,6 +95,22 @@ namespace WorldGen.Workspace.Data
                 foreach (var n in g.Nodes)
                     if (n.Target.Kind != SurfaceKind.Page || n.Target.Id != PageIdOf(doc, n.Title))
                     { Debug.LogError($"FAIL tree: node «{n.Title}» targets {n.Target.Kind}/{n.Target.Id}, want Page/{PageIdOf(doc, n.Title)} (N4)"); ok = false; }
+
+            // N5 — an Authored group carries its backing PageGroup's id (so a caller can rename/delete the
+            // group without re-deriving it by title); the computed Мир group carries none, since there is no
+            // PageGroup behind it. The positive check (matching the REAL id, not just "non-empty") is what
+            // catches a mutant that populates Id with some other stand-in value instead of g.Id.
+            var sessionsGroup = groups.Find(g => g.Kind == NavGroupKind.Authored && g.Title == "Сессии");
+            string wantSessionsId = PageGroupIdOf(doc, "Сессии");
+            if (sessionsGroup == null || sessionsGroup.Id != wantSessionsId)
+            {
+                string actual = sessionsGroup == null ? "no «Сессии» group" : $"Id=«{sessionsGroup.Id}»";
+                Debug.LogError($"FAIL tree: authored group «Сессии» = [{actual}], want Id=«{wantSessionsId}» (N5)");
+                ok = false;
+            }
+            var worldGroup = groups.Find(g => g.Kind == NavGroupKind.World);
+            if (worldGroup != null && worldGroup.Id != "")
+            { Debug.LogError($"FAIL tree: Мир group Id = «{worldGroup.Id}», want empty (N5)"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Navigator Tree: PASS" : "Self-Test Navigator Tree: FAIL");
         }

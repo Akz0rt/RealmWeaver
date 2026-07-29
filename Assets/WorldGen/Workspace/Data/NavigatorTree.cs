@@ -23,6 +23,13 @@ namespace WorldGen.Workspace.Data
     {
         public NavGroupKind Kind;
         public string Title;
+
+        /// <summary>The backing PageGroup's id for an Authored group — carried through so a caller can
+        /// rename/delete the group itself (NotesDocumentController.RenameGroup/DeleteGroup) without
+        /// re-deriving it by title. Empty for World: that group is computed (N1), not a stored PageGroup,
+        /// so there is nothing for an id to name.</summary>
+        public string Id = "";
+
         public List<NavNode> Nodes = new List<NavNode>();
     }
 
@@ -67,7 +74,7 @@ namespace WorldGen.Workspace.Data
             // loop never consults Bound, which is exactly what lets a bound page appear in Мир AND here.
             foreach (var g in doc.Groups)
             {
-                var authored = new NavGroup { Kind = NavGroupKind.Authored, Title = g.Title };
+                var authored = new NavGroup { Kind = NavGroupKind.Authored, Title = g.Title, Id = g.Id };
                 foreach (var p in g.Pages)
                     if (Matches(p.Name, needle))
                         authored.Nodes.Add(MakeNode(p));

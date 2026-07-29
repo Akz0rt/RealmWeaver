@@ -54,10 +54,11 @@ namespace WorldGen.Workspace.Rendering
         string filter = "";
         bool rebuildPending;
 
-        // Rename bookkeeping, ported from NotesTreeSidebar — see StartRename/CancelActiveRename. Cleared at
-        // the top of every Rebuild() because Rebuild destroys every row (and any in-progress rename's
-        // InputField along with it); without clearing these first, Update()'s Escape handler could reach
-        // into an already-destroyed GameObject.
+        // Rename bookkeeping, ported from NotesTreeSidebar — see StartRename/CancelActiveRename. A non-null
+        // activeRenameInput both drives Update()'s Escape handler AND holds LateUpdate's rebuild (see its own
+        // comment) — that hold is what keeps Rebuild() from ever destroying the row these fields point at
+        // while a rename is in flight, so Rebuild's own clearing of them is defensive, not the thing
+        // preventing a dangling reference.
         InputField activeRenameInput;
         GameObject activeRenameLabelGO;
         bool renameCancelled;
@@ -268,6 +269,11 @@ namespace WorldGen.Workspace.Rendering
 
         void Rebuild()
         {
+            // Defensive, not load-bearing: LateUpdate's own guard above (activeRenameInput != null → hold
+            // the rebuild) already stops this method from ever running while a rename is in flight, so these
+            // three fields are normally already at rest by the time this line runs. Cleared again here only
+            // in case a future call site invokes Rebuild() directly, bypassing that guard — Create() itself
+            // does exactly that for the first frame, where they are trivially already null/false anyway.
             activeRenameInput = null;
             activeRenameLabelGO = null;
             renameCancelled = false;
@@ -320,7 +326,7 @@ namespace WorldGen.Workspace.Rendering
             groupVLayout.childForceExpandWidth = true;
             groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            BuildGroupHeader(groupGO.transform, group.Title);
+            BuildGroupHeader(groupGO.transform, group);
 
             foreach (var node in group.Nodes)
             {
@@ -329,7 +335,13 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
-        void BuildGroupHeader(Transform parent, string title)
+        /// <summary>Group headers render for both NavGroupKind values, but only Authored ones get a
+        /// rename/delete menu wired on: NavGroup.Id is only populated for Authored groups (see its own doc
+        /// comment) — the computed Мир group is not a stored PageGroup at all, so there is nothing behind it
+        /// for «Переименовать»/«Удалить» to act on. This is the one place NotesTreeSidebar's ported behaviour
+        /// narrows: its group-delete confirm (with the page-count cost report) only has a home here for
+        /// Authored groups.</summary>
+        void BuildGroupHeader(Transform parent, NavGroup group)
         {
             var go = new GameObject("Header", typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -341,7 +353,7 @@ namespace WorldGen.Workspace.Rendering
             // Display-only uppercasing — NavGroup.Title/NavigatorTree.WorldGroupTitle stay whatever case the
             // model uses ("Мир"); the brief's "10px uppercase" is a rendering rule, not a data rule, so it
             // has no business changing NavigatorTree's own constant.
-            text.text = (title ?? "").ToUpperInvariant();
+            text.text = (group.Title ?? "").ToUpperInvariant();
             text.font = builtinFont;
             text.fontSize = 10;
             text.fontStyle = FontStyle.Bold;
@@ -352,6 +364,84 @@ namespace WorldGen.Workspace.Rendering
             textRect.anchorMax = Vector2.one;
             textRect.offsetMin = new Vector2(10f, 2f);
             textRect.offsetMax = Vector2.zero;
+
+            if (group.Kind != NavGroupKind.Authored) return;
+
+            // Clicks must land on the router below, not the label — same reasoning as BuildNodeRow's label.
+            text.raycastTarget = false;
+            var bg = go.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel, 0f);   // invisible, still raycasts (same trick as row bg).
+
+            // Rename overlay — same construction and StartRename/onEndEdit shape BuildNodeRow uses for a
+            // page row, retargeted at RenameGroup. The input shows/submits the RAW stored title, not the
+            // uppercased display string above.
+            var inputGO = new GameObject("RenameInput", typeof(RectTransform));
+            inputGO.transform.SetParent(go.transform, false);
+            var inputRect = inputGO.GetComponent<RectTransform>();
+            inputRect.anchorMin = textRect.anchorMin;
+            inputRect.anchorMax = textRect.anchorMax;
+            inputRect.offsetMin = textRect.offsetMin;
+            inputRect.offsetMax = textRect.offsetMax;
+            var inputImg = inputGO.AddComponent<Image>();
+            ThemeService.Tag(inputImg, ThemeRole.Elev);
+            var input = inputGO.AddComponent<InputField>();
+            input.targetGraphic = inputImg;
+
+            var inputTextGO = new GameObject("Text", typeof(RectTransform));
+            inputTextGO.transform.SetParent(inputGO.transform, false);
+            var inputText = inputTextGO.AddComponent<Text>();
+            inputText.font = builtinFont;
+            inputText.fontSize = 11;
+            ThemeService.Tag(inputText, ThemeRole.Txt);
+            inputText.alignment = TextAnchor.MiddleLeft;
+            inputText.supportRichText = false;
+            var inputTextRect = inputTextGO.GetComponent<RectTransform>();
+            inputTextRect.anchorMin = Vector2.zero;
+            inputTextRect.anchorMax = Vector2.one;
+            inputTextRect.offsetMin = new Vector2(4f, 0f);
+            inputTextRect.offsetMax = new Vector2(-4f, 0f);
+            input.textComponent = inputText;
+            inputGO.SetActive(false);
+
+            string groupId = group.Id;
+            string rawTitle = group.Title;
+
+            input.onEndEdit.AddListener(newText =>
+            {
+                bool wasCancelled = renameCancelled;
+                activeRenameInput = null;
+                activeRenameLabelGO = null;
+                renameCancelled = false;
+                if (wasCancelled) return;
+                inputGO.SetActive(false);
+                textGO.SetActive(true);
+                if (!string.IsNullOrWhiteSpace(newText)) documentController?.RenameGroup(groupId, newText.Trim());
+            });
+
+            var click = go.AddComponent<NavRowClickRouter>();
+            click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
+                ("Переименовать", () => StartRename(textGO, input, rawTitle), false),
+                ("Удалить", () => ConfirmDialog.Show(builtinFont, "Удалить группу?",
+                    // The REAL page count, not group.Nodes.Count — Nodes reflects the current search
+                    // filter (NavigatorTree's N3), and the cost report must name what deletion actually
+                    // takes, not just what a filtered view happens to be showing right now.
+                    $"«{rawTitle}» и все её страницы ({PageGroupPageCount(groupId) ?? group.Nodes.Count})", confirmed =>
+                {
+                    if (confirmed) documentController?.DeleteGroup(groupId);
+                }), true));
+        }
+
+        /// <summary>The live PageGroup's actual page count, looked up fresh at call time (not baked in at
+        /// row-build time) — mirrors NotesTreeSidebar.BuildGroupRow's own `group.Pages.Count`, just reached
+        /// through documentController instead of holding a direct PageGroup reference the way the old
+        /// sidebar did. Null when the group can't be found (already deleted, or no document wired).</summary>
+        int? PageGroupPageCount(string groupId)
+        {
+            var groups = documentController?.Document?.Groups;
+            if (groups == null) return null;
+            foreach (var g in groups)
+                if (g.Id == groupId) return g.Pages.Count;
+            return null;
         }
 
         void BuildNodeRow(Transform parent, NavNode node, bool isActive)
@@ -453,12 +543,12 @@ namespace WorldGen.Workspace.Rendering
             var click = rowGO.AddComponent<NavRowClickRouter>();
             click.OnLeftClick = () => controller.Open(node.Target, node.Title, inOtherPane: false);
             click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
-                onOpenOther: () => controller.Open(node.Target, node.Title, inOtherPane: true),
-                onRename: () => StartRename(labelGO, input, rawTitle),
-                onDelete: () => ConfirmDialog.Show(builtinFont, "Удалить страницу?", $"«{rawTitle}»", confirmed =>
+                ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false),
+                ("Переименовать", () => StartRename(labelGO, input, rawTitle), false),
+                ("Удалить", () => ConfirmDialog.Show(builtinFont, "Удалить страницу?", $"«{rawTitle}»", confirmed =>
                 {
                     if (confirmed) documentController?.DeletePage(pageId);
-                }));
+                }), true));
         }
 
         void StartRename(GameObject labelGO, InputField input, string rawValue)
@@ -500,10 +590,12 @@ namespace WorldGen.Workspace.Rendering
         }
     }
 
-    /// <summary>The navigator row's right-click menu: «Открыть рядом» / «Переименовать» / «Удалить». «рядом»,
-    /// not «справа» — WorkspaceOps.Open(inOtherPane) means "the pane that is NOT focused" (see the plan
-    /// ledger's Task 1 decision, carried to this task); with focus already on the right pane, "справа" would
-    /// open on the LEFT and the label would lie.
+    /// <summary>The right-click menu, shared by page rows (Открыть рядом / Переименовать / Удалить — see
+    /// BuildNodeRow) and Authored group headers (Переименовать / Удалить — see BuildGroupHeader; the World
+    /// group gets none, since it is computed with no PageGroup behind it). «рядом», not «справа» —
+    /// WorkspaceOps.Open(inOtherPane) means "the pane that is NOT focused" (see the plan ledger's Task 1
+    /// decision, carried to this task); with focus already on the right pane, "справа" would open on the
+    /// LEFT and the label would lie.
     ///
     /// Structurally follows ConfirmDialog.BuildBase — own overlay Canvas, one instance at a time via a static
     /// activeMenuGO — with one deliberate difference: this backdrop DISMISSES on click. ConfirmDialog's
@@ -517,7 +609,7 @@ namespace WorldGen.Workspace.Rendering
 
         static GameObject activeMenuGO;
 
-        public static void Show(Font font, Vector2 screenPos, Action onOpenOther, Action onRename, Action onDelete)
+        public static void Show(Font font, Vector2 screenPos, params (string Label, Action OnClick, bool Danger)[] items)
         {
             Close();
 
@@ -559,9 +651,8 @@ namespace WorldGen.Workspace.Rendering
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             panelRect.sizeDelta = new Vector2(MenuWidth, 0f);
 
-            AddItem(font, panelGO.transform, "Открыть рядом", onOpenOther);
-            AddItem(font, panelGO.transform, "Переименовать", onRename);
-            AddItem(font, panelGO.transform, "Удалить", onDelete, danger: true);
+            foreach (var item in items)
+                AddItem(font, panelGO.transform, item.Label, item.OnClick, item.Danger);
 
             // ScreenSpaceOverlay + camera=null is the established conversion for this canvas kind — see
             // NotesToolbar.cs and DungeonViewController.cs's own ScreenPointToLocalPointInRectangle calls.
