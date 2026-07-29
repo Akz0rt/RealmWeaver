@@ -160,6 +160,15 @@ namespace WorldGen.Generation
                 ("MutUndoNoRestore", "SettlementUndo.TryUndo pops the stack and reports success without restoring the floor",
                     () => new WorldGen.MutantTests.MutUndoNoRestoreSelfTests().SelfTestSettlementUndo()),
 
+                ("MutPlaceRefusesWall", "SettlementVolumeRendererPlacement.IsPlaceable reverts to the retired three-term rule (Wall/Gate refuse a stroke, so drawing can no longer cross the town's own derived wall)",
+                    () => new WorldGen.MutantTests.MutPlaceRefusesWallSelfTests().SelfTestBrushStrokes()),
+                ("MutPaintIgnoresOnField", "SettlementBrushOps.PaintBuilding keeps cells whose centre lies past the 0..1 field, which the animation cascade then Clamp01s to the edge on every later drag",
+                    () => new WorldGen.MutantTests.MutPaintIgnoresOnFieldSelfTests().SelfTestBrushStrokes()),
+                ("MutPreviewBuildingsIgnored", "SettlementTileGrid.Build drops the brush's preview building cells entirely (no live preview, and the wall ring never re-derives around the stroke)",
+                    () => new WorldGen.MutantTests.MutPreviewBuildingsIgnoredSelfTests().SelfTestPreviewBuildings()),
+                ("MutPreviewBuildingsNotInExtent", "SettlementTileGrid.Allocate's extent fold skips the preview cells, so a preview cell past the buildings' margin is silently dropped even though Build still tries to write it",
+                    () => new WorldGen.MutantTests.MutPreviewBuildingsNotInExtentSelfTests().SelfTestPreviewBuildings()),
+
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
                 ("MutFenceNoStreets", "DungeonLayout.DeriveTownFence stops folding the floor's STORED street cells into the fence (it wraps buildings + gates only — the fence the Task 5 measurement rejected, which leaves 21 of 78 street cells outside on the pinned fixture)",

@@ -146,13 +146,17 @@ namespace WorldGen.Generation
         // grid reads STORED street cells (the `streets` fold above).
         //
         // Build MAY ADDITIONALLY RECEIVE A PREVIEW SET (sub-project B, settlement-street-access): a drag's
-        // uncommitted extra streets, unioned into Build's `streets` before it ever reaches Allocate. This
-        // method has no equivalent parameter, and DungeonViewController.FitBoundsFor deliberately never folds
-        // the preview in either — the view must not rescale under the cursor mid-drag, so the fit is allowed
-        // to lag the drawn extent by exactly the preview's cells until the next rebuild (RefitIfContentOverflows
-        // is itself gated off for the whole drag). The fitted extent is therefore a subset of the drawn one
-        // during a drag, not identical to it — see FitBoundsFor's own doc for why that gap is bounded and
-        // accepted rather than a bug.
+        // uncommitted extra streets, unioned into Build's `streets` before it ever reaches Allocate — so this
+        // method has no PARAMETER of its own for the STREET preview specifically, only the one already-unioned
+        // `streets` list. The BUILDING preview (Task 3a, checkpoint 1) is different: `extraCells` below IS a
+        // parameter of this method, kept separate from `buildings` rather than pre-unioned into it, because a
+        // preview building has no Room to fold into that list — see PaintBuilding/Build's own extraBuildings
+        // param for the caller side. DungeonViewController.FitBoundsFor deliberately never folds either preview
+        // into the FIT — the view must not rescale under the cursor mid-drag, so the fit is allowed to lag the
+        // drawn extent by exactly the preview's cells until the next rebuild (RefitIfContentOverflows is itself
+        // gated off for the whole drag). The fitted extent is therefore a subset of the drawn one during a
+        // drag, not identical to it — see FitBoundsFor's own doc for why that gap is bounded and accepted
+        // rather than a bug.
         //
         // ORIGIN vs EXTENT — the distinction this method now turns on. The EXTENT still depends on what is
         // placed (it is the occupied bbox plus MarginCells, and it must be, or a building would fall off the
@@ -163,7 +167,8 @@ namespace WorldGen.Generation
         // renumbers (and, whenever it moved off-pitch, slides). OriginI/OriginJ stay: they are the array's
         // offset into the absolute lattice, not a redefinition of it.
         public static SettlementTileGrid Allocate(System.Collections.Generic.IReadOnlyList<Room> buildings,
-            System.Collections.Generic.IReadOnlyList<(int i, int j)> streets = null)
+            System.Collections.Generic.IReadOnlyList<(int i, int j)> streets = null,
+            System.Collections.Generic.IReadOnlyList<(int i, int j)> extraCells = null)
         {
             var g = new SettlementTileGrid { Cell = SettlementGenerator.BuildingCell };
 
@@ -188,6 +193,11 @@ namespace WorldGen.Generation
             // right, so a floor with streets and no buildings still gets a real grid rather than the 1x1 below.
             if (streets != null)
                 foreach (var c in streets) Fold(c.i, c.j);
+            // PREVIEW CELLS count towards the extent for the same reason streets do — a cell outside the
+            // allocated array is dropped silently, and the entire point of the brush preview is to show a
+            // stroke reaching PAST the town's current edge.
+            if (extraCells != null)
+                foreach (var c in extraCells) Fold(c.i, c.j);
 
             if (!any)
             {
@@ -221,7 +231,8 @@ namespace WorldGen.Generation
         // a cell that currently reads Wall or (idempotently) Gate (so it can't clobber a Road cell, and
         // trivially can't clobber Building either) — see MarkGates for why Gate is accepted too.
         public static SettlementTileGrid Build(InteriorFloor floor,
-                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraStreets = null)
+                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraStreets = null,
+                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraBuildings = null)
         {
             // Decode ONCE and hand the same list to Allocate (extent) and StreetMask (cells): the extent must
             // be sized for exactly the cells that will be written, or a street outside it is dropped silently.
@@ -237,7 +248,7 @@ namespace WorldGen.Generation
                 var seen = new System.Collections.Generic.HashSet<(int i, int j)>(streets);
                 foreach (var c in extraStreets) if (seen.Add(c)) streets.Add(c);
             }
-            var g = Allocate(floor.Rooms, streets);
+            var g = Allocate(floor.Rooms, streets, extraBuildings);
             foreach (var r in floor.Rooms)
             {
                 if (r.TypeId != 1) continue;
@@ -245,6 +256,15 @@ namespace WorldGen.Generation
                 foreach (var c in fp)
                     if (g.InBounds(c.i, c.j)) g.Cells[c.i - g.OriginI, c.j - g.OriginJ] = TileType.Building;
             }
+            // THE BRUSH'S LIVE PREVIEW (checkpoint-1 requirement). Written in the SAME pass as the real
+            // buildings and therefore BEFORE BuildWallRing, which seeds itself from `Cells[..] ==
+            // TileType.Building` — so the ring re-derives AROUND the stroke and the DM watches the town grow,
+            // wall and all, before releasing the brush. Written after the ring instead, the preview would
+            // show houses inside a wall that had not moved, which is a preview that lies about the commit.
+            // Never written back to the floor: a preview that wrote would BE a commit.
+            if (extraBuildings != null)
+                foreach (var c in extraBuildings)
+                    if (g.InBounds(c.i, c.j)) g.Cells[c.i - g.OriginI, c.j - g.OriginJ] = TileType.Building;
 
             bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
             // Streets are marked regardless of HasWall: a wall-less town (the DM cleared «Со стеной» — this

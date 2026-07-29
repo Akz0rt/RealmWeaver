@@ -1514,6 +1514,49 @@ New-SettlementRebind 'SelfTestSettlementUndo' 'MutUndoNoRestore' `
   @('\bSettlementUndo\b') `
   @('WorldGen.Generation.MutUndoNoRestore.SettlementUndo')
 
+# ---- CHECKPOINT-1 MUTANTS (settlement-brushes, task 3a). --------------------------------------------------
+
+# MutPlaceRefusesWall: the retired three-term rule is back, so a stroke stops at the town's own derived wall.
+# SelfTestBrushStrokes' case 9 must fail (1 cell instead of 3).
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutPlaceRefusesWall' `
+  'public static bool IsPlaceable(TileType type) => type != TileType.Building;' `
+  'public static bool IsPlaceable(TileType type) => type != TileType.Building && type != TileType.Wall && type != TileType.Gate;   // MUTANT: the derived wall refuses a stroke again' `
+  'MutPlaceRefusesWall.cs'
+
+# MutPaintIgnoresOnField: PaintBuilding keeps cells whose centre lies past the 0..1 field, which the cascade
+# then Clamp01s to the edge on every later drag. SelfTestBrushStrokes' case 10 must fail (3 cells, not 1).
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresOnField' `
+  '                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;' `
+  '                // MUTANT: the on-field bound is ignored' `
+  'MutPaintIgnoresOnField.cs'
+
+foreach ($mc in @('MutPlaceRefusesWall', 'MutPaintIgnoresOnField')) {
+  New-SettlementRebind 'SelfTestBrushStrokes' $mc `
+    @('SettlementBrushOps\.') `
+    @("WorldGen.Generation.$mc.SettlementBrushOps.")
+}
+
+# MutPreviewBuildingsIgnored: Build drops the preview cells entirely. SelfTestPreviewBuildings must fail on
+# BOTH the "drew as Building" claim and the ring-re-derives claim ((7,0) stays outside the ring).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewBuildingsIgnored' `
+  '            if (extraBuildings != null)' `
+  '            if (false && extraBuildings != null)   // MUTANT: the brush preview is never drawn' `
+  'MutPreviewBuildingsIgnored.cs'
+
+# MutPreviewBuildingsNotInExtent: the preview reaches the WRITE but not Allocate's extent, so a cell past the
+# margin is silently dropped — the exact split-union regression SelfTestPreviewStreets' own comment records.
+# SelfTestPreviewBuildings' InBounds claim must fail on (4,0) and (5,0).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewBuildingsNotInExtent' `
+  '                foreach (var c in extraCells) Fold(c.i, c.j);' `
+  '                { }   // MUTANT: preview cells never widen the extent' `
+  'MutPreviewBuildingsNotInExtent.cs'
+
+foreach ($mc in @('MutPreviewBuildingsIgnored', 'MutPreviewBuildingsNotInExtent')) {
+  New-SettlementRebind 'SelfTestPreviewBuildings' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
 # The two settlement counts are COUNTED, not quoted: the literal 46 that stood here was already 8 short of the

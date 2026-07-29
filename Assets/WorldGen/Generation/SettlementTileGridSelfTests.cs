@@ -909,6 +909,85 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Preview Streets: PASS");
         }
 
+        /// <summary>The BRUSH's preview channel — the twin of SelfTestPreviewStreets, and it carries one claim
+        /// that one does not: the wall ring must RE-DERIVE AROUND the preview. That is the whole visual point
+        /// of the DM's requirement (draw outward and watch the town grow), and it is what pins the ordering —
+        /// extras are written with the real buildings, BEFORE BuildWallRing seeds itself from the Building
+        /// tiles. Written after the ring they would draw as houses standing in a wall that had not moved: a
+        /// preview that lies about what releasing the brush will do.</summary>
+        [ContextMenu("Self-Test: Preview Buildings")]
+        public void SelfTestPreviewBuildings()
+        {
+            bool ok = true;
+            var floor = Floor(true, (0, 0));
+            int roomsBefore = floor.Rooms.Count;
+            string cellsBefore = floor.Rooms[0].Cells == null
+                ? "null" : string.Join(",", floor.Rooms[0].Cells);
+
+            // The farthest extra must sit PAST the extent MarginCells alone would reach, or the InBounds
+            // check proves nothing: maxCellI = 0 here, MarginCells = CourtyardCells(1) + 2 = 3, so the
+            // incidental reach is i = 3 and (5,0) is two cells beyond it. Contiguous from (1,0) — a real
+            // stroke, not a stray point.
+            var extras = new System.Collections.Generic.List<(int i, int j)>
+                { (1, 0), (2, 0), (3, 0), (4, 0), (5, 0) };
+            var withExtras = SettlementTileGrid.Build(floor, null, extras);
+            var without = SettlementTileGrid.Build(floor);
+
+            foreach (var c in extras)
+            {
+                if (!withExtras.InBounds(c.i, c.j))
+                {
+                    Debug.LogError($"SelfTestPreviewBuildings: extra cell {c} fell outside the allocated grid "
+                                 + "— extras are not folded into the extent");
+                    ok = false;
+                    continue;
+                }
+                if (withExtras.At(c.i, c.j) != TileType.Building)
+                {
+                    Debug.LogError($"SelfTestPreviewBuildings: extra cell {c} drew as "
+                                 + $"{withExtras.At(c.i, c.j)}, expected Building");
+                    ok = false;
+                }
+            }
+
+            // THE RING RE-DERIVES. Without extras the lone building at (0,0) is ringed at Chebyshev distance
+            // 2, so (2,0) reads Wall. With the preview reaching (5,0) the seed is (0,0)..(5,0), the dilation
+            // covers i in [-2,7], and the ring's east edge lands on (7,0) instead. Both halves are asserted:
+            // the precondition (the ring WAS at 2) and the payoff (it MOVED to 7).
+            if (without.At(2, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewBuildings: without extras, cell (2,0) reads "
+                             + $"{without.At(2, 0)}, expected Wall — the fixture's ring is not where this "
+                             + "test assumes, so the re-derive claim below would prove nothing");
+                ok = false;
+            }
+            if (withExtras.At(7, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewBuildings: with the preview reaching (5,0), cell (7,0) reads "
+                             + $"{withExtras.At(7, 0)}, expected Wall — the wall ring did not re-derive "
+                             + "around the previewed stroke, so the DM would watch houses appear inside an "
+                             + "unmoved wall");
+                ok = false;
+            }
+
+            if (floor.Rooms.Count != roomsBefore)
+            {
+                Debug.LogError($"SelfTestPreviewBuildings: the floor's room count CHANGED from {roomsBefore} "
+                             + $"to {floor.Rooms.Count}. A preview must not write.");
+                ok = false;
+            }
+            string cellsAfter = floor.Rooms[0].Cells == null
+                ? "null" : string.Join(",", floor.Rooms[0].Cells);
+            if (cellsBefore != cellsAfter)
+            {
+                Debug.LogError($"SelfTestPreviewBuildings: the existing building's cells CHANGED — was "
+                             + $"[{cellsBefore}], now [{cellsAfter}]. A preview must not write.");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Preview Buildings: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

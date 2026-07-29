@@ -94,6 +94,7 @@ static class Program
         tileGrid.SelfTestSpurWidth();
         tileGrid.SelfTestStreetCellsNearBuildings();
         tileGrid.SelfTestPreviewStreets();
+        tileGrid.SelfTestPreviewBuildings();
         tileGrid.SelfTestTileGridSanity();
         var blocks = new WorldGen.Rendering.SettlementBlocksSelfTests();
         blocks.SelfTestBlocks();
