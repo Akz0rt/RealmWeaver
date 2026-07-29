@@ -29,7 +29,9 @@ $sources = @(
       'WorkspaceOps.cs',
       'WorkspaceOpsSelfTests.cs',
       'NavigatorTree.cs',
-      'NavigatorTreeSelfTests.cs'
+      'NavigatorTreeSelfTests.cs',
+      'QuickOpen.cs',
+      'QuickOpenSelfTests.cs'
     ) }
 )
 
