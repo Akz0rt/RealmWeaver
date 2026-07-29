@@ -14,22 +14,23 @@ namespace WorldGen.Generation
     /// WHAT IS CAPTURED IS EVERY FIELD OF EVERY ROOM, not just the ones a brush writes — TryUndo replaces the
     /// WHOLE Rooms list (it has to: a stroke can both add and remove rooms), so every field of every room is
     /// in scope for every undo, including rooms the stroke being undone never touched. Id/TypeId/Title/Body/
-    /// X/Y/SizeW/SizeH/IsDummy/Cells, plus the floor's NextRoomId and SettlementParams.StreetCells. Title/
-    /// Body/Preview are authored through the building inspector (DungeonInspectorPanel), never by a brush —
-    /// but a snapshot that omitted them would still erase them from every OTHER room on the floor the moment
-    /// any one stroke gets undone, which is a strictly worse failure than no undo at all: the DM has no reason
-    /// to suspect an unrelated action wiped a building's name, description or photo.
+    /// X/Y/SizeW/SizeH/IsDummy/Cells, plus Grid/Preview/Portals (treated as described below) and the floor's
+    /// NextRoomId and SettlementParams.StreetCells. Title/Body/Preview are authored through the building
+    /// inspector (DungeonInspectorPanel), never by a brush — but a snapshot that omitted them would still
+    /// erase them from every OTHER room on the floor the moment any one stroke gets undone, which is a
+    /// strictly worse failure than no undo at all: the DM has no reason to suspect an unrelated action wiped a
+    /// building's name, description or photo.
     ///
-    /// Grid, Preview and Portals are carried BY REFERENCE, deliberately, not cloned: nothing in this codebase
-    /// mutates them in place through a settlement floor's own rooms (DungeonInspectorPanel only ever assigns
-    /// a new BattleGrid/byte[] wholesale — `room.Preview = shrunk` / `= null` — never edits one in place), so
-    /// sharing the reference is exactly as safe as cloning and skips cloning a 512px PNG or a battle grid 64
-    /// layers deep, which is precisely the cost the snapshot-not-delta argument above exists to avoid. Portals
-    /// is the one exception: elsewhere in the codebase (dungeon/building interiors) it IS mutated in place
-    /// (DungeonOps.AddSecretPassage/RemoveSecret, BuildingGenerator's stair wiring all call .Add/.Remove on
-    /// the live list) — unreachable for a settlement floor's own rooms today, but Room is one shared type, and
-    /// a List<Portal> is cheap enough that cloning it costs nothing, so it is cloned as a shallow copy rather
-    /// than trusted to stay untouched.
+    /// Grid and Preview are carried BY REFERENCE, deliberately, not cloned: nothing in this codebase mutates
+    /// them in place through a settlement floor's own rooms (DungeonInspectorPanel only ever assigns a new
+    /// BattleGrid/byte[] wholesale — `room.Preview = shrunk` / `= null` — never edits one in place), so sharing
+    /// the reference is exactly as safe as cloning and skips cloning a 512px PNG or a battle grid 64 layers
+    /// deep, which is precisely the cost the snapshot-not-delta argument above exists to avoid. Portals, by
+    /// contrast, IS cloned: elsewhere in the codebase (dungeon/building interiors) it genuinely is mutated in
+    /// place (DungeonOps.AddSecretPassage/RemoveSecret, BuildingGenerator's stair wiring all call .Add/.Remove
+    /// on the live list) — unreachable for a settlement floor's own rooms today, but Room is one shared type,
+    /// and a List<Portal> is cheap enough that cloning it costs nothing, so it is cloned as a shallow copy
+    /// rather than trusted to stay untouched.
     ///
     /// Cells is cloned because the ops DO produce a fresh array per paint (SettlementFootprint.Encode), so a
     /// clone is cheap insurance against a future op that writes into an existing one in place instead.
