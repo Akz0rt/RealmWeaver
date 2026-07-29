@@ -27,7 +27,9 @@ $sources = @(
   @{ Dir = (Join-Path $repo 'Assets\WorldGen\Workspace\Data'); Files = @(
       'WorkspaceLayout.cs',
       'WorkspaceOps.cs',
-      'WorkspaceOpsSelfTests.cs'
+      'WorkspaceOpsSelfTests.cs',
+      'NavigatorTree.cs',
+      'NavigatorTreeSelfTests.cs'
     ) }
 )
 

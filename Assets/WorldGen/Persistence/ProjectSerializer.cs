@@ -30,7 +30,19 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 12;  // 12: document pages — NotesPage.Kind + NotesPage.Blocks
+        public const int CurrentFormatVersion = 13;  // 13: NotesPage.Bound (a WorldRef) — which world object,
+                                                     // if any, a page documents. It is the ONLY field the
+                                                     // computed «Мир» group in NavigatorTree reads (a page is
+                                                     // a member exactly when Bound != null; membership is
+                                                     // never itself stored). Bound is ABSENT from a v12 file
+                                                     // and deserializes to null there, so no migration code
+                                                     // exists or is needed. Bumped anyway, for the same reason
+                                                     // 9 and 11 were: so an OLDER build WARNS on open instead
+                                                     // of silently dropping every page's world binding on its
+                                                     // next save. The next sub-project's Board→Canvas
+                                                     // migration will take 14.
+                                                     //
+                                                     // 12: document pages — NotesPage.Kind + NotesPage.Blocks
                                                      // (List<DocBlock>) and PageGroup.IsReference. All three
                                                      // are ABSENT from an older file and deserialize to their
                                                      // defaults: Kind to PageKind.Board (which is exactly why

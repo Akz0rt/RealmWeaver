@@ -15,6 +15,22 @@ namespace WorldGen.Notes.Data
     /// Board does.</summary>
     public enum BlockKind { Section = 0, Item = 1, Prose = 2, Image = 3, BoardRef = 4 }
 
+    /// <summary>Which kind of world object a NotesPage.Bound names. Poi covers a settlement/POI on the map;
+    /// Building and Room narrow to a building interior and a room within it, mirroring the levels Р3's
+    /// «Открыть город» and friends already open through.</summary>
+    public enum WorldRefKind { Poi = 0, Building = 1, Room = 2 }
+
+    /// <summary>What a page documents, if it documents a world object at all. This is the ONLY signal
+    /// NavigatorTree.Build reads to decide whether a page belongs to the computed «Мир» group — a page is a
+    /// member exactly when its Bound is non-null, and nothing else anywhere records that membership. Kept
+    /// as a nullable reference rather than a bool flag beside an id, the same reason PageGroup.LinkedPoiId
+    /// is null rather than paired with an "IsLinked" bool: the two could otherwise disagree.</summary>
+    public class WorldRef
+    {
+        public WorldRefKind Kind;
+        public string Id;
+    }
+
     public class NotesDocument
     {
         public List<PageGroup> Groups = new List<PageGroup>();
@@ -45,6 +61,14 @@ namespace WorldGen.Notes.Data
         public List<LinkData> Links = new List<LinkData>();
         public Vector2 CameraPan;
         public float CameraZoom = 1f;
+
+        /// <summary>Which world object this page documents, if any — null for an ordinary authored page.
+        /// See WorldRef: this is the single field NavigatorTree.Build reads for МИР membership. Additive,
+        /// matching DocBlock.Detail/LinkedPageId: absent from a file saved before it existed, and
+        /// deserializes to null there, so no migration code exists or is needed (ProjectSerializer.
+        /// CurrentFormatVersion 13).</summary>
+        [JsonProperty("Bound", NullValueHandling = NullValueHandling.Ignore)]
+        public WorldRef Bound;
     }
 
     /// <summary>One row of a document page. ONE class with a Kind enum rather than a subclass hierarchy:
