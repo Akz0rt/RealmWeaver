@@ -179,10 +179,15 @@ namespace WorldGen.Persistence
                 // DM action at all. EnsureAccess is idempotent, so a healthy save pays one pass and changes
                 // nothing.
                 //
-                // The d.Floors == null and f == null guards mirror EnsureFootprints' own, one statement above:
-                // a hand-edited file can carry a null Levels/floor list, and unlike the version-gated block
-                // below, this call is ungated, so it is the first thing on every load that would dereference it.
-                if (d.Kind == InteriorKind.Settlement && d.Floors != null)
+                // The d != null / d.Floors != null / f != null guards mirror EnsureFootprints' own convention
+                // (interior == null || … || interior.Floors == null, then floor == null inside its loop), so
+                // this pass is safe in isolation. They are DEFENCE-IN-DEPTH, not what makes a malformed file
+                // load: RoomSizing.ApplyDefaults, one line above, does an unguarded
+                // `foreach (var lvl in dungeon.Floors) foreach (var r in lvl.Rooms)` past its own
+                // `dungeon == null` check, so a file carrying a null Floors list or a null floor element
+                // already throws THERE, before control reaches this call. A reader must not conclude from
+                // this comment that such a file loads gracefully today — it still does not.
+                if (d != null && d.Kind == InteriorKind.Settlement && d.Floors != null)
                     foreach (var f in d.Floors)
                         if (f != null && f.SettlementParams != null) SettlementStreetOps.EnsureAccess(f);
             }
