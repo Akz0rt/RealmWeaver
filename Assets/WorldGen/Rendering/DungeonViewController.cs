@@ -501,6 +501,16 @@ namespace WorldGen.Rendering
             // An undo stack that survived a bind to a different interior would let Ctrl+Z restore rooms into
             // the wrong town (DM findings ·1, ·7, ·8). Verified by grep this is the ONLY writer of `dungeon`.
             undo.Clear();
+            // A brush armed in one interior must not survive into another (task review Critical): without
+            // this, dragging into a building interior with a settlement brush still armed would make
+            // OnBeginDrag's brush branch fire there, fail its own settlement guard, and return BEFORE
+            // draggingRoomId is assigned — silently killing room dragging on that screen, with no brush
+            // button there to explain why. BEFORE SetRenderer below (same reason as undo.Clear() above isn't
+            // enough alone): SetBrush's HidePlacementHighlight() must still reach the renderer that is
+            // CURRENTLY on screen, not the one about to replace it. Raising OnActiveBrushChanged here is
+            // safe — DungeonEditorScreen.RefreshBody (which calls this Bind) runs AFTER RefreshToolbar in
+            // SetLevel, so the button fields it repaints already exist for this floor.
+            SetBrush(SettlementBrush.None);
             this.levelIndex = levelIndex;
             this.font = font;
             boundLevel = newLevel;
@@ -1029,6 +1039,10 @@ namespace WorldGen.Rendering
         {
             if (brush == SettlementBrush.None) return;
             if (ActiveBrush == brush) { SetBrush(SettlementBrush.None); return; }
+            // Same gate ArmPlacement has (task review Minor): unreachable through today's UI (the brush
+            // button only exists on a settlement's toolbar), but this is a public method, and without this a
+            // future caller could arm a settlement-only brush on a dungeon or building interior.
+            if (!SupportsClickPlacement) return;
             if (PlacementArmed) DisarmPlacement();
             SetBrush(brush);
         }
@@ -1038,6 +1052,14 @@ namespace WorldGen.Rendering
             if (ActiveBrush == brush) return;
             ActiveBrush = brush;
             hoverValid = false;
+            // An in-flight stroke (press, drag, then Esc/toggle-off before release) must not survive the
+            // brush changing (task review Important): OnEndDrag never runs its commit for it (ActiveBrush is
+            // already something else by the time the release arrives), so without this strokeCells and its
+            // already-pushed undo snapshot would be orphaned — the next Ctrl+Z would silently restore an
+            // identical state, and a LATER stroke whose own OnBeginDrag guard fails would see strokeCells
+            // still non-null and append from the stale strokeLastCell, painting from an abandoned stroke's
+            // end with no snapshot behind it.
+            strokeCells = null;
             if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
             OnActiveBrushChanged?.Invoke(brush);
         }
@@ -1074,10 +1096,13 @@ namespace WorldGen.Rendering
 
             // Ctrl+Z (DM findings ·1, ·7, ·8), following BrushToolController.HandleUndo exactly — Input System
             // only, never legacy UnityEngine.Input, which compiles but throws here. Gated by nothing of its
-            // own, same as HandleUndo itself: this whole method already returned above unless PlacementArmed
-            // or a brush is armed, exactly mirroring BrushToolController.Update's own `if (!brushModeActive)
-            // return;` gating its call to HandleUndo.
-            if (Keyboard.current != null)
+            // own beyond `strokeCells == null`, same as HandleUndo itself: this whole method already returned
+            // above unless PlacementArmed or a brush is armed, exactly mirroring BrushToolController.Update's
+            // own `if (!brushModeActive) return;` gating its call to HandleUndo. The `strokeCells == null`
+            // half (task review Minor) keeps a Ctrl+Z pressed mid-stroke from popping THAT stroke's own
+            // snapshot before OnEndDrag ever commits it — without it the stroke would land unsnapshotted and
+            // the next Ctrl+Z would rewind two strokes at once.
+            if (Keyboard.current != null && strokeCells == null)
             {
                 bool ctrl = Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed;
                 if (ctrl && Keyboard.current.zKey.wasPressedThisFrame)
@@ -1324,9 +1349,16 @@ namespace WorldGen.Rendering
             // POI-placement precedent on the world map (PoiInteractionController.Update gates its own press on
             // Mouse.current.leftButton). Scoped to the ARMED branch only — an unarmed right-click still selects
             // exactly as before; this must not touch that path.
-            if (PlacementArmed)
+            //
+            // A BRUSH CONSUMES THE CLICK TOO, but does NOTHING with it (task review Important): the brush owns
+            // the DRAG (OnBeginDrag/OnDrag/OnEndDrag), not the click, so a press-release below the drag
+            // threshold must not fall through to select a room or — worse, on a double-click — navigate into
+            // a building's interior mid-painting. Whether a single dab should paint one cell is a DM decision
+            // for the checkpoint, not implemented here.
+            if (PlacementArmed || ActiveBrush != SettlementBrush.None)
             {
                 if (data.button != PointerEventData.InputButton.Left) return;
+                if (ActiveBrush != SettlementBrush.None) return;   // consumed — brush click does nothing
                 PlaceHoveredBuilding();
                 return;
             }
@@ -1386,7 +1418,12 @@ namespace WorldGen.Rendering
             {
                 var lvlB = BoundLevel;
                 var volB = renderer as SettlementVolumeRenderer;
-                if (lvlB?.SettlementParams == null || volB == null
+                // Same containment guard UpdatePlacement uses before storing a hover cell (task review
+                // Minor): TryAreaToCell is documented unbounded, so without this a press outside the
+                // renderer's own rect (the hit-plate covers the whole map area, not just the drawn panel —
+                // see UpdatePlacement's own doc) would still resolve to SOME cell instead of refusing.
+                if (lvlB?.SettlementParams == null || volB == null || volB.Area == null
+                    || !RectTransformUtility.RectangleContainsScreenPoint(volB.Area, data.position, null)
                     || !TryPointerToAreaLocal(data, out var localB) || !volB.TryAreaToCell(localB, out int bi, out int bj))
                     return;
                 undo.PushSnapshot(lvlB);                 // BEFORE anything mutates
@@ -1508,7 +1545,13 @@ namespace WorldGen.Rendering
             {
                 if (strokeCells == null) return;
                 var volD = renderer as SettlementVolumeRenderer;
-                if (volD == null || !TryPointerToAreaLocal(data, out var localD)
+                // Same containment guard as OnBeginDrag's brush branch (task review Minor): without it a
+                // stroke dragged off the panel keeps appending cells (TryAreaToCell is unbounded and
+                // IsPlaceable(None) is true off-grid), trailing a house off the map and forcing a
+                // whole-town rescale.
+                if (volD == null || volD.Area == null
+                    || !RectTransformUtility.RectangleContainsScreenPoint(volD.Area, data.position, null)
+                    || !TryPointerToAreaLocal(data, out var localD)
                     || !volD.TryAreaToCell(localD, out int di2, out int dj2)) return;
                 if ((di2, dj2) == strokeLastCell) return;
                 SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, (di2, dj2));
