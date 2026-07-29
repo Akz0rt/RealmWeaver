@@ -31,14 +31,21 @@ namespace WorldGen.Workspace.Rendering
 
         void Awake()
         {
-            // A Play-mode script recompile re-invokes Awake() on this already-existing component
-            // (WorkspaceBuilder documents the same trap for itself, including recovering ITS
-            // reference to this component). Unconditionally reassigning here would silently reset
-            // whatever tabs/split/focus the user had back to NewDefault() on every recompile. Only
-            // assigning when still null keeps whatever this object already held — which is NOT full
-            // restoration (that needs the serialized layout back from PlayerPrefs, which does not
-            // exist until Task 11's WorkspacePrefs), just "don't actively destroy it" in the
-            // meantime.
+            // `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
+            // code path calling Awake() again without a reload in between — where Layout genuinely
+            // still holds what it held before. It does NOT protect the case it looks like it
+            // protects: a Play-mode script recompile. WorkspaceBuilder.cs:30-38 documents why —
+            // Layout is a plain auto-property, not a [SerializeField], so its backing field does
+            // NOT survive a script reload the way the GameObject/component hierarchy does. On that
+            // exact path, Layout IS null when this runs, the condition is true, and a fresh
+            // NewDefault() is created anyway — tabs, split and focus are silently discarded, same
+            // as before this guard existed. Do not read this line as "recompiles are handled".
+            //
+            // Task 11 (WorkspacePrefs) is what actually has to fix this, and it must NOT gate its
+            // restore on `Layout == null` — that condition is not a reliable "first run" signal (see
+            // above, it is also true after every recompile that should instead be recovering saved
+            // state). Task 11 needs to load from WorkspacePrefs unconditionally on startup and apply
+            // the result, independent of whatever Awake() already put in Layout.
             if (Layout == null) Layout = WorkspaceOps.NewDefault();
         }
 
