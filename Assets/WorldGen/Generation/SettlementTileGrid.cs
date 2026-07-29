@@ -212,11 +212,23 @@ namespace WorldGen.Generation
         // HasWall there is no Wall to skip and a street lands on None instead); MarkGates only ever retargets
         // a cell that currently reads Wall or (idempotently) Gate (so it can't clobber a Road cell, and
         // trivially can't clobber Building either) — see MarkGates for why Gate is accepted too.
-        public static SettlementTileGrid Build(InteriorFloor floor)
+        public static SettlementTileGrid Build(InteriorFloor floor,
+                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraStreets = null)
         {
             // Decode ONCE and hand the same list to Allocate (extent) and StreetMask (cells): the extent must
             // be sized for exactly the cells that will be written, or a street outside it is dropped silently.
+            //
+            // EXTRA STREETS are the DRAG'S PREVIEW (sub-project B). They are unioned in here, at the single
+            // point the stored ones enter, so every downstream pass — the extent, the wall-ring seed, the Road
+            // reclassification — sees them without a second code path to keep in sync. They are never written
+            // back: a preview that wrote would be a commit, and with dead ends deliberately kept that would
+            // leave a road behind every drag sample.
             var streets = SettlementFootprint.Decode(floor.SettlementParams?.StreetCells);
+            if (extraStreets != null && extraStreets.Count > 0)
+            {
+                var seen = new System.Collections.Generic.HashSet<(int i, int j)>(streets);
+                foreach (var c in extraStreets) if (seen.Add(c)) streets.Add(c);
+            }
             var g = Allocate(floor.Rooms, streets);
             foreach (var r in floor.Rooms)
             {

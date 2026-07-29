@@ -827,6 +827,68 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Street Cells Near Buildings: PASS");
         }
 
+        /// <summary>The drag's preview channel: extras draw exactly like stored streets, and change nothing
+        /// about the floor. Both halves matter — a preview that did not reach the wall seed would show a road
+        /// the commit then wrapped differently, and a preview that wrote to the floor would be a commit.</summary>
+        [ContextMenu("Self-Test: Preview Streets")]
+        public void SelfTestPreviewStreets()
+        {
+            bool ok = true;
+            var floor = Floor(true, (2, 2), (3, 2));
+            floor.SettlementParams.StreetCells = SettlementFootprint.Encode(
+                new System.Collections.Generic.List<(int i, int j)> { (2, 3), (3, 3) });
+            string before = floor.SettlementParams.StreetCells == null
+                ? "null" : string.Join(",", floor.SettlementParams.StreetCells);
+
+            var extras = new System.Collections.Generic.List<(int i, int j)> { (4, 3), (5, 3), (6, 3) };
+            var withExtras = SettlementTileGrid.Build(floor, extras);
+            var without = SettlementTileGrid.Build(floor);
+
+            foreach (var c in extras)
+            {
+                if (!withExtras.InBounds(c.i, c.j))
+                {
+                    Debug.LogError($"SelfTestPreviewStreets: extra cell {c} fell outside the allocated grid — "
+                                 + "extras are not folded into the extent");
+                    ok = false;
+                    continue;
+                }
+                if (withExtras.At(c.i, c.j) != TileType.Road)
+                {
+                    Debug.LogError($"SelfTestPreviewStreets: extra cell {c} drew as "
+                                 + $"{withExtras.At(c.i, c.j)}, expected Road");
+                    ok = false;
+                }
+            }
+
+            string after = floor.SettlementParams.StreetCells == null
+                ? "null" : string.Join(",", floor.SettlementParams.StreetCells);
+            if (before != after)
+            {
+                Debug.LogError($"SelfTestPreviewStreets: the floor's stored streets CHANGED — was [{before}], "
+                             + $"now [{after}]. A preview must not write.");
+                ok = false;
+            }
+
+            // A null extras list must be exactly today's behaviour: the two grids differ only where an extra sits.
+            int diffs = 0;
+            for (int a = 0; a < without.W; a++)
+                for (int b = 0; b < without.H; b++)
+                {
+                    int wi = a + without.OriginI, wj = b + without.OriginJ;
+                    if (!withExtras.InBounds(wi, wj)) continue;
+                    if (withExtras.At(wi, wj) != without.At(wi, wj)) diffs++;
+                }
+            if (diffs == 0)
+            {
+                Debug.LogError("SelfTestPreviewStreets: the grid with extras is identical to the one without — "
+                             + "the extras had no effect at all, so this test proves nothing");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Preview Streets: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {
