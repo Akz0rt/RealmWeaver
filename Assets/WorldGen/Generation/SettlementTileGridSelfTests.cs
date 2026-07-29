@@ -840,7 +840,18 @@ namespace WorldGen.Rendering
             string before = floor.SettlementParams.StreetCells == null
                 ? "null" : string.Join(",", floor.SettlementParams.StreetCells);
 
-            var extras = new System.Collections.Generic.List<(int i, int j)> { (4, 3), (5, 3), (6, 3) };
+            // The farthest extra must sit PAST the extent MarginCells alone would already reach, or the
+            // InBounds check below is unreachable and proves nothing (task-review finding: the split-union
+            // regression this test exists to catch — extras reaching StreetMask/the wall seed but never
+            // Allocate's fold — would still pass here, because MarginCells pads the buildings+stored-streets
+            // bbox (i 2..3) out to i 6 on its own). MarginCells = CourtyardCells(1) + 2 = 3, and maxCellI = 3
+            // (buildings AND stored streets both top out at i=3), so the incidental reach is 3 + 3 = 6 —
+            // (6,3) sat exactly ON that edge. (10,3), four cells past it, cannot be reached by margin alone;
+            // it is in bounds ONLY if the extras are genuinely folded into Allocate's extent. Kept CONTIGUOUS
+            // (4,3)..(10,3) — a real street, not a stray point — so (4,3)-(6,3) still fall inside the
+            // extras-less `without` grid below and keep the non-vacuity diff check live without widening it.
+            var extras = new System.Collections.Generic.List<(int i, int j)>
+                { (4, 3), (5, 3), (6, 3), (7, 3), (8, 3), (9, 3), (10, 3) };
             var withExtras = SettlementTileGrid.Build(floor, extras);
             var without = SettlementTileGrid.Build(floor);
 
