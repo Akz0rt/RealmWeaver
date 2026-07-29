@@ -124,7 +124,12 @@ namespace WorldGen.Workspace.Rendering
         {
             var tab = pane.Tabs[index];
 
-            var tabGO = new GameObject($"Tab_{index}", typeof(RectTransform));
+            // Full title in the GameObject's own name (visible in the Hierarchy/Inspector) even when the
+            // label on-screen gets truncated below — the accessibility escape hatch review Finding 1 asked
+            // for, without building a floating hover tooltip (NotesToolbar has one, but it's wired to a
+            // fixed row of icon buttons with its own Update()-driven hover scan; adapting it here is out of
+            // this fix's scope).
+            var tabGO = new GameObject($"Tab_{index}_{tab.Title}", typeof(RectTransform));
             tabGO.transform.SetParent(transform, false);
 
             var bg = tabGO.AddComponent<Image>();
@@ -147,15 +152,24 @@ namespace WorldGen.Workspace.Rendering
             var titleGO = new GameObject("Title", typeof(RectTransform));
             titleGO.transform.SetParent(tabGO.transform, false);
             var title = titleGO.AddComponent<Text>();
-            title.text = tab.Title;
             title.font = builtinFont;
             title.fontSize = 13;
             title.fontStyle = FontStyle.Bold;
-            title.horizontalOverflow = HorizontalWrapMode.Overflow;
-            title.verticalOverflow = VerticalWrapMode.Truncate;
+            title.horizontalOverflow = HorizontalWrapMode.Overflow;   // single line, never wrap — width
+            title.verticalOverflow = VerticalWrapMode.Truncate;        // is controlled below, not by wrapping.
             title.alignment = TextAnchor.MiddleLeft;
             title.raycastTarget = false;   // clicks must reach tabBtn, not the label.
             ThemeService.Tag(title, active ? ThemeRole.Txt : ThemeRole.Mut);
+
+            // MaxTabWidth is a HARD ceiling (the tab never grows past it), so the title's own on-screen
+            // budget is fixed regardless of how long tab.Title actually is: TruncateTitle guarantees
+            // title.preferredWidth <= maxTextWidth afterward, so a too-long title can never draw outside
+            // this rect over the close button, the neighbouring tab, or the "+" button (review Finding 1 —
+            // HorizontalWrapMode.Overflow above only controls WRAPPING, it does not clip, so an untruncated
+            // string would have drawn straight through all of that with nothing to stop it).
+            float maxTextWidth = MaxTabWidth - TitlePaddingLeft - CloseReserve;
+            string displayTitle = TruncateTitle(title, tab.Title, maxTextWidth);
+            title.text = displayTitle;
 
             // Text.preferredWidth is readable immediately after font/fontSize/text are set, with no layout
             // pass needed — the one number in this file that is genuinely unverifiable without opening the
@@ -215,6 +229,32 @@ namespace WorldGen.Workspace.Rendering
                                          // the "×" to appear on hover, not sit permanently visible.
             var hover = tabGO.AddComponent<TabHoverReveal>();
             hover.Target = closeGO;
+        }
+
+        /// <summary>Shrinks `full` one character at a time, appending an ellipsis, until `measurer`
+        /// (already carrying the right font/fontSize/fontStyle) reports a preferredWidth that fits within
+        /// maxWidth — or returns `full` unchanged if it already fits. `measurer.text` is left holding
+        /// whatever this method returns, so the caller does not need to re-assign it. A linear scan rather
+        /// than a binary search: tab titles in this project (page/settlement/dungeon names) are short, so
+        /// the extra remeasure calls cost nothing per rebuild, and a straight-line scan is easier for a
+        /// reviewer to verify by inspection than a binary-search off-by-one. Chosen over a RectMask2D clip
+        /// (review Finding 1 offered either) because clipping mid-glyph gives no visual sign that a title
+        /// was cut off, where an ellipsis is the conventional signal (browser/editor tab strips do the
+        /// same) and needs no extra component on the tab.</summary>
+        static string TruncateTitle(Text measurer, string full, float maxWidth)
+        {
+            measurer.text = full;
+            if (string.IsNullOrEmpty(full) || measurer.preferredWidth <= maxWidth) return full;
+
+            for (int len = full.Length - 1; len > 0; len--)
+            {
+                string candidate = full.Substring(0, len) + "…";
+                measurer.text = candidate;
+                if (measurer.preferredWidth <= maxWidth) return candidate;
+            }
+
+            measurer.text = "…";
+            return "…";
         }
 
         void BuildPlusButton()
