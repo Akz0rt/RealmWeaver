@@ -169,6 +169,18 @@ namespace WorldGen.Persistence
             {
                 RoomSizing.ApplyDefaults(d);
                 SettlementFootprint.EnsureFootprints(d, legacyLattice);
+
+                // ORDER IS LOAD-BEARING: EnsureFootprints must have run first, or a v9/v10 building has no
+                // cells for the street repair to reach and the town would be "repaired" around whatever
+                // subset happened to be footprinted.
+                //
+                // UNGATED, unlike the v11 lattice migration below. A v9 save carries ZERO street cells, and a
+                // building far enough from its neighbours then grows its own private wall ring on load with no
+                // DM action at all. EnsureAccess is idempotent, so a healthy save pays one pass and changes
+                // nothing.
+                if (d.Kind == InteriorKind.Settlement)
+                    foreach (var f in d.Floors)
+                        if (f.SettlementParams != null) SettlementStreetOps.EnsureAccess(f);
             }
 
             // v11 lattice migration. VERSION-GATED, unlike its three neighbours above, and BOTH passes are:
