@@ -504,10 +504,14 @@ namespace WorldGen.Rendering
             // UNCONDITIONAL, same reason as undo.Clear() just above: SetBrush(SettlementBrush.None) below
             // early-returns the instant ActiveBrush is ALREADY None (its very first line), which is the common
             // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings left on the
-            // renderer by an abandoned stroke. The renderer instance itself is NOT per-floor (SetRenderers
-            // installs the flat/volume pair once for this controller's whole lifetime), so a leak here would
-            // show as phantom houses drawing on the very first reposition of whatever floor this call is about
-            // to bind to — the shape of bug this task's brief names explicitly.
+            // renderer. DEFENSIVE: no live path was found where this actually fires with a stale non-null
+            // PreviewBuildings (ActiveBrush only ever changes through SetBrush, which — given its own
+            // unconditional clear — already drops PreviewBuildings on every transition away from a brush), but
+            // the renderer instance itself is NOT per-floor (SetRenderers installs the flat/volume pair once
+            // for this controller's whole lifetime), so IF something ever left it stale, the shape of the
+            // resulting bug would be exactly sub-project B's — phantom houses on the next floor's first
+            // reposition. Kept unconditional per the task brief, belt-and-suspenders alongside SetBrush's own
+            // clear rather than in place of it.
             if (renderer is SettlementVolumeRenderer volBind) volBind.PreviewBuildings = null;
             // A brush armed in one interior must not survive into another (task review Critical): without
             // this, dragging into a building interior with a settlement brush still armed would make
@@ -1140,7 +1144,20 @@ namespace WorldGen.Rendering
             // after it instead, this changes nothing about Esc: SetBrush(None) above already returns first
             // whenever Esc actually fires, and clears strokeCells itself (see SetBrush) before this line could
             // ever run again with it still set.
-            if (strokeCells != null) { if (renderer is SettlementVolumeRenderer hideV) hideV.HidePlacementHighlight(); return; }
+            //
+            // hoverValid = false FIRST, matching the "Invalidate FIRST" rule below (both Esc exits above honor
+            // it too, via SetBrush/DisarmPlacement's own hoverValid = false) — without it, a stroke stranded
+            // by something other than a clean OnEndDrag (ScreenSwitcher deactivating this object mid-drag:
+            // OnDisable is `=> DisarmPlacement();`, which does not touch strokeCells) would freeze hover at
+            // the stroke's START cell while this guard keeps returning early every frame, and a later plain
+            // click would commit that frozen, never-shown cell through TryHoveredCell/DabBrush — exactly what
+            // TryHoveredCell's own doc promises never happens.
+            if (strokeCells != null)
+            {
+                hoverValid = false;
+                if (renderer is SettlementVolumeRenderer hideV) hideV.HidePlacementHighlight();
+                return;
+            }
 
             // The binding can change under an armed mode (a rebind to a different interior, a renderer swap).
             // One guard covers every such case, and disarming is the honest answer: the cell lattice the mode
