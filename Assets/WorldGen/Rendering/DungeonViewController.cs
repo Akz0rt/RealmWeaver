@@ -130,6 +130,11 @@ namespace WorldGen.Rendering
         // last ACCEPTED delta, and that is what this must keep describing.
         (int i, int j) dragAppliedDelta;
 
+        // The road the drag WOULD carve, recomputed every sample from the floor's UNTOUCHED stored streets.
+        // Null except during a settlement footprint drag. Never written to the floor — see OnEndDrag, which
+        // commits through CommitSettlementStreets instead.
+        System.Collections.Generic.List<(int i, int j)> dragStreetPreview;
+
         // ── «+ Здание» click-to-place (Task 8b) ─────────────────────────────────────────────────────────
         // THE WHOLE STATE MACHINE, and deliberately no bigger: one bool for "armed", and one cell under the
         // cursor. Everything else about the mode is derived.
@@ -1106,6 +1111,7 @@ namespace WorldGen.Rendering
             lastAnchorRoomId = 0;
             lastPlacedRoomId = room.Id;   // guards the reflex double-click — see the field's own doc
             DisarmPlacement();
+            CommitSettlementStreets();
             // REFIT (final-review fix). The grid just grew — by the new building's own cell and by the 2-cell
             // ring SettlementTileGrid.Build re-derives around it (CourtyardCells + 1), which per the auto-link
             // doc above may be the new building's OWN separate ring rather than a merge into the town's — and
@@ -1130,10 +1136,26 @@ namespace WorldGen.Rendering
         {
             if (SelectedRoomId == 0 || dungeon == null) return;
             DungeonOps.RemoveRoom(dungeon, levelIndex, SelectedRoomId);
+            CommitSettlementStreets();
             SelectRoom(0);   // clears via the same path as a background click — fires OnRoomSelected(0) so
                              // the host drops the deleted id too
             Refresh();
             OnGraphMutated?.Invoke();
+        }
+
+        /// <summary>Repair the town's street invariant after an edit that could have broken it — a placed,
+        /// moved or deleted building (DM findings ·4 and ·9). ONE expression, three callers, so the rule
+        /// cannot drift between them; sub-project C's brush strokes get the same entry point.
+        ///
+        /// No-ops on anything that is not a settlement, and on a settlement with no SettlementParams. The
+        /// repair itself is SettlementStreetOps.EnsureAccess, which is idempotent — calling this after an
+        /// edit that changed nothing costs one pass and writes nothing.</summary>
+        void CommitSettlementStreets()
+        {
+            if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
+            var lvl = BoundLevel;
+            if (lvl?.SettlementParams == null) return;
+            SettlementStreetOps.EnsureAccess(lvl);
         }
 
         /// <summary>Adds a Normal room at the canvas center, selects it, rebuilds.</summary>
@@ -1380,6 +1402,10 @@ namespace WorldGen.Rendering
             room.X = SettlementFootprint.CenterOf(rep.i);
             room.Y = SettlementFootprint.CenterOf(rep.j);
             dragAppliedDelta = delta;
+            // The building has just moved, so the road it needs may have changed. PURE — MissingAccess writes
+            // nothing, so nothing accumulates across samples: each one starts from the same stored streets.
+            dragStreetPreview = SettlementStreetOps.MissingAccess(lvl);
+            vol.PreviewStreets = dragStreetPreview;
             RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
         }
 
@@ -1458,6 +1484,7 @@ namespace WorldGen.Rendering
                 var room = lvl?.GetRoom(draggingRoomId);
                 if (room != null) TranslateFootprintTo(lvl, room, local);
             }
+            CommitSettlementStreets();
             // Clear on EVERY drag path, here and nowhere else. If the release lands outside this
             // hit-plate (over the toolbar, or a badge Button), no click fires at all — leaving the clear
             // to OnPointerClick would strand draggingRoomId set and swallow the next click.
@@ -1465,6 +1492,11 @@ namespace WorldGen.Rendering
             draggingRoomId = 0;
             dragFootprint = false;
             dragOriginCells = null;
+            dragStreetPreview = null;
+            // Renderer-held preview state is EXTERNAL to this controller (same convention as
+            // RoomsWithInterior) and nothing else clears it — without this the last drag's preview cells
+            // would keep drawing as phantom streets on every subsequent RepositionRooms.
+            if (renderer is SettlementVolumeRenderer v) v.PreviewStreets = null;
             OnGraphMutated?.Invoke();
         }
 

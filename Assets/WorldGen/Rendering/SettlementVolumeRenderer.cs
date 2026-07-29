@@ -218,6 +218,11 @@ namespace WorldGen.Rendering
         /// code path.</summary>
         public HashSet<int> RoomsWithInterior { get; set; } = new HashSet<int>();
 
+        /// <summary>Streets to DRAW but not store — the drag's preview road (sub-project B). The controller
+        /// sets it per sample and clears it on release; the renderer only forwards it to
+        /// SettlementTileGrid.Build.</summary>
+        public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewStreets { get; set; }
+
         // ── State ────────────────────────────────────────────────────────────────────────────────────────
 
         const string TilesLayerName = "TilesLayer";
@@ -434,7 +439,7 @@ namespace WorldGen.Rendering
 
             // SettlementTileGrid.Build takes no roads: streets are STORED cells (SettlementParams.StreetCells)
             // and the grid reads them itself, so `rg` reaches nothing this method draws.
-            grid = SettlementTileGrid.Build(lvl);
+            grid = SettlementTileGrid.Build(lvl, PreviewStreets);
             RebuildCellRooms(lvl);
 
             float cw = CellWidthPx;
