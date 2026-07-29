@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
 using WorldGen.Rendering;
 using WorldGen.Workspace.Data;
@@ -157,23 +158,36 @@ namespace WorldGen.Workspace.Rendering
     /// RECOMPILE GAP (same known class as WorkspaceController.Layout/WorkspaceBuilder's tab
     /// strips/Navigator/QuickOpenPopup — Task 11 owns fixing all of it together): WorkspaceBuilder.Awake's
     /// own recompile guard (`if (transform.childCount > 0) return;`) stops a Play-mode script reload from
-    /// AddComponent-ing a SECOND MapSurfaceHost, so this component itself survives correctly. But nothing
-    /// re-registers it with a (freshly reset) WorkspaceController.Layout afterward, and its `visible`/
-    /// `shownIn` fields are untouched Unity-serialized state that may now disagree with reality — so the map
-    /// can end up stuck hidden (or stuck on the wrong pane rect) after a reload, with no path back until
-    /// Task 11's real fix (rebuilding/re-syncing the whole shell on restore).</summary>
+    /// AddComponent-ing a SECOND MapSurfaceHost, so this component itself survives correctly. But a domain
+    /// reload runs every field initializer again for every surviving MonoBehaviour, and `visible`/`shownIn`
+    /// are plain private fields with no `[SerializeField]` — Unity does NOT preserve those across the
+    /// reload, it resets them to `false`/`null`. The Camera component's own `enabled`/`rect`, by contrast,
+    /// ARE native Unity object state and DO survive. So the two sides desynchronise in the OPPOSITE
+    /// direction from "stale tracking data": the CAMERA correctly remembers whatever it was left at, while
+    /// this script forgets it ever showed anything — nothing re-registers with a freshly-reset
+    /// WorkspaceController.Layout afterward either, so the map can end up stuck at whatever `mapCamera.rect`/
+    /// `.enabled` happened to be at reload time, with no path back until Task 11's real fix (rebuilding/
+    /// re-syncing the whole shell on restore).</summary>
     public class MapSurfaceHost : MonoBehaviour, ISurfaceHost
     {
         Camera mapCamera;
         GameObject[] chrome;
         MapToolbarUI toolbar;
 
+        /// <summary>The full-bleed background WorkspaceBuilder paints behind NavigatorColumn/PaneContainer
+        /// (RootRow's own Image) — see SetBackgroundsEnabled's own doc for why THIS one, specifically, needs
+        /// a thread-through reference rather than being reached via paneContent.parent the way the pane- and
+        /// content-level backgrounds are.</summary>
+        Image rootRowBackground;
+
         RectTransform shownIn;
         bool visible;
 
-        public static MapSurfaceHost Create(GameObject owner, Camera cameraOverride, GameObject[] chromeOverride)
+        public static MapSurfaceHost Create(GameObject owner, Camera cameraOverride, GameObject[] chromeOverride,
+            Image rootRowBackground)
         {
             var host = owner.AddComponent<MapSurfaceHost>();
+            host.rootRowBackground = rootRowBackground;
 
             host.mapCamera = cameraOverride != null
                 ? cameraOverride
@@ -199,13 +213,26 @@ namespace WorldGen.Workspace.Rendering
 
         public SurfaceKind Kind => SurfaceKind.WorldMap;
 
+        /// <summary>Re-parenting a CAMERA is not "set a Transform.parent" the way a uGUI surface would —
+        /// there is nothing to move. What actually has to happen instead: the pane's own opaque backgrounds
+        /// (which sit in the SAME ScreenSpaceOverlay canvas that composites on top of every camera,
+        /// unconditionally, regardless of any UI-internal sibling order) have to stop covering the exact
+        /// screen rect the camera now renders into — see SetBackgroundsEnabled's own doc for exactly which
+        /// three Images that is and why each one is safe to disable. If `paneContent` differs from whatever
+        /// this host was PREVIOUSLY shown in (a pane promotion, or the other pane winning the single-host
+        /// tie-break), the OLD container's backgrounds are restored FIRST — otherwise a container that stops
+        /// hosting the camera would be left with a permanently punched hole the next time something else
+        /// (a Page tab, a future Task-10 surface) tries to render there.</summary>
         public void Show(RectTransform paneContent, string id)
         {
             if (paneContent == null) return;
 
+            if (shownIn != null && shownIn != paneContent) SetBackgroundsEnabled(shownIn, true);
+
             shownIn = paneContent;
             visible = true;
             SetChromeActive(true);
+            SetBackgroundsEnabled(shownIn, false);
 
             // Forces uGUI's deferred layout pass to run NOW rather than at its usual point (just before
             // rendering, after every Update/LateUpdate this frame) — without it, the very first Show() of a
@@ -222,6 +249,10 @@ namespace WorldGen.Workspace.Rendering
         public void Hide()
         {
             visible = false;
+            // Restore BEFORE clearing shownIn — SetBackgroundsEnabled needs the container reference to know
+            // which pane's/content's Images to re-enable. Runs even when shownIn is already null (nothing to
+            // restore, the ternary/null-guards inside just no-op) so Hide stays safe to call unconditionally.
+            if (shownIn != null) SetBackgroundsEnabled(shownIn, true);
             shownIn = null;
             SetChromeActive(false);
             // A camera is not a uGUI element — "hide" means stop it rendering (Camera.enabled = false)
@@ -231,6 +262,41 @@ namespace WorldGen.Workspace.Rendering
             // stays in a consistent state for the next Show(), exactly as MapScreenController already
             // assumes elsewhere.
             if (mapCamera != null) mapCamera.enabled = false;
+        }
+
+        /// <summary>Punches (or restores) the hole a camera-backed surface needs: THREE opaque Images sit in
+        /// the SAME ScreenSpaceOverlay canvas the camera composites underneath, all added unconditionally by
+        /// WorkspaceBuilder with no awareness a camera might occupy their area — RootRow's own full-bleed
+        /// background, `container`'s parent pane's own background (WorkspaceBuilder.BuildPane's `img`), and
+        /// `container`'s own background (BuildPane's `contentImg`, the exact rect the camera renders into).
+        /// ScreenSpaceOverlay composites ON TOP OF every camera unconditionally — UI-internal sibling order
+        /// (which of these three would visually "win" against ANOTHER UI element) is irrelevant to whether
+        /// any ONE of them blocks the camera; each independently paints over it wherever its own rect
+        /// overlaps, so all three must be disabled together, not just the smallest one.
+        ///
+        /// Disabling the PANE-level and RootRow backgrounds this broadly (not just container's own rect) is
+        /// safe rather than a wider hole than intended: TabStripView carries its OWN complete opaque
+        /// background (`ThemeRole.Panel`) independent of the pane root's, so the tab-strip portion of the
+        /// pane stays covered when the pane root's background goes transparent; NavigatorColumn likewise
+        /// carries its own opaque `Panel` background independent of RootRow's. RootRow's own background is
+        /// otherwise a pure safety net for TRANSIENT layout gaps (its own doc comment: "any gap left by a
+        /// shrunk/hidden child") — with `HorizontalLayoutGroup.childControlWidth=true` and zero spacing on
+        /// both RootRow and PaneContainer, every ACTIVE child tiles its neighbours exactly in steady state, so
+        /// nothing here depends on RootRow's background remaining opaque while it is disabled.
+        ///
+        /// `container.GetComponent<Image>()`/`container.parent.GetComponent<Image>()` are looked up fresh
+        /// rather than cached: `container` (a pane's fixed physical ContentArea) never changes IDENTITY across
+        /// Show() calls — only which LOGICAL pane it represents does — so this is cheap and needs no extra
+        /// state to invalidate.</summary>
+        void SetBackgroundsEnabled(RectTransform container, bool enabled)
+        {
+            var contentImg = container.GetComponent<Image>();
+            if (contentImg != null) contentImg.enabled = enabled;
+
+            var paneImg = container.parent != null ? container.parent.GetComponent<Image>() : null;
+            if (paneImg != null) paneImg.enabled = enabled;
+
+            if (rootRowBackground != null) rootRowBackground.enabled = enabled;
         }
 
         /// <summary>Re-derives the camera's viewport rect from the pane's LIVE on-screen rect every frame

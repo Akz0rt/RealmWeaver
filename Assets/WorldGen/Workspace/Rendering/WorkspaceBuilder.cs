@@ -170,7 +170,7 @@ namespace WorldGen.Workspace.Rendering
             // the same null-tolerance NavigatorView/QuickOpenPopup already extend to a null documentController.
             var registry = new SurfaceRegistry();
             if (notesRoot != null) registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
-            registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome));
+            registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
             Controller.SetSurfaceRegistry(registry);
         }
 
