@@ -81,14 +81,14 @@ namespace WorldGen.Generation
             // validator reports, so keep only the component containing the FIRST surviving cell — the piece
             // the DM started drawing. The rest of the stroke is simply not painted, which is the same answer
             // the placement rule gives for the obstacle itself.
-            var kill = ComponentContainingFirst(kept);
+            var keep = ComponentContainingFirst(kept);
 
             var room = new Room
             {
                 Id = floor.NextRoomId++, TypeId = 1,
-                Cells = SettlementFootprint.Encode(kill),
+                Cells = SettlementFootprint.Encode(keep),
             };
-            var rep = SettlementFootprint.Representative(kill);
+            var rep = SettlementFootprint.Representative(keep);
             room.X = SettlementFootprint.CenterOf(rep.i);
             room.Y = SettlementFootprint.CenterOf(rep.j);
             var (w, h) = RoomSizing.Default(1); room.SizeW = w; room.SizeH = h;

@@ -154,6 +154,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutBrushNoInterpolationSelfTests().SelfTestBrushStrokes()),
                 ("MutBrushIgnoresPlaceable", "SettlementBrushOps.PaintBuilding keeps cells another building, a wall or a gate already occupies",
                     () => new WorldGen.MutantTests.MutBrushIgnoresPlaceableSelfTests().SelfTestBrushStrokes()),
+                ("MutBrushNoComponentRepair", "SettlementBrushOps.PaintBuilding skips the connectivity repair — a stroke severed by a dropped obstacle keeps every remaining cell instead of only the component the DM started from",
+                    () => new WorldGen.MutantTests.MutBrushNoComponentRepairSelfTests().SelfTestBrushStrokes()),
 
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),

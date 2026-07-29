@@ -1459,7 +1459,18 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutBrushIgnoresPlaceable' `
   '                // MUTANT: the placement rule is ignored' `
   'MutBrushIgnoresPlaceable.cs'
 
-foreach ($mc in @('MutBrushNoInterpolation', 'MutBrushIgnoresPlaceable')) {
+# MutBrushNoComponentRepair: the connectivity repair skipped entirely — the deduped-but-unrepaired `kept`
+# list is used as the painted footprint verbatim, so a stroke genuinely severed by a dropped obstacle keeps
+# BOTH sides instead of only the component the DM started from. Case 5's L cannot catch this (its remainder
+# is already one connected piece with or without the repair); SelfTestBrushStrokes' case 6 (a bent stroke
+# severed by an obstacle at its bend, every other cell kept at Chebyshev distance 1 from it so none is
+# eaten by the wall ring instead) must fail.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutBrushNoComponentRepair' `
+  '            var keep = ComponentContainingFirst(kept);' `
+  '            var keep = kept;   // MUTANT: connectivity repair skipped, the unrepaired kept list is used as-is' `
+  'MutBrushNoComponentRepair.cs'
+
+foreach ($mc in @('MutBrushNoInterpolation', 'MutBrushIgnoresPlaceable', 'MutBrushNoComponentRepair')) {
   New-SettlementRebind 'SelfTestBrushStrokes' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

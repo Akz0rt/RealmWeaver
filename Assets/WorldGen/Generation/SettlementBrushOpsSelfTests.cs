@@ -150,14 +150,16 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 5. THE PLACEMENT RULE IS OBEYED, and the result is still ONE CONNECTED building.
-            //    The fixture is an L drawn AROUND an obstacle at (3,2): the stroke touches the occupied cell
-            //    and then comes back down the row below it. Dropping (3,2) leaves five cells that are still
-            //    4-connected through (2,1)-(3,1)-(4,1), so the whole L survives.
-            //    THE SHAPE IS CHOSEN TO SEPARATE TWO WRONG IMPLEMENTATIONS:
+            // 5. THE PLACEMENT RULE IS OBEYED. The fixture is an L drawn AROUND an obstacle at (3,2): the
+            //    stroke touches the occupied cell and then comes back down the row below it. Dropping (3,2)
+            //    leaves five cells that are ALREADY one connected piece, chained through (2,1)-(3,1)-(4,1),
+            //    BEFORE ComponentContainingFirst ever runs — so this fixture does NOT exercise the
+            //    connectivity repair itself (a version that skipped it entirely would produce the identical
+            //    5-cell result here; see case 6 for the fixture that actually severs the stroke). What THIS
+            //    fixture separates is the placement rule from a second wrong shortcut:
             //      - "keep everything, ignore the rule"          -> 6 cells, and (3,2) present;
             //      - "stop the stroke at the first occupied cell" -> 1 cell;
-            //      - correct: drop the occupied cell, keep the component the DM started from -> 5 cells.
+            //      - correct: drop the occupied cell, keep the whole (already-connected) remainder -> 5 cells.
             //    A straight three-cell stroke could not tell the last two apart.
             {
                 var floor = Floor(null, (3, 2));
@@ -189,7 +191,52 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 6. NOTHING PLACEABLE → null AND an untouched floor.
+            // 6. THE CONNECTIVITY REPAIR ACTUALLY FIRES. A building at (1,1) sits in the MIDDLE of a bent
+            //    stroke (0,0)-(0,1)-(1,1)-(2,1)-(2,2), so dropping the occupied cell genuinely SEVERS it into
+            //    two components: {(0,0),(0,1)} and {(2,1),(2,2)}. EVERY non-obstacle cell here is one of the
+            //    obstacle's own 8 neighbours (Chebyshev distance 1), which the settlement's wall ring always
+            //    leaves as plain Void — a straight stroke reaching Chebyshev distance 2 from a LONE building
+            //    would instead run into the wall ring itself (BuildWallRing dilates by CourtyardCells + 1 = 2
+            //    cells, and the ring sits exactly at that outer edge), which drops those cells for an
+            //    unrelated reason and defeats the fixture; keeping every cell at distance 1 avoids that trap.
+            //    Without the repair — the kept cells used as-is — the painted footprint would be all four
+            //    remaining cells, split across the gap and NOT 4-connected. WITH the repair, only the
+            //    component containing the first cell (0,0) — the piece the DM started drawing — survives:
+            //    2 cells, connected, and never (2,1) or (2,2). Case 5's L cannot tell this apart from "no
+            //    repair at all" (its remainder is already one piece); this fixture is the one that can.
+            {
+                var floor = Floor(null, (1, 1));
+                var cells = Cells((0, 0), (0, 1), (1, 1), (2, 1), (2, 2));
+                var room = SettlementBrushOps.PaintBuilding(floor, cells);
+                if (room == null) { Debug.LogError("SelfTestBrushStrokes: PaintBuilding returned null with four free cells either side of a severing obstacle"); ok = false; }
+                else
+                {
+                    var fp = SettlementTileGrid.FootprintOf(room);
+                    foreach (var c in fp)
+                        if (c == (2, 1) || c == (2, 2))
+                        {
+                            Debug.LogError($"SelfTestBrushStrokes: the painted building claimed cell {c}, on "
+                                         + "the far side of the obstacle that severed the stroke — only the "
+                                         + "component containing the first cell (0,0) should survive");
+                            ok = false;
+                        }
+                    if (fp.Count != 2)
+                    {
+                        Debug.LogError($"SelfTestBrushStrokes: painted building has {fp.Count} cells, expected 2 "
+                                     + "(the obstacle at (1,1) severs the stroke; only {(0,0),(0,1)} — the piece "
+                                     + "the DM started from — should survive)");
+                        ok = false;
+                    }
+                    if (!SettlementFootprint.IsConnected4(fp))
+                    {
+                        Debug.LogError("SelfTestBrushStrokes: the painted building is not 4-connected — the "
+                                     + "severed far side was not dropped");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 7. NOTHING PLACEABLE → null AND an untouched floor.
             {
                 var floor = Floor(null, (3, 2));
                 int before = floor.Rooms.Count;
@@ -203,7 +250,7 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 7. PAINT A ROAD, and adding the same cell twice adds it once.
+            // 8. PAINT A ROAD, and adding the same cell twice adds it once.
             {
                 var floor = Floor(Cells((0, 0)));
                 int added = SettlementBrushOps.PaintRoad(floor, Cells((1, 0), (2, 0), (2, 0)));
