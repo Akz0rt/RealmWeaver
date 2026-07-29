@@ -26,11 +26,12 @@ static class Program
     // output order is stable between runs.
     static int SelfTests()
     {
-        // Every *SelfTests type in the notes namespace, not a hand-listed set — adding a suite must never
-        // require remembering to register it here.
+        // Every *SelfTests type in the notes or workspace-shell namespace, not a hand-listed set — adding a
+        // suite must never require remembering to register it here.
+        var suiteNamespaces = new HashSet<string> { "WorldGen.Notes.Data", "WorldGen.Workspace.Data" };
         var suites = typeof(WorldGen.Notes.Data.NotesDocOps).Assembly
             .GetTypes()
-            .Where(t => t.Namespace == "WorldGen.Notes.Data"
+            .Where(t => t.Namespace != null && suiteNamespaces.Contains(t.Namespace)
                         && t.Name.EndsWith("SelfTests", StringComparison.Ordinal)
                         && !t.IsAbstract)
             .OrderBy(t => t.Name, StringComparer.Ordinal)

@@ -9,26 +9,36 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = (Resolve-Path (Join-Path $here '..\..')).Path
-$src  = Join-Path $repo 'Assets\WorldGen\Notes\Data'
 $gen  = Join-Path $here 'gen'
 
 if (Test-Path $gen) { Remove-Item -Recurse -Force $gen }
 New-Item -ItemType Directory -Path $gen | Out-Null
 
-$files = @(
-  'NotesData.cs',
-  'NotesDocOps.cs',
-  'NotesDocOpsSelfTests.cs',
-  'DocKeyboardOps.cs',
-  'DocKeyboardOpsSelfTests.cs'
+# Each source directory paired with the files pulled from it. Two directories rather than one because the
+# workspace-shell layer (WorldGen.Workspace.Data) lives beside, not inside, the notes layer.
+$sources = @(
+  @{ Dir = (Join-Path $repo 'Assets\WorldGen\Notes\Data'); Files = @(
+      'NotesData.cs',
+      'NotesDocOps.cs',
+      'NotesDocOpsSelfTests.cs',
+      'DocKeyboardOps.cs',
+      'DocKeyboardOpsSelfTests.cs'
+    ) },
+  @{ Dir = (Join-Path $repo 'Assets\WorldGen\Workspace\Data'); Files = @(
+      'WorkspaceLayout.cs',
+      'WorkspaceOps.cs',
+      'WorkspaceOpsSelfTests.cs'
+    ) }
 )
 
 $copied = 0
 $skipped = @()
-foreach ($f in $files) {
-  $from = Join-Path $src $f
-  if (Test-Path $from) { Copy-Item $from (Join-Path $gen $f); $copied++ }
-  else { $skipped += $f }
+foreach ($source in $sources) {
+  foreach ($f in $source.Files) {
+    $from = Join-Path $source.Dir $f
+    if (Test-Path $from) { Copy-Item $from (Join-Path $gen $f); $copied++ }
+    else { $skipped += $f }
+  }
 }
 
 Write-Host "synced $copied source(s) into gen/"
