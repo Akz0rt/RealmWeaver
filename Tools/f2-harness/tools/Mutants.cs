@@ -159,6 +159,8 @@ namespace WorldGen.Generation
 
                 ("MutUndoNoRestore", "SettlementUndo.TryUndo pops the stack and reports success without restoring the floor",
                     () => new WorldGen.MutantTests.MutUndoNoRestoreSelfTests().SelfTestSettlementUndo()),
+                ("MutUndoDiscardIsNoop", "SettlementUndo.Discard leaves the snapshot on the stack, so a dab that painted nothing still costs the DM one Ctrl+Z",
+                    () => new WorldGen.MutantTests.MutUndoDiscardIsNoopSelfTests().SelfTestSettlementUndo()),
 
                 ("MutPlaceRefusesWall", "SettlementVolumeRendererPlacement.IsPlaceable reverts to the retired three-term rule (Wall/Gate refuse a stroke, so drawing can no longer cross the town's own derived wall)",
                     () => new WorldGen.MutantTests.MutPlaceRefusesWallSelfTests().SelfTestBrushStrokes()),

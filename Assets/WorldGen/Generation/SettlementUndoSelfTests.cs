@@ -197,6 +197,37 @@ namespace WorldGen.Rendering
                 }
             }
 
+            // 6. DISCARD: a snapshot pushed for a gesture that then changed nothing must LEAVE, not be undone.
+            //    A dab on an occupied cell paints nothing, and the alternative — pushing, painting nothing, and
+            //    calling TryUndo — RESTORES, which would silently paper over a real failure to paint instead of
+            //    discarding the intent to.
+            {
+                var floor = Floor(null, (1, 1));
+                var u = new SettlementUndo();
+                u.PushSnapshot(floor);
+                int depth = u.Count;
+                floor.Rooms.Clear();               // a mutation the discard must NOT walk back
+                u.Discard();
+                if (u.Count != depth - 1)
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: Discard left {u.Count} snapshots, expected "
+                                 + $"{depth - 1}");
+                    ok = false;
+                }
+                if (floor.Rooms.Count != 0)
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: Discard RESTORED the floor ({floor.Rooms.Count} "
+                                 + "rooms) — it must drop the snapshot, not apply it");
+                    ok = false;
+                }
+                if (u.TryUndo(floor))
+                {
+                    Debug.LogError("SelfTestSettlementUndo: after Discard, TryUndo still rewound something — "
+                                 + "the discarded snapshot is still on the stack");
+                    ok = false;
+                }
+            }
+
             if (ok) Debug.Log("Self-Test Settlement Undo: PASS");
         }
 

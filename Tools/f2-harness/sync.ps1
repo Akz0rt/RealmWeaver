@@ -1514,6 +1514,24 @@ New-SettlementRebind 'SelfTestSettlementUndo' 'MutUndoNoRestore' `
   @('\bSettlementUndo\b') `
   @('WorldGen.Generation.MutUndoNoRestore.SettlementUndo')
 
+# MutUndoDiscardIsNoop (task 3b): Discard leaves the snapshot on the stack, so a dab that painted nothing
+# still costs the DM one Ctrl+Z. SelfTestSettlementUndo's Discard case (case 6) must fail on both the Count
+# claim (the stack still holds the pushed entry) and the TryUndo claim (that entry is still there to pop and
+# restore) — see the case's own comment in SettlementUndoSelfTests.cs.
+New-SettlementMutant 'SettlementUndo.cs' 'MutUndoDiscardIsNoop' `
+  '            if (stack.Count > 0) stack.RemoveAt(stack.Count - 1);' `
+  '            // MUTANT: Discard keeps the snapshot' `
+  'MutUndoDiscardIsNoop.cs'
+
+# Same single bare-word pattern as MutUndoNoRestore's rebind just above, for the identical reason: this is a
+# DISTINCT mutant class, so it needs its own rebind call (New-SettlementRebind writes one file keyed on the
+# mutant class name — a second call under the SAME class name would silently overwrite the first), but the
+# pattern itself does not change: SelfTestSettlementUndo still names SettlementUndo both ways
+# ("new SettlementUndo()" and "SettlementUndo.MaxDepth"), the same identifier either way.
+New-SettlementRebind 'SelfTestSettlementUndo' 'MutUndoDiscardIsNoop' `
+  @('\bSettlementUndo\b') `
+  @('WorldGen.Generation.MutUndoDiscardIsNoop.SettlementUndo')
+
 # ---- CHECKPOINT-1 MUTANTS (settlement-brushes, task 3a). --------------------------------------------------
 
 # MutPlaceRefusesWall: the retired three-term rule is back, so a stroke stops at the town's own derived wall.

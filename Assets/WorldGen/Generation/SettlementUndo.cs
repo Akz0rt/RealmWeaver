@@ -108,5 +108,14 @@ namespace WorldGen.Generation
             floor.SettlementParams.StreetCells = e.Streets;
             return true;
         }
+
+        /// <summary>Drop the newest snapshot WITHOUT applying it — for a gesture that pushed one and then
+        /// turned out to change nothing (a dab on an occupied cell). Never TryUndo for this: TryUndo
+        /// RESTORES, so a paint that silently failed would be indistinguishable from one that never
+        /// happened, and the stack would look right while hiding a real defect. Empty stack: no-op.</summary>
+        public void Discard()
+        {
+            if (stack.Count > 0) stack.RemoveAt(stack.Count - 1);
+        }
     }
 }
