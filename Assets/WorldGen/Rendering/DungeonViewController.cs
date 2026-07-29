@@ -59,6 +59,16 @@ namespace WorldGen.Rendering
         /// <summary>True while «+ Здание» is armed and the next click on a free tile will create a building
         /// there (Task 8b). Transient UI state — never stored, never serialized, never saved.</summary>
         public bool PlacementArmed { get; private set; }
+        /// <summary>Which brush is armed, if any (DM findings ·1, ·7, ·8). A SIBLING of PlacementArmed rather
+        /// than a replacement: arming either disarms the other, and they never coexist. Folding them into one
+        /// mode would be tidier and would touch far more of a layer the offline harness cannot compile.</summary>
+        public enum SettlementBrush { None, Building, Road, Erase }
+        public SettlementBrush ActiveBrush { get; private set; } = SettlementBrush.None;
+        public System.Action<SettlementBrush> OnActiveBrushChanged;
+
+        readonly SettlementUndo undo = new SettlementUndo();
+        List<(int i, int j)> strokeCells;    // non-null only between OnBeginDrag and OnEndDrag of a brush stroke
+        (int i, int j) strokeLastCell;
         /// <summary>True between BeginCascade and OnCascadeSettled — i.e. while the rooms are animating and
         /// their positions are deliberately NOT the settled ones. A host that reads room geometry (the shaft
         /// check is the only such rule today) must wait for OnCascadeSettled instead of reading it now.</summary>
@@ -488,6 +498,9 @@ namespace WorldGen.Rendering
                 ? dungeon.Floors[levelIndex] : null;
             bool sameBinding = this.dungeon == dungeon && this.levelIndex == levelIndex && newLevel == boundLevel;
             this.dungeon = dungeon;
+            // An undo stack that survived a bind to a different interior would let Ctrl+Z restore rooms into
+            // the wrong town (DM findings ·1, ·7, ·8). Verified by grep this is the ONLY writer of `dungeon`.
+            undo.Clear();
             this.levelIndex = levelIndex;
             this.font = font;
             boundLevel = newLevel;
@@ -989,6 +1002,7 @@ namespace WorldGen.Rendering
         public void ArmPlacement()
         {
             if (PlacementArmed || !SupportsClickPlacement) return;
+            SetBrush(SettlementBrush.None);
             PlacementArmed = true;
             hoverValid = false;   // no cell sampled yet — a click before the first Update places nothing
             OnPlacementArmedChanged?.Invoke(true);
@@ -1009,6 +1023,23 @@ namespace WorldGen.Rendering
         {
             if (PlacementArmed) DisarmPlacement();
             else ArmPlacement();
+        }
+
+        public void ToggleBrush(SettlementBrush brush)
+        {
+            if (brush == SettlementBrush.None) return;
+            if (ActiveBrush == brush) { SetBrush(SettlementBrush.None); return; }
+            if (PlacementArmed) DisarmPlacement();
+            SetBrush(brush);
+        }
+
+        void SetBrush(SettlementBrush brush)
+        {
+            if (ActiveBrush == brush) return;
+            ActiveBrush = brush;
+            hoverValid = false;
+            if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
+            OnActiveBrushChanged?.Invoke(brush);
         }
 
         /// <summary>Leaving the screen cancels placement. ScreenSwitcher deactivates the whole
@@ -1032,9 +1063,29 @@ namespace WorldGen.Rendering
         /// entirely.</summary>
         void UpdatePlacement()
         {
-            if (!PlacementArmed) return;
+            if (!PlacementArmed && ActiveBrush == SettlementBrush.None) return;
+
+            // Brush Esc MUST be checked before the placement Esc below: that check is not itself gated on
+            // PlacementArmed, so while only a brush is armed (PlacementArmed false) it would otherwise fire
+            // first, no-op through DisarmPlacement, and return — leaving the brush armed with Esc swallowed.
+            if (ActiveBrush != SettlementBrush.None && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) { SetBrush(SettlementBrush.None); return; }
 
             if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) { DisarmPlacement(); return; }
+
+            // Ctrl+Z (DM findings ·1, ·7, ·8), following BrushToolController.HandleUndo exactly — Input System
+            // only, never legacy UnityEngine.Input, which compiles but throws here. Gated by nothing of its
+            // own, same as HandleUndo itself: this whole method already returned above unless PlacementArmed
+            // or a brush is armed, exactly mirroring BrushToolController.Update's own `if (!brushModeActive)
+            // return;` gating its call to HandleUndo.
+            if (Keyboard.current != null)
+            {
+                bool ctrl = Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed;
+                if (ctrl && Keyboard.current.zKey.wasPressedThisFrame)
+                {
+                    var lvlU = BoundLevel;
+                    if (lvlU != null && undo.TryUndo(lvlU)) { Refresh(); OnGraphMutated?.Invoke(); }
+                }
+            }
 
             // The binding can change under an armed mode (a rebind to a different interior, a renderer swap).
             // One guard covers every such case, and disarming is the honest answer: the cell lattice the mode
@@ -1327,6 +1378,24 @@ namespace WorldGen.Rendering
             // Building UPPER floors are GENERATE-ONLY (spec stairwell stage B): rooms can't be dragged — the
             // floor is (re)generated around the column. Leaving draggingRoomId at 0 makes OnDrag a no-op.
             if (dungeon != null && dungeon.Kind == InteriorKind.Building && levelIndex > 0) return;
+
+            // A BRUSH CLAIMS THE GESTURE. While one is armed a drag paints; it never moves a building. The
+            // existing `if (PlacementArmed) return;` in OnDrag is the precedent for an armed mode owning the
+            // pointer, and this is the same rule for a sibling mode.
+            if (ActiveBrush != SettlementBrush.None)
+            {
+                var lvlB = BoundLevel;
+                var volB = renderer as SettlementVolumeRenderer;
+                if (lvlB?.SettlementParams == null || volB == null
+                    || !TryPointerToAreaLocal(data, out var localB) || !volB.TryAreaToCell(localB, out int bi, out int bj))
+                    return;
+                undo.PushSnapshot(lvlB);                 // BEFORE anything mutates
+                strokeCells = new List<(int i, int j)>();
+                strokeLastCell = (bi, bj);
+                SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, strokeLastCell);
+                return;
+            }
+
             if (!TryPointerToAreaLocal(data, out var local)) return;
             draggingRoomId = renderer.HitRoomId(local, lvl);
             ArmFootprintDrag(lvl, local);
@@ -1435,6 +1504,18 @@ namespace WorldGen.Rendering
 
         public void OnDrag(PointerEventData data)
         {
+            if (ActiveBrush != SettlementBrush.None)
+            {
+                if (strokeCells == null) return;
+                var volD = renderer as SettlementVolumeRenderer;
+                if (volD == null || !TryPointerToAreaLocal(data, out var localD)
+                    || !volD.TryAreaToCell(localD, out int di2, out int dj2)) return;
+                if ((di2, dj2) == strokeLastCell) return;
+                SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, (di2, dj2));
+                strokeLastCell = (di2, dj2);
+                return;
+            }
+
             if (draggingRoomId == 0) return;
             // Second half of the "armed = no dragging" rule above. OnBeginDrag is the LIVE gate (nothing can
             // arm placement mid-gesture today — TogglePlacement is only reachable from the toolbar button);
@@ -1494,6 +1575,24 @@ namespace WorldGen.Rendering
 
         public void OnEndDrag(PointerEventData data)
         {
+            // Placed BEFORE the draggingRoomId guard below, deliberately: a brush stroke never sets
+            // draggingRoomId (OnBeginDrag's brush branch returns before that assignment), so it stays 0 for
+            // the whole gesture. Reaching this after the guard would let it swallow every brush stroke's
+            // commit, leaking strokeCells and stranding the snapshot OnBeginDrag already pushed.
+            if (ActiveBrush != SettlementBrush.None)
+            {
+                var lvlE = BoundLevel;
+                if (strokeCells != null && strokeCells.Count > 0 && lvlE != null)
+                {
+                    if (ActiveBrush == SettlementBrush.Building) SettlementBrushOps.PaintBuilding(lvlE, strokeCells);
+                    CommitSettlementStreets();
+                    Refresh();
+                    OnGraphMutated?.Invoke();
+                }
+                strokeCells = null;
+                return;
+            }
+
             if (draggingRoomId == 0) return;
             // THE DROP'S VERDICT — the same expression the live drag evaluates, on the release point (Task 7).
             // Not decoration: OnEndDrag carries its own pointer position, and Unity does not guarantee that an

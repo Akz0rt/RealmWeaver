@@ -73,6 +73,10 @@ namespace WorldGen.Rendering
         Text addBuildingBtnLabel;
         Text placementHintLabel;
         string addBuildingBtnBaseLabel = "";   // «+ Здание» — the profile term, restored when the mode disarms
+        // «Кисть: здание» (Task 3 of the brush arc) — settlements only, same re-capture-on-every-RefreshToolbar
+        // convention as the three fields above.
+        Image brushBuildingBtnImg;
+        Text brushBuildingBtnLabel;
         int upperRoomCount = DefaultRooms;   // desired room count for the generate-only «Перегенерировать»
         int currentUpperCap = DefaultRooms;  // probed packable max for the current upper floor (set in RefreshToolbar)
         int regenCounter = 0;   // DoRegenerateSettlement: bumped every press so a repeated press on the SAME
@@ -454,6 +458,7 @@ namespace WorldGen.Rendering
             for (int i = toolbarBar.childCount - 1; i >= 0; i--) Destroy(toolbarBar.GetChild(i).gameObject);
             linkToggleImg = null; upperCountLabel = null; regenMsgLabel = null;
             addBuildingBtnImg = null; addBuildingBtnLabel = null; placementHintLabel = null;
+            brushBuildingBtnImg = null; brushBuildingBtnLabel = null;
             viewController?.SetLinkMode(false);   // link mode is per-floor — a floor switch exits it
             // Placement mode is per-binding for the same reason, and disarming here is what makes the freshly
             // built button below correct BY CONSTRUCTION: it is created in its unarmed look, and the mode it
@@ -510,6 +515,12 @@ namespace WorldGen.Rendering
                     // the immediate AddRoomAtCenter below, unchanged.
                     addBuildingBtnImg = AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev,
                                                          () => viewController?.TogglePlacement(), out addBuildingBtnLabel);
+                    // Task 3 (settlement brushes): a drag-to-paint sibling of click-to-place «+ Здание». Captured
+                    // via the out-overload, not the plain one, because RefreshBrushButton needs the same
+                    // Image+Text handles RefreshPlacementButton uses for «+ Здание»'s own armed/unarmed repaint.
+                    brushBuildingBtnImg = AddToolbarButton(toolbarBar, "Кисть: здание", 130f, ThemeRole.Elev,
+                                                            () => viewController?.ToggleBrush(DungeonViewController.SettlementBrush.Building),
+                                                            out brushBuildingBtnLabel);
                 }
                 else
                     AddToolbarButton(toolbarBar, addBuildingBtnBaseLabel, 110f, ThemeRole.Elev, () => viewController?.AddRoomAtCenter());
@@ -558,6 +569,21 @@ namespace WorldGen.Rendering
             // ground, not занято. «нельзя» covers both truthfully without getting longer.
             if (placementHintLabel != null)
                 placementHintLabel.text = armed ? "Кликните по тайлу: зелёный — свободно, красный — нельзя" : "";
+        }
+
+        /// <summary>Repaint «Кисть: здание» for the armed/unarmed state — wired to
+        /// DungeonViewController.OnActiveBrushChanged, same shape as RefreshPlacementButton above for «+
+        /// Здание». No-ops on a dungeon/building toolbar, where these fields are null.</summary>
+        void RefreshBrushButton(DungeonViewController.SettlementBrush brush)
+        {
+            bool armed = brush == DungeonViewController.SettlementBrush.Building;
+            if (brushBuildingBtnImg != null)
+                ThemeService.Tag(brushBuildingBtnImg, armed ? ThemeRole.Accent : ThemeRole.Elev);
+            if (brushBuildingBtnLabel != null)
+            {
+                brushBuildingBtnLabel.text = armed ? "Отмена (Esc)" : "Кисть: здание";
+                ThemeService.Tag(brushBuildingBtnLabel, armed ? ThemeRole.AccentInk : ThemeRole.Txt);
+            }
         }
 
         /// <summary>«Удалить» handler: DungeonViewController.DeleteSelected removes the room with no
@@ -979,6 +1005,9 @@ namespace WorldGen.Rendering
             // time) and not inside RefreshToolbar, because the mode can end for reasons the toolbar never sees
             // — Esc, a successful placement, or the screen closing.
             viewController.OnPlacementArmedChanged = RefreshPlacementButton;
+            // Task 3: the ONE place «Кисть: здание» learns the brush changed — same rationale as the wiring
+            // just above (Esc, a toggle-off, or a rebind can all end the mode without the toolbar seeing it).
+            viewController.OnActiveBrushChanged = RefreshBrushButton;
 
             var flatGO = new GameObject("FlatRenderer", typeof(RectTransform));
             flatGO.transform.SetParent(viewGO.transform, false);
