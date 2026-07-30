@@ -1190,6 +1190,28 @@ New-SettlementRebind 'SelfTestSizeCalibration' 'MutSizingGuaranteeTooHigh' `
   @('int guarantee = SettlementSizing\.GuaranteedMinBuildings\(size\);') `
   @('int guarantee = WorldGen.Generation.MutSizingGuaranteeTooHigh.SettlementSizing.GuaranteedMinBuildings((WorldGen.Generation.MutSizingGuaranteeTooHigh.SettlementSize)(int)size);')
 
+# MutSizingCapIgnoresActual (Task 6, settlement brushes): ActiveBuildingsCap reverts to the OLD ceiling
+# behaviour it replaced — it returns GuaranteedMinBuildings(size) regardless of buildingCount, ignoring how
+# many buildings the town actually has. Caught by SelfTestActiveBuildingsCap's `floor + 25` half: with more
+# buildings than the table promises, the real rule must return the actual count (a floor, never a ceiling)
+# while the mutant still clamps down to the table's number. The `buildingCount == 0` half does NOT catch this
+# mutant — Max(floor, 0) == floor == GuaranteedMinBuildings(size) either way, so a town with fewer buildings
+# than the table promises looks identical under both rules; only the above-the-table case tells them apart.
+# Same two-pattern shape as MutSizingLargeOverflowsField's rebind of SelfTestSizing just above:
+# SelfTestActiveBuildingsCap's only cross-references are its own `new[] { SettlementSize.Small, ... }` array
+# and SettlementSizing.* calls, so rebinding both the bare enum and the static class within just this method
+# is safe — nothing else in the method needs the REAL SettlementSize.
+New-SettlementMutant 'SettlementSizing.cs' 'MutSizingCapIgnoresActual' `
+  'public static int ActiveBuildingsCap(SettlementSize size, int buildingCount)
+            => System.Math.Max(GuaranteedMinBuildings(size), buildingCount);' `
+  'public static int ActiveBuildingsCap(SettlementSize size, int buildingCount)
+            => GuaranteedMinBuildings(size);   // MUTANT: back to a CEILING, ignoring how many buildings the town actually has' `
+  'MutSizingCapIgnoresActual.cs'
+
+New-SettlementRebind 'SelfTestActiveBuildingsCap' 'MutSizingCapIgnoresActual' `
+  @('SettlementSizing\.', '\bSettlementSize\b') `
+  @('WorldGen.Generation.MutSizingCapIgnoresActual.SettlementSizing.', 'WorldGen.Generation.MutSizingCapIgnoresActual.SettlementSize')
+
 # SettlementMigration.cs defines ONE class and no data types (InteriorData/InteriorFloor/Room live in the
 # unmutated DungeonData.cs, SettlementFootprint in its own unmutated file — both resolve OUTWARD), so the
 # single-class New-SettlementMutant / rebind-only-"SettlementMigration." shape is sound here, exactly like

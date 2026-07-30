@@ -121,6 +121,16 @@ namespace WorldGen.Generation
             }
         }
 
+        /// <summary>The count the inspector's «макс. N» actually enforces (settlement-brushes Task 6): the
+        /// table's promise (GuaranteedMinBuildings) is a FLOOR, never a ceiling. Before a brush existed the
+        /// only way to add a building was one click at a time, so a town could never in practice run far past
+        /// the guarantee and the table's number was never visibly wrong — a brush makes it obvious, letting a
+        /// DM paint arbitrarily many buildings into a town. `buildingCount` must be the ACHIEVED count read
+        /// off the floor's rooms (DungeonInspectorPanel.BuildingCount — TypeId == 1 only), never
+        /// TargetBuildings or ActiveBuildings itself.</summary>
+        public static int ActiveBuildingsCap(SettlementSize size, int buildingCount)
+            => System.Math.Max(GuaranteedMinBuildings(size), buildingCount);
+
         /// <summary>Bucket a PRE-v11 save's stored TargetBuildings into a size class — the v11 load migration's
         /// only use of the retired knob. The boundaries are inclusive on the low side, and they are chosen to
         /// put the two counts this tool ever SHIPPED as defaults (10 for a village, 20 for a city — see

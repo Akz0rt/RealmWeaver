@@ -1881,6 +1881,33 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Gate Handles: PASS");
         }
 
+        /// <summary>The inspector's «макс. N» is a FLOOR, not a ceiling: a town the DM has painted more houses
+        /// into can make all of them active. Before sub-project C the only way to add a building was one click
+        /// at a time, so the table's number was never visibly wrong; a brush makes it obvious.</summary>
+        [ContextMenu("Self-Test: Active Buildings Cap")]
+        public void SelfTestActiveBuildingsCap()
+        {
+            bool ok = true;
+            foreach (var size in new[] { SettlementSize.Small, SettlementSize.Medium, SettlementSize.Large })
+            {
+                int floor = SettlementSizing.GuaranteedMinBuildings(size);
+                if (SettlementSizing.ActiveBuildingsCap(size, 0) != floor)
+                {
+                    Debug.LogError($"SelfTestActiveBuildingsCap: {size} with no buildings capped at "
+                                 + $"{SettlementSizing.ActiveBuildingsCap(size, 0)}, expected the table's {floor}");
+                    ok = false;
+                }
+                if (SettlementSizing.ActiveBuildingsCap(size, floor + 25) != floor + 25)
+                {
+                    Debug.LogError($"SelfTestActiveBuildingsCap: {size} with {floor + 25} buildings capped at "
+                                 + $"{SettlementSizing.ActiveBuildingsCap(size, floor + 25)}, expected {floor + 25} "
+                                 + "— the promise is a floor, not a ceiling");
+                    ok = false;
+                }
+            }
+            if (ok) Debug.Log("Self-Test Active Buildings Cap: PASS");
+        }
+
         [ContextMenu("Self-Test: Settlement Sentinel")]
         public void SelfTestSettlementSentinel()
         {

@@ -212,6 +212,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutSizingLargeOverflowsFieldSelfTests().SelfTestSizing()),
                 ("MutSizingGuaranteeTooHigh", "SettlementSizing.GuaranteedMinBuildings returns TargetBuildings for every size (a guarantee equal to the target — precisely the lie the pre-Task-D provisional table used to tell, which the 200-seed calibration sweep exists to catch)",
                     () => new WorldGen.MutantTests.MutSizingGuaranteeTooHighSelfTests().SelfTestSizeCalibration()),
+                ("MutSizingCapIgnoresActual", "SettlementSizing.ActiveBuildingsCap reverts to the old ceiling (returns GuaranteedMinBuildings(size) regardless of buildingCount) — Task 6, settlement brushes",
+                    () => new WorldGen.MutantTests.MutSizingCapIgnoresActualSelfTests().SelfTestActiveBuildingsCap()),
                 ("MutFillNoMinimumRepair", "SettlementBlocks.EnforceMinimumCount splits nothing (a town can come in under the building guarantee the inspector shows)",
                     () => new WorldGen.MutantTests.MutFillNoMinimumRepairSelfTests().SelfTestSizeCalibration()),
                 ("MutMigrationNoRecentre", "SettlementMigration.RecentreFloor returns immediately (a pre-v11 town is left in the corner the finer lattice put it in)",

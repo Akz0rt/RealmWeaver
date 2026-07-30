@@ -45,6 +45,21 @@ namespace WorldGen.Rendering
         bool committingActiveBuildings;   // re-entrancy latch for CommitActiveBuildingsTyped; plain runtime
                                            // flag, never [SerializeField] — must not be scene-restored
 
+        // Task 6 (settlement brushes): the floor's ACHIEVED building count, cached from the last
+        // BuildSettlementCompositionSection so CommitActiveBuildingsTyped/SetSettlementSize/StepActiveBuildings
+        // below — which take only `sp`, no floor — can compute SettlementSizing.ActiveBuildingsCap without a
+        // fresh lookup chain to the dungeon. INTRODUCES NO NEW STALENESS CLASS: those three methods are only
+        // ever invoked from a closure built inside BuildSettlementCompositionSection, capturing the SAME `sp`
+        // (== lvl.SettlementParams) that this field is set alongside, in that same call. So `lastBuildingCount`
+        // and the `sp` a handler mutates can only ever be stale TOGETHER — and `sp` staying current between a
+        // Rebuild() and the next click is a contract this panel already relied on before Task 6 (every button
+        // here closes over state from its own last Rebuild()). A brush stroke that changes the actual count
+        // fires DungeonViewController.OnGraphMutated -> DungeonEditorScreen.RevalidateAndRefresh ->
+        // inspectorPanel.ShowRoom(selectedRoomId) -> Rebuild() -> BuildSettlementCompositionSection (when
+        // nothing is selected, which is the only state that shows this section) before the DM can click again,
+        // so both the count and the closures over `sp` are refreshed together, every time.
+        int lastBuildingCount;
+
         InteriorFloor CurrentLevel
         {
             get
@@ -510,6 +525,16 @@ namespace WorldGen.Rendering
         // out of the UI pre-Task-D only because it was unproven (a Large town then achieved 61..94
         // against a declared minimum of 90); that reason is gone now that a Large town measures
         // 98..151, median 120, against a declared guarantee of 88.
+        /// <summary>How many BUILDINGS this floor has. TypeId 1 only: gates (TypeId 0) are rooms too and must
+        /// not inflate the active-buildings cap.</summary>
+        static int BuildingCount(InteriorFloor lvl)
+        {
+            if (lvl == null) return 0;
+            int n = 0;
+            foreach (var r in lvl.Rooms) if (r != null && r.TypeId == 1) n++;
+            return n;
+        }
+
         void BuildSettlementCompositionSection(Transform parent, InteriorFloor lvl)
         {
             if (lvl.SettlementParams == null)
@@ -524,7 +549,14 @@ namespace WorldGen.Rendering
             // (Rebuild(), not a user action) and deliberately does NOT call OnChanged — same
             // "OnChanged only fires after a commit" contract the rest of this panel follows, and
             // there is no new commit here, just a value coming back into its own declared range.
-            int guarantee = SettlementSizing.GuaranteedMinBuildings(sp.Size);
+            //
+            // Task 6 (settlement brushes): the cap is now Max(table, actual) — a FLOOR, never a ceiling
+            // (SettlementSizing.ActiveBuildingsCap's own doc). lastBuildingCount is refreshed here, before
+            // any control below is (re)built, so CommitActiveBuildingsTyped/SetSettlementSize/
+            // StepActiveBuildings — which have no floor in scope — always read this stroke's real count.
+            int buildingCount = BuildingCount(lvl);
+            lastBuildingCount = buildingCount;
+            int guarantee = SettlementSizing.ActiveBuildingsCap(sp.Size, buildingCount);
             if (sp.ActiveBuildings > guarantee) sp.ActiveBuildings = guarantee;
 
             var sec = AddSection(parent, "SettlementSection");
@@ -553,11 +585,11 @@ namespace WorldGen.Rendering
 
             // The ACHIEVED count for the town actually open right now — a readout, not an input, so it
             // is counted straight off lvl.Rooms rather than trusted from ActiveBuildings/TargetBuildings
-            // (both of those are generation INPUTS, not what generation produced). No LINQ in this file.
-            int achieved = 0;
-            foreach (var r in lvl.Rooms)
-                if (r.TypeId == 1) achieved++;
-            AddInfoText(sec.transform, $"в городе {achieved} зданий", 10, ThemeRole.Mut, FontStyle.Italic);
+            // (both of those are generation INPUTS, not what generation produced). Task 6: this is the exact
+            // same count BuildingCount(lvl) computed above (nothing between the two touches lvl.Rooms), so it
+            // now reuses that local instead of a second hand-rolled loop — the brief's own reason for adding
+            // BuildingCount ("so the sites cannot drift apart") applies here too.
+            AddInfoText(sec.transform, $"в городе {buildingCount} зданий", 10, ThemeRole.Mut, FontStyle.Italic);
         }
 
         // A labelled ◄ [typed field] ► row for the active-buildings count. Same caption-flexibleWidth /
@@ -592,7 +624,7 @@ namespace WorldGen.Rendering
         }
 
         // Typed-entry commit: parses on end-edit and clamps into the same 0..guarantee range
-        // StepActiveBuildings enforces, reading the same SettlementSizing.GuaranteedMinBuildings
+        // StepActiveBuildings enforces, reading the same SettlementSizing.ActiveBuildingsCap
         // expression the caption shows — the shown cap and the enforced cap can never drift. Unparseable
         // or empty input leaves sp.ActiveBuildings untouched (restores, doesn't zero). Parses as a long
         // (not int) so an oversized paste like "99999999999999" still clamps down to the size's
@@ -620,7 +652,7 @@ namespace WorldGen.Rendering
                 long parsed;
                 if (long.TryParse(typed, out parsed))
                 {
-                    long cap = SettlementSizing.GuaranteedMinBuildings(sp.Size);
+                    long cap = SettlementSizing.ActiveBuildingsCap(sp.Size, lastBuildingCount);
                     long clamped = parsed < 0 ? 0 : (parsed > cap ? cap : parsed);
                     sp.ActiveBuildings = (int)clamped;
                 }
@@ -635,26 +667,28 @@ namespace WorldGen.Rendering
 
         // Task E: choice-button handler for the 3-way size picker. Unlike the old StepSize's ±1 nudge,
         // there is no "current index" to step from — the DM taps the class they want, so this sets
-        // sp.Size outright. Clamps ActiveBuildings to the NEW size's MEASURED guarantee (not its
-        // advisory target): a resized town cannot promise more active buildings than every seed at that
-        // size can actually deliver.
+        // sp.Size outright. Clamps ActiveBuildings to the NEW size's cap (Task 6: Max(table, actual) —
+        // lastBuildingCount is the floor's real count, unaffected by the size change itself): a resized town
+        // cannot promise more active buildings than every seed at that size can actually deliver, but a town
+        // that already has more than the new size's table promise keeps them all active.
         void SetSettlementSize(SettlementParams sp, SettlementSize size)
         {
             sp.Size = size;
-            int cap = SettlementSizing.GuaranteedMinBuildings(size);
+            int cap = SettlementSizing.ActiveBuildingsCap(size, lastBuildingCount);
             if (sp.ActiveBuildings > cap) sp.ActiveBuildings = cap;
             Rebuild();
             OnChanged?.Invoke();
         }
 
-        // Clamped 0..the size's MEASURED guarantee (Task E; was 0..TargetBuildings) — every seed at this
-        // size delivers at least that many active-eligible buildings, so the stepper can no longer author
-        // a count only a lucky seed could satisfy. Still can't go negative (SettlementGenerator already
-        // floors a negative ActiveBuildings to 0 defensively, but the stepper itself should never author
-        // an out-of-range value in the first place).
+        // Clamped 0..ActiveBuildingsCap (Task 6; was 0..GuaranteedMinBuildings, and before Task E,
+        // 0..TargetBuildings) — every seed at this size delivers at least the table's floor of
+        // active-eligible buildings, and a town the DM has painted past it can go higher still, so the
+        // stepper can no longer author a count the town cannot actually back. Still can't go negative
+        // (SettlementGenerator already floors a negative ActiveBuildings to 0 defensively, but the stepper
+        // itself should never author an out-of-range value in the first place).
         void StepActiveBuildings(SettlementParams sp, int dir)
         {
-            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, SettlementSizing.GuaranteedMinBuildings(sp.Size));
+            sp.ActiveBuildings = Mathf.Clamp(sp.ActiveBuildings + dir, 0, SettlementSizing.ActiveBuildingsCap(sp.Size, lastBuildingCount));
             Rebuild();
             OnChanged?.Invoke();
         }
