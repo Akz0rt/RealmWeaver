@@ -533,6 +533,17 @@ function New-SettlementRebind([string]$methodName, [string]$mutantClass, [string
     $srcText = $undoTests
     $origClass = 'SettlementUndoSelfTests'
   }
+  # Same both-sides newline normalisation the two mutant generators do (see New-SettlementMutant's comment for
+  # why a locator must not depend on how a file was checked out). LATENT here rather than active — review
+  # finding: all 111 rebind patterns in this script are currently single-line, so none of them can notice a
+  # CRLF. Hardened anyway, because the ONE thing this sub-project learned three separate times is that the
+  # trap is invisible until someone writes the first multi-line pattern, and then it fails as a confusing
+  # "method not found" rather than as anything that points at line endings.
+  $srcText = $srcText -replace "`r`n", "`n"
+  for ($k = 0; $k -lt $rebindPatterns.Count; $k++) {
+    $rebindPatterns[$k] = $rebindPatterns[$k] -replace "`r`n", "`n"
+    $rebindTo[$k] = $rebindTo[$k] -replace "`r`n", "`n"
+  }
   $t = $srcText -replace 'namespace WorldGen\.Rendering', 'namespace WorldGen.MutantTests'
   $t = $t -replace "class $origClass", "class ${mutantClass}SelfTests"
 
