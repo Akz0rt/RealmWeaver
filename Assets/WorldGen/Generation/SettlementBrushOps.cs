@@ -184,9 +184,22 @@ namespace WorldGen.Generation
             if (!streets.Remove(cell)) return false;                  // nothing here to erase
             var saved = floor.SettlementParams.StreetCells;
             floor.SettlementParams.StreetCells = streets.Count > 0 ? SettlementFootprint.Encode(streets) : null;
-            bool safe = SettlementStreetOps.MissingAccess(floor).Count == 0;
-            floor.SettlementParams.StreetCells = saved;               // ALWAYS restored, on both branches
-            return safe;
+            // try/finally (fix round 1, Minor 2): this predicate runs on every hover frame while the eraser is
+            // armed over a street cell (UpdatePlacement -> CanErase), not just on a commit, so the temporary
+            // mutation below is live for the LONGEST and most-repeated window of anywhere in this file. Without
+            // this, an exception thrown out of MissingAccess would skip the restore two lines down and leave
+            // the floor's stored streets permanently one cell short — from a call that only ASKED whether a
+            // cell could be erased. The two lines the existing mutants (MutEraseAllowsStranding,
+            // MutEraseNoRestore) target are unchanged, only moved into try/finally.
+            try
+            {
+                bool safe = SettlementStreetOps.MissingAccess(floor).Count == 0;
+                return safe;
+            }
+            finally
+            {
+                floor.SettlementParams.StreetCells = saved;               // ALWAYS restored, on both branches
+            }
         }
 
         /// <summary>Remove building cells and street cells under the stroke, skipping any cell CanErase

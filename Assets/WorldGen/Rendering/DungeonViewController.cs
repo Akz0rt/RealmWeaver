@@ -503,17 +503,35 @@ namespace WorldGen.Rendering
             undo.Clear();
             // UNCONDITIONAL, same reason as undo.Clear() just above: SetBrush(SettlementBrush.None) below
             // early-returns the instant ActiveBrush is ALREADY None (its very first line), which is the common
-            // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings left on the
-            // renderer. DEFENSIVE: no live path was found where this actually fires with a stale non-null
-            // PreviewBuildings (ActiveBrush only ever changes through SetBrush, which — given its own
-            // unconditional clear — already drops PreviewBuildings on every transition away from a brush).
+            // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings/PreviewStreets
+            // left on the renderer. DEFENSIVE: no live path was found where this actually fires with a stale
+            // non-null preview (ActiveBrush only ever changes through SetBrush, which — given its own
+            // unconditional clear — already drops both on every transition away from a brush).
             // `renderer` here is whichever of the flat/volume pair is CURRENTLY ACTIVE (SetRenderer can swap
             // it mid-lifetime, and neither renderer is per-floor — SetRenderers installs the pair once for
             // this controller's whole lifetime), so this line reaches the volume renderer only while it is the
-            // active one — which is exactly when a stale PreviewBuildings would matter, since a flat renderer
-            // never reads the property at all. Kept unconditional per the task brief, belt-and-suspenders
+            // active one — which is exactly when a stale preview would matter, since a flat renderer never
+            // reads either property at all. Kept unconditional per the task brief, belt-and-suspenders
             // alongside SetBrush's own clear rather than in place of it.
-            if (renderer is SettlementVolumeRenderer volBind) volBind.PreviewBuildings = null;
+            //
+            // BOTH FIELDS, TOGETHER (fix round 1 review, Important 1) — PreviewStreets used to be left out of
+            // this pre-clear, which was safe only as long as SetBrush's own `hadPreview` gate downstream read
+            // PreviewBuildings alone: Bind's PreviewBuildings-only pre-clear made that half of the gate
+            // provably false by the time SetBrush(None) ran below, so the belt-and-suspenders RepositionNow it
+            // guards could never fire against this method's mismatched-binding window (`this.dungeon` already
+            // reassigned to the new interior, `this.levelIndex`/`boundLevel` not yet). Task 5 widened the gate
+            // to `PreviewBuildings != null || PreviewStreets != null` without widening THIS pre-clear, which
+            // silently re-opened that window for a Road stroke's PreviewStreets. Traced as harmless in
+            // practice (Bind always reaches Refresh() synchronously afterward, so the stray repaint is never
+            // presented) — but this is the THIRD time in this sub-project the same shape has shown up: one
+            // preview channel cleared, its twin left out. Clear the pair here, together, always — so a FOURTH
+            // preview channel added later inherits a pre-clear that already covers it by construction, instead
+            // of silently reopening the same gap a fourth time.
+            if (renderer is SettlementVolumeRenderer volBind)
+            {
+                volBind.PreviewBuildings = null;
+                volBind.PreviewStreets = null;
+            }
             // A brush armed in one interior must not survive into another (task review Critical): without
             // this, dragging into a building interior with a settlement brush still armed would make
             // OnBeginDrag's brush branch fire there, fail its own settlement guard, and return BEFORE
@@ -1117,20 +1135,14 @@ namespace WorldGen.Rendering
             // `this.dungeon` is reassigned to the NEW dungeon but BEFORE `this.levelIndex` is reassigned
             // (traced in Bind: `this.dungeon = dungeon;` near its top, `this.levelIndex = levelIndex;` only
             // after this call), so BoundLevel computed here in that one case is `newDungeon.Floors[oldIndex]`
-            // — genuinely the wrong floor, or out of range. For a Building stroke, Bind's own PreviewBuildings
-            // clear (beside undo.Clear(), unconditional, before this call) already nulls the SAME renderer's
-            // PreviewBuildings first, so by the time this line reads it here that half of hadPreview is
-            // already false. Bind does NOT similarly pre-clear PreviewStreets (Task 5 did not extend it,
-            // deliberately — see below), so a Road stroke live at the exact instant of a reentrant Bind could
-            // in principle leave hadPreview true here and fire RepositionNow(BoundLevel, Fast) against that
-            // wrong floor. TRACED AND HARMLESS: this whole method runs synchronously inside Bind, which always
-            // calls Refresh() itself immediately afterward (either directly, when the renderer did not swap,
-            // or through SetRenderer when it did) — no frame is ever presented between this RepositionNow and
-            // that Refresh, so a stray read of the wrong floor's rooms is invisible and overwritten before
-            // anything renders. Not worth adding a second pre-clear in Bind for a window that cannot be seen.
-            // Every OTHER caller of SetBrush (ToggleBrush, the Esc branch in UpdatePlacement) leaves
-            // dungeon/levelIndex/boundLevel all mutually consistent, so BoundLevel there is simply the floor
-            // on screen and this whole paragraph does not apply.
+            // — genuinely the wrong floor, or out of range. Bind's own preview pre-clear (beside undo.Clear(),
+            // unconditional, before this call) now nulls BOTH PreviewBuildings and PreviewStreets on the SAME
+            // renderer first (fix round 1, Important 1 — it used to clear only PreviewBuildings, which quietly
+            // stopped being enough the moment this gate below was widened to read PreviewStreets too), so by
+            // the time this line reads it here hadPreview is already false for either brush and the repaint
+            // below cannot fire against that mismatched pair. Every OTHER caller of SetBrush (ToggleBrush, the
+            // Esc branch in UpdatePlacement) leaves dungeon/levelIndex/boundLevel all mutually consistent, so
+            // BoundLevel there is simply the floor on screen and this whole paragraph does not apply.
             if (hadPreview && BoundLevel != null) RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
             OnActiveBrushChanged?.Invoke(brush);
         }
@@ -1247,13 +1259,30 @@ namespace WorldGen.Rendering
             // feel — it is on the checkpoint-2 walk as a question for the DM, not a defect to invent a third
             // affordance for.
             //
-            // The ROAD brush is deliberately NOT covered here — it keeps TryPlacementCell's founding verdict,
-            // so it shows red over a building's cell even though PaintRoad does not itself refuse such a cell
-            // (a street cell under a house is inert: the grid gives Building precedence and MarkRoads skips
-            // Building cells, so it is untidy in the data but harmless). Adding a PaintRoad-side rule for that
-            // is a new test and a new mutant, ledgered as a question for the whole-branch review.
+            // NEITHER OVERRIDE CAN LEAVE `placeable` STALE when its own TryAreaToCell call is skipped or
+            // fails, and that is provable rather than assumed. We only reach this point because
+            // `vol.TryPlacementCell(local, lvl, out nx, out ny, out placeable)` above returned true, and that
+            // method's own FIRST statement is `if (!TryAreaToCell(areaLocalPoint, out int i, out int j)) return
+            // false;` (SettlementVolumeRenderer.TryPlacementCell) — so a successful TryPlacementCell on `local`
+            // already proves `vol.TryAreaToCell(local, ...)` succeeds on that exact same, unchanged `local`
+            // (TryAreaToCell is pure — same projection, same grid, same input). So re-calling it below for
+            // whichever brush is active can never fail, and `placeable` is always overwritten with that
+            // brush's own verdict, never left holding the founding one by accident.
             if (ActiveBrush == SettlementBrush.Erase && vol.TryAreaToCell(local, out int ei, out int ej))
                 placeable = SettlementBrushOps.CanErase(lvl, (ei, ej));
+
+            // THE ROAD BRUSH ASKS ITS OWN QUESTION TOO (fix round 1, Important 2). TryPlacementCell answered
+            // "may a BUILDING be founded here", which is the wrong question for a lane: a road may legally
+            // cross a courtyard, a wall, a gate — everything except a cell off the field. Left on the founding
+            // verdict, the quad went red over a building's cell and the stroke committed there regardless
+            // (PaintRoad does not itself refuse a building's cell — a street cell under a house is inert, the
+            // grid gives Building precedence and MarkRoads skips Building cells — so the data is merely untidy,
+            // not broken), which is worse than no affordance at all: a refusal the DM believes and the code
+            // ignores. `PaintRoad` refusing an OFF-FIELD cell is a separate, `Generation`-side fix (ledgered
+            // for the whole-branch review, not this task) — this override only has to make the quad tell the
+            // truth about the question PaintRoad actually answers today: "is this cell on the field at all".
+            if (ActiveBrush == SettlementBrush.Road && vol.TryAreaToCell(local, out int ri, out int rj))
+                placeable = SettlementVolumeRendererPlacement.OnFieldCell(ri, rj);
 
             hoverValid = true; hoverNx = nx; hoverNy = ny; hoverPlaceable = placeable;
             vol.ShowPlacementHighlight(nx, ny, placeable);
@@ -1754,7 +1783,13 @@ namespace WorldGen.Rendering
                 // PreviewStreets already relies on during a footprint drag.
                 volD.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
                 volD.PreviewStreets = ActiveBrush == SettlementBrush.Road ? strokeCells : null;
-                RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
+                // Fix round 1, Minor 4: the Erase brush feeds neither preview channel (both are additive, so a
+                // removal can't be expressed through them — see the doc at the PreviewStreets feed sites), so
+                // a rebuild here would repaint the EXACT same tile grid the previous frame already drew. This
+                // path runs on every mouse-move sample of a drag, not once per stroke, so skipping it for
+                // Erase is a real saving, not a rounding error. Building and Road both still need the repaint
+                // to show their live preview; only Erase is pure waste.
+                if (ActiveBrush != SettlementBrush.Erase) RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
 
