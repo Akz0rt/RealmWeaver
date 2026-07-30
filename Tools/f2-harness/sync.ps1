@@ -271,6 +271,10 @@ foreach ($mn in @('MutAnchorOuter', 'MutNoLinkPref', 'MutTightBounds', 'MutTight
 # a source file (BattleGridGenerator.cs, or BattleGridOps.cs) never step on each other.
 function New-BattleMutant([string]$srcFile, [string]$className, [string]$from, [string]$to, [string]$outFile) {
   $t = Get-Content (Join-Path $src $srcFile) -Raw -Encoding UTF8
+  # Same reason, and the same both-sides normalisation, as New-SettlementMutant's — see the comment there.
+  $t = $t -replace "`r`n", "`n"
+  $from = $from -replace "`r`n", "`n"
+  $to = $to -replace "`r`n", "`n"
   if ($t -notmatch [regex]::Escape($from)) { throw "mutant $outFile : pattern not found: $from" }
   $t = $t -replace [regex]::Escape($from), $to
   $t = $t -replace 'namespace WorldGen.Generation', "namespace WorldGen.Generation.$className"
@@ -301,7 +305,7 @@ New-BattleMutant 'BattleGridOps.cs' 'MutFirstTouch' `
 # diagonally, because (1,0) and (0,1) are Wall — to catch this.
 New-BattleMutant 'BattleGridOps.cs' 'MutFillDiagonal' `
   'Enqueue(px, py + 1); Enqueue(px, py - 1);' `
-  "Enqueue(px, py + 1); Enqueue(px, py - 1);`r`n                Enqueue(px + 1, py + 1); Enqueue(px + 1, py - 1); Enqueue(px - 1, py + 1); Enqueue(px - 1, py - 1);   // MUTANT: diagonal spread" `
+  "Enqueue(px, py + 1); Enqueue(px, py - 1);`n                Enqueue(px + 1, py + 1); Enqueue(px + 1, py - 1); Enqueue(px - 1, py + 1); Enqueue(px - 1, py - 1);   // MUTANT: diagonal spread" `
   'MutFillDiagonal.cs'
 
 # ---- BATTLE GRID MUTANT-BOUND SELF-TESTS -------------------------------------------------------------------
@@ -360,6 +364,23 @@ foreach ($bm in @('MutFirstTouch', 'MutFillDiagonal')) {
 # re-namespace (class name unchanged, only nested), write to gen/.
 function New-SettlementMutant([string]$srcFile, [string]$className, [string]$from, [string]$to, [string]$outFile) {
   $t = Get-Content (Join-Path $src $srcFile) -Raw -Encoding UTF8
+  # NEWLINES NORMALIZED TO LF BEFORE ANY MATCHING, and this is load-bearing rather than tidy. A MULTI-LINE
+  # locator has to agree with the file's line endings byte for byte, and those are NOT a property of the
+  # repository: core.autocrlf is true here with no .gitattributes, so `git ls-files --eol` shows the index
+  # holding LF while the working tree holds CRLF for most of these sources — and any `git checkout` of a file
+  # re-materializes it as CRLF. That already broke MutEraseStaleCheck once, silently, and it would have broken
+  # every multi-line settlement locator on a FRESH CLONE, since they are written with a forced `n. Normalizing
+  # here makes a locator depend only on the source text, never on how the file happened to be checked out.
+  #
+  # NORMALISED ON BOTH SIDES, and that is what makes it safe for the locators that already exist. A locator
+  # can be written two ways in this script: as a double-quoted string with an explicit `n (independent of
+  # anything), or as a single-quoted string that literally spans lines in THIS file — whose newline is then
+  # whatever sync.ps1 itself was saved with, i.e. CRLF. Normalising only the source would break every locator
+  # of the second kind. Normalising both means either form matches either checkout, and no existing locator
+  # had to be rewritten.
+  $t = $t -replace "`r`n", "`n"
+  $from = $from -replace "`r`n", "`n"
+  $to = $to -replace "`r`n", "`n"
   if ($t -notmatch [regex]::Escape($from)) { throw "mutant $outFile : pattern not found: $from" }
   $t = $t -replace [regex]::Escape($from), $to
   $t = $t -replace 'namespace WorldGen.Generation', "namespace WorldGen.Generation.$className"
