@@ -437,6 +437,40 @@ namespace WorldGen.Rendering
                 }
             }
 
+            // 12. A ROAD STROKE MAY NOT LEAVE THE FIELD (Task 5a). Same bound PaintBuilding applies, for a
+            //     different reason: an off-field street cell has no room to be Clamp01ed, but it DOES widen
+            //     the fitted extent — FitBoundsFor decodes the stored streets into Allocate — and the view
+            //     never zooms back in, so one stroke toward the panel edge shrinks the town permanently.
+            //     Cell i = 33's centre is 1.005, just past the field; i = 32's is 0.975, just inside.
+            //     PaintRoad reports how many cells it ADDED, so the count IS the assertion.
+            {
+                var floor = Floor(null);
+                int added = SettlementBrushOps.PaintRoad(floor, Cells((32, 0), (33, 0), (34, 0)));
+                if (added != 1)
+                {
+                    Debug.LogError($"SelfTestBrushStrokes: a road stroke ending off-field added {added} cells, "
+                                 + "expected 1 — only (32,0) is on the field");
+                    ok = false;
+                }
+                var streets = SettlementFootprint.Decode(floor.SettlementParams.StreetCells);
+                foreach (var c in streets)
+                    if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j))
+                    {
+                        Debug.LogError($"SelfTestBrushStrokes: the stored streets contain the off-field cell "
+                                     + $"{c}, whose centre is ({SettlementFootprint.CenterOf(c.i)}, "
+                                     + $"{SettlementFootprint.CenterOf(c.j)})");
+                        ok = false;
+                    }
+                bool has32 = false;
+                foreach (var c in streets) if (c == (32, 0)) has32 = true;
+                if (!has32)
+                {
+                    Debug.LogError("SelfTestBrushStrokes: the stored streets are missing (32,0), the stroke's "
+                                 + "only on-field cell — the guard rejected too much");
+                    ok = false;
+                }
+            }
+
             if (ok) Debug.Log("Self-Test Brush Strokes: PASS");
         }
 

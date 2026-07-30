@@ -1548,10 +1548,21 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutPlaceRefusesWall' `
 # cell, so the count is 1 either way. What fails is case 10's off-field loop (a claimed cell with a negative
 # centre) and its has32 claim (the only genuinely on-field cell is gone). Stated exactly because the count
 # reading was in this comment before case 10 grew its (-1,0) cell, and was wrong the moment it did.
+#
+# TWO-LINE LOCATOR (task 5a widened this from one line): PaintRoad grew the IDENTICAL guard statement
+# `if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;` for MutRoadIgnoresOnField below,
+# and New-SettlementMutant's -replace is GLOBAL — a single-line locator here would now match BOTH occurrences
+# and silently strip PaintRoad's guard as well, making this mutant PaintBuilding's AND PaintRoad's on-field
+# check at once and no longer distinguishable from MutRoadIgnoresOnField by which method it mutates (confirmed
+# empirically: before this widening, `gen/MutPaintIgnoresOnField.cs` carried the MUTANT marker inside PaintRoad
+# too). Extending the locator to include the very next line — IsPlaceable(grid.At(c.i, c.j)), unique to
+# PaintBuilding, confirmed by grep — makes the two-line span match only PaintBuilding's copy again, `n forcing
+# a bare LF between the lines regardless of how this .ps1 file itself is saved (same reasoning as
+# MutEraseStaleCheck and MutRoadIgnoresOnField).
+$mutPaintIgnoresOnFieldFrom = "                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;`n                if (!SettlementVolumeRendererPlacement.IsPlaceable(grid.At(c.i, c.j))) continue;"
+$mutPaintIgnoresOnFieldTo   = "                // MUTANT: the on-field bound is ignored`n                if (!SettlementVolumeRendererPlacement.IsPlaceable(grid.At(c.i, c.j))) continue;"
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresOnField' `
-  '                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;' `
-  '                // MUTANT: the on-field bound is ignored' `
-  'MutPaintIgnoresOnField.cs'
+  $mutPaintIgnoresOnFieldFrom $mutPaintIgnoresOnFieldTo 'MutPaintIgnoresOnField.cs'
 
 # MutOnFieldNoLowerBound: OnFieldCell drops only its LOWER x-bound, so a NEGATIVE normalized X (the direction
 # the deleted renderer doc flagged as the one actually reachable in production — a large city's margin band)
@@ -1578,8 +1589,29 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutPaintIgnoresRoomOwnership' `
   '                // MUTANT: the room-ownership rule is ignored' `
   'MutPaintIgnoresRoomOwnership.cs'
 
+# ---- ROAD ON-FIELD BOUND (settlement-brushes, task 5a): PaintRoad gets the bound PaintBuilding already has. -
+
+# MutRoadIgnoresOnField: PaintRoad keeps cells whose centre lies past the 0..1 field. They cannot be Clamp01ed
+# (a street cell has no room) but they DO widen FitBoundsFor's extent, and the view never zooms back in
+# (DungeonViewController.cs:373) — so one stroke toward the panel edge shrinks the whole town until the cells
+# are erased. SelfTestBrushStrokes' case 12 must fail on its added-count claim AND on its stored-streets loop.
+# NOT MutPaintIgnoresOnField's shadow: that mutant deletes PaintBuilding's guard and is caught by cases 10/11
+# (a painted BUILDING's footprint and cell count); this one deletes PaintRoad's own separate guard and is
+# caught only by case 12 (PaintRoad's returned added-count and the stored StreetCells) — the two mutate
+# different methods and neither case's fixture reaches the other method at all.
+#
+# TWO-LINE LOCATOR, built with `n rather than a raw multi-line literal embedded in this .ps1 file: sync.ps1
+# itself is CRLF but SettlementBrushOps.cs is LF-only (a previous task's `git checkout --` on this exact file
+# let core.autocrlf re-CRLF it and broke MutEraseStaleCheck's own multi-line locator the same way, just above)
+# — `n forces a bare LF byte regardless of how this .ps1 file is saved, so the pattern matches the source file
+# byte-for-byte instead of depending on this file's own line endings.
+$mutRoadFrom = "                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;`n                if (seen.Add(c)) { all.Add(c); added++; }"
+$mutRoadTo   = "                if (seen.Add(c)) { all.Add(c); added++; }   // MUTANT: the road brush ignores the field bound"
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutRoadIgnoresOnField' `
+  $mutRoadFrom $mutRoadTo 'MutRoadIgnoresOnField.cs'
+
 foreach ($mc in @('MutPlaceRefusesWall', 'MutPaintIgnoresOnField', 'MutOnFieldNoLowerBound',
-                  'MutPaintIgnoresRoomOwnership')) {
+                  'MutPaintIgnoresRoomOwnership', 'MutRoadIgnoresOnField')) {
   New-SettlementRebind 'SelfTestBrushStrokes' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

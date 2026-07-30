@@ -144,7 +144,16 @@ namespace WorldGen.Generation
             var all = new List<(int i, int j)>(SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
             var seen = new HashSet<(int i, int j)>(all);
             int added = 0;
-            foreach (var c in cells) if (seen.Add(c)) { all.Add(c); added++; }
+            foreach (var c in cells)
+            {
+                // THE FIELD BOUND, same rule PaintBuilding applies (Task 3a) and through the same shared
+                // expression. An off-field STREET cell is not the Clamp01 hazard a room is — it has no room —
+                // but FitBoundsFor folds the stored streets into the fitted extent and the view never zooms
+                // back in (DungeonViewController.cs:373), so one stroke past the panel's edge shrinks the town
+                // until those cells are erased. Erase is deliberately NOT bounded: it is the way back.
+                if (!SettlementVolumeRendererPlacement.OnFieldCell(c.i, c.j)) continue;
+                if (seen.Add(c)) { all.Add(c); added++; }
+            }
             if (added == 0) return 0;
             all.Sort(RowMajor);
             floor.SettlementParams.StreetCells = SettlementFootprint.Encode(all);

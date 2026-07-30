@@ -170,6 +170,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutOnFieldNoLowerBoundSelfTests().SelfTestBrushStrokes()),
                 ("MutPaintIgnoresRoomOwnership", "SettlementBrushOps.PaintBuilding's room-ownership rule deleted, so a stroke may found a Building on a previously-dragged gate's own cell (review finding I3 fix round)",
                     () => new WorldGen.MutantTests.MutPaintIgnoresRoomOwnershipSelfTests().SelfTestBrushStrokes()),
+                ("MutRoadIgnoresOnField", "SettlementBrushOps.PaintRoad keeps cells whose centre lies past the 0..1 field, so a stroke toward the panel edge widens FitBoundsFor's fitted extent and the view never zooms back in (task 5a)",
+                    () => new WorldGen.MutantTests.MutRoadIgnoresOnFieldSelfTests().SelfTestBrushStrokes()),
                 ("MutPreviewBuildingsIgnored", "SettlementTileGrid.Build drops the brush's preview building cells entirely (no live preview, and the wall ring never re-derives around the stroke)",
                     () => new WorldGen.MutantTests.MutPreviewBuildingsIgnoredSelfTests().SelfTestPreviewBuildings()),
                 ("MutPreviewBuildingsNotInExtent", "SettlementTileGrid.Allocate's extent fold skips the preview cells, so a preview cell past the buildings' margin is silently dropped even though Build still tries to write it",
