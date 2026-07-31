@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using WorldGen.Notes.Data;
 
@@ -34,7 +35,7 @@ namespace WorldGen.Workspace.Data
             session.Blocks.Add(picture);
             g.Pages.Add(anchor); g.Pages.Add(session);
 
-            var hits = QuickOpen.Search(doc, "якор");
+            var hits = QuickOpen.Search(doc, null, "якор");
 
             // Q1 — the page NAME wins over body text.
             if (hits.Count < 2 || hits[0].Title != "Ржавый Якорь")
@@ -59,19 +60,19 @@ namespace WorldGen.Workspace.Data
             }
 
             // Q2 again — Detail is searched too.
-            var detailHits = QuickOpen.Search(doc, "цепь");
+            var detailHits = QuickOpen.Search(doc, null, "цепь");
             if (detailHits.Count == 0)
             { Debug.LogError("FAIL quickopen: Detail search «цепь» found 0 hits, want >= 1 — Detail must be searchable (Q2)"); ok = false; }
 
             // Q4 — an empty query is not "everything".
-            var emptyHits = QuickOpen.Search(doc, "   ");
+            var emptyHits = QuickOpen.Search(doc, null, "   ");
             if (emptyHits.Count != 0)
             { Debug.LogError($"FAIL quickopen: whitespace query returned {emptyHits.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} hit(s), want 0 (Q4)"); ok = false; }
 
             // Q4's folding rule checked from its own angle: a broken/removed ToLowerInvariant call would
             // still pass the whitespace check above (that one never touches case), so it needs a dedicated
             // positive check — an upper-case query must still find the lower-case text.
-            var upperHits = QuickOpen.Search(doc, "ЯКОРЬ");
+            var upperHits = QuickOpen.Search(doc, null, "ЯКОРЬ");
             if (upperHits.Count == 0)
             { Debug.LogError("FAIL quickopen: upper-case query «ЯКОРЬ» found 0 hits, want >= 1 — folding must be case-insensitive (Q4)"); ok = false; }
 
@@ -79,7 +80,7 @@ namespace WorldGen.Workspace.Data
             // «якор» mid-word (checked above); this new page matches it as a prefix and must come first.
             var prefixPage = new NotesPage { Name = "Якорная стоянка" };
             g.Pages.Add(prefixPage);
-            var prefixHits = QuickOpen.Search(doc, "якор");
+            var prefixHits = QuickOpen.Search(doc, null, "якор");
             if (prefixHits.Count == 0 || prefixHits[0].Title != "Якорная стоянка")
             {
                 string actual = prefixHits.Count > 0 ? prefixHits[0].Title : "<none>";
@@ -95,7 +96,7 @@ namespace WorldGen.Workspace.Data
             // win this position check instead of tying and losing to it.
             var catalog = new NotesPage { Name = "Картотека" };
             g.Pages.Add(catalog);
-            var worldHits = QuickOpen.Search(doc, "карт");
+            var worldHits = QuickOpen.Search(doc, null, "карт");
             if (worldHits.Count < 1 || worldHits[0].Target == null || worldHits[0].Target.Kind != SurfaceKind.WorldMap)
             {
                 string actual = worldHits.Count > 0 ? $"«{worldHits[0].Title}» ({worldHits[0].Target?.Kind})" : "<none>";
@@ -127,7 +128,7 @@ namespace WorldGen.Workspace.Data
             // is genuinely worse-ranked than a real NamePrefix page and must lose outright.
             var mirage = new NotesPage { Name = "Мираж" };
             g.Pages.Add(mirage);
-            var midRankHits = QuickOpen.Search(doc, "мира");
+            var midRankHits = QuickOpen.Search(doc, null, "мира");
             if (midRankHits.Count == 0 || midRankHits[0].Title != "Мираж")
             {
                 string actual = midRankHits.Count > 0 ? $"«{midRankHits[0].Title}»" : "<none>";
@@ -145,7 +146,7 @@ namespace WorldGen.Workspace.Data
             var stealth = NotesDocOps.NewBlock(BlockKind.Image, 1);
             stealth.ImageBytes = System.Text.Encoding.UTF8.GetBytes("тайнопись");
             session.Blocks.Add(stealth);
-            var imageOnlyHits = QuickOpen.Search(doc, "тайнопись");
+            var imageOnlyHits = QuickOpen.Search(doc, null, "тайнопись");
             if (imageOnlyHits.Count != 0)
             { Debug.LogError($"FAIL quickopen: a query matching only ImageBytes returned {imageOnlyHits.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} hit(s), want 0 (Q3)"); ok = false; }
 
@@ -153,13 +154,97 @@ namespace WorldGen.Workspace.Data
             // 1 body + 40 fresh pages), so a cap implementation that quietly collapses the result set toward
             // zero must fail here just as loudly as one that ignores the limit and returns everything.
             for (int i = 0; i < 40; i++) g.Pages.Add(new NotesPage { Name = $"Якорь {i}" });
-            var capped = QuickOpen.Search(doc, "якорь", 20);
+            var capped = QuickOpen.Search(doc, null, "якорь", 20);
             if (capped.Count > 20)
             { Debug.LogError($"FAIL quickopen: {capped.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} results, want <= 20 (Q5)"); ok = false; }
             if (capped.Count != 20)
             { Debug.LogError($"FAIL quickopen: {capped.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} results, want exactly 20 of the 42 available matches (Q5)"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Quick Open: PASS" : "Self-Test Quick Open: FAIL");
+        }
+
+        /// <summary>W1-W5 — the world (today: POI) side of Ctrl+K, task-10b-brief.md. Its own fixture rather
+        /// than sharing SelfTestQuickOpen's (which grows to 40+ pages by its own final assertion): W4 needs a
+        /// page whose Bound names a SPECIFIC POI id, which is easiest to reason about starting clean.</summary>
+        [ContextMenu("Self-Test: Quick Open World Objects")]
+        public void SelfTestQuickOpenWorldObjects()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(g);
+
+            // W1, mirror direction of SelfTestQuickOpen's own Мираж check: there, the world MAP loses to a
+            // real NamePrefix page. Here a world OBJECT must lose the same way — «Ратуша» prefix-matches
+            // «рат» (NamePrefix); the POI «Пиратская застава» only matches mid-name (NameContains), so a
+            // mutant that ranked every world-object hit as NamePrefix regardless of idx would make the POI
+            // win this position check instead of losing it.
+            var townHall = new NotesPage { Name = "Ратуша" };
+            g.Pages.Add(townHall);
+            var unboundPoi = new WorldObjectRef { Kind = WorldRefKind.Poi, Id = "poi-1", Name = "Пиратская застава", KindLabel = "город" };
+
+            var hits = QuickOpen.Search(doc, new List<WorldObjectRef> { unboundPoi }, "рат");
+            if (hits.Count == 0 || hits[0].Title != "Ратуша")
+            {
+                string actual = hits.Count > 0 ? hits[0].Title : "<none>";
+                Debug.LogError($"FAIL quickopen-world: first hit «{actual}», want «Ратуша» (NamePrefix) ahead of the mid-name POI «Пиратская застава» (NameContains) (W1)");
+                ok = false;
+            }
+            // Positive side: the POI must still BE found, just ranked below — a mutant that excluded world
+            // objects from mid-string matches entirely would pass the check above (index 0 only) while
+            // silently breaking "a world object is searched like a page name" (W1).
+            var poiHit = hits.Find(h => h.World != null);
+            if (poiHit == null || poiHit.Title != "Пиратская застава")
+            { Debug.LogError("FAIL quickopen-world: «рат» found 0 world-object hits, want >= 1 — a POI must still match mid-name, just rank below a NamePrefix page (W1)"); ok = false; }
+
+            if (poiHit != null)
+            {
+                // W2 — the hit carries the world identity, and Target names no page (none exists yet).
+                if (poiHit.World == null || poiHit.World.Kind != WorldRefKind.Poi || poiHit.World.Id != "poi-1")
+                { Debug.LogError("FAIL quickopen-world: POI hit's World must carry Kind=Poi, Id=«poi-1» (W2)"); ok = false; }
+                if (poiHit.Target == null || poiHit.Target.Kind != SurfaceKind.Page || poiHit.Target.Id != "")
+                { Debug.LogError($"FAIL quickopen-world: POI hit Target = {poiHit.Target?.Kind}/«{poiHit.Target?.Id}», want Page/«» — no page exists yet (W2)"); ok = false; }
+
+                // W3 — Kind is the object's KindLabel, NOT its Name (Title already equals Name, so a mutant
+                // that swapped Kind for Name would pass every check above while breaking the palette's
+                // right-hand column). Snippet stays null: QuickOpenPopup.BuildRow renders `Snippet ?? Kind`,
+                // so a stray Snippet would silently hide the label this assertion is pinning.
+                if (poiHit.Kind != "город")
+                { Debug.LogError($"FAIL quickopen-world: POI hit Kind «{poiHit.Kind}», want «город» (KindLabel) (W3)"); ok = false; }
+                if (poiHit.Snippet != null)
+                { Debug.LogError("FAIL quickopen-world: a world-object hit must carry no Snippet, or its Kind label would never render (W3)"); ok = false; }
+            }
+
+            // W4 — a POI that ALREADY has a bound page produces exactly one row, and it is the PAGE, not the
+            // POI: the page hit already represents it, so both appearing would open the same target twice.
+            var boundPage = new NotesPage { Name = "Тихий Брод", Bound = new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-2" } };
+            g.Pages.Add(boundPage);
+            var boundPoi = new WorldObjectRef { Kind = WorldRefKind.Poi, Id = "poi-2", Name = "Тихий Брод", KindLabel = "город" };
+            var boundHits = QuickOpen.Search(doc, new List<WorldObjectRef> { boundPoi }, "брод");
+            if (boundHits.Count != 1)
+            { Debug.LogError($"FAIL quickopen-world: bound POI produced {boundHits.Count} hit(s), want exactly 1 — the page and the POI must not both appear (W4)"); ok = false; }
+            else
+            {
+                if (boundHits[0].World != null)
+                { Debug.LogError("FAIL quickopen-world: the surviving hit must be the PAGE hit (World == null), not the POI hit (W4)"); ok = false; }
+                if (boundHits[0].Target == null || boundHits[0].Target.Id != boundPage.Id)
+                { Debug.LogError("FAIL quickopen-world: the surviving hit's Target must name the bound page's own id (W4)"); ok = false; }
+            }
+
+            // W5 — `world == null` is the pre-generation state (no POIs placed yet, or PoiManager not found),
+            // not an error: page hits still come back, and Search must not throw. Wrapped in try/catch, a
+            // deliberate departure from this file's usual bare-if idiom, so a THROWING mutant fails a named
+            // W5 assertion instead of surfacing as a bare stack trace the harness attributes to no rule.
+            try
+            {
+                var noWorldHits = QuickOpen.Search(doc, null, "рат");
+                if (noWorldHits.Count == 0 || noWorldHits[0].Title != "Ратуша")
+                { Debug.LogError("FAIL quickopen-world: Search(doc, null, ...) must still return page hits, not silently drop them (W5)"); ok = false; }
+            }
+            catch (System.Exception ex)
+            { Debug.LogError($"FAIL quickopen-world: Search(doc, null, ...) threw {ex.GetType().Name} — a null `world` is the pre-generation state, not an error (W5)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Quick Open World Objects: PASS" : "Self-Test Quick Open World Objects: FAIL");
         }
     }
 }

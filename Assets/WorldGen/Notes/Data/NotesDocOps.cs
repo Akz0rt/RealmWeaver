@@ -325,6 +325,62 @@ namespace WorldGen.Notes.Data
             return group;
         }
 
+        /// <summary>The page (if any) already bound to a given world object. THE one definition of "is this
+        /// world object already represented by a page" — NavigatorTree.Build's own Мир membership test reads
+        /// only `p.Bound != null` (it never needs to name a SPECIFIC object, just "is there one"), but the
+        /// two call sites that DO need to name one — QuickOpen's W4 row-suppression and EnsurePageFor's E1
+        /// reuse-not-duplicate check below — must not each hand-roll that comparison, or a future edit to one
+        /// could silently disagree with the other. Takes Kind+Id rather than a WorldRef instance so
+        /// QuickOpen's per-keystroke, per-world-object caller (CollectWorldHits) allocates nothing extra per
+        /// candidate — the same allocation concern Search's own class doc (Q3) already documents for this
+        /// file's search path.</summary>
+        public static NotesPage FindPageBoundTo(NotesDocument doc, WorldRefKind kind, string id)
+        {
+            if (doc == null) return null;
+            foreach (var g in doc.Groups)
+                foreach (var p in g.Pages)
+                    if (p.Bound != null && p.Bound.Kind == kind && p.Bound.Id == id) return p;
+            return null;
+        }
+
+        /// <summary>Returns the id of the page bound to `bound`, creating it if none exists. THE only writer
+        /// of NotesPage.Bound — which is what turns "the user worked on this place" into «Мир» membership
+        /// without anything storing tree state (see NavigatorTree.Build's own doc). Membership is decided by
+        /// FindPageBoundTo above, the same Kind+Id predicate this method and QuickOpen's W4 both defer to — a
+        /// second hand-rolled comparison here could silently disagree with it. A new page is filed into the
+        /// IsReference group («Справочник»), which exists for exactly this — PageGroup.IsReference's own doc
+        /// calls it "the single group that promoted pages are filed into" — and the group is created if the
+        /// document has none. A dedicated «Места» group was rejected: it would be a second mechanism for the
+        /// same job.</summary>
+        public static string EnsurePageFor(NotesDocument doc, WorldRef bound, string title)
+        {
+            if (doc == null || bound == null) return null;   // E4
+
+            var existing = FindPageBoundTo(doc, bound.Kind, bound.Id);
+            if (existing != null) return existing.Id;   // E1 — reuse; nothing created, nothing duplicated.
+
+            var group = EnsureReferenceGroup(doc);   // E5 — reused when present, created when absent.
+            string name = string.IsNullOrWhiteSpace(title) ? "Без названия" : title;   // E3
+
+            var page = new NotesPage
+            {
+                Name = name,
+                Kind = PageKind.Document,   // NotesPage.Kind defaults to Board (NotesData.cs) — must be said
+                                            // explicitly, or Validate would flag a Document-shaped page (it
+                                            // is about to carry Blocks) claiming to be a Board.
+                // E2 — a COPY of `bound`, never the caller's own instance: a later caller-side mutation of
+                // the WorldObjectRef/WorldRef it built this call from must not be able to rewrite stored
+                // state through a shared reference.
+                Bound = new WorldRef { Kind = bound.Kind, Id = bound.Id },
+            };
+            // A promoted page cannot start out empty (I2: first block must be a Section) — same seed
+            // PromoteToPage uses for the identical reason, see PromotedPageSectionTitle's own doc.
+            page.Blocks.Add(NewBlock(BlockKind.Section, 0, PromotedPageSectionTitle));
+            page.Blocks.Add(NewBlock(BlockKind.Item, 1));
+            group.Pages.Add(page);
+            return page.Id;
+        }
+
         /// <summary>The title of the section a block sits under — the nearest Section at or before it.</summary>
         static string SectionTitleFor(IReadOnlyList<DocBlock> blocks, int index)
         {

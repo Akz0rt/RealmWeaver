@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
 using WorldGen.Workspace.Data;
 
@@ -42,6 +44,15 @@ namespace WorldGen.Workspace.Rendering
 
         WorkspaceController controller;
         NotesDocumentController documentController;
+
+        /// <summary>Discovered once, in Attach, the same override-or-discover pattern MapSurfaceHost.Rewire
+        /// uses for mapCamera — except this class has no Rewire counterpart to re-run it after a domain
+        /// reload: `controller` itself is already documented (Update's own guard, above) as NOT revived post-
+        /// reload, and this field is a plain non-serialized reference beside it, so it is wiped right along
+        /// with `controller` and left null — the same accepted gap, not a new one. Null-checked at the one
+        /// place it is read (RunSearch), same as every other optional dependency in this class.</summary>
+        PoiManager poiManager;
+
         Font builtinFont;
 
         GameObject popupGO;
@@ -64,6 +75,12 @@ namespace WorldGen.Workspace.Rendering
             var popup = host.AddComponent<QuickOpenPopup>();
             popup.controller = controller;
             popup.documentController = documentController;
+            // FindFirstObjectByType, not an Inspector slot — WorkspaceBuilder is not wired into the scene
+            // until Task 11 (see EnsureDocumentController's own doc for the identical reasoning applied to
+            // documentController), and PoiManager already lives wherever the map's own scene objects do, not
+            // under WorkspaceBuilder's GameObject. Absent entirely before generation runs — RunSearch's own
+            // null check covers that, the same tolerance this class already extends to a null documentController.
+            popup.poiManager = FindFirstObjectByType<PoiManager>();
             popup.builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             return popup;
         }
@@ -189,9 +206,35 @@ namespace WorldGen.Workspace.Rendering
             var doc = documentController != null ? documentController.Document : null;
 
             hits.Clear();
-            hits.AddRange(QuickOpen.Search(doc, query, ResultLimit));
+            hits.AddRange(QuickOpen.Search(doc, CollectWorldObjects(), query, ResultLimit));
             highlighted = hits.Count > 0 ? 0 : -1;
             RebuildRows();
+        }
+
+        /// <summary>Maps the live PoiManager's POIs into the pure WorldObjectRef DTO QuickOpen.Search takes
+        /// (Task 10b — see WorldObjectRef's own doc for why PoiData itself never crosses into QuickOpen).
+        /// Built fresh on every search, same as `doc` immediately above: PoiManager.OnPoisChanged exists, but
+        /// subscribing to it would only save re-walking a list that is, at most, a few hundred entries long
+        /// on every keystroke — the same cost QuickOpen.Search itself already pays walking every page. Null
+        /// when poiManager was never found (pre-generation, or a scene with no map at all yet); QuickOpen's
+        /// own W5 guard treats that exactly like "no POIs exist".</summary>
+        List<WorldObjectRef> CollectWorldObjects()
+        {
+            if (poiManager == null) return null;
+
+            var pois = poiManager.GetAllPois();
+            var world = new List<WorldObjectRef>(pois.Count);
+            foreach (var poi in pois)
+                world.Add(new WorldObjectRef
+                {
+                    Kind = WorldRefKind.Poi,
+                    Id = poi.Id,
+                    Name = poi.Name,
+                    // PoiInfoPopup.TypeLabel — the SAME Russian label switch that popup's own type line
+                    // shows, made public static for exactly this reuse (see its own doc); not copied here.
+                    KindLabel = PoiInfoPopup.TypeLabel(poi.Type),
+                });
+            return world;
         }
 
         void MoveHighlight(int delta)
@@ -212,10 +255,26 @@ namespace WorldGen.Workspace.Rendering
             if (index < 0 || index >= hits.Count) return;
 
             QuickHit hit = hits[index];
+            SurfaceRef target = hit.Target;
+
+            // World != null (Task 10b, W2): no page exists for this world object yet, so create-or-find it
+            // NOW — at the moment the user actually chooses the row, never while merely typing (RunSearch
+            // calls QuickOpen.Search on every keystroke; creating a page per keystroke would litter
+            // «Справочник» with pages nobody asked for). NotesDocOps.EnsurePageFor is THE only writer of
+            // NotesPage.Bound (see its own doc) — this is the one call site the brief's problem statement
+            // ("placing a POI creates no navigation link") is about.
+            if (hit.World != null)
+            {
+                var doc = documentController != null ? documentController.Document : null;
+                string pageId = NotesDocOps.EnsurePageFor(doc, hit.World, hit.Title);
+                if (pageId == null) return;   // E4 — null doc/bound; nothing was created, nothing to open.
+                target = new SurfaceRef { Kind = SurfaceKind.Page, Id = pageId };
+            }
+
             Close();   // before Open() — same ordering NavContextMenu.AddItem uses for its own onClick, so
                        // the palette is never still on screen (or the active canvas) underneath whatever
                        // opening the target surface does next.
-            controller.Open(hit.Target, hit.Title, inOtherPane);
+            controller.Open(target, hit.Title, inOtherPane);
         }
 
         // ── Construction (built fresh on every Open, torn down whole on every Close) ─

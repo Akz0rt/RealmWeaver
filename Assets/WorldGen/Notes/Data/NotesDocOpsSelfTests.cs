@@ -644,5 +644,113 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test BoardRef Rules: PASS" : "Self-Test BoardRef Rules: FAIL");
         }
+
+        // ── Task 10b: EnsurePageFor / FindPageBoundTo ─────────────────────────────
+
+        [ContextMenu("Self-Test: Ensure Page For World Object")]
+        public void SelfTestEnsurePageFor()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var sessions = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(sessions);
+
+            var bound = new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-1" };
+            string firstId = NotesDocOps.EnsurePageFor(doc, bound, "Тихий Брод");
+
+            var refGroup = doc.Groups.Find(x => x.IsReference);
+            if (firstId == null || refGroup == null || !refGroup.Pages.Exists(p => p.Id == firstId))
+            { Debug.LogError("FAIL ensurepage: a fresh call must create a page in the reference group"); ok = false; }
+
+            var created = NotesDocOps.FindPage(doc, firstId);
+            if (created == null || created.Name != "Тихий Брод")
+            { Debug.LogError($"FAIL ensurepage: page name «{created?.Name}», want «Тихий Брод» (E3)"); ok = false; }
+            if (created != null && created.Kind != PageKind.Document)
+            { Debug.LogError($"FAIL ensurepage: page Kind = {created?.Kind}, want Document — it defaults to Board (NotesData.cs) and must be said explicitly"); ok = false; }
+            if (created != null && (created.Bound == null || created.Bound.Kind != WorldRefKind.Poi || created.Bound.Id != "poi-1"))
+            { Debug.LogError("FAIL ensurepage: created page's Bound must carry Kind=Poi, Id=«poi-1»"); ok = false; }
+            // E2 — Bound is a COPY of `bound`, not the same instance: mutating the caller's WorldRef after
+            // the call must not reach into stored state through a shared reference.
+            if (created != null && ReferenceEquals(created.Bound, bound))
+            { Debug.LogError("FAIL ensurepage: Bound must be a COPY of the caller's WorldRef, not the same instance (E2)"); ok = false; }
+            if (created != null)
+            {
+                bound.Id = "mutated-after-the-fact";
+                if (created.Bound.Id != "poi-1")
+                { Debug.LogError($"FAIL ensurepage: mutating the caller's WorldRef after the call changed the stored Bound to «{created.Bound.Id}» (E2)"); ok = false; }
+                bound.Id = "poi-1";   // restore for the calls below
+            }
+
+            var problems = NotesDocOps.Validate(doc);
+            if (problems.Count != 0)
+            { Debug.LogError($"FAIL ensurepage: a freshly created page must be valid, got: {string.Join("; ", problems)}"); ok = false; }
+
+            // E1 — the load-bearing rule: calling AGAIN for the SAME world object returns the SAME id and
+            // creates NOTHING. Asserting the page COUNT, not just the returned id — an implementation that
+            // creates a duplicate and happens to return the new id would still pass an id-only check.
+            int pagesBefore = refGroup != null ? refGroup.Pages.Count : -1;
+            string secondId = NotesDocOps.EnsurePageFor(doc, bound, "A different title entirely");
+            int pagesAfter = refGroup != null ? refGroup.Pages.Count : -1;
+            if (secondId != firstId)
+            { Debug.LogError($"FAIL ensurepage: second call returned «{secondId}», want the same id «{firstId}» (E1)"); ok = false; }
+            if (pagesAfter != pagesBefore)
+            { Debug.LogError($"FAIL ensurepage: reference group held {pagesBefore} page(s) before, {pagesAfter} after — a matching Bound must create NOTHING (E1)"); ok = false; }
+
+            // E3 — an empty/whitespace title falls back to «Без названия» rather than a nameless row.
+            string blankId = NotesDocOps.EnsurePageFor(doc, new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-2" }, "   ");
+            var blankPage = NotesDocOps.FindPage(doc, blankId);
+            if (blankPage == null || blankPage.Name != "Без названия")
+            { Debug.LogError($"FAIL ensurepage: blank-title page name «{blankPage?.Name}», want «Без названия» (E3)"); ok = false; }
+
+            // E4 — a null doc or a null bound creates nothing and returns null. Both calls wrapped in
+            // try/catch, a deliberate departure from this file's usual bare-if idiom: a mutant that dropped
+            // just the `bound == null` half of the guard would NRE on `bound.Kind` a few lines further in
+            // (FindPageBoundTo) rather than return null, and an uncaught exception here would fail the whole
+            // suite with a bare stack trace instead of a message naming E4.
+            try
+            {
+                if (NotesDocOps.EnsurePageFor(null, bound, "X") != null)
+                { Debug.LogError("FAIL ensurepage: a null doc must return null (E4)"); ok = false; }
+            }
+            catch (System.Exception ex)
+            { Debug.LogError($"FAIL ensurepage: EnsurePageFor(null, bound, ...) threw {ex.GetType().Name}, want a null return (E4)"); ok = false; }
+            try
+            {
+                if (NotesDocOps.EnsurePageFor(doc, null, "X") != null)
+                { Debug.LogError("FAIL ensurepage: a null bound must return null (E4)"); ok = false; }
+            }
+            catch (System.Exception ex)
+            { Debug.LogError($"FAIL ensurepage: EnsurePageFor(doc, null, ...) threw {ex.GetType().Name}, want a null return (E4)"); ok = false; }
+            int pagesAfterNullAttempts = doc.Groups.Find(x => x.IsReference)?.Pages.Count ?? -1;
+            if (pagesAfterNullAttempts != pagesAfter + 1)   // +1 for the E3 blank-title page just added
+            { Debug.LogError("FAIL ensurepage: a refused (null doc / null bound) call must create nothing (E4)"); ok = false; }
+
+            // E5 — the SAME reference-group INSTANCE is reused across calls, not a second one filed alongside
+            // it. Identity, not just count: a mutant that filed a new page straight into doc.Groups[0] would
+            // still leave exactly one IsReference group and pass a count-only check.
+            var refGroupsNow = doc.Groups.FindAll(x => x.IsReference);
+            if (refGroupsNow.Count != 1 || !ReferenceEquals(refGroupsNow[0], refGroup))
+            { Debug.LogError("FAIL ensurepage: every created page must land in the SAME reference-group instance (E5)"); ok = false; }
+
+            // E5, the "created when absent" half: a document with NO reference group yet still gets exactly
+            // one, on first use.
+            var freshDoc = new NotesDocument();
+            freshDoc.Groups.Add(new PageGroup { Title = "Сессии" });
+            string freshId = NotesDocOps.EnsurePageFor(freshDoc, new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-3" }, "Форт");
+            var freshRefGroups = freshDoc.Groups.FindAll(x => x.IsReference);
+            if (freshId == null || freshRefGroups.Count != 1)
+            { Debug.LogError($"FAIL ensurepage: a document with no reference group must get exactly one on first use, got {freshRefGroups.Count} (E5)"); ok = false; }
+
+            // FindPageBoundTo itself: the shared predicate EnsurePageFor (E1) and QuickOpen's W4 both defer
+            // to. An unmatched kind/id must return null, not the wrong page.
+            if (NotesDocOps.FindPageBoundTo(doc, WorldRefKind.Poi, "no-such-poi") != null)
+            { Debug.LogError("FAIL findboundto: an unmatched (kind, id) must return null"); ok = false; }
+            if (NotesDocOps.FindPageBoundTo(doc, WorldRefKind.Building, "poi-1") != null)
+            { Debug.LogError("FAIL findboundto: matching Id but the WRONG Kind must still return null — Kind is part of the identity"); ok = false; }
+            if (NotesDocOps.FindPageBoundTo(doc, WorldRefKind.Poi, "poi-1") != created)
+            { Debug.LogError("FAIL findboundto: a matching (kind, id) must return the bound page"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Ensure Page For World Object: PASS" : "Self-Test Ensure Page For World Object: FAIL");
+        }
     }
 }

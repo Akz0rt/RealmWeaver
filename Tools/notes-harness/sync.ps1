@@ -31,7 +31,8 @@ $sources = @(
       'NavigatorTree.cs',
       'NavigatorTreeSelfTests.cs',
       'QuickOpen.cs',
-      'QuickOpenSelfTests.cs'
+      'QuickOpenSelfTests.cs',
+      'WorldObjectRef.cs'
     ) }
 )
 

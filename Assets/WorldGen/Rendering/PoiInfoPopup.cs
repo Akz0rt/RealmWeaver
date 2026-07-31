@@ -155,7 +155,11 @@ namespace WorldGen.Rendering
             return s.Length <= max ? s : s.Substring(0, max).TrimEnd() + "…";
         }
 
-        static string TypeLabel(PoiType t) => t switch
+        /// <summary>Public so QuickOpenPopup (Task 10b) can label a POI's Ctrl+K row with the exact same
+        /// Russian word this popup's own type line shows, rather than a second switch that could drift from
+        /// this one — the caller maps its own PoiType into a WorldObjectRef.KindLabel; QuickOpen itself
+        /// never sees PoiType (see WorldObjectRef's own doc for why).</summary>
+        public static string TypeLabel(PoiType t) => t switch
         {
             PoiType.City => "Город",
             PoiType.Fortress => "Крепость",

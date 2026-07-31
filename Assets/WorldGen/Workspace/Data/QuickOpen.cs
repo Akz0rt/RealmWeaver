@@ -6,19 +6,26 @@ namespace WorldGen.Workspace.Data
 {
     /// <summary>One Ctrl+K result. Target and Title name the page this hit would open — quick-open never
     /// opens a block directly, the same "navigator opens pages" rule NavigatorTree.MakeNode follows — with
-    /// ONE exception: the world-map hit (W1) targets the world map itself, since there is no page behind it
-    /// to open instead. Kind is "" for a page-NAME hit, the source page's name for a body-TEXT hit (Q2 —
-    /// "its Kind names the page it came from"), and the fixed string "карта" for the world-map hit — three
-    /// values that never collide, so the palette's right-hand column can always tell which kind of hit it is
-    /// rendering. Snippet is null for a name hit and the world-map hit, and the matched fragment (with a
-    /// little context) for a body hit — QuickOpenSelfTests leans on exactly that null/non-null split to tell
-    /// a name hit from a body hit apart.</summary>
+    /// TWO exceptions: the world-map hit (W1) targets the world map itself, since there is no page behind it
+    /// to open instead; and a world-OBJECT hit (W2, e.g. a POI with no page yet) carries no page id at all —
+    /// see World below. Kind is "" for a page-NAME hit, the source page's name for a body-TEXT hit (Q2 —
+    /// "its Kind names the page it came from"), the fixed string "карта" for the world-map hit, and the
+    /// object's own KindLabel (e.g. «город») for a world-object hit (W3) — four values that never collide, so
+    /// the palette's right-hand column can always tell which kind of hit it is rendering. Snippet is null for
+    /// every hit except a body-TEXT hit, where it is the matched fragment (with a little context) —
+    /// QuickOpenSelfTests leans on exactly that null/non-null split to tell a name hit from a body hit apart.</summary>
     public class QuickHit
     {
         public SurfaceRef Target;
         public string Title;
         public string Kind;
         public string Snippet;
+
+        /// <summary>Non-null ONLY for a world-object hit (W2) — the world identity to open, for the one case
+        /// where Target cannot yet name a page because none exists. Null for every other hit kind.
+        /// QuickOpenPopup.Choose branches on this: World != null means "create-or-find the page THEN open
+        /// it" (NotesDocOps.EnsurePageFor), everything else opens Target unchanged.</summary>
+        public WorldRef World;
     }
 
     /// <summary>
@@ -45,6 +52,16 @@ namespace WorldGen.Workspace.Data
     /// CollectWorldMapHit is called after the body-hit loop but BEFORE the name-hit loop, so its Seq (the
     /// sort's tie-breaker for equal ranks) is always lower than any page-name hit's — the plan's "ordered
     /// before page hits of equal rank" falls out of that placement, with no second sort key needed.
+    ///
+    /// W1-W5 — every WORLD OBJECT (a POI today; see WorldObjectRef's own doc for why settlements/buildings
+    /// can join later without a second search path) is ALSO a candidate on every search, for the identical
+    /// reason the world map is: the spec's explicit promise is "everything absent is still one keystroke
+    /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence.
+    /// CollectWorldHits sits in the SAME spot CollectWorldMapHit does — after body hits, before the name-hit
+    /// loop — folded and ranked by the identical NamePrefix/NameContains rule (W1), for the same reason:
+    /// a world object is, for ranking purposes, one more page-NAME candidate. W4 suppresses a world object
+    /// once it already has a bound page, so a worked-on place never yields two rows that open the same
+    /// target — see FindPageBoundTo's own doc for why that check is NOT reimplemented here.
     /// </summary>
     public static class QuickOpen
     {
@@ -57,8 +74,11 @@ namespace WorldGen.Workspace.Data
         const int SnippetContext = 24;
 
         /// <summary>Q4: folding is Trim().ToLowerInvariant(); an empty (or whitespace-only) query returns an
-        /// empty list, never "everything". Q5: results are capped at <paramref name="limit"/>.</summary>
-        public static List<QuickHit> Search(NotesDocument doc, string query, int limit = 20)
+        /// empty list, never "everything". Q5: results are capped at <paramref name="limit"/>. W5: `world`
+        /// may be null OR empty — that is the pre-generation state (no POIs placed yet, or PoiManager not
+        /// found — see QuickOpenPopup.Attach), not an error, so this never throws or special-cases it beyond
+        /// CollectWorldHits' own null check.</summary>
+        public static List<QuickHit> Search(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string query, int limit = 20)
         {
             var result = new List<QuickHit>();
             if (doc == null) return result;
@@ -85,6 +105,9 @@ namespace WorldGen.Workspace.Data
             // are strictly worse, so their relative Seq order doesn't matter) but before the name-hit loop
             // (whose ranks it can TIE with), so its Seq always wins that tie.
             CollectWorldMapHit(needle, candidates, ref seq);
+
+            // W1-W5 — same placement reasoning as CollectWorldMapHit immediately above; see the class doc.
+            CollectWorldHits(doc, world, needle, candidates, ref seq);
 
             foreach (var g in doc.Groups)
                 foreach (var p in g.Pages)
@@ -118,6 +141,42 @@ namespace WorldGen.Workspace.Data
                 Kind = "карта",
                 Snippet = null,
             }));
+        }
+
+        /// <summary>W1-W5 — every candidate `world` object, folded and ranked exactly like CollectWorldMapHit
+        /// folds and ranks the world map (same NamePrefix/NameContains rule, no new ranking constants). W4:
+        /// an object already represented by a page (NotesDocOps.FindPageBoundTo — the SAME Kind+Id predicate
+        /// EnsurePageFor and NavigatorTree's own Bound scan agree on, not a second one invented here) is
+        /// skipped entirely — the page hit from the name-hit loop below already stands for it, so showing
+        /// both would open the same target from two different rows. W5: a null `world` is the pre-generation
+        /// state, not an error — this loop simply has nothing to add.</summary>
+        static void CollectWorldHits(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string needle,
+            List<(int, int, QuickHit)> candidates, ref int seq)
+        {
+            if (world == null) return;
+            foreach (var w in world)
+            {
+                if (w == null) continue;
+                if (NotesDocOps.FindPageBoundTo(doc, w.Kind, w.Id) != null) continue;   // W4
+
+                string folded = (w.Name ?? "").Trim().ToLowerInvariant();
+                int idx = folded.IndexOf(needle, StringComparison.Ordinal);
+                if (idx < 0) continue;
+
+                int rank = idx == 0 ? NamePrefix : NameContains;   // W1
+                candidates.Add((rank, seq++, new QuickHit
+                {
+                    // W2 — no page exists yet for a fresh world object, so Target carries no page id; the
+                    // world identity travels on World instead, and QuickOpenPopup.Choose creates the page
+                    // only at the moment the user actually picks this row (not on every keystroke that
+                    // merely matches it — see Choose's own comment).
+                    Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = "" },
+                    World = new WorldRef { Kind = w.Kind, Id = w.Id },
+                    Title = w.Name,
+                    Kind = w.KindLabel,   // W3
+                    Snippet = null,
+                }));
+            }
         }
 
         static void CollectNameHit(NotesPage p, string needle, List<(int, int, QuickHit)> candidates, ref int seq)
