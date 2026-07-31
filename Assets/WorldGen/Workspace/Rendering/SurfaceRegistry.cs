@@ -136,7 +136,8 @@ namespace WorldGen.Workspace.Rendering
     /// per the brief; redesigning them is Р5's job entirely, not this task's.
     ///
     /// A MonoBehaviour (unlike PageSurfaceHost) because the camera's viewport rect must track the pane's
-    /// LIVE on-screen rect continuously, not just once at the moment Show() runs — see LateUpdate.
+    /// LIVE on-screen rect continuously, not just once at the moment Show() runs — see
+    /// ApplyViewportForRender, the Canvas.willRenderCanvases handler that does this every frame.
     ///
     /// mapCamera/chrome are resolved by FindFirstObjectByType when Create's caller passes null/empty,
     /// mirroring the override-or-discover pattern already used elsewhere in this codebase (e.g.
@@ -167,7 +168,15 @@ namespace WorldGen.Workspace.Rendering
     /// this script forgets it ever showed anything — nothing re-registers with a freshly-reset
     /// WorkspaceController.Layout afterward either, so the map can end up stuck at whatever `mapCamera.rect`/
     /// `.enabled` happened to be at reload time, with no path back until Task 11's real fix (rebuilding/
-    /// re-syncing the whole shell on restore).</summary>
+    /// re-syncing the whole shell on restore).
+    ///
+    /// `rootRowBackground` is the SAME class of field (plain, non-serialized) but gets a NARROWER, LOCAL fix
+    /// rather than being left for Task 11: unlike `mapCamera`/`shownIn`, which are only ever WRITTEN by this
+    /// script and simply go stale together with it, `rootRowBackground`'s `Image.enabled` flag is WRITTEN
+    /// (by SetBackgroundsEnabled) and, if a reload happens while the map is shown, the flag is left at
+    /// `false` (disabled) at the exact moment the only reference able to ever set it back to `true` is wiped
+    /// — permanently stranding a disabled graphic with no owner, not merely a desynchronised one. See
+    /// ResolveRootRowBackground for the re-acquire-on-null fix.</summary>
     public class MapSurfaceHost : MonoBehaviour, ISurfaceHost
     {
         Camera mapCamera;
@@ -177,7 +186,9 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>The full-bleed background WorkspaceBuilder paints behind NavigatorColumn/PaneContainer
         /// (RootRow's own Image) — see SetBackgroundsEnabled's own doc for why THIS one, specifically, needs
         /// a thread-through reference rather than being reached via paneContent.parent the way the pane- and
-        /// content-level backgrounds are.</summary>
+        /// content-level backgrounds are. Read ONLY through ResolveRootRowBackground below, never directly —
+        /// see that method's own doc and the class doc's RECOMPILE GAP paragraph for why a direct read would
+        /// be unrecoverable after a domain reload wipes this field mid-session.</summary>
         Image rootRowBackground;
 
         RectTransform shownIn;
@@ -234,14 +245,22 @@ namespace WorldGen.Workspace.Rendering
             SetChromeActive(true);
             SetBackgroundsEnabled(shownIn, false);
 
-            // Forces uGUI's deferred layout pass to run NOW rather than at its usual point (just before
-            // rendering, after every Update/LateUpdate this frame) — without it, the very first Show() of a
-            // session (called from WorkspaceController.SetSurfaceRegistry, itself called from
-            // WorkspaceBuilder.Awake) would read paneContent's PRE-layout world corners and give the camera
-            // a zero/garbage viewport for one visible frame. Same idiom GenerationScreenUI/
-            // GenerationProgressUI already use for the same reason. Only paid here, not every LateUpdate —
-            // by the second frame onward the ordinary end-of-frame layout pass has already run at least
-            // once, so ApplyViewport's own reads are already correct without forcing it again.
+            // Subscribes to Canvas.willRenderCanvases — Unity's own static event fired once per frame, AFTER
+            // the CanvasUpdateRegistry has finished that frame's deferred layout rebuild but BEFORE anything
+            // actually renders (see ApplyViewportForRender's own doc for why THAT ordering, specifically,
+            // matters and LateUpdate's did not). `-=` before `+=` makes this idempotent against repeat Show()
+            // calls that never went through Hide() in between (an ordinary SyncSurfaces re-sync where nothing
+            // actually changed) — removing an unsubscribed handler is a silent no-op in C#, so this always
+            // ends at exactly one subscription, never a growing stack of duplicate ones.
+            Canvas.willRenderCanvases -= ApplyViewportForRender;
+            Canvas.willRenderCanvases += ApplyViewportForRender;
+
+            // Belt-and-suspenders for the FIRST frame specifically: forces the deferred layout pass to run
+            // NOW (rather than waiting for this same frame's willRenderCanvases, which the subscription above
+            // already covers) so ApplyViewport's read immediately below is correct even before that event
+            // fires — matters here because Show() can run from WorkspaceController.SetSurfaceRegistry, itself
+            // called from WorkspaceBuilder.Awake, i.e. before uGUI has ever laid out this hierarchy at all.
+            // Same idiom GenerationScreenUI/GenerationProgressUI already use for the same reason.
             Canvas.ForceUpdateCanvases();
             ApplyViewport();
         }
@@ -249,6 +268,7 @@ namespace WorldGen.Workspace.Rendering
         public void Hide()
         {
             visible = false;
+            Canvas.willRenderCanvases -= ApplyViewportForRender;
             // Restore BEFORE clearing shownIn — SetBackgroundsEnabled needs the container reference to know
             // which pane's/content's Images to re-enable. Runs even when shownIn is already null (nothing to
             // restore, the ternary/null-guards inside just no-op) so Hide stays safe to call unconditionally.
@@ -263,6 +283,14 @@ namespace WorldGen.Workspace.Rendering
             // assumes elsewhere.
             if (mapCamera != null) mapCamera.enabled = false;
         }
+
+        /// <summary>Unsubscribes from the static Canvas.willRenderCanvases event if this component is
+        /// destroyed while still shown (scene teardown, an out-of-band Destroy) — without this, a static
+        /// event holding a delegate onto a destroyed Unity object throws a "MissingReferenceException" the
+        /// next time it fires, or at minimum leaks the subscription for the rest of the process lifetime.
+        /// The same class of cleanup DocumentPageView.OnDestroy already does for its own OnActivePageChanged
+        /// subscription.</summary>
+        void OnDestroy() => Canvas.willRenderCanvases -= ApplyViewportForRender;
 
         /// <summary>Punches (or restores) the hole a camera-backed surface needs: THREE opaque Images sit in
         /// the SAME ScreenSpaceOverlay canvas the camera composites underneath, all added unconditionally by
@@ -287,7 +315,8 @@ namespace WorldGen.Workspace.Rendering
         /// `container.GetComponent<Image>()`/`container.parent.GetComponent<Image>()` are looked up fresh
         /// rather than cached: `container` (a pane's fixed physical ContentArea) never changes IDENTITY across
         /// Show() calls — only which LOGICAL pane it represents does — so this is cheap and needs no extra
-        /// state to invalidate.</summary>
+        /// state to invalidate. `rootRowBackground` goes through ResolveRootRowBackground rather than the
+        /// field directly, for the same reason.</summary>
         void SetBackgroundsEnabled(RectTransform container, bool enabled)
         {
             var contentImg = container.GetComponent<Image>();
@@ -296,18 +325,53 @@ namespace WorldGen.Workspace.Rendering
             var paneImg = container.parent != null ? container.parent.GetComponent<Image>() : null;
             if (paneImg != null) paneImg.enabled = enabled;
 
-            if (rootRowBackground != null) rootRowBackground.enabled = enabled;
+            var rootBg = ResolveRootRowBackground();
+            if (rootBg != null) rootBg.enabled = enabled;
         }
 
-        /// <summary>Re-derives the camera's viewport rect from the pane's LIVE on-screen rect every frame
-        /// while shown, rather than converting once inside Show(). A one-shot conversion goes stale three
-        /// ways: (1) the very first sync runs from WorkspaceController.SetSurfaceRegistry, called from
-        /// WorkspaceBuilder.Awake — before uGUI's first layout pass, so paneContent's world corners are not
-        /// yet meaningful; (2) WorkspaceController.SetSplitRatioLive (the divider-drag path) deliberately
-        /// does NOT raise OnLayoutChanged (see its own doc comment), so dragging the divider moves the pane
-        /// without ever calling Show() again; (3) an ordinary window resize moves every pane's screen rect
-        /// with no workspace event at all. Continuous re-derivation fixes all three for free.</summary>
-        void LateUpdate()
+        /// <summary>Returns `rootRowBackground`, re-acquiring it by hierarchy path first if the
+        /// constructor-injected reference was lost — see the class doc's RECOMPILE GAP paragraph for why a
+        /// domain reload can wipe this specific field while leaving its Image's `.enabled` state (and every
+        /// other field this class holds) exactly as it was. "WorkspaceCanvas/RootRow" is the exact relative
+        /// path WorkspaceBuilder.Awake builds it at: MapSurfaceHost is AddComponent-ed directly onto
+        /// WorkspaceBuilder's own GameObject (see Create's `owner` parameter), so `transform` here already IS
+        /// WorkspaceBuilder's transform — no separate "find WorkspaceBuilder first" step is needed. The
+        /// re-acquired reference is cached back into the field so this Find only ever runs once per loss, not
+        /// on every SetBackgroundsEnabled call.</summary>
+        Image ResolveRootRowBackground()
+        {
+            if (rootRowBackground != null) return rootRowBackground;
+            var rootRow = transform.Find("WorkspaceCanvas/RootRow");
+            rootRowBackground = rootRow != null ? rootRow.GetComponent<Image>() : null;
+            return rootRowBackground;
+        }
+
+        /// <summary>The Canvas.willRenderCanvases handler — re-derives the camera's viewport rect from the
+        /// pane's on-screen rect every frame while shown, rather than converting once inside Show(). A
+        /// one-shot conversion goes stale three ways: (1) the very first sync runs from
+        /// WorkspaceController.SetSurfaceRegistry, called from WorkspaceBuilder.Awake — before uGUI's first
+        /// layout pass, so paneContent's world corners are not yet meaningful (Show()'s own
+        /// Canvas.ForceUpdateCanvases call covers this one specifically); (2) WorkspaceController.
+        /// SetSplitRatioLive (the divider-drag path) deliberately does NOT raise OnLayoutChanged (see its own
+        /// doc comment), so dragging the divider moves the pane without ever calling Show() again; (3) an
+        /// ordinary window resize moves every pane's screen rect with no workspace event at all.
+        ///
+        /// A PREVIOUS version of this method ran from LateUpdate instead, reading shownIn.GetWorldCorners()
+        /// EVERY frame — but uGUI's own deferred layout rebuild runs at willRenderCanvases, AFTER every
+        /// script's LateUpdate, so during an active divider drag (SetSplitRatioLive changes flexibleWidth
+        /// synchronously, but the resulting RESIZE is deferred) LateUpdate was reading STALE, pre-rebuild
+        /// corners — one whole frame behind whatever the neighbour pane's still-enabled background had
+        /// already shrunk away from, leaving a thin gap covered by neither the old background (shrunk) nor
+        /// the camera (rect not yet caught up): the exact "camera rect clamped, nothing clears the rest"
+        /// artifact SetBackgroundsEnabled's own backgrounds exist to prevent, reintroduced for the DURATION
+        /// of a drag. Subscribing to willRenderCanvases instead — which fires AFTER that same frame's layout
+        /// rebuild has already applied — reads corners at the one point in the frame where they are
+        /// guaranteed current, closing the gap at its ROOT CAUSE rather than working around it by forcing an
+        /// extra rebuild every single frame (Canvas.ForceUpdateCanvases() in LateUpdate would also have
+        /// fixed it, at the cost of paying for a full forced rebuild on every frame the map is visible,
+        /// whether or not a drag or resize actually happened that frame; this event-based approach pays
+        /// nothing beyond an existing Unity-internal per-frame event Unity already dispatches regardless).</summary>
+        void ApplyViewportForRender()
         {
             if (!visible || shownIn == null || mapCamera == null) return;
             ApplyViewport();
@@ -315,10 +379,10 @@ namespace WorldGen.Workspace.Rendering
 
         void ApplyViewport()
         {
-            // Guards the SAME null case LateUpdate already guards before calling this — needed here too
-            // because Show() calls this directly (to avoid a one-frame stale/zero viewport — see its own
-            // comment), on a path LateUpdate's guard does not cover. Discovery finding no camera at all
-            // (Create's own null-tolerance — see the class doc) must not throw on the very first Show().
+            // Guards the SAME null case ApplyViewportForRender already guards before calling this — needed
+            // here too because Show() calls this directly (to avoid a one-frame stale/zero viewport — see its
+            // own comment), on a path ApplyViewportForRender's guard does not cover. Discovery finding no
+            // camera at all (Create's own null-tolerance — see the class doc) must not throw on Show().
             if (mapCamera == null) return;
 
             var corners = new Vector3[4];
