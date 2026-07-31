@@ -233,6 +233,64 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Workspace Move And Prune: PASS" : "Self-Test Workspace Move And Prune: FAIL");
         }
 
+        /// <summary>FindSurface (Task 10c): every Close* path in MapScreenController holds a SurfaceRef and no
+        /// index, so "where is this open" has to be answerable from the layout alone.</summary>
+        [ContextMenu("Self-Test: Workspace Find Surface")]
+        public void SelfTestFindSurface()
+        {
+            bool ok = true;
+
+            var l = WorkspaceOps.NewDefault();                             // Primary: [WorldMap]
+            WorkspaceOps.Open(l, Page("a"), "A", false);                    // Primary: [WorldMap, A]
+            WorkspaceOps.Open(l, new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = "poi-7" }, "Курган", true);
+                                                                            // Secondary: [Курган]
+            WorkspaceOps.Open(l, Page("b"), "B", false);                    // Secondary: [Курган, B] (focus moved)
+
+            // Found in Primary, at the right index — asserting the INDEX, not merely "true": a FindSurface
+            // that reported the wrong slot would close somebody else's tab, which is the actual damage.
+            if (!WorkspaceOps.FindSurface(l, Page("a"), out int paneA, out int indexA) || paneA != 0 || indexA != 1)
+            { Debug.LogError($"FAIL find: Page(a) reported pane {paneA}/index {indexA}, want pane 0/index 1"); ok = false; }
+
+            // Found in Secondary — the pane the search reaches SECOND, so this is what proves the loop does
+            // not stop at Primary.
+            var dungeon = new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = "poi-7" };
+            if (!WorkspaceOps.FindSurface(l, dungeon, out int paneD, out int indexD) || paneD != 1 || indexD != 0)
+            { Debug.LogError($"FAIL find: Dungeon/poi-7 reported pane {paneD}/index {indexD}, want pane 1/index 0"); ok = false; }
+
+            // A DIFFERENT ref naming the same surface must match — the whole point of deferring to
+            // SameSurface rather than comparing instances. `dungeon` above is already a fresh instance; this
+            // adds the Kind-differs case, which an Id-only comparison would wrongly match.
+            if (WorkspaceOps.FindSurface(l, new SurfaceRef { Kind = SurfaceKind.Settlement, Id = "poi-7" }, out int paneS, out int indexS))
+            { Debug.LogError($"FAIL find: Settlement/poi-7 matched at pane {paneS}/index {indexS}, want no match — same Id, different Kind"); ok = false; }
+
+            // Absent: reports false AND leaves both outs at -1, so a caller that ignores the bool cannot
+            // accidentally close pane 0's tab 0.
+            if (WorkspaceOps.FindSurface(l, Page("nope"), out int paneN, out int indexN) || paneN != -1 || indexN != -1)
+            { Debug.LogError($"FAIL find: Page(nope) reported {paneN}/{indexN} (returned true?), want false with -1/-1"); ok = false; }
+
+            // Null layout / null surface: false and -1/-1, never a throw — MapScreenController calls this on
+            // paths where the workspace may not exist yet.
+            try
+            {
+                if (WorkspaceOps.FindSurface(null, Page("a"), out int pN1, out int iN1) || pN1 != -1 || iN1 != -1)
+                { Debug.LogError("FAIL find: FindSurface(null layout, ...) must report false with -1/-1"); ok = false; }
+                if (WorkspaceOps.FindSurface(l, null, out int pN2, out int iN2) || pN2 != -1 || iN2 != -1)
+                { Debug.LogError("FAIL find: FindSurface(l, null surface) must report false with -1/-1"); ok = false; }
+            }
+            catch (System.Exception ex)
+            { Debug.LogError($"FAIL find: a null argument threw {ex.GetType().Name}, want false with -1/-1"); ok = false; }
+
+            // Open in BOTH panes: Primary wins, deterministically. Open only dedupes within its target pane,
+            // so this is a state a user reaches by «Открыть рядом» on something already open.
+            var both = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(both, Page("dup"), "Dup", false);
+            WorkspaceOps.Open(both, Page("dup"), "Dup", true);
+            if (!WorkspaceOps.FindSurface(both, Page("dup"), out int paneB, out int indexB) || paneB != 0)
+            { Debug.LogError($"FAIL find: a surface open in both panes reported pane {paneB}/index {indexB}, want pane 0 (Primary first)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Find Surface: PASS" : "Self-Test Workspace Find Surface: FAIL");
+        }
+
         [ContextMenu("Self-Test: Workspace Persistence")]
         public void SelfTestPersistence()
         {
@@ -260,6 +318,24 @@ namespace WorldGen.Workspace.Data
                 var dungeon = back.Secondary.Tabs[0].Surface;
                 if (dungeon.Kind != SurfaceKind.Dungeon || dungeon.Id != "poi-7")
                 { Debug.LogError($"FAIL persist: surface came back {dungeon.Kind}/{dungeon.Id}, want Dungeon/poi-7"); ok = false; }
+            }
+
+            // Task 10c added SurfaceKind.PoiEditor, and TryParseSurfaceKind is an EXPLICIT name switch (its own
+            // doc says why: Enum.TryParse would accept a bare numeral). A new kind that nobody added a case for
+            // therefore round-trips as a REFUSED payload — every tab in it silently dropped — rather than as a
+            // compile error, so the new case needs pinning by name here.
+            var poiEditor = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(poiEditor, new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-3" }, "Тихий Брод", false);
+            if (!WorkspaceOps.TryDeserialize(WorkspaceOps.Serialize(poiEditor), out var poiBack) || poiBack == null
+                || poiBack.Primary.Tabs.Count < 2
+                || poiBack.Primary.Tabs[1].Surface.Kind != SurfaceKind.PoiEditor
+                || poiBack.Primary.Tabs[1].Surface.Id != "poi-3")
+            {
+                string got = poiBack == null ? "<parse failed>"
+                    : poiBack.Primary.Tabs.Count < 2 ? $"<only {poiBack.Primary.Tabs.Count} tab(s)>"
+                    : $"{poiBack.Primary.Tabs[1].Surface.Kind}/{poiBack.Primary.Tabs[1].Surface.Id}";
+                Debug.LogError($"FAIL persist: PoiEditor tab came back {got}, want PoiEditor/poi-3");
+                ok = false;
             }
 
             // A title carrying a tab or newline must not corrupt the payload.

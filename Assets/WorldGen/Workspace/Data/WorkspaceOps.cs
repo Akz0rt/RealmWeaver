@@ -114,6 +114,37 @@ namespace WorldGen.Workspace.Data
             l.FocusedPane = target;
         }
 
+        /// <summary>Where a surface is currently open, as (pane, index), or (-1, -1) when it is open nowhere.
+        /// Task 10c needs it because every Close* path in MapScreenController holds a SurfaceRef and nothing
+        /// else — the tab it wants to close was opened arbitrarily long ago, possibly in either pane, possibly
+        /// with other tabs opened and closed around it since, so there is no index to have remembered.
+        ///
+        /// Defers to the SAME IndexOfSurface (and therefore the same SameSurface) that Open's
+        /// reopen-does-not-duplicate rule uses — R1 and "close the tab I opened" have to agree about what
+        /// counts as the same surface, or a Close could miss the very tab a preceding Open had focused.
+        ///
+        /// PRIMARY FIRST, and the first match wins. A surface CAN be open in both panes at once (Open only
+        /// dedupes within its TARGET pane — see R1's own wording), so "where is it" genuinely has two answers
+        /// sometimes; picking Primary deterministically beats an ordering that depends on FocusedPane, because
+        /// a Close that closed a different tab depending on which pane happened to be focused would be
+        /// unpredictable in exactly the situation the user is least able to reason about.</summary>
+        public static bool FindSurface(WorkspaceLayout l, SurfaceRef s, out int pane, out int index)
+        {
+            pane = -1;
+            index = -1;
+            if (l == null || s == null) return false;
+
+            for (int p = 0; p <= 1; p++)
+            {
+                int i = IndexOfSurface(PaneAt(l, p), s);
+                if (i < 0) continue;
+                pane = p;
+                index = i;
+                return true;
+            }
+            return false;
+        }
+
         public static bool CloseTab(WorkspaceLayout l, int pane, int index)
         {
             if (l == null) return false;

@@ -8,6 +8,7 @@ namespace WorldGen.Rendering
     /// <summary>
     /// Handles all mouse interaction with POI markers:
     /// - Click on marker → select (highlight + show panel).
+    /// - Double-click on marker → open that place's page in the workspace (Task 10c Step 2a).
     /// - Click on empty map → deselect.
     /// - Drag marker → reposition; commits WorldPosition + OwnerCellId on mouse-up.
     ///
@@ -27,7 +28,7 @@ namespace WorldGen.Rendering
         public Camera raycastCamera;
         [Tooltip("Info popup shown on a single click of a POI.")]
         public PoiInfoPopup infoPopup;
-        [Tooltip("Screen controller — a double-click opens the full POI editor.")]
+        [Tooltip("Screen controller — a double-click opens the point's page in the workspace (Task 10c).")]
         public MapScreenController mapScreenController;
 
         [Header("Interaction settings")]
@@ -138,8 +139,19 @@ namespace WorldGen.Rendering
                 var poi = poiManager.GetPoiById(trackedPoiId);
                 if (poi != null)
                 {
-                    // Single click → info popup; double click → full editor screen.
-                    if (isDouble && mapScreenController != null) mapScreenController.OpenPoiEditor(poi);
+                    // Single click → select + info popup; double click → the place's PAGE (Task 10c Step 2a).
+                    //
+                    // The single-click half is the spec's hard rule and is why this is a DOUBLE-click at all:
+                    // «клик выделяет ... случайный клик не должен выбрасывать пользователя с карты». Before
+                    // Task 10c a double-click took over the whole window with the POI editor, which was
+                    // exactly that — being thrown out of the map. It now opens a tab, and in the OTHER pane
+                    // when a split exists, so the map the user just clicked stays on screen either way.
+                    //
+                    // Opening the PAGE rather than the editor is also what makes the place appear in the
+                    // navigator's «Мир» group, since the page is what carries NotesPage.Bound. The editor is
+                    // still one click away — the info popup this same gesture's single click shows carries
+                    // «Редактировать» (PoiInfoPopup.cs:307 → MapScreenController.OpenPoiEditor).
+                    if (isDouble && mapScreenController != null) mapScreenController.OpenPoiPage(poi);
                     else if (infoPopup != null) infoPopup.Show(poi);
                 }
             }

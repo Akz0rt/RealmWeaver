@@ -268,6 +268,21 @@ namespace WorldGen.Workspace.Rendering
             RaiseChanged();
         }
 
+        /// <summary>Closes whichever tab currently shows `s`, wherever it is — the shape every Close* path in
+        /// MapScreenController needs, since those hold a SurfaceRef and were never told an index (see
+        /// WorkspaceOps.FindSurface's own doc). Silently does nothing when the surface is open nowhere, which
+        /// is an ORDINARY outcome, not an error: the user may have closed the tab themselves from the strip,
+        /// and the editor screen's own «Назад» button would then still call through to here.
+        ///
+        /// Closes ONE tab, the first FindSurface reports. A surface open in both panes therefore survives in
+        /// the other — deliberate: «Открыть рядом» on a POI editor is the user asking for two views, and a
+        /// «Назад» in one of them should not reach across and shut the other.</summary>
+        public void CloseSurface(SurfaceRef s)
+        {
+            if (!WorkspaceOps.FindSurface(Layout, s, out int pane, out int index)) return;
+            CloseTab(pane, index);
+        }
+
         public void CloseTab(int pane, int index)
         {
             if (!WorkspaceOps.CloseTab(Layout, pane, index)) return;

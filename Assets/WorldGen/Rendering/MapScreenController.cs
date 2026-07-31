@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
+using WorldGen.Notes.Data;
+using WorldGen.Notes.Rendering;
+using WorldGen.Workspace.Data;
 using WorldGen.Workspace.Rendering;
 
 namespace WorldGen.Rendering
@@ -70,7 +73,10 @@ namespace WorldGen.Rendering
         // reset that also clears editingDungeon — OnWorldRegenerated, OpenDungeonEditor's stale-parent
         // guard). editingDungeon itself still drives DesiredScreen(); this is pure "where does back go" memory.
         InteriorData parentTown;
-        int battleGridRoomId;        // 0 = the battle grid screen is closed
+        int battleGridRoomId;        // 0 = no battle grid tab is open
+        // The floor `battleGridRoomId` was resolved on, remembered at open time — see OpenBattleGrid for why
+        // it cannot be re-read from the interior editor when the tab is closed.
+        int battleGridFloorIndex;
         ScreenSwitcher switcher;
 
         void Awake()
@@ -171,6 +177,15 @@ namespace WorldGen.Rendering
 
         void OnWorldRegenerated()
         {
+            // Close the tabs BEFORE clearing the state that names them — every SurfaceRef below is derived
+            // from editingPoi/editingDungeon/battleGridRoomId, so a clear-first ordering would leave three
+            // tabs open pointing at a world that no longer exists, each of which would then Show() a screen
+            // still bound to a dead InteriorData. (Task 11's WorkspacePrefs has its own version of this
+            // problem for STORED tabs and its own answer, WorkspaceOps.PruneMissing; this is the live one.)
+            CloseSurfaceTab(BattleGridSurface());
+            CloseSurfaceTab(InteriorSurface(editingDungeon));
+            CloseSurfaceTab(PoiEditorSurface(editingPoi));
+
             editingPoi = null; // a fresh world drops any open POI editor
             editingDungeon = null; // a fresh world drops any open dungeon editor
             parentTown = null;   // ...and any building-from-town back-target it was carrying
@@ -178,26 +193,64 @@ namespace WorldGen.Rendering
             RefreshScreenState();
         }
 
-        /// <summary>Opens the full-screen POI editor for a point (single source of truth for both the
-        /// info-popup «Редактировать» button and double-click). Hides the popup + map view.</summary>
+        // ── Surfaces: opening and closing the tabs that used to be screens (Task 10c Step 2) ────────
+        //
+        // The Open* methods keep every line of the state-keeping they always had — Bind, the resolve-before-
+        // mutate guards, parentTown bookkeeping — and only replace their final "switch the window to my
+        // screen" with "open (or focus) my tab". That split is why each one still ends in RefreshScreenState:
+        // the SCREEN question ("is there a world at all?") is unchanged and still this class's, while WHICH
+        // surface is visible is now WorkspaceController's.
+        //
+        // inOtherPane is FALSE everywhere here, deliberately, and it is not an oversight to revisit: the spec
+        // reserves the other pane for two explicit gestures (Shift+Enter in Ctrl+K, «Открыть рядом» in the
+        // navigator) plus double-clicking a place on the map, which is Step 2a's and lives in
+        // PoiInteractionController. Everything in THIS file is a drill-down from something already open — the
+        // POI editor's «КАРТА ЛОКАЦИИ», a room's «Боевая карта», a building inside a town — where the user is
+        // going deeper into one line of work, not putting two things side by side.
+
+        /// <summary>Opens the POI editor for a point (single source of truth for the info-popup's
+        /// «Редактировать» button). Hides the popup, binds the editor and opens its TAB — as of Task 10c it no
+        /// longer takes over the window, which is the «редактирование точки интереса происходит не в отдельной
+        /// вкладке, а раскрывается на весь экран» the user reported at the Task 10a checkpoint.
+        ///
+        /// ALSO ENSURES THE POI HAS A PAGE, which is what puts it in the navigator's «Мир» group — the spec's
+        /// "it appears in the tree as a consequence of being worked on rather than through a separate
+        /// mechanism", with opening the editor being the act of working on it. The page is CREATED, not
+        /// OPENED: a tab for it would be a second thing appearing from one click. Note this is a different
+        /// gesture from double-clicking the POI on the map (PoiInteractionController), which opens the page
+        /// itself and no editor.</summary>
         public void OpenPoiEditor(PoiData poi)
         {
             if (poi == null) return;
             editingPoi = poi;
             if (poiInfoPopup != null) poiInfoPopup.Hide();
             if (poiEditorScreen != null) poiEditorScreen.Bind(poi);
+            EnsurePageForPoi(poi);
+            OpenSurfaceTab(PoiEditorSurface(poi), PoiTitle(poi));
             RefreshScreenState();
         }
 
-        /// <summary>Closes the POI editor and returns to the world map.</summary>
+        /// <summary>Closes the POI editor's tab. What the user sees next is whatever tab the workspace makes
+        /// active in its place (WorkspaceOps.FixActiveIndexAfterRemoval decides), NOT "the world map" as the
+        /// pre-Task-10c version of this comment promised — the map is one tab among many now and may not even
+        /// be in the same pane.</summary>
         public void ClosePoiEditor()
         {
+            CloseSurfaceTab(PoiEditorSurface(editingPoi));
             editingPoi = null;
             RefreshScreenState();
         }
 
-        /// <summary>Opens the cave-dungeon editor for a POI (get-or-create its dungeon). Returns to the
-        /// POI editor on close (editingPoi stays set), not the world map.</summary>
+        /// <summary>Opens the cave-dungeon editor for a POI (get-or-create its dungeon) in its own tab. The
+        /// POI editor's own tab is left OPEN behind it (editingPoi stays set, as it always did), so closing
+        /// this one lands back on the POI editor exactly as before — that continuity now comes from the tab
+        /// still existing rather than from a screen underneath.
+        ///
+        /// One method, two SurfaceKinds: a settlement POI yields InteriorKind.Settlement and everything else
+        /// Dungeon (Profiles.InteriorKindForPoiType), and InteriorSurface below maps that to Settlement or
+        /// Dungeon. Both are served by the same DungeonEditorScreen object — see ScreenSurfaceHosts' class doc
+        /// for why that sharing has to be resolved inside the host rather than by registering three of
+        /// them.</summary>
         public void OpenDungeonEditor(PoiData poi)
         {
             if (poi == null || dungeonManager == null) return;
@@ -226,6 +279,7 @@ namespace WorldGen.Rendering
             }
             if (dungeonEditorScreen != null)
                 dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
+            OpenSurfaceTab(InteriorSurface(editingDungeon), PoiTitle(poi));
             RefreshScreenState();
         }
 
@@ -316,13 +370,24 @@ namespace WorldGen.Rendering
 
         /// <summary>Wired to DungeonEditorScreen.OnCloseRequested (the top-strip back button) — the SAME
         /// single handler for both of its meanings. When a building interior is open (parentTown != null),
-        /// «← Город» rebinds the town interior in place and stays on AppScreen.Dungeon — it must NOT fall
-        /// through to the editingDungeon=null branch below, which would instead drop to the POI editor.
-        /// Otherwise («← Назад» on a top-level dungeon/building/settlement) behaviour is unchanged.</summary>
+        /// «← Город» goes back up one level; otherwise («← Назад» on a top-level dungeon/building/settlement)
+        /// the interior closes entirely.
+        ///
+        /// WHAT «← Город» MEANS UNDER TABS, decided here rather than left ambiguous: the building's tab is
+        /// CLOSED and the town's is opened (which, since the town's tab is still there from
+        /// OpenDungeonEditor, means FOCUSED — WorkspaceOps.Open's R1 reopen-does-not-duplicate rule). Chosen
+        /// over re-targeting the one tab in place because the two are genuinely different places with
+        /// different names, and a tab that silently changed what it points at would leave the tab strip
+        /// lying about where the user is. Closing rather than leaving both open matches what the button says:
+        /// «← Город» is going back, not opening a second thing.
+        ///
+        /// ORDER MATTERS: close the building's tab BEFORE editingDungeon is reassigned, since
+        /// InteriorSurface(editingDungeon) is what names it.</summary>
         public void CloseDungeonEditor()
         {
             if (parentTown != null)
             {
+                CloseSurfaceTab(InteriorSurface(editingDungeon));
                 editingDungeon = parentTown;
                 parentTown = null;
                 // Recomputed here, not carried over from the original OpenDungeonEditor bind — the DM may
@@ -331,15 +396,22 @@ namespace WorldGen.Rendering
                 // return trip.
                 if (dungeonEditorScreen != null)
                     dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
+                // Re-Opened, not merely re-Bound: the town's tab still exists, so this focuses it. The title
+                // is only used if it somehow does not (the user closed it from the strip while a building
+                // interior was open) — in which case re-opening it is better than silently leaving the DM on
+                // whatever tab happened to be next.
+                OpenSurfaceTab(InteriorSurface(editingDungeon), InteriorTitle(editingDungeon));
                 RefreshScreenState();
                 return;
             }
 
-            editingDungeon = null;   // editingPoi is still set → DesiredScreen returns PoiEditor
+            CloseSurfaceTab(InteriorSurface(editingDungeon));
+            editingDungeon = null;
             RefreshScreenState();
-            // The POI editor is re-SHOWN (SetActive), not re-Bound, so its «Карта локации» label would
-            // keep its pre-dungeon "Создать" text. Refresh it here to reflect a dungeon just created —
-            // Bind is otherwise the only place that computes it.
+            // The POI editor's tab was never closed, so it is still bound to the same POI — but it was Bound
+            // BEFORE this interior existed, so its «Карта локации» label would keep its pre-dungeon "Создать"
+            // text. Refresh it here to reflect a dungeon just created; Bind is otherwise the only place that
+            // computes it.
             if (editingPoi != null && poiEditorScreen != null) poiEditorScreen.RefreshMapSection();
         }
 
@@ -384,11 +456,16 @@ namespace WorldGen.Rendering
             editingDungeon = building;
             string header = !string.IsNullOrEmpty(room.Title) ? room.Title : $"Здание {roomId}";
             dungeonEditorScreen.Bind(editingDungeon, header);
+            // The town's OWN tab stays open behind this one — that is what CloseDungeonEditor's «← Город»
+            // branch focuses on the way back up. Same header string for both the screen's top strip and the
+            // tab, so the two cannot disagree about what this building is called.
+            OpenSurfaceTab(InteriorSurface(editingDungeon), header);
             RefreshScreenState();
         }
 
-        /// <summary>Opens the battle map of a room on the CURRENTLY open interior floor. Returns to the
-        /// interior screen on close (editingDungeon stays set), with the same room still selected.</summary>
+        /// <summary>Opens the battle map of a room on the CURRENTLY open interior floor, in its own tab. The
+        /// interior's tab stays open behind it (editingDungeon stays set), so closing this one lands back
+        /// there with the same room still selected.</summary>
         public void OpenBattleGrid(int roomId)
         {
             if (editingDungeon == null || roomId == 0 || battleGridScreen == null) return;
@@ -403,26 +480,198 @@ namespace WorldGen.Rendering
             // settlement.
             if (editingDungeon.Kind == InteriorKind.Settlement) return;
 
-            // Resolve BEFORE touching battleGridRoomId: DesiredScreen() switches on that field alone, so
-            // setting it for a room that does not resolve would show the battle-grid screen with nothing
-            // bound — blank on a first open, or still showing the PREVIOUS room's map on a later one, with
+            // Resolve BEFORE touching battleGridRoomId/battleGridFloorIndex: those two name the surface (see
+            // BattleGridSurface), so setting them for a room that does not resolve would open a tab bound to
+            // nothing — blank on a first open, or still showing the PREVIOUS room's map on a later one, with
             // no error the DM can see in a standalone build. An id that cannot be resolved must leave the
             // DM exactly where they are.
             if (dungeonEditorScreen == null) return;
             int floorIndex = dungeonEditorScreen.CurrentLevelIndex;
             if (floorIndex < 0 || floorIndex >= editingDungeon.Floors.Count) return;
-            if (editingDungeon.Floors[floorIndex].GetRoom(roomId) == null) return;
+            var gridRoom = editingDungeon.Floors[floorIndex].GetRoom(roomId);
+            if (gridRoom == null) return;
 
             battleGridRoomId = roomId;
+            // Remembered rather than re-read from dungeonEditorScreen.CurrentLevelIndex when the tab is
+            // closed: the interior editor stays live behind this tab, so the DM can switch its level tab
+            // while the battle grid is open, and a close would then compute a DIFFERENT id than the open did
+            // and fail to find its own tab.
+            battleGridFloorIndex = floorIndex;
             battleGridScreen.Bind(editingDungeon, floorIndex, roomId);
+            OpenSurfaceTab(BattleGridSurface(),
+                !string.IsNullOrEmpty(gridRoom.Title) ? gridRoom.Title : $"Бой: комната {roomId}");
             RefreshScreenState();
         }
 
         public void CloseBattleGrid()
         {
-            battleGridRoomId = 0;   // editingDungeon is still set → DesiredScreen returns Dungeon
+            CloseSurfaceTab(BattleGridSurface());   // derived from the two fields, so close BEFORE clearing
+            battleGridRoomId = 0;
+            battleGridFloorIndex = 0;
             RefreshScreenState();
         }
+
+        // ── Surface refs, titles, and the two calls that reach the workspace ────────────────────────
+
+        /// <summary>The tab a POI editor is shown in. PoiData.Id is a Guid string (PoiData.cs), so it names
+        /// one POI unambiguously — the same identity Task 10b's WorldRef{Kind=Poi, Id} already relies on.
+        /// Null for a null POI so every call site can pass its field unguarded.</summary>
+        static SurfaceRef PoiEditorSurface(PoiData poi) =>
+            poi == null ? null : new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = poi.Id };
+
+        /// <summary>The tab an interior is shown in — Settlement, BuildingInterior or Dungeon, decided by the
+        /// interior's own Kind rather than by which method opened it, so the two can never disagree.
+        ///
+        /// THE ID HAS TO CARRY OwnerRoomId, not just OwnerPoiId: a building interior is a SECOND interior for
+        /// the SAME poiId, distinguished only by OwnerRoomId (see InteriorData.OwnerRoomId's own doc and
+        /// OpenBuildingInterior's comment about why GetByPoiId cannot serve that lookup). Without the room
+        /// part, a town and a building inside it would be the same SurfaceRef under WorkspaceOps.SameSurface,
+        /// so drilling into a building would silently re-focus the town's tab instead of opening one.
+        /// InteriorKind.Building with OwnerRoomId 0 is a TOP-LEVEL building (a POI that is a building, not one
+        /// inside a town) — it maps to BuildingInterior too, and the "#0" suffix keeps its id a pure function
+        /// of the data with no special case.
+        ///
+        /// '#' as the separator: PoiData.Id is a Guid string, which cannot contain one, so the two parts can
+        /// never be ambiguous. Ids are also persisted verbatim by WorkspaceOps.Serialize, which escapes tabs
+        /// and newlines and has no opinion about anything else.</summary>
+        static SurfaceRef InteriorSurface(InteriorData interior)
+        {
+            if (interior == null) return null;
+            switch (interior.Kind)
+            {
+                case InteriorKind.Settlement:
+                    return new SurfaceRef { Kind = SurfaceKind.Settlement, Id = interior.OwnerPoiId ?? "" };
+                case InteriorKind.Building:
+                    return new SurfaceRef
+                    {
+                        Kind = SurfaceKind.BuildingInterior,
+                        Id = $"{interior.OwnerPoiId}#{interior.OwnerRoomId}",
+                    };
+                default:
+                    return new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = interior.OwnerPoiId ?? "" };
+            }
+        }
+
+        /// <summary>The tab the battle grid is shown in, named by the interior AND the exact room on the exact
+        /// floor — three different rooms of one dungeon are three different battle maps, and each deserves its
+        /// own tab rather than one tab whose meaning changes. Null when no battle grid is open, which is what
+        /// makes CloseSurfaceTab a no-op on the paths that call it unconditionally.</summary>
+        SurfaceRef BattleGridSurface()
+        {
+            if (editingDungeon == null || battleGridRoomId == 0) return null;
+            var interior = InteriorSurface(editingDungeon);
+            return new SurfaceRef
+            {
+                Kind = SurfaceKind.BattleGrid,
+                Id = $"{interior.Id}#{battleGridFloorIndex}#{battleGridRoomId}",
+            };
+        }
+
+        /// <summary>A POI's tab title. Falls back the same way NotesDocOps.EnsurePageFor's E3 does, and to the
+        /// same string, so a nameless POI reads identically in the tab strip and in «Мир» rather than being
+        /// «Без названия» in one place and blank in the other.</summary>
+        static string PoiTitle(PoiData poi) =>
+            poi != null && !string.IsNullOrWhiteSpace(poi.Name) ? poi.Name : "Без названия";
+
+        /// <summary>An interior's tab title, used only on CloseDungeonEditor's «← Город» path where the town's
+        /// own tab is expected to already exist (so this is the title of a tab that will normally not be
+        /// created). The POI's real name is not reachable from an InteriorData, and going to PoiManager for it
+        /// would add a manager reference for one fallback string — so this names the KIND, which is honest
+        /// about what it knows.</summary>
+        static string InteriorTitle(InteriorData interior) =>
+            interior == null ? "" : interior.Kind == InteriorKind.Settlement ? "Город"
+                : interior.Kind == InteriorKind.Building ? "Здание" : "Подземелье";
+
+        /// <summary>Opens (or focuses, per WorkspaceOps.Open's R1) `s` in the FOCUSED pane. A no-op when there
+        /// is no workspace in the scene — the transitional state this class's own doc names — and when `s` is
+        /// null, which is how the Close*/Open* paths pass state that is not set.</summary>
+        void OpenSurfaceTab(SurfaceRef s, string title)
+        {
+            if (s == null) return;
+            Shell()?.Open(s, title, inOtherPane: false);
+        }
+
+        /// <summary>Closes `s`'s tab wherever it is. Null-tolerant for the same reason OpenSurfaceTab is, and
+        /// tolerant of the surface not being open at all — WorkspaceController.CloseSurface's own doc explains
+        /// why that is ordinary rather than an error.</summary>
+        void CloseSurfaceTab(SurfaceRef s)
+        {
+            if (s == null) return;
+            Shell()?.CloseSurface(s);
+        }
+
+        /// <summary>Creates the POI's page if it has none, which is the ONLY thing that puts the POI in the
+        /// navigator's «Мир» group (NotesDocOps.EnsurePageFor is the single writer of NotesPage.Bound, and
+        /// NavigatorTree derives membership from it). Existing pages are reused, never duplicated — E1.
+        ///
+        /// RAISES OnDocumentChanged EXPLICITLY rather than relying on the OpenSurfaceTab that follows it. The
+        /// navigator rebuilds on either OnDocumentChanged or WorkspaceController.OnLayoutChanged
+        /// (NavigatorView.cs:99-100), and every call site here does follow this with an Open — so the tree
+        /// would refresh anyway, today, by ordering. Task 10b's review flagged that as a trap worth closing
+        /// rather than documenting: a future path that creates a page WITHOUT opening a tab (or an Open that
+        /// no-ops because the tab was already there and focused — WorkspaceController.Open still raises, but
+        /// a future short-circuit might not) would leave the place silently absent from «Мир».
+        ///
+        /// The document controller is DISCOVERED, like the workspace: NotesRootBuilder owns the live
+        /// NotesDocumentController and this class has no Inspector reference to it (adding one would need a
+        /// scene edit Task 11 owns). EnsurePageFor(null-doc, ...) already returns null (E4), so a scene
+        /// without notes degrades to "no page, no «Мир» row" rather than throwing.</summary>
+        string EnsurePageForPoi(PoiData poi)
+        {
+            if (poi == null) return null;
+            var docController = Documents();
+            var doc = docController != null ? docController.Document : null;
+            if (doc == null) return null;
+
+            string pageId = NotesDocOps.EnsurePageFor(
+                doc, new WorldRef { Kind = WorldRefKind.Poi, Id = poi.Id }, PoiTitle(poi));
+            if (pageId == null) return null;
+            docController.NotifyDocumentChanged();
+            return pageId;
+        }
+
+        /// <summary>Opens a POI's PAGE — the Р1-reachable half of the spec's "clicking a place on the map":
+        /// a single click only SELECTS (a stray click must never throw the user out of the map), and the page
+        /// opens on an explicit action. Double-clicking the marker is that action for Р1; the inspector's
+        /// «Открыть страницу →» is Р5's. Wired from PoiInteractionController.OnRelease.
+        ///
+        /// IN THE OTHER PANE WHEN A SPLIT EXISTS, per the spec, otherwise a new tab in the focused pane. That
+        /// is the one place in this file that passes inOtherPane: true, and it is the point of the gesture —
+        /// the user is reading a place's notes NEXT TO the map they clicked it on, not instead of it.
+        ///
+        /// DELIBERATELY NOT the POI editor: OpenPoiEditor (the popup's «Редактировать») opens the editor's own
+        /// tab and merely ENSURES the page exists. Two gestures, two surfaces, one shared EnsurePageFor.
+        ///
+        /// LIVES HERE, not in PoiInteractionController, even though the gesture is wired there: this class
+        /// already owns the discovered NotesDocumentController and WorkspaceController (see Documents() and
+        /// Shell()), and giving the interaction controller its own copies would be two more references to go
+        /// stale after a domain reload for no gain.</summary>
+        public void OpenPoiPage(PoiData poi)
+        {
+            string pageId = EnsurePageForPoi(poi);
+            if (pageId == null) return;   // no document in this scene, or a null POI — nothing to open.
+
+            var shell = Shell();
+            if (shell == null) return;
+            bool split = shell.Layout != null && shell.Layout.Secondary != null;
+            shell.Open(new SurfaceRef { Kind = SurfaceKind.Page, Id = pageId }, PoiTitle(poi), inOtherPane: split);
+        }
+
+        /// <summary>The live notes document controller, discovered on every miss for the same reasons Shell()
+        /// is — no Inspector slot until Task 11, and a domain reload wipes the cached reference while the
+        /// component survives. FindObjectsInactive.Include because NotesRootBuilder's own GameObject may be
+        /// inactive depending on which screen is showing.</summary>
+        NotesDocumentController Documents()
+        {
+            if (documentController != null) return documentController;
+            var notesRoot = FindFirstObjectByType<NotesRootBuilder>(FindObjectsInactive.Include);
+            if (notesRoot == null) return null;
+            notesRoot.EnsureBuilt();   // idempotent; Awake ordering across GameObjects is undefined.
+            documentController = notesRoot.DocumentController;
+            return documentController;
+        }
+
+        NotesDocumentController documentController;
 
         void RefreshScreenState()
         {
