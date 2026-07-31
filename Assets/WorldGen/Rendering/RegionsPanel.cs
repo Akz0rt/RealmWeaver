@@ -218,7 +218,9 @@ namespace WorldGen.Rendering
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
             panelRect.offsetMin = new Vector2(20f, 20f);
-            panelRect.offsetMax = new Vector2(20f + 262f, -(40f + MapToolbarUI.BarHeightPixels + 20f));
+            // The 40px menu-bar term is gone from this top inset — the pane's own top already excludes the
+            // menu bar once PaneChromeFrame confines this canvas to it. Full reasoning: MapLayersPanel.cs:68.
+            panelRect.offsetMax = new Vector2(20f + 262f, -(MapToolbarUI.BarHeightPixels + 20f));
 
             var layout = panelGO.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(12, 12, 12, 12);

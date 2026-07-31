@@ -107,10 +107,20 @@ namespace WorldGen.Rendering
             // Фиксированная позиция: правый край у линии раздела карта/заметки (anchor = SplitFraction,
             // pivot справа), верх — сразу под верхней панелью (40 меню + 46 тулбар + отступ). Раньше
             // панель докалась под легенду, но в Screen A легенда уехала в низ-лево, так что отвязываем.
-            float topY = -(40f + MapToolbarUI.BarHeightPixels + 20f);
+            // Слагаемое «40 меню» УБРАНО: оболочка workspace ограничивает этот канвас панелью
+            // (PaneChromeFrame через MapSurfaceHost), и её верх уже не включает меню-бар — WorkspaceBuilder
+            // отступает RootRow на MenuBarInset = 40f (WorkspaceBuilder.cs:231) до раскладки панелей внутри,
+            // так что слагаемое считало те же 40 пикселей дважды. Подробнее: MapLayersPanel.cs:68.
+            float topY = -(MapToolbarUI.BarHeightPixels + 20f);
             panelRect.anchoredPosition = new Vector2(-rightMargin, topY);
 
-            float availableHeight = Screen.height + topY - bottomScreenMargin;
+            // Высота берётся у РОДИТЕЛЯ, а не у Screen.height: родитель — это PaneChromeFrame (или сам канвас,
+            // когда рамки ещё нет), т.е. ровно тот прямоугольник, в котором панель живёт. Со Screen.height
+            // панель внутри узкой вкладки считала себе высоту целого окна и уезжала за нижний край панели, где
+            // RectMask2D рамки её обрезал. Оба случая покрыты одним выражением, спец-веток нет.
+            var host = panelRect.parent as RectTransform;
+            float hostHeight = host != null ? host.rect.height : Screen.height;
+            float availableHeight = hostHeight + topY - bottomScreenMargin;
             float contentHeight = LayoutUtility.GetPreferredHeight(contentRect);
             float desiredHeight = Mathf.Min(contentHeight, Mathf.Max(availableHeight, 0f));
 
