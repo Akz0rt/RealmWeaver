@@ -90,7 +90,7 @@ namespace WorldGen.Workspace.Rendering
         /// LateUpdate. A tab click raises TWO events in the same frame — SetActive then FocusPane (see
         /// BuildTab) — and since Destroy() is deferred to end-of-frame, a second synchronous Rebuild would
         /// iterate children already marked for destruction and build a THIRD, overlapping set on top. Same
-        /// fix NotesTreeSidebar uses for its own RequestRebuild/LateUpdate pair.</summary>
+        /// fix NavigatorView uses for its own RequestRebuild/LateUpdate pair.</summary>
         void LateUpdate()
         {
             if (!rebuildPending) return;
@@ -102,7 +102,7 @@ namespace WorldGen.Workspace.Rendering
         {
             // SetActive(false) takes effect immediately; Destroy() is deferred to end of frame — without
             // deactivating first, the old and newly-built tabs would both render for one frame (same trap
-            // NotesTreeSidebar.Rebuild documents).
+            // NavigatorView.Rebuild documents for its own rows).
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
                 var child = transform.GetChild(i).gameObject;

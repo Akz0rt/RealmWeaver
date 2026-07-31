@@ -11,9 +11,13 @@ namespace WorldGen.Notes.Rendering
     /// canvas/whiteboard viewport (NotesCanvasController + chrome) — Task 9 (workspace shell
     /// surfaces) retires all three from this build: the split and sidebar are superseded by the
     /// workspace's own navigator and panes, and canvas/board rendering is later work entirely (see
-    /// the workspace-shell spec's Р4). NotesLayoutController.cs and NotesTreeSidebar.cs are left on
-    /// disk untouched — deleting them is Task 10's job, not this one's; this class simply stops
-    /// calling them.
+    /// the workspace-shell spec's Р4). Task 10c then DELETED NotesLayoutController.cs and
+    /// NotesTreeSidebar.cs outright, as Task 9 said it would — every comment elsewhere in the project that
+    /// cites either of them by name is citing history, and git is where to read it.
+    ///
+    /// SampleScene.unity still holds MonoBehaviour entries pointing at both deleted scripts, which Unity
+    /// surfaces as "missing script" components. That is expected and deliberate: Task 11 is the only task
+    /// allowed to edit the scene, and it removes them.
     ///
     /// DocumentView's root starts parked under a bare, non-Canvas holding transform (nothing renders
     /// there — Unity draws uGUI only under a Canvas) and is re-parented into whichever workspace pane

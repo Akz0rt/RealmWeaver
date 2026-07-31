@@ -141,7 +141,7 @@ namespace WorldGen.Workspace.Rendering
         ///     onValueChanged (every keystroke, per the brief's explicit no-debounce instruction). Coalescing
         ///     into LateUpdate is NOT a debounce: it still runs once per keystroke, zero added latency beyond
         ///     the same frame — it only guards against the same destroy-then-rebuild-twice-in-one-frame trap
-        ///     TabStripView/NavigatorView/NotesTreeSidebar all document for their own RequestRebuild.</summary>
+        ///     TabStripView and NavigatorView both document for their own RequestRebuild.</summary>
         void LateUpdate()
         {
             if (popupGO == null) return;
@@ -405,8 +405,8 @@ namespace WorldGen.Workspace.Rendering
             // its freshly-created RectTransform already had. Mirrors the panel's own vlg 70 lines up
             // (BuildPopup: childControlHeight = true; childForceExpandHeight = false) — "control height, but
             // don't force-expand it past the child's own preferredHeight" is the correct shape for a
-            // fixed-row-height list, the same shape NavigatorView.cs/NotesTreeSidebar.cs/
-            // GenerationProgressUI.cs all use by leaving this field at Unity's own default (true).
+            // fixed-row-height list, the same shape NavigatorView.cs and GenerationProgressUI.cs both use
+            // by leaving this field at Unity's own default (true).
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
             vlg.spacing = 0f;
@@ -454,7 +454,7 @@ namespace WorldGen.Workspace.Rendering
         {
             // SetActive(false) before Destroy() — Destroy() is deferred to end of frame, so without
             // deactivating first, stale and freshly-built rows would both render for one frame; same trap
-            // TabStripView.Rebuild/NavigatorView.Rebuild/NotesTreeSidebar.Rebuild all document for themselves.
+            // TabStripView.Rebuild and NavigatorView.Rebuild both document for themselves.
             for (int i = listContent.childCount - 1; i >= 0; i--)
             {
                 var child = listContent.GetChild(i).gameObject;

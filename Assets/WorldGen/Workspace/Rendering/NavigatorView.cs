@@ -247,14 +247,15 @@ namespace WorldGen.Workspace.Rendering
 
         /// <summary>Coalesces every OnLayoutChanged/OnDocumentChanged/search-keystroke fired within one frame
         /// into a single Rebuild in LateUpdate — the same fix TabStripView.LateUpdate and
-        /// NotesTreeSidebar.LateUpdate use, and for the same reason: committing a rename fires
+        /// QuickOpenPopup.LateUpdate use, and for the same reason: committing a rename fires
         /// OnDocumentChanged from inside the InputField's own onEndEdit callback, and Destroy() is deferred
         /// to end of frame, so a synchronous second Rebuild reached from that callback would destroy rows
         /// already marked for destruction and stack a third set on top.
         ///
         /// While a rename is in flight (activeRenameInput != null), the rebuild is held rather than run: this
-        /// view subscribes to OnLayoutChanged as well as OnDocumentChanged — unlike NotesTreeSidebar, which
-        /// only had the latter — and OnLayoutChanged fires from something as unrelated as clicking a tab.
+        /// view subscribes to OnLayoutChanged as well as OnDocumentChanged — unlike the retired notes
+        /// sidebar, which only had the latter — and OnLayoutChanged fires from something as unrelated as
+        /// clicking a tab.
         /// Without this guard, that would destroy the row the user is mid-rename on, silently discarding
         /// whatever they had typed with no commit and no cancel. rebuildPending stays true (not cleared),
         /// so the held rebuild runs on the first LateUpdate after the rename actually ends (StartRename's
@@ -296,7 +297,7 @@ namespace WorldGen.Workspace.Rendering
 
             // SetActive(false) takes effect immediately; Destroy() is deferred to end of frame — without
             // deactivating first, the old and newly-built rows would both render for one frame (same trap
-            // NotesTreeSidebar.Rebuild documents).
+            // TabStripView.Rebuild documents for its own tabs).
             for (int i = listContent.childCount - 1; i >= 0; i--)
             {
                 var child = listContent.GetChild(i).gameObject;

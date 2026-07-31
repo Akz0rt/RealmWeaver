@@ -5,11 +5,16 @@ using UnityEngine.UI;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Thin draggable bar used by both the map/notes split and the notes sidebar width.
-    /// Reports only a raw screen-space delta.x per drag frame and a one-shot "drag ended"
-    /// callback — it has zero awareness of fractions, pixel widths, or what it's resizing;
-    /// each caller (NotesLayoutController, NotesTreeSidebar) interprets the delta its own way.
-    /// Highlights on hover; stays fully transparent otherwise.
+    /// Thin draggable bar. Reports only a raw screen-space delta.x per drag frame and a one-shot
+    /// "drag ended" callback — it has zero awareness of fractions, pixel widths, or what it's
+    /// resizing; each caller interprets the delta its own way. Highlights on hover; stays fully
+    /// transparent otherwise.
+    ///
+    /// Its two original callers (the map/notes split and the notes sidebar width) were deleted in Task 10c
+    /// along with the classes that owned them. The one live caller now is the workspace shell's
+    /// Primary|Secondary divider — WorkspaceBuilder.BuildPaneContainer, which turns the delta into a
+    /// SplitRatio. It still lives in WorldGen.Notes.Rendering rather than moving into the workspace layer:
+    /// the move would be pure churn, and Р4 (the canvas block) is expected to want a divider of its own.
     /// </summary>
     public class DraggableDivider : MonoBehaviour, IDragHandler, IEndDragHandler, IPointerEnterHandler, IPointerExitHandler
     {

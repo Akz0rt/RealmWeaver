@@ -369,8 +369,8 @@ namespace WorldGen.Workspace.Rendering
             ThemeService.Tag(navImg, ThemeRole.Panel);
 
             // Fixed pixel width from preferredWidth alone: minWidth/flexibleWidth pinned to 0 so this
-            // column never competes for a share of the row's leftover space, the same reasoning
-            // NotesTreeSidebar.cs documents for its own root LayoutElement.
+            // column never competes for a share of the row's leftover space — a fixed-width column must not
+            // grow into space the panes need, and flexibleWidth 0 is what says so.
             var navLayoutElement = navGO.AddComponent<LayoutElement>();
             navLayoutElement.minWidth = 0f;
             navLayoutElement.flexibleWidth = 0f;
@@ -395,8 +395,8 @@ namespace WorldGen.Workspace.Rendering
 
             // Added AFTER the HorizontalLayoutGroup, with explicit non-negative values, so THIS
             // LayoutElement — not the group's own upward self-report — decides how PaneContainer is
-            // sized within RootRow. Mirrors NotesTreeSidebar.cs's own root LayoutElement-after-
-            // LayoutGroup ordering and its documented reasoning.
+            // sized within RootRow. The ORDER is the load-bearing part: a LayoutGroup added first reports
+            // its own preferred size upward, and a LayoutElement added after it overrides that report.
             var paneContainerLayoutElement = paneContainerGO.AddComponent<LayoutElement>();
             paneContainerLayoutElement.minWidth = 0f;
             paneContainerLayoutElement.preferredWidth = 0f;

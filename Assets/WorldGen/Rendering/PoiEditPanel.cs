@@ -287,9 +287,10 @@ namespace WorldGen.Rendering
             // NotesLayoutController.SplitFraction, как было. SplitFraction (по умолчанию 2/3) описывал
             // границу СТАРОГО раздела «карта | заметки», которого больше нет: якорь считается от РОДИТЕЛЯ, то
             // есть внутри вкладки панель вставала на 2/3 её ширины и оставляла треть вкладки пустой.
-            // Задача 10b удаляет NotesLayoutController целиком, так что подписка на OnSplitFractionChanged (и
-            // UpdateSplitAnchor вместе с ней) убраны здесь, а не оставлены умирать. RepositionPanel так же
-            // берёт высоту у родителя — обе оси теперь меряются от одного и того же прямоугольника.
+            // Задача 10c удалила NotesLayoutController целиком (класса больше нет в проекте — см. историю
+            // git), так что подписка на OnSplitFractionChanged (и UpdateSplitAnchor вместе с ней) убраны
+            // здесь, а не оставлены умирать. RepositionPanel так же берёт высоту у родителя — обе оси теперь
+            // меряются от одного и того же прямоугольника.
             panelRect.anchorMin = new Vector2(1f, 1f);
             panelRect.anchorMax = new Vector2(1f, 1f);
             panelRect.pivot = new Vector2(1f, 1f);
