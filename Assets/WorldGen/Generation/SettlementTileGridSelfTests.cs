@@ -988,6 +988,58 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Preview Buildings: PASS");
         }
 
+        /// <summary>The ERASER's preview channel — the subtractive twin of the other two. Its load-bearing
+        /// claim is the same one SelfTestPreviewBuildings makes in the other direction: the wall ring must
+        /// RE-DERIVE around the smaller town, or the DM watches houses vanish inside a wall that has not
+        /// moved. And, as with both other channels, the floor must be untouched.</summary>
+        [ContextMenu("Self-Test: Preview Erased")]
+        public void SelfTestPreviewErased()
+        {
+            bool ok = true;
+            var floor = Floor(true, (0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0));
+            int roomsBefore = floor.Rooms.Count;
+
+            var erased = new System.Collections.Generic.List<(int i, int j)> { (3, 0), (4, 0), (5, 0) };
+            var withErase = SettlementTileGrid.Build(floor, null, null, erased);
+            var without = SettlementTileGrid.Build(floor);
+
+            foreach (var c in erased)
+                if (withErase.At(c.i, c.j) == TileType.Building)
+                {
+                    Debug.LogError($"SelfTestPreviewErased: erased cell {c} still draws as Building");
+                    ok = false;
+                }
+            if (without.At(5, 0) != TileType.Building)
+            {
+                Debug.LogError($"SelfTestPreviewErased: without the preview, cell (5,0) reads "
+                             + $"{without.At(5, 0)}, expected Building — the fixture is not what this test assumes");
+                ok = false;
+            }
+            // THE RING RE-DERIVES INWARD. Without the preview the row reaches (5,0), so the ring's east edge
+            // sits at (7,0). With the last three cells erased the town ends at (2,0) and the edge must move to
+            // (4,0). Both halves asserted: the precondition and the payoff.
+            if (without.At(7, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewErased: without the preview, cell (7,0) reads "
+                             + $"{without.At(7, 0)}, expected Wall");
+                ok = false;
+            }
+            if (withErase.At(4, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewErased: with three cells erased, cell (4,0) reads "
+                             + $"{withErase.At(4, 0)}, expected Wall — the ring did not re-derive around the "
+                             + "smaller town, so the DM would watch houses vanish inside an unmoved wall");
+                ok = false;
+            }
+            if (floor.Rooms.Count != roomsBefore)
+            {
+                Debug.LogError($"SelfTestPreviewErased: the floor's room count changed from {roomsBefore} to "
+                             + $"{floor.Rooms.Count}. A preview must not write.");
+                ok = false;
+            }
+            if (ok) Debug.Log("Self-Test Preview Erased: PASS");
+        }
+
         [ContextMenu("Self-Test: TileGrid Sanity")]
         public void SelfTestTileGridSanity()
         {

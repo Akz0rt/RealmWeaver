@@ -177,6 +177,11 @@ namespace WorldGen.Generation
                 ("MutPreviewBuildingsNotInExtent", "SettlementTileGrid.Allocate's extent fold skips the preview cells, so a preview cell past the buildings' margin is silently dropped even though Build still tries to write it",
                     () => new WorldGen.MutantTests.MutPreviewBuildingsNotInExtentSelfTests().SelfTestPreviewBuildings()),
 
+                ("MutPreviewErasedIgnored", "SettlementTileGrid.Build never calls SubtractErased, so the eraser draws nothing while the DM drags and the town only changes on release",
+                    () => new WorldGen.MutantTests.MutPreviewErasedIgnoredSelfTests().SelfTestPreviewErased()),
+                ("MutPreviewErasedAfterRing", "SettlementTileGrid.Build's SubtractErased call moved to AFTER BuildWallRing, so the wall ring is derived from the full pre-erase town — cells vanish inside a wall that has not moved",
+                    () => new WorldGen.MutantTests.MutPreviewErasedAfterRingSelfTests().SelfTestPreviewErased()),
+
                 ("MutEraseAllowsStranding", "SettlementBrushOps.CanErase's street half always allows, so a lane that is a house's only access can be erased anyway",
                     () => new WorldGen.MutantTests.MutEraseAllowsStrandingSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseStaleCheck", "SettlementBrushOps.Erase decides every cell's safety up front against the floor as it stood when the stroke began, instead of re-asking CanErase after every removal",
@@ -193,6 +198,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutEraseTieBreakFlippedSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseSplitNoPoint", "SettlementBrushOps.AssignFootprint's point re-derivation deleted, so a split-off room keeps Room's default X/Y (0.5,0.5) and the surviving original keeps its pre-split point (review finding I3)",
                     () => new WorldGen.MutantTests.MutEraseSplitNoPointSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseSplitDuplicatesIdentity", "SettlementBrushOps.RemoveBuildingCell's split copies Title onto the split-off room too, so both halves of a split building end up named (DM ruling: identity follows the larger piece only)",
+                    () => new WorldGen.MutantTests.MutEraseSplitDuplicatesIdentitySelfTests().SelfTestEraseRefusal()),
 
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),

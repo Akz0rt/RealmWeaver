@@ -1692,6 +1692,40 @@ foreach ($mc in @('MutPreviewBuildingsIgnored', 'MutPreviewBuildingsNotInExtent'
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
+# ---- ERASER'S PREVIEW MUTANTS (settlement-brushes, task 8) — the subtractive twin of the pair just above.
+# Both caught via SelfTestPreviewErased. SubtractErased is its own method (Build calls it once, between the
+# preview-building write and the ring) SPECIFICALLY so both mutants below stay ONE-LINE-OR-SHORT-CONTIGUOUS-
+# BLOCK locators instead of the multi-line, comment-straddling kind this arc's CRLF failures came from
+# (MutEraseStaleCheck, MutRoadIgnoresOnField) — see SubtractErased's own doc.
+
+# MutPreviewErasedIgnored: Build never calls SubtractErased at all, so the eraser draws nothing while the DM
+# drags and the town only changes on release. SelfTestPreviewErased must fail on BOTH the still-Building claim
+# (the three erased cells never clear to None) AND the ring-re-derives claim ((4,0) stays outside the smaller
+# ring, since the ring itself is still the full six-building one).
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewErasedIgnored' `
+  '            SubtractErased(g, streets, erasedCells);' `
+  '            // MUTANT: the eraser preview is never subtracted' `
+  'MutPreviewErasedIgnored.cs'
+
+# MutPreviewErasedAfterRing: the subtraction runs AFTER BuildWallRing derives, so the ring is still the one the
+# FULL (pre-erase) town produces — the exact lie this channel exists to avoid, the DM watching houses vanish
+# inside a wall that has not moved. The erased cells still clear to None (SubtractErased still runs, just
+# late), so SelfTestPreviewErased's "still draws as Building" loop does NOT fail — those cells genuinely are
+# not Building either way. Only the (4,0) ring claim catches it: at the moment BuildWallRing ran, cell (4,0)
+# was still seeded as Building (part of the full six-building row), so BuildWallRing's own "skip Building
+# cells" guard leaves it Building instead of Wall — SubtractErased's later clear then drops it straight to
+# None, never to Wall.
+$mutPreviewErasedAfterRingFrom = "            SubtractErased(g, streets, erasedCells);`n`n            bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;`n            bool[,] streetMask = StreetMask(g, streets);`n            bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;"
+$mutPreviewErasedAfterRingTo   = "            bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;`n            bool[,] streetMask = StreetMask(g, streets);`n            bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;`n            SubtractErased(g, streets, erasedCells);   // MUTANT: subtracted AFTER the ring already derived"
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewErasedAfterRing' `
+  $mutPreviewErasedAfterRingFrom $mutPreviewErasedAfterRingTo 'MutPreviewErasedAfterRing.cs'
+
+foreach ($mc in @('MutPreviewErasedIgnored', 'MutPreviewErasedAfterRing')) {
+  New-SettlementRebind 'SelfTestPreviewErased' $mc `
+    @('SettlementTileGrid\.', '\bTileType\b') `
+    @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
+}
+
 # ---- ERASER MUTANTS (settlement-brushes, task 4; the building-split half retired and replaced in task 7):
 # the street rule pinned by CanErase, the re-evaluation rule pinned by Erase's re-ask-after-every-removal, and
 # (task 7) the split-and-identity rule pinned by RemoveBuildingCell plus the gesture-order rule pinned by
@@ -1816,9 +1850,23 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitNoPoint' `
   '            // MUTANT: the point is never re-derived' `
   'MutEraseSplitNoPoint.cs'
 
+# MutEraseSplitDuplicatesIdentity (task 8 review carry-over, previous task): the split-off room copies `Title`
+# from the surviving original, so a building split in two ends up with BOTH halves named — the DM's «Кузница»
+# on the offcut too, which the DM ruling (checkpoint 2) named as the outcome to prevent: identity follows the
+# LARGER piece, period, never both. Case 6 already asserts this (`if (!string.IsNullOrEmpty(r.Title))` on every
+# split-off room, added the same task this mutant was ledgered from) but had no mutant of its own until now —
+# the assertion passed vacuously because nothing broke it. Cases 3 and 7 also split a building but never give
+# `room.Title` a non-default value before erasing (Room's own field initializer, `""`, survives untouched), so
+# copying an EMPTY string onto their split-off pieces trips nothing — case 6, whose fixture sets
+# `room.Title = "Кузница"` before the split, is this mutant's ONLY possible killer. 1 error.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitDuplicatesIdentity' `
+  '                    var split = new Room { Id = floor.NextRoomId++, TypeId = 1, IsDummy = r.IsDummy };' `
+  '                    var split = new Room { Id = floor.NextRoomId++, TypeId = 1, IsDummy = r.IsDummy, Title = r.Title };   // MUTANT: identity duplicated onto the split-off room' `
+  'MutEraseSplitDuplicatesIdentity.cs'
+
 foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseStaleCheck', 'MutEraseNoRestore',
                   'MutEraseNoSplit', 'MutEraseSplitKeepsSmallest', 'MutEraseRowMajorOrder',
-                  'MutEraseTieBreakFlipped', 'MutEraseSplitNoPoint')) {
+                  'MutEraseTieBreakFlipped', 'MutEraseSplitNoPoint', 'MutEraseSplitDuplicatesIdentity')) {
   New-SettlementRebind 'SelfTestEraseRefusal' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

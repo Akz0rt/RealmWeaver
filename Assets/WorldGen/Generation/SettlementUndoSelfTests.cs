@@ -228,6 +228,70 @@ namespace WorldGen.Rendering
                 }
             }
 
+            // 7. CLONEFLOOR (Step 3, task 8) IS ONE WHOLE-FLOOR CLONE, exposed for a SECOND caller (the
+            //    eraser's scratch floor) — cases 1-6 above already exercise it indirectly through
+            //    PushSnapshot/TryUndo. This case exercises CloneFloor directly: clone a floor, then mutate the
+            //    CLONE'S room LIST, a room FIELD, a PORTAL field IN PLACE, and StreetCells — the source must
+            //    move on none of them. A shallow Rooms-list copy fails the first two; a shared Portal OBJECT —
+            //    the exact bug Task 2's review caught with a ReferenceEquals repro — fails the portal check,
+            //    the same way case 5 catches it for PushSnapshot's own clone.
+            {
+                var floor = Floor(Cells((0, 0)), (5, 5));
+                var authored = floor.GetRoom(1);
+                authored.Title = "Кузница";
+                var portal = new Portal { Kind = PortalKind.SecretDoor, Label = "старая" };
+                authored.Portals.Add(portal);
+
+                var clone = SettlementUndo.CloneFloor(floor);
+                var clonedRoom = clone.GetRoom(1);
+                if (clonedRoom == null || clonedRoom.Portals.Count != 1)
+                {
+                    Debug.LogError("SelfTestSettlementUndo: CloneFloor — room 1's portal did not carry across "
+                                 + "to the clone");
+                    ok = false;
+                }
+                else
+                {
+                    clonedRoom.Title = "ИЗМЕНЕНО";           // field mutation on the CLONE
+                    clonedRoom.Portals[0].Label = "новая";   // IN-PLACE portal mutation on the CLONE
+                }
+                clone.Rooms.Add(new Room { Id = 99, TypeId = 1 });   // structural mutation: the CLONE'S list
+                clone.SettlementParams.StreetCells = SettlementFootprint.Encode(Cells((9, 9)));
+
+                if (floor.Rooms.Count != 1)
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: CloneFloor — adding a room to the clone changed "
+                                 + $"the source's room count to {floor.Rooms.Count}, expected 1 — the Rooms "
+                                 + "list is shared, not cloned");
+                    ok = false;
+                }
+                var sourceAgain = floor.GetRoom(1);
+                if (sourceAgain == null || sourceAgain.Title != "Кузница")
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: CloneFloor — mutating the clone's Title leaked "
+                                 + $"into the source, whose Title is \"{sourceAgain?.Title}\", expected "
+                                 + "\"Кузница\"");
+                    ok = false;
+                }
+                if (sourceAgain == null || sourceAgain.Portals.Count != 1 || sourceAgain.Portals[0].Label != "старая")
+                {
+                    string got = sourceAgain == null ? "<room missing>"
+                        : (sourceAgain.Portals.Count != 1 ? $"{sourceAgain.Portals.Count} portal(s)" : sourceAgain.Portals[0].Label);
+                    Debug.LogError($"SelfTestSettlementUndo: CloneFloor — mutating the clone's portal in place "
+                                 + $"leaked into the source ({got}), expected exactly one portal labelled "
+                                 + "\"старая\"");
+                    ok = false;
+                }
+                var sourceStreets = SettlementFootprint.Decode(floor.SettlementParams.StreetCells);
+                if (sourceStreets.Count != 1 || sourceStreets[0] != (0, 0))
+                {
+                    Debug.LogError($"SelfTestSettlementUndo: CloneFloor — mutating the clone's StreetCells "
+                                 + $"changed the source's, now [{string.Join(" ", sourceStreets)}], expected "
+                                 + "exactly (0, 0)");
+                    ok = false;
+                }
+            }
+
             if (ok) Debug.Log("Self-Test Settlement Undo: PASS");
         }
 

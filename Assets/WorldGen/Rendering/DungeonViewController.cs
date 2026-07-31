@@ -69,6 +69,20 @@ namespace WorldGen.Rendering
         readonly SettlementUndo undo = new SettlementUndo();
         List<(int i, int j)> strokeCells;    // non-null only between OnBeginDrag and OnEndDrag of a brush stroke
         (int i, int j) strokeLastCell;
+        // ── Eraser live preview (Task 8) ────────────────────────────────────────────────────────────────────
+        // A SCRATCH CLONE of the floor, live only for the duration an Erase stroke — never the real floor, and
+        // never written back. Erase refuses SEQUENTIALLY (CanErase re-asked after every removal), so the
+        // preview cannot be "the cells the stroke covered": two cells that are each safe alone can be fatal
+        // together, and a preview built from the raw stroke would promise removals the release then refuses.
+        // The honest construction instead runs Erase on THIS clone one new cell at a time and previews exactly
+        // the cells it actually removed — erasePreview. Task 7 made Erase honour gesture order precisely so
+        // this incremental run and OnEndDrag's release-time batch (SettlementBrushOps.Erase(lvlE, strokeCells))
+        // are the SAME computation; without that, the preview and the commit could disagree.
+        // Non-null only between OnBeginDrag and OnEndDrag of an ERASE stroke specifically — null for every
+        // other brush, exactly like strokeCells' own non-null window but narrower (Building/Road strokes never
+        // touch either field). Cleared everywhere strokeCells is cleared (SetBrush, OnEndDrag's brush branch).
+        InteriorFloor eraseScratch;
+        List<(int i, int j)> erasePreview;
         /// <summary>True between BeginCascade and OnCascadeSettled — i.e. while the rooms are animating and
         /// their positions are deliberately NOT the settled ones. A host that reads room geometry (the shaft
         /// check is the only such rule today) must wait for OnCascadeSettled instead of reading it now.</summary>
@@ -514,24 +528,25 @@ namespace WorldGen.Rendering
             // reads either property at all. Kept unconditional per the task brief, belt-and-suspenders
             // alongside SetBrush's own clear rather than in place of it.
             //
-            // BOTH FIELDS, TOGETHER (fix round 1 review, Important 1) — PreviewStreets used to be left out of
-            // this pre-clear, which was safe only as long as SetBrush's own `hadPreview` gate downstream read
-            // PreviewBuildings alone: Bind's PreviewBuildings-only pre-clear made that half of the gate
-            // provably false by the time SetBrush(None) ran below, so the belt-and-suspenders RepositionNow it
-            // guards could never fire against this method's mismatched-binding window (`this.dungeon` already
-            // reassigned to the new interior, `this.levelIndex`/`boundLevel` not yet). Task 5 widened the gate
-            // to `PreviewBuildings != null || PreviewStreets != null` without widening THIS pre-clear, which
-            // silently re-opened that window for a Road stroke's PreviewStreets. Traced as harmless in
-            // practice (Bind always reaches Refresh() synchronously afterward, so the stray repaint is never
-            // presented) — but this is the THIRD time in this sub-project the same shape has shown up: one
-            // preview channel cleared, its twin left out. Clear the pair here, together, always — so a FOURTH
-            // preview channel added later inherits a pre-clear that already covers it by construction, instead
-            // of silently reopening the same gap a fourth time.
-            if (renderer is SettlementVolumeRenderer volBind)
-            {
-                volBind.PreviewBuildings = null;
-                volBind.PreviewStreets = null;
-            }
+            // EVERY CHANNEL, TOGETHER, THROUGH ClearPreviews() (Task 8, Step 4) — PreviewStreets used to be
+            // left out of a hand-rolled pre-clear here, which was safe only as long as SetBrush's own
+            // `hadPreview` gate downstream read PreviewBuildings alone: Bind's PreviewBuildings-only pre-clear
+            // made that half of the gate provably false by the time SetBrush(None) ran below, so the
+            // belt-and-suspenders RepositionNow it guards could never fire against this method's
+            // mismatched-binding window (`this.dungeon` already reassigned to the new interior,
+            // `this.levelIndex`/`boundLevel` not yet). Task 5 widened the gate to `PreviewBuildings != null ||
+            // PreviewStreets != null` without widening THIS pre-clear, which silently re-opened that window for
+            // a Road stroke's PreviewStreets — the THIRD time this sub-project shipped "one channel cleared,
+            // its twin left out". ClearPreviews() makes a fourth channel (PreviewErased) inherit the fix by
+            // construction instead of needing this call site touched a fourth time.
+            //
+            // NO REPAINT HERE, deliberately, unlike every other ClearPreviews() call site: the level is
+            // MID-REASSIGNMENT (`this.dungeon` already the NEW interior, `this.levelIndex`/`boundLevel` not yet
+            // — see the paragraph above), so BoundLevel computed right now would be `newDungeon.Floors[oldIndex]`,
+            // genuinely the wrong floor or out of range. Bind always reaches Refresh() synchronously afterward
+            // (RefreshBody unconditionally follows this call), so the correct repaint is coming regardless —
+            // this call's only job is to make sure nothing stale survives into it.
+            if (renderer is SettlementVolumeRenderer volBind) volBind.ClearPreviews();
             // A brush armed in one interior must not survive into another (task review Critical): without
             // this, dragging into a building interior with a settlement brush still armed would make
             // OnBeginDrag's brush branch fire there, fail its own settlement guard, and return BEFORE
@@ -1100,27 +1115,30 @@ namespace WorldGen.Rendering
             // still non-null and append from the stale strokeLastCell, painting from an abandoned stroke's
             // end with no snapshot behind it.
             strokeCells = null;
+            // The eraser's scratch clone and its accumulated preview are ABANDONED-STROKE state exactly like
+            // strokeCells above — cleared everywhere strokeCells is (here and OnEndDrag's brush branch) so a
+            // later Erase stroke never resumes running against a stale scratch left over from this one.
+            eraseScratch = null;
+            erasePreview = null;
             if (hadStroke) undo.Discard();
             // Clearing only strokeCells above would be INERT (sub-project B's exact bug, in the same shape):
-            // the renderer holds its OWN reference (PreviewBuildings/PreviewStreets, set directly from
-            // strokeCells at OnBeginDrag/OnDrag) and keeps drawing the abandoned stroke's cells until
-            // something else rebuilds it. Unconditional like strokeCells just above — not gated on
-            // `brush == SettlementBrush.None` the way HidePlacementHighlight below is — because switching
-            // straight from one brush to ANOTHER (not through None) must drop it too. Captured as hadPreview
-            // BEFORE clearing (review Important 2, extended Task 5): EITHER field non-null here means a
-            // stroke was actually DRAWING — PreviewBuildings for the Building brush, PreviewStreets for the
-            // Road brush; the Erase brush sets neither on any sample (Step 4's own doc — both channels are
-            // ADDITIVE, a removal cannot be expressed through them) — and clearing them here with nothing else
-            // ever repainting afterward (see below) would otherwise leave the abandoned stroke's cells on
-            // screen. Missing this for PreviewStreets specifically would mean Esc mid-road-stroke leaves the
-            // lane drawn with nothing left to repaint it away.
-            bool hadPreview = false;
-            if (renderer is SettlementVolumeRenderer volSb)
-            {
-                hadPreview = volSb.PreviewBuildings != null || volSb.PreviewStreets != null;
-                volSb.PreviewBuildings = null;
-                volSb.PreviewStreets = null;
-            }
+            // the renderer holds its OWN reference (PreviewBuildings/PreviewStreets/PreviewErased, set
+            // directly from strokeCells/erasePreview at OnBeginDrag/OnDrag) and keeps drawing the abandoned
+            // stroke's cells until something else rebuilds it. Unconditional like strokeCells just above — not
+            // gated on `brush == SettlementBrush.None` the way HidePlacementHighlight below is — because
+            // switching straight from one brush to ANOTHER (not through None) must drop it too. Captured as
+            // hadPreview BEFORE clearing (review Important 2, extended Task 5, Task 8): ANY channel non-null
+            // here means a stroke was actually DRAWING — PreviewBuildings for the Building brush, PreviewStreets
+            // for the Road brush, PreviewErased for the Erase brush (Task 8 — no longer the additive-only pair
+            // this comment used to name; the eraser now has its own live channel, and clearing it here with
+            // nothing else ever repainting afterward would otherwise leave the abandoned stroke's cells drawn
+            // as if still standing to be removed). Missing this for PreviewStreets specifically would mean Esc
+            // mid-road-stroke leaves the lane drawn with nothing left to repaint it away.
+            //
+            // THROUGH ClearPreviews() (Task 8, Step 4): the SAME "clear + report whether anything was live"
+            // contract every other call site now uses, so hadPreview can never drift out of sync with what was
+            // actually cleared the way three independent hand-rolled clears already did in this sub-project.
+            bool hadPreview = renderer is SettlementVolumeRenderer volSb && volSb.ClearPreviews();
             if (brush == SettlementBrush.None && renderer is SettlementVolumeRenderer v) v.HidePlacementHighlight();
             // Review Important 2: clearing PreviewBuildings above is not enough by itself — nothing else
             // repaints afterward. Update is `UpdatePlacement(); if (!cascading) return;`, so an unrelated
@@ -1638,10 +1656,10 @@ namespace WorldGen.Rendering
                 SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, strokeLastCell);
                 // The live preview (task 3b): drawn as Building, never written to the floor until the release
                 // commits it. BY REFERENCE, like dragStreetPreview — strokeCells keeps growing and the
-                // renderer re-reads it on every rebuild, so no copy is made. Road/Erase feed null: neither has
-                // an op yet (Tasks 4-5), and Building's own preview must not still be showing once the DM has
-                // switched brushes mid-drag (this is the FIRST sample of a brand new stroke, so there is
-                // nothing stale to inherit either way).
+                // renderer re-reads it on every rebuild, so no copy is made. Road's own live channel is fed the
+                // same way (Task 5). Building's own preview must not still be showing once the DM has switched
+                // brushes mid-drag (this is the FIRST sample of a brand new stroke, so there is nothing stale
+                // to inherit either way).
                 volB.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
                 // The Road brush's own live channel (Task 5) — sub-project B's PreviewStreets, fed the same
                 // way PreviewBuildings is: BY REFERENCE, so the renderer re-reads the growing list on every
@@ -1649,6 +1667,28 @@ namespace WorldGen.Rendering
                 // and a footprint drag can never overlap, because this branch RETURNS before draggingRoomId is
                 // ever assigned, so ArmFootprintDrag (the only other writer) never runs for this gesture.
                 volB.PreviewStreets = ActiveBrush == SettlementBrush.Road ? strokeCells : null;
+                // THE ERASER'S OWN LIVE CHANNEL (Task 8) — the subtractive twin of the two above, and it cannot
+                // be fed `strokeCells` by reference the same way: a removal is not expressible as "draw these
+                // cells", and Erase refuses SEQUENTIALLY (CanErase re-asked after every removal), so what the
+                // preview must show is "the cells Erase has ACTUALLY removed so far", not "the cells the stroke
+                // has covered so far". eraseScratch is a throwaway CLONE of the floor, run one new cell at a
+                // time as the stroke grows; erasePreview collects exactly the cells that scratch run removed.
+                // See the two fields' own doc for why a clone (not the real floor) and why incremental (not a
+                // re-run of the whole stroke every sample, which would just be this same loop done more work).
+                if (ActiveBrush == SettlementBrush.Erase)
+                {
+                    eraseScratch = SettlementUndo.CloneFloor(lvlB);
+                    erasePreview = new List<(int i, int j)>();
+                    var one = new List<(int i, int j)> { strokeLastCell };
+                    if (SettlementBrushOps.Erase(eraseScratch, one) == 1) erasePreview.Add(strokeLastCell);
+                    volB.PreviewErased = erasePreview;
+                }
+                else
+                {
+                    eraseScratch = null;
+                    erasePreview = null;
+                    volB.PreviewErased = null;
+                }
                 RepositionNow(lvlB, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
@@ -1680,15 +1720,21 @@ namespace WorldGen.Rendering
             dragAnchorCell = (0, 0);
             dragAppliedDelta = (0, 0);
             dragOriginCells = null;
-            // Same two clears OnEndDrag does on the teardown side (final-review fix). A drag interrupted
-            // before OnEndDrag — the pointer leaving this hit-plate mid-gesture, same shape as the
-            // draggingRoomId-stranding case OnEndDrag's own comment names — used to leave the LAST drag's
-            // preview road on a renderer this controller shares across every interior it binds to, so an
-            // unrelated town's next repaint would still draw a phantom street. Not in OnDisable: that is
-            // `=> DisarmPlacement();`, which early-returns on `!PlacementArmed` and so would never run on
-            // this path at all.
+            // Same clear OnEndDrag does on the teardown side (final-review fix), now THROUGH ClearPreviews()
+            // (Task 8, Step 4). A drag interrupted before OnEndDrag — the pointer leaving this hit-plate
+            // mid-gesture, same shape as the draggingRoomId-stranding case OnEndDrag's own comment names — used
+            // to leave the LAST drag's preview road on a renderer this controller shares across every interior
+            // it binds to, so an unrelated town's next repaint would still draw a phantom street. Not in
+            // OnDisable: that is `=> DisarmPlacement();`, which early-returns on `!PlacementArmed` and so would
+            // never run on this path at all.
+            //
+            // REPAINT WHEN SOMETHING WAS ACTUALLY LIVE, same contract as every other ClearPreviews() call site
+            // but Bind: this runs at the tail of every plain (non-brush) OnBeginDrag, which otherwise never
+            // repaints on this path, so a leftover channel from an interrupted gesture would stay drawn with
+            // nothing else to clean it up.
             dragStreetPreview = null;
-            if (renderer is SettlementVolumeRenderer volReset) { volReset.PreviewStreets = null; volReset.PreviewBuildings = null; }
+            if (renderer is SettlementVolumeRenderer volReset && volReset.ClearPreviews())
+                RepositionNow(lvl, RoomLinkGeometry.RoutingMode.Fast);
             if (draggingRoomId == 0) return;
             if (dungeon == null || dungeon.Kind != InteriorKind.Settlement) return;
             var vol = renderer as SettlementVolumeRenderer;
@@ -1774,6 +1820,11 @@ namespace WorldGen.Rendering
                     || !TryPointerToAreaLocal(data, out var localD)
                     || !volD.TryAreaToCell(localD, out int di2, out int dj2)) return;
                 if ((di2, dj2) == strokeLastCell) return;
+                // BEFORE appending (Task 8): AppendSegment INTERPOLATES, so one sample of a fast drag can add
+                // several cells, not just (di2, dj2) itself. The scratch run below has to see every one of
+                // them, in order, or the preview would show fewer removed cells than the release actually
+                // removes on a fast flick — exactly the lie this whole feature exists to kill.
+                int strokeCountBefore = strokeCells.Count;
                 SettlementBrushOps.AppendSegment(strokeCells, strokeLastCell, (di2, dj2));
                 strokeLastCell = (di2, dj2);
                 // Same live preview as OnBeginDrag's brush branch above, sampled again on every drag frame:
@@ -1783,13 +1834,29 @@ namespace WorldGen.Rendering
                 // PreviewStreets already relies on during a footprint drag.
                 volD.PreviewBuildings = ActiveBrush == SettlementBrush.Building ? strokeCells : null;
                 volD.PreviewStreets = ActiveBrush == SettlementBrush.Road ? strokeCells : null;
-                // Fix round 1, Minor 4: the Erase brush feeds neither preview channel (both are additive, so a
-                // removal can't be expressed through them — see the doc at the PreviewStreets feed sites), so
-                // a rebuild here would repaint the EXACT same tile grid the previous frame already drew. This
-                // path runs on every mouse-move sample of a drag, not once per stroke, so skipping it for
-                // Erase is a real saving, not a rounding error. Building and Road both still need the repaint
-                // to show their live preview; only Erase is pure waste.
-                if (ActiveBrush != SettlementBrush.Erase) RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
+                // THE ERASER'S OWN LIVE CHANNEL (Task 8), same construction as OnBeginDrag's first cell: run
+                // Erase on the SAME scratch clone for every cell AppendSegment just added (NOT deduped — a
+                // self-crossing stroke lists a cell twice, and the release-time batch (OnEndDrag) processes the
+                // duplicate too, per Erase's own gesture-order doc, so skipping it here would desynchronise the
+                // incremental preview from the batch commit for that one shape). eraseScratch is null for every
+                // brush but Erase (OnBeginDrag only sets it for Erase), so this loop is a no-op then.
+                int erasedCountBefore = erasePreview?.Count ?? 0;
+                if (eraseScratch != null)
+                    for (int k = strokeCountBefore; k < strokeCells.Count; k++)
+                    {
+                        var one = new List<(int i, int j)> { strokeCells[k] };
+                        if (SettlementBrushOps.Erase(eraseScratch, one) == 1) erasePreview.Add(strokeCells[k]);
+                    }
+                volD.PreviewErased = erasePreview;
+                // Building/Road always repaint here — every new sample changes what is drawn. The Erase brush
+                // only needs it when the scratch run actually removed something new: a sample whose newly
+                // appended cells were ALL refused (a stroke reversing back over ground it just crossed, or
+                // cells CanErase never allowed in the first place) changes nothing drawn, and skipping the
+                // rebuild then is a real saving — this path runs on every mouse-move sample of a drag, not once
+                // per stroke — never an approximation that could leave the preview stale.
+                bool eraseGrew = (erasePreview?.Count ?? 0) != erasedCountBefore;
+                if (ActiveBrush != SettlementBrush.Erase || eraseGrew)
+                    RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
                 return;
             }
 
@@ -1858,22 +1925,28 @@ namespace WorldGen.Rendering
             // commit, leaking strokeCells and stranding the snapshot OnBeginDrag already pushed.
             if (ActiveBrush != SettlementBrush.None)
             {
-                // HOISTED ABOVE the commit block below (review Important 1): Refresh()/OnGraphMutated there
-                // rebuild the grid — through RepositionRooms -> SettlementTileGrid.Build(lvl, PreviewStreets,
-                // PreviewBuildings) — while PreviewBuildings (Building brush) or PreviewStreets (Road brush)
-                // still aliases strokeCells, so every cell PaintBuilding/PaintRoad REFUSED (dropped by the
-                // 4-connectivity repair, by gate ownership, or by the off-field bound) would draw as a live
-                // tile, wall ring included, until some unrelated edit repaints. This branch RETURNS before
-                // ever reaching the general clear further down (see the doc at the top of this method), so it
-                // cannot be relied on to clean this up either. Both cleared here, on the same line, for the
-                // same reason — Task 3b's review found this exact defect for PreviewBuildings alone, and
-                // PreviewStreets is the twin channel with the twin hazard. strokeCells itself stays exactly
-                // where it was below — PaintBuilding/PaintRoad/Erase still need it.
-                if (renderer is SettlementVolumeRenderer volEndBrush)
-                {
-                    volEndBrush.PreviewBuildings = null;
-                    volEndBrush.PreviewStreets = null;
-                }
+                // HOISTED ABOVE the commit block below (review Important 1), now THROUGH ClearPreviews()
+                // (Task 8, Step 4): Refresh()/OnGraphMutated there rebuild the grid — through RepositionRooms ->
+                // SettlementTileGrid.Build(lvl, PreviewStreets, PreviewBuildings, PreviewErased) — while any of
+                // the three still aliases strokeCells/erasePreview, so every cell the commit REFUSED (dropped
+                // by the 4-connectivity repair, by gate ownership, by the off-field bound, or simply never
+                // reached by the scratch run) would draw as a live tile, wall ring included, until some
+                // unrelated edit repaints. This branch RETURNS before ever reaching the general clear further
+                // down (see the doc at the top of this method), so it cannot be relied on to clean this up
+                // either. Cleared here, ALL THREE on the same line, for the same reason — Task 3b's review
+                // found this exact defect for PreviewBuildings alone, PreviewStreets was the twin channel with
+                // the twin hazard, and PreviewErased is the third instance of the identical shape. strokeCells
+                // itself stays exactly where it was below — PaintBuilding/PaintRoad/Erase still need it.
+                //
+                // CAPTURED as hadPreview, not discarded: clearing is not enough by itself (the whole-branch
+                // review's fourth finding, and the reason Step 4 exists) — ONLY the `changed` path below
+                // repaints, so a stroke that commits nothing would otherwise leave its already-cleared preview
+                // cells still drawn on screen (the renderer's `grid` field is stale until something rebuilds
+                // it), AND poison the next hover verdict: a Building-brush hover reads that stale `grid` as
+                // still missing a house the eraser only PREVIEWED removing, paints the cell green, and a dab
+                // there founds a room on top of one that was never actually erased. See the repaint line below
+                // the commit block, which exists for exactly this case.
+                bool hadPreview = renderer is SettlementVolumeRenderer volEndBrush && volEndBrush.ClearPreviews();
                 var lvlE = BoundLevel;
                 // A snapshot was pushed for THIS stroke iff strokeCells is non-null here: OnBeginDrag's brush
                 // branch always calls undo.PushSnapshot immediately before creating strokeCells, with no path
@@ -1902,6 +1975,8 @@ namespace WorldGen.Rendering
                             changed = SettlementBrushOps.PaintRoad(lvlE, strokeCells) > 0;
                             break;
                         case SettlementBrush.Erase:
+                            // Task 7's gesture order is what makes this batch equal the incremental scratch run
+                            // above, cell for cell — see eraseScratch's own doc.
                             changed = SettlementBrushOps.Erase(lvlE, strokeCells) > 0;
                             break;
                     }
@@ -1912,6 +1987,15 @@ namespace WorldGen.Rendering
                         OnGraphMutated?.Invoke();
                     }
                 }
+                // THE OTHER HALF OF THE CONTRACT (Step 4): `changed`'s own block just above already repaints
+                // through Refresh() when something committed. When it did NOT — the whole stroke refused,
+                // lvlE null, or the outer `if` above never even ran — but a preview WAS live (hadPreview),
+                // nothing else in this branch will ever repaint it away, so this is the one place that must.
+                // Deliberately OUTSIDE the outer `if (strokeCells != null && ...)` block above (not an `else`
+                // nested inside it): hadPreview can be true even when that block's own condition is false
+                // (lvlE null, or an empty stroke), and nesting the repaint inside would miss exactly those
+                // cases — the ones most likely to strand a preview with nothing left to clean it up.
+                if (!changed && hadPreview && lvlE != null) RepositionNow(lvlE, RoomLinkGeometry.RoutingMode.Fast);
                 // A stroke that changed nothing must not leave its snapshot on the stack (review Important 3):
                 // Esc/brush-switch abandonment is handled by SetBrush's own Discard below, but a stroke that
                 // reaches HERE with nothing committed — the whole stroke refused, lvlE null, or a Road/Erase
@@ -1921,6 +2005,8 @@ namespace WorldGen.Rendering
                 // unconditional Discard here would drop an unrelated, earlier snapshot instead.
                 if (pushedSnapshot && !changed) undo.Discard();
                 strokeCells = null;
+                eraseScratch = null;
+                erasePreview = null;
                 return;
             }
 
@@ -1949,11 +2035,13 @@ namespace WorldGen.Rendering
             dragStreetPreview = null;
             // Renderer-held preview state is EXTERNAL to this controller (same convention as
             // RoomsWithInterior) and nothing else clears it — without this the last drag's preview cells
-            // would keep drawing as phantom streets on every subsequent RepositionRooms. PreviewBuildings
-            // dropped alongside it for the same reason, even though this path is a ROOM drag (a brush stroke
-            // never reaches here — see the brush branch's own return, above): defensive, matching
-            // ArmFootprintDrag's identical pair of resets on the OTHER gesture-start side.
-            if (renderer is SettlementVolumeRenderer v) { v.PreviewStreets = null; v.PreviewBuildings = null; }
+            // would keep drawing as phantom streets on every subsequent RepositionRooms. EVERY channel dropped
+            // alongside it now, through ClearPreviews() (Task 8, Step 4), even though this path is a ROOM drag
+            // (a brush stroke never reaches here — see the brush branch's own return, above): defensive,
+            // matching ArmFootprintDrag's identical reset on the OTHER gesture-start side. Repainted only when
+            // something was actually live — the same contract every ClearPreviews() call site now shares.
+            if (renderer is SettlementVolumeRenderer v && v.ClearPreviews())
+                RepositionNow(BoundLevel, RoomLinkGeometry.RoutingMode.Fast);
             OnGraphMutated?.Invoke();
         }
 

@@ -224,12 +224,43 @@ namespace WorldGen.Rendering
         public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewStreets { get; set; }
 
         /// <summary>Cells the BRUSH is drawing right now, drawn as Building but never written to the floor —
-        /// the twin of <see cref="PreviewStreets"/>, and set by DungeonViewController on every stroke sample.
-        /// The wall ring re-derives around them (SettlementTileGrid.Build writes them before BuildWallRing),
-        /// so the DM watches the town's own wall grow to enclose the stroke before releasing the brush.
-        /// EXTERNAL STATE, exactly like PreviewStreets: nothing here clears it, and a controller that forgets
-        /// to leaves phantom houses drawing on every later reposition.</summary>
+        /// one of three preview channels (see also PreviewStreets and PreviewErased), all set by
+        /// DungeonViewController on every stroke sample. The wall ring re-derives around them
+        /// (SettlementTileGrid.Build writes them before BuildWallRing), so the DM watches the town's own wall
+        /// grow to enclose the stroke before releasing the brush. EXTERNAL STATE, exactly like PreviewStreets:
+        /// nothing here clears it on its own — see <see cref="ClearPreviews"/>, the ONE method that clears
+        /// every channel together — and a controller that forgets to call it leaves phantom houses drawing on
+        /// every later reposition.</summary>
         public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewBuildings { get; set; }
+
+        /// <summary>Cells the ERASER's scratch run has actually removed so far this stroke (Task 8) — the
+        /// SUBTRACTIVE twin of PreviewBuildings/PreviewStreets, both of which are additive (they draw cells
+        /// that are not in the data yet). A removal cannot be expressed that way, which is why this channel
+        /// exists at all rather than reusing one of the other two: SettlementTileGrid.Build clears these cells
+        /// to None (and drops them from the street mask) BEFORE the wall ring derives, so the DM watches the
+        /// wall close IN around the stroke exactly as it watches the OTHER two channels grow it outward.
+        /// DungeonViewController computes it INCREMENTALLY, never from the raw stroke: Erase refuses
+        /// sequentially (CanErase re-asked after every removal), so a preview built from "the cells the stroke
+        /// covered" would promise removals the release then refuses. See DungeonViewController's eraseScratch
+        /// field for the construction. EXTERNAL STATE, exactly like the other two — cleared only through
+        /// <see cref="ClearPreviews"/>.</summary>
+        public System.Collections.Generic.IReadOnlyList<(int i, int j)> PreviewErased { get; set; }
+
+        /// <summary>Clear every preview channel TOGETHER and report whether any of them was actually live
+        /// (non-null) beforehand — the ONE place all three are nulled, so a fourth channel added later cannot
+        /// repeat the shape this branch shipped three separate times: one channel cleared, its twin left
+        /// standing (OnEndDrag's brush branch, SetBrush, Bind). Every call site in DungeonViewController
+        /// follows the SAME contract this method's return enforces: clear, and repaint ONLY when this returned
+        /// true — never clear-and-forget, and never repaint unconditionally either (a repaint the caller cannot
+        /// afford belongs to the caller's own gating, not to a channel staying uncleared to avoid it).</summary>
+        public bool ClearPreviews()
+        {
+            bool hadAny = PreviewStreets != null || PreviewBuildings != null || PreviewErased != null;
+            PreviewStreets = null;
+            PreviewBuildings = null;
+            PreviewErased = null;
+            return hadAny;
+        }
 
         // ── State ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -446,10 +477,11 @@ namespace WorldGen.Rendering
             }
 
             // SettlementTileGrid.Build reads its STORED streets itself (SettlementParams.StreetCells) — `rg`
-            // reaches nothing this method draws — and is additionally handed PreviewStreets, the drag's
-            // uncommitted preview road (sub-project B): drawn exactly like a stored street, but never written
-            // back to the floor (see PreviewStreets' own doc).
-            grid = SettlementTileGrid.Build(lvl, PreviewStreets, PreviewBuildings);
+            // reaches nothing this method draws — and is additionally handed PreviewStreets and
+            // PreviewBuildings, the drag's uncommitted preview road/building (sub-project B / checkpoint-1):
+            // drawn exactly like stored data, but never written back to the floor (see each property's own
+            // doc). PreviewErased (Task 8) is the fourth argument — the SUBTRACTIVE twin of the other two.
+            grid = SettlementTileGrid.Build(lvl, PreviewStreets, PreviewBuildings, PreviewErased);
             RebuildCellRooms(lvl);
 
             float cw = CellWidthPx;

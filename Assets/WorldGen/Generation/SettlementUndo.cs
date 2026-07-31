@@ -64,6 +64,61 @@ namespace WorldGen.Generation
             TargetRoomId = p.TargetRoomId, Bidirectional = p.Bidirectional, Label = p.Label,
         };
 
+        // The per-room half of CloneFloor, factored out only because CloneFloor loops over it — same
+        // field list PushSnapshot always copied (see the class doc for why every field is in scope, not
+        // just the ones a brush writes), same by-value/by-reference/deep split: Cells cloned (a fresh array
+        // per paint anyway), Grid/Preview by reference (nothing mutates either in place through a room),
+        // Portals deep-cloned through ClonePortal (BuildSecretRow's in-place edits, see the class doc).
+        static Room CloneRoom(Room r) => new Room
+        {
+            Id = r.Id, TypeId = r.TypeId, Title = r.Title, Body = r.Body,
+            X = r.X, Y = r.Y, SizeW = r.SizeW, SizeH = r.SizeH, IsDummy = r.IsDummy,
+            Cells = r.Cells == null ? null : (int[])r.Cells.Clone(),
+            Grid = r.Grid, Preview = r.Preview,
+            Portals = r.Portals == null ? null : r.Portals.ConvertAll(ClonePortal),
+        };
+
+        /// <summary>The ONE whole-floor deep clone (Task 8, Step 3) — what PushSnapshot below always built by
+        /// hand, now exposed so a SECOND caller (DungeonViewController's eraser scratch floor) can get the
+        /// identical guarantee instead of a fresh, independently-written clone. THAT is the risk this method
+        /// closes: a second hand-rolled clone that forgot Portals — or, just as fatal for the eraser
+        /// specifically, forgot to give the clone its OWN SettlementParams/StreetCells array — would resurrect
+        /// exactly the bug Task 2's review caught with a ReferenceEquals repro, except this time corrupting the
+        /// LIVE floor the moment the scratch's own Erase call rewrote StreetCells through a SHARED
+        /// SettlementParams reference.
+        ///
+        /// Rooms and SettlementParams (including its StreetCells array) are fully independent copies — see
+        /// CloneRoom and ClonePortal for the per-room split. Links is a FRESH LIST sharing the existing Link
+        /// objects (the same by-reference treatment Grid/Preview already get): nothing in this codebase edits
+        /// a Link's RoomA/RoomB in place after construction (DungeonOps only ever adds or removes whole Link
+        /// objects), so cloning the list but not the objects is exactly as safe as cloning nothing at all, and
+        /// cheaper. Null-safe: a null `source` clones to null, matching every other producer in this arc.</summary>
+        public static InteriorFloor CloneFloor(InteriorFloor source)
+        {
+            if (source == null) return null;
+            var rooms = new List<Room>(source.Rooms.Count);
+            foreach (var r in source.Rooms) rooms.Add(CloneRoom(r));
+            var clone = new InteriorFloor
+            {
+                Rooms = rooms,
+                Links = new List<Link>(source.Links),
+                NextRoomId = source.NextRoomId,
+            };
+            if (source.SettlementParams != null)
+            {
+                clone.SettlementParams = new SettlementParams
+                {
+                    Size = source.SettlementParams.Size,
+                    LegacyTargetBuildings = source.SettlementParams.LegacyTargetBuildings,
+                    ActiveBuildings = source.SettlementParams.ActiveBuildings,
+                    HasWall = source.SettlementParams.HasWall,
+                    StreetCells = source.SettlementParams.StreetCells == null
+                        ? null : (int[])source.SettlementParams.StreetCells.Clone(),
+                };
+            }
+            return clone;
+        }
+
         readonly List<Entry> stack = new List<Entry>();
 
         public int Count => stack.Count;
@@ -73,25 +128,12 @@ namespace WorldGen.Generation
         public void PushSnapshot(InteriorFloor floor)
         {
             if (floor?.SettlementParams == null) return;
-            var rooms = new Room[floor.Rooms.Count];
-            for (int k = 0; k < rooms.Length; k++)
-            {
-                var r = floor.Rooms[k];
-                rooms[k] = new Room
-                {
-                    Id = r.Id, TypeId = r.TypeId, Title = r.Title, Body = r.Body,
-                    X = r.X, Y = r.Y, SizeW = r.SizeW, SizeH = r.SizeH, IsDummy = r.IsDummy,
-                    Cells = r.Cells == null ? null : (int[])r.Cells.Clone(),
-                    Grid = r.Grid, Preview = r.Preview,
-                    Portals = r.Portals == null ? null : r.Portals.ConvertAll(ClonePortal),
-                };
-            }
-            var streets = floor.SettlementParams.StreetCells;
+            var clone = CloneFloor(floor);
             stack.Add(new Entry
             {
-                Rooms = rooms,
-                NextRoomId = floor.NextRoomId,
-                Streets = streets == null ? null : (int[])streets.Clone(),
+                Rooms = clone.Rooms.ToArray(),
+                NextRoomId = clone.NextRoomId,
+                Streets = clone.SettlementParams.StreetCells,
             });
             // Drop the OLDEST when the cap is reached — the DM keeps the most recent MaxDepth strokes.
             if (stack.Count > MaxDepth) stack.RemoveAt(0);

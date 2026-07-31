@@ -232,7 +232,8 @@ namespace WorldGen.Generation
         // trivially can't clobber Building either) — see MarkGates for why Gate is accepted too.
         public static SettlementTileGrid Build(InteriorFloor floor,
                                                System.Collections.Generic.IReadOnlyList<(int i, int j)> extraStreets = null,
-                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraBuildings = null)
+                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> extraBuildings = null,
+                                               System.Collections.Generic.IReadOnlyList<(int i, int j)> erasedCells = null)
         {
             // Decode ONCE and hand the same list to Allocate (extent) and StreetMask (cells): the extent must
             // be sized for exactly the cells that will be written, or a street outside it is dropped silently.
@@ -266,14 +267,29 @@ namespace WorldGen.Generation
                 foreach (var c in extraBuildings)
                     if (g.InBounds(c.i, c.j)) g.Cells[c.i - g.OriginI, c.j - g.OriginJ] = TileType.Building;
 
-            bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
+            // THE ERASER'S PREVIEW — the subtractive twin of extraBuildings, and it must land BEFORE the ring
+            // for the same reason: BuildWallRing seeds itself from the Building tiles and the street mask, so
+            // subtracting here is what makes the wall close IN around the smaller town while the DM drags.
+            // Applied to BOTH kinds of cell, because the eraser erases both: a Building tile is cleared to
+            // None, and a street cell is dropped from `streets` before the mask is built.
+            // The EXTENT is deliberately NOT shrunk to match — Allocate has already sized the grid, and
+            // re-fitting the view mid-stroke is exactly what spec R6 forbids. An oversized grid draws nothing
+            // extra; a rescale under the cursor would be a bug.
+            //
             // Streets are marked regardless of HasWall: a wall-less town (the DM cleared «Со стеной» — this
             // is not a consequence of its POI type) still gets streets, and those streets must render. Only
             // the WALL/gate machinery below is conditional on HasWall — "Inside" is a wall-ring concept and
             // simply doesn't exist without a wall, so when HasWall is false `inside` stays null and
             // MarkRoads is told (via that null) not to apply an Inside test at all.
-            bool[,] streetMask = StreetMask(g, streets);
+            //
+            // THE FIVE LINES BELOW ARE ONE BLOCK, DELIBERATELY KEPT CODE-ONLY (no comment in the middle): the
+            // subtraction must run BEFORE BuildWallRing, so a mutant that instead runs it AFTER
+            // (MutPreviewErasedAfterRing) has to relocate this whole span — a single contiguous locator, never
+            // a multi-line one straddling a comment.
+            SubtractErased(g, streets, erasedCells);
 
+            bool hasWall = floor.SettlementParams != null && floor.SettlementParams.HasWall;
+            bool[,] streetMask = StreetMask(g, streets);
             bool[,] inside = hasWall ? BuildWallRing(g, streetMask) : null;
 
             MarkRoads(g, streetMask, inside);
@@ -284,6 +300,30 @@ namespace WorldGen.Generation
             }
 
             return g;
+        }
+
+        /// <summary>The eraser's live preview (Task 8): remove `erasedCells` from BOTH the street list and
+        /// the just-written Building tiles, so the wall ring — built from `streets`/`g.Cells` right after this
+        /// call returns — derives around the SMALLER town rather than the one before the stroke. A separate
+        /// method, not inlined into Build, so the two mutants that guard its ordering (MutPreviewErasedIgnored:
+        /// this call deleted; MutPreviewErasedAfterRing: this call moved past BuildWallRing) are each a
+        /// single-line change in sync.ps1 instead of a multi-line block move — the CRLF-fragile kind of locator
+        /// this arc has already been burned by twice (MutEraseStaleCheck, MutRoadIgnoresOnField).
+        ///
+        /// No-op on a null/empty `erasedCells` — the common case, every Build call that is not mid-eraser-drag.
+        /// `g.Cells` is cleared to None, never left at whatever it was: a cell can be a building's footprint
+        /// cell written just above, and clearing to None (not skipping the write in the first place) is what
+        /// makes this the LAST writer for a cell that is somehow BOTH erased and freshly (preview-)founded —
+        /// erasing wins, deterministically, because nothing after this method touches Building cells again.</summary>
+        static void SubtractErased(SettlementTileGrid g,
+                                    System.Collections.Generic.List<(int i, int j)> streets,
+                                    System.Collections.Generic.IReadOnlyList<(int i, int j)> erasedCells)
+        {
+            if (erasedCells == null || erasedCells.Count == 0) return;
+            var erased = new System.Collections.Generic.HashSet<(int i, int j)>(erasedCells);
+            streets.RemoveAll(c => erased.Contains(c));
+            foreach (var c in erased)
+                if (g.InBounds(c.i, c.j)) g.Cells[c.i - g.OriginI, c.j - g.OriginJ] = TileType.None;
         }
 
         // ---- depth (Task 4) --------------------------------------------------------------------------------
