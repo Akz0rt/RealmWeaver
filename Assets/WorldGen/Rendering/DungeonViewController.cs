@@ -538,6 +538,17 @@ namespace WorldGen.Rendering
             // An undo stack that survived a bind to a different interior would let Ctrl+Z restore rooms into
             // the wrong town (DM findings ·1, ·7, ·8). Verified by grep this is the ONLY writer of `dungeon`.
             undo.Clear();
+            // eraseConfirmPending is RESET HERE TOO, and it belongs in this list for the same reason every
+            // other line in it does: it is state that can outlive its owner (whole-branch re-review). It is
+            // cleared in exactly ONE other place — ResolveEraseConfirm, the dialog's callback — so if that
+            // callback ever fails to run, the flag latches TRUE and UpdatePlacement returns on its first line
+            // forever: no hover quad, no Esc, no Ctrl+Z, for any brush, for the rest of the session, with
+            // nothing on screen to explain it. ConfirmDialog.BuildBase destroys a prior dialog without
+            // invoking its callback, and a screen teardown can take the dialog with it, so "the callback
+            // always runs" is an assumption, not a guarantee. Bind is where this controller already drops
+            // every other piece of cross-binding state, and it is reached on every screen entry — which makes
+            // it the one place that can un-wedge this without anyone knowing it was wedged.
+            eraseConfirmPending = false;
             // UNCONDITIONAL, same reason as undo.Clear() just above: SetBrush(SettlementBrush.None) below
             // early-returns the instant ActiveBrush is ALREADY None (its very first line), which is the common
             // case for a Bind — so it cannot be trusted alone to drop a stale PreviewBuildings/PreviewStreets
@@ -1561,6 +1572,14 @@ namespace WorldGen.Rendering
         {
             eraseConfirmPending = false;
             bool hadPreview = renderer is SettlementVolumeRenderer volConfirm && volConfirm.ClearPreviews();
+            // THE BINDING MAY HAVE MOVED WHILE THE DIALOG STOOD (whole-branch re-review). This callback holds
+            // a CAPTURED floor, and Bind can run between Show and the answer — the host re-Binds on its own
+            // refreshes, and nothing about a modal dialog prevents that. Committing into a floor that is no
+            // longer on screen would edit a town the DM is not looking at, and `undo` has been Clear()ed by
+            // that same Bind, so the snapshot this dialog was deciding the fate of is already gone: neither
+            // branch below can do anything honest. Treat it as a cancel that has nothing left to roll back —
+            // the preview is already down (above), which is the only visible state still owed.
+            if (floor != null && !ReferenceEquals(floor, BoundLevel)) return;
             bool committed = ok && floor != null && SettlementBrushOps.Erase(floor, cells) > 0;
             if (committed)
             {
