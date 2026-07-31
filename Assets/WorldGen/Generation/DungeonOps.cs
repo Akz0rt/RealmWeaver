@@ -122,18 +122,38 @@ namespace WorldGen.Generation
         /// carrying a battle map (Room.Grid != null — the field is null until the DM edits one, so a
         /// generated floor never trips this on its own); and (5) a settlement building carrying a Preview
         /// image (Room.Preview != null — null until the DM adds one, so a freshly generated settlement of
-        /// any size never trips this on its own).</summary>
+        /// any size never trips this on its own).
+        ///
+        /// (1)/(4)/(5) plus the non-Stairs-portal test are the PER-ROOM half, delegated to
+        /// <see cref="RoomHasAuthoredContent"/> (Task 9, Step 1) so the floor-wide question and the
+        /// room-wide one — the settlement eraser's own gate needs the latter — are one rule and can never
+        /// disagree. Only (2), the Link-level test, stays here: a Link is not owned by either endpoint
+        /// room, so it has no per-room home to move to.</summary>
         public static bool HasAuthoredContent(InteriorFloor lvl)
         {
             if (lvl == null) return false;
             foreach (var l in lvl.Links) if (l.Authored) return true;
             foreach (var r in lvl.Rooms)
-            {
-                if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
-                if (r.Grid != null) return true;
-                if (r.Preview != null) return true;
-                foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
-            }
+                if (RoomHasAuthoredContent(r)) return true;
+            return false;
+        }
+
+        /// <summary>Does THIS room carry anything the DM authored? Extracted from HasAuthoredContent's own
+        /// loop body (which now calls it) so the floor-level question and the room-level one are one rule.
+        /// Stairs portals are excluded for the same reason they always were: the generator writes them, so a
+        /// floor that has only those has nothing authored on it.
+        ///
+        /// Task 9's settlement eraser is the second caller: erasing a building down to its last cell used to
+        /// destroy its title, notes, photo and authored interior with no warning, while the «Удалить» button
+        /// showed a confirm dialog for exactly that reason — this is the predicate that closes that
+        /// asymmetry, reused verbatim rather than re-derived so the two never drift apart.</summary>
+        public static bool RoomHasAuthoredContent(Room r)
+        {
+            if (r == null) return false;
+            if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Body)) return true;
+            if (r.Grid != null) return true;
+            if (r.Preview != null) return true;
+            foreach (var p in r.Portals) if (p.Kind != PortalKind.Stairs) return true;
             return false;
         }
 

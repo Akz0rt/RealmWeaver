@@ -241,6 +241,11 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutMigrationCurrentPitchSelfTests().SelfTestSizeMigration()),
                 ("MutMigrationAlwaysLegacyPitch", "SettlementFootprint.EnsureFootprints ignores legacyLattice and always uses LegacyCellOf (a v11 point read on the legacy lattice — wrong data at rest that nothing repairs)",
                     () => new WorldGen.MutantTests.MutMigrationAlwaysLegacyPitchSelfTests().SelfTestSizeMigration()),
+
+                ("MutAuthoredContentIgnoresPreview", "DungeonOps.RoomHasAuthoredContent drops the Preview term (a settlement building's photo alone no longer counts as authored)",
+                    () => new WorldGen.MutantTests.MutAuthoredContentIgnoresPreviewSelfTests().SelfTestRoomHasAuthoredContent()),
+                ("MutDestroyedIncludesSplit", "SettlementBrushOps.RoomsDestroyedBy reports every room whose footprint changed, not only the ones that vanished (a split's surviving larger piece gets reported as destroyed too)",
+                    () => new WorldGen.MutantTests.MutDestroyedIncludesSplitSelfTests().SelfTestRoomsDestroyedBy()),
             };
 
             Console.WriteLine("Baseline: the shipped packer against the shipped suite");

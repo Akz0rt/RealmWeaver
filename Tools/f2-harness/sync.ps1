@@ -1884,6 +1884,45 @@ foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseStaleCheck', 'MutEraseNoRe
     @("WorldGen.Generation.$mc.SettlementBrushOps.")
 }
 
+# ---- TASK 9 MUTANTS (settlement-brushes): the eraser's confirm-before-destroy gate. -------------------------
+# Two rules, one per new method, each a single-class source file (DungeonOps.cs / SettlementBrushOps.cs both
+# already appear above — same New-SettlementMutant shape, nothing new needed to reach them).
+
+# MutAuthoredContentIgnoresPreview: DungeonOps.RoomHasAuthoredContent drops the Preview term. Caught by
+# SelfTestRoomHasAuthoredContent's case 4 (Preview alone) — the ONLY case that sets Preview and nothing else,
+# so it is this mutant's sole possible killer; every other case (Title/Body/Grid/a non-Stairs portal/Stairs-
+# only/null) never touches Preview and is untouched by this line's removal.
+New-SettlementMutant 'DungeonOps.cs' 'MutAuthoredContentIgnoresPreview' `
+  '            if (r.Preview != null) return true;' `
+  '            // MUTANT: the Preview term is dropped' `
+  'MutAuthoredContentIgnoresPreview.cs'
+
+New-SettlementRebind 'SelfTestRoomHasAuthoredContent' 'MutAuthoredContentIgnoresPreview' `
+  @('DungeonOps\.') `
+  @('WorldGen.Generation.MutAuthoredContentIgnoresPreview.DungeonOps.')
+
+# MutDestroyedIncludesSplit: RoomsDestroyedBy additionally reports every room whose FOOTPRINT changed, not
+# only the ones that vanished — the natural "count-based" mistake this rule guards against, since a split
+# changes a surviving room's Cells (its id lives on, its shape does not) and looks like ANOTHER kind of
+# destruction if the comparison is not scoped to bare presence. Compared by CONTENT
+# (System.Linq.Enumerable.SequenceEqual over the encoded Cells arrays), deliberately not by reference —
+# SettlementUndo.CloneFloor clones the array, so a reference compare would report EVERY room as "changed" and
+# produce a degenerate, over-broad mutant that still prints "detected" for the wrong reason (the exact trap
+# the locator audit exists to catch, just one level up: a correct-looking mutant that is not surgical).
+# Caught by SelfTestRoomsDestroyedBy's case 3 (the split: the surviving original's Cells shrink 5->3 even
+# though its id survives — reported as destroyed, which case 3 asserts must not happen) AND by case 1 (a
+# shrink with no split at all, Cells 2->1) — both a genuine kill, reported together rather than picking one.
+# The "newly-created room not reported" half of case 3 has NO mutant of its own: nothing in the correct
+# implementation ever iterates `after`-only ids, so there is no rule here to remove — see case 3's own comment.
+$mutDestroyedFrom = "            foreach (var r in before.Rooms)`n                if (!afterIds.Contains(r.Id)) result.Add(r);`n            return result;"
+$mutDestroyedTo   = "            foreach (var r in before.Rooms)`n            {`n                var match = after?.GetRoom(r.Id);`n                bool same = match != null && (r.Cells == null ? match.Cells == null`n                    : match.Cells != null && System.Linq.Enumerable.SequenceEqual(r.Cells, match.Cells));`n                if (!same) result.Add(r);   // MUTANT: every room whose footprint changed is reported too, not only the ones that vanished`n            }`n            return result;"
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutDestroyedIncludesSplit' `
+  $mutDestroyedFrom $mutDestroyedTo 'MutDestroyedIncludesSplit.cs'
+
+New-SettlementRebind 'SelfTestRoomsDestroyedBy' 'MutDestroyedIncludesSplit' `
+  @('SettlementBrushOps\.') `
+  @('WorldGen.Generation.MutDestroyedIncludesSplit.SettlementBrushOps.')
+
 $variants = @('SpreadOnlyLayout', 'CompactOnlyLayout', 'CompactNoSlideLayout', 'CompactSlideNoCuts',
               'PreSlideLayout', 'PreSlideSpreadOnly', 'PreSlideCompactOnly', 'PreReviewLayout', 'NoPlainRunLayout')
 # The two settlement counts are COUNTED, not quoted: the literal 46 that stood here was already 8 short of the

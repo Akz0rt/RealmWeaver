@@ -83,6 +83,29 @@ namespace WorldGen.Rendering
         // touch either field). Cleared everywhere strokeCells is cleared (SetBrush, OnEndDrag's brush branch).
         InteriorFloor eraseScratch;
         List<(int i, int j)> erasePreview;
+        // ── Deferred erase confirm (Task 9) ─────────────────────────────────────────────────────────────────
+        // True from the moment an erase-confirm dialog is shown (DabBrush's one-cell gate, or OnEndDrag's
+        // whole-stroke gate) until ResolveEraseConfirm's callback resolves it — unconditionally false again on
+        // EITHER answer. Freezes UpdatePlacement ENTIRELY while true (see its own doc): the undo snapshot the
+        // dialog is deciding the fate of is already on the stack (pushed either right before the dialog, or
+        // earlier at OnBeginDrag), and strokeCells/eraseScratch are already nulled for the callback's own
+        // capture — so without this, Ctrl+Z's gate below (`strokeCells == null`) is satisfied the moment the
+        // dialog appears, and a Ctrl+Z pressed while it is still up would pop that exact pending snapshot with
+        // nothing yet committed to undo. The later commit would then land with NO snapshot behind it, silently
+        // breaking the DM's next real Ctrl+Z. Pointer input cannot start a second stroke either way —
+        // ConfirmDialog's own doc: "a click-swallowing backdrop that does NOT dismiss on outside-click", built
+        // as a full-screen Image + Button on the topmost canvas (sortingOrder 32000), so it is a raycast target
+        // over the WHOLE screen and no click reaches this controller's hit-plate while it stands — but the
+        // keyboard shortcuts UpdatePlacement reads directly (Ctrl+Z, Esc) go through no raycasting at all, so
+        // this field is what actually closes that gap.
+        //
+        // ASSUMES ConfirmDialog.Show is never called a SECOND time while this is true: BuildBase destroys the
+        // PRIOR dialog's GameObject without ever invoking its callback, so a second Show here would leave this
+        // flag stuck true forever. Nothing in this class calls Show except the two erase-confirm sites, and
+        // both are gated on this same flag (DabBrush's own early check; OnEndDrag's brush arm can only run once
+        // per gesture and the pointer block above keeps a second gesture from starting), so that case does not
+        // arise today.
+        bool eraseConfirmPending;
         /// <summary>True between BeginCascade and OnCascadeSettled — i.e. while the rooms are animating and
         /// their positions are deliberately NOT the settled ones. A host that reads room geometry (the shaft
         /// check is the only such rule today) must wait for OnCascadeSettled instead of reading it now.</summary>
@@ -1186,6 +1209,12 @@ namespace WorldGen.Rendering
         /// entirely.</summary>
         void UpdatePlacement()
         {
+            // TASK 9: frozen while an erase confirm is pending — see eraseConfirmPending's own doc for why
+            // this specifically closes the Ctrl+Z hazard the dialog's pointer-blocking backdrop cannot touch.
+            // Placed before every other check in this method, including the armed-mode guard just below: while
+            // the dialog is up, ActiveBrush is still Erase (nothing here changes it), so without this line the
+            // method would still enter and read Esc/Ctrl+Z/the hover sample as if nothing were pending.
+            if (eraseConfirmPending) return;
             if (!PlacementArmed && ActiveBrush == SettlementBrush.None) return;
 
             // Brush Esc MUST be checked before the placement Esc below: that check is not itself gated on
@@ -1421,11 +1450,41 @@ namespace WorldGen.Rendering
         /// "changed" for the same brush.</summary>
         void DabBrush()
         {
+            // TASK 9, defence in depth: a dab is routed here from OnPointerClick, which the confirm dialog's
+            // backdrop already blocks while eraseConfirmPending is true (same reasoning as OnBeginDrag's own
+            // guard) — this line does not depend on that holding, it just costs nothing to keep.
+            if (eraseConfirmPending) return;
             var lvl = BoundLevel;
             var vol = renderer as SettlementVolumeRenderer;
             if (lvl?.SettlementParams == null || vol == null) return;
             if (!TryHoveredCell(out int i, out int j)) return;
             var one = new List<(int i, int j)> { (i, j) };
+
+            // TASK 9: ask before destroying an authored building or one carrying an interior — same rule
+            // OnEndDrag's whole-stroke gate uses below, just over a single cell. DabBrush has no incremental
+            // scratch the way a drag stroke does (eraseScratch only exists across OnBeginDrag/OnDrag samples),
+            // so it builds a ONE-OFF clone through SettlementUndo.CloneFloor (made public by Task 8) and runs
+            // this one cell's Erase against IT — a dry run that touches nothing real and pushes no snapshot —
+            // rather than special-casing this path.
+            if (ActiveBrush == SettlementBrush.Erase)
+            {
+                var dry = SettlementUndo.CloneFloor(lvl);
+                SettlementBrushOps.Erase(dry, one);
+                var named = NamedLoss(SettlementBrushOps.RoomsDestroyedBy(lvl, dry));
+                if (named.Count > 0)
+                {
+                    undo.PushSnapshot(lvl);          // BEFORE anything mutates — same contract as every push
+                    eraseConfirmPending = true;
+                    var confirmLevel = lvl;
+                    ConfirmDialog.Show(font, "Стереть?", EraseConfirmBody(named),
+                        ok => ResolveEraseConfirm(ok, confirmLevel, one));
+                    return;
+                }
+                // named.Count == 0: nothing authored is at risk — fall through to the UNCHANGED shape below,
+                // exactly as before this task. The dry run above touched no real state and pushed no snapshot,
+                // so falling through here costs only a second (identical) Erase call over one cell.
+            }
+
             undo.PushSnapshot(lvl);
             bool changed = false;
             switch (ActiveBrush)
@@ -1438,6 +1497,82 @@ namespace WorldGen.Rendering
             CommitSettlementStreets();
             Refresh();
             OnGraphMutated?.Invoke();
+        }
+
+        // ── Task 9: the eraser's confirm-before-destroy gate ────────────────────────────────────────────────
+        // Shared by DabBrush's one-cell gate and OnEndDrag's whole-stroke gate below, so the wording and the
+        // commit/rollback shape can never drift apart between a click and a drag.
+
+        /// <summary>Which of `doomed` are worth NAMING in a confirm dialog — a room the DM will actually miss.
+        /// Two independent reasons: DungeonOps.RoomHasAuthoredContent (title/notes/battle map/preview/a
+        /// non-Stairs portal) and membership in RoomsWithInterior (an authored BUILDING INTERIOR, which
+        /// `Generation` cannot see at all — see RoomsWithInterior's own doc on SettlementVolumeRenderer/
+        /// DungeonFlatRenderer). This is why that second half of the eraser's confirm rule lives here, in the
+        /// controller, rather than folded into RoomsDestroyedBy itself.</summary>
+        List<Room> NamedLoss(List<Room> doomed)
+        {
+            var named = new List<Room>();
+            var volInteriors = renderer as SettlementVolumeRenderer;
+            foreach (var r in doomed)
+                if (DungeonOps.RoomHasAuthoredContent(r)
+                 || (volInteriors?.RoomsWithInterior != null && volInteriors.RoomsWithInterior.Contains(r.Id)))
+                    named.Add(r);
+            return named;
+        }
+
+        static string EraseConfirmBody(List<Room> named) => named.Count == 1
+            ? $"«{BuildingLabel(named[0])}» будет удалён вместе с заметками и картой."
+            : $"Будет удалено домов с заполненными данными: {named.Count}.\n{NamesOf(named)}";
+
+        // Named BuildingLabel/NamesOf, not Title/Names — Room.Title is a FIELD, and this project has been
+        // bitten by same-name shadowing before (type/namespace, not methods, but the caution carries over
+        // cheaply here too).
+        static string BuildingLabel(Room r) => string.IsNullOrEmpty(r.Title) ? $"Здание {r.Id}" : r.Title;
+
+        static string NamesOf(List<Room> rooms)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int k = 0; k < rooms.Count; k++)
+            {
+                if (k > 0) sb.Append("\n");
+                sb.Append("• ").Append(BuildingLabel(rooms[k]));
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Resolves a deferred erase confirm's callback — «Удалить» commits, «Отмена» rolls back the
+        /// snapshot already pushed before the dialog was shown (DabBrush right before Show; OnEndDrag's brush
+        /// arm earlier still, at OnBeginDrag). Same three-way shape the synchronous (non-confirm) commit path
+        /// already used for every brush, just deferred: ClearPreviews() first on EITHER answer (Task 9's own
+        /// rule — the DM was reading the dialog while looking at exactly these cells, and the preview must
+        /// come down whichever button they press), then commit-and-repaint, or discard-and-reposition.
+        ///
+        /// DELIBERATELY NEVER CALLS InteriorOps.RemoveOwnedInteriors HERE. Erasing a building leaves its
+        /// interior orphaned in the project — no owner room references it any more — and that looks like
+        /// something to clean up. It is not: undo restores the room with its id UNCHANGED (SettlementUndo is a
+        /// whole-floor snapshot; TryUndo replaces Rooms wholesale but every Id survives), and an unchanged id
+        /// is exactly what lets the interior re-attach itself the next time something reads it. Deleting the
+        /// orphan here would make Ctrl+Z silently LOSSY — the DM's authored interior traded for a few
+        /// kilobytes of save file — to fix a leak a prior review already confirmed can never re-attach to a
+        /// DIFFERENT building (the only writer of OwnerRoomId clears the undo stack on the same path, and
+        /// regeneration deletes interiors before minting new ids). Leave it, and leave this comment, so the
+        /// next reader does not "fix" it.</summary>
+        void ResolveEraseConfirm(bool ok, InteriorFloor floor, List<(int i, int j)> cells)
+        {
+            eraseConfirmPending = false;
+            bool hadPreview = renderer is SettlementVolumeRenderer volConfirm && volConfirm.ClearPreviews();
+            bool committed = ok && floor != null && SettlementBrushOps.Erase(floor, cells) > 0;
+            if (committed)
+            {
+                CommitSettlementStreets();
+                Refresh();
+                OnGraphMutated?.Invoke();
+            }
+            else
+            {
+                undo.Discard();
+                if (hadPreview) RepositionNow(floor, RoomLinkGeometry.RoutingMode.Fast);
+            }
         }
 
         /// <summary>Removes the selected room (DungeonOps also strips its corridors and any secrets
@@ -1619,6 +1754,11 @@ namespace WorldGen.Rendering
 
         public void OnBeginDrag(PointerEventData data)
         {
+            // TASK 9, defence in depth: ConfirmDialog's full-screen backdrop already keeps this event from
+            // ever firing while an erase confirm is pending (see eraseConfirmPending's own doc) — confirmed at
+            // the source, not assumed — but a guard here costs nothing and does not depend on that assumption
+            // holding forever.
+            if (eraseConfirmPending) return;
             var lvl = BoundLevel;
             if (lvl == null) return;
             // «+ Здание» ARMED = no dragging (final-review fix). OnPointerClick already routes the whole click
@@ -1946,8 +2086,66 @@ namespace WorldGen.Rendering
                 // still missing a house the eraser only PREVIEWED removing, paints the cell green, and a dab
                 // there founds a room on top of one that was never actually erased. See the repaint line below
                 // the commit block, which exists for exactly this case.
-                bool hadPreview = renderer is SettlementVolumeRenderer volEndBrush && volEndBrush.ClearPreviews();
                 var lvlE = BoundLevel;
+
+                // TASK 9: ask before destroying an authored building or one carrying an interior — BEFORE
+                // touching hadPreview/ClearPreviews below and before strokeCells/eraseScratch are nulled for
+                // the ordinary (non-confirm) path. The preview MUST stay drawn while the dialog is up (the DM
+                // reads it while looking at exactly these cells), so this whole block runs ahead of the
+                // ClearPreviews() call that every other path takes.
+                //
+                // eraseScratch REUSED, not re-run: OnBeginDrag/OnDrag already ran the whole stroke against it,
+                // one new cell at a time, for the live preview (erasePreview) — the exact same computation
+                // OnEndDrag's own commit below performs in one batch (Task 7's gesture order is what makes the
+                // two agree, cell for cell; see eraseScratch's own doc). RoomsDestroyedBy is therefore a pure
+                // diff over two floors that already exist, not a second run of the stroke.
+                if (ActiveBrush == SettlementBrush.Erase && strokeCells != null && strokeCells.Count > 0
+                 && lvlE != null && eraseScratch != null)
+                {
+                    var named = NamedLoss(SettlementBrushOps.RoomsDestroyedBy(lvlE, eraseScratch));
+                    if (named.Count > 0)
+                    {
+                        // CAPTURED for the callback (this branch's own known trap): strokeCells/eraseScratch
+                        // are nulled right here, exactly where the ordinary path always nulled them at the
+                        // tail of this method, so a callback that read the FIELDS instead of these locals would
+                        // commit nothing and look like a dead button.
+                        var capturedCells = strokeCells;
+                        var capturedLevel = lvlE;
+                        strokeCells = null;
+                        eraseScratch = null;
+                        erasePreview = null;    // the CONTROLLER's own reference only. The renderer's
+                                                 // PreviewErased (and PreviewBuildings/PreviewStreets) keep
+                                                 // drawing by THEIR OWN reference until ResolveEraseConfirm's
+                                                 // ClearPreviews() call, on either answer — see requirement 1.
+                        eraseConfirmPending = true;   // freezes UpdatePlacement's Ctrl+Z/Esc — see its own doc.
+                        ConfirmDialog.Show(font, "Стереть?", EraseConfirmBody(named),
+                            ok => ResolveEraseConfirm(ok, capturedLevel, capturedCells));
+                        return;
+                    }
+                }
+
+                // HOISTED ABOVE the commit block below (review Important 1), now THROUGH ClearPreviews()
+                // (Task 8, Step 4): Refresh()/OnGraphMutated there rebuild the grid — through RepositionRooms ->
+                // SettlementTileGrid.Build(lvl, PreviewStreets, PreviewBuildings, PreviewErased) — while any of
+                // the three still aliases strokeCells/erasePreview, so every cell the commit REFUSED (dropped
+                // by the 4-connectivity repair, by gate ownership, by the off-field bound, or simply never
+                // reached by the scratch run) would draw as a live tile, wall ring included, until some
+                // unrelated edit repaints. This branch RETURNS before ever reaching the general clear further
+                // down (see the doc at the top of this method), so it cannot be relied on to clean this up
+                // either. Cleared here, ALL THREE on the same line, for the same reason — Task 3b's review
+                // found this exact defect for PreviewBuildings alone, PreviewStreets was the twin channel with
+                // the twin hazard, and PreviewErased is the third instance of the identical shape. strokeCells
+                // itself stays exactly where it was below — PaintBuilding/PaintRoad/Erase still need it.
+                //
+                // CAPTURED as hadPreview, not discarded: clearing is not enough by itself (the whole-branch
+                // review's fourth finding, and the reason Step 4 exists) — ONLY the `changed` path below
+                // repaints, so a stroke that commits nothing would otherwise leave its already-cleared preview
+                // cells still drawn on screen (the renderer's `grid` field is stale until something rebuilds
+                // it), AND poison the next hover verdict: a Building-brush hover reads that stale `grid` as
+                // still missing a house the eraser only PREVIEWED removing, paints the cell green, and a dab
+                // there founds a room on top of one that was never actually erased. See the repaint line below
+                // the commit block, which exists for exactly this case.
+                bool hadPreview = renderer is SettlementVolumeRenderer volEndBrush && volEndBrush.ClearPreviews();
                 // A snapshot was pushed for THIS stroke iff strokeCells is non-null here: OnBeginDrag's brush
                 // branch always calls undo.PushSnapshot immediately before creating strokeCells, with no path
                 // between them that could skip the push, and nothing else in this class ever assigns

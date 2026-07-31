@@ -811,6 +811,218 @@ namespace WorldGen.Rendering
             if (ok) Debug.Log("Self-Test Erase Refusal: PASS");
         }
 
+        /// <summary>DungeonOps.RoomHasAuthoredContent (Task 9, Step 1) — the per-room half HasAuthoredContent's
+        /// own loop now delegates to, so the floor-level question and the room-level one can never disagree.
+        /// EACH of the five authored fields is asserted INDEPENDENTLY — a fixture that set all five at once
+        /// would still pass with four of the five terms deleted, this arc's own named failure mode (found ten
+        /// times already in this sub-project alone).</summary>
+        [ContextMenu("Self-Test: Room Has Authored Content")]
+        public void SelfTestRoomHasAuthoredContent()
+        {
+            bool ok = true;
+
+            // 0. A PLAIN ROOM CARRIES NOTHING.
+            if (DungeonOps.RoomHasAuthoredContent(new Room()))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a brand-new, untouched room reports authored content");
+                ok = false;
+            }
+
+            // 1. TITLE ALONE.
+            if (!DungeonOps.RoomHasAuthoredContent(new Room { Title = "Кузница" }))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a Title is not reported as authored");
+                ok = false;
+            }
+
+            // 2. BODY ALONE.
+            if (!DungeonOps.RoomHasAuthoredContent(new Room { Body = "Пахнет углём и железом." }))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a Body is not reported as authored");
+                ok = false;
+            }
+
+            // 3. GRID ALONE (a battle map, DungeonInspectorPanel's own field — never touched by anything else
+            //    in this fixture).
+            if (!DungeonOps.RoomHasAuthoredContent(new Room { Grid = new BattleGrid() }))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a Grid is not reported as authored");
+                ok = false;
+            }
+
+            // 4. PREVIEW ALONE. THIS IS THE CASE MutAuthoredContentIgnoresPreview EXISTS TO KILL: dropping just
+            //    this one `if (r.Preview != null) return true;` line leaves every OTHER case in this method
+            //    unaffected, so this is that mutant's ONLY possible killer.
+            if (!DungeonOps.RoomHasAuthoredContent(new Room { Preview = new byte[] { 1, 2, 3 } }))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a Preview is not reported as authored");
+                ok = false;
+            }
+
+            // 5. A NON-STAIRS PORTAL ALONE (a secret passage — the only kind of portal a fresh room can carry
+            //    that the DM, not the generator, put there).
+            {
+                var r = new Room();
+                r.Portals.Add(new Portal { Kind = PortalKind.SecretDoor });
+                if (!DungeonOps.RoomHasAuthoredContent(r))
+                {
+                    Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a non-Stairs portal is not reported as authored");
+                    ok = false;
+                }
+            }
+
+            // 6. A STAIRS-ONLY ROOM STAYS FALSE — Stairs portals are 100% generator-owned
+            //    (BuildingGenerator.RewireStairChain), so a floor that has only those has nothing authored on it.
+            {
+                var r = new Room();
+                r.Portals.Add(new Portal { Kind = PortalKind.Stairs });
+                if (DungeonOps.RoomHasAuthoredContent(r))
+                {
+                    Debug.LogError("SelfTestRoomHasAuthoredContent: a room with only a Stairs portal reports authored content");
+                    ok = false;
+                }
+            }
+
+            // 7. NULL IS FALSE — defensive: HasAuthoredContent's own loop never passes null, but the predicate
+            //    is public now and a second caller (the settlement eraser) reads it directly.
+            if (DungeonOps.RoomHasAuthoredContent(null))
+            {
+                Debug.LogError("SelfTestRoomHasAuthoredContent: a null room reports authored content");
+                ok = false;
+            }
+
+            if (ok) Debug.Log("Self-Test Room Has Authored Content: PASS");
+        }
+
+        /// <summary>SettlementBrushOps.RoomsDestroyedBy (Task 9, Step 2) — what a stroke DESTROYED between two
+        /// floor snapshots, compared by Id: a split leaves the original id alive on the LARGER piece, and only
+        /// a room erased to its last cell disappears entirely.</summary>
+        [ContextMenu("Self-Test: Rooms Destroyed By")]
+        public void SelfTestRoomsDestroyedBy()
+        {
+            bool ok = true;
+
+            // 1. ERASING ONE CELL OF A TWO-CELL BUILDING DESTROYS NOTHING — the room shrinks, its id survives.
+            {
+                var before = Floor(null);
+                var room = SettlementBrushOps.PaintBuilding(before, Cells((0, 0), (1, 0)));
+                if (room == null) { Debug.LogError("SelfTestRoomsDestroyedBy: the two-cell fixture did not paint"); ok = false; }
+                else
+                {
+                    var after = SettlementUndo.CloneFloor(before);
+                    if (SettlementBrushOps.Erase(after, Cells((1, 0))) != 1)
+                    {
+                        Debug.LogError("SelfTestRoomsDestroyedBy: erasing (1,0) from the two-cell fixture removed nothing");
+                        ok = false;
+                    }
+                    var destroyed = SettlementBrushOps.RoomsDestroyedBy(before, after);
+                    if (destroyed.Count != 0)
+                    {
+                        Debug.LogError($"SelfTestRoomsDestroyedBy: shrinking a two-cell building reported "
+                                     + $"{destroyed.Count} destroyed room(s), expected 0 — the room's id "
+                                     + "survives the shrink");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 2. ERASING A ONE-CELL BUILDING DESTROYS EXACTLY IT.
+            {
+                var before = Floor(null);
+                var room = SettlementBrushOps.PaintBuilding(before, Cells((5, 5)));
+                if (room == null) { Debug.LogError("SelfTestRoomsDestroyedBy: the one-cell fixture did not paint"); ok = false; }
+                else
+                {
+                    int keptId = room.Id;
+                    var after = SettlementUndo.CloneFloor(before);
+                    if (SettlementBrushOps.Erase(after, Cells((5, 5))) != 1)
+                    {
+                        Debug.LogError("SelfTestRoomsDestroyedBy: erasing the one-cell fixture's only cell removed nothing");
+                        ok = false;
+                    }
+                    var destroyed = SettlementBrushOps.RoomsDestroyedBy(before, after);
+                    if (destroyed.Count != 1 || destroyed[0].Id != keptId)
+                    {
+                        var ids = destroyed.ConvertAll(r => r.Id);
+                        Debug.LogError($"SelfTestRoomsDestroyedBy: erasing a one-cell building reported destroyed "
+                                     + $"ids [{string.Join(",", ids)}], expected exactly [{keptId}]");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 3. SPLITTING A BUILDING DESTROYS NOTHING (the id survives) — AND THE NEWLY-CREATED PIECE MUST NOT
+            //    BE REPORTED AS DESTROYED EITHER. That second half is the case a naive presence-plus-footprint
+            //    implementation can still get wrong even after passing cases 1/2: MutDestroyedIncludesSplit
+            //    (which additionally reports every room whose FOOTPRINT changed, not only the vanished ones)
+            //    is caught by the surviving original showing up here — its Cells shrink from 5 to 3 even
+            //    though its id lives on — so case 1 (2->1 cells) and this case (5->3 cells) are BOTH that
+            //    mutant's killers. The "newly-created room not reported" assertion just below has no mutant of
+            //    its own (same shape as MutEraseSplitDuplicatesIdentity before its own mutant existed): nothing
+            //    in RoomsDestroyedBy's correct implementation ever iterates `after`-only ids, so there is
+            //    nothing here to remove a rule FROM — it stands as a defensive correctness check.
+            {
+                var before = Floor(null);
+                var room = SettlementBrushOps.PaintBuilding(before, Cells((0, 0), (1, 0), (2, 0), (3, 0), (4, 0)));
+                if (room == null) { Debug.LogError("SelfTestRoomsDestroyedBy: the five-cell split fixture did not paint"); ok = false; }
+                else
+                {
+                    int keptId = room.Id;
+                    var beforeIds = new System.Collections.Generic.HashSet<int>();
+                    foreach (var r in before.Rooms) beforeIds.Add(r.Id);
+
+                    var after = SettlementUndo.CloneFloor(before);
+                    if (SettlementBrushOps.Erase(after, Cells((1, 0))) != 1)
+                    {
+                        Debug.LogError("SelfTestRoomsDestroyedBy: erasing the middle cell of the split fixture removed nothing");
+                        ok = false;
+                    }
+                    // PRECONDITION, not decoration: without a genuine split (one more room than before) there is
+                    // nothing here to falsely report as destroyed, and the rest of this case would pass vacuously.
+                    if (after.Rooms.Count != before.Rooms.Count + 1)
+                    {
+                        Debug.LogError($"SelfTestRoomsDestroyedBy: the split fixture has {after.Rooms.Count} "
+                                     + $"room(s) after the erase, expected {before.Rooms.Count + 1} — without a "
+                                     + "genuine split this case is not testing what it claims to");
+                        ok = false;
+                    }
+                    int newId = 0;
+                    foreach (var r in after.Rooms) if (!beforeIds.Contains(r.Id)) newId = r.Id;
+                    if (newId == 0)
+                    {
+                        Debug.LogError("SelfTestRoomsDestroyedBy: no newly-created split-off room was found in `after`");
+                        ok = false;
+                    }
+
+                    var destroyed = SettlementBrushOps.RoomsDestroyedBy(before, after);
+                    foreach (var r in destroyed)
+                    {
+                        if (r.Id == keptId)
+                        {
+                            Debug.LogError($"SelfTestRoomsDestroyedBy: the split reported the SURVIVING original "
+                                         + $"(id {keptId}) as destroyed — its id survives the split");
+                            ok = false;
+                        }
+                        if (r.Id == newId)
+                        {
+                            Debug.LogError($"SelfTestRoomsDestroyedBy: the split reported the NEWLY-CREATED room "
+                                         + $"(id {newId}) as destroyed — it never existed in `before` at all");
+                            ok = false;
+                        }
+                    }
+                    if (destroyed.Count != 0)
+                    {
+                        var ids = destroyed.ConvertAll(r => r.Id);
+                        Debug.LogError($"SelfTestRoomsDestroyedBy: a split reported destroyed ids "
+                                     + $"[{string.Join(",", ids)}], expected none");
+                        ok = false;
+                    }
+                }
+            }
+
+            if (ok) Debug.Log("Self-Test Rooms Destroyed By: PASS");
+        }
+
         /// <summary>Trailing sentinel — see the arc's trailing-sentinel rule. Asserts nothing.</summary>
         [ContextMenu("Self-Test: Brush Ops Sentinel")]
         public void SelfTestBrushOpsSentinel()

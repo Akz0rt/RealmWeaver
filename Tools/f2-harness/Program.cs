@@ -110,6 +110,8 @@ static class Program
         var brushOps = new WorldGen.Rendering.SettlementBrushOpsSelfTests();
         brushOps.SelfTestBrushStrokes();
         brushOps.SelfTestEraseRefusal();
+        brushOps.SelfTestRoomHasAuthoredContent();
+        brushOps.SelfTestRoomsDestroyedBy();
         brushOps.SelfTestBrushOpsSentinel();
         var settlementUndo = new WorldGen.Rendering.SettlementUndoSelfTests();
         settlementUndo.SelfTestSettlementUndo();

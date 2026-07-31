@@ -248,6 +248,25 @@ namespace WorldGen.Generation
             return false;
         }
 
+        /// <summary>Rooms present in <paramref name="before"/> and gone from <paramref name="after"/> — what a
+        /// stroke DESTROYED, as opposed to shrank or split. Compared by Id, because a split leaves the
+        /// original id alive on the larger piece and only a room erased to its LAST cell disappears entirely.
+        /// Pure: reads both floors, writes neither.
+        ///
+        /// Task 9's eraser confirm calls this with `before` the bound (real) floor and `after` the scratch
+        /// clone the eraser's OnBeginDrag/OnDrag (or DabBrush's one-off dry run) already ran the whole stroke
+        /// against — a diff over two floors that already exist, never a re-run of the stroke itself.</summary>
+        public static List<Room> RoomsDestroyedBy(InteriorFloor before, InteriorFloor after)
+        {
+            var result = new List<Room>();
+            if (before == null) return result;
+            var afterIds = new HashSet<int>();
+            if (after != null) foreach (var r in after.Rooms) afterIds.Add(r.Id);
+            foreach (var r in before.Rooms)
+                if (!afterIds.Contains(r.Id)) result.Add(r);
+            return result;
+        }
+
         /// <summary>Remove one cell from the building room that owns it. If that DISCONNECTS the remainder,
         /// the building SPLITS (DM ruling, checkpoint 2): the LARGEST piece keeps `r`'s identity — its id, and
         /// therefore title, body, preview, portals, IsDummy and the building interior keyed by
