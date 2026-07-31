@@ -181,6 +181,8 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutPreviewErasedIgnoredSelfTests().SelfTestPreviewErased()),
                 ("MutPreviewErasedAfterRing", "SettlementTileGrid.Build's SubtractErased call moved to AFTER BuildWallRing, so the wall ring is derived from the full pre-erase town — cells vanish inside a wall that has not moved",
                     () => new WorldGen.MutantTests.MutPreviewErasedAfterRingSelfTests().SelfTestPreviewErased()),
+                ("MutPreviewErasedStreetsKept", "SettlementTileGrid.Build's SubtractErased never drops an erased cell from the street list, so an erased street cell keeps seeding the wall ring and keeps drawing as Road",
+                    () => new WorldGen.MutantTests.MutPreviewErasedStreetsKeptSelfTests().SelfTestPreviewErased()),
 
                 ("MutEraseAllowsStranding", "SettlementBrushOps.CanErase's street half always allows, so a lane that is a house's only access can be erased anyway",
                     () => new WorldGen.MutantTests.MutEraseAllowsStrandingSelfTests().SelfTestEraseRefusal()),

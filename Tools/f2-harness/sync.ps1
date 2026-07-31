@@ -1720,7 +1720,19 @@ $mutPreviewErasedAfterRingTo   = "            bool hasWall = floor.SettlementPar
 New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewErasedAfterRing' `
   $mutPreviewErasedAfterRingFrom $mutPreviewErasedAfterRingTo 'MutPreviewErasedAfterRing.cs'
 
-foreach ($mc in @('MutPreviewErasedIgnored', 'MutPreviewErasedAfterRing')) {
+# MutPreviewErasedStreetsKept (fix round 1, review Important 1): SubtractErased's OTHER half — the
+# `streets.RemoveAll` call — deleted, so an erased STREET cell is still fed to StreetMask/BuildWallRing/
+# MarkRoads as if it were never touched; only its (already-None) `g.Cells` write survives, which the building
+# fixture above cannot exercise (a stored street cell has not been marked Road yet at the point this method
+# runs, so that write is a no-op for a pure street cell either way). SelfTestPreviewErased's street-half block
+# is this mutant's ONLY possible killer: the building-only assertions above it never touch `streets` at all
+# (the original fixture stores none), so this mutant cannot be caught without a fixture that stores some.
+New-SettlementMutant 'SettlementTileGrid.cs' 'MutPreviewErasedStreetsKept' `
+  '            streets.RemoveAll(c => erased.Contains(c));' `
+  '            // MUTANT: an erased street cell is never dropped from `streets`' `
+  'MutPreviewErasedStreetsKept.cs'
+
+foreach ($mc in @('MutPreviewErasedIgnored', 'MutPreviewErasedAfterRing', 'MutPreviewErasedStreetsKept')) {
   New-SettlementRebind 'SelfTestPreviewErased' $mc `
     @('SettlementTileGrid\.', '\bTileType\b') `
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")

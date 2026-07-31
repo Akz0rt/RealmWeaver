@@ -1037,6 +1037,74 @@ namespace WorldGen.Rendering
                              + $"{floor.Rooms.Count}. A preview must not write.");
                 ok = false;
             }
+
+            // THE STREET HALF (fix round 1, Important 1). Everything above erases BUILDING cells only — the
+            // fixture stores no streets at all, so SubtractErased's `streets.RemoveAll(c => erased.Contains(c))`
+            // is a no-op for every assertion above this line, and a mutant that deletes ONLY that line survives
+            // all of them. A building-only fixture cannot catch it even in principle: at the point
+            // SubtractErased runs, a stored street cell has not been marked Road yet (MarkRoads hasn't run), so
+            // its `g.Cells[...] = None` write is ALSO a no-op there — `streets.RemoveAll` is the only line in
+            // this method that can make an erased street cell stop drawing as Road, or shrink the ring around a
+            // shorter street. A second, separate fixture is the only way to exercise it.
+            var floor2 = Floor(true, (0, 0), (1, 0), (2, 0));
+            floor2.SettlementParams.StreetCells = SettlementFootprint.Encode(
+                new System.Collections.Generic.List<(int i, int j)> { (3, 0), (4, 0) });
+            string streetsBefore = string.Join(",", SettlementFootprint.Decode(floor2.SettlementParams.StreetCells));
+
+            var erased2 = new System.Collections.Generic.List<(int i, int j)> { (4, 0) };
+            var withErase2 = SettlementTileGrid.Build(floor2, null, null, erased2);
+            var without2 = SettlementTileGrid.Build(floor2);
+
+            // PRECONDITION: without the preview, (4,0) — a STORED street cell — draws as Road. It sits within
+            // OpenStreetNeighbourhood of building (2,0), so it dilates by the WIDE radius (CourtyardCells + 1 =
+            // 2) exactly like a building would, and it is comfortably interior to the ring it seeds (the seed
+            // set's own dilation reaches two cells past it), so it is never picked as the Wall cell itself.
+            if (without2.At(4, 0) != TileType.Road)
+            {
+                Debug.LogError($"SelfTestPreviewErased: (street half) without the preview, cell (4,0) reads "
+                             + $"{without2.At(4, 0)}, expected Road — the fixture is not what this test assumes");
+                ok = false;
+            }
+            // THE PAYOFF: erased, it must stop drawing as Road.
+            if (withErase2.At(4, 0) == TileType.Road)
+            {
+                Debug.LogError("SelfTestPreviewErased: (street half) erased street cell (4,0) still draws as Road");
+                ok = false;
+            }
+            // THE RING RE-DERIVES AROUND A SHORTER STREET TOO, not just a shorter building row: without the
+            // preview the seed reaches as far as the street cell (4,0), so the ring's east edge sits at (6,0).
+            // With (4,0) erased the seed only reaches (3,0), and the edge must move in to (5,0) — (6,0) must
+            // fall OUTSIDE the ring entirely (None), not merely fail to be picked as the Wall cell.
+            if (without2.At(6, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewErased: (street half) without the preview, cell (6,0) reads "
+                             + $"{without2.At(6, 0)}, expected Wall — the fixture's ring is not where this test "
+                             + "assumes");
+                ok = false;
+            }
+            if (withErase2.At(5, 0) != TileType.Wall)
+            {
+                Debug.LogError($"SelfTestPreviewErased: (street half) with the street cell erased, cell (5,0) "
+                             + $"reads {withErase2.At(5, 0)}, expected Wall — the ring did not re-derive around "
+                             + "the shorter street, so the DM would watch the lane vanish inside an unmoved wall");
+                ok = false;
+            }
+            if (withErase2.At(6, 0) == TileType.Wall)
+            {
+                Debug.LogError("SelfTestPreviewErased: (street half) cell (6,0) still reads Wall after the "
+                             + "street cell that used to reach it was erased — the ring did not shrink");
+                ok = false;
+            }
+            // A preview must not write: the floor's STORED streets must be untouched — SubtractErased mutates
+            // only the fresh `streets` LIST Build decodes on every call, never the stored array itself.
+            string streetsAfter = string.Join(",", SettlementFootprint.Decode(floor2.SettlementParams.StreetCells));
+            if (streetsAfter != streetsBefore)
+            {
+                Debug.LogError($"SelfTestPreviewErased: (street half) the floor's stored streets changed from "
+                             + $"[{streetsBefore}] to [{streetsAfter}]. A preview must not write.");
+                ok = false;
+            }
+
             if (ok) Debug.Log("Self-Test Preview Erased: PASS");
         }
 
