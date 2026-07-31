@@ -72,12 +72,24 @@ namespace WorldGen.Workspace.Rendering
         }
 
         /// <summary>`paneCorners` is a pane ContentArea's GetWorldCorners buffer (index 0 = bottom-left,
-        /// 2 = top-right). See the class doc for why a world position is used as a screen position verbatim.</summary>
+        /// 2 = top-right). See the class doc for why a world position is used as a screen position verbatim.
+        ///
+        /// WRITES ONLY ON CHANGE, and that guard is load-bearing rather than a micro-optimisation: the caller
+        /// (MapSurfaceHost.ApplyViewport) runs from Canvas.willRenderCanvases, i.e. from INSIDE uGUI's own
+        /// CanvasUpdateRegistry.PerformUpdate. Writing a RectTransform offset there marks the frame's whole
+        /// subtree for a layout rebuild while a rebuild is in progress, which uGUI defers with a warning —
+        /// harmless once, but an unconditional write would do it on every single frame the map is visible,
+        /// whether or not anything moved. Comparing first makes the steady state (no drag, no resize) a pure
+        /// read that dirties nothing at all, and leaves the rebuild for the frames that genuinely need one.
+        /// Vector2's == is the approximate comparison, which is the right one here — sub-pixel jitter in
+        /// GetWorldCorners must not count as movement.</summary>
         public static void Apply(RectTransform frame, Vector3[] paneCorners)
         {
             if (frame == null || paneCorners == null || paneCorners.Length < 3) return;
-            frame.offsetMin = new Vector2(paneCorners[0].x, paneCorners[0].y);
-            frame.offsetMax = new Vector2(paneCorners[2].x - Screen.width, paneCorners[2].y - Screen.height);
+            var min = new Vector2(paneCorners[0].x, paneCorners[0].y);
+            var max = new Vector2(paneCorners[2].x - Screen.width, paneCorners[2].y - Screen.height);
+            if (frame.offsetMin != min) frame.offsetMin = min;
+            if (frame.offsetMax != max) frame.offsetMax = max;
         }
 
         /// <summary>Undoes Apply: the frame becomes the full canvas rect again, so the chrome inside it is
@@ -88,8 +100,9 @@ namespace WorldGen.Workspace.Rendering
         public static void Reset(RectTransform frame)
         {
             if (frame == null) return;
-            frame.offsetMin = Vector2.zero;
-            frame.offsetMax = Vector2.zero;
+            // Same write-only-on-change rule as Apply — Hide can be called repeatedly by SyncSurfaces.
+            if (frame.offsetMin != Vector2.zero) frame.offsetMin = Vector2.zero;
+            if (frame.offsetMax != Vector2.zero) frame.offsetMax = Vector2.zero;
         }
     }
 }
