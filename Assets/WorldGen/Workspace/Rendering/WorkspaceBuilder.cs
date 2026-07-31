@@ -3,6 +3,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Workspace.Rendering
@@ -48,8 +49,15 @@ namespace WorldGen.Workspace.Rendering
         /// portion (the map/regions/layers tab segment starts 12px in and runs 320px wide) disappears behind
         /// the 236px navigator column, while the part crossing the pane's content area still shows through,
         /// because the map surface disables that area's backgrounds and the shell paints no pixels there. Task
-        /// 10/Р5 re-hosts that toolbar as shell-native chrome, which is what actually resolves it.</summary>
-        const float MenuBarInset = 40f;
+        /// 10/Р5 re-hosts that toolbar as shell-native chrome, which is what actually resolves it.
+        ///
+        /// PUBLIC, and read from ProjectMenuBar rather than re-typing 40f, because PaneChromeFrame.Reset needs
+        /// the SAME inset: Task 10a removed the menu-bar term from the map chrome's own top offsets (see
+        /// MapLayersPanel.cs:68), so an UNHOSTED frame has to reproduce the strip this constant reserves or
+        /// that chrome lands under the bar. Deriving it from ProjectMenuBar.BarHeightPixels means the two
+        /// cannot drift, which the sentence at the top of this doc ("whose own BarHeightPixels is 40f") was
+        /// previously only asserting.</summary>
+        public const float MenuBarInset = ProjectMenuBar.BarHeightPixels;
 
         [Header("External refs")]
         [Tooltip("The document NavigatorView/QuickOpenPopup render. Left unassigned in the Inspector — Task 9 " +
@@ -63,7 +71,12 @@ namespace WorldGen.Workspace.Rendering
         [Header("External refs — WorldMap surface")]
         [Tooltip("Overrides for MapSurfaceHost's auto-discovery (FindFirstObjectByType<WorldMapRenderer>/" +
                  "PoiEditPanel/MapLegendUI). Left null/empty until Task 11 (or a manual test) has a reason to " +
-                 "pin a specific instance instead of whatever discovery finds.")]
+                 "pin a specific instance instead of whatever discovery finds.\n\n" +
+                 "DO NOT LIST PoiInfoPopup OR THE REGION-LABEL OVERLAYS HERE. Everything in this array is " +
+                 "both shown/hidden with the map AND confined to the map's pane by PaneChromeFrame. Those " +
+                 "three place themselves with cam.WorldToScreenPoint, which already accounts for the " +
+                 "camera's viewport rect, so insetting them a second time moves them off their own map " +
+                 "features. Same rule for anything else that positions itself from the camera.")]
         public Camera mapCamera;
         public GameObject[] mapChrome;
 

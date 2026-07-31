@@ -74,15 +74,20 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>`paneCorners` is a pane ContentArea's GetWorldCorners buffer (index 0 = bottom-left,
         /// 2 = top-right). See the class doc for why a world position is used as a screen position verbatim.
         ///
-        /// WRITES ONLY ON CHANGE, and that guard is load-bearing rather than a micro-optimisation: the caller
-        /// (MapSurfaceHost.ApplyViewport) runs from Canvas.willRenderCanvases, i.e. from INSIDE uGUI's own
-        /// CanvasUpdateRegistry.PerformUpdate. Writing a RectTransform offset there marks the frame's whole
-        /// subtree for a layout rebuild while a rebuild is in progress, which uGUI defers with a warning —
-        /// harmless once, but an unconditional write would do it on every single frame the map is visible,
-        /// whether or not anything moved. Comparing first makes the steady state (no drag, no resize) a pure
-        /// read that dirties nothing at all, and leaves the rebuild for the frames that genuinely need one.
-        /// Vector2's == is the approximate comparison, which is the right one here — sub-pixel jitter in
-        /// GetWorldCorners must not count as movement.</summary>
+        /// WRITES ONLY ON CHANGE — an ordinary optimisation, and deliberately NOT justified by the
+        /// rebuild-re-entrancy hazard an earlier version of this comment claimed. That claim was WRONG and is
+        /// recorded here so nobody re-derives it: CanvasUpdateRegistry subscribes its own PerformUpdate to
+        /// Canvas.willRenderCanvases in its CONSTRUCTOR (CanvasUpdateRegistry.cs:91 in
+        /// com.unity.ugui@52e65280e89e), so it is a SIBLING subscriber on that multicast event, not a pass
+        /// this class runs inside. MapSurfaceHost's handler is invoked after PerformUpdate has returned and
+        /// its m_PerformingLayoutUpdate/m_PerformingGraphicUpdate flags are back to false — so there is no
+        /// re-entrancy, no LogError, no dropped rebuild. An unconditional write would simply queue a layout
+        /// rebuild for the NEXT frame's PerformUpdate, every frame, forever. Comparing first makes the steady
+        /// state (no drag, no resize) a pure read that queues nothing.
+        ///
+        /// Vector2's == compares squared distance against ~1e-10, i.e. ~1e-5 px — effectively exact, not a
+        /// sub-pixel tolerance. It is used because it is the natural operator, not because it absorbs jitter;
+        /// GetWorldCorners on a static layout returns bit-identical values anyway.</summary>
         public static void Apply(RectTransform frame, Vector3[] paneCorners)
         {
             if (frame == null || paneCorners == null || paneCorners.Length < 3) return;
@@ -92,17 +97,31 @@ namespace WorldGen.Workspace.Rendering
             if (frame.offsetMax != max) frame.offsetMax = max;
         }
 
-        /// <summary>Undoes Apply: the frame becomes the full canvas rect again, so the chrome inside it is
-        /// back to being window-anchored. Called from MapSurfaceHost.Hide so a surface that stops owning a
-        /// pane is not left clamped to whatever rect that pane last had — a stale clamp would survive into
-        /// any path that shows this chrome OUTSIDE the workspace (MapScreenController/ScreenSwitcher still
-        /// drive its active state independently — see MapSurfaceHost's KNOWN SEAM paragraph).</summary>
+        /// <summary>Undoes Apply: the frame gives the whole window back to the chrome inside it, MINUS the
+        /// menu-bar strip. Called from MapSurfaceHost.Hide so a surface that stops owning a pane is not left
+        /// clamped to whatever rect that pane last had — a stale clamp would survive into any path that shows
+        /// this chrome OUTSIDE the workspace (MapScreenController/ScreenSwitcher still drive its active state
+        /// independently — see MapSurfaceHost's KNOWN SEAM paragraph, and specifically the case it names:
+        /// closing the POI editor re-asserts AppScreen.MapEditor, re-activating the chrome behind a Hide()
+        /// this host already issued).
+        ///
+        /// WHY NOT PLAIN ZERO. Zeroing all four offsets restores the frame to the full canvas — which WAS the
+        /// window-anchored geometry the chrome was written for, and stopped being it in the same change that
+        /// created this class: Task 10a removed the 40px menu-bar term from all six top-anchored map panels
+        /// (MapLayersPanel.cs:68 carries the full reasoning) because a pane's ContentArea already excludes the
+        /// bar. A zeroed frame would therefore put the toolbar at window y=0, UNDER ProjectMenuBar (canvas
+        /// order 100 against the toolbar's 40), with the five panels 40px too high and overlapping it.
+        /// Insetting the top by MenuBarInset instead puts those panels exactly where the removed 40f used to,
+        /// so the un-hosted layout is preserved rather than merely "restored" to something now wrong.
+        /// WorkspaceBuilder.MenuBarInset is the same constant the shell reserves for that bar, itself derived
+        /// from ProjectMenuBar.BarHeightPixels — one number, three readers, no copy.</summary>
         public static void Reset(RectTransform frame)
         {
             if (frame == null) return;
+            var max = new Vector2(0f, -WorkspaceBuilder.MenuBarInset);
             // Same write-only-on-change rule as Apply — Hide can be called repeatedly by SyncSurfaces.
             if (frame.offsetMin != Vector2.zero) frame.offsetMin = Vector2.zero;
-            if (frame.offsetMax != Vector2.zero) frame.offsetMax = Vector2.zero;
+            if (frame.offsetMax != max) frame.offsetMax = max;
         }
     }
 }

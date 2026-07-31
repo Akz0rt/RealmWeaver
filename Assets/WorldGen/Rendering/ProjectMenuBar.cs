@@ -26,7 +26,10 @@ namespace WorldGen.Rendering
     /// </summary>
     public class ProjectMenuBar : MonoBehaviour
     {
-        const float BarHeightPixels = 40f;
+        /// <summary>Public so the one layout that has to reserve this strip derives it instead of copying the
+        /// number: WorkspaceBuilder.MenuBarInset. Same public-const-as-single-source rule as
+        /// MapToolbarUI.BarHeightPixels, which the map panels already offset themselves by.</summary>
+        public const float BarHeightPixels = 40f;
 
         [Header("Источники")]
         public WorldMapRenderer mapRenderer;
