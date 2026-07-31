@@ -564,28 +564,28 @@ namespace WorldGen.Rendering
         /// OpenBuildingInterior's comment about why GetByPoiId cannot serve that lookup). Without the room
         /// part, a town and a building inside it would be the same SurfaceRef under WorkspaceOps.SameSurface,
         /// so drilling into a building would silently re-focus the town's tab instead of opening one.
-        /// InteriorKind.Building with OwnerRoomId 0 is a TOP-LEVEL building (a POI that is a building, not one
-        /// inside a town) — it maps to BuildingInterior too, and the "#0" suffix keeps its id a pure function
-        /// of the data with no special case.
+        /// InteriorKind.Building with OwnerRoomId 0 is a TOP-LEVEL building — a POI that IS a building
+        /// (Tower/Temple/Fortress/Ruin, per InteriorProfile), not one inside a town. It maps to
+        /// BuildingInterior too. An earlier revision gave it a literal "#0" suffix and claimed that kept the
+        /// id "a pure function of the data with no special case"; the claim was true of the ENCODER and false
+        /// of the PAIR, because the decoder fed InteriorOps.FindBuildingInterior, which refuses roomId 0
+        /// (InteriorOps.cs:13) — so those four POI types re-bound to null and re-showed a DIFFERENT interior
+        /// on every return to their tab. SurfaceIds now owns both halves, omits the suffix entirely for room
+        /// 0, and SurfaceIdsSelfTests pins the round-trip for BOTH shapes rather than only the one a
+        /// hand-walk happened to try.
         ///
-        /// '#' as the separator: PoiData.Id is a Guid string, which cannot contain one, so the two parts can
-        /// never be ambiguous. Ids are also persisted verbatim by WorkspaceOps.Serialize, which escapes tabs
-        /// and newlines and has no opinion about anything else.</summary>
+        /// OwnerRoomId is passed unconditionally rather than only for the Building case: a settlement or a
+        /// dungeon always carries 0, so SurfaceIds.Interior yields the bare poiId for them anyway, and reading
+        /// the field one way for all three kinds leaves nothing to keep in step.</summary>
         static SurfaceRef InteriorSurface(InteriorData interior)
         {
             if (interior == null) return null;
+            string id = SurfaceIds.Interior(interior.OwnerPoiId, interior.OwnerRoomId);
             switch (interior.Kind)
             {
-                case InteriorKind.Settlement:
-                    return new SurfaceRef { Kind = SurfaceKind.Settlement, Id = interior.OwnerPoiId ?? "" };
-                case InteriorKind.Building:
-                    return new SurfaceRef
-                    {
-                        Kind = SurfaceKind.BuildingInterior,
-                        Id = $"{interior.OwnerPoiId}#{interior.OwnerRoomId}",
-                    };
-                default:
-                    return new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = interior.OwnerPoiId ?? "" };
+                case InteriorKind.Settlement: return new SurfaceRef { Kind = SurfaceKind.Settlement, Id = id };
+                case InteriorKind.Building:   return new SurfaceRef { Kind = SurfaceKind.BuildingInterior, Id = id };
+                default:                      return new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = id };
             }
         }
 
@@ -600,7 +600,7 @@ namespace WorldGen.Rendering
             return new SurfaceRef
             {
                 Kind = SurfaceKind.BattleGrid,
-                Id = $"{interior.Id}#{battleGridFloorIndex}#{battleGridRoomId}",
+                Id = SurfaceIds.BattleGrid(interior.Id, battleGridFloorIndex, battleGridRoomId),
             };
         }
 
@@ -639,7 +639,7 @@ namespace WorldGen.Rendering
                 case SurfaceKind.PoiEditor: RebindPoiEditor(id); break;
                 case SurfaceKind.Settlement:
                 case SurfaceKind.Dungeon:
-                case SurfaceKind.BuildingInterior: RebindInterior(kind, id); break;
+                case SurfaceKind.BuildingInterior: RebindInterior(id); break;
                 case SurfaceKind.BattleGrid: RebindBattleGrid(id); break;
             }
         }
@@ -653,51 +653,48 @@ namespace WorldGen.Rendering
             poiEditorScreen.Bind(poi);
         }
 
-        void RebindInterior(SurfaceKind kind, string id)
+        void RebindInterior(string id)
         {
-            var interior = ResolveInterior(kind, id);
+            var interior = ResolveInterior(id);
             if (interior == null || dungeonEditorScreen == null) return;
             if (ReferenceEquals(editingDungeon, interior)) return;
 
+            // EVERY DECISION BELOW READS interior.OwnerRoomId, NOT THE SurfaceKind THE TAB CARRIES. The two
+            // agree in practice (InteriorSurface derives one from the other), but only OwnerRoomId is the
+            // authority on "is this a building INSIDE a town, or a POI that simply IS a building" — and the
+            // Critical this method was fixed for came precisely from treating SurfaceKind.BuildingInterior as
+            // if it implied a room. Tower/Temple/Fortress/Ruin are Kind=Building with OwnerRoomId 0.
+            bool insideATown = interior.OwnerRoomId != 0;
+
             // parentTown is re-derived rather than left alone, because it is what «← Город» reads: switching
-            // to a BUILDING's tab must make the back button go to THAT building's town, and switching to any
-            // top-level interior must clear it (the same stale-parent rule OpenDungeonEditor enforces for the
-            // map entry path). The town is the FIRST interior for the poiId — DungeonManager.GetByPoiId, the
-            // same lookup OpenBuildingInterior's own comment says cannot serve a BUILDING lookup and can
-            // therefore serve this one exactly.
-            parentTown = kind == SurfaceKind.BuildingInterior && dungeonManager != null
+            // to a building-in-a-town's tab must make the back button go to THAT building's town, and
+            // switching to any top-level interior must clear it (the same stale-parent rule OpenDungeonEditor
+            // enforces for the map entry path). The town is the FIRST interior for the poiId —
+            // DungeonManager.GetByPoiId, the same lookup OpenBuildingInterior's own comment says cannot serve
+            // a BUILDING lookup and can therefore serve this one exactly.
+            parentTown = insideATown && dungeonManager != null
                 ? dungeonManager.GetByPoiId(interior.OwnerPoiId)
                 : null;
-            if (ReferenceEquals(parentTown, interior)) parentTown = null;   // a town is not its own parent
+            if (ReferenceEquals(parentTown, interior)) parentTown = null;   // belt: nothing is its own parent
 
             editingDungeon = interior;
-            if (kind == SurfaceKind.BuildingInterior)
+            if (insideATown)
                 dungeonEditorScreen.Bind(interior, BuildingHeaderFor(parentTown, interior.OwnerRoomId));
             else
+                // A TOP-LEVEL interior takes the same no-header bind OpenDungeonEditor gives it. Routing it
+                // through BuildingHeaderFor instead would title the screen «Здание 0» — there is no room 0 to
+                // name, and no parent town to look one up in.
                 dungeonEditorScreen.Bind(interior, roomsWithInterior: RoomsWithInteriorFor(interior));
         }
 
         void RebindBattleGrid(string id)
         {
-            // Parsed from the RIGHT: the interior part of this id may itself contain a '#' (a building
-            // interior is "poiId#roomId"), so the floor and room are the LAST two segments and everything
-            // before them is the interior id. Splitting from the left would mis-read every battle grid inside
-            // a building.
-            int lastSep = id != null ? id.LastIndexOf('#') : -1;
-            if (lastSep <= 0) return;
-            int prevSep = id.LastIndexOf('#', lastSep - 1);
-            if (prevSep <= 0) return;
+            // SurfaceIds owns both halves of this parse (and SurfaceIdsSelfTests pins them against each
+            // other) — in particular the parse-from-the-RIGHT rule, which matters because the interior part
+            // itself contains a separator whenever the grid is inside a building-in-a-town.
+            if (!SurfaceIds.TryParseBattleGrid(id, out string interiorId, out int floorIndex, out int roomId)) return;
 
-            if (!int.TryParse(id.Substring(lastSep + 1), out int roomId)) return;
-            if (!int.TryParse(id.Substring(prevSep + 1, lastSep - prevSep - 1), out int floorIndex)) return;
-            string interiorId = id.Substring(0, prevSep);
-
-            // The interior id's own shape says which kind it is: a building's carries a '#', a settlement's or
-            // dungeon's does not. Settlement and Dungeon resolve identically (GetByPoiId), so guessing between
-            // those two costs nothing — and a settlement can never own a battle grid anyway (OpenBattleGrid
-            // returns early for one).
-            var interior = ResolveInterior(
-                interiorId.IndexOf('#') >= 0 ? SurfaceKind.BuildingInterior : SurfaceKind.Dungeon, interiorId);
+            var interior = ResolveInterior(interiorId);
             if (interior == null || battleGridScreen == null) return;
             if (floorIndex < 0 || floorIndex >= interior.Floors.Count) return;
             if (interior.Floors[floorIndex].GetRoom(roomId) == null) return;
@@ -714,18 +711,24 @@ namespace WorldGen.Rendering
             battleGridScreen.Bind(interior, floorIndex, roomId);
         }
 
-        /// <summary>Reverses InteriorSurface: an id back to the InteriorData it names. Settlement and Dungeon
-        /// are both "the first interior for this poiId" (DungeonManager.GetByPoiId); BuildingInterior splits
-        /// "poiId#roomId" and goes through InteriorOps.FindBuildingInterior, the only lookup that can
-        /// distinguish a SECOND interior for the same poiId.</summary>
-        InteriorData ResolveInterior(SurfaceKind kind, string id)
+        /// <summary>Reverses InteriorSurface: an id back to the InteriorData it names. Takes NO SurfaceKind,
+        /// deliberately — the id's own shape says everything the lookup needs, and the SurfaceKind the tab
+        /// carries is what the fixed Critical came from (`BuildingInterior` does not imply a room; a
+        /// Tower/Temple/Fortress/Ruin is Kind=Building with OwnerRoomId 0). One argument that cannot disagree
+        /// with itself beats two that can.
+        ///
+        /// roomId 0 → "the FIRST interior for this poiId" (DungeonManager.GetByPoiId), which is what a
+        /// settlement, a dungeon and a POI-that-is-a-building all are. Non-zero →
+        /// InteriorOps.FindBuildingInterior, the only lookup that can pick out a SECOND interior sharing a
+        /// poiId — and the one that refuses roomId 0 outright (InteriorOps.cs:13), which is exactly why the
+        /// old encoding's `#0` suffix resolved to null.</summary>
+        InteriorData ResolveInterior(string id)
         {
-            if (dungeonManager == null || string.IsNullOrEmpty(id)) return null;
-            if (kind != SurfaceKind.BuildingInterior) return dungeonManager.GetByPoiId(id);
-
-            int sep = id.LastIndexOf('#');
-            if (sep <= 0 || !int.TryParse(id.Substring(sep + 1), out int roomId)) return null;
-            return InteriorOps.FindBuildingInterior(dungeonManager.GetAll(), id.Substring(0, sep), roomId);
+            if (dungeonManager == null) return null;
+            if (!SurfaceIds.TryParseInterior(id, out string poiId, out int roomId)) return null;
+            return roomId == 0
+                ? dungeonManager.GetByPoiId(poiId)
+                : InteriorOps.FindBuildingInterior(dungeonManager.GetAll(), poiId, roomId);
         }
 
         /// <summary>The header OpenBuildingInterior would have used for this building — its room's Title, or
