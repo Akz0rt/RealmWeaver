@@ -298,7 +298,7 @@ namespace WorldGen.Workspace.Rendering
             // The frame roots are a STRICT SUPERSET of `chrome`, and deliberately a separate list rather than
             // an enlarged `chrome`: `chrome` drives SetActive (see SetChromeActive), and the four docked
             // panels must NOT be driven that way — MapToolbarUI.SetActiveTab owns their activation and its own
-            // comment (MapToolbarUI.cs:275) documents why the deactivate-all-then-activate-target ORDER is
+            // comment (MapToolbarUI.cs:281) documents why the deactivate-all-then-activate-target ORDER is
             // load-bearing (EditorBrushPanel/RegionsPanel share mutable BrushToolController state through
             // OnEnable/OnDisable). Framing is a purely geometric concern with no such coupling, so the two
             // lists have different memberships on purpose. The four panels are reachable ONLY through the
@@ -316,7 +316,7 @@ namespace WorldGen.Workspace.Rendering
             //
             // Dropping the old `frames` without Reset()ing its entries first is safe ONLY because the root
             // set cannot SHRINK between two Rewire calls: the only two callers are Create (once per
-            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:165), and both pass
+            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:186), and both pass
             // the same `mapChrome` field, so discovery yields the same set both times. A future caller that
             // narrowed the set would strand a __PaneFrame at its last-applied inset with nothing left
             // holding a reference to reset it — Reset the outgoing frames here if that ever becomes possible.
@@ -342,7 +342,7 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// Every one of these panels builds its canvas in its OWN Awake (MapLayersPanel.cs:36,
         /// EditorBrushPanel.cs:70, PoiToolPanel.cs:44, RegionsPanel.cs:47, MapLegendUI.cs:42,
-        /// PoiEditPanel.cs:58), and Unity's Awake order between sibling scene objects is undefined — so
+        /// PoiEditPanel.cs:63), and Unity's Awake order between sibling scene objects is undefined — so
         /// WorkspaceBuilder.Awake -> Create -> Rewire can easily run BEFORE any of them. Worse, and this is
         /// the case that makes a one-shot resolution unfixable rather than merely racy: MapToolbarUI.Awake
         /// ends in SetActiveTab(0), which SetActive(false)s the three non-selected docked panels. A
@@ -367,6 +367,12 @@ namespace WorldGen.Workspace.Rendering
             // Destroy()s). Apply/Reset null-guard each entry anyway, so this is hygiene rather than a fix —
             // without it the list only ever grows, and a fake-null entry is indistinguishable from a live one
             // at a glance in the debugger. n <= 7, downward so RemoveAt does not skip.
+            //
+            // ONE-WAY DOOR, accepted, and the sibling of the shrinking-root-set trap marked in Rewire above:
+            // a root is dropped from pendingFrameRoots the moment it yields a frame, so a root whose frame is
+            // pruned here is never re-framed until the next Rewire. Unreachable in normal use — destroying a
+            // __PaneFrame destroys the chrome children it holds, and destroying the canvas destroys the frame,
+            // so there is no state where a live canvas outlives its pruned frame.
             for (int i = frames.Count - 1; i >= 0; i--)
                 if (frames[i] == null) frames.RemoveAt(i);
 
@@ -451,9 +457,12 @@ namespace WorldGen.Workspace.Rendering
             if (shownIn != null) SetBackgroundsEnabled(shownIn, true);
             shownIn = null;
             SetChromeActive(false);
-            // Give every frame the whole canvas back, so the chrome inside it is window-anchored again while
-            // this surface owns no pane. Left clamped, a panel re-shown by the legacy path (MapScreenController
-            // /ScreenSwitcher still drive these GameObjects' active state on their own — see the class doc's
+            // Give every frame the whole canvas back MINUS the menu-bar strip (see PaneChromeFrame.Reset's own
+            // doc for why not plain zero — the map chrome's top offsets no longer include that strip, so a
+            // fully-zeroed frame would put the toolbar underneath ProjectMenuBar), which restores the chrome
+            // to pixel-identical pre-Task-10a geometry while this surface owns no pane. Left clamped instead,
+            // a panel re-shown by the legacy path (MapScreenController/ScreenSwitcher
+            // still drive these GameObjects' active state on their own — see the class doc's
             // KNOWN SEAM paragraph) would render inside a rect belonging to a pane that no longer shows the
             // map. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
             // nothing but a Vector2 write per frame object. Null-guarded because Hide is documented as safe to

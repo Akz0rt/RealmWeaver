@@ -712,7 +712,7 @@ namespace WorldGen.Workspace.Rendering
             // likewise collapse to sum-of-those-sizeDeltas + spacing + padding, not to ItemHeight-per-item.
             // Exactly the defect QuickOpenPopup.cs shipped once already in this same arc (commit b187ceb,
             // "quick-open rows need childControlHeight=true, not false") and ProjectMenuBar.cs's «Файл»/«Вид»
-            // dropdown (ProjectMenuBar.cs:353-354) avoids by using this same true/false pair for the
+            // dropdown (ProjectMenuBar.cs:356-357) avoids by using this same true/false pair for the
             // identical shape: control height, but don't force-expand it past the child's own preferredHeight.
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;

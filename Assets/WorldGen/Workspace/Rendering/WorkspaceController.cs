@@ -71,7 +71,7 @@ namespace WorldGen.Workspace.Rendering
         /// `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
         /// code path calling Awake() again without a reload in between — where Layout genuinely
         /// still holds what it held before. It does NOT protect the case it looks like it
-        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:30-38 documents why —
+        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:111-146 documents why —
         /// Layout is a plain auto-property, not a [SerializeField], so its backing field does
         /// NOT survive a script reload the way the GameObject/component hierarchy does. On that
         /// exact path, Layout IS null when this runs, the condition is true, and a fresh

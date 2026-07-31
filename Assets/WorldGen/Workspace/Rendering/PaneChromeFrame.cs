@@ -25,7 +25,7 @@ namespace WorldGen.Workspace.Rendering
     ///
     /// SCREEN PIXELS == WORLD UNITS. Every canvas this is applied to is ScreenSpaceOverlay at scaleFactor 1
     /// (the CanvasScalers in this project are AddComponent-ed and never configured, so they stay at the
-    /// default ConstantPixelSize/scaleFactor 1 — e.g. MapToolbarUI.cs:68), so a RectTransform world position
+    /// default ConstantPixelSize/scaleFactor 1 — e.g. MapToolbarUI.cs:97), so a RectTransform world position
     /// IS a screen-pixel position and Apply needs no conversion. The same identity MapSurfaceHost.ApplyViewport
     /// already relies on when it turns shownIn.GetWorldCorners() straight into a Camera.rect.</summary>
     public static class PaneChromeFrame
@@ -43,9 +43,14 @@ namespace WorldGen.Workspace.Rendering
             // The class doc's "screen pixels ARE world units" identity is the one thing here that is asserted
             // rather than derived, and a silent mis-inset is exactly the failure mode this project keeps
             // hitting — code believing one thing while the screen shows another. So read the real value once,
-            // at frame creation, and SAY SO if it ever stops being 1. Valid at this point in time because
-            // EnsureFrames only reaches an activeInHierarchy root, so any CanvasScaler on it has had its
-            // OnEnable (and therefore its Handle()) run. The frame is still built afterwards: a mis-inset
+            // at frame creation, and SAY SO if it ever stops being 1. NOT a guarantee, and the earlier version
+            // of this comment wrongly claimed it was: EnsureFrames checks activeInHierarchy on the ROOT and
+            // then calls GetComponentsInChildren(true, …), which includes INACTIVE children — MapToolbarUI's
+            // barCanvasGO is exactly that (SetChromeVisible(false) deactivates it while the root stays
+            // active), so a canvas whose CanvasScaler.OnEnable has not run can reach here. It fails SAFE:
+            // Canvas.scaleFactor defaults to 1, so the check can miss a real mismatch but can never invent
+            // one. A missed detection costs the same silent mis-inset that existed before this check, so a
+            // one-sided check is strictly an improvement over none. The frame is still built: a mis-inset
             // frame is strictly better than none, which would leave the chrome anchored to the whole window.
             // The full fix — dividing Apply's offsets by canvas.scaleFactor — is deliberately not taken:
             // nothing in this project configures a CanvasScaler, and Р5 replaces this chrome outright, so

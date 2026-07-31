@@ -69,15 +69,23 @@ namespace WorldGen.Workspace.Rendering
         public NotesDocumentController documentController;
 
         [Header("External refs — WorldMap surface")]
-        [Tooltip("Overrides for MapSurfaceHost's auto-discovery (FindFirstObjectByType<WorldMapRenderer>/" +
-                 "PoiEditPanel/MapLegendUI). Left null/empty until Task 11 (or a manual test) has a reason to " +
-                 "pin a specific instance instead of whatever discovery finds.\n\n" +
+        // The two overrides carry SEPARATE [Tooltip]s on purpose: a PropertyAttribute decorates the single
+        // member that follows it, and these are two declarations, not one. The exclusion rule below belongs on
+        // mapChrome — the array a human actually populates — and an earlier revision put it on mapCamera,
+        // where the Inspector rendered it on the Camera slot and the field it was written for showed nothing.
+        [Tooltip("Override for MapSurfaceHost's camera discovery (FindFirstObjectByType<WorldMapRenderer>." +
+                 "targetCamera). Left null until Task 11 (or a manual test) has a reason to pin a specific " +
+                 "instance instead of whatever discovery finds.")]
+        public Camera mapCamera;
+
+        [Tooltip("Override for MapSurfaceHost's chrome discovery (FindFirstObjectByType<PoiEditPanel>/" +
+                 "MapLegendUI). Left empty until Task 11 (or a manual test) has a reason to pin specific " +
+                 "instances instead of whatever discovery finds.\n\n" +
                  "DO NOT LIST PoiInfoPopup OR THE REGION-LABEL OVERLAYS HERE. Everything in this array is " +
                  "both shown/hidden with the map AND confined to the map's pane by PaneChromeFrame. Those " +
                  "three place themselves with cam.WorldToScreenPoint, which already accounts for the " +
                  "camera's viewport rect, so insetting them a second time moves them off their own map " +
                  "features. Same rule for anything else that positions itself from the camera.")]
-        public Camera mapCamera;
         public GameObject[] mapChrome;
 
         public WorkspaceController Controller { get; private set; }

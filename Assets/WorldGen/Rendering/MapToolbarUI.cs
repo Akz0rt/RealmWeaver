@@ -42,7 +42,7 @@ namespace WorldGen.Rendering
         /// the toolbar that owns them. Deliberately NOT folded into MapSurfaceHost's `chrome` array, which
         /// drives SetActive: activating all four at once and letting SetChromeVisible switch three back off
         /// is precisely the OnEnable-before-OnDisable interleaving SetActiveTab's own comment below
-        /// (MapToolbarUI.cs:275) exists to prevent, since EditorBrushPanel/RegionsPanel share mutable
+        /// (MapToolbarUI.cs:281) exists to prevent, since EditorBrushPanel/RegionsPanel share mutable
         /// BrushToolController state across those callbacks.
         ///
         /// IReadOnlyList over the cached array, not a fresh GameObject[] per get: returning the array itself
@@ -50,7 +50,13 @@ namespace WorldGen.Rendering
         /// every get made the property look free when it was not. Built lazily in the getter rather than in
         /// Awake because a Play-mode domain reload wipes this plain field while the serialized panel
         /// references above survive — the lazy form recovers with no Awake re-entry, which matters because
-        /// this class has no recompile guard of the kind WorkspaceBuilder/NotesRootBuilder carry.</summary>
+        /// this class has no recompile guard of the kind WorkspaceBuilder/NotesRootBuilder carry.
+        ///
+        /// ACCEPTED CONSEQUENCE of caching at all: re-assigning one of the four fields in the INSPECTOR
+        /// mid-Play no longer takes effect immediately (the pre-cache version re-read them on every get); the
+        /// old array is held until something nulls the field, e.g. a domain reload. Nothing in C# ever writes
+        /// those four (they are set only by SampleScene), so this is reachable exclusively by a human editing
+        /// the Inspector during Play.</summary>
         public IReadOnlyList<GameObject> DockedPanels =>
             dockedPanels ??= new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
 

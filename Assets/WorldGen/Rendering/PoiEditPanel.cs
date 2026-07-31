@@ -25,17 +25,19 @@ namespace WorldGen.Rendering
     {
         [Header("Источники")]
         public PoiManager poiManager;
-        [Tooltip("Легенда карты - панель редактирования точки автоматически встаёт на 20px ниже её нижней грани.")]
+        [Tooltip("НЕ ИСПОЛЬЗУЕТСЯ. Панель докалась под легенду, пока в Screen A легенда не уехала в низ-лево; " +
+                 "теперь она встаёт в правый верхний угол своего хозяина (см. RepositionPanel). Поле осталось " +
+                 "только потому, что записано в SampleScene, а править сцену нельзя до задачи 11.")]
         public MapLegendUI legendUI;
         [Tooltip("Notes root — resolves/creates the POI's linked page group when \"Открыть страницы\" is clicked.")]
         public NotesRootBuilder notesRoot;
 
         [Header("Внешний вид")]
-        [Tooltip("Горизонтальный отступ от правого края экрана.")]
+        [Tooltip("Горизонтальный отступ от правого края ХОЗЯИНА — рамки вкладки, а без неё самого канваса (= экрана).")]
         public float rightMargin = 20f;
-        [Tooltip("Отступ снизу от нижней грани легенды.")]
+        [Tooltip("НЕ ИСПОЛЬЗУЕТСЯ — см. legendUI выше.")]
         public float gapBelowLegend = 20f;
-        [Tooltip("Отступ от нижнего края экрана, ниже которого панель не опускается.")]
+        [Tooltip("Отступ от нижнего края ХОЗЯИНА, ниже которого панель не опускается.")]
         public float bottomScreenMargin = 20f;
         public float panelWidth = 240f;
 
