@@ -163,6 +163,45 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Quick Open: PASS" : "Self-Test Quick Open: FAIL");
         }
 
+        /// <summary>Fix round 1 (checkpoint review) — the world-MAP hit must survive a null `doc`, unlike
+        /// every other candidate: opening the map needs no document (it targets the surface directly, not a
+        /// page — QuickHit's own doc), so a scene where no NotesRootBuilder was ever resolved must still be
+        /// able to offer «Карта мира» from Ctrl+K. This is the SAME shape an earlier review in this arc
+        /// flagged Important against NavigatorTree.Build's Pinned row, fixed there by moving it above that
+        /// method's own doc==null guard — QuickOpen.Search now does the identical move for the world map (see
+        /// its class doc's W1 paragraph). A world-OBJECT hit (W2) does NOT get this treatment — it stays
+        /// gated on `doc`, because choosing it is inert without one (EnsurePageFor(null, ...) returns null,
+        /// E4) — SelfTestQuickOpenWorldObjects' own W5 case covers that half; this test is the world map's.</summary>
+        [ContextMenu("Self-Test: Quick Open World Map Survives Null Doc")]
+        public void SelfTestQuickOpenWorldMapSurvivesNullDoc()
+        {
+            bool ok = true;
+
+            var hits = QuickOpen.Search(null, null, "карта");
+            if (hits.Count != 1 || hits[0].Target == null || hits[0].Target.Kind != SurfaceKind.WorldMap)
+            {
+                string actual = hits.Count > 0 ? $"«{hits[0].Title}» ({hits[0].Target?.Kind})" : "<none>";
+                Debug.LogError($"FAIL quickopen-nulldoc: Search(null, null, «карта») = {actual}, want exactly the world-map hit — it must not be gated behind doc==null");
+                ok = false;
+            }
+            else
+            {
+                if (hits[0].Target.Id != "")
+                { Debug.LogError($"FAIL quickopen-nulldoc: world-map hit Id «{hits[0].Target.Id}», want «» even with a null doc"); ok = false; }
+                if (hits[0].Title != WorkspaceOps.DefaultWorldMapTitle)
+                { Debug.LogError($"FAIL quickopen-nulldoc: world-map hit title «{hits[0].Title}», want «{WorkspaceOps.DefaultWorldMapTitle}»"); ok = false; }
+            }
+
+            // A null doc must not throw, and a query the world map does NOT match must return an EMPTY list
+            // — not, say, every world-object hit (which stays correctly gated on doc, see the method doc) —
+            // confirming a null doc really does suppress every doc-dependent candidate and only that one.
+            var noMatch = QuickOpen.Search(null, null, "нет такого");
+            if (noMatch.Count != 0)
+            { Debug.LogError($"FAIL quickopen-nulldoc: Search(null, null, «нет такого») returned {noMatch.Count}, want 0"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Quick Open World Map Survives Null Doc: PASS" : "Self-Test Quick Open World Map Survives Null Doc: FAIL");
+        }
+
         /// <summary>W1-W5 — the world (today: POI) side of Ctrl+K, task-10b-brief.md. Its own fixture rather
         /// than sharing SelfTestQuickOpen's (which grows to 40+ pages by its own final assertion): W4 needs a
         /// page whose Bound names a SPECIFIC POI id, which is easiest to reason about starting clean.</summary>

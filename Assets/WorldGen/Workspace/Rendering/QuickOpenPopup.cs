@@ -204,11 +204,11 @@ namespace WorldGen.Workspace.Rendering
             // scene without one leaves this field null for the component's whole life — no Task revives it
             // later, there is no second assignment site. QuickOpen.Search(null, ...) already returns an empty
             // list rather than throwing (Q-guard in QuickOpen.cs), so this needs no extra null branch of its
-            // own to stay crash-free — but it also means Ctrl+K shows no PAGE or WORLD-OBJECT hits in that
-            // scene, even though poiManager below may still have been found. Same seam NavigatorTree.Build's
-            // own doc calls out for its Pinned row (built ABOVE the doc==null guard for exactly this reason);
-            // QuickOpen never got that treatment for the world map either, and this task extends the same gap
-            // to world objects rather than fixing it — out of scope here, flagged for Task 10c/11.
+            // own to stay crash-free. It does NOT mean Ctrl+K goes blank in that scene: Search's own class doc
+            // explains why the world-map hit is unconditional (built above ITS OWN doc==null guard) while
+            // page and world-object hits stay gated — a world-object row is INERT without a document
+            // (choosing it calls NotesDocOps.EnsurePageFor(null, ...), which returns null and does nothing),
+            // so suppressing it here is correct, not merely deferred out of scope.
             var doc = documentController != null ? documentController.Document : null;
 
             hits.Clear();

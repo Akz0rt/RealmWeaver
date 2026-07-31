@@ -49,18 +49,31 @@ namespace WorldGen.Workspace.Data
     /// never makes it unreachable from Ctrl+K. It is matched against WorkspaceOps.DefaultWorldMapTitle with
     /// the exact same fold-and-rank rule CollectNameHit uses for a page NAME — same NamePrefix/NameContains
     /// ranks, same idx==0 prefix test — rather than a third, fixed-position "always show it first" scheme.
-    /// CollectWorldMapHit is called after the body-hit loop but BEFORE the name-hit loop, so its Seq (the
-    /// sort's tie-breaker for equal ranks) is always lower than any page-name hit's — the plan's "ordered
-    /// before page hits of equal rank" falls out of that placement, with no second sort key needed.
+    /// CollectWorldMapHit is called BEFORE every doc-dependent candidate (body hits, world-object hits, name
+    /// hits), so its Seq (the sort's tie-breaker for equal ranks) is always lower than any of theirs — the
+    /// plan's "ordered before page hits of equal rank" falls out of that placement, with no second sort key
+    /// needed. It is ALSO called unconditionally, above Search's `doc == null` guard: unlike every other
+    /// candidate here, opening the world map needs no document at all (it targets the surface directly, not
+    /// a page — see QuickHit's own doc), so gating it on `doc` would make Ctrl+K unable to offer the one
+    /// doc-independent escape hatch back to the map in exactly the scene state (no document resolved) that
+    /// most needs one. Mirrors NavigatorTree.Build's own Pinned group, built above THAT method's doc==null
+    /// guard for the identical reason (see its comment: "this one place... must not be gated on a document
+    /// existing") — a review of this task's own history flagged the same shape as Important there and it was
+    /// fixed by the same move.
     ///
     /// W1-W5 — every WORLD OBJECT (a POI today; see WorldObjectRef's own doc for why settlements/buildings
     /// can join later without a second search path) is ALSO a candidate on every search, for the identical
     /// reason the world map is: the spec's explicit promise is "everything absent is still one keystroke
-    /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence.
-    /// CollectWorldHits sits in the SAME spot CollectWorldMapHit does — after body hits, before the name-hit
-    /// loop — folded and ranked by the identical NamePrefix/NameContains rule (W1), for the same reason:
-    /// a world object is, for ranking purposes, one more page-NAME candidate. W4 suppresses a world object
-    /// once it already has a bound page, so a worked-on place never yields two rows that open the same
+    /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence. UNLIKE
+    /// the world map, this candidate stays gated behind `doc == null` (see Search's own comment on that
+    /// guard) — a world-object row is INERT without a document: choosing it calls
+    /// NotesDocOps.EnsurePageFor(doc, ...), which returns null the instant `doc` is null (E4), so the row
+    /// would do nothing when picked. Offering an inert row is worse than offering none; the world map has no
+    /// such dependency, which is the whole reason it gets the different treatment above. CollectWorldHits
+    /// sits in the SAME spot CollectWorldMapHit does relative to the OTHER doc-dependent candidates — before
+    /// the name-hit loop — folded and ranked by the identical NamePrefix/NameContains rule (W1), for the same
+    /// reason: a world object is, for ranking purposes, one more page-NAME candidate. W4 suppresses a world
+    /// object once it already has a bound page, so a worked-on place never yields two rows that open the same
     /// target — see FindPageBoundTo's own doc for why that check is NOT reimplemented here.
     /// </summary>
     public static class QuickOpen
@@ -77,11 +90,12 @@ namespace WorldGen.Workspace.Data
         /// empty list, never "everything". Q5: results are capped at <paramref name="limit"/>. W5: `world`
         /// may be null OR empty — that is the pre-generation state (no POIs placed yet, or PoiManager not
         /// found — see QuickOpenPopup.Attach), not an error, so this never throws or special-cases it beyond
-        /// CollectWorldHits' own null check.</summary>
+        /// CollectWorldHits' own null check. `doc` may ALSO be null (no NotesRootBuilder resolved yet) — see
+        /// the class doc for why the world-map candidate is unaffected by that while every other candidate
+        /// (body/name/world-object hits) is gated on it.</summary>
         public static List<QuickHit> Search(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string query, int limit = 20)
         {
             var result = new List<QuickHit>();
-            if (doc == null) return result;
             if (limit < 0) limit = 0;
 
             string needle = (query ?? "").Trim().ToLowerInvariant();
@@ -97,21 +111,26 @@ namespace WorldGen.Workspace.Data
             var candidates = new List<(int Rank, int Seq, QuickHit Hit)>();
             int seq = 0;
 
-            foreach (var g in doc.Groups)
-                foreach (var p in g.Pages)
-                    CollectBodyHits(p, needle, candidates, ref seq);
-
-            // W1 — see the class comment above for why this sits exactly HERE: after body hits (whose ranks
-            // are strictly worse, so their relative Seq order doesn't matter) but before the name-hit loop
-            // (whose ranks it can TIE with), so its Seq always wins that tie.
+            // Unconditional, ABOVE the `doc == null` check below — see the class doc's W1 paragraph for why
+            // the world map is the one candidate that must not be gated on a document existing.
             CollectWorldMapHit(needle, candidates, ref seq);
 
-            // W1-W5 — same placement reasoning as CollectWorldMapHit immediately above; see the class doc.
-            CollectWorldHits(doc, world, needle, candidates, ref seq);
+            // Every OTHER candidate needs a document: body/name hits are read straight off doc.Groups, and a
+            // world-object hit (CollectWorldHits) is inert without one (see the class doc's W1-W5 paragraph).
+            if (doc != null)
+            {
+                foreach (var g in doc.Groups)
+                    foreach (var p in g.Pages)
+                        CollectBodyHits(p, needle, candidates, ref seq);
 
-            foreach (var g in doc.Groups)
-                foreach (var p in g.Pages)
-                    CollectNameHit(p, needle, candidates, ref seq);
+                // W1-W5 — same placement reasoning as CollectWorldMapHit above, relative to the name-hit loop
+                // below; see the class doc.
+                CollectWorldHits(doc, world, needle, candidates, ref seq);
+
+                foreach (var g in doc.Groups)
+                    foreach (var p in g.Pages)
+                        CollectNameHit(p, needle, candidates, ref seq);
+            }
 
             candidates.Sort((a, b) => a.Rank != b.Rank ? a.Rank.CompareTo(b.Rank) : a.Seq.CompareTo(b.Seq));
 

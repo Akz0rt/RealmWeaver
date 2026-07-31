@@ -351,7 +351,15 @@ namespace WorldGen.Notes.Data
         /// IsReference group («Справочник»), which exists for exactly this — PageGroup.IsReference's own doc
         /// calls it "the single group that promoted pages are filed into" — and the group is created if the
         /// document has none. A dedicated «Места» group was rejected: it would be a second mechanism for the
-        /// same job.</summary>
+        /// same job.
+        ///
+        /// DELIBERATELY does not repeat PromoteToPage's name-collision dedupe (that method links a second
+        /// «Староста Ольга» to the first rather than creating a duplicate — see its own doc). Identity HERE is
+        /// `Bound` (Kind+Id), not `Name`: a hand-authored reference page that happens to share a POI's name is
+        /// a different thing from that POI's own page, and folding them by name would silently hijack a page
+        /// the user never tied to a map pin. Two pages can therefore legitimately share a Name under this
+        /// method where PromoteToPage would never allow it — not an oversight, a different identity rule for
+        /// a different kind of "the same thing".</summary>
         public static string EnsurePageFor(NotesDocument doc, WorldRef bound, string title)
         {
             if (doc == null || bound == null) return null;   // E4
