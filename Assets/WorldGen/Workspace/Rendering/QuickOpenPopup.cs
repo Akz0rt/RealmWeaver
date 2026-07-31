@@ -199,10 +199,16 @@ namespace WorldGen.Workspace.Rendering
             // Read documentController.Document FRESH every search, never cached across calls —
             // NotesDocumentController.LoadDocument swaps the whole instance, and this class's own
             // OpenForPane/Attach hold no OnDocumentChanged subscription to invalidate a cached copy.
-            // documentController itself is null through Tasks 7-10 (WorkspaceBuilder.documentController has
-            // no owner yet — see that field's own doc comment), and QuickOpen.Search(null, ...) already
-            // returns an empty list rather than throwing (Q-guard in QuickOpen.cs), so this needs no extra
-            // null branch of its own to stay crash-free.
+            // documentController CAN still be null here: WorkspaceBuilder.EnsureDocumentController only
+            // resolves it when a NotesRootBuilder already exists somewhere in the scene (its own doc), so a
+            // scene without one leaves this field null for the component's whole life — no Task revives it
+            // later, there is no second assignment site. QuickOpen.Search(null, ...) already returns an empty
+            // list rather than throwing (Q-guard in QuickOpen.cs), so this needs no extra null branch of its
+            // own to stay crash-free — but it also means Ctrl+K shows no PAGE or WORLD-OBJECT hits in that
+            // scene, even though poiManager below may still have been found. Same seam NavigatorTree.Build's
+            // own doc calls out for its Pinned row (built ABOVE the doc==null guard for exactly this reason);
+            // QuickOpen never got that treatment for the world map either, and this task extends the same gap
+            // to world objects rather than fixing it — out of scope here, flagged for Task 10c/11.
             var doc = documentController != null ? documentController.Document : null;
 
             hits.Clear();
