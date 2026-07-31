@@ -53,7 +53,7 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// PUBLIC, and read from ProjectMenuBar rather than re-typing 40f, because PaneChromeFrame.Reset needs
         /// the SAME inset: Task 10a removed the menu-bar term from the map chrome's own top offsets (see
-        /// MapLayersPanel.cs:68), so an UNHOSTED frame has to reproduce the strip this constant reserves or
+        /// MapLayersPanel.cs:74), so an UNHOSTED frame has to reproduce the strip this constant reserves or
         /// that chrome lands under the bar. Deriving it from ProjectMenuBar.BarHeightPixels means the two
         /// cannot drift, which the sentence at the top of this doc ("whose own BarHeightPixels is 40f") was
         /// previously only asserting.</summary>

@@ -59,12 +59,18 @@ namespace WorldGen.Rendering
             panelRect.anchorMin = new Vector2(0f, 1f);
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
-            // Below the 46px toolbar, +20 margin. The 40px menu-bar term this line also carried is GONE: the
-            // workspace shell confines this canvas to a pane (PaneChromeFrame, driven from MapSurfaceHost),
-            // and the pane's top already excludes the menu bar — WorkspaceBuilder insets RootRow by
-            // MenuBarInset = 40f (WorkspaceBuilder.cs:231) before any pane is laid out inside it — so the term
-            // double-counted the same 40 pixels and pushed the panel 40px down inside every pane. The toolbar
-            // clearance stays real: MapToolbarUI's bar is flush with the pane's top (MapToolbarUI.cs:99).
+            // Below the 46px toolbar, +20 margin. The 40px menu-bar term this line also carried is GONE, and
+            // this comment is the canonical statement of why — the other four sites (EditorBrushPanel,
+            // PoiToolPanel, RegionsPanel, PoiEditPanel) point here.
+            //
+            // The workspace shell confines this canvas to a pane (PaneChromeFrame, driven from
+            // MapSurfaceHost), and the rect the frame is driven to is the pane's ContentArea — NOT the
+            // window. That rect is below the menu bar twice over: WorkspaceBuilder insets RootRow by
+            // MenuBarInset (WorkspaceBuilder.cs:244) before any pane exists, AND ContentArea is the second
+            // child of the pane's VerticalLayoutGroup, under TabStripView (WorkspaceBuilder.BuildPane, :396).
+            // So a menu-bar term here double-counted 40 pixels that were already excluded and pushed the
+            // panel 40px down inside every pane. The toolbar clearance stays real: MapToolbarUI's bar is
+            // flush with the ContentArea's top (MapToolbarUI.cs:109).
             panelRect.anchoredPosition = new Vector2(20f, -20f - MapToolbarUI.BarHeightPixels);
             panelRect.sizeDelta = new Vector2(216f, 0f);
 

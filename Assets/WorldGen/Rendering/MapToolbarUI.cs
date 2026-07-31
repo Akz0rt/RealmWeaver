@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Rendering.Theme;
@@ -41,10 +42,19 @@ namespace WorldGen.Rendering
         /// the toolbar that owns them. Deliberately NOT folded into MapSurfaceHost's `chrome` array, which
         /// drives SetActive: activating all four at once and letting SetChromeVisible switch three back off
         /// is precisely the OnEnable-before-OnDisable interleaving SetActiveTab's own comment below
-        /// (MapToolbarUI.cs:265) exists to prevent, since EditorBrushPanel/RegionsPanel share mutable
-        /// BrushToolController state across those callbacks. Allocates a small array per call; every caller
-        /// is a click handler or a once-per-Rewire discovery, never a per-frame path.</summary>
-        public GameObject[] DockedPanels => new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
+        /// (MapToolbarUI.cs:275) exists to prevent, since EditorBrushPanel/RegionsPanel share mutable
+        /// BrushToolController state across those callbacks.
+        ///
+        /// IReadOnlyList over the cached array, not a fresh GameObject[] per get: returning the array itself
+        /// would let a caller write through it and silently re-map the tab indices, while re-allocating on
+        /// every get made the property look free when it was not. Built lazily in the getter rather than in
+        /// Awake because a Play-mode domain reload wipes this plain field while the serialized panel
+        /// references above survive — the lazy form recovers with no Awake re-entry, which matters because
+        /// this class has no recompile guard of the kind WorkspaceBuilder/NotesRootBuilder carry.</summary>
+        public IReadOnlyList<GameObject> DockedPanels =>
+            dockedPanels ??= new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
+
+        GameObject[] dockedPanels;
 
         /// <summary>Show/hide the whole map-editor chrome this toolbar owns — its strip AND the docked
         /// tab panels (which are sibling GameObjects, so MapScreenController can't hide them directly).
@@ -92,10 +102,10 @@ namespace WorldGen.Rendering
             barRect.pivot = new Vector2(0.5f, 1f);
             // Flush with the TOP of whatever this canvas is confined to. That used to be the window, and the
             // -40f this line carried dodged the 40px menu bar drawn above it. The workspace shell now hosts
-            // this canvas inside a pane (PaneChromeFrame, driven from MapSurfaceHost), and the pane's own top
-            // already excludes the menu bar — WorkspaceBuilder insets RootRow by MenuBarInset = 40f
-            // (WorkspaceBuilder.cs:231) before any pane is laid out inside it — so keeping the dodge
-            // double-counted the same 40 pixels and showed as a gap between the tab strip and this bar.
+            // this canvas inside a pane (PaneChromeFrame, driven from MapSurfaceHost), and the rect it is
+            // driven to — the pane's ContentArea — is already below the menu bar AND below the tab strip, so
+            // keeping the dodge double-counted 40 pixels and showed as a gap under the tab strip. Full
+            // reasoning, shared by all six sites that dropped this term: MapLayersPanel.cs:74.
             barRect.anchoredPosition = Vector2.zero;
             barRect.sizeDelta = new Vector2(0f, BarHeightPixels);
 
@@ -268,10 +278,10 @@ namespace WorldGen.Rendering
             // activation could run the new tab's OnEnable before the old tab's OnDisable, letting
             // the old tab's teardown clobber the state the new tab just set. Deactivate-all-then-
             // activate-target makes "the newly-activated panel wins" true regardless of tab order.
-            GameObject[] panels = DockedPanels;
+            var panels = DockedPanels;
             foreach (var panel in panels)
                 if (panel != null) panel.SetActive(false);
-            GameObject target = index >= 0 && index < panels.Length ? panels[index] : null;
+            GameObject target = index >= 0 && index < panels.Count ? panels[index] : null;
             if (target != null) target.SetActive(true);
 
             for (int i = 0; i < tabButtons.Length; i++)

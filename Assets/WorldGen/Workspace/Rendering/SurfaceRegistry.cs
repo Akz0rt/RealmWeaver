@@ -298,7 +298,7 @@ namespace WorldGen.Workspace.Rendering
             // The frame roots are a STRICT SUPERSET of `chrome`, and deliberately a separate list rather than
             // an enlarged `chrome`: `chrome` drives SetActive (see SetChromeActive), and the four docked
             // panels must NOT be driven that way — MapToolbarUI.SetActiveTab owns their activation and its own
-            // comment (MapToolbarUI.cs:265) documents why the deactivate-all-then-activate-target ORDER is
+            // comment (MapToolbarUI.cs:275) documents why the deactivate-all-then-activate-target ORDER is
             // load-bearing (EditorBrushPanel/RegionsPanel share mutable BrushToolController state through
             // OnEnable/OnDisable). Framing is a purely geometric concern with no such coupling, so the two
             // lists have different memberships on purpose. The four panels are reachable ONLY through the
@@ -356,12 +356,19 @@ namespace WorldGen.Workspace.Rendering
         /// framed on the very frame it appears, with no window-anchored flash.
         ///
         /// `isRootCanvas` is the filter, not "the first Canvas found": EditorBrushPanel's dropdown Template is
-        /// a NESTED overrideSorting canvas parented under the dropdown itself (EditorBrushPanel.cs:902), and
+        /// a NESTED overrideSorting canvas parented under the dropdown itself (EditorBrushPanel.cs:906), and
         /// nested canvases must be left alone — they are already inside the frame via their parent and
         /// framing them again would inset them twice.</summary>
         void EnsureFrames()
         {
             if (pendingFrameRoots == null || frames == null || canvasScratch == null) return;
+
+            // Prune frames whose canvas was destroyed (scene teardown, or a chrome GameObject someone else
+            // Destroy()s). Apply/Reset null-guard each entry anyway, so this is hygiene rather than a fix —
+            // without it the list only ever grows, and a fake-null entry is indistinguishable from a live one
+            // at a glance in the debugger. n <= 7, downward so RemoveAt does not skip.
+            for (int i = frames.Count - 1; i >= 0; i--)
+                if (frames[i] == null) frames.RemoveAt(i);
 
             // Downward iteration so RemoveAt does not skip the next entry.
             for (int i = pendingFrameRoots.Count - 1; i >= 0; i--)

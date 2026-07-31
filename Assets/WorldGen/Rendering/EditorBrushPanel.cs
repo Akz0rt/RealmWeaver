@@ -258,9 +258,9 @@ namespace WorldGen.Rendering
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
             // Ниже 46px тулбара + отступ 20. Слагаемое «40px меню» УБРАНО: оболочка workspace ограничивает
-            // этот канвас панелью (PaneChromeFrame через MapSurfaceHost), а верх панели уже не включает
-            // меню-бар — WorkspaceBuilder отступает RootRow на MenuBarInset = 40f (WorkspaceBuilder.cs:231),
-            // так что слагаемое считало те же 40 пикселей дважды. См. MapLayersPanel.cs:68.
+            // этот канвас областью ContentArea вкладки (PaneChromeFrame через MapSurfaceHost), а тот
+            // прямоугольник уже и ниже меню-бара, и ниже полосы вкладок, так что слагаемое считало те же 40
+            // пикселей дважды. Полное обоснование: MapLayersPanel.cs:74.
             panelRect.anchoredPosition = new Vector2(20f, -20f - MapToolbarUI.BarHeightPixels);
             panelRect.sizeDelta = new Vector2(264f, 0f);
 

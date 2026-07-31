@@ -95,9 +95,9 @@ namespace WorldGen.Rendering
             // Фиксированная позиция: правый верхний угол хозяина (якорь (1,1), pivot справа — см. BuildUI),
             // верх — сразу под 46px тулбаром + отступ. Раньше панель докалась под легенду, но в Screen A
             // легенда уехала в низ-лево, так что отвязываем.
-            // Слагаемое «40 меню» УБРАНО: оболочка workspace ограничивает этот канвас панелью
-            // (PaneChromeFrame через MapSurfaceHost), и её верх уже не включает меню-бар. Подробнее:
-            // MapLayersPanel.cs:68.
+            // Слагаемое «40 меню» УБРАНО: оболочка workspace ограничивает этот канвас областью ContentArea
+            // вкладки (PaneChromeFrame через MapSurfaceHost), а тот прямоугольник уже и ниже меню-бара, и
+            // ниже полосы вкладок. Полное обоснование: MapLayersPanel.cs:74.
             float topY = -(MapToolbarUI.BarHeightPixels + 20f);
             panelRect.anchoredPosition = new Vector2(-rightMargin, topY);
 
@@ -281,8 +281,8 @@ namespace WorldGen.Rendering
             // Правый верхний угол ХОЗЯИНА (рамки вкладки, а без неё — самого канваса), а не доля
             // NotesLayoutController.SplitFraction, как было. SplitFraction (по умолчанию 2/3) описывал
             // границу СТАРОГО раздела «карта | заметки», которого больше нет: якорь считается от РОДИТЕЛЯ, то
-            // есть внутри вкладки панель вставала на 2/3 её ширины и оставляла треть вкладки пустой. Задача
-            // 10b удаляет NotesLayoutController целиком, так что подписка на OnSplitFractionChanged (и
+            // есть внутри вкладки панель вставала на 2/3 её ширины и оставляла треть вкладки пустой.
+            // Задача 10b удаляет NotesLayoutController целиком, так что подписка на OnSplitFractionChanged (и
             // UpdateSplitAnchor вместе с ней) убраны здесь, а не оставлены умирать. RepositionPanel так же
             // берёт высоту у родителя — обе оси теперь меряются от одного и того же прямоугольника.
             panelRect.anchorMin = new Vector2(1f, 1f);

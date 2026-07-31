@@ -40,6 +40,21 @@ namespace WorldGen.Workspace.Rendering
             if (canvasTransform == null) return null;
             if (canvasTransform.Find(FrameName) is RectTransform existing) return existing;
 
+            // The class doc's "screen pixels ARE world units" identity is the one thing here that is asserted
+            // rather than derived, and a silent mis-inset is exactly the failure mode this project keeps
+            // hitting — code believing one thing while the screen shows another. So read the real value once,
+            // at frame creation, and SAY SO if it ever stops being 1. Valid at this point in time because
+            // EnsureFrames only reaches an activeInHierarchy root, so any CanvasScaler on it has had its
+            // OnEnable (and therefore its Handle()) run. The frame is still built afterwards: a mis-inset
+            // frame is strictly better than none, which would leave the chrome anchored to the whole window.
+            // The full fix — dividing Apply's offsets by canvas.scaleFactor — is deliberately not taken:
+            // nothing in this project configures a CanvasScaler, and Р5 replaces this chrome outright, so
+            // paying a per-frame GetComponent to support a mode no canvas uses is not worth it.
+            var canvas = canvasTransform.GetComponent<Canvas>();
+            if (canvas != null && !Mathf.Approximately(canvas.scaleFactor, 1f))
+                Debug.LogError($"[PaneChromeFrame] '{canvasTransform.name}' has scaleFactor {canvas.scaleFactor}, " +
+                               "not 1 — Apply treats a world position as a screen pixel and will mis-inset it.");
+
             var frame = new GameObject(FrameName, typeof(RectTransform)).GetComponent<RectTransform>();
             frame.SetParent(canvasTransform, false);
             frame.anchorMin = Vector2.zero;
@@ -108,7 +123,7 @@ namespace WorldGen.Workspace.Rendering
         /// WHY NOT PLAIN ZERO. Zeroing all four offsets restores the frame to the full canvas — which WAS the
         /// window-anchored geometry the chrome was written for, and stopped being it in the same change that
         /// created this class: Task 10a removed the 40px menu-bar term from all six top-anchored map panels
-        /// (MapLayersPanel.cs:68 carries the full reasoning) because a pane's ContentArea already excludes the
+        /// (MapLayersPanel.cs:74 carries the full reasoning) because a pane's ContentArea already excludes the
         /// bar. A zeroed frame would therefore put the toolbar at window y=0, UNDER ProjectMenuBar (canvas
         /// order 100 against the toolbar's 40), with the five panels 40px too high and overlapping it.
         /// Insetting the top by MenuBarInset instead puts those panels exactly where the removed 40f used to,
