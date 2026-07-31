@@ -18,11 +18,18 @@ namespace WorldGen.Workspace.Rendering
     /// TabStripView follows for tabs.
     ///
     /// documentController is an EXTERNAL reference (see WorkspaceBuilder.documentController's own comment) —
-    /// NotesRootBuilder owns the live NotesDocumentController, not this class, and nothing wires the two
-    /// together before Task 11. Until then this is null and NavigatorView still builds its chrome (header,
-    /// search box, empty scroll area) but renders zero groups — NavigatorTree.Build(null, filter) already
-    /// returns an empty list, so the only extra guard needed is around the rename/delete calls that would
-    /// otherwise NRE on a null documentController.
+    /// NotesRootBuilder owns the live NotesDocumentController, not this class. WorkspaceBuilder.Awake wires
+    /// the two together via EnsureDocumentController's FindFirstObjectByType discovery (Task 9), so this is
+    /// non-null in the normal running app; it stays null only where that discovery finds no NotesRootBuilder
+    /// in the scene at all (a bare/partial scene, e.g. a harness or test host). While null, NavigatorView
+    /// still builds its chrome (header, search box, empty scroll area) but renders zero groups — Rebuild's
+    /// own `if (documentController == null) return;` short-circuits BEFORE ever calling NavigatorTree.Build,
+    /// so it does not matter here that Build(null, filter) itself no longer returns an empty list (the
+    /// Pinned world-map row does not depend on a document — see Build's own comment); that tolerance is
+    /// exercised by direct callers of Build (the self-tests) and stands as defense-in-depth against a future
+    /// change to THIS guard, not as something the rendered navigator relies on today. The remaining guard
+    /// this view does need is around the rename/delete calls, which would otherwise NRE on a null
+    /// documentController.
     ///
     /// Built via the static Create factory onto the GameObject WorkspaceBuilder.BuildNavigatorColumn already
     /// constructed (Image + fixed-width LayoutElement) — this class adds the VerticalLayoutGroup and children
@@ -338,10 +345,11 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
-        /// <summary>Group headers render for both NavGroupKind values, but only Authored ones get a
-        /// rename/delete menu wired on: NavGroup.Id is only populated for Authored groups (see its own doc
-        /// comment) — the computed Мир group is not a stored PageGroup at all, so there is nothing behind it
-        /// for «Переименовать»/«Удалить» to act on. This is the one place NotesTreeSidebar's ported behaviour
+        /// <summary>Called for World and Authored groups (BuildGroup skips it for Pinned — that group's
+        /// Title is "", so there is no label to show at all), but only Authored ones get a rename/delete menu
+        /// wired on: NavGroup.Id is only populated for Authored groups (see its own doc comment) — the
+        /// computed Мир group is not a stored PageGroup at all, so there is nothing behind it for
+        /// «Переименовать»/«Удалить» to act on. This is the one place NotesTreeSidebar's ported behaviour
         /// narrows: its group-delete confirm (with the page-count cost report) only has a home here for
         /// Authored groups.</summary>
         void BuildGroupHeader(Transform parent, NavGroup group)
@@ -449,7 +457,11 @@ namespace WorldGen.Workspace.Rendering
 
         void BuildNodeRow(Transform parent, NavNode node, bool isActive)
         {
-            var rowGO = new GameObject($"Node_{node.Target.Id}", typeof(RectTransform));
+            // Falls back to Target.Kind when Id is empty (the pinned world-map row, and any future
+            // non-Page node) — otherwise this reads as "Node_" in the Hierarchy, indistinguishable from a
+            // bug, rather than naming what the row actually is.
+            string idPart = string.IsNullOrEmpty(node.Target.Id) ? node.Target.Kind.ToString() : node.Target.Id;
+            var rowGO = new GameObject($"Node_{idPart}", typeof(RectTransform));
             rowGO.transform.SetParent(parent, false);
             rowGO.AddComponent<LayoutElement>().preferredHeight = RowHeight;
             // Structural containment for long titles — Task 6 learned twice that arithmetic truncation
@@ -496,52 +508,8 @@ namespace WorldGen.Workspace.Rendering
             labelRect.offsetMin = new Vector2(14f, 0f);
             labelRect.offsetMax = new Vector2(-8f, 0f);
 
-            // Rename overlay — built (but hidden) for every row up front, same rect as the label, exactly
-            // mirroring NotesTreeSidebar.AddRenameAndDelete. The trigger differs: the old sidebar started
-            // this from a double-click; here it starts from the context menu's «Переименовать», since the
-            // brief moves rename/delete behind the right-click menu instead of always-on affordances.
-            var inputGO = new GameObject("RenameInput", typeof(RectTransform));
-            inputGO.transform.SetParent(rowGO.transform, false);
-            var inputRect = inputGO.GetComponent<RectTransform>();
-            inputRect.anchorMin = labelRect.anchorMin;
-            inputRect.anchorMax = labelRect.anchorMax;
-            inputRect.offsetMin = labelRect.offsetMin;
-            inputRect.offsetMax = labelRect.offsetMax;
-            var inputImg = inputGO.AddComponent<Image>();
-            ThemeService.Tag(inputImg, ThemeRole.Elev);
-            var input = inputGO.AddComponent<InputField>();
-            input.targetGraphic = inputImg;
-
-            var inputTextGO = new GameObject("Text", typeof(RectTransform));
-            inputTextGO.transform.SetParent(inputGO.transform, false);
-            var inputText = inputTextGO.AddComponent<Text>();
-            inputText.font = builtinFont;
-            inputText.fontSize = 13;
-            ThemeService.Tag(inputText, ThemeRole.Txt);
-            inputText.alignment = TextAnchor.MiddleLeft;
-            inputText.supportRichText = false;
-            var inputTextRect = inputTextGO.GetComponent<RectTransform>();
-            inputTextRect.anchorMin = Vector2.zero;
-            inputTextRect.anchorMax = Vector2.one;
-            inputTextRect.offsetMin = new Vector2(4f, 0f);
-            inputTextRect.offsetMax = new Vector2(-4f, 0f);
-            input.textComponent = inputText;
-            inputGO.SetActive(false);
-
             string pageId = node.Target.Id;
             string rawTitle = node.Title;
-
-            input.onEndEdit.AddListener(newText =>
-            {
-                bool wasCancelled = renameCancelled;
-                activeRenameInput = null;
-                activeRenameLabelGO = null;
-                renameCancelled = false;
-                if (wasCancelled) return;
-                inputGO.SetActive(false);
-                labelGO.SetActive(true);
-                if (!string.IsNullOrWhiteSpace(newText)) documentController?.RenamePage(pageId, newText.Trim());
-            });
 
             var click = rowGO.AddComponent<NavRowClickRouter>();
             click.OnLeftClick = () => controller.Open(node.Target, node.Title, inOtherPane: false);
@@ -553,6 +521,60 @@ namespace WorldGen.Workspace.Rendering
             // new name into. Both stay off the menu rather than being wired to quietly do nothing.
             if (node.Target.Kind == SurfaceKind.Page)
             {
+                // Rename overlay — built (but hidden) here, same rect as the label, exactly mirroring
+                // NotesTreeSidebar.AddRenameAndDelete. The trigger differs: the old sidebar started this
+                // from a double-click; here it starts from the context menu's «Переименовать», since the
+                // brief moves rename/delete behind the right-click menu instead of always-on affordances.
+                //
+                // Built inside this Page-only branch, not unconditionally for every row (a prior round built
+                // it for every row and guarded only the menu item that could reach it): a hidden
+                // RenamePage(pageId, …) listener with pageId=="" for a non-Page row was harmless ONLY because
+                // no trigger could reach it today — the menu item was never wired for that branch. That guard
+                // sat one level away from the actual hazard: any future affordance that calls StartRename
+                // directly (the double-click trigger this comment used to describe, before rename moved
+                // behind the context menu) would silently re-arm a rename that persists nothing. Not
+                // constructing the overlay at all for a non-Page row removes the hazard instead of merely
+                // leaving it untriggered.
+                var inputGO = new GameObject("RenameInput", typeof(RectTransform));
+                inputGO.transform.SetParent(rowGO.transform, false);
+                var inputRect = inputGO.GetComponent<RectTransform>();
+                inputRect.anchorMin = labelRect.anchorMin;
+                inputRect.anchorMax = labelRect.anchorMax;
+                inputRect.offsetMin = labelRect.offsetMin;
+                inputRect.offsetMax = labelRect.offsetMax;
+                var inputImg = inputGO.AddComponent<Image>();
+                ThemeService.Tag(inputImg, ThemeRole.Elev);
+                var input = inputGO.AddComponent<InputField>();
+                input.targetGraphic = inputImg;
+
+                var inputTextGO = new GameObject("Text", typeof(RectTransform));
+                inputTextGO.transform.SetParent(inputGO.transform, false);
+                var inputText = inputTextGO.AddComponent<Text>();
+                inputText.font = builtinFont;
+                inputText.fontSize = 13;
+                ThemeService.Tag(inputText, ThemeRole.Txt);
+                inputText.alignment = TextAnchor.MiddleLeft;
+                inputText.supportRichText = false;
+                var inputTextRect = inputTextGO.GetComponent<RectTransform>();
+                inputTextRect.anchorMin = Vector2.zero;
+                inputTextRect.anchorMax = Vector2.one;
+                inputTextRect.offsetMin = new Vector2(4f, 0f);
+                inputTextRect.offsetMax = new Vector2(-4f, 0f);
+                input.textComponent = inputText;
+                inputGO.SetActive(false);
+
+                input.onEndEdit.AddListener(newText =>
+                {
+                    bool wasCancelled = renameCancelled;
+                    activeRenameInput = null;
+                    activeRenameLabelGO = null;
+                    renameCancelled = false;
+                    if (wasCancelled) return;
+                    inputGO.SetActive(false);
+                    labelGO.SetActive(true);
+                    if (!string.IsNullOrWhiteSpace(newText)) documentController?.RenamePage(pageId, newText.Trim());
+                });
+
                 click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
                     ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false),
                     ("Переименовать", () => StartRename(labelGO, input, rawTitle), false),
@@ -607,9 +629,11 @@ namespace WorldGen.Workspace.Rendering
         }
     }
 
-    /// <summary>The right-click menu, shared by page rows (Открыть рядом / Переименовать / Удалить — see
-    /// BuildNodeRow) and Authored group headers (Переименовать / Удалить — see BuildGroupHeader; the World
-    /// group gets none, since it is computed with no PageGroup behind it). «рядом», not «справа» —
+    /// <summary>The right-click menu, shared by three callers, all in BuildNodeRow/BuildGroupHeader above:
+    /// Page rows (Открыть рядом / Переименовать / Удалить), non-Page rows i.e. today only the pinned
+    /// world-map row (Открыть рядом ONLY — there is no page behind it for the other two items to act on),
+    /// and Authored group headers (Переименовать / Удалить; the World group gets none, since it is computed
+    /// with no PageGroup behind it). «рядом», not «справа» —
     /// WorkspaceOps.Open(inOtherPane) means "the pane that is NOT focused" (see the plan ledger's Task 1
     /// decision, carried to this task); with focus already on the right pane, "справа" would open on the
     /// LEFT and the label would lie.
@@ -618,6 +642,10 @@ namespace WorldGen.Workspace.Rendering
     /// activeMenuGO — with one deliberate difference: this backdrop DISMISSES on click. ConfirmDialog's
     /// blocks without dismissing because a confirm/cancel decision must be explicit; a context menu is
     /// ordinary desktop behaviour to click away from.
+    ///
+    /// activeMenuGO survives a domain reload only as a dangling reference — see Close()'s own doc for the
+    /// RECOMPILE GAP this class shares with SurfaceRegistry.cs's MapSurfaceHost, and the by-name fallback
+    /// that recovers from it.
     /// </summary>
     static class NavContextMenu
     {
@@ -658,8 +686,11 @@ namespace WorldGen.Workspace.Rendering
             // Anchored to the canvas's CENTRE, not its bottom-left corner (Vector2.zero) — see the block
             // below where `local` is computed for the full reasoning. Fixed here rather than switched to
             // `panelRect.position = screenPos`, matching the established idiom (NotesToolbar.cs:195-196)
-            // instead of introducing a second one — and staying correct under a non-1 CanvasScaler.scaleFactor,
-            // which `.position` would not.
+            // instead of introducing a second one — and this anchor/local pairing itself stays correct
+            // regardless of CanvasScaler.scaleFactor, unlike `.position`. The screen CLAMP below this block
+            // does NOT share that independence — it bounds against raw Screen.width/height, which is only
+            // equal to this canvas's own local units because the CanvasScaler added a few lines down keeps
+            // its defaults (ConstantPixelSize, scaleFactor 1); see the clamp's own comment.
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.pivot = new Vector2(0f, 1f);   // top-left pivot: the menu hangs DOWN-right from the click.
@@ -670,16 +701,19 @@ namespace WorldGen.Workspace.Rendering
             vlg.childControlWidth = true;
             vlg.childForceExpandWidth = true;
             // TRUE, not false: this is the group that must APPLY each item's own preferredHeight (ItemHeight,
-            // set in AddItem below) to its actual rect.sizeDelta. With childControlHeight=false, uGUI's
-            // layout pass calls the position-only SetChildAlongAxisWithScale overload — it STACKS children
-            // using preferredHeight for spacing math, but never WRITES that height into the child's own rect,
-            // so every item would render at whatever height its freshly-created RectTransform already had
-            // (Unity's own RectTransform default, not 0 and not ItemHeight either) while still being
-            // positioned as if it were ItemHeight tall. Exactly the defect QuickOpenPopup.cs shipped once
-            // already in this same arc (commit b187ceb, "quick-open rows need childControlHeight=true, not
-            // false") and ProjectMenuBar.cs's «Файл»/«Вид» dropdown (ProjectMenuBar.cs:353-354) avoids by
-            // using this same true/false pair for the identical shape: control height, but don't
-            // force-expand it past the child's own preferredHeight.
+            // set via LayoutElement in AddItem below) to its actual rect.sizeDelta. With
+            // childControlHeight=false, uGUI's HorizontalOrVerticalLayoutGroup.GetChildSizes takes the OTHER
+            // branch entirely: it sets BOTH min and preferred from child.rect.sizeDelta[axis] directly and
+            // never consults LayoutUtility/the LayoutElement at all — not "uses preferredHeight for stacking
+            // but forgets to write it back", the read itself never happens. So every item would be stacked
+            // (not just rendered) at whatever height its freshly-created RectTransform's OWN sizeDelta
+            // already carried (never touched by AddItem, which sets only LayoutElement.preferredHeight), AND
+            // the group's own total preferred height — what the ContentSizeFitter above reads — would
+            // likewise collapse to sum-of-those-sizeDeltas + spacing + padding, not to ItemHeight-per-item.
+            // Exactly the defect QuickOpenPopup.cs shipped once already in this same arc (commit b187ceb,
+            // "quick-open rows need childControlHeight=true, not false") and ProjectMenuBar.cs's «Файл»/«Вид»
+            // dropdown (ProjectMenuBar.cs:353-354) avoids by using this same true/false pair for the
+            // identical shape: control height, but don't force-expand it past the child's own preferredHeight.
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
@@ -713,7 +747,11 @@ namespace WorldGen.Workspace.Rendering
             // Screen.width/height (not canvasRect.rect — a fresh ScreenSpaceOverlay canvas is not guaranteed
             // to have finished sizing to the screen on its own creation frame, forced rebuild above or not),
             // the same bound the in-repo clamp precedent (PoiInfoPopup.Reposition) uses for exactly that
-            // reason. The menu hangs DOWN-RIGHT from the click (pivot (0,1) above), so `local` names its
+            // reason. Unlike the anchor/`local` pairing above, this specific bound is NOT scaleFactor-robust:
+            // it is correct only because the CanvasScaler this menu's canvas got a few lines up was added
+            // with defaults (ConstantPixelSize, scaleFactor 1), making one canvas-local unit == one screen
+            // pixel. A future non-1 scaleFactor on this canvas would need `canvasRect.rect` here instead.
+            // The menu hangs DOWN-RIGHT from the click (pivot (0,1) above), so `local` names its
             // LEFT/TOP edge — the RIGHT/BOTTOM edges (MenuWidth and the fitted height further out) have to
             // stay on screen too, not just the anchor point, or a click near an edge still pushes part of
             // the menu off it. Height comes from LayoutUtility.GetPreferredHeight, not panelRect.rect.height
@@ -758,8 +796,27 @@ namespace WorldGen.Workspace.Rendering
             textRect.offsetMax = new Vector2(-10f, 0f);
         }
 
+        /// <summary>Destroys the current menu (if any) and clears the singleton — re-acquiring the
+        /// GameObject BY NAME first when the static reference itself is already gone. A Play-mode script
+        /// recompile wipes a plain, non-[SerializeField] field like `activeMenuGO` while the Unity
+        /// GameObject it pointed at survives the reload completely untouched (this arc's recurring
+        /// "RECOMPILE GAP" family — see SurfaceRegistry.cs's MapSurfaceHost class doc for the first sighting
+        /// and ResolveRootRowBackground for its own by-hierarchy-path recovery). Without this fallback, the
+        /// very first Close() after a reload sees `activeMenuGO == null` and does nothing — but
+        /// "NavContextMenuCanvas" (a full-screen, sortingOrder-1000, click-to-dismiss backdrop) is still
+        /// alive in the scene, and nothing is left able to dismiss it: every click for the rest of the
+        /// session lands on an invisible backdrop instead of whatever is underneath it.
+        ///
+        /// ResolveRootRowBackground re-acquires via `transform.Find` on a known relative path, because that
+        /// class is a MonoBehaviour anchored to a fixed parent. This is a static class with no such anchor
+        /// (the canvas is a root-level GameObject — see Show()'s `new GameObject("NavContextMenuCanvas")`
+        /// with no SetParent call), so `GameObject.Find` by that same exact name is the equivalent lookup
+        /// here. Not cached anywhere beyond the static field itself — this method already nulls that field
+        /// out on every call, so there is nothing extra to invalidate.</summary>
         static void Close()
         {
+            if (activeMenuGO == null)
+                activeMenuGO = GameObject.Find("NavContextMenuCanvas");
             if (activeMenuGO != null) UnityEngine.Object.Destroy(activeMenuGO);
             activeMenuGO = null;
         }

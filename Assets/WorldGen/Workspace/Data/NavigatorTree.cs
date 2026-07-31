@@ -15,9 +15,11 @@ namespace WorldGen.Workspace.Data
     {
         public string Title;
 
-        /// <summary>Always a Page surface pointing at the page id (N4) — the navigator opens pages, never
-        /// world objects directly. Opening the world object itself is a separate action elsewhere («Открыть
-        /// город»), not something this tree does.</summary>
+        /// <summary>A Page surface pointing at the page id (N4) for every node EXCEPT the one Pinned node —
+        /// the navigator otherwise opens pages, never world objects directly; opening the world object
+        /// itself is a separate action elsewhere («Открыть город»), not something this tree does. The Pinned
+        /// node is the deliberate exception (see Build's own comment): there is no page behind the world map,
+        /// so its Target names the world map surface directly.</summary>
         public SurfaceRef Target;
     }
 
@@ -28,8 +30,8 @@ namespace WorldGen.Workspace.Data
 
         /// <summary>The backing PageGroup's id for an Authored group — carried through so a caller can
         /// rename/delete the group itself (NotesDocumentController.RenameGroup/DeleteGroup) without
-        /// re-deriving it by title. Empty for World: that group is computed (N1), not a stored PageGroup,
-        /// so there is nothing for an id to name.</summary>
+        /// re-deriving it by title. Empty for World AND Pinned: both are computed (N1 / Build's Pinned
+        /// comment), not a stored PageGroup, so there is nothing for an id to name in either case.</summary>
         public string Id = "";
 
         public List<NavNode> Nodes = new List<NavNode>();

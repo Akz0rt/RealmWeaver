@@ -63,6 +63,13 @@ namespace WorldGen.Workspace.Data
             else
             {
                 var pinnedGroup = groups[0];
+
+                // M6 — the brief names Title="", Id="" exactly (there is no PageGroup behind a computed
+                // group — same reasoning NavGroup.Id's own doc comment gives for Мир). Code was already
+                // correct; this just pins the value the way N5 below already does for «Мир».
+                if (pinnedGroup.Title != "" || pinnedGroup.Id != "")
+                { Debug.LogError($"FAIL tree: Pinned group Title=«{pinnedGroup.Title}» Id=«{pinnedGroup.Id}», want both empty (P1)"); ok = false; }
+
                 if (pinnedGroup.Nodes.Count != 1 || pinnedGroup.Nodes[0].Title != WorkspaceOps.DefaultWorldMapTitle)
                 {
                     string actual = pinnedGroup.Nodes.Count == 0 ? "0 nodes"
