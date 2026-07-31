@@ -689,13 +689,68 @@ namespace WorldGen.Rendering
             bool hasMap = mapRenderer.Cells != null;
             bool generating = activeGeneration != null;
             if (generating) return AppScreen.Progress;
-            if (!hasMap) return AppScreen.Generation;
+            if (!hasMap || newWorldRequested) return AppScreen.Generation;
             return AppScreen.Workspace;
+        }
+
+        // ── «Создать новый мир…» (Task 10c Step 4) ──────────────────────────────────────────────
+        //
+        // The roadmap gap the Р1 spec names: "today there is no way to create a second world without
+        // restarting the app, because StartGeneration is only reachable from the generation screen". The
+        // generation FORM is the entry point, not StartGeneration directly — the form is where the seed,
+        // size, shape and region count come from, and calling StartGeneration without it would silently
+        // regenerate with whatever the renderer happens to hold.
+        //
+        // A plain field, so a Play-mode domain reload resets it to false — which lands the DM back on their
+        // existing world rather than on a generation form they no longer asked for. That is the harmless
+        // direction of this arc's recurring reload defect, so it needs no recovery of its own.
+
+        bool newWorldRequested;
+
+        /// <summary>Whether a world exists to be replaced. ProjectMenuBar reads it to decide whether
+        /// «Создать новый мир…» is worth offering at all: with no world the generation form is ALREADY the
+        /// screen (DesiredScreen's `!hasMap`), so the item would be a no-op that looks like a command.</summary>
+        public bool HasWorld => mapRenderer != null && mapRenderer.Cells != null;
+
+        /// <summary>Whether the generation form is currently being shown OVER an existing world — the state
+        /// «Вернуться к текущему миру» exists to leave. See RequestNewWorld for why an escape is needed.</summary>
+        public bool NewWorldRequested => newWorldRequested;
+
+        /// <summary>Shows the generation form over the existing world. The caller confirms first
+        /// (ProjectMenuBar does) — generating replaces the world in place, so this is destructive in the same
+        /// sense «Сгенерировать заново» is, and this project confirms before destroying.
+        ///
+        /// REVERSIBLE ON PURPOSE, via CancelNewWorldRequest. The generation form has no back button of its
+        /// own (it was only ever reachable when there was nothing to go back TO), so without an escape a DM
+        /// who confirmed and then changed their mind would be stuck filling in a form or restarting the app —
+        /// the very complaint this feature exists to fix, reintroduced one screen along. The escape lives in
+        /// the «Файл» menu because ProjectMenuBar's canvas sorts at 100, above GenerationScreenUI's 50, so
+        /// the menu stays reachable while the form is up.</summary>
+        public void RequestNewWorld()
+        {
+            if (!HasWorld || newWorldRequested) return;
+            newWorldRequested = true;
+            RefreshScreenState();
+        }
+
+        /// <summary>Dismisses the generation form and returns to the workspace, leaving the current world
+        /// exactly as it was — nothing has been generated yet at this point.</summary>
+        public void CancelNewWorldRequest()
+        {
+            if (!newWorldRequested) return;
+            newWorldRequested = false;
+            RefreshScreenState();
         }
 
         public void StartGeneration(WorldGen.Rendering.GenerationRequest uiParams)
         {
             if (activeGeneration != null) return;
+
+            // The request is satisfied the moment generation starts: from here on DesiredScreen is driven by
+            // `generating`, and when it finishes there IS a new world, so leaving the flag set would keep the
+            // form up over it. Cleared here rather than in RunGeneration's tail so CancelGeneration lands back
+            // on the world too, instead of on the form the DM already left.
+            newWorldRequested = false;
 
             ApplyUiParamsToRenderer(uiParams);
             var genParams = BuildGenerationParams(uiParams);

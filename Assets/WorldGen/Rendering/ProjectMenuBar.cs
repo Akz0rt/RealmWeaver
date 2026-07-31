@@ -129,6 +129,26 @@ namespace WorldGen.Rendering
         /// <summary>Lets other screens (e.g. GenerationScreenUI's "Открыть проект…") trigger the same Open flow.</summary>
         public void TriggerOpenFromExternal() => DoOpen();
 
+        /// <summary>The screen controller «Создать новый мир…» routes to (Task 10c Step 4). DISCOVERED rather
+        /// than added as an Inspector field, for the same reason WorkspaceBuilder discovers its own external
+        /// refs: a new serialized field would need SampleScene.unity edited to be populated, and Task 11 is
+        /// the only task allowed to touch the scene. Re-searched on every miss, which also recovers the
+        /// reference after a Play-mode domain reload wipes it while the component itself survives — this arc's
+        /// recurring defect family. FindObjectsInactive.Include because nothing guarantees the controller's
+        /// GameObject is active.
+        ///
+        /// Null in a scene without one, and every caller treats that as "offer neither world row" (see
+        /// OpenMenu's offerNewWorld/offerReturnToWorld), so the menu degrades to exactly what it was before
+        /// this task rather than showing a dead item.</summary>
+        MapScreenController MapScreens()
+        {
+            if (mapScreens != null) return mapScreens;
+            mapScreens = FindFirstObjectByType<MapScreenController>(FindObjectsInactive.Include);
+            return mapScreens;
+        }
+
+        MapScreenController mapScreens;
+
         void LoadFrom(string path)
         {
             if (mapRenderer == null)
@@ -374,8 +394,43 @@ namespace WorldGen.Rendering
 
             // MenuKind.File
             var recentPaths = recentExpanded ? RecentProjectsList.Get().Where(File.Exists).ToList() : null;
-            int rowCount = 4 + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
+            // Task 10c Step 4: exactly ONE of the two world rows is ever offered, and often neither (before
+            // the first world exists the generation form IS the screen already). Computed here rather than
+            // inline so the popup's own height stays in step with what is actually added below — a row count
+            // that lied would leave the last item clipped or a gap under it.
+            var screens = MapScreens();
+            bool offerNewWorld = screens != null && screens.HasWorld && !screens.NewWorldRequested;
+            bool offerReturnToWorld = screens != null && screens.NewWorldRequested;
+            int rowCount = 4 + ((offerNewWorld || offerReturnToWorld) ? 1 : 0)
+                             + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
             popupRect.sizeDelta = new Vector2(200f, rowCount * 26f);
+
+            if (offerNewWorld)
+            {
+                // Confirmed before it happens: generating replaces the world in place, so any unsaved edit to
+                // the current one is lost — the same confirm-before-destroy rule the settlement editor's
+                // «Сгенерировать заново» follows. The popup is closed FIRST so the dialog does not open behind
+                // a menu that is still capturing clicks through its own backdrop.
+                AddPopupAction(actionsPopupGO.transform, "Создать новый мир…", () =>
+                {
+                    CloseActionsPopup();
+                    ConfirmDialog.Show(builtinFont, "Создать новый мир?",
+                        "Текущий мир будет заменён сгенерированным. Несохранённые изменения будут потеряны.",
+                        confirmed => { if (confirmed) MapScreens()?.RequestNewWorld(); });
+                });
+            }
+            else if (offerReturnToWorld)
+            {
+                // The generation form's own escape — it has no back button, and this menu bar (canvas order
+                // 100) draws above it (50), so «Файл» is still reachable while the form is up. See
+                // MapScreenController.RequestNewWorld's own doc for why an escape is required rather than
+                // nice to have. No confirm: nothing has been generated yet, so this destroys nothing.
+                AddPopupAction(actionsPopupGO.transform, "Вернуться к текущему миру", () =>
+                {
+                    CloseActionsPopup();
+                    MapScreens()?.CancelNewWorldRequest();
+                });
+            }
 
             AddPopupAction(actionsPopupGO.transform, "Сохранить", () => { CloseActionsPopup(); DoSave(); });
             AddPopupAction(actionsPopupGO.transform, "Сохранить как…", () => { CloseActionsPopup(); DoSaveAs(); });
