@@ -21,10 +21,18 @@ namespace WorldGen.Notes.Rendering
     /// boardViewportGO is left intact and untouched for exactly the callers that still pass one.
     ///
     /// `root` is re-parented by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs)
-    /// into whichever pane is currently showing a Page tab — see the public Root accessor below.
+    /// into whichever pane is currently showing a Page tab — see the public Root accessor below. Because that
+    /// makes this view's own visibility something the workspace drives, none of the fields below may quietly
+    /// forget what they point at: EnsureWired re-establishes all of them after a Play-mode script reload, and
+    /// its doc explains what a page stuck visible over the map camera costs when they do.
     /// </summary>
     public class DocumentPageView : MonoBehaviour
     {
+        /// <summary>The names Initialize builds `root`/`placeholderGO` under, hoisted to constants because
+        /// EnsureWired re-finds them by name after a domain reload — see RecoverBuiltObjects.</summary>
+        const string RootObjectName = "DocumentViewport";
+        const string PlaceholderObjectName = "BoardPlaceholder";
+
         NotesDocumentController documentController;
         GameObject boardViewport;
         GameObject root;
@@ -73,7 +81,7 @@ namespace WorldGen.Notes.Rendering
             boardViewport = boardViewportGO;
             font = builtinFont;
 
-            root = new GameObject("DocumentViewport", typeof(RectTransform));
+            root = new GameObject(RootObjectName, typeof(RectTransform));
             root.transform.SetParent(parent, false);
             var rootRect = root.GetComponent<RectTransform>();
             rootRect.anchorMin = Vector2.zero;
@@ -129,7 +137,7 @@ namespace WorldGen.Notes.Rendering
 
             // Board-page placeholder — a sibling of Viewport, not a child of it, so it is never subject to
             // the ScrollRect/mask/content-fitter machinery above. See the class doc for why this exists now.
-            placeholderGO = new GameObject("BoardPlaceholder", typeof(RectTransform));
+            placeholderGO = new GameObject(PlaceholderObjectName, typeof(RectTransform));
             placeholderGO.transform.SetParent(root.transform, false);
             var placeholderRect = placeholderGO.GetComponent<RectTransform>();
             placeholderRect.anchorMin = Vector2.zero;
@@ -151,6 +159,104 @@ namespace WorldGen.Notes.Rendering
         void OnDestroy()
         {
             if (documentController != null) documentController.OnActivePageChanged -= OnActivePageChanged;
+        }
+
+        /// <summary>Re-establishes everything a Play-mode script reload wipes on THIS component, so Show/Hide
+        /// work again afterwards. Called only from NotesRootBuilder.EnsureBuilt's already-built (early-return)
+        /// branch — the one place that knows the difference between "never built" (Initialize's job) and
+        /// "built, then reloaded".
+        ///
+        /// WHAT GOES WRONG WITHOUT IT — and it is NOT merely "the page fails to reappear". `root`/`content`/
+        /// `viewportGO`/`placeholderGO`/`documentController`/`font` are plain, non-[SerializeField] fields, so
+        /// a domain reload nulls all six, while the DocumentViewport GameObject they described survives as
+        /// live native state in whatever pane PageSurfaceHost last re-parented it into — and if it was ACTIVE
+        /// at that moment it stays active. Every access below is null-guarded, so nothing throws; the guards
+        /// instead turn Hide() -> SetSurfaceVisible(false) -> OnActivePageChanged into a SILENT NO-OP against
+        /// a null `root`, so `root.SetActive(false)` never fires and NOTHING in the rest of that session can
+        /// ever hide it again. DocumentViewport carries its own opaque ThemeRole.Bg Image, so a pane that
+        /// then shows the WorldMap surface gets painted over by it — MapSurfaceHost.SetBackgroundsEnabled
+        /// knows about exactly three Images and this stray one is not among them, which is Task 9 review
+        /// round 1's Critical (map hidden behind an opaque UI rect) arriving again through a different door.
+        ///
+        /// The last line is what actually kills that symptom, and it does so INSIDE NotesRootBuilder's own
+        /// recovery, without depending on WorkspaceBuilder's path running at all: `surfaceVisible` is a plain
+        /// bool that the same reload already reset to false, so re-running OnActivePageChanged with the
+        /// recovered `root` deactivates a stuck-visible viewport immediately. WorkspaceController.SyncSurfaces
+        /// then re-asserts the correct state a moment later (Show for a pane whose active tab is a Page, Hide
+        /// otherwise) — this just makes the stuck case impossible even if it does not.</summary>
+        public void EnsureWired(NotesDocumentController docController, Font builtinFont)
+        {
+            if (docController != null) documentController = docController;
+            if (builtinFont != null) font = builtinFont;
+
+            // `root == null` while this component exists at all is the reliable "wiped by a reload" signal —
+            // Initialize always assigns it, and it is exactly the kind of field a reload always forgets. On an
+            // ordinary (non-reload) call — WorkspaceBuilder.Awake asking NotesRootBuilder for a document that
+            // its own Awake already built — this is false and the re-assert below is correctly skipped.
+            bool lostToReload = root == null;
+            if (lostToReload) RecoverBuiltObjects();
+            if (root == null) return;   // not found: stay inert rather than half-wired.
+
+            // C# delegates are never serialized, so this subscription is gone after a reload no matter how
+            // the fields above were recovered. `-=` before `+=` keeps it at exactly one for the non-reload
+            // caller, where the subscription Initialize made is still live.
+            if (documentController != null)
+            {
+                documentController.OnActivePageChanged -= OnActivePageChanged;
+                documentController.OnActivePageChanged += OnActivePageChanged;
+            }
+
+            // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
+            // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
+            // the next Rebuild() would find nothing to destroy and stack a SECOND full set of rows on top of
+            // the first. Their own fields are wiped too, so they are good for nothing except being destroyed —
+            // which is precisely what Rebuild does with them, through its existing disposal path rather than a
+            // second one added here.
+            //
+            // Guarded on the hazard ITSELF (a tracking list that disagrees with the live children) rather than
+            // on `lostToReload`, which is only a proxy for it: Rebuild is the sole thing that ever parents a
+            // child to `content`, so "no rows tracked but children present" IS the desynchronised state and
+            // cannot arise any other way. On the ordinary non-reload call this is a no-op — an empty `rows`
+            // there means Rebuild never produced any, so childCount is 0 — and it stays correct if a future
+            // change ever makes `root` recoverable without `content` being.
+            if (rows.Count == 0 && content != null && content.childCount > 0)
+                rows.AddRange(content.GetComponentsInChildren<DocBlockView>(true));
+
+            if (!lostToReload) return;
+
+            OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
+        }
+
+        /// <summary>Re-finds the four GameObjects Initialize built, after a reload nulled the fields pointing
+        /// at them. They cannot be found by hierarchy path the way MapSurfaceHost.ResolveRootRowBackground
+        /// finds RootRow: PageSurfaceHost.Show re-parents `root` out of NotesRootBuilder's PageViewHolder and
+        /// into whichever pane's ContentArea is showing a Page tab, so its parent is not fixed. What IS fixed
+        /// is that it is the only object in the project named "DocumentViewport" carrying a ScrollRect (that
+        /// name is constructed in exactly one place — Initialize, above, from the same constant). Inactive
+        /// objects must be included: a reload that happens while no Page tab is showing leaves `root`
+        /// deactivated, and that case needs recovering just as much as the visible one.
+        ///
+        /// The remaining three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
+        /// built-in uGUI component, i.e. native state that survives the reload — and from a plain
+        /// Transform.Find for the placeholder, which locates inactive children (it is SetActive(false) for
+        /// every Document page).</summary>
+        void RecoverBuiltObjects()
+        {
+            ScrollRect found = null;
+            foreach (var scroll in FindObjectsByType<ScrollRect>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (scroll == null || scroll.name != RootObjectName) continue;
+                // On the (unexpected) tie of two same-named ScrollRects, prefer one that still has its
+                // content wired — a half-built stray is never the live page surface.
+                if (found == null || (found.content == null && scroll.content != null)) found = scroll;
+            }
+            if (found == null) return;
+
+            root = found.gameObject;
+            viewportGO = found.viewport != null ? found.viewport.gameObject : null;
+            content = found.content;
+            var placeholder = found.transform.Find(PlaceholderObjectName);
+            placeholderGO = placeholder != null ? placeholder.gameObject : null;
         }
 
         void OnActivePageChanged(NotesPage page)

@@ -79,16 +79,21 @@ namespace WorldGen.Workspace.Rendering
     /// parameter). WorkspaceController.SyncSurfaces's "focused pane shown last" rule at least makes the
     /// outcome predictable rather than order-of-iteration arbitrary.
     ///
-    /// REMAINING RECOMPILE GAP, NOT CLOSED (still Task 11's, same shape as TabStripView/NavigatorView/
-    /// QuickOpenPopup — see WorkspaceBuilder.Awake's own comment): WorkspaceBuilder.Awake's guard branch
-    /// reconstructs a FRESH PageSurfaceHost after a reload from NotesRootBuilder's (now correctly recovered —
-    /// see NotesRootBuilder.EnsureBuilt's own comment) DocumentController/DocumentView, so THIS class and the
-    /// document MODEL it wraps are sound again. But DocumentPageView's OWN `root`/`content`/`viewportGO`/
-    /// `placeholderGO` fields are the SAME class of plain, non-serialized field this whole arc keeps finding
-    /// — a reload wipes them on DocumentPageView itself, pre-dating Task 9 entirely, and Show() here silently
-    /// no-ops its reparenting step against a null `pageView.Root` in that state (the `if (root != null)`
-    /// guard already there). `documentController?.OpenPage(id)` still runs regardless, so the underlying
-    /// model stays correct; only the VIEW may fail to reparent/redisplay until Task 11's broader fix.</summary>
+    /// RECOMPILE GAP — CLOSED in round 4, and the round-3 description of it below was wrong in a way worth
+    /// keeping on record. WorkspaceBuilder.Awake's guard branch reconstructs a FRESH PageSurfaceHost after a
+    /// reload from NotesRootBuilder's (correctly recovered) DocumentController/DocumentView, so this class and
+    /// the document MODEL it wraps were already sound. DocumentPageView's OWN `root`/`content`/`viewportGO`/
+    /// `placeholderGO` were not — the same class of plain, non-serialized field this whole arc keeps finding.
+    /// Round 3 characterised the consequence as "the VIEW may fail to reparent/redisplay", i.e. a page failing
+    /// to APPEAR, and deferred it. That framing missed the damaging half: `root` is an OPAQUE ThemeRole.Bg
+    /// Image, so a page that was VISIBLE at the moment of the reload stays visible — Hide() -> SetSurfaceVisible
+    /// (false) -> OnActivePageChanged no-ops against the null `root`, so `root.SetActive(false)` never fires
+    /// and nothing in the session can hide it again, and it then paints over the map camera in whatever pane
+    /// it is parented in (MapSurfaceHost.SetBackgroundsEnabled disables three known Images and has no idea
+    /// this one exists). Harmless before round 3 only because SyncSurfaces never ran post-reload at all; round
+    /// 3 making it run is what exposed it. DocumentPageView.EnsureWired now recovers those fields (and the
+    /// OnActivePageChanged subscription, which no serialization scheme could have restored) — see its own doc
+    /// and NotesRootBuilder.EnsureBuilt's, which calls it.</summary>
     public class PageSurfaceHost : ISurfaceHost
     {
         readonly NotesDocumentController documentController;
@@ -185,11 +190,19 @@ namespace WorldGen.Workspace.Rendering
     /// ResolveRootRowBackground) reachable again — see WorkspaceBuilder.Awake's own comment for exactly which
     /// half of "rebuild vs. re-wire" this is.
     ///
-    /// STILL OPEN, still Task 11's (this is the part rebuilding/re-syncing the whole shell on restore
-    /// actually owns): between the reload and the NEXT layout-changing interaction, `mapCamera.rect`/
-    /// `.enabled` may sit at whatever they were left at reload time rather than what `Layout` (also reset —
-    /// see WorkspaceController.Awake's own comment) currently says should be shown — a one-interaction-long
-    /// staleness window, not a permanent dead system.</summary>
+    /// ROUND 4 finished that job for the SURFACES specifically: the guard branch now also calls
+    /// WorkspaceController.EnsureLayout (without which SyncSurfaces threw an NRE on Layout.FocusedPane inside
+    /// this very recovery) and EnsurePaneHandles (without which PaneContent returned null forever, so the
+    /// recovered SyncSurfaces showed nothing and Hid every host — a blank workspace). The one SyncSurfaces
+    /// call at the end of that branch is therefore now authoritative: the map re-shows in the pane the
+    /// recovered (default) Layout says owns it, at the correct rect, with no staleness window.
+    ///
+    /// STILL OPEN, still Task 11's: the recovered Layout is a fresh WorkspaceOps.NewDefault(), so the user's
+    /// actual tabs/split/focus are still discarded by a reload (only WorkspacePrefs can fix that), and the
+    /// CHROME around the surface — tab strips, navigator, «+», Ctrl+K, divider drag — stays inert afterwards,
+    /// deliberately not partially revived here (see WorkspaceBuilder.Awake's comment for why). So there is no
+    /// second interaction that could re-sync anything: post-reload the surface is correct, and nothing the
+    /// user clicks changes it until they leave and re-enter Play Mode.</summary>
     public class MapSurfaceHost : MonoBehaviour, ISurfaceHost
     {
         Camera mapCamera;

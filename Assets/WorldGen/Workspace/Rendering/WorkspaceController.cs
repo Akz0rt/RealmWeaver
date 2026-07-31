@@ -55,23 +55,36 @@ namespace WorldGen.Workspace.Rendering
 
         SurfaceRegistry surfaceRegistry;
 
-        void Awake()
+        void Awake() => EnsureLayout();
+
+        /// <summary>Guarantees Layout exists, whoever asks first. Awake() calls this, and so does
+        /// WorkspaceBuilder.Awake's recompile-guard branch DIRECTLY — that branch recovers this component
+        /// with GetComponent (which, unlike AddComponent, does NOT invoke Awake synchronously), so whether
+        /// this class's own Awake has already run by then depends on Unity's undefined Awake-dispatch order
+        /// between two components on the same GameObject. The likely order is the bad one: WorkspaceBuilder
+        /// is the PRE-EXISTING component and WorkspaceController was AddComponent-ed later, so the builder
+        /// tends to run first and would otherwise reach SetSurfaceRegistry -> SyncSurfaces -> Layout.FocusedPane
+        /// on a null Layout, throwing an NRE inside the very recovery path that exists to survive reloads.
+        /// Calling this explicitly is the same direct-call pattern NotesRootBuilder.EnsureBuilt already uses
+        /// for exactly this reason, rather than trusting an Awake that may not have fired yet.
+        ///
+        /// `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
+        /// code path calling Awake() again without a reload in between — where Layout genuinely
+        /// still holds what it held before. It does NOT protect the case it looks like it
+        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:30-38 documents why —
+        /// Layout is a plain auto-property, not a [SerializeField], so its backing field does
+        /// NOT survive a script reload the way the GameObject/component hierarchy does. On that
+        /// exact path, Layout IS null when this runs, the condition is true, and a fresh
+        /// NewDefault() is created anyway — tabs, split and focus are silently discarded, same
+        /// as before this guard existed. Do not read this line as "recompiles are handled".
+        ///
+        /// Task 11 (WorkspacePrefs) is what actually has to fix this, and it must NOT gate its
+        /// restore on `Layout == null` — that condition is not a reliable "first run" signal (see
+        /// above, it is also true after every recompile that should instead be recovering saved
+        /// state). Task 11 needs to load from WorkspacePrefs unconditionally on startup and apply
+        /// the result, independent of whatever Awake() already put in Layout.</summary>
+        public void EnsureLayout()
         {
-            // `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
-            // code path calling Awake() again without a reload in between — where Layout genuinely
-            // still holds what it held before. It does NOT protect the case it looks like it
-            // protects: a Play-mode script recompile. WorkspaceBuilder.cs:30-38 documents why —
-            // Layout is a plain auto-property, not a [SerializeField], so its backing field does
-            // NOT survive a script reload the way the GameObject/component hierarchy does. On that
-            // exact path, Layout IS null when this runs, the condition is true, and a fresh
-            // NewDefault() is created anyway — tabs, split and focus are silently discarded, same
-            // as before this guard existed. Do not read this line as "recompiles are handled".
-            //
-            // Task 11 (WorkspacePrefs) is what actually has to fix this, and it must NOT gate its
-            // restore on `Layout == null` — that condition is not a reliable "first run" signal (see
-            // above, it is also true after every recompile that should instead be recovering saved
-            // state). Task 11 needs to load from WorkspacePrefs unconditionally on startup and apply
-            // the result, independent of whatever Awake() already put in Layout.
             if (Layout == null) Layout = WorkspaceOps.NewDefault();
         }
 
@@ -88,6 +101,62 @@ namespace WorldGen.Workspace.Rendering
             dividerRect = dividerRectTransform;
 
             ReflowPanes();
+        }
+
+        /// <summary>Re-acquires the six handles Initialize normally supplies, by hierarchy path, when a
+        /// Play-mode script reload has wiped them — the "re-point the references, don't rebuild" pattern
+        /// MapSurfaceHost.Rewire/ResolveRootRowBackground already use in this same arc, applied to this
+        /// class's own fields. No GameObject is created, moved or duplicated here.
+        ///
+        /// WHY THIS IS NEEDED AT ALL, and why a null Layout was only half the reload story: every field
+        /// Initialize writes is a plain, non-[SerializeField] field, so a domain reload nulls all six —
+        /// and Initialize's ONLY caller is WorkspaceBuilder.BuildPaneContainer, on the first-build path
+        /// the recompile guard skips. Without this, PaneContent(0) returns null forever after a reload,
+        /// so SyncSurfaces shows NOTHING and Hides EVERY host: a blank workspace, not the "surface system
+        /// revived" the guard branch is written to produce. The paths below are exactly where
+        /// WorkspaceBuilder.BuildPaneContainer/BuildPane construct them, relative to THIS transform —
+        /// which is also WorkspaceBuilder's own transform, since WorkspaceBuilder AddComponents this
+        /// class onto its own GameObject. Transform.Find locates INACTIVE children too, which matters:
+        /// ReflowPanes deactivates SecondaryPane and the divider whenever there is no split.
+        ///
+        /// ALL-OR-NOTHING on purpose: nothing is assigned until every lookup has succeeded, so a renamed
+        /// or restructured hierarchy leaves this class in its existing safe state (ReflowPanes' own
+        /// `primaryLayoutElement == null` early-return, PaneContent returning null) instead of half-wired
+        /// — ReflowPanes dereferences secondaryPaneRect/dividerRect unguarded once past that check, so a
+        /// partial recovery would turn a silent no-op into an NRE.
+        ///
+        /// Calls EnsureLayout() itself rather than documenting an ordering requirement it would then NRE on:
+        /// Initialize below ends in ReflowPanes, which reads Layout.Secondary/SplitRatio. WorkspaceBuilder's
+        /// guard branch still calls EnsureLayout explicitly right before this, because the registry it wires
+        /// afterwards needs a Layout too — this is belt for any other caller, not a duplicate of that.
+        ///
+        /// This deliberately does NOT try to revive TabStripView /
+        /// NavigatorView / QuickOpenPopup / the divider's drag delegates — see WorkspaceBuilder.Awake's
+        /// comment for why a partial recovery THERE is worse than none, and Task 11 for the real fix. The
+        /// line between the two: these handles are read by SyncSurfaces, which round 3 made run again
+        /// after a reload; the strips and the navigator are read by nothing that runs post-reload.</summary>
+        public void EnsurePaneHandles()
+        {
+            if (primaryContent != null) return;
+
+            EnsureLayout();
+
+            const string PaneContainerPath = "WorkspaceCanvas/RootRow/PaneContainer/";
+            var primaryPane = transform.Find(PaneContainerPath + "PrimaryPane") as RectTransform;
+            var secondaryPane = transform.Find(PaneContainerPath + "SecondaryPane") as RectTransform;
+            var divider = transform.Find(PaneContainerPath + "DraggableDivider") as RectTransform;
+            if (primaryPane == null || secondaryPane == null || divider == null) return;
+
+            var primaryContentRect = primaryPane.Find("ContentArea") as RectTransform;
+            var secondaryContentRect = secondaryPane.Find("ContentArea") as RectTransform;
+            var primaryElement = primaryPane.GetComponent<LayoutElement>();
+            var secondaryElement = secondaryPane.GetComponent<LayoutElement>();
+            if (primaryContentRect == null || secondaryContentRect == null ||
+                primaryElement == null || secondaryElement == null) return;
+
+            Initialize(new PaneHandles(primaryPane, primaryElement, primaryContentRect),
+                       new PaneHandles(secondaryPane, secondaryElement, secondaryContentRect),
+                       divider);
         }
 
         /// <summary>Wires the surface registry (Task 9) and runs the first sync immediately — WorkspaceBuilder
@@ -247,7 +316,16 @@ namespace WorldGen.Workspace.Rendering
         /// by coincidence of iteration order.</summary>
         void SyncSurfaces()
         {
+            // The real guard: no hosts registered yet (before WorkspaceBuilder's SetSurfaceRegistry call)
+            // means there is nothing to show or hide.
             if (surfaceRegistry == null) return;
+
+            // Belt, not the fix: EnsureLayout is what actually guarantees a Layout on every path that
+            // reaches here (Awake for a first build, WorkspaceBuilder.Awake's guard branch for a reload —
+            // see EnsureLayout's own doc). This stays because SetSurfaceRegistry is public and calls straight
+            // through to here, so a future caller that skips EnsureLayout gets an inert no-op instead of an
+            // NRE on Layout.FocusedPane / PaneContent / ActiveSurfaceOf below.
+            if (Layout == null) return;
 
             int[] order = Layout.FocusedPane == 1 ? new[] { 0, 1 } : new[] { 1, 0 };
             var shownKinds = new HashSet<SurfaceKind>();

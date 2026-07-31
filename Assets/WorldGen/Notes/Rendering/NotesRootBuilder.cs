@@ -66,17 +66,28 @@ namespace WorldGen.Notes.Rendering
         /// silently register a host wrapping two null references: reachable, harmless to call into, but
         /// unable to reparent or open anything, functionally identical to not being registered at all — the
         /// SAME "non-null-but-inert reference is worse than leaving it null" trap WorkspaceBuilder.Awake's
-        /// comment already names for the tab strips/Navigator, closed here instead of merely documented.</summary>
+        /// comment already names for the tab strips/Navigator, closed here instead of merely documented.
+        ///
+        /// ROUND 4: re-acquiring the two COMPONENTS was necessary but not sufficient. DocumentPageView's own
+        /// internals (its root GameObject, viewport, content, placeholder, its document reference and its
+        /// OnActivePageChanged subscription) are wiped by the same reload, and every use of them is
+        /// null-guarded — so the surface does not throw, it silently stops responding to Show/Hide, which can
+        /// leave a page's opaque viewport stuck visible over whatever the pane shows next. EnsureWired (see
+        /// its own doc for the full failure mode) is what repairs that, and it is called from HERE rather than
+        /// from DocumentPageView.Awake because this branch is the only place that can tell "already built,
+        /// possibly after a reload" apart from "never built" — the distinction that decides whether a
+        /// re-find-and-re-assert is a repair or a mis-bind.</summary>
         public void EnsureBuilt()
         {
             if (transform.childCount > 0)
             {
                 DocumentController = GetComponent<NotesDocumentController>();
                 DocumentView = GetComponent<DocumentPageView>();
+                if (DocumentView != null) DocumentView.EnsureWired(DocumentController, EnsureFont());
                 return;
             }
 
-            builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            builtinFont = EnsureFont();
             EnsureEventSystemExists();
 
             DocumentController = gameObject.AddComponent<NotesDocumentController>();
@@ -92,6 +103,16 @@ namespace WorldGen.Notes.Rendering
 
             var keyboard = gameObject.AddComponent<DocKeyboardController>();
             keyboard.pageView = DocumentView;
+        }
+
+        /// <summary>The one place the builtin font resource is named. `builtinFont` is itself a plain field a
+        /// reload wipes, and the recovery branch above has to hand a live Font to DocumentPageView.EnsureWired
+        /// (without one, any row Rebuild after a reload would draw text with a null font, i.e. nothing at all)
+        /// — Resources.GetBuiltinResource is cheap and returns the same shared asset every call.</summary>
+        Font EnsureFont()
+        {
+            if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            return builtinFont;
         }
 
         static void EnsureEventSystemExists()

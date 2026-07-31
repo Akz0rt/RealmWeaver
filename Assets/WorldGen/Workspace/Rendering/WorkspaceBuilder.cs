@@ -110,9 +110,33 @@ namespace WorldGen.Workspace.Rendering
             // and `new SurfaceRegistry()` / `new PageSurfaceHost(...)` are cheap plain C# objects, not
             // GameObjects, so reconstructing them is not "stacking a duplicate hierarchy" the way a second
             // BuildPaneContainer call would be — there is no hierarchy involved in either at all.
+            //
+            // Round 4 extends that same exception to the two things SyncSurfaces reads BESIDES the registry,
+            // for the same reason and by the same rule (re-point references, never rebuild):
+            // WorkspaceController.Layout (null after a reload -> an NRE on Layout.FocusedPane INSIDE this
+            // recovery path) and WorkspaceController's six pane handles (null after a reload -> PaneContent
+            // returns null forever, so SyncSurfaces shows nothing and Hides every host: a blank workspace
+            // rather than a revived one). Both are recovered by WorkspaceController's own Ensure* methods —
+            // see their docs. NOTHING here revives the tab strips/Navigator/QuickOpenPopup/divider-drag
+            // delegates, so after a reload the correct SURFACE renders but the chrome around it stays inert
+            // until Task 11: clicking a tab, the navigator, «+», Ctrl+K or dragging the divider all still do
+            // nothing. That is the line — pane handles are read by SyncSurfaces, which runs post-reload; the
+            // strips are read by nothing that runs post-reload.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
+                if (Controller != null)
+                {
+                    // GetComponent, unlike the AddComponent below, does NOT invoke Awake() synchronously, and
+                    // Unity's Awake dispatch order between two components on the SAME GameObject is undefined
+                    // — so WorkspaceController.Awake may not have run yet when SetSurfaceRegistry (and its
+                    // immediate SyncSurfaces) fires at the end of this branch. Call both Ensure* directly
+                    // instead of trusting that ordering, the same way EnsureDocumentController below calls
+                    // NotesRootBuilder.EnsureBuilt() directly rather than trusting ITS Awake. Layout first:
+                    // EnsurePaneHandles ends in ReflowPanes, which reads Layout.Secondary/SplitRatio.
+                    Controller.EnsureLayout();
+                    Controller.EnsurePaneHandles();
+                }
 
                 var recoveredNotesRoot = EnsureDocumentController();
                 var recoveredMapHost = GetComponent<MapSurfaceHost>();
