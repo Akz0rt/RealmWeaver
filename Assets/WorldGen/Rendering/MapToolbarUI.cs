@@ -33,6 +33,19 @@ namespace WorldGen.Rendering
             SetActiveTab(0);
         }
 
+        /// <summary>The four docked panels, in tab order (Карта/Редактор/Точки/Регионы) — the SAME array
+        /// SetChromeVisible and SetActiveTab both walk, so the tab-index-to-panel mapping has exactly one
+        /// definition. Exposed publicly for MapSurfaceHost: these are sibling GameObjects of this one,
+        /// referenced by nothing else in the scene, so a component that needs to reach the map's full chrome
+        /// (to confine it to a workspace pane — see MapSurfaceHost.EnsureFrames) can only get at them through
+        /// the toolbar that owns them. Deliberately NOT folded into MapSurfaceHost's `chrome` array, which
+        /// drives SetActive: activating all four at once and letting SetChromeVisible switch three back off
+        /// is precisely the OnEnable-before-OnDisable interleaving SetActiveTab's own comment below
+        /// (MapToolbarUI.cs:265) exists to prevent, since EditorBrushPanel/RegionsPanel share mutable
+        /// BrushToolController state across those callbacks. Allocates a small array per call; every caller
+        /// is a click handler or a once-per-Rewire discovery, never a per-frame path.</summary>
+        public GameObject[] DockedPanels => new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
+
         /// <summary>Show/hide the whole map-editor chrome this toolbar owns — its strip AND the docked
         /// tab panels (which are sibling GameObjects, so MapScreenController can't hide them directly).
         /// Called by MapScreenController so the toolbar + panels don't leak onto the generation/POI-editor
@@ -46,7 +59,7 @@ namespace WorldGen.Rendering
             }
             else
             {
-                foreach (var p in new[] { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel })
+                foreach (var p in DockedPanels)
                     if (p != null) p.SetActive(false);
             }
         }
@@ -77,7 +90,13 @@ namespace WorldGen.Rendering
             barRect.anchorMin = new Vector2(0f, 1f);
             barRect.anchorMax = new Vector2(1f, 1f);
             barRect.pivot = new Vector2(0.5f, 1f);
-            barRect.anchoredPosition = new Vector2(0f, -40f); // sits directly below the 40px menu bar
+            // Flush with the TOP of whatever this canvas is confined to. That used to be the window, and the
+            // -40f this line carried dodged the 40px menu bar drawn above it. The workspace shell now hosts
+            // this canvas inside a pane (PaneChromeFrame, driven from MapSurfaceHost), and the pane's own top
+            // already excludes the menu bar — WorkspaceBuilder insets RootRow by MenuBarInset = 40f
+            // (WorkspaceBuilder.cs:231) before any pane is laid out inside it — so keeping the dodge
+            // double-counted the same 40 pixels and showed as a gap between the tab strip and this bar.
+            barRect.anchoredPosition = Vector2.zero;
             barRect.sizeDelta = new Vector2(0f, BarHeightPixels);
 
             BuildTabSegment(barGO.transform);
@@ -249,7 +268,7 @@ namespace WorldGen.Rendering
             // activation could run the new tab's OnEnable before the old tab's OnDisable, letting
             // the old tab's teardown clobber the state the new tab just set. Deactivate-all-then-
             // activate-target makes "the newly-activated panel wins" true regardless of tab order.
-            GameObject[] panels = { mapLayersPanel, editorBrushPanel, poiToolPanel, regionsPanel };
+            GameObject[] panels = DockedPanels;
             foreach (var panel in panels)
                 if (panel != null) panel.SetActive(false);
             GameObject target = index >= 0 && index < panels.Length ? panels[index] : null;

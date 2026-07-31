@@ -155,6 +155,18 @@ namespace WorldGen.Workspace.Rendering
     /// LIVE on-screen rect continuously, not just once at the moment Show() runs — see
     /// ApplyViewportForRender, the Canvas.willRenderCanvases handler that does this every frame.
     ///
+    /// PANE-CONFINED CHROME: "as they are" covers their CONTENT, not their extent. Every one of those panels
+    /// is its own root ScreenSpaceOverlay canvas anchored to the WINDOW, so once the map became one tab among
+    /// many they kept laying themselves out against the whole display: the navigator column swallowed the four
+    /// 216px docked panels whole and the tab strip covered the toolbar, and whatever crossed the divider was
+    /// painted over by the OTHER pane's still-enabled background at sortingOrder 70 — which reads as a
+    /// truncated panel rather than a misplaced one, and is exactly what the user reported («при открытии
+    /// отдельно элементы вкладки "Карта мира" не подстраиваются под новые габариты вкладки и поэтому
+    /// обрезаются»). PaneChromeFrame fixes it without redesigning a single panel: a stretched frame is
+    /// inserted between each canvas and its children, and ApplyViewport drives that frame's offsets from the
+    /// SAME pane corners it derives the camera's viewport from. See EnsureFrames for which canvases are in the
+    /// list and why, and PaneChromeFrame's own doc for why a frame rather than a reparent.
+    ///
     /// mapCamera/chrome are resolved by FindFirstObjectByType when Create's caller passes null/empty,
     /// mirroring the override-or-discover pattern already used elsewhere in this codebase (e.g.
     /// PoiManager.cameraController, DungeonManager.poiManager): WorkspaceBuilder is not wired into the
@@ -208,6 +220,25 @@ namespace WorldGen.Workspace.Rendering
         Camera mapCamera;
         GameObject[] chrome;
         MapToolbarUI toolbar;
+
+        /// <summary>The chrome roots whose canvases have not been framed YET, and the frames already built —
+        /// see EnsureFrames for why resolution has to be lazy rather than finished inside Rewire.
+        ///
+        /// NOT `readonly`, and re-assigned in Rewire rather than trusted to these initializers: a Play-mode
+        /// domain reload restores a MonoBehaviour by DESERIALIZING it, not by constructing it, so field
+        /// initializers do not run a second time and every non-serialized reference field comes back NULL —
+        /// the same trap the class doc's RECOMPILE GAP paragraph documents for mapCamera/chrome/toolbar, and
+        /// the one this project has now been bitten by four times. The __PaneFrame GameObjects themselves
+        /// survive that reload intact, so Rewire's fresh empty lists lose nothing: EnsureFrames RE-FINDS each
+        /// surviving frame by name (PaneChromeFrame.Ensure is idempotent) instead of building a second
+        /// one — "re-point the references, never rebuild", exactly as everywhere else here.</summary>
+        List<GameObject> pendingFrameRoots = new List<GameObject>();
+        List<RectTransform> frames = new List<RectTransform>();
+
+        /// <summary>Scratch buffer for GetComponentsInChildren inside EnsureFrames — reused rather than
+        /// re-allocated because EnsureFrames runs from ApplyViewport, i.e. once per rendered frame for as long
+        /// as any chrome root is still unresolved. Same non-readonly/re-assigned-in-Rewire rule as above.</summary>
+        List<Canvas> canvasScratch = new List<Canvas>();
 
         /// <summary>The full-bleed background WorkspaceBuilder paints behind NavigatorColumn/PaneContainer
         /// (RootRow's own Image) — see SetBackgroundsEnabled's own doc for why THIS one, specifically, needs
@@ -263,6 +294,89 @@ namespace WorldGen.Workspace.Rendering
             }
 
             toolbar = FindFirstObjectByType<MapToolbarUI>();
+
+            // The frame roots are a STRICT SUPERSET of `chrome`, and deliberately a separate list rather than
+            // an enlarged `chrome`: `chrome` drives SetActive (see SetChromeActive), and the four docked
+            // panels must NOT be driven that way — MapToolbarUI.SetActiveTab owns their activation and its own
+            // comment (MapToolbarUI.cs:265) documents why the deactivate-all-then-activate-target ORDER is
+            // load-bearing (EditorBrushPanel/RegionsPanel share mutable BrushToolController state through
+            // OnEnable/OnDisable). Framing is a purely geometric concern with no such coupling, so the two
+            // lists have different memberships on purpose. The four panels are reachable ONLY through the
+            // toolbar (they are its siblings, referenced by nothing else), which is why MapToolbarUI exposes
+            // DockedPanels instead of this class re-discovering four more types by FindFirstObjectByType.
+            //
+            // PoiInfoPopup is deliberately absent, as are the two region-label overlays: all three place
+            // themselves with cam.WorldToScreenPoint (PoiInfoPopup.cs:142, RegionLabelOverlay.cs:266,
+            // PoliticalRegionLabelOverlay.cs:118), which ALREADY accounts for the camera's viewport rect that
+            // ApplyViewport sets — insetting them a second time would move them off their own map features.
+            //
+            // Fresh instances, not .Clear(): after a domain reload all three fields are null (see their own
+            // doc), so there is nothing to clear — and on the ordinary path a fresh list is identical to a
+            // cleared one, which keeps this single line correct on BOTH paths with no branch to get wrong.
+            pendingFrameRoots = new List<GameObject>();
+            frames = new List<RectTransform>();
+            canvasScratch = new List<Canvas>();
+
+            if (chrome != null)
+                foreach (var go in chrome)
+                    if (go != null) pendingFrameRoots.Add(go);
+            if (toolbar != null)
+            {
+                pendingFrameRoots.Add(toolbar.gameObject);
+                foreach (var panel in toolbar.DockedPanels)
+                    if (panel != null) pendingFrameRoots.Add(panel);
+            }
+        }
+
+        /// <summary>Turns whatever chrome roots have become resolvable into PaneChromeFrames, and is called
+        /// EVERY rendered frame (from ApplyViewport) rather than once from Rewire — because at Rewire time
+        /// most of these canvases do not exist yet, and three of them may not exist for the rest of the
+        /// session.
+        ///
+        /// Every one of these panels builds its canvas in its OWN Awake (MapLayersPanel.cs:36,
+        /// EditorBrushPanel.cs:70, PoiToolPanel.cs:44, RegionsPanel.cs:47, MapLegendUI.cs:42,
+        /// PoiEditPanel.cs:58), and Unity's Awake order between sibling scene objects is undefined — so
+        /// WorkspaceBuilder.Awake -> Create -> Rewire can easily run BEFORE any of them. Worse, and this is
+        /// the case that makes a one-shot resolution unfixable rather than merely racy: MapToolbarUI.Awake
+        /// ends in SetActiveTab(0), which SetActive(false)s the three non-selected docked panels. A
+        /// GameObject deactivated before its own Awake has run never runs it — so those three have NO canvas
+        /// at all until the user first clicks their tab, which may be minutes later or never.
+        ///
+        /// Hence: skip an inactive root entirely (it costs one bool check, allocates nothing, and an invisible
+        /// panel needs no frame), and re-scan an ACTIVE one until it actually yields a canvas. SetActive(true)
+        /// runs Awake synchronously inside the click handler's Update, and this method runs from
+        /// Canvas.willRenderCanvases — after every Update/LateUpdate, before anything renders — so a panel is
+        /// framed on the very frame it appears, with no window-anchored flash.
+        ///
+        /// `isRootCanvas` is the filter, not "the first Canvas found": EditorBrushPanel's dropdown Template is
+        /// a NESTED overrideSorting canvas parented under the dropdown itself (EditorBrushPanel.cs:902), and
+        /// nested canvases must be left alone — they are already inside the frame via their parent and
+        /// framing them again would inset them twice.</summary>
+        void EnsureFrames()
+        {
+            if (pendingFrameRoots == null || frames == null || canvasScratch == null) return;
+
+            // Downward iteration so RemoveAt does not skip the next entry.
+            for (int i = pendingFrameRoots.Count - 1; i >= 0; i--)
+            {
+                var root = pendingFrameRoots[i];
+                if (root == null) { pendingFrameRoots.RemoveAt(i); continue; }
+                if (!root.activeInHierarchy) continue;
+
+                root.GetComponentsInChildren(true, canvasScratch);
+                bool found = false;
+                foreach (var canvas in canvasScratch)
+                {
+                    if (canvas == null || !canvas.isRootCanvas) continue;
+                    var frame = PaneChromeFrame.Ensure(canvas.transform);
+                    if (frame == null) continue;
+                    frames.Add(frame);
+                    found = true;
+                }
+                // Only retire the root once it has actually produced a frame — an active GameObject whose
+                // Awake has not run yet reports zero canvases and must be retried next frame.
+                if (found) pendingFrameRoots.RemoveAt(i);
+            }
         }
 
         public SurfaceKind Kind => SurfaceKind.WorldMap;
@@ -318,6 +432,15 @@ namespace WorldGen.Workspace.Rendering
             if (shownIn != null) SetBackgroundsEnabled(shownIn, true);
             shownIn = null;
             SetChromeActive(false);
+            // Give every frame the whole canvas back, so the chrome inside it is window-anchored again while
+            // this surface owns no pane. Left clamped, a panel re-shown by the legacy path (MapScreenController
+            // /ScreenSwitcher still drive these GameObjects' active state on their own — see the class doc's
+            // KNOWN SEAM paragraph) would render inside a rect belonging to a pane that no longer shows the
+            // map. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
+            // nothing but a Vector2 write per frame object. Null-guarded because Hide is documented as safe to
+            // call unconditionally, and `frames` is null on any path that reaches Hide before Rewire.
+            if (frames != null)
+                for (int i = 0; i < frames.Count; i++) PaneChromeFrame.Reset(frames[i]);
             // The camera stays ENABLED, and only its viewport goes back to full-screen. Hiding a camera is
             // not "Camera.enabled = false" here, because this is the scene's ONLY camera: disabling it left
             // Unity with nothing rendering Display 1 at all — the literal "Display 1 — No cameras rendering"
@@ -463,6 +586,16 @@ namespace WorldGen.Workspace.Rendering
             // scene's only camera, which would otherwise leave a Show() with a correct rect and no render.
             mapCamera.enabled = true;
             mapCamera.rect = new Rect(xMin, yMin, Mathf.Max(0f, xMax - xMin), Mathf.Max(0f, yMax - yMin));
+
+            // The chrome rides the SAME corners the viewport was just derived from — one GetWorldCorners read,
+            // two consumers. Driving the frames from here rather than from Show() is what makes divider-drag
+            // and window-resize free: both move the pane without ever calling Show() again (see this method's
+            // caller ApplyViewportForRender for the full list of ways a one-shot conversion goes stale), and
+            // both already had to be handled for the camera. Anything that keeps the camera's rect honest now
+            // keeps the panels' rect honest by construction, so the two can no longer drift apart.
+            EnsureFrames();
+            if (frames != null)
+                for (int i = 0; i < frames.Count; i++) PaneChromeFrame.Apply(frames[i], corners);
         }
 
         void SetChromeActive(bool active)
