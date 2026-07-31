@@ -88,6 +88,22 @@ namespace WorldGen.Workspace.Rendering
                  "features. Same rule for anything else that positions itself from the camera.")]
         public GameObject[] mapChrome;
 
+        [Header("External refs — the five ex-screen surfaces (Task 10c)")]
+        // Overrides for ScreenSurfaceHosts.Rewire's discovery, the same override-or-discover pattern the two
+        // map fields above use, and left null for the same reason: WorkspaceBuilder is not in the scene until
+        // Task 11, so nothing can drag a reference in before then. Three fields, not five — Settlement,
+        // BuildingInterior and Dungeon are three SurfaceKinds served by the ONE DungeonEditorScreen object
+        // (see ScreenSurfaceHosts' class doc), so there is only one thing to pin for all three.
+        [Tooltip("Override for the PoiEditor surface's screen object (FindFirstObjectByType<PoiEditorScreen>).")]
+        public GameObject poiEditorScreenOverride;
+
+        [Tooltip("Override for the Settlement/BuildingInterior/Dungeon surfaces' shared screen object " +
+                 "(FindFirstObjectByType<DungeonEditorScreen>). One object serves all three kinds.")]
+        public GameObject interiorScreenOverride;
+
+        [Tooltip("Override for the BattleGrid surface's screen object (FindFirstObjectByType<BattleGridScreen>).")]
+        public GameObject battleGridScreenOverride;
+
         public WorkspaceController Controller { get; private set; }
 
         /// <summary>The two tab strips, exposed the same way Controller is — Task 8 reaches these to wire
@@ -184,11 +200,20 @@ namespace WorldGen.Workspace.Rendering
                 var recoveredNotesRoot = EnsureDocumentController();
                 var recoveredMapHost = GetComponent<MapSurfaceHost>();
                 recoveredMapHost?.Rewire(mapCamera, mapChrome, rootRowBackground: null);
+                // Same GetComponent-then-Rewire recovery as the map host on the line above, and needed for the
+                // same reason (ScreenSurfaceHosts' own RECOMPILE GAP paragraph): the component survives the
+                // reload, every reference inside it does not. Recovering it also has a visible consequence the
+                // map host's does not — a screen that was ON at the moment of the reload can only be turned
+                // off again by a host that still holds it.
+                var recoveredScreenHosts = GetComponent<ScreenSurfaceHosts>();
+                recoveredScreenHosts?.Rewire(poiEditorScreenOverride, interiorScreenOverride, battleGridScreenOverride);
 
                 var recoveredRegistry = new SurfaceRegistry();
                 if (recoveredNotesRoot != null)
                     recoveredRegistry.Register(new PageSurfaceHost(recoveredNotesRoot.DocumentController, recoveredNotesRoot.DocumentView));
                 if (recoveredMapHost != null) recoveredRegistry.Register(recoveredMapHost);
+                if (recoveredScreenHosts != null)
+                    foreach (var host in recoveredScreenHosts.Hosts) recoveredRegistry.Register(host);
                 if (Controller != null) Controller.SetSurfaceRegistry(recoveredRegistry);
 
                 return;
@@ -220,14 +245,19 @@ namespace WorldGen.Workspace.Rendering
             // EditorBrushPanel / PoiToolPanel / RegionsPanel (60). The 60 band is the binding constraint:
             // those panels are 216px wide at the top-left, i.e. entirely inside the navigator's 236px column.
             //
-            // Below, deliberately: ProjectMenuBar (100) and the three legacy full-screen screens —
-            // PoiEditorScreen (100), DungeonEditorScreen (101), BattleGridScreen (102). Those still own the
-            // ENTIRE window until Task 10 turns them into surfaces, and each is opened only by explicit
-            // navigation. Putting the shell above them would leave the POI/dungeon/battle editors permanently
-            // clipped by the navigator column and the tab strips with no way to reach what is underneath —
-            // strictly worse than the shell being hidden while one of those screens is deliberately open.
-            // TASK 10 REVISITS THIS: once those screens become surfaces hosted inside a pane, they stop being
-            // window-owning canvases and this ordering question changes shape entirely.
+            // Below, deliberately: ProjectMenuBar (100) and the three ex-screen canvases — PoiEditorScreen
+            // (100), DungeonEditorScreen (101), BattleGridScreen (102).
+            //
+            // TASK 10c REVISITED THIS, as the previous revision of this comment said it would, and the answer
+            // is that all three STAY where they are — for a reason that is now the opposite of the original
+            // one. They are no longer window-owning: ScreenSurfaceHosts confines each to its pane with a
+            // PaneChromeFrame + RectMask2D, so the shell is never "hidden underneath" one of them any more.
+            // What keeps them above 70 now is that they are opaque uGUI canvases with NOTHING disabling the
+            // pane's own ContentArea background (unlike the camera, which needs
+            // MapSurfaceHost.SetBackgroundsEnabled to punch a hole) — drop them below 70 and that background
+            // would simply cover them. Their sorting above ProjectMenuBar (101/102) stopped mattering in the
+            // same change: the mask clips them to a ContentArea that already excludes the menu-bar strip,
+            // since RootRow is inset by MenuBarInset. See ScreenSurfaceHosts' class doc.
             //
             // Also below the shell's OWN popups, which already sit far higher and must stay there:
             // NavigatorView's context menu (1000) and QuickOpenPopup (4000), plus the modal band —
@@ -299,6 +329,12 @@ namespace WorldGen.Workspace.Rendering
             var registry = new SurfaceRegistry();
             if (notesRoot != null) registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
+            // Task 10c: the five ex-screens. Registered unconditionally — ScreenSurfaceHosts registers a host
+            // only for the kinds whose screen it actually found (AddSlot's null check), so a scene missing one
+            // of them yields fewer hosts rather than a host that silently does nothing.
+            foreach (var host in ScreenSurfaceHosts.Create(gameObject, poiEditorScreenOverride,
+                         interiorScreenOverride, battleGridScreenOverride).Hosts)
+                registry.Register(host);
             Controller.SetSurfaceRegistry(registry);
         }
 

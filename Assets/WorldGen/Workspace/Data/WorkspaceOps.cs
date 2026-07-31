@@ -364,6 +364,7 @@ namespace WorldGen.Workspace.Data
                 case "BuildingInterior":  kind = SurfaceKind.BuildingInterior; return true;
                 case "Dungeon":           kind = SurfaceKind.Dungeon;          return true;
                 case "BattleGrid":        kind = SurfaceKind.BattleGrid;       return true;
+                case "PoiEditor":         kind = SurfaceKind.PoiEditor;        return true;
             }
             kind = SurfaceKind.Page;
             return false;

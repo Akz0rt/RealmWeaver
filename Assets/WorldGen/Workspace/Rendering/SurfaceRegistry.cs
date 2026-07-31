@@ -42,10 +42,12 @@ namespace WorldGen.Workspace.Rendering
         string TitleFor(string id);
     }
 
-    /// <summary>Surface kind -> the one host object that shows/hides it. Task 9 registers Page and WorldMap;
-    /// Settlement/BuildingInterior/Dungeon/BattleGrid stay unregistered until Task 10 wraps their existing
-    /// screen objects — For() simply returns null for those today, and WorkspaceController.SyncSurfaces
-    /// treats "no host for this Kind" as "nothing to show", not an error.</summary>
+    /// <summary>Surface kind -> the one host object that shows/hides it. Task 9 registered Page and WorldMap;
+    /// Task 10c adds the remaining five (PoiEditor/Settlement/BuildingInterior/Dungeon/BattleGrid) via
+    /// ScreenSurfaceHosts below, so For() now returns a host for every SurfaceKind in a fully-built scene.
+    /// It still returns null for a Kind whose backing screen was not found (a bare/partial scene), and
+    /// WorkspaceController.SyncSurfaces still treats "no host for this Kind" as "nothing to show", not an
+    /// error.</summary>
     public class SurfaceRegistry
     {
         readonly Dictionary<SurfaceKind, ISurfaceHost> hosts = new Dictionary<SurfaceKind, ISurfaceHost>();
@@ -635,5 +637,301 @@ namespace WorldGen.Workspace.Rendering
         }
 
         public string TitleFor(string id) => WorkspaceOps.DefaultWorldMapTitle;
+    }
+
+    /// <summary>Hosts the five surfaces that used to be full-screen SCREENS: PoiEditor, Settlement,
+    /// BuildingInterior, Dungeon and BattleGrid (Task 10c Step 3). Each wraps the screen GameObject it
+    /// already had — PoiEditorScreen, DungeonEditorScreen, BattleGridScreen — exactly as they are; their
+    /// insides are Р5's to redesign, this only decides WHERE they draw and WHEN they are on.
+    ///
+    /// ONE MonoBehaviour FOR ALL THREE SCREENS, not one per screen, and this is the load-bearing shape:
+    /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
+    /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
+    /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:333-348), so three
+    /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
+    /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
+    /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
+    /// EVERY sync. A shared SLOT with an explicit owner (see Slot.Owner) is what makes Hide(kind) a no-op for
+    /// a kind that does not currently own the screen, so the three cannot fight over it.
+    ///
+    /// A MonoBehaviour for the same reason MapSurfaceHost is one: these are window-anchored root canvases at
+    /// sortingOrder 100-102, so confining them to a pane means driving PaneChromeFrame from the pane's LIVE
+    /// on-screen corners every frame (divider drag and window resize both move a pane without any workspace
+    /// event — see MapSurfaceHost.ApplyViewportForRender's own doc for the full list). A host that skipped
+    /// PaneChromeFrame would reproduce, for all five surfaces at once, exactly the clipping the user reported
+    /// for the map («элементы вкладки "Карта мира" не подстраиваются под новые габариты вкладки»).
+    ///
+    /// NO SetBackgroundsEnabled COUNTERPART, unlike MapSurfaceHost, and deliberately: that method exists
+    /// because a CAMERA composites UNDER every ScreenSpaceOverlay canvas, so the pane's own opaque Images had
+    /// to be switched off to reveal it. These five are themselves ScreenSpaceOverlay canvases sorting at
+    /// 100-102, i.e. ABOVE the shell's 70, so they already paint over the pane's background with nothing to
+    /// disable. Leaving those backgrounds ON is also what keeps the pane opaque in the strip the RectMask2D
+    /// cuts away.
+    ///
+    /// SORTING LEFT ALONE, answering the question WorkspaceBuilder.cs's canvas-order comment parked for this
+    /// task ("Task 10 revisits this"). They must stay ABOVE the shell's 70 or the pane's own ContentArea
+    /// background would cover them; DungeonEditorScreen (101) and BattleGridScreen (102) also sort above
+    /// ProjectMenuBar (100), which no longer matters now that the frame's RectMask2D clips them to the pane's
+    /// ContentArea — a rect that already excludes the menu-bar strip, since RootRow is inset by
+    /// WorkspaceBuilder.MenuBarInset. Re-numbering them would be a change with no visible effect and a real
+    /// chance of regressing the un-hosted (Task 10c-to-11 transitional) path.
+    ///
+    /// SINGLE INSTANCE PER SCREEN, accepted, same limitation PageSurfaceHost's own doc records: if both panes
+    /// show interior tabs at once, the LAST Show() wins the one real screen, which SyncSurfaces' "focused
+    /// pane shown last" rule makes be the pane the user is looking at.
+    ///
+    /// RECOMPILE GAP: every field here is plain and non-[SerializeField], so a Play-mode domain reload wipes
+    /// all of them while the screen GameObjects, their canvases and their __PaneFrames survive as live
+    /// objects — this arc's recurring defect family, now on its seventh sighting (see MapSurfaceHost's own
+    /// RECOMPILE GAP paragraph for the previous six). Rewire() re-runs discovery against THIS existing
+    /// component and is called from WorkspaceBuilder.Awake's recompile-guard branch, exactly as
+    /// MapSurfaceHost.Rewire is. Slot.HasOwner comes back FALSE after such a reload, which is why Hide()
+    /// treats "nobody owns this screen" as "nobody wants it" and deactivates — otherwise a screen that was
+    /// visible at the moment of the reload could never be hidden again for the rest of the session, the same
+    /// unrecoverable-visible-surface trap DocumentPageView hit (PageSurfaceHost's doc, round 3).</summary>
+    public class ScreenSurfaceHosts : MonoBehaviour
+    {
+        /// <summary>One legacy screen GameObject plus everything needed to confine and retire it. Its Frames
+        /// are the __PaneFrames of the canvases UNDER Screen — plural because a screen may build more than one
+        /// root canvas, and lazily because DungeonEditorScreen/BattleGridScreen only build theirs on the first
+        /// frame they are ACTIVE (`void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }` —
+        /// DungeonEditorScreen.cs:104, BattleGridScreen.cs:69), which for a screen the switcher has already
+        /// deactivated is never. Same lazy-resolution reason MapSurfaceHost.EnsureFrames documents for the
+        /// docked tool panels.</summary>
+        class Slot
+        {
+            public GameObject Screen;
+            public List<GameObject> PendingFrameRoots = new List<GameObject>();
+            public List<RectTransform> Frames = new List<RectTransform>();
+            public RectTransform ShownIn;
+            public bool Visible;
+
+            /// <summary>Which SurfaceKind currently has this screen bound to it, and whether anyone does at
+            /// all. The three interior kinds share one Slot, so Hide(kind) must only retire the screen when
+            /// the RETIRING kind is the one that owns it — see the class doc's SyncSurfaces show-then-hide
+            /// argument for what breaks otherwise.</summary>
+            public SurfaceKind Owner;
+            public bool HasOwner;
+        }
+
+        List<Slot> slots = new List<Slot>();
+        Dictionary<SurfaceKind, Slot> byKind = new Dictionary<SurfaceKind, Slot>();
+
+        /// <summary>Scratch buffer for GetComponentsInChildren inside EnsureFrames — reused rather than
+        /// re-allocated, since EnsureFrames runs once per rendered frame for as long as any screen is still
+        /// unresolved. Same non-readonly/re-assigned-in-Rewire rule as the two collections above.</summary>
+        List<Canvas> canvasScratch = new List<Canvas>();
+
+        public static ScreenSurfaceHosts Create(GameObject owner, GameObject poiEditorOverride,
+            GameObject interiorOverride, GameObject battleGridOverride)
+        {
+            var hosts = owner.AddComponent<ScreenSurfaceHosts>();
+            hosts.Rewire(poiEditorOverride, interiorOverride, battleGridOverride);
+            return hosts;
+        }
+
+        /// <summary>Re-runs Create's discovery/assignment against THIS existing component — the "re-point the
+        /// references, don't rebuild" half of WorkspaceBuilder.Awake's recompile-guard branch, identical in
+        /// role to MapSurfaceHost.Rewire (see this class's RECOMPILE GAP paragraph).
+        ///
+        /// FindObjectsInactive.Include is not optional here, unlike in MapSurfaceHost.Rewire's own discovery:
+        /// the map chrome it looks for is active whenever a map exists, but these three screens are
+        /// DEACTIVATED almost all of the time (only the one whose surface is showing is on), so the default
+        /// active-only overload would find nothing on any call after the first — including, fatally, the
+        /// post-reload one, which would leave whichever screen was visible at the reload permanently on with
+        /// no host holding a reference to turn it off.
+        ///
+        /// Fresh collections rather than .Clear(): after a reload all three fields are null, so there is
+        /// nothing to clear, and on the ordinary path a fresh collection is identical to a cleared one — one
+        /// line that is correct on both paths with no branch to get wrong (the same argument
+        /// MapSurfaceHost.Rewire makes for its own lists). The __PaneFrame GameObjects survive the reload and
+        /// PaneChromeFrame.Ensure is idempotent, so EnsureFrames RE-FINDS each surviving frame by name instead
+        /// of building a second one; nothing is stranded, because the screen set cannot shrink between two
+        /// Rewire calls (both callers pass the same three override fields).</summary>
+        public void Rewire(GameObject poiEditorOverride, GameObject interiorOverride, GameObject battleGridOverride)
+        {
+            slots = new List<Slot>();
+            byKind = new Dictionary<SurfaceKind, Slot>();
+            canvasScratch = new List<Canvas>();
+
+            GameObject poiScreen = poiEditorOverride != null
+                ? poiEditorOverride
+                : FindFirstObjectByType<PoiEditorScreen>(FindObjectsInactive.Include)?.gameObject;
+            GameObject interiorScreen = interiorOverride != null
+                ? interiorOverride
+                : FindFirstObjectByType<DungeonEditorScreen>(FindObjectsInactive.Include)?.gameObject;
+            GameObject battleScreen = battleGridOverride != null
+                ? battleGridOverride
+                : FindFirstObjectByType<BattleGridScreen>(FindObjectsInactive.Include)?.gameObject;
+
+            AddSlot(poiScreen, SurfaceKind.PoiEditor);
+            // THE three-kinds-one-GameObject case the class doc is about. Listed here rather than split into
+            // three AddSlot calls precisely so the sharing is visible at the one place it is decided.
+            AddSlot(interiorScreen, SurfaceKind.Settlement, SurfaceKind.BuildingInterior, SurfaceKind.Dungeon);
+            AddSlot(battleScreen, SurfaceKind.BattleGrid);
+        }
+
+        void AddSlot(GameObject screen, params SurfaceKind[] kinds)
+        {
+            // A missing screen registers NO host for its kinds, rather than a host with a null screen: that is
+            // what makes SurfaceRegistry.For return null and SyncSurfaces treat the kind as "nothing to show"
+            // (its own documented contract), instead of a live host silently doing nothing on every call.
+            if (screen == null) return;
+
+            var slot = new Slot { Screen = screen };
+            slot.PendingFrameRoots.Add(screen);
+            slots.Add(slot);
+            foreach (var kind in kinds) byKind[kind] = slot;
+        }
+
+        /// <summary>One ISurfaceHost per Kind this component actually resolved a screen for — handed straight
+        /// to SurfaceRegistry.Register by WorkspaceBuilder. Built fresh on each read rather than cached,
+        /// because it is read exactly twice per session (first build, post-reload recovery) and a cache would
+        /// be one more plain field to go stale.</summary>
+        public IEnumerable<ISurfaceHost> Hosts
+        {
+            get
+            {
+                foreach (var kv in byKind) yield return new ScreenSurfaceHost(kv.Key, this);
+            }
+        }
+
+        public void Show(SurfaceKind kind, RectTransform paneContent)
+        {
+            if (paneContent == null) return;
+            if (!byKind.TryGetValue(kind, out Slot slot)) return;
+
+            slot.Owner = kind;
+            slot.HasOwner = true;
+            slot.ShownIn = paneContent;
+            slot.Visible = true;
+            if (slot.Screen != null) slot.Screen.SetActive(true);
+
+            Canvas.willRenderCanvases -= ApplyFramesForRender;
+            Canvas.willRenderCanvases += ApplyFramesForRender;
+
+            // Same first-frame belt MapSurfaceHost.Show takes, and for the same reason: Show can run from
+            // WorkspaceController.SetSurfaceRegistry -> WorkspaceBuilder.Awake, i.e. before uGUI has ever laid
+            // this hierarchy out, so paneContent's world corners would otherwise be meaningless for one frame.
+            // It matters MORE here than for the camera: SetActive(true) runs the screen's own Awake ->
+            // EnsureBuilt synchronously, so the canvas being framed was created microseconds ago and has never
+            // been laid out at all.
+            Canvas.ForceUpdateCanvases();
+            ApplyFrames();
+        }
+
+        public void Hide(SurfaceKind kind)
+        {
+            if (!byKind.TryGetValue(kind, out Slot slot)) return;
+            // Another kind is currently driving this screen — leave it alone. The whole reason this class is
+            // one component with owned slots; see the class doc.
+            if (slot.HasOwner && slot.Owner != kind) return;
+
+            slot.HasOwner = false;
+            slot.Visible = false;
+            slot.ShownIn = null;
+            if (slot.Screen != null) slot.Screen.SetActive(false);
+            // Hand the whole canvas back (minus the menu-bar strip) so a screen re-shown OUTSIDE the workspace
+            // is not stuck inside a pane rect it no longer occupies — the same stale-clamp argument
+            // MapSurfaceHost.Hide makes, and the reason PaneChromeFrame.Reset does not simply zero the
+            // offsets. Cheap: Reset writes only on change.
+            for (int i = 0; i < slot.Frames.Count; i++) PaneChromeFrame.Reset(slot.Frames[i]);
+
+            // Unsubscribe only once NOTHING is visible any more — the handler is shared by all slots, and a
+            // per-slot unsubscribe would silently stop driving a slot that is still shown.
+            bool anyVisible = false;
+            for (int i = 0; i < slots.Count; i++) if (slots[i].Visible) { anyVisible = true; break; }
+            if (!anyVisible) Canvas.willRenderCanvases -= ApplyFramesForRender;
+        }
+
+        /// <summary>Same static-event cleanup MapSurfaceHost.OnDestroy does, and for the same reason: a static
+        /// delegate still pointing at a destroyed Unity object throws on its next dispatch.</summary>
+        void OnDestroy() => Canvas.willRenderCanvases -= ApplyFramesForRender;
+
+        void ApplyFramesForRender() => ApplyFrames();
+
+        void ApplyFrames()
+        {
+            var corners = new Vector3[4];
+            for (int i = 0; i < slots.Count; i++)
+            {
+                var slot = slots[i];
+                if (!slot.Visible || slot.ShownIn == null) continue;
+
+                EnsureFrames(slot);
+                slot.ShownIn.GetWorldCorners(corners);   // ScreenSpaceOverlay: world position IS screen pixel.
+                for (int f = 0; f < slot.Frames.Count; f++) PaneChromeFrame.Apply(slot.Frames[f], corners);
+            }
+        }
+
+        /// <summary>Turns whatever of this slot's canvases have become resolvable into PaneChromeFrames.
+        /// Lazy and retried every frame rather than resolved once in Rewire, for the reason Slot's own doc
+        /// gives: these screens build their canvas inside their own Awake, gated on being ACTIVE, so before
+        /// the first Show() there is nothing to frame — and Show() itself activates the screen, which runs
+        /// that Awake synchronously, so the very first ApplyFrames after a Show is what finds it.
+        ///
+        /// `isRootCanvas` rather than "the first Canvas found", the same filter (and the same trap) as
+        /// MapSurfaceHost.EnsureFrames: a nested overrideSorting canvas is already inside the frame via its
+        /// parent, and framing it again would inset it twice.</summary>
+        void EnsureFrames(Slot slot)
+        {
+            for (int i = slot.Frames.Count - 1; i >= 0; i--)
+                if (slot.Frames[i] == null) slot.Frames.RemoveAt(i);
+
+            // Downward so RemoveAt does not skip the next entry.
+            for (int i = slot.PendingFrameRoots.Count - 1; i >= 0; i--)
+            {
+                var root = slot.PendingFrameRoots[i];
+                if (root == null) { slot.PendingFrameRoots.RemoveAt(i); continue; }
+                if (!root.activeInHierarchy) continue;
+
+                root.GetComponentsInChildren(true, canvasScratch);
+                bool found = false;
+                foreach (var canvas in canvasScratch)
+                {
+                    if (canvas == null || !canvas.isRootCanvas) continue;
+                    var frame = PaneChromeFrame.Ensure(canvas.transform);
+                    if (frame == null) continue;
+                    found = true;
+                    // Contains-before-Add: Ensure is idempotent, so re-reaching an already-framed canvas must
+                    // be a no-op rather than a duplicate entry Apply/Reset would then write twice. n is 1-2.
+                    if (!slot.Frames.Contains(frame)) slot.Frames.Add(frame);
+                }
+                if (found) slot.PendingFrameRoots.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>The per-Kind ISurfaceHost adapter over ScreenSurfaceHosts — a plain object, not a
+    /// MonoBehaviour, because it holds no state of its own: every Show/Hide is forwarded to the one component
+    /// that owns the screens, tagged with the Kind that is asking. Five of these exist (one per Kind), three
+    /// of them pointing at the SAME slot; see ScreenSurfaceHosts' class doc for why that sharing has to be
+    /// resolved inside the component rather than by the adapters.</summary>
+    public class ScreenSurfaceHost : ISurfaceHost
+    {
+        readonly SurfaceKind kind;
+        readonly ScreenSurfaceHosts owner;
+
+        public ScreenSurfaceHost(SurfaceKind kind, ScreenSurfaceHosts owner)
+        {
+            this.kind = kind;
+            this.owner = owner;
+        }
+
+        public SurfaceKind Kind => kind;
+
+        public void Show(RectTransform paneContent, string id) => owner?.Show(kind, paneContent);
+
+        public void Hide() => owner?.Hide(kind);
+
+        /// <summary>Empty by design, not by omission. A tab of one of these kinds gets its title from the
+        /// opener, which is the only place that has it: MapScreenController.Open* passes the POI's/room's own
+        /// name (see OpenDungeonEditor/OpenBuildingInterior), and there is no cheap re-lookup from here — this
+        /// object holds no PoiManager or DungeonManager, and giving it one would add exactly the kind of
+        /// live-but-stale reference this arc's recompile gap keeps producing. ISurfaceHost.TitleFor is not
+        /// wired to any call site yet (its own doc says so); the day a title-refresh path exists, the right
+        /// fix is to hand the resolver in at registration, not to discover managers here.</summary>
+        public string TitleFor(string id) => "";
     }
 }

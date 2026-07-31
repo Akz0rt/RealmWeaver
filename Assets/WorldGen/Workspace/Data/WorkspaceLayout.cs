@@ -3,8 +3,24 @@ using System.Collections.Generic;
 namespace WorldGen.Workspace.Data
 {
     /// <summary>What kind of surface a tab shows. WorldMap has no id — there is only one world map, so
-    /// SurfaceRef.Id is always empty for it.</summary>
-    public enum SurfaceKind { Page = 0, WorldMap = 1, Settlement = 2, BuildingInterior = 3, Dungeon = 4, BattleGrid = 5 }
+    /// SurfaceRef.Id is always empty for it.
+    ///
+    /// PoiEditor (Task 10c) is NOT in the Р1 spec's surface TABLE, and is added deliberately rather than by
+    /// oversight — the spec's own screen-layer section names it («`MapEditor`, `PoiEditor`, `Dungeon` and
+    /// `BattleGrid` stop being screens and become surfaces a tab hosts»), and without it Р1 would ship with
+    /// settlements and dungeons UNREACHABLE: PoiEditorScreen's «КАРТА ЛОКАЦИИ» row (PoiEditorScreen.cs:744 ->
+    /// OnOpenDungeonRequested, assigned at MapScreenController.cs:76) is the only path into the interior
+    /// editor in the whole project, and the spec explicitly defers the page-side replacement («showing the
+    /// settlement, «Открыть город», the inspector link — stays in Р3»). So the POI editor keeps existing as a
+    /// surface until Р5 redesigns it away; it is the tab the popup's «Редактировать» opens, while a
+    /// double-click on the map opens the place's PAGE (Task 10c Step 2a) — two different actions, two
+    /// different surfaces.
+    ///
+    /// APPENDED at the end, never renumbered: WorkspaceOps.Serialize writes the enum's NAME (not its ordinal)
+    /// and TryParseSurfaceKind reads it back by name, so the numbers are not themselves a wire format — but
+    /// Task 11's WorkspacePrefs stores those payloads in PlayerPrefs across versions, so keeping additions
+    /// purely additive means an older payload keeps parsing unchanged.</summary>
+    public enum SurfaceKind { Page = 0, WorldMap = 1, Settlement = 2, BuildingInterior = 3, Dungeon = 4, BattleGrid = 5, PoiEditor = 6 }
 
     /// <summary>What a tab points at. Two refs name the same surface when Kind AND Id match — see
     /// WorkspaceOps.SameSurface, the one place that comparison is made.</summary>
