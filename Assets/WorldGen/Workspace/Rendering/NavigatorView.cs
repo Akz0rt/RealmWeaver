@@ -638,8 +638,13 @@ namespace WorldGen.Workspace.Rendering
             var panelImg = panelGO.AddComponent<Image>();
             ThemeService.Tag(panelImg, ThemeRole.Panel2);
             var panelRect = panelGO.GetComponent<RectTransform>();
-            panelRect.anchorMin = Vector2.zero;
-            panelRect.anchorMax = Vector2.zero;
+            // Anchored to the canvas's CENTRE, not its bottom-left corner (Vector2.zero) — see the block
+            // below where `local` is computed for the full reasoning. Fixed here rather than switched to
+            // `panelRect.position = screenPos`, matching the established idiom (NotesToolbar.cs:195-196)
+            // instead of introducing a second one — and staying correct under a non-1 CanvasScaler.scaleFactor,
+            // which `.position` would not.
+            panelRect.anchorMin = new Vector2(0.5f, 0.5f);
+            panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.pivot = new Vector2(0f, 1f);   // top-left pivot: the menu hangs DOWN-right from the click.
 
             var vlg = panelGO.AddComponent<VerticalLayoutGroup>();
@@ -654,11 +659,45 @@ namespace WorldGen.Workspace.Rendering
             foreach (var item in items)
                 AddItem(font, panelGO.transform, item.Label, item.OnClick, item.Danger);
 
+            // Forces the deferred layout pass (ContentSizeFitter above, plus the Canvas's own first-frame
+            // sizing) to run NOW, before anything below reads a size off either rect — the same idiom
+            // MapSurfaceHost.Show uses before reading corners (SurfaceRegistry.cs) and
+            // GenerationProgressUI/GenerationScreenUI use before reading a content-fitted card's height.
+            // Without this, `canvasRect` can still be unsized on the very first menu of the session (Show()
+            // can run before uGUI has ever laid this hierarchy out), and `panelRect`'s ContentSizeFitter has
+            // not yet written a real height back — either one reading 0 would make the clamp below silently
+            // no-op, reproducing this exact defect one line later.
+            Canvas.ForceUpdateCanvases();
+
             // ScreenSpaceOverlay + camera=null is the established conversion for this canvas kind — see
             // NotesToolbar.cs and DungeonViewController.cs's own ScreenPointToLocalPointInRectangle calls.
+            // ScreenPointToLocalPointInRectangle returns coordinates relative to canvasRect's OWN pivot — a
+            // freshly-AddComponent<Canvas> RectTransform defaults to pivot (0.5, 0.5), i.e. CENTRE-relative,
+            // the exact fact DungeonViewController.cs:1703-1705 documents for its own projection ("...the
+            // projection's local space is CENTRE-relative. area is stretched with a 0.5 pivot, so they
+            // already coincide"). panelRect's anchor was set to that same (0.5, 0.5) point above, so `local`
+            // can be used as anchoredPosition directly.
             var canvasRect = canvasGO.GetComponent<RectTransform>();
             RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRect, screenPos, null, out var local);
-            panelRect.anchoredPosition = local;
+
+            // Clamp to the screen, in the same centre-relative space `local` is already in. Bounds are
+            // Screen.width/height (not canvasRect.rect — a fresh ScreenSpaceOverlay canvas is not guaranteed
+            // to have finished sizing to the screen on its own creation frame, forced rebuild above or not),
+            // the same bound the in-repo clamp precedent (PoiInfoPopup.Reposition) uses for exactly that
+            // reason. The menu hangs DOWN-RIGHT from the click (pivot (0,1) above), so `local` names its
+            // LEFT/TOP edge — the RIGHT/BOTTOM edges (MenuWidth and the fitted height further out) have to
+            // stay on screen too, not just the anchor point, or a click near an edge still pushes part of
+            // the menu off it. Height comes from LayoutUtility.GetPreferredHeight, not panelRect.rect.height
+            // or .sizeDelta.y, for the same "measure the real post-fitter value" reason
+            // GenerationProgressUI.ApplyCardHeight (GenerationProgressUI.cs:152-158) reads its own card the
+            // same way instead of trusting a size that may not have been written back yet.
+            float menuHeight = LayoutUtility.GetPreferredHeight(panelRect);
+            float halfScreenW = Screen.width * 0.5f;
+            float halfScreenH = Screen.height * 0.5f;
+            const float ScreenMargin = 4f;
+            float x = Mathf.Clamp(local.x, -halfScreenW + ScreenMargin, halfScreenW - MenuWidth - ScreenMargin);
+            float y = Mathf.Clamp(local.y, -halfScreenH + menuHeight + ScreenMargin, halfScreenH - ScreenMargin);
+            panelRect.anchoredPosition = new Vector2(x, y);
         }
 
         static void AddItem(Font font, Transform parent, string label, Action onClick, bool danger = false)
