@@ -313,6 +313,13 @@ namespace WorldGen.Workspace.Rendering
             // Fresh instances, not .Clear(): after a domain reload all three fields are null (see their own
             // doc), so there is nothing to clear — and on the ordinary path a fresh list is identical to a
             // cleared one, which keeps this single line correct on BOTH paths with no branch to get wrong.
+            //
+            // Dropping the old `frames` without Reset()ing its entries first is safe ONLY because the root
+            // set cannot SHRINK between two Rewire calls: the only two callers are Create (once per
+            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:165), and both pass
+            // the same `mapChrome` field, so discovery yields the same set both times. A future caller that
+            // narrowed the set would strand a __PaneFrame at its last-applied inset with nothing left
+            // holding a reference to reset it — Reset the outgoing frames here if that ever becomes possible.
             pendingFrameRoots = new List<GameObject>();
             frames = new List<RectTransform>();
             canvasScratch = new List<Canvas>();
@@ -370,8 +377,13 @@ namespace WorldGen.Workspace.Rendering
                     if (canvas == null || !canvas.isRootCanvas) continue;
                     var frame = PaneChromeFrame.Ensure(canvas.transform);
                     if (frame == null) continue;
-                    frames.Add(frame);
                     found = true;
+                    // Contains-before-Add, not a bare Add: `frames` must hold each frame exactly once, and
+                    // Ensure is idempotent by design, so re-reaching an already-framed canvas (a repeat
+                    // Rewire, or a scratch buffer that turned out not to be cleared for us) has to be a
+                    // no-op rather than a duplicate entry that Apply/Reset would then write twice. n <= 7,
+                    // so the linear scan is cheaper than the HashSet it would otherwise take.
+                    if (!frames.Contains(frame)) frames.Add(frame);
                 }
                 // Only retire the root once it has actually produced a frame — an active GameObject whose
                 // Awake has not run yet reports zero canvases and must be retried next frame.
