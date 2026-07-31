@@ -9,7 +9,7 @@ namespace WorldGen.Workspace.Rendering
     /// Owns the in-memory WorkspaceLayout and is the ONLY place that mutates it. Every structural
     /// change (open/close/activate/focus) routes through WorkspaceOps — this class never touches
     /// Tabs lists, or PaneState.ActiveIndex, itself; WorkspaceOps.SetActiveTab owns that scalar the
-    /// same way CloseTab owns removal (see WorkspaceLayout.cs:27-28: "WorkspaceOps.
+    /// same way CloseTab owns removal (see WorkspaceLayout.cs:44-45: "WorkspaceOps.
     /// FixActiveIndexAfterRemoval is the one place that keeps this true" — SetActiveTab is the other
     /// place). SplitRatio is the one genuine exception: its own doc comment on WorkspaceLayout says
     /// "no op in this layer moves it", so it is set directly here — see SetSplitRatioLive below.
@@ -119,7 +119,7 @@ namespace WorldGen.Workspace.Rendering
         /// `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
         /// code path calling Awake() again without a reload in between — where Layout genuinely
         /// still holds what it held before. It does NOT protect the case it looks like it
-        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:111-146 documents why —
+        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:127-183 documents why —
         /// Layout is a plain auto-property, not a [SerializeField], so its backing field does
         /// NOT survive a script reload the way the GameObject/component hierarchy does. On that
         /// exact path, Layout IS null when this runs, the condition is true, and a fresh
