@@ -13,10 +13,13 @@ namespace WorldGen.Rendering
     /// <summary>
     /// Standalone screen-space panel for editing the currently selected POI: type, name,
     /// description, cell binding, custom icon path, and per-POI icon/label scale.
-    /// Anchored top-right, automatically positioned 20px below MapLegendUI's actual bottom
-    /// edge every frame (legend height changes as its rows change). Height auto-fits content
-    /// but is clamped to the remaining screen space below that position, scrolling if needed.
+    /// Anchored to the top-right corner of its HOST — the pane frame PaneChromeFrame inserts when the
+    /// workspace shell hosts this canvas, and the canvas itself when it does not. Height auto-fits
+    /// content but is clamped to the host's remaining height below the toolbar, scrolling if needed.
     /// Shows itself when a POI is selected via PoiManager.OnSelectionChanged, hides on deselect.
+    /// legendUI/gapBelowLegend below are INERT: this panel docked under MapLegendUI until the legend
+    /// moved to the bottom-left in Screen A, and both survive only because they are serialized into
+    /// SampleScene, which no task before 11 may edit. Nothing reads either one.
     /// </summary>
     public class PoiEditPanel : MonoBehaviour
     {
