@@ -669,7 +669,19 @@ namespace WorldGen.Workspace.Rendering
             vlg.spacing = 2f;
             vlg.childControlWidth = true;
             vlg.childForceExpandWidth = true;
-            vlg.childControlHeight = false;
+            // TRUE, not false: this is the group that must APPLY each item's own preferredHeight (ItemHeight,
+            // set in AddItem below) to its actual rect.sizeDelta. With childControlHeight=false, uGUI's
+            // layout pass calls the position-only SetChildAlongAxisWithScale overload — it STACKS children
+            // using preferredHeight for spacing math, but never WRITES that height into the child's own rect,
+            // so every item would render at whatever height its freshly-created RectTransform already had
+            // (Unity's own RectTransform default, not 0 and not ItemHeight either) while still being
+            // positioned as if it were ItemHeight tall. Exactly the defect QuickOpenPopup.cs shipped once
+            // already in this same arc (commit b187ceb, "quick-open rows need childControlHeight=true, not
+            // false") and ProjectMenuBar.cs's «Файл»/«Вид» dropdown (ProjectMenuBar.cs:353-354) avoids by
+            // using this same true/false pair for the identical shape: control height, but don't
+            // force-expand it past the child's own preferredHeight.
+            vlg.childControlHeight = true;
+            vlg.childForceExpandHeight = false;
             panelGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             panelRect.sizeDelta = new Vector2(MenuWidth, 0f);
 
