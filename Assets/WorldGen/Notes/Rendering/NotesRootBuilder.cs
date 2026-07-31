@@ -35,22 +35,46 @@ namespace WorldGen.Notes.Rendering
 
         void Awake() => EnsureBuilt();
 
-        /// <summary>Idempotent (guarded by DocumentController, not transform.childCount — see below) and
-        /// safe to call from an outside caller (WorkspaceBuilder.Awake) even if THIS component's own
-        /// Awake() has not run yet: Unity does not guarantee Awake order across components on different
-        /// GameObjects, and WorkspaceBuilder needs DocumentController to exist before it builds the
+        /// <summary>Idempotent and safe to call from an outside caller (WorkspaceBuilder.Awake) even if THIS
+        /// component's own Awake() has not run yet: Unity does not guarantee Awake order across components on
+        /// different GameObjects, and WorkspaceBuilder needs DocumentController to exist before it builds the
         /// navigator/Ctrl+K, which read it once at construction time.
         ///
-        /// Guarded by `DocumentController != null` rather than `transform.childCount > 0` (the guard this
-        /// class used through Task 8): the old guard relied on this method always creating at least one
-        /// child GameObject, which stopped being true the moment the docked split (many children) shrank
-        /// to just a DocumentPageView + a bare holder (still one child, so it happened to still work, but
-        /// only by accident). Guarding on the model reference itself states the actual invariant — "do not
-        /// build a second NotesDocumentController" — directly, and keeps holding even if a future edit
-        /// changes what children this method creates.</summary>
+        /// CORRECTION (round 3 of Task 9's review): an EARLIER version of this method guarded on
+        /// `DocumentController != null` instead of `transform.childCount > 0`, reasoning that childCount was
+        /// only "accidentally" correct once the docked split shrank to a single child. That reasoning was
+        /// backwards and the change was a real bug: `DocumentController` is a plain auto-property with no
+        /// `[SerializeField]`, so its backing field does NOT survive a Play-mode script reload — the SAME
+        /// mechanic WorkspaceController.Awake's own comment documents for `Layout`. A reload would have made
+        /// this guard false again, so `EnsureBuilt` would run to completion a SECOND time and
+        /// AddComponent a SECOND `NotesDocumentController` onto this GameObject — precisely the "two
+        /// divergent NotesDocuments" data-losing bug this class's own doc warns against, and the exact
+        /// failure mode WorkspaceBuilder.EnsureDocumentController exists to prevent from the OTHER direction.
+        /// `transform.childCount > 0` is reload-SAFE (the GameObject/Transform hierarchy is native Unity
+        /// object state, not a plain C# field) and was never accidental — it is the SAME technique
+        /// WorkspaceBuilder.Awake's own recompile guard uses for exactly the same reason. This method always
+        /// creates exactly one child (`PageViewHolder`) when it runs to completion, so the check holds
+        /// permanently once true, reload or not.
+        ///
+        /// The early-return branch re-acquires DocumentController/DocumentView via GetComponent rather than
+        /// trusting them to already be set — those are ALSO plain auto-properties with no `[SerializeField]`,
+        /// so a reload wipes them to null too, even though the ACTUAL NotesDocumentController/DocumentPageView
+        /// COMPONENTS they used to point at persist as live, native state on this same GameObject (Unity
+        /// guarantees at most one of each on a GameObject unless AddComponent is called again, which this
+        /// branch deliberately never does). Without this, WorkspaceBuilder.Awake's own post-reload recovery
+        /// (which reads these two properties to reconstruct a PageSurfaceHost — see its own comment) would
+        /// silently register a host wrapping two null references: reachable, harmless to call into, but
+        /// unable to reparent or open anything, functionally identical to not being registered at all — the
+        /// SAME "non-null-but-inert reference is worse than leaving it null" trap WorkspaceBuilder.Awake's
+        /// comment already names for the tab strips/Navigator, closed here instead of merely documented.</summary>
         public void EnsureBuilt()
         {
-            if (DocumentController != null) return;
+            if (transform.childCount > 0)
+            {
+                DocumentController = GetComponent<NotesDocumentController>();
+                DocumentView = GetComponent<DocumentPageView>();
+                return;
+            }
 
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             EnsureEventSystemExists();

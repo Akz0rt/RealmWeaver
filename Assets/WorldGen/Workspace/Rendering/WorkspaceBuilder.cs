@@ -91,13 +91,39 @@ namespace WorldGen.Workspace.Rendering
             // and never actually be able to open anything. A non-null-but-inert reference is worse than
             // leaving these properties null — Task 8 assigning OnRequestQuickOpen onto a dead strip would
             // silently do nothing, which is harder to notice than a null reference. This is the same known
-            // gap WorkspaceController's own Awake() documents for Layout, extended to the tab strips, the
-            // navigator, and the quick-open popup: Task 11 owns fixing it, by rebuilding
-            // the whole shell (or at minimum re-running the affected Create methods) on restore, not by a
-            // partial reference recovery here.
+            // gap WorkspaceController's own Awake() documents for Layout, extended to the tab strips and the
+            // navigator: Task 11 owns fixing THOSE, by rebuilding the whole shell (or at minimum re-running
+            // the affected Create methods) on restore, not by a partial reference recovery here.
+            //
+            // Surfaces (Task 9, review round 3) are the ONE exception to "don't partially recover here", and
+            // deliberately so: WorkspaceController.surfaceRegistry is ALSO a plain, non-serialized field, so
+            // without re-wiring it here `SyncSurfaces` early-returns on every call for the rest of the
+            // session — not merely a stale rect (the already-accepted class of gap above), but the ENTIRE
+            // surface system going silently dead: no tab switch, close or promotion shows or hides anything,
+            // with nothing in a standalone build to tell the user why. This branch re-wires it WITHOUT
+            // rebuilding any UI — the distinction the rest of this comment draws for tab strips/Navigator
+            // still holds and is not being abandoned: MapSurfaceHost is RECOVERED via GetComponent (never
+            // Create, which would AddComponent a duplicate) and only re-runs its OWN discovery
+            // (MapSurfaceHost.Rewire — camera/chrome/toolbar, the same plain-field class of gap on THAT
+            // component); NotesRootBuilder.EnsureDocumentController/EnsureBuilt were already reload-safe
+            // (childCount-guarded — see NotesRootBuilder's own doc) and cost nothing extra to call again;
+            // and `new SurfaceRegistry()` / `new PageSurfaceHost(...)` are cheap plain C# objects, not
+            // GameObjects, so reconstructing them is not "stacking a duplicate hierarchy" the way a second
+            // BuildPaneContainer call would be — there is no hierarchy involved in either at all.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
+
+                var recoveredNotesRoot = EnsureDocumentController();
+                var recoveredMapHost = GetComponent<MapSurfaceHost>();
+                recoveredMapHost?.Rewire(mapCamera, mapChrome, rootRowBackground: null);
+
+                var recoveredRegistry = new SurfaceRegistry();
+                if (recoveredNotesRoot != null)
+                    recoveredRegistry.Register(new PageSurfaceHost(recoveredNotesRoot.DocumentController, recoveredNotesRoot.DocumentView));
+                if (recoveredMapHost != null) recoveredRegistry.Register(recoveredMapHost);
+                if (Controller != null) Controller.SetSurfaceRegistry(recoveredRegistry);
+
                 return;
             }
 

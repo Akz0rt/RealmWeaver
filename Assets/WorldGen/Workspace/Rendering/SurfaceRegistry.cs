@@ -77,7 +77,18 @@ namespace WorldGen.Workspace.Rendering
     /// itself a single field, so the two tabs could never show DIFFERENT content simultaneously even before
     /// Task 9 — and it is exactly what the brief's ISurfaceHost signature allows (one host, no pane
     /// parameter). WorkspaceController.SyncSurfaces's "focused pane shown last" rule at least makes the
-    /// outcome predictable rather than order-of-iteration arbitrary.</summary>
+    /// outcome predictable rather than order-of-iteration arbitrary.
+    ///
+    /// REMAINING RECOMPILE GAP, NOT CLOSED (still Task 11's, same shape as TabStripView/NavigatorView/
+    /// QuickOpenPopup — see WorkspaceBuilder.Awake's own comment): WorkspaceBuilder.Awake's guard branch
+    /// reconstructs a FRESH PageSurfaceHost after a reload from NotesRootBuilder's (now correctly recovered —
+    /// see NotesRootBuilder.EnsureBuilt's own comment) DocumentController/DocumentView, so THIS class and the
+    /// document MODEL it wraps are sound again. But DocumentPageView's OWN `root`/`content`/`viewportGO`/
+    /// `placeholderGO` fields are the SAME class of plain, non-serialized field this whole arc keeps finding
+    /// — a reload wipes them on DocumentPageView itself, pre-dating Task 9 entirely, and Show() here silently
+    /// no-ops its reparenting step against a null `pageView.Root` in that state (the `if (root != null)`
+    /// guard already there). `documentController?.OpenPage(id)` still runs regardless, so the underlying
+    /// model stays correct; only the VIEW may fail to reparent/redisplay until Task 11's broader fix.</summary>
     public class PageSurfaceHost : ISurfaceHost
     {
         readonly NotesDocumentController documentController;
@@ -156,27 +167,29 @@ namespace WorldGen.Workspace.Rendering
     /// AppScreen.MapEditor (and therefore the chrome's active state) out from under a Hide() this host
     /// already issued.
     ///
-    /// RECOMPILE GAP (same known class as WorkspaceController.Layout/WorkspaceBuilder's tab
-    /// strips/Navigator/QuickOpenPopup — Task 11 owns fixing all of it together): WorkspaceBuilder.Awake's
-    /// own recompile guard (`if (transform.childCount > 0) return;`) stops a Play-mode script reload from
-    /// AddComponent-ing a SECOND MapSurfaceHost, so this component itself survives correctly. But a domain
-    /// reload runs every field initializer again for every surviving MonoBehaviour, and `visible`/`shownIn`
-    /// are plain private fields with no `[SerializeField]` — Unity does NOT preserve those across the
-    /// reload, it resets them to `false`/`null`. The Camera component's own `enabled`/`rect`, by contrast,
-    /// ARE native Unity object state and DO survive. So the two sides desynchronise in the OPPOSITE
-    /// direction from "stale tracking data": the CAMERA correctly remembers whatever it was left at, while
-    /// this script forgets it ever showed anything — nothing re-registers with a freshly-reset
-    /// WorkspaceController.Layout afterward either, so the map can end up stuck at whatever `mapCamera.rect`/
-    /// `.enabled` happened to be at reload time, with no path back until Task 11's real fix (rebuilding/
-    /// re-syncing the whole shell on restore).
+    /// RECOMPILE GAP — PARTIALLY CLOSED, not left for Task 11: a domain reload (Play-mode script recompile)
+    /// resets every plain, non-`[SerializeField]` field on every surviving MonoBehaviour, including
+    /// `mapCamera`/`chrome`/`toolbar`/`rootRowBackground`/`shownIn`/`visible` here — while the Unity objects
+    /// they used to point at (the Camera, the chrome panels, RootRow's Image, whichever pane's ContentArea)
+    /// persist as native, live state completely unaware anything reset. WorkspaceBuilder.Awake's own
+    /// recompile guard (`if (transform.childCount > 0) return;`) always stopped a reload from
+    /// AddComponent-ing a SECOND MapSurfaceHost, so this component itself always survived — but through this
+    /// task's first two review rounds, the guard branch did nothing ELSE, so `WorkspaceController.
+    /// surfaceRegistry` (itself a plain field, wiped the same way) stayed null forever after a reload:
+    /// `SyncSurfaces` early-returns on a null registry, so NO tab switch/close/promotion showed or hid
+    /// anything for the rest of that session — a live-but-blind component, not merely one showing a stale
+    /// rect. The guard branch now calls this method (via `GetComponent<MapSurfaceHost>` — recovering the
+    /// EXISTING component, never `Create`-ing a second one) and re-registers a freshly-built SurfaceRegistry
+    /// with `WorkspaceController.SetSurfaceRegistry`, which is what makes `SyncSurfaces` (and therefore
+    /// `Show`/`Hide`, and therefore `rootRowBackground`'s own lazy re-acquisition in
+    /// ResolveRootRowBackground) reachable again — see WorkspaceBuilder.Awake's own comment for exactly which
+    /// half of "rebuild vs. re-wire" this is.
     ///
-    /// `rootRowBackground` is the SAME class of field (plain, non-serialized) but gets a NARROWER, LOCAL fix
-    /// rather than being left for Task 11: unlike `mapCamera`/`shownIn`, which are only ever WRITTEN by this
-    /// script and simply go stale together with it, `rootRowBackground`'s `Image.enabled` flag is WRITTEN
-    /// (by SetBackgroundsEnabled) and, if a reload happens while the map is shown, the flag is left at
-    /// `false` (disabled) at the exact moment the only reference able to ever set it back to `true` is wiped
-    /// — permanently stranding a disabled graphic with no owner, not merely a desynchronised one. See
-    /// ResolveRootRowBackground for the re-acquire-on-null fix.</summary>
+    /// STILL OPEN, still Task 11's (this is the part rebuilding/re-syncing the whole shell on restore
+    /// actually owns): between the reload and the NEXT layout-changing interaction, `mapCamera.rect`/
+    /// `.enabled` may sit at whatever they were left at reload time rather than what `Layout` (also reset —
+    /// see WorkspaceController.Awake's own comment) currently says should be shown — a one-interaction-long
+    /// staleness window, not a permanent dead system.</summary>
     public class MapSurfaceHost : MonoBehaviour, ISurfaceHost
     {
         Camera mapCamera;
@@ -198,15 +211,33 @@ namespace WorldGen.Workspace.Rendering
             Image rootRowBackground)
         {
             var host = owner.AddComponent<MapSurfaceHost>();
-            host.rootRowBackground = rootRowBackground;
+            host.Rewire(cameraOverride, chromeOverride, rootRowBackground);
+            return host;
+        }
 
-            host.mapCamera = cameraOverride != null
+        /// <summary>Re-runs Create's own discovery/assignment logic against THIS existing component, without
+        /// AddComponent-ing a new one — the "re-point the references, don't rebuild" half of
+        /// WorkspaceBuilder.Awake's recompile-guard branch. `mapCamera`/`chrome`/`toolbar` are plain private
+        /// fields with no `[SerializeField]`, exactly the class of field the RECOMPILE GAP paragraph
+        /// documents, so a Play-mode script reload wipes all three even though this MonoBehaviour ITSELF (and
+        /// the camera/panels it used to point at) survive as live, findable objects — calling this again is
+        /// what actually recovers them, rather than leaving a live-but-blind component behind that
+        /// `WorkspaceController.SyncSurfaces` would otherwise call `Show`/`Hide` on for no visible effect.
+        /// `rootRowBackground` is deliberately allowed to stay null here (the caller has no local reference to
+        /// pass post-reload — see WorkspaceBuilder.Awake's guard branch) — ResolveRootRowBackground's own
+        /// hierarchy-path fallback re-acquires it lazily the first time SetBackgroundsEnabled actually needs
+        /// it, so there is nothing extra to do for that one specifically.</summary>
+        public void Rewire(Camera cameraOverride, GameObject[] chromeOverride, Image rootRowBackground)
+        {
+            this.rootRowBackground = rootRowBackground;
+
+            mapCamera = cameraOverride != null
                 ? cameraOverride
                 : FindFirstObjectByType<WorldMapRenderer>()?.targetCamera;
 
             if (chromeOverride != null && chromeOverride.Length > 0)
             {
-                host.chrome = chromeOverride;
+                chrome = chromeOverride;
             }
             else
             {
@@ -215,11 +246,10 @@ namespace WorldGen.Workspace.Rendering
                 var legend = FindFirstObjectByType<MapLegendUI>();
                 if (poiPanel != null) discovered.Add(poiPanel.gameObject);
                 if (legend != null) discovered.Add(legend.gameObject);
-                host.chrome = discovered.ToArray();
+                chrome = discovered.ToArray();
             }
 
-            host.toolbar = FindFirstObjectByType<MapToolbarUI>();
-            return host;
+            toolbar = FindFirstObjectByType<MapToolbarUI>();
         }
 
         public SurfaceKind Kind => SurfaceKind.WorldMap;
