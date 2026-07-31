@@ -678,25 +678,80 @@ namespace WorldGen.Rendering
                                          + $"'{kept.Title}', expected 'Кузница'");
                             ok = false;
                         }
-                    }
-                    foreach (var r in floor.Rooms)
-                        if (r.Id != keptId && r.TypeId == 1 && !string.IsNullOrEmpty(r.Title))
+                        // THE POINT MUST BE RE-DERIVED TOO (review finding I3): AssignFootprint is reached only
+                        // from a split, so nothing else in this file ever reads X/Y after an Erase. The
+                        // surviving piece's representative cell is (2,0) — the row-major-first cell of
+                        // {(2,0),(3,0),(4,0)} — so a room stamped at its PRE-split point (CenterOf(0), still
+                        // (0,0)'s centre from the original 5-cell paint) would mean the DM's selection/inspector/
+                        // drag anchor sits on a cell this room no longer owns.
+                        if (kept.X != SettlementFootprint.CenterOf(2) || kept.Y != SettlementFootprint.CenterOf(0))
                         {
-                            Debug.LogError($"SelfTestEraseRefusal: the split-off room {r.Id} carries the title "
-                                         + $"'{r.Title}' — identity must never be DUPLICATED");
+                            Debug.LogError($"SelfTestEraseRefusal: the surviving original's point is "
+                                         + $"({kept.X},{kept.Y}), expected (CenterOf(2),CenterOf(0)) = "
+                                         + $"({SettlementFootprint.CenterOf(2)},{SettlementFootprint.CenterOf(0)}) "
+                                         + "— its representative cell is (2,0)");
                             ok = false;
                         }
+                    }
+                    Room splitOff = null;
+                    foreach (var r in floor.Rooms)
+                        if (r.Id != keptId && r.TypeId == 1)
+                        {
+                            splitOff = r;
+                            if (!string.IsNullOrEmpty(r.Title))
+                            {
+                                Debug.LogError($"SelfTestEraseRefusal: the split-off room {r.Id} carries the title "
+                                             + $"'{r.Title}' — identity must never be DUPLICATED");
+                                ok = false;
+                            }
+                        }
+                    // THE SPLIT-OFF ROOM'S POINT MUST BE DERIVED TOO, not left at Room's field-initializer
+                    // default (X = 0.5f, Y = 0.5f — the dead centre of the field). Its only cell is (0,0), so a
+                    // default point would be arbitrarily far from the one cell it actually owns.
+                    if (splitOff == null)
+                    {
+                        Debug.LogError("SelfTestEraseRefusal: no split-off room was found to check its point");
+                        ok = false;
+                    }
+                    else if (splitOff.X != SettlementFootprint.CenterOf(0) || splitOff.Y != SettlementFootprint.CenterOf(0))
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the split-off room's point is "
+                                     + $"({splitOff.X},{splitOff.Y}), expected CenterOf(0) on both axes = "
+                                     + $"({SettlementFootprint.CenterOf(0)},{SettlementFootprint.CenterOf(0)}) — "
+                                     + "its only cell is (0,0)");
+                        ok = false;
+                    }
                 }
             }
 
             // 7. A TIE BREAKS ROW-MAJOR. Three in a row split at the middle leaves two ONE-cell pieces, so the
-            //    size rule cannot decide and the tie-break is what is under test.
+            //    size rule cannot decide and the tie-break is what is under test. NO MUTANT ELSEWHERE TARGETS
+            //    THE TIE-BREAK LINE (review finding I2) — this case, with its precondition below, is the rule's
+            //    only guard.
             {
                 var floor = Floor(Cells((2, 1), (4, 1)));
                 var room = SettlementBrushOps.PaintBuilding(floor, Cells((2, 0), (3, 0), (4, 0)));
                 if (room == null) { Debug.LogError("SelfTestEraseRefusal: the tie fixture did not paint"); ok = false; }
                 else
                 {
+                    // PRECONDITION, not decoration (review finding I2): the tie only exists if the painted
+                    // footprint really IS the three intended cells. Read back through FootprintOf, which stays
+                    // unmutated inside a rebound copy of this test, and checked by CELL — not merely by count
+                    // — so a same-count wrong triple could not slip past it either. Without this, a fixture
+                    // that quietly degraded to a single cell {(2,0)} would still pass: Erase((3,0)) would find
+                    // nothing to remove, keptFp would still be {(2,0)}, and the assertion below would hold
+                    // while exercising no split and no tie-break at all.
+                    var fp7 = SettlementTileGrid.FootprintOf(room);
+                    bool has20 = false, has30 = false, has40 = false;
+                    foreach (var c in fp7) { if (c == (2, 0)) has20 = true; if (c == (3, 0)) has30 = true; if (c == (4, 0)) has40 = true; }
+                    if (fp7.Count != 3 || !has20 || !has30 || !has40)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the tie fixture painted {fp7.Count} cells "
+                                     + $"(has (2,0): {has20}, has (3,0): {has30}, has (4,0): {has40}), expected "
+                                     + "exactly {(2,0),(3,0),(4,0)} — without a genuine tie the tie-break is "
+                                     + "not being tested");
+                        ok = false;
+                    }
                     int keptId = room.Id;
                     SettlementBrushOps.Erase(floor, Cells((3, 0)));
                     var kept = floor.GetRoom(keptId);

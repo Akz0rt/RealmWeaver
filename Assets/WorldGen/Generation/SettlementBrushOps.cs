@@ -227,8 +227,12 @@ namespace WorldGen.Generation
             int removed = 0;
             // GESTURE ORDER, never sorted (DM decision, checkpoint 2). Task 8's live preview runs this one
             // cell at a time as the cursor moves; only if the batch honours the same order do the preview and
-            // the commit compute the same answer. A repeat of an already-erased cell is harmless — CanErase
-            // then finds nothing there and returns false.
+            // the commit compute the same answer. A repeat finds nothing left OF THE LAYER ALREADY REMOVED —
+            // not quite "harmless" outright (review finding Minor 4): a cell can be BOTH a building cell and a
+            // stored street cell (painting a building over a lane is legal), so a self-crossing stroke's first
+            // visit removes the building layer and its second visit can then remove the street layer too,
+            // erasing strictly more than a single visit of a non-doubled cell would. Safe either way — CanErase
+            // is re-asked on every visit — just not a no-op for that one shape.
             foreach (var cell in cells)
             {
                 if (!CanErase(floor, cell)) continue;
@@ -278,6 +282,13 @@ namespace WorldGen.Generation
                     // both halves is the outcome that decision exists to prevent. IsDummy IS copied — it is a
                     // visual class, not content. Portals, Grid and the building INTERIOR stay with `r` for
                     // free, because `r` keeps its id and the interior is keyed by InteriorData.OwnerRoomId.
+                    // SizeW/SizeH DELIBERATELY LEFT AT 0 (review finding Minor 2), unlike PaintBuilding's
+                    // RoomSizing.Default(1): for a settlement building room the FOOTPRINT (Cells), not this
+                    // legacy tile-size pair, drives the drawn fit and the fence — DungeonInspectorPanel's own
+                    // size stepper is hidden for exactly this room shape and says so ("a building's SizeW/
+                    // SizeH is provably dead there"). 0 is also the documented "unset" value (DungeonData.cs),
+                    // so a split-off room reads the same as any other footprint-only room, not as a
+                    // corrupted one.
                     var split = new Room { Id = floor.NextRoomId++, TypeId = 1, IsDummy = r.IsDummy };
                     AssignFootprint(split, comps[c]);
                     floor.Rooms.Add(split);

@@ -1704,9 +1704,11 @@ foreach ($mc in @('MutPreviewBuildingsIgnored', 'MutPreviewBuildingsNotInExtent'
 # out of the rebind pattern list, exactly as SelfTestBrushStrokes never names SettlementVolumeRendererPlacement.
 
 # MutEraseAllowsStranding: CanErase's street half always allows, so a lane that is a house's only access can
-# be erased anyway. SelfTestEraseRefusal case 1 ("was allowed") must fail — and case 5 also fires (removing
-# both cells of the two-cell-wide lane now succeeds), reported as a second symptom of the same cause, not a
-# separate rule.
+# be erased anyway. SelfTestEraseRefusal case 1 fires TWICE (both "was allowed" and the follow-up
+# Erase-removed-a-cell-CanErase-refuses check) — and cases 5 AND 8 also fire, twice each (case 5's two-cell-
+# wide lane loses both cells instead of one, on both the removed-count and the MissingAccess follow-up; case
+# 8's two-lane gesture stroke loses both lanes, in EITHER ordering, since nothing refuses the second cell any
+# more), reported as further symptoms of the same cause, not separate rules. 6 errors total (2+2+2).
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseAllowsStranding' `
   '            bool safe = SettlementStreetOps.MissingAccess(floor).Count == 0;' `
   '            bool safe = true;   // MUTANT: a lane can always be erased' `
@@ -1720,11 +1722,16 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseAllowsStranding' `
 # the UNMODIFIED floor, before the removal loop runs at all, and the loop's own guard reads `stale` instead of
 # ever calling CanErase again. Rewritten for Task 7 (the loop now reads straight from the caller's `cells`,
 # gesture order, never sorted into `ordered`) but the rule under test is unchanged. SelfTestEraseRefusal case
-# 5 must fail on the "removed N, expected exactly 1" claim: (5,4) and (6,4) are BOTH individually safe on the
-# intact floor (each still fronts the shared two-cell building via the other column), so `stale` holds both
-# and this mutant erases 2, not 1 — the exact gap between "each cell is safe alone" and "both together are
-# not" that the re-ask rule exists to close. Cases 1/2/4 do not distinguish stale from fresh (the floor never
-# changes between two safe/refused verdicts in any of them), so this must be the only case that fails.
+# 5 fails on the "removed N, expected exactly 1" claim AND on its MissingAccess follow-up: (5,4) and (6,4)
+# are BOTH individually safe on the intact floor (each still fronts the shared two-cell building via the
+# other column), so `stale` holds both and this mutant erases 2, not 1 — the exact gap between "each cell is
+# safe alone" and "both together are not" that the re-ask rule exists to close. Case 8 ALSO fails, in BOTH
+# orderings (review finding I1 — a prior version of this comment claimed case 5 was the only failure, before
+# case 8 existed): (5,4) and (6,4) are likewise both individually safe on the intact floor there, for the
+# identical reason, so `stale` holds both regardless of which one the gesture named first, and each run
+# over-removes. Cases 1/2/3/4/6/7 do not distinguish stale from fresh (the floor never changes between two
+# safe/refused verdicts in any of them, and splitting/the tie-break do not depend on when CanErase runs), so
+# case 5 (2 errors) and case 8 (2 errors, one per ordering) are the only ones that fail — 4 total, not 1.
 $mutEraseStaleFrom = "            foreach (var cell in cells)`n            {`n                if (!CanErase(floor, cell)) continue;"
 $mutEraseStaleTo   = "            var stale = new HashSet<(int i, int j)>();`n            foreach (var c in cells) if (CanErase(floor, c)) stale.Add(c);   // MUTANT: decided before any removal, against the floor as it stood when the stroke began`n            foreach (var cell in cells)`n            {`n                if (!stale.Contains(cell)) continue;"
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseStaleCheck' `
@@ -1749,20 +1756,25 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseNoRestore' `
 
 # MutEraseNoSplit: the disconnected remainder is written back as ONE room, so a building erased through the
 # middle becomes a single room whose footprint is two separate pieces — which DungeonValidator reports as an
-# Error and which draws as one building with a hole in it. SelfTestEraseRefusal's case 3 (room count) and
-# case 6 (the surviving original's cell count) must both fail.
+# Error and which draws as one building with a hole in it. 5 errors: SelfTestEraseRefusal case 3's room-count
+# claim (1); case 6's surviving-original cell count AND both of its point assertions (3 — the merged room's
+# point stays at its pre-erase representative (0,0) instead of moving to (2,0), and there is no split-off
+# room left for the "was one found" check to pass); case 7's tie fixture (1), since a merge instead of a
+# split leaves the tie's two would-be pieces as one room too, not the lone (2,0) the tie-break should produce.
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseNoSplit' `
   '                var comps = Components4(rest);' `
   '                var comps = new List<List<(int i, int j)>> { rest };   // MUTANT: never split' `
   'MutEraseNoSplit.cs'
 
 # MutEraseSplitKeepsSmallest: the identity follows the SMALLEST piece instead of the largest, so the DM's
-# building name, notes and interior end up on the offcut. Case 6 must fail on the surviving original's cell
-# count — NOT on its title: `Title` lives on `r`, and `r` survives the split either way (only which cells
-# land on it changes), so the title assertion cannot distinguish this mutant from correct code. It guards a
-# DIFFERENT regression instead — a split that copies identity onto the offcut too — via case 6's duplication
-# loop. Case 7 (the tie) cannot catch this mutant either — both pieces are size 1 there — which is why case
-# 6's fixture is deliberately lopsided.
+# building name, notes and interior end up on the offcut. 3 errors, all case 6: the surviving original's
+# cell count, its point (which lands on the offcut's (0,0) instead of the kept piece's (2,0)), and the
+# split-off room's point (which lands on (2,0) instead of its own (0,0)) — identity, and with it the point,
+# followed the wrong component. NOT on the title: `Title` lives on `r`, and `r` survives the split either way
+# (only which cells — and therefore which point — land on it changes), so the title assertion cannot
+# distinguish this mutant from correct code. It guards a DIFFERENT regression instead — a split that copies
+# identity onto the offcut too — via case 6's duplication loop. Case 7 (the tie) cannot catch this mutant
+# either — both pieces are size 1 there — which is why case 6's fixture is deliberately lopsided.
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitKeepsSmallest' `
   '                    if (comps[c].Count > comps[best].Count) { best = c; continue; }' `
   '                    if (comps[c].Count < comps[best].Count) { best = c; continue; }   // MUTANT: identity to the smallest' `
@@ -1776,8 +1788,37 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseRowMajorOrder' `
   "            var sorted = new List<(int i, int j)>(cells); sorted.Sort(RowMajor);   // MUTANT: row-major again`n            foreach (var cell in sorted)" `
   'MutEraseRowMajorOrder.cs'
 
+# MutEraseTieBreakFlipped (review finding I2): the tie-break comparison flipped, so on a size TIE the split
+# keeps the row-major-LAST piece instead of the row-major-FIRST one. The size comparison above this line is
+# untouched, so a genuine size difference (case 6, 1 vs 3 cells) still picks correctly either way — only a
+# TRUE tie (case 7, two 1-cell pieces) can tell this apart, which is why case 7 is this mutant's ONLY
+# possible killer; no other case exercises a tie. Traced both ways by hand (Components4's HashSet-driven
+# enumeration order is unspecified): whichever physical component ends up at comps[0], the flipped
+# comparison ends up keeping the piece at (4,0), never (2,0) — confirmed empirically by breaking the line,
+# running SelfTestEraseRefusal (exactly 1 error, case 7's "kept 1 cell(s) at (4, 0)"), and restoring it.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseTieBreakFlipped' `
+  '                                 SettlementFootprint.Representative(comps[best])) < 0) best = c;' `
+  '                                 SettlementFootprint.Representative(comps[best])) > 0) best = c;   // MUTANT: tie-break flipped' `
+  'MutEraseTieBreakFlipped.cs'
+
+# MutEraseSplitNoPoint (review finding I3): AssignFootprint's point re-derivation deleted, so `r.Cells`
+# still updates but `r.X`/`r.Y` are left at whatever they were BEFORE the split (the surviving original,
+# whose representative cell changes) or at Room's field-initializer default 0.5f/0.5f (a brand-new
+# split-off room, which AssignFootprint alone ever sets a point for). AssignFootprint is reached ONLY from
+# RemoveBuildingCell — PaintBuilding derives its point inline through a separate `room.X =`/`room.Y =` pair
+# at a different call site (`:131-132`), untouched by this locator. Case 6's point assertions (added for
+# this same finding) must both fail: the surviving original's point stays at (0,0)'s centre instead of
+# moving to (2,0)'s, and the split-off room's point is (0.5,0.5) instead of (0,0)'s centre — confirmed
+# empirically by deleting the two lines, running SelfTestEraseRefusal (exactly 2 errors, both case 6's new
+# point checks), and restoring them.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitNoPoint' `
+  "            r.X = SettlementFootprint.CenterOf(rep.i);`n            r.Y = SettlementFootprint.CenterOf(rep.j);" `
+  '            // MUTANT: the point is never re-derived' `
+  'MutEraseSplitNoPoint.cs'
+
 foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseStaleCheck', 'MutEraseNoRestore',
-                  'MutEraseNoSplit', 'MutEraseSplitKeepsSmallest', 'MutEraseRowMajorOrder')) {
+                  'MutEraseNoSplit', 'MutEraseSplitKeepsSmallest', 'MutEraseRowMajorOrder',
+                  'MutEraseTieBreakFlipped', 'MutEraseSplitNoPoint')) {
   New-SettlementRebind 'SelfTestEraseRefusal' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

@@ -189,6 +189,10 @@ namespace WorldGen.Generation
                     () => new WorldGen.MutantTests.MutEraseSplitKeepsSmallestSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseRowMajorOrder", "SettlementBrushOps.Erase sorts the stroke row-major again instead of honouring gesture order, desynchronising Task 8's live preview from the batch commit",
                     () => new WorldGen.MutantTests.MutEraseRowMajorOrderSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseTieBreakFlipped", "SettlementBrushOps.RemoveBuildingCell's tie-break flipped, so a size tie keeps the row-major-LAST piece instead of the row-major-FIRST one (review finding I2)",
+                    () => new WorldGen.MutantTests.MutEraseTieBreakFlippedSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseSplitNoPoint", "SettlementBrushOps.AssignFootprint's point re-derivation deleted, so a split-off room keeps Room's default X/Y (0.5,0.5) and the surviving original keeps its pre-split point (review finding I3)",
+                    () => new WorldGen.MutantTests.MutEraseSplitNoPointSelfTests().SelfTestEraseRefusal()),
 
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),
