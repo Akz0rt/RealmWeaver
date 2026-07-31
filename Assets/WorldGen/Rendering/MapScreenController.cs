@@ -184,6 +184,11 @@ namespace WorldGen.Rendering
             // problem for STORED tabs and its own answer, WorkspaceOps.PruneMissing; this is the live one.)
             CloseSurfaceTab(BattleGridSurface());
             CloseSurfaceTab(InteriorSurface(editingDungeon));
+            // parentTown is a SECOND open interior tab, not a duplicate of the line above: inside a building
+            // interior `editingDungeon` is the BUILDING and the town's own tab is still open behind it
+            // (OpenBuildingInterior leaves it there on purpose). Newly reachable now that Step 4 lets a DM
+            // generate a world from inside a building — town, building, «Файл» → «Создать новый мир…».
+            CloseSurfaceTab(InteriorSurface(parentTown));
             CloseSurfaceTab(PoiEditorSurface(editingPoi));
 
             editingPoi = null; // a fresh world drops any open POI editor
@@ -233,11 +238,18 @@ namespace WorldGen.Rendering
         /// <summary>Closes the POI editor's tab. What the user sees next is whatever tab the workspace makes
         /// active in its place (WorkspaceOps.FixActiveIndexAfterRemoval decides), NOT "the world map" as the
         /// pre-Task-10c version of this comment promised — the map is one tab among many now and may not even
-        /// be in the same pane.</summary>
+        /// be in the same pane.
+        ///
+        /// CLEARS ONLY WHAT IT CLOSED. CloseSurfaceTab runs a full SyncSurfaces, which activates the
+        /// neighbouring tab and (since Task 10c's rebind hook) re-binds this same screen to it — so with two
+        /// POI-editor tabs open, `editingPoi` is already the OTHER one by the time this line runs, and an
+        /// unconditional null would blank state that belongs to a tab still on screen. Same discipline in
+        /// CloseDungeonEditor and CloseBattleGrid below.</summary>
         public void ClosePoiEditor()
         {
-            CloseSurfaceTab(PoiEditorSurface(editingPoi));
-            editingPoi = null;
+            var closing = editingPoi;
+            CloseSurfaceTab(PoiEditorSurface(closing));
+            if (ReferenceEquals(editingPoi, closing)) editingPoi = null;
             RefreshScreenState();
         }
 
@@ -385,28 +397,41 @@ namespace WorldGen.Rendering
         /// InteriorSurface(editingDungeon) is what names it.</summary>
         public void CloseDungeonEditor()
         {
-            if (parentTown != null)
+            // Both captured BEFORE the close: CloseSurfaceTab runs a full SyncSurfaces, and Task 10c's rebind
+            // hook lets that re-point `editingDungeon`/`parentTown` at whatever tab becomes active — including,
+            // very commonly, the town's own tab, which sets parentTown to null. Reading the fields after the
+            // close would then take this method to the wrong place, or to null.
+            var closing = editingDungeon;
+            var town = parentTown;
+
+            if (town != null)
             {
-                CloseSurfaceTab(InteriorSurface(editingDungeon));
-                editingDungeon = parentTown;
+                CloseSurfaceTab(InteriorSurface(closing));
+                // The rebind may already have done this — activating the town's tab binds it. Guarded rather
+                // than repeated: DungeonEditorScreen.Bind rebuilds a settlement's whole ~40-node canvas and
+                // discards the DM's selection, so a redundant second one is visible, not just wasted.
+                if (!ReferenceEquals(editingDungeon, town))
+                {
+                    editingDungeon = town;
+                    // Recomputed, not carried over from the original OpenDungeonEditor bind — the DM may just
+                    // have opened a building interior for the FIRST time (OpenBuildingInterior generates and
+                    // persists it on demand), which grows the set between the town's original bind and this
+                    // return trip.
+                    if (dungeonEditorScreen != null)
+                        dungeonEditorScreen.Bind(town, roomsWithInterior: RoomsWithInteriorFor(town));
+                }
                 parentTown = null;
-                // Recomputed here, not carried over from the original OpenDungeonEditor bind — the DM may
-                // just have opened a building interior for the FIRST time (OpenBuildingInterior generates
-                // and persists it on demand), which grows the set between the town's original bind and this
-                // return trip.
-                if (dungeonEditorScreen != null)
-                    dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
-                // Re-Opened, not merely re-Bound: the town's tab still exists, so this focuses it. The title
-                // is only used if it somehow does not (the user closed it from the strip while a building
-                // interior was open) — in which case re-opening it is better than silently leaving the DM on
-                // whatever tab happened to be next.
-                OpenSurfaceTab(InteriorSurface(editingDungeon), InteriorTitle(editingDungeon));
+                // Re-Opened, not merely re-Bound: the town's tab normally still exists, so this focuses it.
+                // The title is only used if it does not (the DM closed it from the strip while a building
+                // interior was open) — re-opening it beats silently landing on whatever tab happened to be
+                // next.
+                OpenSurfaceTab(InteriorSurface(town), InteriorTitle(town));
                 RefreshScreenState();
                 return;
             }
 
-            CloseSurfaceTab(InteriorSurface(editingDungeon));
-            editingDungeon = null;
+            CloseSurfaceTab(InteriorSurface(closing));
+            if (ReferenceEquals(editingDungeon, closing)) editingDungeon = null;
             RefreshScreenState();
             // The POI editor's tab was never closed, so it is still bound to the same POI — but it was Bound
             // BEFORE this interior existed, so its «Карта локации» label would keep its pre-dungeon "Создать"
@@ -505,9 +530,21 @@ namespace WorldGen.Rendering
 
         public void CloseBattleGrid()
         {
-            CloseSurfaceTab(BattleGridSurface());   // derived from the two fields, so close BEFORE clearing
-            battleGridRoomId = 0;
-            battleGridFloorIndex = 0;
+            // BattleGridSurface is derived from these three, so they are read (and captured) before the close,
+            // and cleared afterwards only if the close did not already re-point them at a DIFFERENT battle
+            // grid — see ClosePoiEditor's doc for the general rule.
+            var closingInterior = editingDungeon;
+            int closingRoom = battleGridRoomId;
+            int closingFloor = battleGridFloorIndex;
+
+            CloseSurfaceTab(BattleGridSurface());
+
+            if (ReferenceEquals(editingDungeon, closingInterior)
+                && battleGridRoomId == closingRoom && battleGridFloorIndex == closingFloor)
+            {
+                battleGridRoomId = 0;
+                battleGridFloorIndex = 0;
+            }
             RefreshScreenState();
         }
 
@@ -566,6 +603,158 @@ namespace WorldGen.Rendering
                 Id = $"{interior.Id}#{battleGridFloorIndex}#{battleGridRoomId}",
             };
         }
+
+        // ── Re-binding a tab the user switched BACK to ──────────────────────────────────────────────
+        //
+        // THE DEFECT THIS EXISTS FOR. Every screen these five surfaces wrap holds ONE binding at a time
+        // (DungeonEditorScreen.current, BattleGridScreen's bound room, PoiEditorScreen.current), set by the
+        // Open* methods above. Clicking a TAB does not go through those: TabStripView -> WorkspaceController.
+        // SetActive -> SyncSurfaces -> ISurfaceHost.Show, and nothing on that path binds anything. So without
+        // this, the ordinary Ц2 flow breaks — open a town, drill into a building (both tabs now open), click
+        // the TOWN's tab: the screen comes back on still showing the BUILDING. Two POI-editor tabs, or two
+        // dungeons, do the same. PageSurfaceHost never had this problem because its Show ends in
+        // documentController.OpenPage(id), i.e. it re-binds from the id every call; this is the same idea for
+        // the five screens that have no such call of their own.
+        //
+        // WHY THE ID IS ENOUGH: every surface id here is a pure function of the data (see PoiEditorSurface /
+        // InteriorSurface / BattleGridSurface), so it can be reversed back to the object without any stored
+        // side table. That is the same property Task 11's WorkspacePrefs needs to restore tabs across a
+        // restart, so this reversal is not scaffolding — it is the half of the id contract that had no reader
+        // yet.
+        //
+        // EVERY BRANCH EARLY-OUTS WHEN ALREADY BOUND, and that is a requirement, not an optimisation:
+        // SyncSurfaces -> Show runs on EVERY layout change (a divider commit, a focus change, opening an
+        // unrelated tab), and DungeonEditorScreen.Bind rebuilds the whole node canvas — re-binding a
+        // settlement's ~40-node graph on every one of those would be a visible stutter, and it would also
+        // discard the DM's current selection and level tab each time.
+
+        /// <summary>Re-binds the screen behind `kind` to whatever `id` names, called from
+        /// ScreenSurfaceHosts.Show. Silently does nothing when the id cannot be resolved (a tab pointing at a
+        /// POI or interior that has since been deleted) — the screen then keeps its previous binding, which is
+        /// wrong but harmless, where a throw here would happen inside a Canvas callback.</summary>
+        public void RebindSurface(SurfaceKind kind, string id)
+        {
+            switch (kind)
+            {
+                case SurfaceKind.PoiEditor: RebindPoiEditor(id); break;
+                case SurfaceKind.Settlement:
+                case SurfaceKind.Dungeon:
+                case SurfaceKind.BuildingInterior: RebindInterior(kind, id); break;
+                case SurfaceKind.BattleGrid: RebindBattleGrid(id); break;
+            }
+        }
+
+        void RebindPoiEditor(string id)
+        {
+            if (editingPoi != null && editingPoi.Id == id) return;
+            var poi = Pois()?.GetPoiById(id);
+            if (poi == null || poiEditorScreen == null) return;
+            editingPoi = poi;
+            poiEditorScreen.Bind(poi);
+        }
+
+        void RebindInterior(SurfaceKind kind, string id)
+        {
+            var interior = ResolveInterior(kind, id);
+            if (interior == null || dungeonEditorScreen == null) return;
+            if (ReferenceEquals(editingDungeon, interior)) return;
+
+            // parentTown is re-derived rather than left alone, because it is what «← Город» reads: switching
+            // to a BUILDING's tab must make the back button go to THAT building's town, and switching to any
+            // top-level interior must clear it (the same stale-parent rule OpenDungeonEditor enforces for the
+            // map entry path). The town is the FIRST interior for the poiId — DungeonManager.GetByPoiId, the
+            // same lookup OpenBuildingInterior's own comment says cannot serve a BUILDING lookup and can
+            // therefore serve this one exactly.
+            parentTown = kind == SurfaceKind.BuildingInterior && dungeonManager != null
+                ? dungeonManager.GetByPoiId(interior.OwnerPoiId)
+                : null;
+            if (ReferenceEquals(parentTown, interior)) parentTown = null;   // a town is not its own parent
+
+            editingDungeon = interior;
+            if (kind == SurfaceKind.BuildingInterior)
+                dungeonEditorScreen.Bind(interior, BuildingHeaderFor(parentTown, interior.OwnerRoomId));
+            else
+                dungeonEditorScreen.Bind(interior, roomsWithInterior: RoomsWithInteriorFor(interior));
+        }
+
+        void RebindBattleGrid(string id)
+        {
+            // Parsed from the RIGHT: the interior part of this id may itself contain a '#' (a building
+            // interior is "poiId#roomId"), so the floor and room are the LAST two segments and everything
+            // before them is the interior id. Splitting from the left would mis-read every battle grid inside
+            // a building.
+            int lastSep = id != null ? id.LastIndexOf('#') : -1;
+            if (lastSep <= 0) return;
+            int prevSep = id.LastIndexOf('#', lastSep - 1);
+            if (prevSep <= 0) return;
+
+            if (!int.TryParse(id.Substring(lastSep + 1), out int roomId)) return;
+            if (!int.TryParse(id.Substring(prevSep + 1, lastSep - prevSep - 1), out int floorIndex)) return;
+            string interiorId = id.Substring(0, prevSep);
+
+            // The interior id's own shape says which kind it is: a building's carries a '#', a settlement's or
+            // dungeon's does not. Settlement and Dungeon resolve identically (GetByPoiId), so guessing between
+            // those two costs nothing — and a settlement can never own a battle grid anyway (OpenBattleGrid
+            // returns early for one).
+            var interior = ResolveInterior(
+                interiorId.IndexOf('#') >= 0 ? SurfaceKind.BuildingInterior : SurfaceKind.Dungeon, interiorId);
+            if (interior == null || battleGridScreen == null) return;
+            if (floorIndex < 0 || floorIndex >= interior.Floors.Count) return;
+            if (interior.Floors[floorIndex].GetRoom(roomId) == null) return;
+
+            if (ReferenceEquals(editingDungeon, interior)
+                && battleGridFloorIndex == floorIndex && battleGridRoomId == roomId) return;
+
+            // editingDungeon follows the battle grid's OWN interior, not whatever was open before: CloseBattleGrid
+            // derives this tab's SurfaceRef from editingDungeon + these two ints (see BattleGridSurface), so
+            // leaving it pointing elsewhere would make «Назад» fail to find the tab it is closing.
+            editingDungeon = interior;
+            battleGridFloorIndex = floorIndex;
+            battleGridRoomId = roomId;
+            battleGridScreen.Bind(interior, floorIndex, roomId);
+        }
+
+        /// <summary>Reverses InteriorSurface: an id back to the InteriorData it names. Settlement and Dungeon
+        /// are both "the first interior for this poiId" (DungeonManager.GetByPoiId); BuildingInterior splits
+        /// "poiId#roomId" and goes through InteriorOps.FindBuildingInterior, the only lookup that can
+        /// distinguish a SECOND interior for the same poiId.</summary>
+        InteriorData ResolveInterior(SurfaceKind kind, string id)
+        {
+            if (dungeonManager == null || string.IsNullOrEmpty(id)) return null;
+            if (kind != SurfaceKind.BuildingInterior) return dungeonManager.GetByPoiId(id);
+
+            int sep = id.LastIndexOf('#');
+            if (sep <= 0 || !int.TryParse(id.Substring(sep + 1), out int roomId)) return null;
+            return InteriorOps.FindBuildingInterior(dungeonManager.GetAll(), id.Substring(0, sep), roomId);
+        }
+
+        /// <summary>The header OpenBuildingInterior would have used for this building — its room's Title, or
+        /// «Здание N». Scans every floor because, unlike OpenBuildingInterior, a rebind has no "the level the
+        /// DM was looking at" to read the room from; a room id is unique within a floor and the same node is
+        /// not expected on two, so the first hit is the right one.</summary>
+        static string BuildingHeaderFor(InteriorData town, int roomId)
+        {
+            if (town != null)
+                foreach (var floor in town.Floors)
+                {
+                    var room = floor.GetRoom(roomId);
+                    if (room != null && !string.IsNullOrEmpty(room.Title)) return room.Title;
+                }
+            return $"Здание {roomId}";
+        }
+
+        /// <summary>The live POI store, discovered on every miss like Shell()/Documents() and for the same two
+        /// reasons: no Inspector slot without a scene edit, and a domain reload wipes the cached reference
+        /// while the component survives. Only RebindPoiEditor needs it — every other Rebind* path resolves
+        /// through dungeonManager, which this class has held as a serialized field since Ц1.</summary>
+        PoiManager Pois()
+        {
+            if (poiManager != null) return poiManager;
+            poiManager = FindFirstObjectByType<PoiManager>(FindObjectsInactive.Include);
+            return poiManager;
+        }
+
+        PoiManager poiManager;
 
         /// <summary>A POI's tab title. Falls back the same way NotesDocOps.EnsurePageFor's E3 does, and to the
         /// same string, so a nameless POI reads identically in the tab strip and in «Мир» rather than being

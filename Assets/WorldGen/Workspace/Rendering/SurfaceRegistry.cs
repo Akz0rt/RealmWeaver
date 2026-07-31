@@ -681,6 +681,11 @@ namespace WorldGen.Workspace.Rendering
     /// show interior tabs at once, the LAST Show() wins the one real screen, which SyncSurfaces' "focused
     /// pane shown last" rule makes be the pane the user is looking at.
     ///
+    /// THAT SINGLE INSTANCE IS ALSO WHY Show() RE-BINDS. Each of these screens holds ONE binding (the
+    /// InteriorData / room / POI it was last given), and the Open* methods that set it are NOT on the
+    /// tab-click path — so switching tabs would re-show a screen still bound to the previous tab's subject.
+    /// See Show's own comment and MapScreenController.RebindSurface.
+    ///
     /// RECOMPILE GAP: every field here is plain and non-[SerializeField], so a Play-mode domain reload wipes
     /// all of them while the screen GameObjects, their canvases and their __PaneFrames survive as live
     /// objects — this arc's recurring defect family, now on its seventh sighting (see MapSurfaceHost's own
@@ -718,6 +723,14 @@ namespace WorldGen.Workspace.Rendering
         List<Slot> slots = new List<Slot>();
         Dictionary<SurfaceKind, Slot> byKind = new Dictionary<SurfaceKind, Slot>();
 
+        /// <summary>Who re-binds a screen to the surface a tab actually names — see Show's own comment for the
+        /// defect this closes. Discovered rather than injected, the same override-or-discover pattern
+        /// MapSurfaceHost.Rewire uses for the map chrome, and re-discovered in Rewire so a domain reload
+        /// recovers it: this is a plain field, so the reload nulls it while MapScreenController itself survives
+        /// (the RECOMPILE GAP paragraph in this class's doc). Null in a scene without one, which makes Show a
+        /// pure activate-and-frame exactly as it was before this hook existed.</summary>
+        MapScreenController screens;
+
         /// <summary>Scratch buffer for GetComponentsInChildren inside EnsureFrames — reused rather than
         /// re-allocated, since EnsureFrames runs once per rendered frame for as long as any screen is still
         /// unresolved. Same non-readonly/re-assigned-in-Rewire rule as the two collections above.</summary>
@@ -754,6 +767,7 @@ namespace WorldGen.Workspace.Rendering
             slots = new List<Slot>();
             byKind = new Dictionary<SurfaceKind, Slot>();
             canvasScratch = new List<Canvas>();
+            screens = FindFirstObjectByType<MapScreenController>(FindObjectsInactive.Include);
 
             GameObject poiScreen = poiEditorOverride != null
                 ? poiEditorOverride
@@ -797,10 +811,21 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
-        public void Show(SurfaceKind kind, RectTransform paneContent)
+        public void Show(SurfaceKind kind, RectTransform paneContent, string id)
         {
             if (paneContent == null) return;
             if (!byKind.TryGetValue(kind, out Slot slot)) return;
+
+            // RE-BIND FIRST, before the screen is activated or framed. `id` is not decoration here: each of
+            // these screens holds ONE binding at a time and nothing on the tab-click path (TabStripView ->
+            // WorkspaceController.SetActive -> SyncSurfaces -> here) would otherwise change it, so clicking
+            // back to a town's tab while a building's tab is also open would re-show the screen still bound to
+            // the BUILDING. See MapScreenController.RebindSurface for the full statement of the defect and why
+            // every branch of it early-outs when the binding is already correct — this method runs on every
+            // layout change, not only on a tab click. PageSurfaceHost.Show has always done the equivalent
+            // (`documentController.OpenPage(id)`); this is the same idea for the five screens that have no
+            // such call of their own.
+            screens?.RebindSurface(kind, id);
 
             slot.Owner = kind;
             slot.HasOwner = true;
@@ -921,7 +946,7 @@ namespace WorldGen.Workspace.Rendering
 
         public SurfaceKind Kind => kind;
 
-        public void Show(RectTransform paneContent, string id) => owner?.Show(kind, paneContent);
+        public void Show(RectTransform paneContent, string id) => owner?.Show(kind, paneContent, id);
 
         public void Hide() => owner?.Hide(kind);
 
