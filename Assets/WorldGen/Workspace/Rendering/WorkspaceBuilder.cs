@@ -29,6 +29,28 @@ namespace WorldGen.Workspace.Rendering
     {
         const float DividerWidth = 6f;
 
+        /// <summary>Top strip reserved for ProjectMenuBar, whose own BarHeightPixels is 40f and whose canvas
+        /// sorts at 100 — ABOVE this shell's 70 — so anything the shell draws up there is simply covered by
+        /// it. This is the "minus whatever genuinely draws above the shell" inset, derived from that bar
+        /// rather than copied: the retired NotesLayoutController reserved TopChromeHeight = 86f (40 menu bar +
+        /// 46 map toolbar) and NotesRootBuilder reserved 20 via layout padding, and neither number is right
+        /// here.
+        ///
+        /// MapToolbarUI's 46px strip (which sits at anchoredPosition Y = -40, i.e. directly below the menu
+        /// bar, making up the old 86) is deliberately NOT reserved, because its canvas sorts at 40 — BELOW
+        /// this shell. It is therefore hidden by the shell rather than drawing over it, so reserving space
+        /// would not fix an overlap; it would carve out a permanent 46px band the shell does not own. That
+        /// band would be visibly EMPTY whenever a non-map surface is active, since MapSurfaceHost.Hide already
+        /// calls MapToolbarUI.SetChromeVisible(false) — a dead strip showing the raw camera, in exchange for
+        /// legacy chrome that Р5/Task 10 replaces outright.
+        ///
+        /// CONSEQUENCE, accepted: while the map surface is shown, the toolbar is partly occluded — its left
+        /// portion (the map/regions/layers tab segment starts 12px in and runs 320px wide) disappears behind
+        /// the 236px navigator column, while the part crossing the pane's content area still shows through,
+        /// because the map surface disables that area's backgrounds and the shell paints no pixels there. Task
+        /// 10/Р5 re-hosts that toolbar as shell-native chrome, which is what actually resolves it.</summary>
+        const float MenuBarInset = 40f;
+
         [Header("External refs")]
         [Tooltip("The document NavigatorView/QuickOpenPopup render. Left unassigned in the Inspector — Task 9 " +
                  "auto-discovers the live NotesRootBuilder already in the scene (FindFirstObjectByType) and " +
@@ -200,6 +222,13 @@ namespace WorldGen.Workspace.Rendering
             rootRowGO.transform.SetParent(canvasGO.transform, false);
             var rootRowRect = rootRowGO.GetComponent<RectTransform>();
             Stretch(rootRowRect);
+            // ...then give the top MenuBarInset pixels back to ProjectMenuBar (see the constant's doc). Both
+            // canvases use a default CanvasScaler (ConstantPixelSize, scaleFactor 1 — nothing in this project
+            // configures one), so 40 here is the same 40 pixels the bar occupies. Insetting RootRow itself,
+            // rather than padding its HorizontalLayoutGroup, also keeps the shell's own full-bleed background
+            // out of that strip, and every descendant follows for free — including the ContentArea whose world
+            // corners MapSurfaceHost converts into the camera's viewport rect.
+            rootRowRect.offsetMax = new Vector2(0f, -MenuBarInset);
 
             // A full-bleed opaque background on the row itself (not a separate child) — this Canvas
             // paints only where a Graphic currently covers a pixel, so any gap left by a

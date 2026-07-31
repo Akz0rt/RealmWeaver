@@ -318,14 +318,34 @@ namespace WorldGen.Workspace.Rendering
             if (shownIn != null) SetBackgroundsEnabled(shownIn, true);
             shownIn = null;
             SetChromeActive(false);
-            // A camera is not a uGUI element — "hide" means stop it rendering (Camera.enabled = false)
-            // rather than anything analogous to SetActive on a RectTransform. Left enabled=false rather
-            // than deactivating the whole GameObject: other components (WorldMapRenderer's own click/hover
-            // handling, MapCameraController) may live on the same object and must keep running so the map
-            // stays in a consistent state for the next Show(), exactly as MapScreenController already
-            // assumes elsewhere.
-            if (mapCamera != null) mapCamera.enabled = false;
+            // The camera stays ENABLED, and only its viewport goes back to full-screen. Hiding a camera is
+            // not "Camera.enabled = false" here, because this is the scene's ONLY camera: disabling it left
+            // Unity with nothing rendering Display 1 at all — the literal "Display 1 — No cameras rendering"
+            // message, and undefined pixels anywhere a uGUI graphic did not happen to cover, since nothing
+            // was performing the frame's clear. Selecting any Page tab reproduced it.
+            //
+            // Painting over it is what "hide" means for a camera in this app, and the mechanism is already
+            // right here: the line above restores the three opaque backgrounds Show() disabled, the outermost
+            // of which (RootRow's) is full-bleed — a strict superset of any viewport this host ever sets. So
+            // the camera renders and is then completely covered, which is exactly the arrangement the app ran
+            // on before the workspace shell existed: NotesLayoutController clamped this same camera's rect to
+            // the docked split and painted the notes panel over the rest, and NEVER disabled it. Nothing else
+            // in the project reads or writes Camera.enabled (verified by grep — MapScreenController /
+            // ScreenSwitcher only toggle chrome GameObjects), so no Task-10-scoped coupling depends on the
+            // old behaviour either.
+            //
+            // The cost is a full-screen clear plus the map draw every frame while hidden. That is the cost
+            // the app already paid for its entire life before Task 9 — an orthographic camera over a static
+            // map mesh — so this is the status quo restored, not a new per-frame expense. Restoring the FULL
+            // rect rather than leaving the last pane's clamp is what makes the guarantee unconditional: the
+            // whole display is cleared by a camera every frame no matter which UI happens to be enabled, so
+            // "undefined pixels" stops being a possible state rather than merely an unlikely one. Show() ->
+            // ApplyViewport re-derives the correct pane rect immediately, so nothing goes stale.
+            if (mapCamera != null) mapCamera.rect = FullViewport;
         }
+
+        /// <summary>The whole-display viewport a camera has by default, restored by Hide — see its comment.</summary>
+        static readonly Rect FullViewport = new Rect(0f, 0f, 1f, 1f);
 
         /// <summary>Unsubscribes from the static Canvas.willRenderCanvases event if this component is
         /// destroyed while still shown (scene teardown, an out-of-band Destroy) — without this, a static
@@ -438,6 +458,9 @@ namespace WorldGen.Workspace.Rendering
             float xMax = corners[2].x / screenW;
             float yMax = corners[2].y / screenH;
 
+            // Hide() no longer disables the camera (see its comment), so this is no longer the counterpart to
+            // anything this class does — it is kept purely as belt against some OTHER path having disabled the
+            // scene's only camera, which would otherwise leave a Show() with a correct rect and no render.
             mapCamera.enabled = true;
             mapCamera.rect = new Rect(xMin, yMin, Mathf.Max(0f, xMax - xMin), Mathf.Max(0f, yMax - yMin));
         }
