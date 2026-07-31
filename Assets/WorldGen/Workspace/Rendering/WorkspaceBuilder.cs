@@ -165,6 +165,34 @@ namespace WorldGen.Workspace.Rendering
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            // 70: ABOVE the whole legacy map-chrome band, BELOW the persistent menu bar and the legacy
+            // full-screen screens. Leaving this at Unity's default 0 is what made the shell invisible at the
+            // first Editor checkpoint — it built correctly, resolved correct rects and clamped the camera
+            // correctly, and then drew UNDERNEATH every pre-existing canvas in the project, so the window
+            // read as "the old app, unchanged".
+            //
+            // Above (must be, or the shell stays buried): MapLegendUI (0, and an order-0 tie is broken by
+            // hierarchy, which is not something to rely on), MapToolbarUI (40), GenerationScreenUI /
+            // GenerationProgressUI / PoiInfoPopup (50), and the four docked tool panels — MapLayersPanel /
+            // EditorBrushPanel / PoiToolPanel / RegionsPanel (60). The 60 band is the binding constraint:
+            // those panels are 216px wide at the top-left, i.e. entirely inside the navigator's 236px column.
+            //
+            // Below, deliberately: ProjectMenuBar (100) and the three legacy full-screen screens —
+            // PoiEditorScreen (100), DungeonEditorScreen (101), BattleGridScreen (102). Those still own the
+            // ENTIRE window until Task 10 turns them into surfaces, and each is opened only by explicit
+            // navigation. Putting the shell above them would leave the POI/dungeon/battle editors permanently
+            // clipped by the navigator column and the tab strips with no way to reach what is underneath —
+            // strictly worse than the shell being hidden while one of those screens is deliberately open.
+            // TASK 10 REVISITS THIS: once those screens become surfaces hosted inside a pane, they stop being
+            // window-owning canvases and this ordering question changes shape entirely.
+            //
+            // Also below the shell's OWN popups, which already sit far higher and must stay there:
+            // NavigatorView's context menu (1000) and QuickOpenPopup (4000), plus the modal band —
+            // EditorBrushPanel's dropdown template (30000) and ConfirmDialog (32000).
+            //
+            // 71-99 is left free for future shell-owned chrome that belongs above the panes but below the
+            // menu bar.
+            canvas.sortingOrder = 70;
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
 
