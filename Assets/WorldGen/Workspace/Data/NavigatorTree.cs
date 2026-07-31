@@ -3,11 +3,13 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Workspace.Data
 {
-    /// <summary>Which kind of group a navigator entry is. World is the one COMPUTED group — see
+    /// <summary>Which kind of group a navigator entry is. World and Pinned are both COMPUTED groups — see
     /// NavigatorTree.Build. Authored covers every ordinary PageGroup the document happens to contain,
     /// including «Люди» and «Сессии»: those are plain user groups, not a second fixed kind, deliberately —
-    /// see NavigatorTree's class comment.</summary>
-    public enum NavGroupKind { World = 0, Authored = 1 }
+    /// see NavigatorTree's class comment. Pinned is the one hardcoded row (the world map) that renders
+    /// ABOVE World, outside the Bound predicate entirely — see Build's own comment for why it does not
+    /// merge into World instead.</summary>
+    public enum NavGroupKind { World = 0, Authored = 1, Pinned = 2 }
 
     public class NavNode
     {
@@ -57,9 +59,39 @@ namespace WorldGen.Workspace.Data
         public static List<NavGroup> Build(NotesDocument doc, string filter)
         {
             var groups = new List<NavGroup>();
+            // The pinned row targets the world map, not anything derived from `doc` — but this early return
+            // was kept anyway rather than special-cased around it: NavigatorView already bails on a null
+            // documentController before ever calling Build (see its Rebuild), so a null doc here only
+            // happens on a path that renders nothing regardless, and a doc-independent exception here would
+            // be one more rule for the next reader to reconcile with "Build returns fresh from doc".
             if (doc == null) return groups;
 
             string needle = (filter ?? "").Trim().ToLowerInvariant();
+
+            // Pinned — P1: ONE hardcoded row, the world map, always first when it survives the filter.
+            // Deliberately NOT folded into Мир below: Мир's only membership rule is "p.Bound != null" (N1),
+            // scanned fresh off the document every call — see that group's own comment, "this one place is
+            // where 'what is a member' lives". A hardcoded head node is exactly the stored-membership
+            // exception that rule forbids, so the world map gets its OWN group instead (kind Pinned, empty
+            // Title/Id — there is no PageGroup behind it, the same reason Мир's own Id is empty).
+            //
+            // The SurfaceRef here must stay byte-identical to WorkspaceOps.NewDefault's own seed tab
+            // (WorkspaceOps.cs: Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface. A merely-equal-LOOKING
+            // ref (e.g. a different Id) would make WorkspaceOps.Open create a SECOND world-map tab instead
+            // of focusing the one NewDefault already opened, which is exactly the "map become unreachable"
+            // defect this group exists to fix, just relocated. NavigatorTreeSelfTests pins this by opening
+            // the target against a fresh NewDefault layout and asserting the tab count stays 1.
+            //
+            // Obeys N3 (the same Matches filter every other node uses) and, like every other group here, is
+            // omitted entirely rather than shown empty when it doesn't survive the filter.
+            var pinned = new NavGroup { Kind = NavGroupKind.Pinned, Title = "", Id = "" };
+            if (Matches(WorkspaceOps.DefaultWorldMapTitle, needle))
+                pinned.Nodes.Add(new NavNode
+                {
+                    Title = WorkspaceOps.DefaultWorldMapTitle,
+                    Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" },
+                });
+            if (pinned.Nodes.Count > 0) groups.Add(pinned);
 
             // Мир — N1: computed from Bound alone, in document order. A separate top-to-bottom scan rather
             // than folded into the Authored loop below, so this one place is where "what is a member" lives.

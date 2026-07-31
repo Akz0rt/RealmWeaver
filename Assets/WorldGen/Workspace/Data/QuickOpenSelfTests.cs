@@ -9,8 +9,8 @@ namespace WorldGen.Workspace.Data
     /// sources against UnityEngine stubs.
     ///
     /// Every failure prints the ACTUAL and the WANTED value. Assertions target the rule a change would break
-    /// (Q1..Q5 in the plan) and, per the recurring lesson on this plan, always include the POSITIVE side of
-    /// each check: a mutation that collapses the result set toward empty, or that scores two rank tiers
+    /// (Q1..Q5, W1 in the plan) and, per the recurring lesson on this plan, always include the POSITIVE side
+    /// of each check: a mutation that collapses the result set toward empty, or that scores two rank tiers
     /// equally, must fail a real assertion here rather than let an "X is absent" check pass vacuously.
     /// </summary>
     public class QuickOpenSelfTests : MonoBehaviour
@@ -86,6 +86,36 @@ namespace WorldGen.Workspace.Data
                 Debug.LogError($"FAIL quickopen: first hit «{actual}», want «Якорная стоянка» ahead of the mid-word «Ржавый Якорь» (Q1 prefix)");
                 ok = false;
             }
+
+            // W1 — the world map is a candidate too, ranked like a page name against
+            // WorkspaceOps.DefaultWorldMapTitle ("Карта мира"). The assertion needs a page that reaches the
+            // SAME rank on the SAME needle, or it is vacuous — «Картотека» prefix-matches «карт» exactly
+            // like «карта мира» does (both NamePrefix, idx 0), so a mutant that ranks the world hit wrong,
+            // orders CollectWorldMapHit after the name loop, or drops its Kind tag would make «Картотека»
+            // win this position check instead of tying and losing to it.
+            var catalog = new NotesPage { Name = "Картотека" };
+            g.Pages.Add(catalog);
+            var worldHits = QuickOpen.Search(doc, "карт");
+            if (worldHits.Count < 1 || worldHits[0].Target == null || worldHits[0].Target.Kind != SurfaceKind.WorldMap)
+            {
+                string actual = worldHits.Count > 0 ? $"«{worldHits[0].Title}» ({worldHits[0].Target?.Kind})" : "<none>";
+                Debug.LogError($"FAIL quickopen: first hit for «карт» = {actual}, want the world map, ordered ahead of the equal-rank «Картотека» (W1)");
+                ok = false;
+            }
+            else
+            {
+                if (worldHits[0].Target.Id != "")
+                { Debug.LogError($"FAIL quickopen: world-map hit Id «{worldHits[0].Target.Id}», want «» — must stay byte-identical to WorkspaceOps.NewDefault's seed tab (W1)"); ok = false; }
+                if (worldHits[0].Title != WorkspaceOps.DefaultWorldMapTitle)
+                { Debug.LogError($"FAIL quickopen: world-map hit title «{worldHits[0].Title}», want «{WorkspaceOps.DefaultWorldMapTitle}» (W1)"); ok = false; }
+                if (worldHits[0].Kind != "карта")
+                { Debug.LogError($"FAIL quickopen: world-map hit Kind «{worldHits[0].Kind}», want «карта» so the palette can tell it apart from a page/body hit (W1)"); ok = false; }
+            }
+            // The positive side of the SAME check: «Картотека» must still BE found, just not first — a
+            // mutant that made the world hit crowd out real results (rather than merely outrank them) would
+            // pass the checks above (which only look at index 0) while silently losing a page hit.
+            if (!worldHits.Exists(h => h.Title == "Картотека"))
+            { Debug.LogError("FAIL quickopen: «карт» found 0 hits for «Картотека», want >= 1 — the world map must not crowd out real page results (W1)"); ok = false; }
 
             // Q3 — ImageBytes is never scanned, even when it happens to hold the query's own bytes: only
             // Text and Detail are text-bearing fields on a block.

@@ -4,12 +4,15 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Workspace.Data
 {
-    /// <summary>One Ctrl+K result. Target and Title always name the PAGE this hit would open — quick-open
-    /// never opens a block directly, the same "navigator opens pages" rule NavigatorTree.MakeNode follows.
-    /// Kind is "" for a page-NAME hit and holds the source page's name for a body-TEXT hit (Q2 — "its Kind
-    /// names the page it came from"). Snippet is null for a name hit and the matched fragment (with a little
-    /// context) for a body hit — QuickOpenSelfTests leans on exactly that null/non-null split to tell the
-    /// two kinds of hit apart.</summary>
+    /// <summary>One Ctrl+K result. Target and Title name the page this hit would open — quick-open never
+    /// opens a block directly, the same "navigator opens pages" rule NavigatorTree.MakeNode follows — with
+    /// ONE exception: the world-map hit (W1) targets the world map itself, since there is no page behind it
+    /// to open instead. Kind is "" for a page-NAME hit, the source page's name for a body-TEXT hit (Q2 —
+    /// "its Kind names the page it came from"), and the fixed string "карта" for the world-map hit — three
+    /// values that never collide, so the palette's right-hand column can always tell which kind of hit it is
+    /// rendering. Snippet is null for a name hit and the world-map hit, and the matched fragment (with a
+    /// little context) for a body hit — QuickOpenSelfTests leans on exactly that null/non-null split to tell
+    /// a name hit from a body hit apart.</summary>
     public class QuickHit
     {
         public SurfaceRef Target;
@@ -34,6 +37,14 @@ namespace WorldGen.Workspace.Data
     /// megabytes of pictures, and Search runs on every keystroke typed into the Ctrl+K box, so "just search
     /// everything" would make every keystroke walk that data. Do not widen this loop to read ImageBytes,
     /// however tempting that looks to a future edit.
+    ///
+    /// W1 — the world map is a candidate on every search too, so closing its tab (WorkspaceOps.CloseTab)
+    /// never makes it unreachable from Ctrl+K. It is matched against WorkspaceOps.DefaultWorldMapTitle with
+    /// the exact same fold-and-rank rule CollectNameHit uses for a page NAME — same NamePrefix/NameContains
+    /// ranks, same idx==0 prefix test — rather than a third, fixed-position "always show it first" scheme.
+    /// CollectWorldMapHit is called after the body-hit loop but BEFORE the name-hit loop, so its Seq (the
+    /// sort's tie-breaker for equal ranks) is always lower than any page-name hit's — the plan's "ordered
+    /// before page hits of equal rank" falls out of that placement, with no second sort key needed.
     /// </summary>
     public static class QuickOpen
     {
@@ -70,6 +81,11 @@ namespace WorldGen.Workspace.Data
                 foreach (var p in g.Pages)
                     CollectBodyHits(p, needle, candidates, ref seq);
 
+            // W1 — see the class comment above for why this sits exactly HERE: after body hits (whose ranks
+            // are strictly worse, so their relative Seq order doesn't matter) but before the name-hit loop
+            // (whose ranks it can TIE with), so its Seq always wins that tie.
+            CollectWorldMapHit(needle, candidates, ref seq);
+
             foreach (var g in doc.Groups)
                 foreach (var p in g.Pages)
                     CollectNameHit(p, needle, candidates, ref seq);
@@ -80,6 +96,28 @@ namespace WorldGen.Workspace.Data
                 result.Add(candidates[i].Hit);
 
             return result;
+        }
+
+        /// <summary>W1 — the world map behaves like one more page NAME for ranking purposes, folded and
+        /// ranked by the exact same rule CollectNameHit uses (see that method — this deliberately does not
+        /// invent a second folding scheme). Target is byte-identical to WorkspaceOps.NewDefault's own seed
+        /// tab (Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface — so opening this hit through
+        /// WorkspaceController.Open focuses the world map's existing tab instead of adding a second one, the
+        /// same requirement NavigatorTree's Pinned node carries for the same reason.</summary>
+        static void CollectWorldMapHit(string needle, List<(int, int, QuickHit)> candidates, ref int seq)
+        {
+            string folded = WorkspaceOps.DefaultWorldMapTitle.Trim().ToLowerInvariant();
+            int idx = folded.IndexOf(needle, StringComparison.Ordinal);
+            if (idx < 0) return;
+
+            int rank = idx == 0 ? NamePrefix : NameContains;
+            candidates.Add((rank, seq++, new QuickHit
+            {
+                Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" },
+                Title = WorkspaceOps.DefaultWorldMapTitle,
+                Kind = "карта",
+                Snippet = null,
+            }));
         }
 
         static void CollectNameHit(NotesPage p, string needle, List<(int, int, QuickHit)> candidates, ref int seq)

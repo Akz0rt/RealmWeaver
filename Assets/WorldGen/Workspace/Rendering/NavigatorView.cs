@@ -326,7 +326,10 @@ namespace WorldGen.Workspace.Rendering
             groupVLayout.childForceExpandWidth = true;
             groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            BuildGroupHeader(groupGO.transform, group);
+            // Pinned renders its one row bare, no header — NavGroup.Title is "" for it (NavigatorTree.Build),
+            // so there is no label to show, and it is not a group the user would recognise as one (it is a
+            // single hardcoded row, not a titled collection like Мир or an Authored PageGroup).
+            if (group.Kind != NavGroupKind.Pinned) BuildGroupHeader(groupGO.transform, group);
 
             foreach (var node in group.Nodes)
             {
@@ -542,13 +545,27 @@ namespace WorldGen.Workspace.Rendering
 
             var click = rowGO.AddComponent<NavRowClickRouter>();
             click.OnLeftClick = () => controller.Open(node.Target, node.Title, inOtherPane: false);
-            click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
-                ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false),
-                ("Переименовать", () => StartRename(labelGO, input, rawTitle), false),
-                ("Удалить", () => ConfirmDialog.Show(builtinFont, "Удалить страницу?", $"«{rawTitle}»", confirmed =>
-                {
-                    if (confirmed) documentController?.DeletePage(pageId);
-                }), true));
+            // Branch on Target.Kind, not on which group the row came from: today the pinned world-map row is
+            // the only non-Page node NavigatorTree ever produces, but the reason is about the TARGET, not
+            // its group — a node with no page behind it has nothing for «Переименовать»/«Удалить» to act on.
+            // «Удалить» would call documentController.DeletePage(pageId) with an id matching no page (a
+            // silent no-op at best); «Переименовать» would edit a label with no backing store to persist the
+            // new name into. Both stay off the menu rather than being wired to quietly do nothing.
+            if (node.Target.Kind == SurfaceKind.Page)
+            {
+                click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
+                    ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false),
+                    ("Переименовать", () => StartRename(labelGO, input, rawTitle), false),
+                    ("Удалить", () => ConfirmDialog.Show(builtinFont, "Удалить страницу?", $"«{rawTitle}»", confirmed =>
+                    {
+                        if (confirmed) documentController?.DeletePage(pageId);
+                    }), true));
+            }
+            else
+            {
+                click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
+                    ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false));
+            }
         }
 
         void StartRename(GameObject labelGO, InputField input, string rawValue)
