@@ -283,6 +283,24 @@ namespace WorldGen.Workspace.Rendering
             CloseTab(pane, index);
         }
 
+        /// <summary>Drops every tab whose surface `exists` rejects, across BOTH panes, through the tested
+        /// WorkspaceOps.PruneMissing (which also collapses the split via NormalizeSplit when that empties the
+        /// secondary pane).
+        ///
+        /// CloseSurface above cannot serve this: it closes ONE tab, the first match, which is right for
+        /// "«Назад» in this editor" and wrong for "the world these tabs describe no longer exists". A surface
+        /// can be open in both panes, and two DIFFERENT surfaces of a dead kind (two battle grids, two POI
+        /// editors) are reachable by ordinary navigation — a caller that closes named refs one at a time
+        /// leaves every duplicate behind, pointing at a destroyed world.</summary>
+        public int PruneSurfaces(System.Func<SurfaceRef, bool> exists)
+        {
+            int dropped = WorkspaceOps.PruneMissing(Layout, exists);
+            if (dropped == 0) return 0;
+            ReflowPanes();
+            RaiseChanged();
+            return dropped;
+        }
+
         public void CloseTab(int pane, int index)
         {
             if (!WorkspaceOps.CloseTab(Layout, pane, index)) return;
@@ -324,8 +342,9 @@ namespace WorldGen.Workspace.Rendering
         }
 
         /// <summary>The "saves on drag-end" half: raises OnLayoutChanged once, the hook a future persistence
-        /// listener (Task 11) attaches to. Called unconditionally on drag-end, matching
-        /// NotesLayoutController.SaveSplitFraction's own drag-end-always-saves behaviour.</summary>
+        /// listener (Task 11) attaches to. Called unconditionally on drag-end, matching the
+        /// drag-end-always-saves behaviour of the retired notes split (NotesLayoutController.SaveSplitFraction,
+        /// deleted in Task 10c — git history, not a file to open).</summary>
         public void CommitSplitRatio() => RaiseChanged();
 
         // ── Navigator collapse (wired by NavigatorView to its header button) ─────
@@ -390,11 +409,29 @@ namespace WorldGen.Workspace.Rendering
         /// ISurfaceHost.Show is required to re-parent unconditionally every call — see SurfaceRegistry.cs's
         /// own class doc.
         ///
-        /// Iterates with the FOCUSED pane's Show() called LAST: if both panes' active tabs happen to share a
-        /// SurfaceKind (the single-host-per-kind limitation ISurfaceHost's signature accepts — see
-        /// PageSurfaceHost's own doc), the LAST Show() wins the one real host's parent, and this ordering
-        /// makes that always be the pane the user is actually looking at, rather than pane 1 always winning
-        /// by coincidence of iteration order.</summary>
+        /// ONE PHYSICAL SURFACE IS SHOWN ONCE, INTO THE FOCUSED PANE. Several hosts can be backed by the same
+        /// object — the three interior kinds all drive the one DungeonEditorScreen (ScreenSurfaceHosts), and
+        /// two Page tabs share the one DocumentPageView — so when both panes want the same physical surface,
+        /// only one of them can actually have it. This iterates the FOCUSED pane first and skips any later
+        /// pane whose host reports an already-claimed ISurfaceHost.ShareGroup, so the focused pane wins and
+        /// the other pane's Show never runs at all.
+        ///
+        /// EARLIER THIS WAS "focused pane shown LAST", relying on the last Show to overwrite the first. That
+        /// produced the same visible result and did redundant work to get there — but once Task 10c gave
+        /// ScreenSurfaceHosts.Show a re-bind (a tab click has to re-point the screen at its own subject), the
+        /// redundant work stopped being free: with an interior tab active in EACH pane, the two kinds
+        /// alternate, so every single sync performed two full DungeonEditorScreen.Bind calls, each rebuilding
+        /// a settlement's ~40-node canvas and discarding the DM's selection and level tab — and a single tab
+        /// click produces several syncs (SetActive -> RaiseChanged, FocusPane -> RaiseChanged, plus
+        /// RefreshScreenState's SetShellActive). MapScreenController.RebindSurface's own doc calls its
+        /// already-bound early-out "a requirement, not an optimisation", and under focused-last that early-out
+        /// could never fire. Claiming first and skipping is what makes the stated contract true.
+        ///
+        /// The skipped pane is NOT then Hidden: its Kind is deliberately left out of `shownKinds`, but for a
+        /// shared-object host the Hide that follows is a no-op anyway (ScreenSurfaceHosts.Hide returns early
+        /// when another kind owns the screen), and for Page both panes share one Kind so no Hide is reached.
+        /// The skipped pane's content area is simply left empty, which is the accepted single-instance
+        /// limitation PageSurfaceHost's own doc records — unchanged by this, only made cheaper.</summary>
         void SyncSurfaces()
         {
             // The real guard: no hosts registered yet (before WorkspaceBuilder's SetSurfaceRegistry call)
@@ -409,15 +446,19 @@ namespace WorldGen.Workspace.Rendering
             if (Layout == null) return;
 
             var shownKinds = new HashSet<SurfaceKind>();
+            var claimedGroups = new HashSet<object>();
 
             // shellSuppressed leaves shownKinds EMPTY, so the Hide loop below retires every registered host —
             // the workspace's surfaces stop drawing while Generation/Progress owns the window (Task 10c
             // Step 1). Expressed as "show nothing" rather than an early return so the Hide half still runs:
             // an early return would leave whatever was last shown (the map camera's punched hole and its
             // active chrome, or a full-screen ex-screen canvas) painting over the screen that took over.
+            //
+            // FOCUSED PANE FIRST — see this method's own doc for why that flipped, and why it is now paired
+            // with claimedGroups rather than relying on a later Show to overwrite an earlier one.
             int[] order = shellSuppressed
                 ? new int[0]
-                : Layout.FocusedPane == 1 ? new[] { 0, 1 } : new[] { 1, 0 };
+                : Layout.FocusedPane == 1 ? new[] { 1, 0 } : new[] { 0, 1 };
 
             foreach (int pane in order)
             {
@@ -427,6 +468,12 @@ namespace WorldGen.Workspace.Rendering
 
                 ISurfaceHost host = surfaceRegistry.For(active.Kind);
                 if (host == null) continue;   // not registered yet — Task 10 registers the rest.
+
+                // A host whose ShareGroup is already claimed is backed by a physical surface an earlier
+                // (higher-priority) pane already took. Skipping is not merely an optimisation: showing it
+                // would re-bind that one object away from the pane the user is looking at, and then be
+                // undone by nothing, since nothing shows it a third time.
+                if (!claimedGroups.Add(host.ShareGroup ?? host)) continue;
 
                 host.Show(paneContent, active.Id);
                 shownKinds.Add(active.Kind);

@@ -20,9 +20,10 @@ namespace WorldGen.Workspace.Rendering
     /// call (which WorkspaceController.SyncSurfaces does) makes promotion handled automatically.
     ///
     /// Only one pane can show a given Kind's real content at a time (see PageSurfaceHost's own doc for why
-    /// that is an accepted limitation, not a bug, for the Page surface specifically) — a second pane whose
-    /// active tab shares that Kind is left showing whatever the host was last Show()n as, which
-    /// WorkspaceController.SyncSurfaces resolves by always Show()ing the FOCUSED pane last.</summary>
+    /// that is an accepted limitation, not a bug, for the Page surface specifically). WorkspaceController
+    /// .SyncSurfaces resolves the contest by iterating the FOCUSED pane FIRST and skipping any later pane
+    /// whose host reports an already-claimed ShareGroup — so the focused pane gets the host and the other
+    /// pane's Show never runs, rather than running and being overwritten.</summary>
     public interface ISurfaceHost
     {
         SurfaceKind Kind { get; }
@@ -40,6 +41,16 @@ namespace WorldGen.Workspace.Rendering
         /// Not yet wired to any call site as of Task 9; kept correct now so a future title-refresh path
         /// (a tab's title going stale after a rename) has something real to call.</summary>
         string TitleFor(string id);
+
+        /// <summary>Identity of the PHYSICAL surface behind this host, for hosts that share one. Two hosts
+        /// returning the same reference are two Kinds driving the same object, and WorkspaceController
+        /// .SyncSurfaces will let only the higher-priority pane show it — see that method's own doc.
+        ///
+        /// Most hosts are their own group and return `this`; the exception is ScreenSurfaceHost, where
+        /// Settlement, BuildingInterior and Dungeon are three Kinds over one DungeonEditorScreen. Compared by
+        /// REFERENCE (a HashSet&lt;object&gt; with default equality), so returning a fresh object per call
+        /// would silently disable the sharing rule — return a stable instance.</summary>
+        object ShareGroup { get; }
     }
 
     /// <summary>Surface kind -> the one host object that shows/hides it. Task 9 registered Page and WorldMap;
@@ -73,13 +84,14 @@ namespace WorldGen.Workspace.Rendering
     /// ONE instance" from the task brief, not a second document).
     ///
     /// SINGLE INSTANCE, ACCEPTED LIMITATION: if both panes end up with a Page tab active at once (an
-    /// ordinary sequence — open a page, then «Открыть рядом» a DIFFERENT page), only the pane
-    /// WorkspaceController showed LAST actually renders content; the other pane's content area goes empty
-    /// until its own tab is reactivated. This is not new here — NotesDocumentController.ActivePage is
-    /// itself a single field, so the two tabs could never show DIFFERENT content simultaneously even before
-    /// Task 9 — and it is exactly what the brief's ISurfaceHost signature allows (one host, no pane
-    /// parameter). WorkspaceController.SyncSurfaces's "focused pane shown last" rule at least makes the
-    /// outcome predictable rather than order-of-iteration arbitrary.
+    /// ordinary sequence — open a page, then «Открыть рядом» a DIFFERENT page), only the FOCUSED pane
+    /// actually renders content; the other pane's content area goes empty until its own tab is reactivated.
+    /// This is not new here — NotesDocumentController.ActivePage is itself a single field, so the two tabs
+    /// could never show DIFFERENT content simultaneously even before Task 9 — and it is exactly what the
+    /// brief's ISurfaceHost signature allows (one host, no pane parameter). WorkspaceController.SyncSurfaces's
+    /// claim-the-ShareGroup-focused-pane-first rule makes the outcome predictable rather than
+    /// order-of-iteration arbitrary, and (since Task 10c's fix round) means the losing pane costs nothing
+    /// rather than doing a full show that is immediately overwritten.
     ///
     /// RECOMPILE GAP — CLOSED in round 4, and the round-3 description of it below was wrong in a way worth
     /// keeping on record. WorkspaceBuilder.Awake's guard branch reconstructs a FRESH PageSurfaceHost after a
@@ -139,6 +151,11 @@ namespace WorldGen.Workspace.Rendering
             pageView?.SetSurfaceVisible(false);
         }
 
+        /// <summary>Its own group: there is one Page host, so nothing else can be sharing its object. (Two
+        /// Page TABS still contend for it — that is the single-instance limitation above — but they contend
+        /// through the same host, which the ShareGroup rule handles by identity.)</summary>
+        public object ShareGroup => this;
+
         public string TitleFor(string id)
         {
             if (documentController?.Document?.Groups == null) return "";
@@ -177,14 +194,16 @@ namespace WorldGen.Workspace.Rendering
     /// owns without any scene edit. WorkspaceBuilder still exposes override fields for Task 11 (or a
     /// manual test) to pin down explicitly if discovery ever picks the wrong instance.
     ///
-    /// KNOWN SEAM (not fixed here — out of this task's scope, see the brief's point 5): MapScreenController
-    /// / ScreenSwitcher still independently drives mapEditorPanelGO/mapLegendUiGO's active state via
-    /// AppScreen.MapEditor, completely unaware this host exists — that coupling is only removed by Task
-    /// 10's screen-layer rework, which this task must not anticipate. Until then the two mechanisms are
-    /// event-driven, not per-frame, so whichever fires LAST wins with no continuous fight; the one concrete
-    /// case that can disagree is closing the POI editor while a non-map tab is focused, which re-asserts
-    /// AppScreen.MapEditor (and therefore the chrome's active state) out from under a Hide() this host
-    /// already issued.
+    /// THE KNOWN SEAM IS CLOSED (Task 10c). Through Task 10b this doc recorded that MapScreenController /
+    /// ScreenSwitcher independently drove mapEditorPanelGO/mapLegendUiGO's active state via an
+    /// `AppScreen.MapEditor` that no longer exists, so the two mechanisms could disagree — concretely, closing
+    /// the POI editor re-asserted the map screen and re-activated this chrome behind a Hide() this host had
+    /// already issued. Task 10c narrowed AppScreen to Generation/Progress/Workspace and removed those
+    /// GameObjects from the switcher's member table entirely (MapScreenController.EnsureSwitcher), so THIS
+    /// host is now the only thing that activates or deactivates them. The one remaining mechanism above it is
+    /// deliberate and does not fight: while AppScreen is Generation or Progress, WorkspaceController
+    /// .SetShellActive suppresses SyncSurfaces, which Hides this host — a strict override, not a second
+    /// opinion.
     ///
     /// RECOMPILE GAP — PARTIALLY CLOSED, not left for Task 11: a domain reload (Play-mode script recompile)
     /// resets every plain, non-`[SerializeField]` field on every surviving MonoBehaviour, including
@@ -463,10 +482,11 @@ namespace WorldGen.Workspace.Rendering
             // doc for why not plain zero — the map chrome's top offsets no longer include that strip, so a
             // fully-zeroed frame would put the toolbar underneath ProjectMenuBar), which restores the chrome
             // to pixel-identical pre-Task-10a geometry while this surface owns no pane. Left clamped instead,
-            // a panel re-shown by the legacy path (MapScreenController/ScreenSwitcher
-            // still drive these GameObjects' active state on their own — see the class doc's
-            // KNOWN SEAM paragraph) would render inside a rect belonging to a pane that no longer shows the
-            // map. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
+            // a panel would render inside a rect belonging to a pane that no longer shows the map. Task 10c
+            // removed the legacy path that used to re-show these panels behind this host's back (see the class
+            // doc's now-closed KNOWN SEAM paragraph), so this is no longer defending against a second owner —
+            // it is defending against this host's OWN next Show landing in a different pane, and against the
+            // un-hosted transitional state before Task 11 wires the shell into the scene. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
             // nothing but a Vector2 write per frame object. Null-guarded because Hide is documented as safe to
             // call unconditionally, and `frames` is null on any path that reaches Hide before Rewire.
             if (frames != null)
@@ -637,6 +657,9 @@ namespace WorldGen.Workspace.Rendering
         }
 
         public string TitleFor(string id) => WorkspaceOps.DefaultWorldMapTitle;
+
+        /// <summary>Its own group — one camera, one host, nothing shares it.</summary>
+        public object ShareGroup => this;
     }
 
     /// <summary>Hosts the five surfaces that used to be full-screen SCREENS: PoiEditor, Settlement,
@@ -648,7 +671,7 @@ namespace WorldGen.Workspace.Rendering
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
     /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:422-437), so three
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:463-484), so three
     /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
     /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
     /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
@@ -678,8 +701,11 @@ namespace WorldGen.Workspace.Rendering
     /// chance of regressing the un-hosted (Task 10c-to-11 transitional) path.
     ///
     /// SINGLE INSTANCE PER SCREEN, accepted, same limitation PageSurfaceHost's own doc records: if both panes
-    /// show interior tabs at once, the LAST Show() wins the one real screen, which SyncSurfaces' "focused
-    /// pane shown last" rule makes be the pane the user is looking at.
+    /// show interior tabs at once, only the FOCUSED pane's gets the screen. SyncSurfaces enforces that by
+    /// claiming ShareGroup (see GroupFor below, which returns the SAME Slot for all three interior kinds) with
+    /// the focused pane first, so the losing pane's Show is skipped outright. That skip is what makes
+    /// MapScreenController.RebindSurface's already-bound early-out reachable at all in a split — without it
+    /// the two kinds alternate and every sync re-Binds the whole node canvas twice.
     ///
     /// THAT SINGLE INSTANCE IS ALSO WHY Show() RE-BINDS. Each of these screens holds ONE binding (the
     /// InteriorData / room / POI it was last given), and the Open* methods that set it are NOT on the
@@ -701,7 +727,7 @@ namespace WorldGen.Workspace.Rendering
         /// are the __PaneFrames of the canvases UNDER Screen — plural because a screen may build more than one
         /// root canvas, and lazily because DungeonEditorScreen/BattleGridScreen only build theirs on the first
         /// frame they are ACTIVE (`void Awake() { if (isActiveAndEnabled) EnsureBuilt(); }` —
-        /// DungeonEditorScreen.cs:104, BattleGridScreen.cs:69), which for a screen the switcher has already
+        /// DungeonEditorScreen.cs:106, BattleGridScreen.cs:70), which for a screen the switcher has already
         /// deactivated is never. Same lazy-resolution reason MapSurfaceHost.EnsureFrames documents for the
         /// docked tool panels.</summary>
         class Slot
@@ -810,6 +836,13 @@ namespace WorldGen.Workspace.Rendering
                 foreach (var kv in byKind) yield return new ScreenSurfaceHost(kv.Key, this);
             }
         }
+
+        /// <summary>The Slot behind `kind` — ISurfaceHost.ShareGroup's answer for these five. Returns the
+        /// SAME instance for Settlement, BuildingInterior and Dungeon, which is exactly what tells
+        /// WorkspaceController.SyncSurfaces that a second pane asking for a different one of those three is
+        /// asking for a screen the focused pane already took. Null for an unregistered kind; the caller falls
+        /// back to the host itself, so an unshared host still gets a unique group.</summary>
+        public object GroupFor(SurfaceKind kind) => byKind.TryGetValue(kind, out Slot slot) ? slot : null;
 
         public void Show(SurfaceKind kind, RectTransform paneContent, string id)
         {
@@ -947,6 +980,11 @@ namespace WorldGen.Workspace.Rendering
         public SurfaceKind Kind => kind;
 
         public void Show(RectTransform paneContent, string id) => owner?.Show(kind, paneContent, id);
+
+        /// <summary>The shared Slot, so the three interior kinds report ONE group — see
+        /// ScreenSurfaceHosts.GroupFor. Falls back to `this` when the owner is gone or the kind unregistered,
+        /// which keeps the group unique rather than accidentally merging every such host into null.</summary>
+        public object ShareGroup => owner != null ? (owner.GroupFor(kind) ?? this) : this;
 
         public void Hide() => owner?.Hide(kind);
 

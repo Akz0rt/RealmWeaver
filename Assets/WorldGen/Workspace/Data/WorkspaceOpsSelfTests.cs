@@ -291,6 +291,74 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Workspace Find Surface: PASS" : "Self-Test Workspace Find Surface: FAIL");
         }
 
+        /// <summary>PruneMissing must drop EVERY tab the predicate rejects, not the first one it finds — the
+        /// property MapScreenController.OnWorldRegenerated relies on since Task 10c's fix round. The old
+        /// close-by-named-ref version of that method passed a single-instance check and still left duplicates
+        /// behind, so both duplicate shapes are pinned here: the SAME surface open in both panes, and two
+        /// DIFFERENT surfaces of a rejected kind.</summary>
+        [ContextMenu("Self-Test: Workspace Prune Drops Every Match")]
+        public void SelfTestPruneDropsEveryMatch()
+        {
+            bool ok = true;
+
+            var l = WorkspaceOps.NewDefault();                                   // Primary: [WorldMap]
+            var grid1 = new SurfaceRef { Kind = SurfaceKind.BattleGrid, Id = "poi-1#0#3" };
+            var grid2 = new SurfaceRef { Kind = SurfaceKind.BattleGrid, Id = "poi-1#0#4" };
+            var poiEd = new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" };
+
+            WorkspaceOps.Open(l, grid1, "Бой 3", false);                          // Primary
+            WorkspaceOps.Open(l, grid2, "Бой 4", false);                          // Primary — a SECOND grid
+            WorkspaceOps.Open(l, Page("notes"), "Заметки", false);                // Primary — must survive
+            WorkspaceOps.Open(l, poiEd, "Тихий Брод", true);                      // Secondary; focus moves to 1
+            // Focus explicitly rather than assuming: Open(…, inOtherPane: true) leaves the focus in the pane
+            // it opened into, so without this the next Open would land in Secondary too and the
+            // same-surface-in-both-panes case would never be built.
+            WorkspaceOps.Focus(l, 0);
+            // The same surface open in BOTH panes — reachable via «Открыть рядом», and the shape a
+            // close-the-first-match call can never clear (Open only dedupes within its TARGET pane).
+            WorkspaceOps.Open(l, new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" }, "Тихий Брод", false);
+
+            // Same predicate MapScreenController.SurvivesWorldChange uses: pages and the world map survive a
+            // regeneration, every ex-screen kind does not.
+            int dropped = WorkspaceOps.PruneMissing(l,
+                s => s != null && (s.Kind == SurfaceKind.Page || s.Kind == SurfaceKind.WorldMap));
+
+            if (dropped != 4)
+            { Debug.LogError($"FAIL prune-all: reported {dropped} dropped, want 4 (two grids + two POI-editor tabs)"); ok = false; }
+
+            // Asserted by SCANNING for survivors of a rejected kind, not by counting: a count would pass if
+            // the prune dropped four of the WRONG tabs.
+            foreach (var pane in new[] { l.Primary, l.Secondary })
+            {
+                if (pane == null) continue;
+                foreach (var tab in pane.Tabs)
+                    if (tab.Surface.Kind != SurfaceKind.Page && tab.Surface.Kind != SurfaceKind.WorldMap)
+                    { Debug.LogError($"FAIL prune-all: a {tab.Surface.Kind}/{tab.Surface.Id} tab survived the prune"); ok = false; }
+            }
+
+            // ...and the survivors really are still there, so "nothing of that kind remains" was not achieved
+            // by emptying the workspace.
+            bool keptMap = false, keptPage = false;
+            foreach (var tab in l.Primary.Tabs)
+            {
+                if (tab.Surface.Kind == SurfaceKind.WorldMap) keptMap = true;
+                if (tab.Surface.Kind == SurfaceKind.Page && tab.Surface.Id == "notes") keptPage = true;
+            }
+            if (!keptMap || !keptPage)
+            { Debug.LogError($"FAIL prune-all: survivors missing (worldMap={keptMap}, page={keptPage})"); ok = false; }
+
+            // The secondary pane held only rejected tabs, so pruning them collapses the split (R3/R4 via
+            // NormalizeSplit) rather than leaving an empty second pane on screen.
+            if (l.Secondary != null)
+            { Debug.LogError("FAIL prune-all: the secondary pane held only pruned tabs and must have collapsed"); ok = false; }
+
+            if (l.Primary.ActiveIndex < 0 || l.Primary.ActiveIndex >= l.Primary.Tabs.Count)
+            { Debug.LogError($"FAIL prune-all: ActiveIndex {l.Primary.ActiveIndex} is out of range for {l.Primary.Tabs.Count} tab(s)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Prune Drops Every Match: PASS"
+                         : "Self-Test Workspace Prune Drops Every Match: FAIL");
+        }
+
         [ContextMenu("Self-Test: Workspace Persistence")]
         public void SelfTestPersistence()
         {

@@ -130,7 +130,16 @@ namespace WorldGen.Rendering
         /// ScreenSwitcher exists to do.</summary>
         void EnsureSwitcher()
         {
-            if (switcher != null) return;
+            // Rebuilt — not merely built once — when the shell it was baked against has changed identity,
+            // INCLUDING null -> non-null. Shell()'s own doc claims a shell built later in the session gets
+            // picked up without a restart, and a plain `switcher != null` early-out would quietly falsify that:
+            // the Workspace member array baked while no shell existed stays empty for the whole session, so
+            // the shell's own canvas (navigator + tab strips) would never be deactivated on
+            // Generation/Progress. The after-show hook resolves Shell() freshly every call and so would still
+            // hide the SURFACES — which is exactly the half-fixed state that reads as "the form floats against
+            // a live shell", the defect Step 1 exists to close.
+            var shellRoot = Shell()?.ShellRoot;
+            if (switcher != null && ReferenceEquals(switcherShellRoot, shellRoot)) return;
 
             // AppScreen.Workspace's member is the shell's own canvas — that is what extends this class's
             // deactivate-everything-else guarantee to the workspace instead of leaving it merely unpopulated
@@ -142,7 +151,7 @@ namespace WorldGen.Rendering
             // absent from this table: they are surfaces now, and their GameObjects belong to MapSurfaceHost /
             // ScreenSurfaceHosts. Listing them here too would give each object two independent owners with
             // opposite opinions about when it should be on — precisely the KNOWN SEAM this task closes.
-            var shellRoot = Shell()?.ShellRoot;
+            switcherShellRoot = shellRoot;
             switcher = new ScreenSwitcher(
                 new Dictionary<AppScreen, GameObject[]>
                 {
@@ -156,6 +165,11 @@ namespace WorldGen.Rendering
                 // them painting over Generation/Progress. See WorkspaceController.SetShellActive.
                 screen => Shell()?.SetShellActive(screen == AppScreen.Workspace));
         }
+
+        /// <summary>The ShellRoot `switcher`'s member table was built against, so EnsureSwitcher can tell a
+        /// stale table from a current one. Plain field, wiped by a domain reload alongside `switcher` itself —
+        /// which is harmless precisely because both are wiped together, so the pair is never half-stale.</summary>
+        GameObject switcherShellRoot;
 
         /// <summary>The workspace shell, discovered rather than wired — WorkspaceBuilder is not in any scene
         /// until Task 11 (see this class's own doc), so there is no Inspector slot to drag it into and nothing
@@ -177,19 +191,22 @@ namespace WorldGen.Rendering
 
         void OnWorldRegenerated()
         {
-            // Close the tabs BEFORE clearing the state that names them — every SurfaceRef below is derived
-            // from editingPoi/editingDungeon/battleGridRoomId, so a clear-first ordering would leave three
-            // tabs open pointing at a world that no longer exists, each of which would then Show() a screen
-            // still bound to a dead InteriorData. (Task 11's WorkspacePrefs has its own version of this
-            // problem for STORED tabs and its own answer, WorkspaceOps.PruneMissing; this is the live one.)
-            CloseSurfaceTab(BattleGridSurface());
-            CloseSurfaceTab(InteriorSurface(editingDungeon));
-            // parentTown is a SECOND open interior tab, not a duplicate of the line above: inside a building
-            // interior `editingDungeon` is the BUILDING and the town's own tab is still open behind it
-            // (OpenBuildingInterior leaves it there on purpose). Newly reachable now that Step 4 lets a DM
-            // generate a world from inside a building — town, building, «Файл» → «Создать новый мир…».
-            CloseSurfaceTab(InteriorSurface(parentTown));
-            CloseSurfaceTab(PoiEditorSurface(editingPoi));
+            // PRUNE BY KIND, not by closing the tabs the fields happen to name. An earlier revision closed
+            // four named SurfaceRefs derived from editingPoi/editingDungeon/parentTown/battleGridRoomId, and
+            // that misses every DUPLICATE — which ordinary navigation produces: open a battle grid for room 1,
+            // click back to the interior's tab (it stays live behind, by design), open a battle grid for room
+            // 2, and BOTH grid tabs are open while the fields name only one. Same for two POI-editor tabs,
+            // two dungeons, or any surface opened in both panes (CloseSurface closes the first match only, by
+            // design). A survivor points at a destroyed world and its next Show re-binds to nothing, leaving a
+            // stale screen under a live tab — exactly what the close-before-clear ordering existed to prevent.
+            //
+            // WorkspaceOps.PruneMissing is the designed answer and had no caller until now. The predicate is
+            // KIND-BASED rather than "does this id still resolve": at this moment PoiManager/DungeonManager
+            // may or may not already have been cleared by their own handlers of the same regeneration, and
+            // Unity gives no ordering guarantee between them — a resolution-based predicate would keep or drop
+            // tabs depending on which handler ran first. "A fresh world drops any open editor" is the rule
+            // these three lines have always stated, and it is order-independent.
+            Shell()?.PruneSurfaces(SurvivesWorldChange);
 
             editingPoi = null; // a fresh world drops any open POI editor
             editingDungeon = null; // a fresh world drops any open dungeon editor
@@ -197,6 +214,13 @@ namespace WorldGen.Rendering
             battleGridRoomId = 0;   // a fresh world drops the battle grid screen too
             RefreshScreenState();
         }
+
+        /// <summary>Which surfaces outlive a world regeneration: the document's pages (they are notes, not
+        /// world state — the whole point of the world/session separation) and the world map itself, which is
+        /// the tab the DM lands back on. Every ex-screen kind describes a POI or an interior of the world that
+        /// was just replaced, so all five go.</summary>
+        static bool SurvivesWorldChange(SurfaceRef s) =>
+            s != null && (s.Kind == SurfaceKind.Page || s.Kind == SurfaceKind.WorldMap);
 
         // ── Surfaces: opening and closing the tabs that used to be screens (Task 10c Step 2) ────────
         //
@@ -622,6 +646,15 @@ namespace WorldGen.Rendering
         // restart, so this reversal is not scaffolding — it is the half of the id contract that had no reader
         // yet.
         //
+        // ACCEPTED CONSEQUENCE — RETURNING TO A MULTI-FLOOR INTERIOR'S TAB LANDS ON FLOOR 0.
+        // DungeonEditorScreen.Bind ends in SetLevel(0), so a rebind resets the level tab (and the room
+        // selection) exactly the way re-entering the editor from the map always has. Not a regression — it is
+        // the pre-tab behaviour — but the rebind hook makes it ROUTINE where it previously took an explicit
+        // re-open. Left as-is rather than papered over: per-tab level/selection is real per-tab VIEW state,
+        // which is Task 11's (WorkspacePrefs) or Р5's to design, and faking it here would mean this class
+        // quietly keeping a second copy of the editor's own state. The early-out below is what stops it
+        // happening on syncs that change nothing, which is the common case.
+        //
         // EVERY BRANCH EARLY-OUTS WHEN ALREADY BOUND, and that is a requirement, not an optimisation:
         // SyncSurfaces -> Show runs on EVERY layout change (a divider commit, a focus change, opening an
         // unrelated tab), and DungeonEditorScreen.Bind rebuilds the whole node canvas — re-binding a
@@ -947,7 +980,15 @@ namespace WorldGen.Rendering
             ApplyUiParamsToRenderer(uiParams);
             var genParams = BuildGenerationParams(uiParams);
 
-            RefreshScreenState(); // hasMap is still false here, but activeGeneration isn't set yet either -- set it first
+            // Kept for the FIRST-world case, where hasMap is still false and this shows the generation screen
+            // again (activeGeneration is not assigned until StartCoroutine returns below, so DesiredScreen
+            // cannot see "generating" yet). On the «Создать новый мир…» path it now resolves to Workspace
+            // instead, because newWorldRequested was just cleared — a wasted SyncSurfaces (including an
+            // interior re-Bind) with no visible flicker, since RunGeneration's first synchronous segment calls
+            // RefreshScreenStateForGenerating in this same frame. Left in rather than made conditional: the
+            // waste is one frame at the start of a multi-second generation, and a conditional here would be a
+            // second place that has to agree with DesiredScreen about what is showing.
+            RefreshScreenState();
             activeGeneration = StartCoroutine(RunGeneration(genParams));
         }
 

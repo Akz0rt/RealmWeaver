@@ -119,11 +119,12 @@ namespace WorldGen.Workspace.Rendering
 
         /// <summary>Undoes Apply: the frame gives the whole window back to the chrome inside it, MINUS the
         /// menu-bar strip. Called from MapSurfaceHost.Hide so a surface that stops owning a pane is not left
-        /// clamped to whatever rect that pane last had — a stale clamp would survive into any path that shows
-        /// this chrome OUTSIDE the workspace (MapScreenController/ScreenSwitcher still drive its active state
-        /// independently — see MapSurfaceHost's KNOWN SEAM paragraph, and specifically the case it names:
-        /// closing the POI editor re-asserts AppScreen.MapEditor, re-activating the chrome behind a Hide()
-        /// this host already issued).
+        /// clamped to whatever rect that pane last had. Through Task 10b the stale clamp had a SECOND owner to
+        /// defend against — MapScreenController/ScreenSwitcher drove this chrome's active state independently
+        /// via an `AppScreen.MapEditor` that Task 10c deleted, so the chrome could be re-shown behind a Hide()
+        /// this host had already issued (see MapSurfaceHost's now-closed KNOWN SEAM paragraph). What it
+        /// defends against NOW is narrower and still real: this host's own next Show landing in a DIFFERENT
+        /// pane, and the un-hosted transitional state before Task 11 wires the shell into a scene.
         ///
         /// WHY NOT PLAIN ZERO. Zeroing all four offsets restores the frame to the full canvas — which WAS the
         /// window-anchored geometry the chrome was written for, and stopped being it in the same change that

@@ -7,7 +7,8 @@ using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
-    /// <summary>Full-screen battle-grid editor (AppScreen.BattleGrid, opened from the room inspector on
+    /// <summary>The battle-grid editor (SurfaceKind.BattleGrid — a workspace SURFACE since Task 10c, hosted
+    /// inside a pane by ScreenSurfaceHosts; it was a full-screen AppScreen until then), opened from the room inspector on
     /// the dungeon/interior screen it sits above). Hosts BattleGridRenderer + BattleGridViewController in
     /// MapArea, a paint toolbar (material / tool / brush size / grid size / regenerate) in Sidebar. Built
     /// imperatively at Awake, own-canvas pattern (mirrors DungeonEditorScreen).

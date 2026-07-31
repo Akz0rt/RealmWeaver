@@ -6,7 +6,9 @@ using WorldGen.Rendering.Theme;
 
 namespace WorldGen.Rendering
 {
-    /// <summary>Full-screen dungeon editor (mutually-exclusive AppScreen.Dungeon, opened from the POI
+    /// <summary>The interior editor (SurfaceKind.Settlement/BuildingInterior/Dungeon — three workspace
+    /// SURFACES over this ONE object since Task 10c, hosted inside a pane by ScreenSurfaceHosts; it was a
+    /// mutually-exclusive full-screen AppScreen until then), opened from the POI
     /// editor). Hosts the draggable room-graph canvas (DungeonViewController + DungeonFlatRenderer) in
     /// MapArea, with a toolbar (+ Комната / Связать / Удалить) below the top strip; the room inspector +
     /// validation panel (DungeonInspectorPanel, Task 5) is hosted in Sidebar. Built imperatively at Awake,
