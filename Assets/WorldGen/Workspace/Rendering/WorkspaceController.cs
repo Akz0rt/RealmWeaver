@@ -55,6 +55,54 @@ namespace WorldGen.Workspace.Rendering
 
         SurfaceRegistry surfaceRegistry;
 
+        /// <summary>True while a NON-workspace AppScreen (Generation/Progress) owns the window, in which case
+        /// SyncSurfaces hides every host instead of showing the panes' active tabs. Task 10c Step 1.
+        ///
+        /// STORED NEGATED — `suppressed`, not `active` — and that is the whole point of the field's shape. A
+        /// plain non-[SerializeField] field is reset to default() by a Play-mode domain reload while every
+        /// Unity object it describes survives untouched: this arc's recurring defect family, seven sightings
+        /// (see ScreenSurfaceHosts' and MapSurfaceHost's RECOMPILE GAP paragraphs). `default(bool)` is false,
+        /// so with this polarity a reload lands on "the workspace owns the window", which is the state the app
+        /// is in essentially all of the time once a world exists. An `active` field with an `= true`
+        /// initializer would NOT survive — field initializers do not re-run on deserialization — so a reload
+        /// would silently blank the entire workspace until the next AppScreen change, which for a user who
+        /// never leaves the map is never.
+        ///
+        /// DEACTIVATING THE SHELL'S CANVAS IS THE OTHER HALF, and it is ScreenSwitcher's, not this class's:
+        /// MapScreenController registers ShellRoot below as AppScreen.Workspace's member GameObject, so the
+        /// switcher's existing "deactivate every screen except the target" guarantee covers the workspace
+        /// without a second mechanism. This field covers what a GameObject toggle cannot reach — the hosts,
+        /// whose surfaces live OUTSIDE the shell hierarchy (the map camera, the five ex-screen canvases) and
+        /// would otherwise keep drawing over a deactivated shell. Both halves are needed: the canvas toggle
+        /// alone leaves MapSurfaceHost's disabled backgrounds and active map chrome painting over the
+        /// generation form (GenerationScreenUI at sortingOrder 50 under MapLayersPanel at 60 — the defect the
+        /// user reported at the Task 10a checkpoint), and this field alone leaves the shell's own navigator
+        /// and tab strips drawn across it.</summary>
+        bool shellSuppressed;
+
+        /// <summary>The shell's own canvas GameObject — what MapScreenController hands ScreenSwitcher as
+        /// AppScreen.Workspace's member (see shellSuppressed's doc). Resolved by hierarchy path rather than
+        /// stored at build time for the reason MapSurfaceHost.ResolveRootRowBackground gives for its own
+        /// re-acquisition: a domain reload wipes the field while the GameObject itself survives, so a lazy
+        /// re-Find is recoverable where a build-time assignment is not. "WorkspaceCanvas" is exactly where
+        /// WorkspaceBuilder.Awake creates it, relative to THIS transform — WorkspaceBuilder AddComponents this
+        /// class onto its own GameObject, so `transform` here already is WorkspaceBuilder's.
+        ///
+        /// Transform.Find locates INACTIVE children, which is what lets this keep working after the switcher
+        /// has deactivated the canvas once.</summary>
+        public GameObject ShellRoot
+        {
+            get
+            {
+                if (shellRoot != null) return shellRoot;
+                var canvas = transform.Find("WorkspaceCanvas");
+                shellRoot = canvas != null ? canvas.gameObject : null;
+                return shellRoot;
+            }
+        }
+
+        GameObject shellRoot;
+
         void Awake() => EnsureLayout();
 
         /// <summary>Guarantees Layout exists, whoever asks first. Awake() calls this, and so does
@@ -167,6 +215,24 @@ namespace WorldGen.Workspace.Rendering
         public void SetSurfaceRegistry(SurfaceRegistry registry)
         {
             surfaceRegistry = registry;
+            SyncSurfaces();
+        }
+
+        /// <summary>Tells the workspace whether it currently owns the window — called from
+        /// MapScreenController's ScreenSwitcher after-show hook with `screen == AppScreen.Workspace`, so it
+        /// fires on every screen change and nowhere else. See shellSuppressed's own doc for the field's
+        /// polarity and for which half of the hiding job this covers.
+        ///
+        /// Re-syncs UNCONDITIONALLY rather than only when the value changed. The state this asserts lives in
+        /// objects nothing else here owns — MapSurfaceHost's three background Images and its chrome
+        /// GameObjects, five ex-screen GameObjects — and the legacy paths that also touch them are exactly
+        /// what Task 10c is unpicking, so re-asserting on every screen change is what makes the ScreenSwitcher
+        /// guarantee ("nothing leaks onto the wrong screen") hold rather than merely usually hold. It is
+        /// affordable because this is an event, not a frame: RefreshScreenState runs on discrete user actions
+        /// (open/close an editor, start/finish a generation), a handful of times per session.</summary>
+        public void SetShellActive(bool active)
+        {
+            shellSuppressed = !active;
             SyncSurfaces();
         }
 
@@ -327,8 +393,16 @@ namespace WorldGen.Workspace.Rendering
             // NRE on Layout.FocusedPane / PaneContent / ActiveSurfaceOf below.
             if (Layout == null) return;
 
-            int[] order = Layout.FocusedPane == 1 ? new[] { 0, 1 } : new[] { 1, 0 };
             var shownKinds = new HashSet<SurfaceKind>();
+
+            // shellSuppressed leaves shownKinds EMPTY, so the Hide loop below retires every registered host —
+            // the workspace's surfaces stop drawing while Generation/Progress owns the window (Task 10c
+            // Step 1). Expressed as "show nothing" rather than an early return so the Hide half still runs:
+            // an early return would leave whatever was last shown (the map camera's punched hole and its
+            // active chrome, or a full-screen ex-screen canvas) painting over the screen that took over.
+            int[] order = shellSuppressed
+                ? new int[0]
+                : Layout.FocusedPane == 1 ? new[] { 0, 1 } : new[] { 1, 0 };
 
             foreach (int pane in order)
             {

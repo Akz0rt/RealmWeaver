@@ -2,23 +2,49 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
+using WorldGen.Workspace.Rendering;
 
 namespace WorldGen.Rendering
 {
     /// <summary>
     /// Owns app-flow POLICY: computes which mutually-exclusive screen should be visible from app
     /// state (map exists? generating? editing a POI?) and delegates the actual show/hide to a
-    /// ScreenSwitcher (the MECHANISM). Screens: Generation / Progress / MapEditor / PoiEditor.
+    /// ScreenSwitcher (the MECHANISM). Screens: Generation / Progress / Workspace.
     /// Also runs the world-generation coroutine.
+    ///
+    /// TASK 10c CHANGED WHAT THIS CLASS IS. It used to be the app's only navigation: six screens, and
+    /// "opening a POI" meant switching the whole window to one of them. It now owns exactly two questions —
+    /// is there a world yet, and is one being generated — and everything else it used to switch between is a
+    /// TAB it opens through WorkspaceController.Open. The Open*/Close* methods below therefore do two things
+    /// each: keep the editing state this class has always tracked (editingPoi/editingDungeon/parentTown/
+    /// battleGridRoomId, which the screens themselves read through Bind), and open or close the tab that
+    /// shows it.
+    ///
+    /// THE WORKSPACE IS DISCOVERED, NOT WIRED (transitional, Task 11 closes it): WorkspaceBuilder is not in
+    /// any scene yet, so Shell() below returns null today and every Open*/Close* is a no-op — between
+    /// this task and Task 11 the app has a world map and no POI/interior/battle editing at all. That is the
+    /// same shape this arc already accepted once for Task 10a's shell-less path, and it is written down here
+    /// rather than left to be discovered at a checkpoint.
     /// </summary>
     public class MapScreenController : MonoBehaviour
     {
         public WorldMapRenderer mapRenderer;
         public GenerationScreenUI generationScreen;
         public GenerationProgressUI progressScreen;
+        // ── Map chrome. NO LONGER SWITCHED HERE (Task 10c): MapSurfaceHost owns all three now — it discovers
+        // PoiEditPanel/MapLegendUI/MapToolbarUI by type (MapSurfaceHost.Rewire) and drives their active state
+        // from whether the WorldMap surface currently owns a pane, which is the seam SurfaceRegistry's class
+        // doc had been documenting as KNOWN since Task 9. Verified against the scene rather than assumed:
+        // mapEditorPanelGO is the "MapEditorUI" object carrying PoiEditPanel and mapLegendUiGO is "MapLegend"
+        // carrying MapLegendUI, i.e. exactly the two objects that discovery finds.
+        //
+        // The three fields are KEPT rather than deleted, deliberately. Deleting them would orphan three
+        // Inspector assignments in SampleScene.unity, which this task is not allowed to touch (Task 11 owns
+        // the scene), and they are the natural things for Task 11 to hand WorkspaceBuilder.mapChrome/mapCamera
+        // as explicit overrides if type discovery ever picks the wrong instance.
         public GameObject mapEditorPanelGO;
         public GameObject mapLegendUiGO;
-        [Tooltip("Тулбар вкладок — прячет свою шапку + докнутые панели вне экрана карты (они сиблинги, не дети mapEditorPanelGO).")]
+        [Tooltip("Тулбар вкладок. Со времён Task 10c его видимостью управляет MapSurfaceHost (вкладка «Карта мира»), а не этот класс.")]
         public MapToolbarUI mapToolbar;
 
         [Header("POI editor screen")]
@@ -57,17 +83,7 @@ namespace WorldGen.Rendering
             // Build the switcher FIRST — before any event subscription — so the invariant
             // "the switcher exists before any handler that could call RefreshScreenState runs"
             // is structural, not merely incidental to statement order.
-            switcher = new ScreenSwitcher(
-                new Dictionary<AppScreen, GameObject[]>
-                {
-                    { AppScreen.Generation, new[] { generationScreen.gameObject } },
-                    { AppScreen.Progress,   new[] { progressScreen.gameObject } },
-                    { AppScreen.MapEditor,  new[] { mapEditorPanelGO, mapLegendUiGO } },
-                    { AppScreen.PoiEditor,  new[] { poiEditorScreenGO } },
-                    { AppScreen.Dungeon,   new[] { dungeonEditorScreenGO } },
-                    { AppScreen.BattleGrid, new[] { battleGridScreenGO } },
-                },
-                screen => { if (mapToolbar != null) mapToolbar.SetChromeVisible(screen == AppScreen.MapEditor); });
+            EnsureSwitcher();
 
             mapRenderer.OnWorldRegenerated += OnWorldRegenerated;
             if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
@@ -86,6 +102,72 @@ namespace WorldGen.Rendering
 
             RefreshScreenState();
         }
+
+        /// <summary>Builds `switcher` if it is not already there, and is called from RefreshScreenState as
+        /// well as from Start — a lazy rebuild, not merely a null guard, and the difference matters.
+        ///
+        /// `switcher` is a plain non-[SerializeField] field, the exact construct a Play-mode domain reload
+        /// resets while every GameObject it names survives (this arc's recurring defect family; see
+        /// WorkspaceController.shellSuppressed's doc for the running count). Unity re-invokes Awake on a
+        /// surviving component after such a reload but NOT Start, so a switcher built only in Start would stay
+        /// null for the rest of the session and every RefreshScreenState would throw. Rebuilding is genuinely
+        /// cheap and genuinely correct here because every input is a SERIALIZED field (generationScreen,
+        /// progressScreen) or a fresh lookup (Shell().ShellRoot), all of which DO survive the reload — so
+        /// the rebuilt switcher is identical to the original rather than a degraded stand-in. A bare
+        /// `if (switcher == null) return;` guard would instead leave the app permanently on whatever screen it
+        /// happened to be showing, which is the "live but blind" outcome WorkspaceBuilder.Awake's own comment
+        /// argues against.
+        ///
+        /// One consequence to know about: `Current` restarts at its default after a rebuild, so the first
+        /// Show() post-reload re-applies every member's active state unconditionally. That is the desired
+        /// direction — the reload cannot have changed which screen SHOULD be visible, and re-asserting is what
+        /// ScreenSwitcher exists to do.</summary>
+        void EnsureSwitcher()
+        {
+            if (switcher != null) return;
+
+            // AppScreen.Workspace's member is the shell's own canvas — that is what extends this class's
+            // deactivate-everything-else guarantee to the workspace instead of leaving it merely unpopulated
+            // (Task 10c Step 1). An EMPTY array when no workspace exists, not a null entry: ScreenSwitcher
+            // iterates the array and null-checks each element, so both are safe, but an empty array says
+            // "this screen has no members here" while a null entry reads as a wiring mistake.
+            //
+            // The four ex-screens (map chrome, POI editor, interior editor, battle grid) are deliberately
+            // absent from this table: they are surfaces now, and their GameObjects belong to MapSurfaceHost /
+            // ScreenSurfaceHosts. Listing them here too would give each object two independent owners with
+            // opposite opinions about when it should be on — precisely the KNOWN SEAM this task closes.
+            var shellRoot = Shell()?.ShellRoot;
+            switcher = new ScreenSwitcher(
+                new Dictionary<AppScreen, GameObject[]>
+                {
+                    { AppScreen.Generation, new[] { generationScreen.gameObject } },
+                    { AppScreen.Progress,   new[] { progressScreen.gameObject } },
+                    { AppScreen.Workspace,  shellRoot != null ? new[] { shellRoot } : new GameObject[0] },
+                },
+                // The second half of the same guarantee, and the half a GameObject toggle cannot reach: the
+                // workspace's SURFACES live outside the shell hierarchy (the map camera and its floating
+                // chrome, the five ex-screen canvases), so deactivating the shell's canvas alone would leave
+                // them painting over Generation/Progress. See WorkspaceController.SetShellActive.
+                screen => Shell()?.SetShellActive(screen == AppScreen.Workspace));
+        }
+
+        /// <summary>The workspace shell, discovered rather than wired — WorkspaceBuilder is not in any scene
+        /// until Task 11 (see this class's own doc), so there is no Inspector slot to drag it into and nothing
+        /// to find until then. Re-searched on every miss rather than once: that is also what recovers the
+        /// reference after a Play-mode domain reload wipes this field, and what would let a shell built later
+        /// in the session be picked up without a restart. FindObjectsInactive.Include because the shell's
+        /// component sits on a GameObject that the switcher itself may have deactivated.
+        ///
+        /// Returns null in a scene with no workspace, and EVERY caller treats that as "do nothing" — the
+        /// transitional no-editing window this class's own doc names.</summary>
+        WorkspaceController Shell()
+        {
+            if (workspace != null) return workspace;
+            workspace = FindFirstObjectByType<WorkspaceController>(FindObjectsInactive.Include);
+            return workspace;
+        }
+
+        WorkspaceController workspace;
 
         void OnWorldRegenerated()
         {
@@ -344,23 +426,22 @@ namespace WorldGen.Rendering
 
         void RefreshScreenState()
         {
+            EnsureSwitcher();
             switcher.Show(DesiredScreen());
         }
 
-        /// <summary>The single truth table mapping app state to the one visible screen. Reproduces
-        /// the old hasMap/generating/editorOpen/mapReady booleans exactly. The switcher then hides
-        /// every other screen's members (incl. the toolbar chrome via the after-show hook), so
-        /// nothing can leak by omission.</summary>
+        /// <summary>The single truth table mapping app state to the one visible screen. Three rows now
+        /// instead of six (Task 10c): the four editing states this used to switch on — battleGridRoomId,
+        /// editingDungeon, editingPoi, and "none of the above" — are all the WORKSPACE now, and which of them
+        /// is on screen is a question about which TAB is active, answered by WorkspaceController, not here.
+        /// The switcher still hides every other screen's members, so nothing can leak by omission.</summary>
         AppScreen DesiredScreen()
         {
             bool hasMap = mapRenderer.Cells != null;
             bool generating = activeGeneration != null;
             if (generating) return AppScreen.Progress;
             if (!hasMap) return AppScreen.Generation;
-            if (battleGridRoomId != 0) return AppScreen.BattleGrid;
-            if (editingDungeon != null) return AppScreen.Dungeon;
-            if (editingPoi != null) return AppScreen.PoiEditor;
-            return AppScreen.MapEditor;
+            return AppScreen.Workspace;
         }
 
         public void StartGeneration(WorldGen.Rendering.GenerationRequest uiParams)
@@ -464,10 +545,11 @@ namespace WorldGen.Rendering
         // During generation START, activeGeneration hasn't been assigned yet (StartCoroutine runs
         // RunGeneration's first segment synchronously, before the handle is stored), so DesiredScreen()
         // would not yet see "generating". Show Progress directly. Unlike the old hand-rolled version,
-        // the switcher also hides the toolbar chrome (via the hook), so it can't linger on Progress
-        // during a regenerate.
+        // the switcher also deactivates the workspace and hides its surfaces (via the hook), so neither the
+        // shell nor the map chrome can linger on Progress during a regenerate.
         void RefreshScreenStateForGenerating()
         {
+            EnsureSwitcher();
             switcher.Show(AppScreen.Progress);
         }
 

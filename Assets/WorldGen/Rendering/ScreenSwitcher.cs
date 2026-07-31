@@ -5,8 +5,17 @@ namespace WorldGen.Rendering
 {
     /// <summary>The mutually-exclusive top-level screens. Named AppScreen (NOT Screen) on purpose:
     /// UnityEngine.Screen (Screen.width/height) is used throughout this namespace, and a same-namespace
-    /// type named Screen would shadow it and break every Screen.width reference.</summary>
-    public enum AppScreen { Generation, Progress, MapEditor, PoiEditor, Dungeon, BattleGrid }
+    /// type named Screen would shadow it and break every Screen.width reference.
+    ///
+    /// Task 10c narrowed this from six to three. MapEditor/PoiEditor/Dungeon/BattleGrid stopped being SCREENS
+    /// and became SURFACES a tab hosts (SurfaceKind in WorkspaceLayout.cs, hosted by MapSurfaceHost /
+    /// ScreenSurfaceHosts) — the Р1 spec's screen-layer rework. Generation and Progress stay screens because
+    /// they exist BEFORE a world does: AppScreen.Generation is only reachable while `!hasMap`
+    /// (MapScreenController.DesiredScreen), so there is no world and therefore no workspace for that form to
+    /// sit in. Workspace is the third, and it is a real member with a real GameObject
+    /// (WorkspaceController.ShellRoot) rather than a bare label, precisely so this class's
+    /// deactivate-everything-else guarantee covers it too.</summary>
+    public enum AppScreen { Generation, Progress, Workspace }
 
     /// <summary>
     /// Single source of truth for which top-level screen is visible. Show(target) deactivates the
