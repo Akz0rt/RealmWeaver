@@ -59,13 +59,6 @@ namespace WorldGen.Workspace.Data
         public static List<NavGroup> Build(NotesDocument doc, string filter)
         {
             var groups = new List<NavGroup>();
-            // The pinned row targets the world map, not anything derived from `doc` — but this early return
-            // was kept anyway rather than special-cased around it: NavigatorView already bails on a null
-            // documentController before ever calling Build (see its Rebuild), so a null doc here only
-            // happens on a path that renders nothing regardless, and a doc-independent exception here would
-            // be one more rule for the next reader to reconcile with "Build returns fresh from doc".
-            if (doc == null) return groups;
-
             string needle = (filter ?? "").Trim().ToLowerInvariant();
 
             // Pinned — P1: ONE hardcoded row, the world map, always first when it survives the filter.
@@ -74,6 +67,15 @@ namespace WorldGen.Workspace.Data
             // where 'what is a member' lives". A hardcoded head node is exactly the stored-membership
             // exception that rule forbids, so the world map gets its OWN group instead (kind Pinned, empty
             // Title/Id — there is no PageGroup behind it, the same reason Мир's own Id is empty).
+            //
+            // Built BEFORE the `doc == null` guard below, deliberately: unlike every other group in this
+            // method, the Pinned row names the world map, not anything derived from `doc` — so it must not
+            // be gated on a document existing. Gating it there (an earlier version of this method did) put
+            // the round's own defect back in a different shape: a scene where nothing has wired a
+            // NotesDocumentController yet (or, upstream of that, wherever WorkspaceBuilder.EnsureDocument
+            // Controller's discovery finds nothing) would lose the one row whose entire job is "the map must
+            // be reachable from something other than its default tab". NavigatorTreeSelfTests pins this with
+            // `Build(null, "")` returning exactly the Pinned group.
             //
             // The SurfaceRef here must stay byte-identical to WorkspaceOps.NewDefault's own seed tab
             // (WorkspaceOps.cs: Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface. A merely-equal-LOOKING
@@ -92,6 +94,10 @@ namespace WorldGen.Workspace.Data
                     Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" },
                 });
             if (pinned.Nodes.Count > 0) groups.Add(pinned);
+
+            // Everything below IS document-derived (Мир scans doc.Groups directly, Authored mirrors
+            // doc.Groups as-is), so the null guard belongs HERE, after Pinned, not before it.
+            if (doc == null) return groups;
 
             // Мир — N1: computed from Bound alone, in document order. A separate top-to-bottom scan rather
             // than folded into the Authored loop below, so this one place is where "what is a member" lives.

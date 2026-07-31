@@ -104,6 +104,27 @@ namespace WorldGen.Workspace.Data
             if (groups.Exists(g => g.Kind == NavGroupKind.World && g.Nodes.Exists(n => n.Title == WorkspaceOps.DefaultWorldMapTitle)))
             { Debug.LogError("FAIL tree: the world-map row leaked into Мир, want it ONLY in the Pinned group (P1)"); ok = false; }
 
+            // P1, doc-independence (checkpoint3-review.md Important 1): the Pinned row names the world map,
+            // not anything derived from `doc` — so Build(null, ...) must still return it. Losing this row on
+            // a null document would be the round's own "map unreachable" defect, relocated to whatever path
+            // leaves NavigatorView with no document wired (e.g. WorkspaceBuilder.EnsureDocumentController's
+            // discovery finding nothing before Task 9's wiring runs). Checked as EXACTLY one group, not just
+            // "contains a Pinned group somewhere" — a mutant that also (wrongly) let Мир/Authored survive a
+            // null doc would slip past a weaker "Exists" check.
+            var nullDocGroups = NavigatorTree.Build(null, "");
+            if (nullDocGroups.Count != 1 || nullDocGroups[0].Kind != NavGroupKind.Pinned)
+            {
+                string actual = nullDocGroups.Count == 0 ? "no groups"
+                    : $"{nullDocGroups.Count} group(s), first Kind={nullDocGroups[0].Kind}";
+                Debug.LogError($"FAIL tree: Build(null, \"\") = [{actual}], want exactly 1 group, Kind=Pinned (P1, doc-independence)");
+                ok = false;
+            }
+            else if (nullDocGroups[0].Nodes.Count != 1 || nullDocGroups[0].Nodes[0].Title != WorkspaceOps.DefaultWorldMapTitle)
+            {
+                Debug.LogError($"FAIL tree: Build(null, \"\")'s Pinned group has {nullDocGroups[0].Nodes.Count} node(s), want 1 «{WorkspaceOps.DefaultWorldMapTitle}» (P1, doc-independence)");
+                ok = false;
+            }
+
             var world = groups.Find(g => g.Kind == NavGroupKind.World);
             if (world == null || world.Nodes.Count != 1 || world.Nodes[0].Title != "Тихий Брод")
             {

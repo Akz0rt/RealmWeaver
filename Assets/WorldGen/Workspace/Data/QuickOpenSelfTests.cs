@@ -117,6 +117,29 @@ namespace WorldGen.Workspace.Data
             if (!worldHits.Exists(h => h.Title == "Картотека"))
             { Debug.LogError("FAIL quickopen: «карт» found 0 hits for «Картотека», want >= 1 — the world map must not crowd out real page results (W1)"); ok = false; }
 
+            // W1, the MIRROR direction (checkpoint3-review.md Important 2): the check above only ever
+            // matches the world map at idx 0 (NamePrefix), so a mutant that forces
+            // `rank = idx == 0 ? NamePrefix : NameContains` down to a bare `NamePrefix` — always, regardless
+            // of idx — survives every assertion above undetected. Needle «мира» matches «карта мира» at
+            // index 6 (NameContains, not a prefix), while a page named «Мираж» matches «мира» at index 0
+            // (NamePrefix) — «Мираж» must therefore rank AHEAD of the world map here, the exact mirror of
+            // the «Картотека» check: there, the map ties a NamePrefix page and wins the tie; here, the map
+            // is genuinely worse-ranked than a real NamePrefix page and must lose outright.
+            var mirage = new NotesPage { Name = "Мираж" };
+            g.Pages.Add(mirage);
+            var midRankHits = QuickOpen.Search(doc, "мира");
+            if (midRankHits.Count == 0 || midRankHits[0].Title != "Мираж")
+            {
+                string actual = midRankHits.Count > 0 ? $"«{midRankHits[0].Title}»" : "<none>";
+                Debug.LogError($"FAIL quickopen: first hit for «мира» = {actual}, want «Мираж» (NamePrefix) ahead of the world map (NameContains at idx 6) (W1)");
+                ok = false;
+            }
+            // Positive side: the world map must still BE found here, just ranked below «Мираж» — a mutant
+            // that instead excluded the map from mid-string matches entirely would pass the check above
+            // (which only looks at index 0) while silently breaking "Search always considers the world map".
+            if (!midRankHits.Exists(h => h.Target != null && h.Target.Kind == SurfaceKind.WorldMap))
+            { Debug.LogError("FAIL quickopen: «мира» found 0 world-map hits, want >= 1 — the world map must still match mid-string, just rank below a real NamePrefix hit (W1)"); ok = false; }
+
             // Q3 — ImageBytes is never scanned, even when it happens to hold the query's own bytes: only
             // Text and Detail are text-bearing fields on a block.
             var stealth = NotesDocOps.NewBlock(BlockKind.Image, 1);
