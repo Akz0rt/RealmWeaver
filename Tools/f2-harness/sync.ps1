@@ -1692,9 +1692,11 @@ foreach ($mc in @('MutPreviewBuildingsIgnored', 'MutPreviewBuildingsNotInExtent'
     @("WorldGen.Generation.$mc.SettlementTileGrid.", "WorldGen.Generation.$mc.TileType")
 }
 
-# ---- ERASER MUTANTS (settlement-brushes, task 4): the two rules pinned by CanErase, plus the re-evaluation
-# rule pinned by Erase's re-ask-after-every-removal. All three are caught via SelfTestEraseRefusal, which
-# lives in SettlementBrushOpsSelfTests.cs (the eighth source above) — same single-pattern rebind shape as the
+# ---- ERASER MUTANTS (settlement-brushes, task 4; the building-split half retired and replaced in task 7):
+# the street rule pinned by CanErase, the re-evaluation rule pinned by Erase's re-ask-after-every-removal, and
+# (task 7) the split-and-identity rule pinned by RemoveBuildingCell plus the gesture-order rule pinned by
+# Erase's own iteration. All are caught via SelfTestEraseRefusal, which lives in SettlementBrushOpsSelfTests.cs
+# (the eighth source above) — same single-pattern rebind shape as the
 # other SettlementBrushOps mutants: SettlementStreetOps/SettlementFootprint/SettlementTileGrid all live in
 # unmutated files and resolve OUTWARD once SettlementBrushOps.cs is re-namespaced, and the test's own
 # `SettlementStreetOps.MissingAccess(floor)` call (case 5's post-stroke check) must keep judging the mutant's
@@ -1710,30 +1712,21 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseAllowsStranding' `
   '            bool safe = true;   // MUTANT: a lane can always be erased' `
   'MutEraseAllowsStranding.cs'
 
-# MutEraseSplitsBuilding: CanErase's building half always allows, so erasing a middle cell may sever a
-# building into two disconnected pieces. SelfTestEraseRefusal case 3's middle-cell claim must fail. The
-# building branch returns before the street rule ever runs and case 3's fixture is a three-cell building with
-# no street rule in play (fp.Count == 3, never 1), so nothing above masks this mutant and nothing below is
-# reachable for it to mask in turn.
-New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitsBuilding' `
-  '                return SettlementFootprint.IsConnected4(rest);' `
-  '                return true;   // MUTANT: a building may be split' `
-  'MutEraseSplitsBuilding.cs'
-
 # MutEraseStaleCheck: Erase decides every cell's safety UP FRONT, against the floor as it stood when the
 # stroke began, instead of re-asking CanErase after every removal. A single-line locator cannot express this
 # (there is no single statement that IS "decide in advance" — the precompute needs its own statement AND the
 # loop's guard needs to read from it instead of calling CanErase live), so the locator spans the loop's
 # opening three lines and rewrites all three: `stale` is populated by asking CanErase once per cell against
 # the UNMODIFIED floor, before the removal loop runs at all, and the loop's own guard reads `stale` instead of
-# ever calling CanErase again. SelfTestEraseRefusal case 5 must fail on the "removed N, expected exactly 1"
-# claim: (5,4) and (6,4) are BOTH individually safe on the intact floor (each still fronts the shared two-cell
-# building via the other column), so `stale` holds both and this mutant erases 2, not 1 — the exact gap
-# between "each cell is safe alone" and "both together are not" that the re-ask rule exists to close. Cases
-# 1/2/4 do not distinguish stale from fresh (the floor never changes between two safe/refused verdicts in any
-# of them), so this must be the only case that fails.
-$mutEraseStaleFrom = "            int removed = 0;`n            foreach (var cell in ordered)`n            {`n                if (!CanErase(floor, cell)) continue;"
-$mutEraseStaleTo   = "            int removed = 0;`n            var stale = new HashSet<(int i, int j)>();`n            foreach (var c in ordered) if (CanErase(floor, c)) stale.Add(c);   // MUTANT: decided before any removal, against the floor as it stood when the stroke began`n            foreach (var cell in ordered)`n            {`n                if (!stale.Contains(cell)) continue;"
+# ever calling CanErase again. Rewritten for Task 7 (the loop now reads straight from the caller's `cells`,
+# gesture order, never sorted into `ordered`) but the rule under test is unchanged. SelfTestEraseRefusal case
+# 5 must fail on the "removed N, expected exactly 1" claim: (5,4) and (6,4) are BOTH individually safe on the
+# intact floor (each still fronts the shared two-cell building via the other column), so `stale` holds both
+# and this mutant erases 2, not 1 — the exact gap between "each cell is safe alone" and "both together are
+# not" that the re-ask rule exists to close. Cases 1/2/4 do not distinguish stale from fresh (the floor never
+# changes between two safe/refused verdicts in any of them), so this must be the only case that fails.
+$mutEraseStaleFrom = "            foreach (var cell in cells)`n            {`n                if (!CanErase(floor, cell)) continue;"
+$mutEraseStaleTo   = "            var stale = new HashSet<(int i, int j)>();`n            foreach (var c in cells) if (CanErase(floor, c)) stale.Add(c);   // MUTANT: decided before any removal, against the floor as it stood when the stroke began`n            foreach (var cell in cells)`n            {`n                if (!stale.Contains(cell)) continue;"
 New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseStaleCheck' `
   $mutEraseStaleFrom $mutEraseStaleTo 'MutEraseStaleCheck.cs'
 
@@ -1754,7 +1747,37 @@ New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseNoRestore' `
   '            // MUTANT: the restore is skipped — a trial removal corrupts StreetCells permanently' `
   'MutEraseNoRestore.cs'
 
-foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseSplitsBuilding', 'MutEraseStaleCheck', 'MutEraseNoRestore')) {
+# MutEraseNoSplit: the disconnected remainder is written back as ONE room, so a building erased through the
+# middle becomes a single room whose footprint is two separate pieces — which DungeonValidator reports as an
+# Error and which draws as one building with a hole in it. SelfTestEraseRefusal's case 3 (room count) and
+# case 6 (the surviving original's cell count) must both fail.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseNoSplit' `
+  '                var comps = Components4(rest);' `
+  '                var comps = new List<List<(int i, int j)>> { rest };   // MUTANT: never split' `
+  'MutEraseNoSplit.cs'
+
+# MutEraseSplitKeepsSmallest: the identity follows the SMALLEST piece instead of the largest, so the DM's
+# building name, notes and interior end up on the offcut. Case 6 must fail on the surviving original's cell
+# count — NOT on its title: `Title` lives on `r`, and `r` survives the split either way (only which cells
+# land on it changes), so the title assertion cannot distinguish this mutant from correct code. It guards a
+# DIFFERENT regression instead — a split that copies identity onto the offcut too — via case 6's duplication
+# loop. Case 7 (the tie) cannot catch this mutant either — both pieces are size 1 there — which is why case
+# 6's fixture is deliberately lopsided.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseSplitKeepsSmallest' `
+  '                    if (comps[c].Count > comps[best].Count) { best = c; continue; }' `
+  '                    if (comps[c].Count < comps[best].Count) { best = c; continue; }   // MUTANT: identity to the smallest' `
+  'MutEraseSplitKeepsSmallest.cs'
+
+# MutEraseRowMajorOrder: the retired row-major sort is back, so a stroke no longer erases in the order it was
+# drawn. Case 8 must fail on the ordering that starts at (6,4) — under the sort, BOTH orderings remove (5,4).
+# This is also what would silently desynchronise Task 8's live preview from the commit.
+New-SettlementMutant 'SettlementBrushOps.cs' 'MutEraseRowMajorOrder' `
+  '            foreach (var cell in cells)' `
+  "            var sorted = new List<(int i, int j)>(cells); sorted.Sort(RowMajor);   // MUTANT: row-major again`n            foreach (var cell in sorted)" `
+  'MutEraseRowMajorOrder.cs'
+
+foreach ($mc in @('MutEraseAllowsStranding', 'MutEraseStaleCheck', 'MutEraseNoRestore',
+                  'MutEraseNoSplit', 'MutEraseSplitKeepsSmallest', 'MutEraseRowMajorOrder')) {
   New-SettlementRebind 'SelfTestEraseRefusal' $mc `
     @('SettlementBrushOps\.') `
     @("WorldGen.Generation.$mc.SettlementBrushOps.")

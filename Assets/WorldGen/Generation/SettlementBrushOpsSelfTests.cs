@@ -517,35 +517,39 @@ namespace WorldGen.Rendering
                 }
             }
 
-            // 3. A MIDDLE CELL OF A MULTI-CELL BUILDING IS REFUSED; an END cell is allowed.
+            // 3. THE MIDDLE OF A BUILDING IS NOW ERASABLE — it SPLITS (DM ruling, checkpoint 2). This case
+            //    asserted the OPPOSITE until that ruling: the old rule refused any cell whose removal would
+            //    disconnect the remainder. Keep reading the footprint back through FootprintOf, which stays
+            //    unmutated inside a rebound copy of this test and so is trustworthy as a precondition guard.
             {
                 var floor = Floor(Cells((2, 1), (3, 1), (4, 1)));
                 var room = SettlementBrushOps.PaintBuilding(floor, Cells((2, 2), (3, 2), (4, 2)));
                 if (room == null) { Debug.LogError("SelfTestEraseRefusal: the three-cell fixture did not paint"); ok = false; }
                 else
                 {
-                    // PRECONDITION, not decoration (review finding I1): the middle-vs-end distinction only
-                    // means anything on a footprint that actually HAS a middle. Read back through
-                    // SettlementTileGrid.FootprintOf — the canonical read, and one that stays UNMUTATED even
-                    // inside a rebound copy of this test, so it is trustworthy as a guard on the mutated call
-                    // above it.
                     var fp3 = SettlementTileGrid.FootprintOf(room);
                     if (fp3.Count != 3)
                     {
                         Debug.LogError($"SelfTestEraseRefusal: the three-cell fixture painted {fp3.Count} cells, "
-                                     + "expected 3 — with fewer cells (3,2) may no longer be a genuine middle "
-                                     + "cell and the middle-vs-end distinction stops being tested");
+                                     + "expected 3 — without a genuine middle there is nothing to split");
                         ok = false;
                     }
-                    if (SettlementBrushOps.CanErase(floor, (3, 2)))
+                    if (!SettlementBrushOps.CanErase(floor, (3, 2)))
                     {
-                        Debug.LogError("SelfTestEraseRefusal: erasing the middle cell (3,2) was allowed — the "
-                                     + "remainder would be two disconnected pieces");
+                        Debug.LogError("SelfTestEraseRefusal: erasing the middle cell (3,2) was refused — the "
+                                     + "middle is erasable now and the building splits");
                         ok = false;
                     }
-                    if (!SettlementBrushOps.CanErase(floor, (4, 2)))
+                    int before = floor.Rooms.Count;
+                    if (SettlementBrushOps.Erase(floor, Cells((3, 2))) != 1)
                     {
-                        Debug.LogError("SelfTestEraseRefusal: erasing the end cell (4,2) was refused");
+                        Debug.LogError("SelfTestEraseRefusal: erasing the middle cell removed nothing");
+                        ok = false;
+                    }
+                    if (floor.Rooms.Count != before + 1)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: after splitting, the floor has {floor.Rooms.Count} "
+                                     + $"rooms, expected {before + 1} — the two halves must be two buildings");
                         ok = false;
                     }
                 }
@@ -627,6 +631,123 @@ namespace WorldGen.Rendering
                     {
                         Debug.LogError($"SelfTestEraseRefusal: after the stroke the repair wants {missing.Count} "
                                      + "cells back — the erase broke the invariant");
+                        ok = false;
+                    }
+                }
+            }
+
+            // 6. THE LARGER PIECE KEEPS THE IDENTITY (DM decision). A five-cell row split at (1,0) leaves a
+            //    ONE-cell piece and a THREE-cell piece, so "largest" and "row-major first" disagree — which is
+            //    the whole point of the fixture: with the row-major rule the lone (0,0) would keep the name.
+            {
+                var floor = Floor(Cells((0, 1), (4, 1)));
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((0, 0), (1, 0), (2, 0), (3, 0), (4, 0)));
+                if (room == null) { Debug.LogError("SelfTestEraseRefusal: the five-cell fixture did not paint"); ok = false; }
+                else
+                {
+                    var fp = SettlementTileGrid.FootprintOf(room);
+                    if (fp.Count != 5)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the five-cell fixture painted {fp.Count} cells, "
+                                     + "expected 5 — the piece sizes this case turns on would not hold");
+                        ok = false;
+                    }
+                    int keptId = room.Id;
+                    room.Title = "Кузница";
+                    SettlementBrushOps.Erase(floor, Cells((1, 0)));
+                    var kept = floor.GetRoom(keptId);
+                    if (kept == null)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: room {keptId} vanished in the split — the "
+                                     + "original room must survive as one of the pieces");
+                        ok = false;
+                    }
+                    else
+                    {
+                        var keptFp = SettlementTileGrid.FootprintOf(kept);
+                        if (keptFp.Count != 3)
+                        {
+                            Debug.LogError($"SelfTestEraseRefusal: the surviving original has {keptFp.Count} "
+                                         + "cells, expected the LARGER piece's 3 — the identity followed the "
+                                         + "wrong component");
+                            ok = false;
+                        }
+                        if (kept.Title != "Кузница")
+                        {
+                            Debug.LogError($"SelfTestEraseRefusal: the surviving original's title is "
+                                         + $"'{kept.Title}', expected 'Кузница'");
+                            ok = false;
+                        }
+                    }
+                    foreach (var r in floor.Rooms)
+                        if (r.Id != keptId && r.TypeId == 1 && !string.IsNullOrEmpty(r.Title))
+                        {
+                            Debug.LogError($"SelfTestEraseRefusal: the split-off room {r.Id} carries the title "
+                                         + $"'{r.Title}' — identity must never be DUPLICATED");
+                            ok = false;
+                        }
+                }
+            }
+
+            // 7. A TIE BREAKS ROW-MAJOR. Three in a row split at the middle leaves two ONE-cell pieces, so the
+            //    size rule cannot decide and the tie-break is what is under test.
+            {
+                var floor = Floor(Cells((2, 1), (4, 1)));
+                var room = SettlementBrushOps.PaintBuilding(floor, Cells((2, 0), (3, 0), (4, 0)));
+                if (room == null) { Debug.LogError("SelfTestEraseRefusal: the tie fixture did not paint"); ok = false; }
+                else
+                {
+                    int keptId = room.Id;
+                    SettlementBrushOps.Erase(floor, Cells((3, 0)));
+                    var kept = floor.GetRoom(keptId);
+                    if (kept == null) { Debug.LogError("SelfTestEraseRefusal: the tie split lost the original room"); ok = false; }
+                    else
+                    {
+                        var keptFp = SettlementTileGrid.FootprintOf(kept);
+                        if (keptFp.Count != 1 || keptFp[0] != (2, 0))
+                        {
+                            Debug.LogError($"SelfTestEraseRefusal: on a size tie the original kept "
+                                         + $"{keptFp.Count} cell(s) at {(keptFp.Count > 0 ? keptFp[0].ToString() : "none")}, "
+                                         + "expected exactly (2,0) — the row-major-first piece");
+                            ok = false;
+                        }
+                    }
+                }
+            }
+
+            // 8. THE STROKE ERASES IN GESTURE ORDER (DM decision, and Task 8 depends on it). Two street cells
+            //    that are each independently sufficient for one two-cell building: whichever the stroke names
+            //    FIRST is the one that goes, and the second is then load-bearing and refused. Under the
+            //    retired row-major order BOTH orderings would have removed (5,4), so this pair of runs is
+            //    exactly what tells the two rules apart.
+            {
+                foreach (var pair in new[] { (first: (6, 4), second: (5, 4)), (first: (5, 4), second: (6, 4)) })
+                {
+                    var floor = Floor(Cells((5, 4), (6, 4)));
+                    var room = SettlementBrushOps.PaintBuilding(floor, Cells((5, 5), (6, 5)));
+                    if (room == null) { Debug.LogError("SelfTestEraseRefusal: the gesture-order fixture did not paint"); ok = false; continue; }
+                    var fpG = SettlementTileGrid.FootprintOf(room);
+                    if (fpG.Count != 2)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: the gesture-order fixture painted {fpG.Count} "
+                                     + "cells, expected 2 — the two lanes stop being independently sufficient");
+                        ok = false;
+                        continue;
+                    }
+                    if (SettlementBrushOps.Erase(floor, Cells(pair.first, pair.second)) != 1)
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: a stroke over both lanes starting at {pair.first} "
+                                     + "removed the wrong number of cells, expected exactly 1");
+                        ok = false;
+                        continue;
+                    }
+                    var streets = new System.Collections.Generic.HashSet<(int i, int j)>(
+                        SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
+                    if (streets.Contains(pair.first) || !streets.Contains(pair.second))
+                    {
+                        Debug.LogError($"SelfTestEraseRefusal: a stroke that touched {pair.first} first left "
+                                     + $"streets [{string.Join(",", streets)}] — the FIRST cell of the gesture "
+                                     + "must be the one erased, and the second the one refused");
                         ok = false;
                     }
                 }

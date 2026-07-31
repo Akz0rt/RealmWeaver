@@ -179,12 +179,16 @@ namespace WorldGen.Generation
 
                 ("MutEraseAllowsStranding", "SettlementBrushOps.CanErase's street half always allows, so a lane that is a house's only access can be erased anyway",
                     () => new WorldGen.MutantTests.MutEraseAllowsStrandingSelfTests().SelfTestEraseRefusal()),
-                ("MutEraseSplitsBuilding", "SettlementBrushOps.CanErase's building half always allows, so erasing a middle cell may sever a building into two disconnected pieces",
-                    () => new WorldGen.MutantTests.MutEraseSplitsBuildingSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseStaleCheck", "SettlementBrushOps.Erase decides every cell's safety up front against the floor as it stood when the stroke began, instead of re-asking CanErase after every removal",
                     () => new WorldGen.MutantTests.MutEraseStaleCheckSelfTests().SelfTestEraseRefusal()),
                 ("MutEraseNoRestore", "SettlementBrushOps.CanErase's trial street removal is never restored, so a mere query permanently corrupts StreetCells (review finding M2 — the restore-purity invariant)",
                     () => new WorldGen.MutantTests.MutEraseNoRestoreSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseNoSplit", "SettlementBrushOps.RemoveBuildingCell writes the disconnected remainder back as ONE room instead of splitting it (DM ruling, checkpoint 2, retiring the old refusal rule)",
+                    () => new WorldGen.MutantTests.MutEraseNoSplitSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseSplitKeepsSmallest", "SettlementBrushOps.RemoveBuildingCell's split gives the original identity to the SMALLEST piece instead of the largest",
+                    () => new WorldGen.MutantTests.MutEraseSplitKeepsSmallestSelfTests().SelfTestEraseRefusal()),
+                ("MutEraseRowMajorOrder", "SettlementBrushOps.Erase sorts the stroke row-major again instead of honouring gesture order, desynchronising Task 8's live preview from the batch commit",
+                    () => new WorldGen.MutantTests.MutEraseRowMajorOrderSelfTests().SelfTestEraseRefusal()),
 
                 ("MutFenceIgnoresFootprint", "DungeonLayout.LinkNodeFor projects a settlement building as its footprint's REPRESENTATIVE cell instead of its whole cell bbox (the fence wraps a point again, so a long footprint's far cells fall outside it)",
                     () => new WorldGen.MutantTests.MutFenceIgnoresFootprintSelfTests().SelfTestFence()),

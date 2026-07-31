@@ -171,9 +171,9 @@ namespace WorldGen.Generation
         /// meaningful sense — and letting it through would not leave the town broken, it would leave the DM
         /// watching a DIFFERENT, minimal road appear somewhere else.
         ///
-        /// A BUILDING CELL is refused when the remainder would not be 4-connected, which
-        /// DungeonValidator.SettlementIssues reports as an Error. Erasing the LAST cell is allowed — that is
-        /// how a building is removed.</summary>
+        /// A BUILDING CELL is ALWAYS ERASABLE (DM ruling, checkpoint 2). The old rule refused a cell whose
+        /// removal would disconnect the remainder; a disconnected remainder is now a SPLIT, not a refusal —
+        /// see RemoveBuildingCell — so there is nothing left for this branch to decide.</summary>
         public static bool CanErase(InteriorFloor floor, (int i, int j) cell)
         {
             if (floor?.SettlementParams == null) return false;
@@ -183,10 +183,12 @@ namespace WorldGen.Generation
                 if (r.TypeId != 1) continue;
                 var fp = SettlementTileGrid.FootprintOf(r);
                 if (!Contains(fp, cell)) continue;
-                if (fp.Count == 1) return true;                       // erasing it deletes the building
-                var rest = new List<(int i, int j)>(fp);
-                rest.Remove(cell);
-                return SettlementFootprint.IsConnected4(rest);
+                // ALWAYS ERASABLE (DM ruling, checkpoint 2). The old rule refused a cell whose removal would
+                // disconnect the remainder; a disconnected remainder is now a SPLIT, not a refusal, so there is
+                // nothing left for this branch to decide. Kept as an explicit `return true` rather than deleted
+                // so the method still distinguishes "a building is here" from "nothing is here" — the street
+                // test below must not run for a building cell.
+                return true;
             }
 
             var streets = new List<(int i, int j)>(SettlementFootprint.Decode(floor.SettlementParams.StreetCells));
@@ -222,10 +224,12 @@ namespace WorldGen.Generation
         public static int Erase(InteriorFloor floor, IReadOnlyList<(int i, int j)> cells)
         {
             if (floor?.SettlementParams == null || cells == null) return 0;
-            var ordered = new List<(int i, int j)>(cells);
-            ordered.Sort(RowMajor);
             int removed = 0;
-            foreach (var cell in ordered)
+            // GESTURE ORDER, never sorted (DM decision, checkpoint 2). Task 8's live preview runs this one
+            // cell at a time as the cursor moves; only if the batch honours the same order do the preview and
+            // the commit compute the same answer. A repeat of an already-erased cell is harmless — CanErase
+            // then finds nothing there and returns false.
+            foreach (var cell in cells)
             {
                 if (!CanErase(floor, cell)) continue;
                 if (RemoveBuildingCell(floor, cell)) { removed++; continue; }
@@ -240,6 +244,11 @@ namespace WorldGen.Generation
             return false;
         }
 
+        /// <summary>Remove one cell from the building room that owns it. If that DISCONNECTS the remainder,
+        /// the building SPLITS (DM ruling, checkpoint 2): the LARGEST piece keeps `r`'s identity — its id, and
+        /// therefore title, body, preview, portals, IsDummy and the building interior keyed by
+        /// InteriorData.OwnerRoomId — ties broken row-major on the pieces' representative cells; every other
+        /// piece becomes a fresh, anonymous room.</summary>
         static bool RemoveBuildingCell(InteriorFloor floor, (int i, int j) cell)
         {
             for (int k = 0; k < floor.Rooms.Count; k++)
@@ -251,13 +260,76 @@ namespace WorldGen.Generation
                 var rest = new List<(int i, int j)>(fp);
                 rest.Remove(cell);
                 if (rest.Count == 0) { floor.Rooms.RemoveAt(k); return true; }
-                r.Cells = SettlementFootprint.Encode(rest);
-                var rep = SettlementFootprint.Representative(rest);
-                r.X = SettlementFootprint.CenterOf(rep.i);
-                r.Y = SettlementFootprint.CenterOf(rep.j);
+                var comps = Components4(rest);
+                int best = 0;
+                for (int c = 1; c < comps.Count; c++)
+                {
+                    if (comps[c].Count > comps[best].Count) { best = c; continue; }
+                    if (comps[c].Count == comps[best].Count
+                     && RowMajor(SettlementFootprint.Representative(comps[c]),
+                                 SettlementFootprint.Representative(comps[best])) < 0) best = c;
+                }
+                AssignFootprint(r, comps[best]);
+                for (int c = 0; c < comps.Count; c++)
+                {
+                    if (c == best) continue;
+                    // A NEW, ANONYMOUS building. Title/Body/Preview are deliberately NOT copied: the DM's
+                    // decision is that the larger piece stays that building, and duplicating the name onto
+                    // both halves is the outcome that decision exists to prevent. IsDummy IS copied — it is a
+                    // visual class, not content. Portals, Grid and the building INTERIOR stay with `r` for
+                    // free, because `r` keeps its id and the interior is keyed by InteriorData.OwnerRoomId.
+                    var split = new Room { Id = floor.NextRoomId++, TypeId = 1, IsDummy = r.IsDummy };
+                    AssignFootprint(split, comps[c]);
+                    floor.Rooms.Add(split);
+                }
                 return true;
             }
             return false;
+        }
+
+        /// <summary>The cells' 4-connected components, each row-major sorted. One component is the common
+        /// case; more than one is exactly the split this method exists to feed.</summary>
+        static List<List<(int i, int j)>> Components4(List<(int i, int j)> cells)
+        {
+            var remaining = new HashSet<(int i, int j)>(cells);
+            var comps = new List<List<(int i, int j)>>();
+            int[] di = { -1, 1, 0, 0 }, dj = { 0, 0, -1, 1 };
+            while (remaining.Count > 0)
+            {
+                var seed = default((int i, int j));
+                foreach (var c in remaining) { seed = c; break; }
+                var comp = new List<(int i, int j)>();
+                var stack = new List<(int i, int j)> { seed };
+                remaining.Remove(seed);
+                while (stack.Count > 0)
+                {
+                    var cur = stack[stack.Count - 1];
+                    stack.RemoveAt(stack.Count - 1);
+                    comp.Add(cur);
+                    for (int k = 0; k < 4; k++)
+                    {
+                        var n = (i: cur.i + di[k], j: cur.j + dj[k]);
+                        if (remaining.Remove(n)) stack.Add(n);
+                    }
+                }
+                comp.Sort(RowMajor);
+                comps.Add(comp);
+            }
+            return comps;
+        }
+
+        // Components4 deliberately does NOT reuse ComponentContainingFirst — that one answers "the piece the
+        // DM started drawing" (keeps whichever component holds cells[0], regardless of size), this one needs
+        // ALL of the components so RemoveBuildingCell can rank them by size. Do not merge them.
+
+        /// <summary>Write a footprint onto a room and re-derive its point from it — the convention every
+        /// producer in this arc follows (cells are the truth, the point is derived).</summary>
+        static void AssignFootprint(Room r, List<(int i, int j)> cells)
+        {
+            r.Cells = SettlementFootprint.Encode(cells);
+            var rep = SettlementFootprint.Representative(cells);
+            r.X = SettlementFootprint.CenterOf(rep.i);
+            r.Y = SettlementFootprint.CenterOf(rep.j);
         }
 
         static bool RemoveStreetCell(InteriorFloor floor, (int i, int j) cell)
