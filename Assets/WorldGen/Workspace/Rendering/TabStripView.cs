@@ -577,7 +577,7 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Escape cancels, and is polled rather than handled: uGUI delivers no keyboard event to the
         /// object being dragged, and the pointer may be perfectly still when the key is pressed, so
         /// OnDrag is not a place this can be noticed. Reads Keyboard.current directly, the same raw-hardware
-        /// read QuickOpenPopup.Update makes for its own Escape (QuickOpenPopup.cs:164-183), and tolerates a
+        /// read QuickOpenPopup.Update makes for its own Escape (QuickOpenPopup.cs:166-185), and tolerates a
         /// null Keyboard (a machine with no keyboard device attached) rather than assuming one.
         ///
         /// Cancels the DROP, not the gesture: the pointer is still down, so uGUI will still deliver OnDrag

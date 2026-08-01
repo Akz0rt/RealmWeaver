@@ -675,7 +675,7 @@ namespace WorldGen.Workspace.Rendering
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
     /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:662-711), so three
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:678-727), so three
     /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
     /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
     /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
