@@ -147,9 +147,14 @@ namespace WorldGen.Workspace.Data
             // off doc.Groups.
             if (doc != null)
             {
+                // Built once and handed down: body text is folded through NotesLinkOps.BuildDisplay, so what
+                // is searched is what the DM sees. See CollectBodyHits for why that is a correctness rule
+                // and not a nicety.
+                var resolve = ResolverFor(doc, world);
+
                 foreach (var g in doc.Groups)
                     foreach (var p in g.Pages)
-                        CollectBodyHits(p, needle, candidates, ref seq);
+                        CollectBodyHits(p, needle, resolve, candidates, ref seq);
 
                 foreach (var g in doc.Groups)
                     foreach (var p in g.Pages)
@@ -237,20 +242,64 @@ namespace WorldGen.Workspace.Data
             }));
         }
 
-        static void CollectBodyHits(NotesPage p, string needle, List<(int, int, QuickHit)> candidates, ref int seq)
+        /// <summary>Resolves a link token's target to its CURRENT name, from the two sources Search already
+        /// receives: the document for "page", the world list for the three WorldRefKind names. Returns null
+        /// for a target that no longer exists, which makes BuildDisplay fall back to the copy stored in the
+        /// token — so a page mentioning a deleted object stays findable by the name it was written with,
+        /// which is the only name the DM can still remember it by.
+        ///
+        /// Building and Room resolve to null today because no producer emits them yet (see WorldObjectRef's
+        /// own doc); the branch exists so that when one does, search follows without a second edit here.</summary>
+        static NotesLinkOps.NameResolver ResolverFor(NotesDocument doc, IReadOnlyList<WorldObjectRef> world)
+        {
+            return (kind, id) =>
+            {
+                if (kind == NotesLinkOps.KindPage)
+                {
+                    if (doc == null) return null;
+                    foreach (var g in doc.Groups)
+                        foreach (var p in g.Pages)
+                            if (p.Id == id) return p.Name;
+                    return null;
+                }
+                if (world == null) return null;
+                if (!NotesLinkOps.TryParseWorldKind(kind, out var wk)) return null;
+                foreach (var o in world)
+                    if (o != null && o.Kind == wk && o.Id == id) return o.Name;
+                return null;
+            };
+        }
+
+        /// <summary>S1 — WHAT IS SEARCHED IS WHAT THE DM SEES, not what is stored.
+        ///
+        /// A block's Text holds inline links as [[poi:a1|Ржавый Якорь]], where the name is a stale fallback
+        /// copy and the object's real name is resolved at render time (NotesLinkOps' class doc). Folding the
+        /// RAW field would therefore undo that in the one reader that bypasses resolution: rename «Ржавый
+        /// Якорь» to «Тихая Гавань» and the page would render correctly everywhere while Ctrl+K still found
+        /// it by the dead name and failed to find it by the live one. It would also print brackets and a raw
+        /// id into the palette, since MakeSnippet slices whatever string the match index came from.
+        ///
+        /// So both fields go through BuildDisplay first, and the snippet is cut from that same string —
+        /// which keeps the index alignment TryAddBodyHit's own comment depends on, by construction.</summary>
+        static void CollectBodyHits(NotesPage p, string needle, NotesLinkOps.NameResolver resolve, List<(int, int, QuickHit)> candidates, ref int seq)
         {
             if (p.Blocks == null) return;
             foreach (var b in p.Blocks)
             {
                 // Q3 guard — see the class comment above. b.Text and b.Detail are the ONLY fields read here;
                 // b.ImageBytes is never touched, regardless of how large it is.
-                TryAddBodyHit(p, b.Text, needle, candidates, ref seq);
-                TryAddBodyHit(p, b.Detail, needle, candidates, ref seq);
+                TryAddBodyHit(p, b.Text, needle, resolve, candidates, ref seq);
+                TryAddBodyHit(p, b.Detail, needle, resolve, candidates, ref seq);
             }
         }
 
-        static void TryAddBodyHit(NotesPage p, string field, string needle, List<(int, int, QuickHit)> candidates, ref int seq)
+        static void TryAddBodyHit(NotesPage p, string field, string needle, NotesLinkOps.NameResolver resolve, List<(int, int, QuickHit)> candidates, ref int seq)
         {
+            if (string.IsNullOrEmpty(field)) return;
+
+            // S1 — from here down, `field` is the DISPLAY text. Everything below (the fold, the match index,
+            // the snippet) reads this one string, so they cannot come out of alignment with each other.
+            field = NotesLinkOps.BuildDisplay(field, resolve).Text;
             if (string.IsNullOrEmpty(field)) return;
 
             // NOT trimmed before folding, unlike the page name and the query: the match index found here is

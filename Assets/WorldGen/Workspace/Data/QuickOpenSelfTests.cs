@@ -296,5 +296,76 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Quick Open World Objects: PASS" : "Self-Test Quick Open World Objects: FAIL");
         }
+
+        [ContextMenu("Self-Test: Body Search Reads Display Text")]
+        public void SelfTestBodySearchDisplay()
+        {
+            bool ok = true;
+
+            // A POI that has been RENAMED since the mention was written.
+            var world = new List<WorldObjectRef>
+            {
+                new WorldObjectRef { Kind = WorldRefKind.Poi, Id = "p1", Name = "Тихая Гавань", KindLabel = "город" },
+            };
+
+            var page = new NotesPage { Name = "Сессия 4" };
+            page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1, "отряд идёт в [[poi:p1|Ржавый Якорь]]"));
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            g.Pages.Add(page);
+            doc.Groups.Add(g);
+
+            // S1 — the CURRENT name finds the page that mentions it.
+            var byNew = QuickOpen.Search(doc, world, "Тихая");
+            if (!byNew.Exists(h => h.Title == "Сессия 4" && h.Snippet != null))
+            { Debug.LogError("FAIL S1: searching the object's CURRENT name found no body hit on the page that mentions it"); ok = false; }
+
+            // S1 — the STALE stored name must NOT find it. This is the half that proves resolution happened,
+            // and without it the assertion above would pass on raw folding too.
+            var byOld = QuickOpen.Search(doc, world, "Ржавый");
+            if (byOld.Exists(h => h.Title == "Сессия 4" && h.Snippet != null))
+            { Debug.LogError("FAIL S1: the STALE name still matches — body search is folding raw source"); ok = false; }
+
+            // The snippet must never leak machinery into the palette.
+            foreach (var hit in byNew)
+                if (hit.Snippet != null && (hit.Snippet.Contains("[[") || hit.Snippet.Contains("p1")))
+                { Debug.LogError($"FAIL: snippet leaks the token: \"{hit.Snippet}\""); ok = false; }
+
+            // A token whose target is GONE keeps matching by its stored copy — otherwise the DM could not
+            // find the page they wrote in order to fix it.
+            var orphan = new NotesPage { Name = "Сессия 5" };
+            orphan.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1, "у [[poi:deleted|Забытая Башня]] был вход"));
+            g.Pages.Add(orphan);
+            if (!QuickOpen.Search(doc, world, "Забытая").Exists(h => h.Title == "Сессия 5"))
+            { Debug.LogError("FAIL: an unresolvable token must still match by its stored fallback copy"); ok = false; }
+
+            // A link to a PAGE resolves through the document, not the world list.
+            var namedTarget = new NotesPage { Name = "Ольга Верная" };
+            g.Pages.Add(namedTarget);
+            var mentions = new NotesPage { Name = "Сессия 6" };
+            mentions.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1, "встречает [[page:" + namedTarget.Id + "|Ольга]]"));
+            g.Pages.Add(mentions);
+            if (!QuickOpen.Search(doc, world, "Верная").Exists(h => h.Title == "Сессия 6" && h.Snippet != null))
+            { Debug.LogError("FAIL: a page link must resolve through the document — searching the target's full name found no body hit"); ok = false; }
+
+            // The ⊕ detail body is searched the same way, and Q3 still holds: nothing here reads ImageBytes.
+            var withDetail = new NotesPage { Name = "Сессия 7" };
+            var d0 = NotesDocOps.NewBlock(BlockKind.Item, 1, "заметка");
+            d0.Detail = "внутри [[poi:p1|Ржавый Якорь]]";
+            withDetail.Blocks.Add(d0);
+            g.Pages.Add(withDetail);
+            if (!QuickOpen.Search(doc, world, "Тихая").Exists(h => h.Title == "Сессия 7"))
+            { Debug.LogError("FAIL: a link inside a ⊕ Detail body must be searched by its current name too"); ok = false; }
+
+            // Prose containing no links must be unaffected — the display transform is the identity there.
+            var plain = new NotesPage { Name = "Сессия 8" };
+            plain.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1, "обычный текст про болото"));
+            g.Pages.Add(plain);
+            var plainHit = QuickOpen.Search(doc, world, "болото").Find(h => h.Title == "Сессия 8");
+            if (plainHit == null || plainHit.Snippet == null || !plainHit.Snippet.Contains("болото"))
+            { Debug.LogError("FAIL: link-free prose must still match and still snippet exactly as before"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Body Search Reads Display Text: PASS" : "Self-Test Body Search Reads Display Text: FAIL");
+        }
     }
 }
