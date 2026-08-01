@@ -44,6 +44,20 @@ namespace WorldGen.Rendering
         };
 
         string currentPath; // null = never saved yet this session
+
+        /// <summary>The project the app currently has open, or null/empty for a session that has never been
+        /// saved. Read by WorkspaceController.RestoreFromPrefs as a SECOND opinion on which stored layout to
+        /// restore — see there for why one opinion was not enough. Deliberately a getter, not a settable
+        /// property: LoadFrom and SaveTo are the only two things that decide this, and the workspace is told
+        /// about both explicitly (BeginProjectSwitch/EndProjectSwitch/RekeyWorkspaceTo) rather than left to
+        /// poll for changes.
+        ///
+        /// ITSELF WIPED BY A DOMAIN RELOAD — `currentPath` is a plain field, so this returns null after a
+        /// Play-mode recompile even though the project is still open. That is a real (pre-existing) defect:
+        /// Ctrl+S after a recompile offers «Сохранить как…» instead of saving. It is NOT worked around here,
+        /// because the caller's own rule (an empty answer never overrides a non-empty stored key) already
+        /// makes this harmless in that direction.</summary>
+        public string CurrentProjectPath => currentPath;
         Font builtinFont;
         Text projectNameText;
         Transform canvasTransform;
@@ -180,10 +194,16 @@ namespace WorldGen.Rendering
             // OUTGOING project's key. See WorkspaceController.BeginProjectSwitch for the full collision.
             //
             // try/finally, not two straight-line calls: if any loader below throws, the workspace must not be
-            // left permanently unable to persist. The `finally` runs after currentPath is assigned, so the
-            // path it re-keys to and the path this method now calls current are the same by construction
-            // rather than by both statements happening to say `path`.
+            // left permanently unable to persist.
+            //
+            // `completed` IS WHAT STOPS THE finally FROM PROMOTING A FAILED LOAD INTO A SUCCESSFUL SWITCH.
+            // It is set on the same line region as currentPath, so "the switch completed" and "this method
+            // now calls `path` current" are one fact rather than two that could drift. A finally that always
+            // called EndProjectSwitch would re-key to a project that never opened and prune against the
+            // PREVIOUS project's still-live document — see WorkspaceController.AbortProjectSwitch, which
+            // spells out why each of those is worse than doing nothing.
             var screens = MapScreens();
+            bool completed = false;
             screens?.BeginProjectSwitch();
             try
             {
@@ -210,15 +230,17 @@ namespace WorldGen.Rendering
                 currentPath = path;
                 UpdateProjectNameText();
                 RecentProjectsList.Push(path);
+                completed = true;
             }
             finally
             {
-                // LAST, deliberately: the restore inside this call prunes against what exists, and every
-                // loader above has to have run for that question to have an answer. It is also what makes
-                // the ordering structural instead of incidental — the tabs are restored after the prune
-                // because the restore is the LOAD'S LAST ACT, not because two statements happen to be in
-                // that order.
-                screens?.EndProjectSwitch(path);
+                // LAST, deliberately: the restore inside EndProjectSwitch prunes against what exists, and
+                // every loader above has to have run for that question to have an answer. It is also what
+                // makes the ordering structural instead of incidental — the tabs are restored after the
+                // mid-load prune because the restore is the LOAD'S LAST ACT, not because two statements
+                // happen to be in that order.
+                if (completed) screens?.EndProjectSwitch(path);
+                else screens?.AbortProjectSwitch();
             }
         }
 

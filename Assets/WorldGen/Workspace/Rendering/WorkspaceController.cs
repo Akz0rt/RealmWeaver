@@ -1,6 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+// ProjectMenuBar, for ReconcileKeyWithLiveProject's second opinion on the current project path. The same
+// direction WorkspaceBuilder already depends in (it reads ProjectMenuBar.BarHeightPixels for MenuBarInset),
+// so this adds no new coupling between the two namespaces — and it stays one-way: nothing in
+// WorldGen.Rendering reaches into this class except through the public methods MapScreenController calls.
+using WorldGen.Rendering;
 using WorldGen.Workspace.Data;
 
 namespace WorldGen.Workspace.Rendering
@@ -246,7 +251,42 @@ namespace WorldGen.Workspace.Rendering
         /// resolves it, in the direction the DM wanted.</summary>
         public void RestoreFromPrefs()
         {
+            ReconcileKeyWithLiveProject();
             ApplyRestored(WorkspacePrefs.Load(prefsProjectPath, null));
+        }
+
+        /// <summary>Cross-checks the stored key against the app's LIVE notion of which project is open, and
+        /// takes the live one when the two disagree. Called only from RestoreFromPrefs, which is called only
+        /// from WorkspaceBuilder.Awake — i.e. exactly once per shell, immediately after the one event that
+        /// could have desynchronised them.
+        ///
+        /// WHY A SECOND OPINION AT ALL. prefsProjectPath is [SerializeField] precisely so a Play-mode domain
+        /// reload does not lose it, and Unity's documented behaviour is that serialized members survive such
+        /// a reload. But this component is AddComponent-ed at RUNTIME, and "a serialized field on a
+        /// runtime-added component survives a domain reload" is the one assumption in this task that could
+        /// not be checked without an Editor. If it turned out false, the failure would be the worst kind
+        /// this arc knows: the key silently reverts to "" while the project stays open, so the DM's tabs come
+        /// back from the no-project slot and — far worse — the NEXT save writes this project's tabs into that
+        /// slot, freezing the project's real stored layout at whatever it held before the recompile.
+        ///
+        /// ProjectMenuBar.CurrentProjectPath is wiped by the same reload (its own doc says so), so this is
+        /// not a reliable field standing in for an unreliable one. It is a SECOND field that fails in the
+        /// SAME direction — both come back empty — and the rule below is what turns that into safety:
+        ///   • both empty            -> "", the no-project slot. Correct for a cold start, and the harmless
+        ///                              answer for a reload where both were lost (wrong tabs, not lost ones).
+        ///   • one empty, one not    -> the non-empty one. Either survivor is enough.
+        ///   • both non-empty        -> the live one. They cannot legitimately disagree — EndProjectSwitch
+        ///                              and RekeyTo set this field at the same two moments ProjectMenuBar
+        ///                              sets currentPath — so a disagreement means the stored one is stale.
+        ///
+        /// THE RESULT IS WRITTEN BACK, so PersistNow and every later save read one already-reconciled field
+        /// rather than repeating this discovery. That is also why FindFirstObjectByType is affordable here:
+        /// once per shell, not once per write.</summary>
+        void ReconcileKeyWithLiveProject()
+        {
+            var menuBar = FindFirstObjectByType<ProjectMenuBar>(FindObjectsInactive.Include);
+            string live = menuBar != null ? menuBar.CurrentProjectPath : null;
+            if (!string.IsNullOrEmpty(live)) prefsProjectPath = live;
         }
 
         /// <summary>Announces that a project is about to be loaded UNDER the live workspace. Suspends every
@@ -305,6 +345,25 @@ namespace WorldGen.Workspace.Rendering
 
             PersistNow();
         }
+
+        /// <summary>Ends a project switch that did NOT complete — a loader threw part-way through, so the
+        /// world is half-replaced and no project was actually opened. Resumes writing and does nothing else:
+        /// no re-key, no restore, no prune, no save.
+        ///
+        /// EACH OMISSION IS THE POINT. Re-keying would associate the incoming project's slot with a world it
+        /// does not have; ProjectMenuBar's own `currentPath` is likewise assigned only on the success path,
+        /// so leaving this alone is what keeps the two agreeing about which project is open. Not pruning
+        /// matters more than it looks: EndProjectSwitch's prune asks MapScreenController.SurfaceExists, whose
+        /// Page branch reads the live document — and the document is loaded LAST, so a throw from any earlier
+        /// loader leaves the PREVIOUS project's document in place. Pruning against it would keep the old
+        /// project's page tabs and, with the key already moved, write them into the new project's slot: a
+        /// failed load permanently mis-associating pages with a project that never opened.
+        ///
+        /// The layout left on screen is whatever the mid-load prune (OnWorldRegenerated) made of it, which is
+        /// wrong in the same way the half-loaded world is. Nothing here tries to repair that — the next
+        /// ordinary user action saves whatever state the app ends up in, under the key that still names the
+        /// project the app still (partly) has.</summary>
+        public void AbortProjectSwitch() => persistSuspended = false;
 
         /// <summary>Points persistence at a different project WITHOUT restoring anything — «Сохранить как…».
         /// The layout on screen is the one the DM wants the new file to have, so it is written under the new

@@ -254,10 +254,14 @@ namespace WorldGen.Rendering
         /// See WorkspaceController.BeginProjectSwitch for the collision it prevents.</summary>
         public void BeginProjectSwitch() => Shell()?.BeginProjectSwitch();
 
-        /// <summary>Called by ProjectMenuBar once the load has finished, with the path just opened. The
-        /// method-group argument is what supplies the "does this still exist" answer that
+        /// <summary>Called by ProjectMenuBar once the load has finished SUCCESSFULLY, with the path just
+        /// opened. The method-group argument is what supplies the "does this still exist" answer that
         /// WorkspaceController.RestoreFromPrefs could not ask at startup.</summary>
         public void EndProjectSwitch(string projectPath) => Shell()?.EndProjectSwitch(projectPath, SurfaceExists);
+
+        /// <summary>Called by ProjectMenuBar instead of EndProjectSwitch when a loader threw part-way — see
+        /// WorkspaceController.AbortProjectSwitch for why the two must not be the same call.</summary>
+        public void AbortProjectSwitch() => Shell()?.AbortProjectSwitch();
 
         /// <summary>«Сохранить как…»: the tabs on screen now belong to the new file. No load, so no restore
         /// and no prune — see WorkspaceController.RekeyTo.</summary>
