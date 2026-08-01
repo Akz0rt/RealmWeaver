@@ -80,15 +80,37 @@ namespace WorldGen.Notes.Rendering
             return loaded;
         }
 
-        /// <summary>Applies the body style to one text component, so no view writes these five lines itself
-        /// and no view gets four of them right.</summary>
+        /// <summary>The face section headings are set in. NOT Literata: a heading here is a LABEL in the
+        /// panel's own type — small, uppercase, letter-spaced — and setting it in the prose face would make it
+        /// read as prose. TMP's default asset is LiberationSans, the metric-compatible Arial the rest of this
+        /// application's chrome already uses, so this keeps headings on the same face as every panel around
+        /// them without introducing a fourth font.</summary>
+        public static TMP_FontAsset Heading => TMP_Settings.defaultFontAsset;
+
+        /// <summary>Applies the body style to one text component, so no view writes these lines itself and no
+        /// view gets three of the four right.</summary>
         public static void ApplyBody(TMP_Text text)
         {
             if (text == null) return;
             if (Body != null) text.font = Body;
             text.fontSize = BodySize;
+            text.fontStyle = FontStyles.Normal;
             text.lineSpacing = LineSpacingPercent;
-            text.richText = true;
+        }
+
+        /// <summary>Applies the section-heading style. Everything about it differs from the body — face,
+        /// size, weight, case, tracking — which is exactly why it lives here beside ApplyBody rather than as
+        /// four overrides at a call site.</summary>
+        public static void ApplySectionHeading(TMP_Text text)
+        {
+            if (text == null) return;
+            if (Heading != null) text.font = Heading;
+            text.fontSize = HeadingSize;
+            text.fontStyle = FontStyles.Bold | FontStyles.UpperCase;
+            // TMP measures character spacing in font units, roughly hundredths of an em, so the design's
+            // .12em becomes 12. Converted here so the design value and the engine value stay in one place.
+            text.characterSpacing = HeadingLetterSpacing * 100f;
+            text.lineSpacing = 0f;
         }
     }
 }

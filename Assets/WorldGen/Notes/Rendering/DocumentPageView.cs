@@ -57,6 +57,19 @@ namespace WorldGen.Notes.Rendering
         RectTransform content;
         Font font;
 
+        /// <summary>The row group whose left/right padding the column measure is expressed through. Fetched
+        /// lazily rather than cached at Initialize, because a destroyed component compares equal to null in
+        /// Unity and the lookup then repeats itself after a script reload — the same reload RecoverBuiltObjects
+        /// exists for, without a second recovery site to keep in step.</summary>
+        VerticalLayoutGroup rowLayout;
+
+        /// <summary>Last side padding written, so the measure does not dirty the layout every frame.</summary>
+        float appliedSidePadding = -1f;
+
+        /// <summary>How close prose may come to the pane's edge when the pane is narrower than the measure.
+        /// Matches the padding Initialize starts the group with, so a narrow pane looks unchanged.</summary>
+        const float MinSideMargin = 8f;
+
         // Gates whether OnActivePageChanged is allowed to make `root` visible at all — set only by
         // PageSurfaceHost.Show/Hide (via SetSurfaceVisible). Without this gate, ActivePage can change from
         // OUTSIDE the workspace's own tab machinery — PoiEditorScreen/PoiEditPanel's «Открыть страницу» flow
@@ -471,6 +484,41 @@ namespace WorldGen.Notes.Rendering
             block.Collapsed = !block.Collapsed;
             Rebuild();
             OnDocumentMutated?.Invoke();
+        }
+
+        void LateUpdate() => ApplyColumnMeasure();
+
+        /// <summary>THE MEASURE: prose never gets wider than ~34em, however wide the pane is.
+        ///
+        /// This is the single most consequential typographic rule on the page and the one a pane split makes
+        /// easy to lose. A line the full width of a maximised window is a line the eye cannot reliably return
+        /// from — it lands on the wrong next line — which is why long-form text has been set at roughly 70
+        /// characters since long before screens. The rejected first editor read badly for several reasons and
+        /// this was one of them.
+        ///
+        /// Expressed as the row group's PADDING rather than as a narrower Content rect on purpose: Content is
+        /// the ScrollRect's content and must keep spanning the viewport, or the scrollbar geometry and the
+        /// mask stop agreeing with it. Padding leaves that structure alone and moves only the rows.
+        ///
+        /// When the pane is NARROWER than the measure the rule does nothing but keep MinSideMargin, so a
+        /// half-width pane behaves exactly as it did before the cap existed.</summary>
+        void ApplyColumnMeasure()
+        {
+            if (content == null || viewportGO == null) return;
+            if (rowLayout == null) rowLayout = content.GetComponent<VerticalLayoutGroup>();
+            if (rowLayout == null) return;
+
+            float available = ((RectTransform)viewportGO.transform).rect.width;
+            if (available <= 1f) return;   // not laid out yet — measuring into a zero-wide box proves nothing
+
+            float column = Mathf.Min(available - MinSideMargin * 2f, NotesTypography.MeasureWidthPx);
+            int side = Mathf.RoundToInt(Mathf.Max(MinSideMargin, (available - column) * 0.5f));
+
+            if (Mathf.Abs(side - appliedSidePadding) < 0.5f) return;
+            appliedSidePadding = side;
+            rowLayout.padding.left = side;
+            rowLayout.padding.right = side;
+            LayoutRebuilder.MarkLayoutForRebuild(content);
         }
 
         /// <summary>Rebuilds and then puts the caret where a keyboard operation asked for it. Rebuild throws

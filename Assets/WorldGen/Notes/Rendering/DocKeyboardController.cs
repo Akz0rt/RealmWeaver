@@ -9,12 +9,12 @@ namespace WorldGen.Notes.Rendering
     /// intent that comes back. Deliberately holds no rules of its own — everything about what a key MEANS is
     /// tested offline in DocKeyboardOpsSelfTests, and this class only has to be right about Unity.
     ///
-    /// BEING RIGHT ABOUT UNITY HERE IS ENTIRELY A QUESTION OF *WHEN*. A keystroke reaches the legacy
-    /// InputField at one exact point in the frame: EventSystem.Update runs the input module, whose
-    /// ProcessNavigation sends updateSelectedHandler to the selected object
-    /// (InputSystemUIInputModule.cs:807), and InputField.OnUpdateSelected (InputField.cs:2023) then drains the
-    /// whole IMGUI event queue with Event.PopEvent, applying every character queued since the last drain and
-    /// raising onValueChanged for each. Call that moment THE DRAIN. Two values the keys below are decided by
+    /// BEING RIGHT ABOUT UNITY HERE IS ENTIRELY A QUESTION OF *WHEN*. A keystroke reaches the field at one
+    /// exact point in the frame: EventSystem.Update runs the input module, whose ProcessNavigation sends
+    /// updateSelectedHandler to the selected object (InputSystemUIInputModule.cs:807), and
+    /// TMP_InputField.OnUpdateSelected (TMP_InputField.cs:2342) then drains the whole IMGUI event queue with
+    /// Event.PopEvent (:2350), applying every character queued since the last drain and raising
+    /// onValueChanged for each. Call that moment THE DRAIN. Two values the keys below are decided by
     /// (Tab needs neither) sat on opposite sides of it:
     ///   • DocBlock.Text, which DocBlockView.OnFieldChanged writes from onValueChanged, i.e. DURING the drain,
     ///     and which DocKeyboardOps reads LIVE off the page;
@@ -49,17 +49,28 @@ namespace WorldGen.Notes.Rendering
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
+        /// <summary>TEMPORARY, Р2 Task 6 only — see the call site below. Delete this and its `if` block once
+        /// the DM has signed off on typing feel; it is a const so the compiler removes the block outright
+        /// rather than leaving a per-keystroke branch behind if anyone forgets.</summary>
+        const bool LogIntents = true;
+
         public DocumentPageView pageView;
 
         // Refreshed in LateUpdate from whichever row is focused THEN — i.e. after the drain, so the caret
         // already includes this frame's typing and the block text it indexes into is final.
         //
-        // On the frame Enter is pressed there is no focused row to read: that same Enter has already made the
-        // field run DeactivateInputField (InputField.cs:3237), which clears m_AllowInput (isFocused false, so
-        // FindFocusedRow returns null), fires onEndEdit, and only then sets m_CaretPosition =
-        // m_CaretSelectPosition = 0. Reading the dead field would give 0 and split the entire row away. The
-        // fallback below therefore takes DocBlockView.CaretWhenEditingEnded, sampled inside that onEndEdit —
-        // the last instant in the drain at which the caret is still the DM's.
+        // On the frame Enter is pressed there is no focused row to read: Enter on any line type but
+        // MultiLineNewline returns EditState.Finish (TMP_InputField.cs:2249-2256), which deactivates the
+        // field and clears m_AllowInput — isFocused goes false, so FindFocusedRow returns null. The fallback
+        // below therefore takes DocBlockView.CaretWhenEditingEnded, sampled inside onEndEdit.
+        //
+        // WHY THAT IS STILL THE RIGHT SOURCE UNDER TMP, THOUGH THE ORIGINAL REASON IS GONE. Legacy InputField
+        // zeroed the caret immediately after firing onEndEdit, so the callback was the only instant the value
+        // still existed. TMP does not: its zeroing lines are commented out in the shipped source
+        // (TMP_InputField.cs:4443-4444), and onEndEdit reaches us from ReleaseSelection (:4410) rather than
+        // from DeactivateInputField at all. Reading the deactivated field directly would therefore work
+        // today — and would be depending on the continued ABSENCE of a reset that two uncommented lines
+        // would restore. The sampled value costs nothing and does not make that bet.
         //
         // A focused row is also skipped while its caret is still PENDING (DocBlockView.CaretPending): between
         // FocusAt and the frame that applies it, the field reports the caret SelectAll left behind, not the
@@ -112,8 +123,9 @@ namespace WorldGen.Notes.Rendering
                 // OWN Backspace in the drain a moment ago and that is what put the caret at 0: deleting the
                 // 'b' of "abc" with the caret at 1 leaves the caret at 0, and merging on that reading would
                 // fold a row into the one above it when the DM only meant to delete a character. The field's
-                // Backspace at offset 0 deletes nothing at all (InputField.cs:2335 needs
-                // caretPositionInternal > 0) and so raises no onValueChanged — "this row's text did not
+                // Backspace at offset 0 deletes nothing at all (TMP_InputField.cs:3162, whose every branch
+                // requires stringPositionInternal or caretPositionInternal > 0) and so raises no
+                // onValueChanged — "this row's text did not
                 // change in this frame's drain" is exactly what separates our case from the field's.
                 //
                 // `live != null` is a deliberate tightening, not a null-guard: Backspace pressed while NO row
@@ -129,7 +141,7 @@ namespace WorldGen.Notes.Rendering
 
             // Up/Down are ours ONLY on a row whose whole text is one visual line. On any other row the field
             // has already moved the caret within the row during the drain — the UpArrow/DownArrow cases at
-            // InputField.cs:1936/:1942 call MoveUp/MoveDown — so stealing the key as well would do two things
+            // TMP_InputField.cs:2224/:2230 call MoveUp/MoveDown — so stealing the key as well would do two things
             // at once: move the caret AND jump to another block. Consuming in LateUpdate made that double
             // action reliable instead of ordering-dependent, which is how it was caught.
             //
@@ -138,9 +150,12 @@ namespace WorldGen.Notes.Rendering
             // text.Length for one on the last, so the field only walks the caret to the start or the end of
             // the row we are leaving anyway, and the row is repainted without focus regardless. That is
             // the whole reason the narrow version is safe where the wide one was not. A wrapped row now keeps
-            // its arrows entirely — the caret moves inside it and focus stays — which is the behaviour uGUI
-            // gives for free and the only one that can be right without InputField's private m_DrawStart.
-            // The gate answers "cannot prove it" as false, so an unmeasurable row is left to the field too.
+            // its arrows entirely — the caret moves inside it and focus stays — which is the behaviour the
+            // field gives for free. Under legacy Text this narrowing was also the only option, because the
+            // wrapping could not be measured from outside the class at all; TMP removed that obstacle (see
+            // DocBlockView.IsSingleVisualLine) but not the reason, which is that two layers must not both act
+            // on one keystroke. The gate answers "cannot prove it" as false, so an unmeasurable row is left
+            // to the field too.
             if (keyboard.upArrowKey.wasPressedThisFrame)
             { if (VerticalIsOurs(live)) Handle(DocKey.Up); return; }
 
@@ -181,6 +196,22 @@ namespace WorldGen.Notes.Rendering
             // to the pure layer even though the view can no longer be the one to report it.
             var result = DocKeyboardOps.Apply(page.Blocks, lastFocusedId, lastCaret,
                                               atFirstLine: true, atLastLine: true, key);
+
+            // TEMPORARY — Р2 Task 6 checkpoint only. DELETE once the DM has confirmed typing feel.
+            //
+            // The offline suite proves nothing about the TextMeshPro port: no pure file changed, so it stays
+            // green whatever the port broke. What the port CAN break silently is the wiring that turns the
+            // field's caret state into the triple DocKeyboardOps is handed — the rules themselves are already
+            // covered by DocKeyboardOpsSelfTests. Printing that triple turns "typing feels off" into a wrong
+            // number with a name on it, which is the difference between one checkpoint round and four.
+            if (LogIntents)
+            {
+                var block = page.Blocks.Find(b => b.Id == lastFocusedId);
+                Debug.Log($"[dockeys] {key} caret={lastCaret} len={(block?.Text ?? "").Length} " +
+                          $"→ handled={result.Handled} rebuild={result.Rebuild} " +
+                          $"focus={(result.FocusBlockId ?? "—")} newCaret={result.CaretOffset}");
+            }
+
             if (!result.Handled) return;
 
             if (result.Rebuild)
@@ -216,8 +247,8 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Moves the cache onto the row focus is being handed to, in the same statement that hands it
         /// over. Without this the caret would go on describing the row the DM has just LEFT until the next
         /// LateUpdate managed to refresh it — and that refresh needs the new field to be focused, which costs
-        /// a frame or two (FocusAt only queues ActivateInputField; InputField.LateUpdate is what actually
-        /// takes focus, InputField.cs:1442). A key pressed inside that window would be answered with the
+        /// a frame or two (FocusAt only queues ActivateInputField; the field takes focus on a later frame of
+        /// its own). A key pressed inside that window would be answered with the
         /// previous row's caret. Nothing about line wrapping is cached alongside it: the vertical keys measure
         /// that at the moment they are pressed, off the live row, so there is no second value here to keep
         /// honest.</summary>
