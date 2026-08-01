@@ -372,7 +372,7 @@ namespace WorldGen.Workspace.Rendering
         /// PRE-REMOVAL BY CONSTRUCTION, and that is load-bearing. The dragged tab stays visible in its strip
         /// for the whole gesture, so the list this walks still contains it, and the index this returns is an
         /// index into the pane's tabs AS THEY ARE NOW — which is exactly what WorkspaceOps.MoveTab's toIndex
-        /// means (WorkspaceOps.cs:210-213 subtracts one itself when the removal shifted the destination
+        /// means (WorkspaceOps.cs:286-289 subtracts one itself when the removal shifted the destination
         /// left). Anyone who later "improves" the drag by hiding or removing the source tab during the
         /// gesture must re-derive this, or every same-pane reorder silently lands one slot off.</summary>
         internal int InsertIndexAt(float pointerX, List<RectTransform> scratch)

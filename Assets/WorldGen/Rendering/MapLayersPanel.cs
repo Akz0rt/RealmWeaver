@@ -66,8 +66,8 @@ namespace WorldGen.Rendering
             // The workspace shell confines this canvas to a pane (PaneChromeFrame, driven from
             // MapSurfaceHost), and the rect the frame is driven to is the pane's ContentArea — NOT the
             // window. That rect is below the menu bar twice over: WorkspaceBuilder insets RootRow by
-            // MenuBarInset (WorkspaceBuilder.cs:284) before any pane exists, AND ContentArea is the second
-            // child of the pane's VerticalLayoutGroup, under TabStripView (WorkspaceBuilder.BuildPane, :486).
+            // MenuBarInset (WorkspaceBuilder.cs:286) before any pane exists, AND ContentArea is the second
+            // child of the pane's VerticalLayoutGroup, under TabStripView (WorkspaceBuilder.BuildPane, :495).
             // So a menu-bar term here double-counted 40 pixels that were already excluded and pushed the
             // panel 40px down inside every pane. The toolbar clearance stays real: MapToolbarUI's bar is
             // flush with the ContentArea's top (MapToolbarUI.cs:115).

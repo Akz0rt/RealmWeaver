@@ -366,7 +366,7 @@ namespace WorldGen.Workspace.Rendering
         /// session.
         ///
         /// Every one of these panels builds its canvas in its OWN Awake (MapLayersPanel.cs:36,
-        /// EditorBrushPanel.cs:70, PoiToolPanel.cs:44, RegionsPanel.cs:47, MapLegendUI.cs:42,
+        /// EditorBrushPanel.cs:70, PoiToolPanel.cs:44, RegionsPanel.cs:47, MapLegendUI.cs:97,
         /// PoiEditPanel.cs:63), and Unity's Awake order between sibling scene objects is undefined — so
         /// WorkspaceBuilder.Awake -> Create -> Rewire can easily run BEFORE any of them. Worse, and this is
         /// the case that makes a one-shot resolution unfixable rather than merely racy: MapToolbarUI.Awake
@@ -675,7 +675,7 @@ namespace WorldGen.Workspace.Rendering
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
     /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:691-740), so three
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:712-761), so three
     /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
     /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
     /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on

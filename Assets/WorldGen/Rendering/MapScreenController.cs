@@ -1023,9 +1023,16 @@ namespace WorldGen.Rendering
             interior == null ? "" : interior.Kind == InteriorKind.Settlement ? "Город"
                 : interior.Kind == InteriorKind.Building ? "Здание" : "Подземелье";
 
-        /// <summary>Opens (or focuses, per WorkspaceOps.Open's R1) `s`, in the FOCUSED pane unless a caller
-        /// asks otherwise. A no-op when there is no workspace in the scene (a bare rig — see Shell()) and
-        /// when `s` is null, which is how the Close*/Open* paths pass state that is not set.
+        /// <summary>Opens `s` in the FOCUSED pane unless a caller asks otherwise. A no-op when there is no
+        /// workspace in the scene (a bare rig — see Shell()) and when `s` is null, which is how the
+        /// Close*/Open* paths pass state that is not set.
+        ///
+        /// "OPENS" IS THREE OUTCOMES, not one, and every Open* method in this file inherits all three. A tab
+        /// is CREATED only when `s` is open nowhere; already open in the target pane -> that tab is ACTIVATED
+        /// (R1); already open in the OTHER pane -> that tab is MOVED here (R1b). `title` is therefore only
+        /// consulted on the create path, which is why InteriorMapTitle's rename does not reach an
+        /// interior-map tab that already exists. See WorkspaceOps.Open for why moving rather than duplicating
+        /// is what the single-instance hosts require.
         ///
         /// The default is false and every call site but one takes it: OpenPoiFromMap (a double-click on the
         /// map) is the single gesture in this file that opens beside rather than in front — see its own doc,

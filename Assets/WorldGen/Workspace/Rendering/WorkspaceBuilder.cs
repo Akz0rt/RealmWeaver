@@ -142,7 +142,7 @@ namespace WorldGen.Workspace.Rendering
             // subscription, every tab/close/«+» callback, NavigatorView's controller/documentController/
             // columnLayoutElement and its three subscriptions, its header, search and «+ Группа» listeners
             // (chrome it builds ONCE and never rebuilds, so no Rebuild could re-add them),
-            // QuickOpenPopup.controller, and the divider's two drag delegates. Re-pointing all of that is not
+            // QuickOpenPopup.controller, PaneFocusOnClick.controller, and the divider's two drag delegates. Re-pointing all of that is not
             // a smaller job than rebuilding — it is the same job, spread over five files, with a new way to
             // half-do it in each. The shell is built imperatively from Layout and nothing else, so
             // demolishing and re-running this method produces EXACTLY what a cold start produces. That is the

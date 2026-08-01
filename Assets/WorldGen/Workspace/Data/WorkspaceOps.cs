@@ -247,6 +247,13 @@ namespace WorldGen.Workspace.Data
         /// inOtherPane does if it does not exist yet. The moved tab becomes the active tab wherever it lands
         /// — a tab you just dragged is the one you meant to look at.
         ///
+        /// TWO CALLERS, not one, and the second is easy to miss because it is not a gesture: the tab drag
+        /// (WorkspaceController.MoveTab, from TabDragHandler) and Open's own R1b, which reuses this rather
+        /// than hand-rolling a second way to move a tab — so the pre-removal-index contract below, the
+        /// create-on-demand above and the NormalizeSplit at the end have exactly one implementation between
+        /// them. R1b always passes the destination's current tab count, i.e. appends, and is always
+        /// cross-pane, so the insertAt-- adjustment never applies to it.
+        ///
         /// `toIndex` IS A PRE-REMOVAL INDEX: an index into the destination pane's tab list as it looks when
         /// the call is made, INCLUDING the tab being moved when the destination is its own pane. The
         /// insertAt-- below is what reconciles that with the removal, and it is the only place that

@@ -512,10 +512,11 @@ namespace WorldGen.Workspace.Rendering
         /// secondary pane).
         ///
         /// CloseSurface above cannot serve this: it closes ONE tab, the first match, which is right for
-        /// "«Назад» in this editor" and wrong for "the world these tabs describe no longer exists". A surface
-        /// can be open in both panes, and two DIFFERENT surfaces of a dead kind (two battle grids, two POI
-        /// editors) are reachable by ordinary navigation — a caller that closes named refs one at a time
-        /// leaves every duplicate behind, pointing at a destroyed world.</summary>
+        /// "«Назад» in this editor" and wrong for "the world these tabs describe no longer exists". Two
+        /// DIFFERENT surfaces of a dead kind (two battle grids, two POI editors) are reachable by ordinary
+        /// navigation, and the SAME surface can still be open twice in a layout restored from a pre-R1b
+        /// WorkspacePrefs payload (see WorkspaceOps.FindSurface) — a caller that closes named refs one at a
+        /// time leaves every one of those behind, pointing at a destroyed world.</summary>
         public int PruneSurfaces(System.Func<SurfaceRef, bool> exists)
         {
             int dropped = WorkspaceOps.PruneMissing(Layout, exists);
@@ -566,7 +567,7 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Moves one tab, possibly across panes, through the tested WorkspaceOps.MoveTab — the drop
         /// half of Task 10d's tab drag (TabStripView's TabDragHandler is the only caller). `toIndex` is a
         /// PRE-REMOVAL index, an index into the destination pane's tab list AS IT LOOKS RIGHT NOW, including
-        /// the dragged tab when the destination is its own pane; WorkspaceOps.cs:210-213 is what
+        /// the dragged tab when the destination is its own pane; WorkspaceOps.cs:286-289 is what
         /// adjusts for the removal, and doing it a second time here would cancel every same-pane reorder.
         ///
         /// A drop that creates the split needs no separate door: MoveTab creates the destination pane on
