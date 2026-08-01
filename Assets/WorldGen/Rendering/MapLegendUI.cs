@@ -17,7 +17,9 @@ namespace WorldGen.Rendering
     ///
     /// THE CARD FITS THE SPACE IT IS GIVEN, and since the workspace shell that space is a PANE, not the
     /// window. This canvas is one of the map-chrome roots MapSurfaceHost frames (discovered at
-    /// SurfaceRegistry.cs:314), so PaneChromeFrame.Ensure has inserted a stretched "__PaneFrame" carrying a
+    /// SurfaceRegistry.cs:320, and framed but NOT activated by it — see the "FRAMED BUT NOT CHROMED"
+    /// paragraph there for why this panel's active state stays PoiToolPanel's alone), so PaneChromeFrame.Ensure
+    /// has inserted a stretched "__PaneFrame" carrying a
     /// RectMask2D between the canvas and this panel — which means the panel's PARENT rect is the pane's live
     /// content rect, and anything taller is CUT. A content-driven height that was comfortable full-screen
     /// therefore ran off the top of a short or split pane, and the DM could not read the biomes above the cut.

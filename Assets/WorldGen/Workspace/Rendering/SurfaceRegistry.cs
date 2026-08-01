@@ -303,6 +303,22 @@ namespace WorldGen.Workspace.Rendering
                 ? cameraOverride
                 : FindFirstObjectByType<WorldMapRenderer>()?.targetCamera;
 
+            // FindObjectsInactive.Include on EVERY lookup here, and that flag is the whole of a defect the DM
+            // reported twice: the default overload skips an object that happens to be inactive AT THIS
+            // MOMENT, and MapLegend reliably is one. PoiToolPanel.OnEnable SetActive(false)s the legend
+            // (PoiToolPanel.cs:59-60, so the POI tool's own panel can have the bottom-left corner), and only
+            // MapToolbarUI's Awake-time SetActiveTab(0) — which deactivates PoiToolPanel and so runs its
+            // OnDisable — turns it back on. Both are Awake-order-dependent and both can land before
+            // WorkspaceBuilder.Awake, so discovery silently returned null, the legend entered neither list,
+            // and it spent the entire session anchored to the WINDOW while every other map panel followed
+            // its pane: half-hidden behind the 236px navigator column, exactly as the DM screenshotted.
+            //
+            // An inactive object is a NORMAL input here, not a miss to be worked around: EnsureFrames is
+            // already written to tolerate a root that is inactive, or active-but-canvas-less, for as long as
+            // it likes (see its own doc — three of the toolbar's docked panels may never wake at all), so
+            // including one costs nothing and depending on Awake order costs a whole feature.
+            var legend = FindFirstObjectByType<MapLegendUI>(FindObjectsInactive.Include);
+
             if (chromeOverride != null && chromeOverride.Length > 0)
             {
                 chrome = chromeOverride;
@@ -310,14 +326,12 @@ namespace WorldGen.Workspace.Rendering
             else
             {
                 var discovered = new List<GameObject>();
-                var poiPanel = FindFirstObjectByType<PoiEditPanel>();
-                var legend = FindFirstObjectByType<MapLegendUI>();
+                var poiPanel = FindFirstObjectByType<PoiEditPanel>(FindObjectsInactive.Include);
                 if (poiPanel != null) discovered.Add(poiPanel.gameObject);
-                if (legend != null) discovered.Add(legend.gameObject);
                 chrome = discovered.ToArray();
             }
 
-            toolbar = FindFirstObjectByType<MapToolbarUI>();
+            toolbar = FindFirstObjectByType<MapToolbarUI>(FindObjectsInactive.Include);
 
             // The frame roots are a STRICT SUPERSET of `chrome`, and deliberately a separate list rather than
             // an enlarged `chrome`: `chrome` drives SetActive (see SetChromeActive), and the four docked
@@ -352,6 +366,20 @@ namespace WorldGen.Workspace.Rendering
             if (chrome != null)
                 foreach (var go in chrome)
                     if (go != null) pendingFrameRoots.Add(go);
+
+            // THE LEGEND IS FRAMED BUT NOT CHROMED, i.e. it joins the frame list and deliberately NOT
+            // `chrome`, even though the pre-defect code tried to put it in both. `chrome` drives SetActive
+            // (SetChromeActive), and the legend's active state ALREADY has an owner — PoiToolPanel turns it
+            // off for the duration of the «Точки» tab and back on when that tab closes. A second owner would
+            // fight it: any Show() (a tab click, a pane promotion) would re-assert the legend on top of the
+            // POI tool that had just hidden it. Framing has no such coupling — it is pure geometry, which is
+            // why this list is documented above as a strict superset of `chrome` rather than the same set.
+            // Not being in `chrome` costs nothing visible: the legend's canvas is order 0, so whenever the
+            // map surface is not showing, the shell's own pane backgrounds (70) cover it completely.
+            // Contains-guarded because a human-populated mapChrome override may already name it.
+            if (legend != null && !pendingFrameRoots.Contains(legend.gameObject))
+                pendingFrameRoots.Add(legend.gameObject);
+
             if (toolbar != null)
             {
                 pendingFrameRoots.Add(toolbar.gameObject);
