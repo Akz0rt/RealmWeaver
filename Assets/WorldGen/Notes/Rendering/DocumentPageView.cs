@@ -560,6 +560,14 @@ namespace WorldGen.Notes.Rendering
                 view.Initialize(block, content, font);
                 view.OnToggleCollapse += OnToggleCollapse;
                 view.OnTextChanged += _ => OnDocumentMutated?.Invoke();
+                // THE WHEEL STOPS AT AN EDITING ROW WITHOUT THIS. A scroll event travels up only as far as
+                // the first object carrying ANY scroll handler, and TMP_InputField is one — it takes the
+                // wheel to scroll text within itself, and forwards to a parent only when it is single-line
+                // (TMP_InputField.cs:2414-2423). So the page never heard about a wheel turned over the row the
+                // DM was writing in. Every handler on the SAME object still runs, which is what makes adding
+                // one here work: the field does its nothing, and the page scrolls. Wired from here rather
+                // than from inside the row, so a row still knows nothing about the page it sits on.
+                if (view.Field != null) view.Field.gameObject.AddComponent<PageWheelRelay>().page = this;
                 view.Refresh();
                 rows.Add(view);
             }

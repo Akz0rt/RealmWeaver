@@ -130,8 +130,14 @@ namespace WorldGen.Notes.Rendering
             // The right inset matches the base indent, so at depth 0 the text has the SAME air on both sides.
             // It used to be 8 against a left of 16, which read as a column leaning left. Deeper rows are
             // deliberately still asymmetric — that gap IS the indentation.
-            textArea.offsetMin = new Vector2(indent, VerticalPadding * 0.5f);
-            textArea.offsetMax = new Vector2(-IndentBase, -VerticalPadding * 0.5f);
+            // VERTICALLY THE AREA TAKES THE WHOLE ROW, and the row's padding stays in its HEIGHT instead
+            // (ApplyHeightNow adds VerticalPadding there). Splitting it half above and half below made the
+            // text box exactly as tall as its own text — and TMP_InputField skips its internal scrolling only
+            // while the text is STRICTLY shorter than the viewport (TMP_InputField.cs:2425). On the equality
+            // it would go on to move the text inside the row instead. Giving the box the row's few spare
+            // pixels makes that guard strictly true, so the wheel over an editing row belongs to the page.
+            textArea.offsetMin = new Vector2(indent, 0f);
+            textArea.offsetMax = new Vector2(-IndentBase, 0f);
 
             // Invisible, but the raycast target that makes a click anywhere in the row start editing —
             // including on an EMPTY row, which has no glyphs to hit. The click is handled by this component
