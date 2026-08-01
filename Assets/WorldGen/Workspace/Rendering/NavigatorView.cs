@@ -510,13 +510,26 @@ namespace WorldGen.Workspace.Rendering
 
             // Read-and-clear on the FIRST lines, before anything can throw or early-return below: the note
             // is for THIS rebuild only, and a pass that fails to find the row must drop it rather than leave
-            // it armed for a later one (see pendingRenamePageId's own doc). Cleared even on the collapsed
-            // path, where no rows are built at all — a rename cannot be started on a hidden tree, and
-            // carrying the note until the column re-expands would fire it long after the gesture.
+            // it armed for a later one (see pendingRenamePageId's own doc).
             string renamePageId = pendingRenamePageId;
             pendingRenamePageId = null;
 
             bool collapsed = controller.Layout.NavigatorCollapsed;
+
+            // DROPPED, not merely unused, when the column is collapsed. Collapsing does NOT stop rows from
+            // being built — only scrollGO is deactivated below, while listContent (its descendant) is still
+            // destroyed and repopulated on every pass — so without this line an auto-rename would happily
+            // arm itself inside a deactivated subtree. StartRename would then SetActive(true) an object
+            // whose parent chain is still off: activeInHierarchy stays false, so Select()/ActivateInputField
+            // no-op, the field never focuses, and onEndEdit — the ONLY path that clears activeRenameInput
+            // besides Escape — can never fire. LateUpdate's rename-in-flight hold would then wedge the
+            // navigator permanently: no rebuild ever again.
+            //
+            // Unreachable today, and this line is what keeps it that way rather than luck: both create
+            // affordances are hidden while collapsed (createGroupGO below; the per-group «+» lives inside
+            // scrollGO), and the click→LateUpdate round trip is same-frame, so nothing can collapse in
+            // between. Cheaper to drop the note here than to rely on that argument staying true.
+            if (collapsed) renamePageId = null;
             // Applied every rebuild (not just on the toggle click) so a Task-11 restore that sets
             // NavigatorCollapsed/NavigatorWidth before this view's first Rebuild lands correctly with no
             // extra wiring — see the class doc's "every rebuild re-derives" rule.
