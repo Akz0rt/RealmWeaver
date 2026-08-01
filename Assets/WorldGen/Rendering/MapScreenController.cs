@@ -490,9 +490,36 @@ namespace WorldGen.Rendering
             }
             if (dungeonEditorScreen != null)
                 dungeonEditorScreen.Bind(editingDungeon, roomsWithInterior: RoomsWithInteriorFor(editingDungeon));
-            OpenSurfaceTab(InteriorSurface(editingDungeon), PoiTitle(poi));
+            OpenSurfaceTab(InteriorSurface(editingDungeon), InteriorMapTitle(poi));
             RefreshScreenState();
         }
+
+        /// <summary>«[Название]:карта» — the DM's ruling, verbatim, on what the interior-map tab is called.
+        ///
+        /// THE DEFECT: a point of interest opens its EDITOR in one tab, and «КАРТА ЛОКАЦИИ» inside that editor
+        /// opens the point's INTERIOR MAP as a second tab. Both used PoiTitle(poi), so the strip showed two
+        /// tabs with the identical name and they read as one. The editor's tab keeps the bare name (see
+        /// OpenPoiEditorIn's own OpenSurfaceTab call) — it is the point itself; only the map is qualified.
+        ///
+        /// NO SPACE AROUND THE COLON, and this is copied from the ruling rather than styled: «[Название]:карта»
+        /// is what the DM wrote. Do not "fix" it to «: карта» or «— карта».
+        ///
+        /// THE SUFFIX IS NOT APPLIED ANYWHERE ELSE, deliberately. OpenBuildingInterior titles a building's tab
+        /// with the ROOM's own name and OpenBattleGrid with the room's name or «Бой: комната N» — neither
+        /// collides with a POI's name, and neither was part of the ruling. CloseDungeonEditor's «← Город»
+        /// re-open passes InteriorTitle(town) («Город»/«Здание»/«Подземелье») for the case where the DM closed
+        /// the town's tab by hand; it cannot use this, because the POI's real name is not reachable from an
+        /// InteriorData (InteriorTitle's own doc says why) — so a town tab re-created that way is named for its
+        /// KIND, not «[Название]:карта». Recorded rather than papered over.
+        ///
+        /// ONLY APPLIES TO A TAB BEING CREATED. WorkspaceOps.Open's R1 activates an existing tab without
+        /// touching its Title, and WorkspacePrefs stores the title it was created with — so interior-map tabs
+        /// that already exist (including ones restored from a previous session) keep the old bare name until
+        /// they are closed and reopened. Renaming the POI afterwards leaves it stale in the same way, for the
+        /// same reason: nothing calls ISurfaceHost.TitleFor yet (its own doc says so, and
+        /// ScreenSurfaceHost.TitleFor returns "" by design). A live title-refresh path is a separate piece of
+        /// work, not one line at this site.</summary>
+        static string InteriorMapTitle(PoiData poi) => PoiTitle(poi) + ":карта";
 
         /// <summary>Ц2, Task 5: room ids of `town`'s own buildings that already have their own interior on
         /// file — feeds DungeonFlatRenderer's has-interior corner mark. Settlement-only (null for a
@@ -979,7 +1006,11 @@ namespace WorldGen.Rendering
         /// POI reads «Без названия» in all three places instead of being «Без названия» in the tab strip and
         /// blank in the tree. Public for that one caller (the same reason PoiInfoPopup.TypeLabel was made
         /// public in Task 10b), and the fallback string is still the one NotesDocOps.EnsurePageFor's E3
-        /// uses, so a page Р3 later binds to a nameless POI still agrees with its row.</summary>
+        /// uses, so a page Р3 later binds to a nameless POI still agrees with its row.
+        ///
+        /// FOUR READERS NOW: InteriorMapTitle builds the interior-map tab's «[Название]:карта» on top of this
+        /// rather than reading poi.Name itself, so the map tab and the editor tab cannot disagree about what
+        /// the place is called — including for a nameless POI, where both read «Без названия».</summary>
         public static string PoiTitle(PoiData poi) =>
             poi != null && !string.IsNullOrWhiteSpace(poi.Name) ? poi.Name : "Без названия";
 
