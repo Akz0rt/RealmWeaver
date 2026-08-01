@@ -22,11 +22,19 @@ namespace WorldGen.Workspace.Data
     /// 0 means "owned by the POI directly". So the encoding now OMITS the suffix entirely for room 0, and the
     /// presence of a separator is what distinguishes a room-scoped interior from a top-level one.
     ///
-    /// SEPARATOR SAFETY: the poiId part is always a PoiData.Id, which is a Guid string (PoiData.cs) and can
-    /// therefore never contain '#'. That is what makes "the first '#' splits poi from room" unambiguous for
-    /// interiors, and "the last two '#' segments are floor and room" unambiguous for battle grids — a battle
-    /// grid inside a building has an interior part that itself contains one. Parsing a battle grid from the
-    /// LEFT would mis-read every one of those.
+    /// SEPARATOR SAFETY, AND EXACTLY HOW FAR IT GOES. The poiId part is a PoiData.Id, which every id this
+    /// app MINTS is a Guid string (PoiData.cs's `= Guid.NewGuid().ToString()` initializer) and therefore
+    /// free of '#'. That is what makes "the first '#' splits poi from room" unambiguous for interiors, and
+    /// "the last two '#' segments are floor and room" unambiguous for battle grids — a battle grid inside a
+    /// building has an interior part that itself contains one, so parsing a battle grid from the LEFT would
+    /// mis-read every one of those.
+    ///
+    /// It is a property of the ids this app writes, NOT an invariant anything enforces: PoiData.Id is a
+    /// public field Newtonsoft deserializes from the .dndproj with no validation, so a corrupted or
+    /// hand-edited project CAN carry a '#' in it, and such an id would split at the wrong place and resolve
+    /// to a different (poi, room) rather than being rejected. Nothing here should be read as ruling that out.
+    /// Deliberately NOT guarded here — validating ids is Task 11's call, since Task 11 is what starts
+    /// persisting them.
     ///
     /// These ids are persisted verbatim by WorkspaceOps.Serialize (which escapes only tabs and newlines and
     /// has no opinion about anything else), so Task 11's WorkspacePrefs restores tabs through this exact

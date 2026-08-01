@@ -8,7 +8,7 @@ namespace WorldGen.Workspace.Data
     /// PoiEditor (Task 10c) is NOT in the Р1 spec's surface TABLE, and is added deliberately rather than by
     /// oversight — the spec's own screen-layer section names it («`MapEditor`, `PoiEditor`, `Dungeon` and
     /// `BattleGrid` stop being screens and become surfaces a tab hosts»), and without it Р1 would ship with
-    /// settlements and dungeons UNREACHABLE: PoiEditorScreen's «КАРТА ЛОКАЦИИ» row (PoiEditorScreen.cs:744 ->
+    /// settlements and dungeons UNREACHABLE: PoiEditorScreen's «КАРТА ЛОКАЦИИ» row (PoiEditorScreen.cs:752 ->
     /// OnOpenDungeonRequested, assigned at MapScreenController.cs:95) is the only path into the interior
     /// editor in the whole project, and the spec explicitly defers the page-side replacement («showing the
     /// settlement, «Открыть город», the inspector link — stays in Р3»). So the POI editor keeps existing as a

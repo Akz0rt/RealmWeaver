@@ -40,9 +40,9 @@ namespace WorldGen.Workspace.Rendering
         const float CloseButtonMargin = 6f;
         const float PlusButtonWidth = 26f;
 
-        /// <summary>Task 8's hook: the quick-open palette this should launch does not exist yet (out of this
-        /// task's scope — see the brief's scope-discipline note), so clicking «+» invokes this with the
-        /// strip's own pane index and otherwise does nothing until Task 8 assigns it.</summary>
+        /// <summary>The «+» hook: clicking «+» invokes this with the strip's own pane index. Task 8 built
+        /// the palette it launches — WorkspaceBuilder assigns QuickOpenPopup.OpenForPane to both strips, and
+        /// OpenForPane focuses the requesting pane before opening. Null (a bare rig) = «+» does nothing.</summary>
         public System.Action<int> OnRequestQuickOpen;
 
         public int PaneIndex { get; private set; }

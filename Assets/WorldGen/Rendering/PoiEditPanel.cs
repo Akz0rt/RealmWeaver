@@ -12,7 +12,7 @@ namespace WorldGen.Rendering
 {
     /// <summary>
     /// Standalone screen-space panel for editing the currently selected POI: type, name,
-    /// description, cell binding, custom icon path, and per-POI icon/label scale.
+    /// description, custom icon, and per-POI icon/label scale.
     /// Anchored to the top-right corner of its HOST — the pane frame PaneChromeFrame inserts when the
     /// workspace shell hosts this canvas, and the canvas itself when it does not. Height auto-fits
     /// content but is clamped to the host's remaining height below the toolbar, scrolling if needed.
@@ -29,7 +29,7 @@ namespace WorldGen.Rendering
                  "теперь она встаёт в правый верхний угол своего хозяина (см. RepositionPanel). Поле осталось " +
                  "только потому, что записано в SampleScene, а править сцену нельзя до задачи 11.")]
         public MapLegendUI legendUI;
-        [Tooltip("Notes root — resolves/creates the POI's linked page group when \"Открыть страницы\" is clicked.")]
+        [Tooltip("Notes root — resolves/creates the POI's linked page group when \"Открыть →\" is clicked.")]
         public NotesRootBuilder notesRoot;
 
         [Header("Внешний вид")]

@@ -8,8 +8,8 @@ namespace WorldGen.Rendering
     /// <summary>
     /// Lightweight read-only info card shown on a SINGLE click of a POI (world map). Displays the
     /// POI's icon, name, type, political region and a truncated description, plus an «Редактировать»
-    /// button. The button invokes <see cref="OnEditRequested"/> (wired by PoiInteractionController to
-    /// MapScreenController.OpenPoiEditor) so the popup stays decoupled from the editor screen.
+    /// button. The button invokes <see cref="OnEditRequested"/>, which MapScreenController.Start wires
+    /// to its own OpenPoiEditor, so the popup stays decoupled from the editor it opens.
     /// Positions itself near the marker's screen position each frame. Built entirely in code,
     /// following the PoiEditPanel conventions (ThemeService.Tag + LegacyRuntime font + VLG).
     /// </summary>
@@ -27,8 +27,8 @@ namespace WorldGen.Rendering
         [Tooltip("Смещение карточки вверх от экранной позиции маркера, в пикселях.")]
         public float screenYOffset = 24f;
 
-        /// <summary>Invoked when «Редактировать» is pressed; carries the shown POI. Wired externally
-        /// (PoiInteractionController → MapScreenController.OpenPoiEditor). Null = button is a no-op.</summary>
+        /// <summary>Invoked when «Редактировать» is pressed; carries the shown POI. Wired externally, by
+        /// MapScreenController.Start, to MapScreenController.OpenPoiEditor. Null = button is a no-op.</summary>
         public System.Action<PoiData> OnEditRequested;
 
         GameObject cardGO;

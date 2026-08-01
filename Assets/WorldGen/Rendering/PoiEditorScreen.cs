@@ -9,12 +9,16 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>
-    /// Full-screen POI editor (a mutually-exclusive screen toggled by MapScreenController). Left
-    /// column = live map-scale preview (populated in RefreshPreview — sub-project A Task 4); right
-    /// column = the migrated PoiEditPanel controls (name/type/description/icon/scales/notes/delete),
-    /// plus a stub «КАРТА ЛОКАЦИИ» section reserved for the cave-dungeon (sub-project B).
+    /// The POI editor. Left column = live map-scale preview (populated in RefreshPreview); right
+    /// column = the PoiEditPanel-derived controls (name/type/description/icon/scales/notes/delete),
+    /// plus the «КАРТА ЛОКАЦИИ» row, which opens the point's own interior.
     ///
-    /// Decoupled from the screen controller: the back/Готово button and delete call
+    /// A SURFACE, NOT A SCREEN (Task 10c). ScreenSurfaceHosts owns whether this GameObject is active
+    /// and confines its canvas to a pane's ContentArea through a PaneChromeFrame — so this is one tab
+    /// among others, not a mutually-exclusive screen the window switches to. Nothing here is reached
+    /// through AppScreen any more: that enum knows only Generation/Progress/Workspace.
+    ///
+    /// Decoupled from the screen controller: the back button and delete call
     /// <see cref="OnCloseRequested"/> (wired to MapScreenController.ClosePoiEditor). Edits go through
     /// PoiManager.UpdatePoi*; every edit calls RefreshPreview() so the live preview stays in sync.
     /// UI is built lazily (EnsureBuilt) so Bind works even before the GameObject is first activated.
@@ -30,12 +34,12 @@ namespace WorldGen.Rendering
         [Tooltip("Владелец подземелий — используется, чтобы показать статус «КАРТА ЛОКАЦИИ» и открыть редактор подземелья.")]
         public DungeonManager dungeonManager;
 
-        /// <summary>Invoked by «← К миру» / «Готово» and after delete. Wired to MapScreenController.ClosePoiEditor.</summary>
+        /// <summary>Invoked by the top bar's back button and after delete. Wired to MapScreenController.ClosePoiEditor.</summary>
         public System.Action OnCloseRequested;
         /// <summary>Invoked by the «КАРТА ЛОКАЦИИ» row. Wired to MapScreenController.OpenDungeonEditor.</summary>
         public System.Action<PoiData> OnOpenDungeonRequested;
 
-        /// <summary>Reserved container for the live map-scale preview (filled in Task 4).</summary>
+        /// <summary>Container for the live map-scale preview; EnsurePreviewWidgets fills it.</summary>
         public RectTransform PreviewContainer { get; private set; }
 
         PoiData current;
@@ -333,7 +337,6 @@ namespace WorldGen.Rendering
                 doc.CreatePage(group.Id, "Страница 1");
             }
             doc.OpenPage(group.Pages[0].Id);
-            // Notes live on the map screen (docked right), so return there to see them.
             OnCloseRequested?.Invoke();
         }
 
@@ -345,12 +348,17 @@ namespace WorldGen.Rendering
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100; // topmost: fully covers the map UI (toolbar/panels/legend) beneath
+            // Above the workspace shell's 70, which is what stops the pane's own ContentArea background
+            // from covering this canvas. It does NOT decide extent: PaneChromeFrame's RectMask2D is what
+            // keeps the editor inside its pane. See ScreenSurfaceHosts' "SORTING LEFT ALONE" paragraph.
+            canvas.sortingOrder = 100;
             canvasGO.AddComponent<CanvasScaler>();
             canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Opaque full-screen background — a dedicated editing screen that covers everything; the
-            // «← К миру» button is the only navigation out (no leftover map chrome peeking through).
+            // Opaque background stretched over this canvas, so nothing shows through the editor's own
+            // area. It stretches to the CANVAS, not to the window: PaneChromeFrame sits between the two
+            // and clips this whole subtree to the pane. The back button is one way out among several —
+            // the tab's «×» closes it, and clicking any other tab leaves it open behind.
             var root = new GameObject("Root");
             root.transform.SetParent(canvasGO.transform, false);
             var rootImg = root.AddComponent<Image>();
@@ -502,7 +510,7 @@ namespace WorldGen.Rendering
             BuildDeleteRow(t);
         }
 
-        // ── Section builders (adapted from PoiEditPanel; the old panel is retired in Task 7) ──
+        // ── Section builders (adapted from PoiEditPanel, which is still live as the map's own chrome) ──
 
         void BuildTypeSelector(Transform t)
         {
@@ -747,8 +755,9 @@ namespace WorldGen.Rendering
             mapSectionLabel.raycastTarget = false;
         }
 
-        /// <summary>Public hook so MapScreenController can refresh the «Карта локации» label when the POI
-        /// editor is re-shown after returning from the dungeon editor (no re-Bind happens on that path).</summary>
+        /// <summary>Public hook so MapScreenController can refresh the «Карта локации» label after an
+        /// interior is closed. The POI editor's own TAB was never closed, so it is still bound to the same
+        /// POI and no re-Bind — the only other thing that computes this label — happens on that path.</summary>
         public void RefreshMapSection() => RefreshMapSectionLabel();
 
         /// <summary>Gates the «КАРТА ЛОКАЦИИ» row: visible only for a POI type that can open an interior

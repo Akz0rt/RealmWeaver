@@ -197,7 +197,7 @@ namespace WorldGen.Rendering
             // enough while the name only appeared on the map.
             //
             // Safe to raise from here specifically: both callers are onEndEdit handlers
-            // (PoiEditorScreen.cs:481, PoiEditPanel.cs:353), so this cannot fire per keystroke, and the two
+            // (PoiEditorScreen.cs:489, PoiEditPanel.cs:353), so this cannot fire per keystroke, and the two
             // existing listeners (PoiToolPanel.RebuildList, PoiEditPanel.RefreshFromSelection) re-reading a
             // COMMITTED rename is what they want anyway. NavigatorView coalesces it into one LateUpdate
             // rebuild regardless (RequestRebuild).

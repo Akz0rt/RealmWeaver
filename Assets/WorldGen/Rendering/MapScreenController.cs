@@ -203,13 +203,16 @@ namespace WorldGen.Rendering
             // may or may not already have been cleared by their own handlers of the same regeneration, and
             // Unity gives no ordering guarantee between them — a resolution-based predicate would keep or drop
             // tabs depending on which handler ran first. "A fresh world drops any open editor" is the rule
-            // these three lines have always stated, and it is order-independent.
+            // this method has always stated, and it is order-independent.
+            //
+            // The TABS are closed here, by PruneMissing; the four field clears below drop only the ids that
+            // NAME them, which is why no CloseSurfaceTab call is left in this method.
             Shell()?.PruneSurfaces(SurvivesWorldChange);
 
             editingPoi = null; // a fresh world drops any open POI editor
             editingDungeon = null; // a fresh world drops any open dungeon editor
             parentTown = null;   // ...and any building-from-town back-target it was carrying
-            battleGridRoomId = 0;   // a fresh world drops the battle grid screen too
+            battleGridRoomId = 0;   // ...and the room id that named the battle grid's tab
             RefreshScreenState();
         }
 

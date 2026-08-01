@@ -337,7 +337,7 @@ namespace WorldGen.Workspace.Rendering
             //
             // Dropping the old `frames` without Reset()ing its entries first is safe ONLY because the root
             // set cannot SHRINK between two Rewire calls: the only two callers are Create (once per
-            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:202), and both pass
+            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:217), and both pass
             // the same `mapChrome` field, so discovery yields the same set both times. A future caller that
             // narrowed the set would strand a __PaneFrame at its last-applied inset with nothing left
             // holding a reference to reset it — Reset the outgoing frames here if that ever becomes possible.
@@ -671,7 +671,7 @@ namespace WorldGen.Workspace.Rendering
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
     /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:463-484), so three
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:492-513), so three
     /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
     /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
     /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
