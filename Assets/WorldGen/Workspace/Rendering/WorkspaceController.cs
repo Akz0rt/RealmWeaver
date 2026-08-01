@@ -343,7 +343,8 @@ namespace WorldGen.Workspace.Rendering
         /// any other pane backed by the same physical surface (see SyncSurfaces' own doc). A cross-pane drop
         /// that left focus behind could therefore land the tab in the other pane and never show it. Routed
         /// through WorkspaceOps.Focus, which ignores a pane that no longer exists — after a move that emptied
-        /// the source, NormalizeSplit may have collapsed `toPane` away and already set FocusedPane itself.</summary>
+        /// the source, NormalizeSplit may have collapsed `toPane` away and already set FocusedPane
+        /// itself.</summary>
         public void MoveTab(int fromPane, int fromIndex, int toPane, int toIndex)
         {
             if (!WorkspaceOps.MoveTab(Layout, fromPane, fromIndex, toPane, toIndex)) return;

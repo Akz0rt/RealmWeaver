@@ -180,8 +180,11 @@ namespace WorldGen.Workspace.Rendering
             // delegates, so after a reload the correct SURFACE renders but the chrome around it stays inert
             // until Task 11: clicking a tab, DRAGGING a tab (Task 10d — TabDragHandler's own guard makes that
             // a silent no-op rather than an NRE on its wiped `strip`/`controller` fields), the navigator,
-            // «+», Ctrl+K or dragging the divider all still do nothing. That is the line — pane handles are read by SyncSurfaces, which runs post-reload; the
-            // strips are read by nothing that runs post-reload.
+            // «+», Ctrl+K or dragging the divider all still do nothing. That is the line — pane handles are
+            // read by SyncSurfaces, which runs post-reload; the strips are read by nothing that runs
+            // post-reload. The ONE thing this branch does clean up for the tab drag is the pair of overlays a
+            // reload could have left on screen mid-gesture — see the HideStrandedOverlays call below, which
+            // hides pixels rather than reviving behaviour.
             if (transform.childCount > 0)
             {
                 Controller = GetComponent<WorkspaceController>();
@@ -196,6 +199,17 @@ namespace WorldGen.Workspace.Rendering
                     // EnsurePaneHandles ends in ReflowPanes, which reads Layout.Secondary/SplitRatio.
                     Controller.EnsureLayout();
                     Controller.EnsurePaneHandles();
+
+                    // A reload landing MID-DRAG (Task 10d) strands the drag ghost and the insertion marker
+                    // visible: the reload nulls TabDragHandler's `dragging` flag and its `strip` reference,
+                    // so its OnBeginDrag guard early-returns forever and its own HideOverlays becomes
+                    // unreachable — the two GameObjects survive, switched on, with nothing left that can
+                    // switch them off. TabDragHandler's find-then-build recovery closes the DUPLICATE-orphan
+                    // case (a second ghost) but not this one, because the recovery only runs on a drag that
+                    // can no longer start. This branch is the only code that runs after a reload and knows
+                    // where the canvas is, which is why the cleanup lives here rather than there. It hides
+                    // PIXELS, not behaviour: the strips stay as inert as the paragraph above says.
+                    TabDragHandler.HideStrandedOverlays(Controller.ShellRoot);
                 }
 
                 var recoveredNotesRoot = EnsureDocumentController();

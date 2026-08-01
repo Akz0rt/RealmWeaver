@@ -448,9 +448,18 @@ namespace WorldGen.Workspace.Rendering
     /// beginDragHandler once (pressPosition - position).sqrMagnitude has passed
     /// EventSystem.pixelDragThreshold² (Unity's default is 10px), so by the time OnBeginDrag below runs the
     /// pointer has ALREADY moved further than any second threshold this class could sensibly impose — one
-    /// added here would be code that reads like a safeguard and can never fire. The consequence for whoever
-    /// wires the shell into the scene (Task 11): do not set the scene EventSystem's Drag Threshold to 0, or
-    /// every click-to-activate becomes a one-pixel drag, which is precisely what Step 1 was protecting.
+    /// added here would be code that reads like a safeguard and can never fire.
+    ///
+    /// THAT THRESHOLD IS 10 AND HAS NO SCENE DEPENDENCY. There is no EventSystem in SampleScene.unity at
+    /// all: every one in this project is created in code (EnsureEventSystemExists in WorkspaceBuilder.cs,
+    /// and six siblings elsewhere), and AddComponent runs EventSystem's own `m_DragThreshold = 10` field
+    /// initializer. So nothing about this gesture is waiting on Task 11 to configure anything. What must
+    /// NOT happen is the inverse: adding a scene EventSystem with a lowered threshold, or lowering
+    /// pixelDragThreshold in code. At 0 the casualty is not click-to-activate — that survives, since
+    /// pointerPress and pointerDrag are both this tab so the click stays eligible, and Commit's no-op skip
+    /// swallows the spurious move, costing one frame of ghost flash. It is the CLOSE BUTTON: a single pixel
+    /// of jitter while pressing the "×" makes pointerPress != pointerDrag, which clears eligibleForClick
+    /// (InputSystemUIInputModule.cs:774-783), and closing a tab silently stops working.
     ///
     /// THE GHOST AND THE MARKER ARE RE-ACQUIRED BY NAME, never re-created blind (EnsureOverlay). They are two
     /// long-lived GameObjects under the workspace canvas, tracked by plain non-[SerializeField] fields — the
@@ -526,14 +535,22 @@ namespace WorldGen.Workspace.Rendering
             otherStrip = FindOtherStrip();
             ghostSize = ((RectTransform)transform).rect.size;
 
+            // Both overlays are resolved and ordered ONCE, here, rather than on every drag frame: sibling
+            // order cannot change during a gesture (nothing else adds children to the canvas root), and
+            // re-asserting it per frame only dirties the canvas hierarchy for no effect. Ghost first, marker
+            // second, so the marker ends up ABOVE it — the insertion line has to stay readable through the
+            // translucent ghost at the moment of release, which is the pair's whole point.
             var ghostRect = EnsureOverlay(ref ghost, GhostName, BuildGhost);
             if (ghostRect != null)
             {
+                ghostRect.SetAsLastSibling();
                 // Re-labelled every gesture: ONE ghost serves every tab in both strips, so whatever title it
                 // is carrying is the previous drag's.
                 var label = ghostRect.GetComponentInChildren<Text>(true);
                 if (label != null) label.text = title;
             }
+            var markerRect = EnsureOverlay(ref marker, MarkerName, BuildMarker);
+            if (markerRect != null) markerRect.SetAsLastSibling();
 
             UpdateOverlays(eventData.position);
         }
@@ -611,7 +628,6 @@ namespace WorldGen.Workspace.Rendering
             if (ghostRect != null)
             {
                 ghostRect.gameObject.SetActive(true);
-                ghostRect.SetAsLastSibling();   // above RootRow — the marker below then goes above THIS,
                 ghostRect.sizeDelta = ghostSize;
                 // ScreenSpaceOverlay: world position IS screen-pixel position (SurfaceRegistry.cs:625), so the
                 // pointer's screen coordinate can be written straight into a world position, whatever the
@@ -623,8 +639,6 @@ namespace WorldGen.Workspace.Rendering
             if (markerRect == null) return;
             markerRect.gameObject.SetActive(target.Valid);
             if (!target.Valid) return;
-            markerRect.SetAsLastSibling();   // ...so the insertion line stays readable THROUGH the ghost,
-                                             // which is the pair's whole point at the moment of release.
             markerRect.sizeDelta = new Vector2(MarkerWidth, Mathf.Max(0f, target.MarkerYMax - target.MarkerYMin));
             markerRect.position = new Vector3(target.MarkerX, (target.MarkerYMin + target.MarkerYMax) * 0.5f, 0f);
         }
@@ -725,9 +739,10 @@ namespace WorldGen.Workspace.Rendering
             return otherStrip != null && otherStrip.PaneIndex == pane ? otherStrip : null;
         }
 
-        /// <summary>The sibling pane's strip, found once per gesture (not per drag frame — GetComponentsInChildren
-        /// allocates). Searched from PaneContainer, the parent both panes share: strip -> its pane -> the
-        /// container, exactly the hierarchy WorkspaceBuilder.BuildPaneContainer/BuildPane construct.
+        /// <summary>The sibling pane's strip, found once per gesture (not per drag frame —
+        /// GetComponentsInChildren allocates). Searched from PaneContainer, the parent both panes share:
+        /// strip -> its pane -> the container, exactly the hierarchy
+        /// WorkspaceBuilder.BuildPaneContainer/BuildPane construct.
         /// includeInactive is required — the secondary pane's whole GameObject is deactivated while there is
         /// no split, which is the state a split-creating drag starts from.</summary>
         TabStripView FindOtherStrip()
@@ -752,6 +767,28 @@ namespace WorldGen.Workspace.Rendering
 
         // ── The two reused overlays ────────────────────────────────────────────
 
+        /// <summary>Switches off any ghost/marker a domain reload left stranded VISIBLE, given the workspace
+        /// canvas. Called from WorkspaceBuilder.Awake's recompile branch, which is the only code that runs
+        /// after a reload and knows where the canvas is — see that call site for why the cleanup cannot live
+        /// in this class: after a reload every surviving TabDragHandler has `dragging` false and `strip`
+        /// null, so OnBeginDrag early-returns and HideOverlays below is unreachable forever, leaving two
+        /// switched-on GameObjects nothing holds a reference to. Looked up BY NAME for the same reason
+        /// EnsureOverlay does: the name is the only handle that survives a reload.
+        ///
+        /// Static, and takes the root as an argument rather than finding it: there is no live instance to
+        /// call it on (the tabs it would belong to are the inert ones), and the caller already holds the
+        /// canvas via WorkspaceController.ShellRoot. Tolerates a null root, and a canvas with neither
+        /// overlay under it — the ordinary case, since most reloads do not land mid-drag.</summary>
+        internal static void HideStrandedOverlays(GameObject canvasRoot)
+        {
+            if (canvasRoot == null) return;
+            foreach (string overlayName in new[] { GhostName, MarkerName })
+            {
+                Transform overlay = canvasRoot.transform.Find(overlayName);
+                if (overlay != null) overlay.gameObject.SetActive(false);
+            }
+        }
+
         void HideOverlays()
         {
             if (ghost != null) ghost.gameObject.SetActive(false);
@@ -767,7 +804,8 @@ namespace WorldGen.Workspace.Rendering
             if (cached != null) return cached;
 
             var canvas = GetComponentInParent<Canvas>();
-            if (canvas == null) return null;   // never true in the built shell; keeps a bare test rig from throwing
+            // Never null in the built shell; keeps a bare test rig from throwing.
+            if (canvas == null) return null;
 
             // Written out rather than `existing as RectTransform ?? build(...)`: `??` on a UnityEngine.Object
             // bypasses the lifetime-aware == operator, so a destroyed-but-not-null survivor would slip
