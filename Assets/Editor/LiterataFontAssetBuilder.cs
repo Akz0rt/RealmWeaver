@@ -45,7 +45,8 @@ namespace WorldGen.EditorTools
             if (!AssetDatabase.IsValidFolder(OutputDir))
                 AssetDatabase.CreateFolder("Assets/Resources", "Fonts");
 
-            string characters = CharacterSet();
+            string required = RequiredCharacters();
+            string optional = OptionalCharacters();
             bool allOk = true;
 
             foreach (var weight in Weights)
@@ -60,19 +61,19 @@ namespace WorldGen.EditorTools
                     continue;
                 }
 
-                allOk &= BuildOne(source, weight, characters);
+                allOk &= BuildOne(source, weight, required, optional);
             }
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
             Debug.Log(allOk
-                ? $"Literata: all {Weights.Length} font assets built with 0 missing characters."
+                ? $"Literata: all {Weights.Length} font assets built with 0 REQUIRED characters missing."
                 : "Literata: FINISHED WITH PROBLEMS — read the errors above. Do not treat the page's typography " +
-                  "as verified until this line reports 0 missing characters.");
+                  "as verified until this line reports 0 required characters missing.");
         }
 
-        static bool BuildOne(Font source, string weight, string characters)
+        static bool BuildOne(Font source, string weight, string required, string optional)
         {
             string assetName = $"Literata-{weight} SDF";
             string assetPath = $"{OutputDir}/{assetName}.asset";
@@ -92,14 +93,18 @@ namespace WorldGen.EditorTools
 
             fontAsset.name = assetName;
 
-            bool complete = fontAsset.TryAddCharacters(characters, out string missing);
-            if (!complete || !string.IsNullOrEmpty(missing))
-            {
-                // The whole reason this command prints anything. A font subset without Cyrillic builds
-                // perfectly and renders Russian as blank boxes; a silent success here is the failure mode.
-                Debug.LogError($"Literata-{weight}: {missing.Length} character(s) MISSING from the source font " +
-                               $"— «{missing}». Cyrillic missing means the wrong TTF subset was downloaded.");
-            }
+            // The whole reason this command prints anything. A font subset lacking the Russian alphabet builds
+            // perfectly and renders every page as blank boxes; a silent success here is the failure mode.
+            fontAsset.TryAddCharacters(required, out string missingRequired);
+            bool requiredOk = string.IsNullOrEmpty(missingRequired);
+            if (!requiredOk)
+                Debug.LogError($"Literata-{weight}: {missingRequired.Length} REQUIRED character(s) missing from " +
+                               $"the source font — «{missingRequired}». The page cannot render correctly until " +
+                               "this is empty; check which TTF was downloaded.");
+
+            // Best effort, and a missing character here is NOT a problem — see OptionalCharacters.
+            fontAsset.TryAddCharacters(optional, out string missingOptional);
+            int optionalAdded = optional.Length - (missingOptional?.Length ?? 0);
 
             fontAsset.atlasPopulationMode = AtlasPopulationMode.Static;
 
@@ -121,25 +126,32 @@ namespace WorldGen.EditorTools
             }
 
             EditorUtility.SetDirty(fontAsset);
-            Debug.Log($"Literata-{weight}: built {assetPath} — {fontAsset.characterTable.Count} glyphs, " +
-                      $"{fontAsset.atlasTextures.Length} atlas page(s).");
-            return complete && string.IsNullOrEmpty(missing);
+            // Requested and got are BOTH printed. A bare glyph count cannot be checked against anything, and
+            // the two numbers differing by a little is exactly the signal worth seeing.
+            Debug.Log($"Literata-{weight}: built {assetPath} — {fontAsset.characterTable.Count} glyphs " +
+                      $"({required.Length} required requested, {optionalAdded} of {optional.Length} optional " +
+                      $"added), {fontAsset.atlasTextures.Length} atlas page(s).");
+            return requiredOk;
         }
 
-        /// <summary>Exactly what the page must be able to render, and nothing speculative.
+        /// <summary>What the page MUST be able to render. A character missing from here is a defect.
         ///
         /// NOT INCLUDED, deliberately: ⊕ and 📄. Those are row affordances drawn as buttons in legacy uGUI
         /// with the built-in font, not glyphs inside prose — the arc's constraint is that only page BODY text
         /// moves to TextMeshPro. 📄 is outside the Basic Multilingual Plane besides, and no text serif face
         /// carries it.</summary>
-        static string CharacterSet()
+        static string RequiredCharacters()
         {
             var seen = new HashSet<char>();
             var sb = new StringBuilder();
 
             AppendRange(sb, seen, 0x0020, 0x007E);   // Basic Latin — ASCII, including digits and punctuation
             AppendRange(sb, seen, 0x00A0, 0x00FF);   // Latin-1 Supplement — accented Latin, ©, °, ×
-            AppendRange(sb, seen, 0x0400, 0x04FF);   // Cyrillic — the language this application is written in
+
+            // MODERN RUSSIAN ONLY, and that boundary was learned the hard way — see OptionalCharacters.
+            sb.Append('Ё'); seen.Add('Ё');           // U+0401, outside the А-я run
+            sb.Append('ё'); seen.Add('ё');           // U+0451, likewise
+            AppendRange(sb, seen, 0x0410, 0x044F);   // А-я, the whole alphabet in one contiguous run
 
             // The typographic punctuation this project's prose actually uses. Russian typesetting needs the
             // guillemets and the em dash the way English needs the apostrophe; without them every «слово»
@@ -147,6 +159,33 @@ namespace WorldGen.EditorTools
             foreach (char c in "«»“”„‘’—–…·№₽†‡•→←↑↓±≈≤≥")
                 if (seen.Add(c)) sb.Append(c);
 
+            return sb.ToString();
+        }
+
+        /// <summary>The rest of the Cyrillic block — taken if the font has it, shrugged off if it does not.
+        ///
+        /// WHY THIS TIER EXISTS, recorded so nobody re-merges the two sets. The first version of this command
+        /// demanded all of U+0400-U+04FF and reported 138 missing characters against a perfectly good
+        /// Literata. Every one of them was a Church Slavonic letter (Ѱ psi, Ҁ koppa, the combining titlos) or
+        /// a letter for a minority language written in Cyrillic — Abkhaz, Bashkir, Chuvash, Komi. Virtually
+        /// no text face carries them, and none of them can appear in this application. The diagnosis printed
+        /// beside the list, "the wrong TTF subset was downloaded", was simply wrong.
+        ///
+        /// An alarm that fires 138 times over nothing is an alarm nobody reads the 139th time, and the
+        /// required tier above has to keep meaning something. So the coverage stays maximal — a DM naming an
+        /// NPC with a Ukrainian ї or a Serbian ђ still gets a real glyph if Literata has one — while only the
+        /// characters this application genuinely needs can fail the build.</summary>
+        static string OptionalCharacters()
+        {
+            var seen = new HashSet<char>();
+            var sb = new StringBuilder();
+
+            for (int c = 0x0400; c <= 0x04FF; c++)
+            {
+                if (c == 0x0401 || c == 0x0451) continue;          // Ё and ё are required
+                if (c >= 0x0410 && c <= 0x044F) continue;          // А-я are required
+                AppendRange(sb, seen, c, c);
+            }
             return sb.ToString();
         }
 
