@@ -130,8 +130,11 @@ namespace WorldGen.Workspace.Rendering
         /// of THIS canvas (nothing else in the project is called that), not of any scoping the API does. The
         /// active-only half IS relied on, and is exactly the right filter: an INACTIVE stranded palette is
         /// invisible and eats no clicks, so it is not the case this exists for, and a Destroy already issued
-        /// on a previous call has left the object switched off by the line below. SetActive(false) before Destroy so the backdrop stops swallowing clicks THIS frame rather
-        /// than at end of frame — the same immediate-hide-before-deferred-destroy precaution Close() takes.</summary>
+        /// on a previous call has left the object switched off by the line below.
+        ///
+        /// SetActive(false) before Destroy, so the backdrop stops swallowing clicks THIS frame rather than
+        /// at end of frame — the same immediate-hide-before-deferred-destroy precaution Close(),
+        /// NavContextMenu.Close and ConfirmDialog.DismissStranded all take.</summary>
         static void DestroyStrandedCanvas()
         {
             var stranded = GameObject.Find(CanvasName);

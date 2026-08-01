@@ -54,9 +54,10 @@ namespace WorldGen.Rendering
         ///
         /// ITSELF WIPED BY A DOMAIN RELOAD — `currentPath` is a plain field, so this returns null after a
         /// Play-mode recompile even though the project is still open. That is a real (pre-existing) defect:
-        /// Ctrl+S after a recompile offers «Сохранить как…» instead of saving. It is NOT worked around here,
-        /// because the caller's own rule (an empty answer never overrides a non-empty stored key) already
-        /// makes this harmless in that direction.</summary>
+        /// «Файл → Сохранить» after a recompile opens the save dialog instead of writing to the open file.
+        /// (There is no keyboard shortcut for it — this app binds no Ctrl+S; the menu row is the only way.)
+        /// It is NOT worked around here, because the caller's own rule (an empty answer never overrides a
+        /// non-empty stored key) already makes this harmless in that direction.</summary>
         public string CurrentProjectPath => currentPath;
 
         /// <summary>Forgets which project is open, so «Сохранить» stops meaning "overwrite that file".
@@ -80,6 +81,7 @@ namespace WorldGen.Rendering
             currentPath = null;
             UpdateProjectNameText();
         }
+
         Font builtinFont;
         Text projectNameText;
         Transform canvasTransform;
@@ -172,15 +174,40 @@ namespace WorldGen.Rendering
             // stored layout is deliberately left alone. See MapScreenController.RekeyWorkspaceTo.
             //
             // BOTH SAVE PATHS REACH HERE, not just «Сохранить как…»: DoSave calls SaveTo(currentPath) for a
-            // plain «Сохранить» too. That is harmless and mildly useful rather than redundant — on the
-            // «Сохранить» path the key is normally already `path`, so this is an idempotent re-assignment
-            // plus one extra write; but after a domain reload that lost BOTH copies of the key (see
-            // WorkspaceController.ReconcileKeyWithLiveProject), a plain Ctrl+S is one of the things that
-            // puts the workspace back on the right slot.
+            // plain «Сохранить» too, so on that path the key is normally already `path` and this is an
+            // idempotent re-assignment plus one extra write. Harmless, not useful.
+            //
+            // AN EARLIER REVISION CLAIMED MORE THAN THAT — that a plain «Сохранить» would put the workspace
+            // back on the right slot after a domain reload lost both copies of the key. It cannot, and the
+            // contradiction was visible two screens up: with `currentPath` wiped, DoSave takes its OTHER
+            // branch into DoSaveAs, so what reaches this method is whatever path the DM picks in the file
+            // dialog. That is still a correct re-key — it is simply not a recovery, because the DM chose the
+            // destination rather than the app remembering it. `currentPath`'s own declaration says «null =
+            // never saved yet this session», which is exactly the state a reload counterfeits.
             // Placed after currentPath so this method has exactly one notion of "the project is now `path`".
             MapScreens()?.RekeyWorkspaceTo(path);
         }
 
+        /// <summary>KNOWN, DOCUMENTED, NOT GUARDED: this is reachable WHILE A GENERATION IS RUNNING.
+        /// ProjectMenuBar is not a member of any AppScreen in MapScreenController.EnsureSwitcher's table —
+        /// deliberately, since the bar is the app's persistent chrome and «Вернуться к текущему миру» has to
+        /// stay reachable over the generation form — so the switcher never deactivates it, and the Progress
+        /// screen does not cover it (the bar's canvas sorts at 100, above Progress's 50).
+        ///
+        /// WHAT ACTUALLY HAPPENS, traced rather than assumed. StandaloneFileBrowser.OpenFilePanel is a
+        /// BLOCKING native dialog, so the generation coroutine is frozen at whatever yield it had reached.
+        /// LoadFrom then runs to completion atomically inside that freeze — Begin/EndProjectSwitch included,
+        /// so the loaded project's layout is restored and its key installed correctly. The coroutine then
+        /// resumes and finishes replacing the world with the GENERATED one, and its own
+        /// RekeyTo("")/ForgetCurrentProject fire — so the DM ends on the generated world, correctly detached
+        /// from the project they just opened, whose stored layout was never written to. Confusing, but not
+        /// lossy: nothing is attributed to the wrong project in either direction.
+        ///
+        /// NOT GUARDED because every obvious guard is worse than the confusion. Disabling the row mid-
+        /// generation would need the same «is generating» state ProjectMenuBar deliberately does not track;
+        /// cancelling the generation on open would destroy work the DM did not ask to lose; and adding the
+        /// bar to the switcher's Progress screen would take «Вернуться к текущему миру» with it. Р5 owns the
+        /// menu-bar rework and is where a real answer belongs.</summary>
         void DoOpen()
         {
             var paths = StandaloneFileBrowser.OpenFilePanel("Открыть проект", "", ProjectFilters, false);
