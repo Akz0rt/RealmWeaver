@@ -187,6 +187,22 @@ namespace WorldGen.Notes.Rendering
             // but Enter never inserts a newline — it is ours to interpret as "make a new block". Without this
             // the field would swallow Enter before DocKeyboardController ever sees it.
             Field.lineType = InputField.LineType.MultiLineSubmit;
+            // …but MultiLineSubmit only stops Enter, and the field is still a MULTILINE one, so
+            // InputField.KeyPressed's guard against control characters (InputField.cs:1968, `if (!multiLine
+            // && …)`) does not fire for us and IsValidChar accepts '\t' and '\n' outright. Tab therefore
+            // reached DocKeyboardController, which indented the block, AND was appended to the block's text
+            // as a literal tab a moment later — the same keystroke landing in both layers. Rejecting the
+            // character here (Append drops an input the validator returns as '\0') leaves indentation to
+            // DocKeyboardController alone. The cost is that pasting multi-line text now flattens: a block is
+            // one paragraph in this model, so a newline inside one has nothing to mean. Second cost, for
+            // whoever next writes `Field.text = …`: having ANY validator makes InputField.SetText
+            // (InputField.cs:493) run the whole string through it and jam the caret to the end. Every
+            // assignment we make (Initialize, Refresh) happens while the row is unfocused, where that is
+            // invisible; assigning into a focused field would now move the DM's caret. A block saved with a
+            // stray tab from before this guard repairs itself on its next Refresh rather than disagreeing with
+            // its field forever: the assignment strips the tab, and SetText's own onValueChanged writes the
+            // stripped text back into the block.
+            Field.onValidateInput = (_, __, added) => added == '\t' || added == '\n' || added == '\r' ? '\0' : added;
             Field.text = data.Text ?? "";
             Field.onValueChanged.AddListener(OnFieldChanged);
             // Fires from inside DeactivateInputField, before it zeroes the caret — see CaretWhenEditingEnded.
