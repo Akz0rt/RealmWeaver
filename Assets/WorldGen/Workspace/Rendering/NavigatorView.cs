@@ -283,17 +283,18 @@ namespace WorldGen.Workspace.Rendering
 
         void RequestRebuild() => rebuildPending = true;
 
-        /// <summary>Coalesces every OnLayoutChanged/OnDocumentChanged/search-keystroke fired within one frame
-        /// into a single Rebuild in LateUpdate — the same fix TabStripView.LateUpdate and
+        /// <summary>Coalesces every OnLayoutChanged/OnDocumentChanged/OnPoisChanged/search-keystroke fired
+        /// within one frame into a single Rebuild in LateUpdate — the same fix TabStripView.LateUpdate and
         /// QuickOpenPopup.LateUpdate use, and for the same reason: committing a rename fires
         /// OnDocumentChanged from inside the InputField's own onEndEdit callback, and Destroy() is deferred
         /// to end of frame, so a synchronous second Rebuild reached from that callback would destroy rows
         /// already marked for destruction and stack a third set on top.
         ///
         /// While a rename is in flight (activeRenameInput != null), the rebuild is held rather than run: this
-        /// view subscribes to OnLayoutChanged as well as OnDocumentChanged — unlike the retired notes
-        /// sidebar, which only had the latter — and OnLayoutChanged fires from something as unrelated as
-        /// clicking a tab.
+        /// view subscribes to OnLayoutChanged and PoiManager.OnPoisChanged as well as OnDocumentChanged —
+        /// unlike the retired notes sidebar, which only had the last — and either of the first two fires from
+        /// something as unrelated as clicking a tab or renaming a POI in a different pane's editor
+        /// (PoiManager.UpdatePoiName raises OnPoisChanged as of Task 10e's review round).
         /// Without this guard, that would destroy the row the user is mid-rename on, silently discarding
         /// whatever they had typed with no commit and no cancel. rebuildPending stays true (not cleared),
         /// so the held rebuild runs on the first LateUpdate after the rename actually ends (StartRename's
@@ -345,7 +346,7 @@ namespace WorldGen.Workspace.Rendering
 
             // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
             // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
-            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:219 and
+            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:218 and
             // DocumentPageView.cs:70. A null document is no longer short-circuited before this line — see
             // the class doc.
             var doc = documentController != null ? documentController.Document : null;

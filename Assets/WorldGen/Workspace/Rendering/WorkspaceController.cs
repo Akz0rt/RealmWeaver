@@ -9,7 +9,7 @@ namespace WorldGen.Workspace.Rendering
     /// Owns the in-memory WorkspaceLayout and is the ONLY place that mutates it. Every structural
     /// change (open/close/activate/focus) routes through WorkspaceOps — this class never touches
     /// Tabs lists, or PaneState.ActiveIndex, itself; WorkspaceOps.SetActiveTab owns that scalar the
-    /// same way CloseTab owns removal (see WorkspaceLayout.cs:44-45: "WorkspaceOps.
+    /// same way CloseTab owns removal (see WorkspaceLayout.cs:46-47: "WorkspaceOps.
     /// FixActiveIndexAfterRemoval is the one place that keeps this true" — SetActiveTab is the other
     /// place). SplitRatio is the one genuine exception: its own doc comment on WorkspaceLayout says
     /// "no op in this layer moves it", so it is set directly here — see SetSplitRatioLive below.

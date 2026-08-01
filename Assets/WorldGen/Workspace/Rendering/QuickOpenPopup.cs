@@ -48,8 +48,9 @@ namespace WorldGen.Workspace.Rendering
         /// uses for mapCamera — except this class has no Rewire counterpart to re-run it after a domain
         /// reload: `controller` itself is already documented (Update's own guard, above) as NOT revived post-
         /// reload, and this field is a plain non-serialized reference beside it, so it is wiped right along
-        /// with `controller` and left null — the same accepted gap, not a new one. Null-checked at the one
-        /// place it is read (RunSearch), same as every other optional dependency in this class.</summary>
+        /// with `controller` and left null — the same accepted gap, not a new one. Passed straight to
+        /// WorldObjectSource.Collect, which treats null as "no POIs exist" (its own doc); this class holds no
+        /// null branch of its own for it any more, the check went with the mapping in Task 10e.</summary>
         PoiManager poiManager;
 
         Font builtinFont;
@@ -77,8 +78,9 @@ namespace WorldGen.Workspace.Rendering
             // FindFirstObjectByType, not an Inspector slot — WorkspaceBuilder is not wired into the scene
             // until Task 11 (see EnsureDocumentController's own doc for the identical reasoning applied to
             // documentController), and PoiManager already lives wherever the map's own scene objects do, not
-            // under WorkspaceBuilder's GameObject. Absent entirely before generation runs — RunSearch's own
-            // null check covers that, the same tolerance this class already extends to a null documentController.
+            // under WorkspaceBuilder's GameObject. Absent entirely before generation runs — WorldObjectSource
+            // .Collect returns null for a null manager and QuickOpen's W5 treats that as "no POIs", the same
+            // tolerance this class already extends to a null documentController.
             // FindObjectsInactive.Include, matching NavigatorView.ResolvePoiManager and
             // MapScreenController.Pois(): this discovers ONCE (unlike those two, which retry on every miss),
             // so a PoiManager whose GameObject happens to be inactive at shell-build time would otherwise
@@ -205,21 +207,14 @@ namespace WorldGen.Workspace.Rendering
             // documentController CAN still be null here: WorkspaceBuilder.EnsureDocumentController only
             // resolves it when a NotesRootBuilder already exists somewhere in the scene (its own doc), so a
             // scene without one leaves this field null for the component's whole life — no Task revives it
-            // later, there is no second assignment site. QuickOpen.Search(null, ...) already returns an empty
-            // list rather than throwing (Q-guard in QuickOpen.cs), so this needs no extra null branch of its
-            // own to stay crash-free. It does NOT mean Ctrl+K goes blank in that scene: Search's own class doc
-            // explains why the world-map hit is unconditional (built above ITS OWN doc==null guard) while
-            // page and world-object hits stay gated.
+            // later, there is no second assignment site. QuickOpen.Search tolerates a null doc by design
+            // (Q-guard), so this needs no null branch of its own to stay crash-free.
             //
-            // THAT GATE HAS OUTLIVED ITS REASON, and is left in place on purpose rather than quietly widened.
-            // It was correct while choosing a world object called NotesDocOps.EnsurePageFor, which returns
-            // null on a null doc (E4) — the row really was inert. Task 10e retargeted that branch at the POI's
-            // EDITOR (see ChooseIndex), which needs no document at all, so a doc-less scene now suppresses
-            // rows that would work. Moving the gate means changing QuickOpen.Search's contract, which this
-            // task's ruling did not ask for; it is recorded in the task report beside the matching W4
-            // question, for one decision rather than two. It costs nothing today: NavigatorView's «Мир»
-            // reaches every POI without a document, and the only scene the gate can fire in is one where no
-            // NotesRootBuilder exists at all.
+            // AND CTRL+K IS NOT BLANK IN THAT SCENE, as of Task 10e's review round: BOTH world candidates —
+            // the world map and every POI — are collected above Search's own doc==null guard, because
+            // neither is reachable through a page any anymore and CollectWorldHits no longer even takes a
+            // document to be gated on (see QuickOpen's class doc). Only PAGE hits need one. A doc-less scene
+            // therefore searches the whole world and none of the notes, which is exactly what exists in it.
             var doc = documentController != null ? documentController.Document : null;
 
             hits.Clear();
@@ -244,10 +239,12 @@ namespace WorldGen.Workspace.Rendering
 
         void ChooseIndex(int index, bool inOtherPane)
         {
-            // Covers BOTH the "nothing highlighted" case (Up/Down/Enter pressed before any search ever
-            // produced a hit) and the null-document case from the brief's context note: QuickOpen.Search on a
-            // null doc yields zero hits, highlighted stays -1, and Enter must do nothing rather than index a
-            // list that was never populated.
+            // The "nothing highlighted" case: Up/Down/Enter pressed before any search ever produced a hit
+            // (an empty query returns [] by Q4, and a query matching nothing returns [] too), so highlighted
+            // is still -1 and Enter must do nothing rather than index a list that was never populated. This
+            // used to be justified by the null-document case as well; since Task 10e's review round a null
+            // document still yields world hits, so that is no longer an empty-list state and this guard rests
+            // on the empty-query/no-match one alone.
             if (index < 0 || index >= hits.Count) return;
 
             QuickHit hit = hits[index];
@@ -257,8 +254,9 @@ namespace WorldGen.Workspace.Rendering
             // carries no usable id for it (Page/"" — no page is involved at all), and the identity to open
             // travels on World instead. Opening it opens THE PLACE — its editor — per the Task 10c checkpoint
             // ruling that a point of interest IS its editor menu; the same SurfaceRef the navigator's «Мир»
-            // row and the map popup's «Редактировать» produce, through the one factory all three share
-            // (WorldSurface.PoiEditor), so all three focus one tab rather than opening near-identical ones.
+            // row, the map popup's «Редактировать» and a double-click on the marker
+            // (MapScreenController.OpenPoiFromMap) all produce, through the one factory the four of them
+            // share (WorldSurface.PoiEditor), so they focus one tab rather than opening near-identical ones.
             //
             // Task 10b created a PAGE here instead (NotesDocOps.EnsurePageFor) and opened that. Removed, not
             // merely bypassed: auto-creating a note for a place the user only looked at produced clutter with
@@ -406,10 +404,11 @@ namespace WorldGen.Workspace.Rendering
 
             listElement = go.AddComponent<LayoutElement>();
             listElement.preferredHeight = 0f;   // updated every RebuildRows to hits.Count * RowHeight; 0 here
-                                                  // is exactly right for the empty (no query yet / no
-                                                  // document) state — no ScrollRect, no placeholder, the
-                                                  // section simply collapses to nothing between Input and
-                                                  // Footer, per the brief's null-document handling.
+                                                  // is exactly right for the empty state — no query typed yet,
+                                                  // or a query that matched nothing. (A missing DOCUMENT is no
+                                                  // longer such a state: world hits survive it — see
+                                                  // RunSearch.) No ScrollRect, no placeholder; the section
+                                                  // simply collapses to nothing between Input and Footer.
 
             listContent = go.transform;
         }
