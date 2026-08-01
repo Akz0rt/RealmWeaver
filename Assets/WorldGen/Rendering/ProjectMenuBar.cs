@@ -111,7 +111,60 @@ namespace WorldGen.Rendering
             // A no-op on the launch path and on every reload that did not land on an open dialog, which is
             // nearly all of them.
             ConfirmDialog.DismissStranded();
+            DemolishForRebuild();
             BuildUI();
+        }
+
+        /// <summary>Destroys the bar this Awake built LAST time, so BuildUI can build it again from scratch.
+        /// The same demolish-and-rebuild shape WorkspaceBuilder.Awake argues for at length, applied to the
+        /// one overlay in this project that had NO recovery of any kind.
+        ///
+        /// WHAT IT CLOSES, and this is the twelfth sighting of the arc's reload family rather than a new
+        /// idea. OpenMenu builds the dropdown's outside-click catcher as a full-screen, alpha-0 Image+Button
+        /// («MenuBackdrop») under this class's canvas, dismissed by a runtime onClick listener. A Play-mode
+        /// domain reload wipes the listener and the only handle to it (`backdropGO`, a plain field) while the
+        /// GameObject survives — active, stretched to the whole screen, and still raycasting, because alpha 0
+        /// does not disable uGUI hit-testing. CloseActionsPopup's `backdropGO != null` guard then sees
+        /// nothing to close, and re-opening the menu does not help either: ToggleMenu reads the same null
+        /// field, takes its "nothing open" branch, and builds a FRESH pair that CloseActionsPopup later
+        /// destroys instead. The strand is unreachable for the rest of the session.
+        ///
+        /// WHY THAT IS WORSE THAN THE THREE OVERLAYS TASK 11 ALREADY FIXED: this canvas sorts at 100, so
+        /// everything below it dies to the mouse — the whole workspace shell (70), the four docked tool
+        /// panels (60), GenerationScreenUI and PoiInfoPopup (50), MapToolbarUI (40), MapLegendUI (0) and the
+        /// map camera. And nothing is drawn or dimmed, so unlike ConfirmDialog's opaque backdrop there is no
+        /// visible cause at all: the application simply stops responding. Reached by opening «Файл» and
+        /// alt-tabbing to the Editor, which recompiles on regaining focus by default.
+        ///
+        /// PRE-EXISTING, not a regression — byte-identical at the merge-base, and Editor-only, since a player
+        /// build has no domain reload. It is fixed here anyway because the DM meets it during the in-Editor
+        /// checkpoint that gates this work, and "the app went dead and nothing looks wrong" is the worst
+        /// possible thing to hand them.
+        ///
+        /// IT ALSO CLOSES THE DUPLICATE-BAR LEAK. BuildUI was previously unguarded, so a reload left TWO
+        /// «ProjectMenuBarCanvas» objects at order 100, each with its own GraphicRaycaster and opaque 40px
+        /// bar, with the old canvas's projectNameText still showing the serialized project name while the new
+        /// one renders «Проект не сохранён» against the reload-wiped currentPath — two strings smeared over
+        /// each other. A bare `childCount > 0` early-return would have fixed NEITHER: it preserves the old
+        /// canvas AND leaves backdropGO null, i.e. the strand exactly as it was.
+        ///
+        /// DESTROYS EVERY CHILD rather than naming the canvas, matching WorkspaceBuilder.DemolishForRebuild —
+        /// BuildUI's canvas is the only thing this class parents to `transform` (MenuBackdrop and MenuPopup
+        /// hang off the canvas and die with it), so "all children" and "the canvas" are the same set today,
+        /// and a future sibling is covered for free.
+        ///
+        /// DestroyImmediate rather than Destroy, but for a DIFFERENT reason than WorkspaceBuilder's: nothing
+        /// looks this canvas up by name, so there is no Transform.Find ambiguity to avoid. What a deferred
+        /// Destroy would leave is a frame in which two order-100 canvases both carry a GraphicRaycaster and
+        /// the stranded backdrop is still live — i.e. one more frame of exactly the defect being fixed, at
+        /// the moment the app is least able to explain itself.
+        ///
+        /// A no-op on the launch path: the ProjectMenuBar GameObject in SampleScene.unity has
+        /// `m_Children: []`, so the first run destroys nothing.</summary>
+        void DemolishForRebuild()
+        {
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                DestroyImmediate(transform.GetChild(i).gameObject);
         }
 
         static void EnsureEventSystemExists()
