@@ -28,16 +28,19 @@ namespace WorldGen.Notes.Rendering
     /// </summary>
     public class DocumentPageView : MonoBehaviour
     {
-        /// <summary>The names Initialize builds `root`/`placeholderGO` under, hoisted to constants because
-        /// EnsureWired re-finds them by name after a domain reload — see RecoverBuiltObjects.</summary>
+        /// <summary>The names Initialize builds `root`/`placeholderGO`/`addSectionBarGO` under, hoisted to
+        /// constants because EnsureWired re-finds them by name after a domain reload — see
+        /// RecoverBuiltObjects.</summary>
         const string RootObjectName = "DocumentViewport";
         const string PlaceholderObjectName = "BoardPlaceholder";
+        const string AddSectionBarObjectName = "AddSectionBar";
 
         NotesDocumentController documentController;
         GameObject boardViewport;
         GameObject root;
         GameObject viewportGO;
         GameObject placeholderGO;
+        GameObject addSectionBarGO;
         RectTransform content;
         Font font;
 
@@ -102,9 +105,9 @@ namespace WorldGen.Notes.Rendering
             viewportRect.anchorMin = Vector2.zero;
             viewportRect.anchorMax = Vector2.one;
             // Leave room at the top for the floating toolbar. Task 9 no longer builds that toolbar (see the
-            // class doc), so this is now a permanent 44px dead strip rather than a live reservation — kept
-            // anyway per this task's "look stays exactly as it is" scope for the Document case; revisit if a
-            // workspace-native toolbar ever replaces it.
+            // class doc), so this was a dead strip until Task 10f's «+ Раздел» bar (BuildAddSectionBar,
+            // below) claimed it — the Critical review finding that an empty session page had no way to
+            // create its first block. Reserved here, built there, so the two never disagree about its size.
             viewportRect.offsetMin = new Vector2(0f, 0f);
             viewportRect.offsetMax = new Vector2(0f, -44f);
             viewportGO.AddComponent<RectMask2D>();
@@ -152,8 +155,82 @@ namespace WorldGen.Notes.Rendering
             placeholderText.alignment = TextAnchor.MiddleCenter;
             placeholderGO.SetActive(false);
 
+            // «+ Раздел» — Task 10f review Critical: CreateSessionSheet stopped seeding a Section
+            // (the DM's own ruling — sections are theirs to make), but I2 still requires a non-empty
+            // page's FIRST block to be one, and until now nothing could put one there. This lives in the
+            // 44px strip viewportRect reserves above (see offsetMax there) rather than opening new screen
+            // real estate. Deliberately ONE button, not the «Вставка»/«Ссылка» editor toolbar the DM has
+            // separately asked for — that one is Р2 per the umbrella spec.
+            addSectionBarGO = BuildAddSectionBar(root.transform);
+
             documentController.OnActivePageChanged += OnActivePageChanged;
             OnActivePageChanged(documentController.ActivePage);
+        }
+
+        /// <summary>Builds the «+ Раздел» bar — see its call site in Initialize for why it exists. Sits in
+        /// the strip `viewportGO`'s own offsetMax already carves out (`-44f`), as a SIBLING of viewportGO
+        /// under `root`, not a child of Content — it must stay fixed at the top of the page, not scroll away
+        /// with the rows underneath it.</summary>
+        GameObject BuildAddSectionBar(Transform parent)
+        {
+            var barGO = new GameObject(AddSectionBarObjectName, typeof(RectTransform));
+            barGO.transform.SetParent(parent, false);
+            var barRect = (RectTransform)barGO.transform;
+            barRect.anchorMin = new Vector2(0f, 1f);
+            barRect.anchorMax = new Vector2(1f, 1f);
+            barRect.pivot = new Vector2(0.5f, 1f);
+            barRect.anchoredPosition = Vector2.zero;
+            barRect.sizeDelta = new Vector2(0f, 44f);
+            ThemeService.Tag(barGO.AddComponent<Image>(), ThemeRole.Panel2);
+
+            var btnGO = new GameObject("Button", typeof(RectTransform));
+            btnGO.transform.SetParent(barGO.transform, false);
+            var btnRect = (RectTransform)btnGO.transform;
+            btnRect.anchorMin = new Vector2(0f, 0.5f);
+            btnRect.anchorMax = new Vector2(0f, 0.5f);
+            btnRect.pivot = new Vector2(0f, 0.5f);
+            btnRect.anchoredPosition = new Vector2(8f, 0f);
+            btnRect.sizeDelta = new Vector2(112f, 30f);
+
+            var btnImg = btnGO.AddComponent<Image>();
+            ThemeService.Tag(btnImg, ThemeRole.AccentSoft);
+            var btn = btnGO.AddComponent<Button>();
+            btn.targetGraphic = btnImg;
+            btn.onClick.AddListener(AddSection);
+
+            var labelGO = new GameObject("Label", typeof(RectTransform));
+            labelGO.transform.SetParent(btnGO.transform, false);
+            var labelRect = (RectTransform)labelGO.transform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            var label = labelGO.AddComponent<Text>();
+            label.text = "+ Раздел";
+            label.font = font;
+            label.fontSize = 13;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.raycastTarget = false;
+            ThemeService.Tag(label, ThemeRole.AccentInk);
+
+            return barGO;
+        }
+
+        /// <summary>Creates a new top-level Section at the END of the page and focuses it for immediate
+        /// typing — the only affordance a session page needs to become usable at all, now that
+        /// CreateSessionSheet no longer seeds one (NotesDocOps.CreateSessionSheet's own doc; Task 10f review
+        /// Critical). Routed through the SAME NotesDocOps.NewBlock/Insert primitives DocKeyboardOps.OnEnter
+        /// uses to create every other block, and the same RebuildAndFocus -> DocBlockView.FocusAt ->
+        /// InputField.ActivateInputField path already used to focus a block Enter just created (and the
+        /// idiom NavigatorView.StartRename uses for a freshly created name) — no second block-creation or
+        /// focus mechanism. Appends rather than inserting at the caret, so the button's meaning does not
+        /// depend on what row (if any) happens to be focused — "add a new top-level section", full stop.</summary>
+        public void AddSection()
+        {
+            if (Page == null) return;
+            var section = NotesDocOps.NewBlock(BlockKind.Section, 0);
+            NotesDocOps.Insert(Page.Blocks, Page.Blocks.Count, section);
+            RebuildAndFocus(section.Id, 0);
         }
 
         void OnDestroy()
@@ -167,10 +244,11 @@ namespace WorldGen.Notes.Rendering
         /// "built, then reloaded".
         ///
         /// WHAT GOES WRONG WITHOUT IT — and it is NOT merely "the page fails to reappear". `root`/`content`/
-        /// `viewportGO`/`placeholderGO`/`documentController`/`font` are plain, non-[SerializeField] fields, so
-        /// a domain reload nulls all six, while the DocumentViewport GameObject they described survives as
-        /// live native state in whatever pane PageSurfaceHost last re-parented it into — and if it was ACTIVE
-        /// at that moment it stays active. Every access below is null-guarded, so nothing throws; the guards
+        /// `viewportGO`/`placeholderGO`/`addSectionBarGO`/`documentController`/`font` are plain,
+        /// non-[SerializeField] fields, so a domain reload nulls all seven, while the DocumentViewport
+        /// GameObject they described survives as live native state in whatever pane PageSurfaceHost last
+        /// re-parented it into — and if it was ACTIVE at that moment it stays active. Every access below is
+        /// null-guarded, so nothing throws; the guards
         /// instead turn Hide() -> SetSurfaceVisible(false) -> OnActivePageChanged into a SILENT NO-OP against
         /// a null `root`, so `root.SetActive(false)` never fires and NOTHING in the rest of that session can
         /// ever hide it again. DocumentViewport carries its own opaque ThemeRole.Bg Image, so a pane that
@@ -227,7 +305,7 @@ namespace WorldGen.Notes.Rendering
             OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
         }
 
-        /// <summary>Re-finds the four GameObjects Initialize built, after a reload nulled the fields pointing
+        /// <summary>Re-finds the five GameObjects Initialize built, after a reload nulled the fields pointing
         /// at them. They cannot be found by hierarchy path the way MapSurfaceHost.ResolveRootRowBackground
         /// finds RootRow: PageSurfaceHost.Show re-parents `root` out of NotesRootBuilder's PageViewHolder and
         /// into whichever pane's ContentArea is showing a Page tab, so its parent is not fixed. What IS fixed
@@ -236,10 +314,14 @@ namespace WorldGen.Notes.Rendering
         /// objects must be included: a reload that happens while no Page tab is showing leaves `root`
         /// deactivated, and that case needs recovering just as much as the visible one.
         ///
-        /// The remaining three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
+        /// The next three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
         /// built-in uGUI component, i.e. native state that survives the reload — and from a plain
         /// Transform.Find for the placeholder, which locates inactive children (it is SetActive(false) for
-        /// every Document page).</summary>
+        /// every Document page). `addSectionBarGO` is found the same Transform.Find way — it is never
+        /// deactivated for a Document page (see its own bar-visibility line in OnActivePageChanged), but the
+        /// FindObjectsByType search above and this Find both already return null gracefully on a page that
+        /// has never called Initialize, and the null-guarded access pattern this whole method exists to keep
+        /// working is worth applying uniformly rather than assuming this one child can never go missing.</summary>
         void RecoverBuiltObjects()
         {
             ScrollRect found = null;
@@ -257,6 +339,8 @@ namespace WorldGen.Notes.Rendering
             content = found.content;
             var placeholder = found.transform.Find(PlaceholderObjectName);
             placeholderGO = placeholder != null ? placeholder.gameObject : null;
+            var addSectionBar = found.transform.Find(AddSectionBarObjectName);
+            addSectionBarGO = addSectionBar != null ? addSectionBar.gameObject : null;
         }
 
         void OnActivePageChanged(NotesPage page)
@@ -272,6 +356,7 @@ namespace WorldGen.Notes.Rendering
                 if (root != null) root.SetActive(surfaceVisible && showDocument);
                 boardViewport.SetActive(surfaceVisible && !showDocument);
                 if (placeholderGO != null) placeholderGO.SetActive(false);
+                if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
             }
             else
             {
@@ -283,6 +368,9 @@ namespace WorldGen.Notes.Rendering
                 if (root != null) root.SetActive(surfaceVisible && (showDocument || boardPage));
                 if (viewportGO != null) viewportGO.SetActive(showDocument);
                 if (placeholderGO != null) placeholderGO.SetActive(boardPage);
+                // «+ Раздел» only makes sense for a Document page — a Board page has no Blocks/Sections to
+                // add one to, and its placeholder occupies this same visual row instead.
+                if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
             }
 
             if (showDocument) Rebuild();
