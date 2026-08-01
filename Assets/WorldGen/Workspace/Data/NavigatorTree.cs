@@ -3,23 +3,27 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Workspace.Data
 {
-    /// <summary>Which kind of group a navigator entry is. World and Pinned are both COMPUTED groups — see
+    /// <summary>Which kind of group a navigator entry is. World is the one COMPUTED group — see
     /// NavigatorTree.Build. Authored covers every ordinary PageGroup the document happens to contain,
     /// including «Люди» and «Сессии»: those are plain user groups, not a second fixed kind, deliberately —
-    /// see NavigatorTree's class comment. Pinned is the one hardcoded row (the world map) that renders
-    /// ABOVE World, outside the Bound predicate entirely — see Build's own comment for why it does not
-    /// merge into World instead.</summary>
-    public enum NavGroupKind { World = 0, Authored = 1, Pinned = 2 }
+    /// see NavigatorTree's class comment.
+    ///
+    /// THERE IS NO Pinned KIND ANY MORE (Task 10e). It existed to carry one hardcoded row — the world map —
+    /// above a «Мир» whose membership was "pages bound to a place", a rule the world map could not satisfy
+    /// because no page stands behind it. «Мир» is now the world's CONTENTS (see Build), so the world map is
+    /// simply its first member and the separate kind, along with NavigatorView's render-without-header
+    /// branch, had nothing left to do.</summary>
+    public enum NavGroupKind { World = 0, Authored = 1 }
 
     public class NavNode
     {
         public string Title;
 
-        /// <summary>A Page surface pointing at the page id (N4) for every node EXCEPT the one Pinned node —
-        /// the navigator otherwise opens pages, never world objects directly; opening the world object
-        /// itself is a separate action elsewhere («Открыть город»), not something this tree does. The Pinned
-        /// node is the deliberate exception (see Build's own comment): there is no page behind the world map,
-        /// so its Target names the world map surface directly.</summary>
+        /// <summary>What this row opens. An Authored row always names a PAGE by its id (N4). A «Мир» row
+        /// never does: the world map targets the world-map surface, and a world object targets its EDITOR
+        /// (WorldSurface.PoiEditor) — «двойное нажатие и выбор в навигаторе должен выдавать то же самое
+        /// меню, именно оно соответствует точке интереса» (the Task 10c checkpoint ruling). A note ABOUT a
+        /// place is an ordinary page the user authored, and it opens from its own authored group.</summary>
         public SurfaceRef Target;
     }
 
@@ -30,18 +34,34 @@ namespace WorldGen.Workspace.Data
 
         /// <summary>The backing PageGroup's id for an Authored group — carried through so a caller can
         /// rename/delete the group itself (NotesDocumentController.RenameGroup/DeleteGroup) without
-        /// re-deriving it by title. Empty for World AND Pinned: both are computed (N1 / Build's Pinned
-        /// comment), not a stored PageGroup, so there is nothing for an id to name in either case.</summary>
+        /// re-deriving it by title. Empty for World: it is computed (N1), not a stored PageGroup, so there
+        /// is nothing for an id to name.</summary>
         public string Id = "";
 
         public List<NavNode> Nodes = new List<NavNode>();
     }
 
     /// <summary>
-    /// Builds the navigator tree fresh from a NotesDocument on every call. Nothing here, or anywhere else,
-    /// stores tree membership: the «Мир» group is computed by scanning every page for Bound != null (N1),
-    /// and that is the ONLY predicate that decides membership — no "visited" flag, no recency list. That is
-    /// deliberate: it keeps the rule for what appears in Мир changeable later by editing one predicate.
+    /// Builds the navigator tree fresh from a NotesDocument (and the world it is a document ABOUT) on every
+    /// call. Nothing here, or anywhere else, stores tree membership: the «Мир» group is computed from the
+    /// `world` list the caller hands in, and that is the ONLY predicate that decides membership — no
+    /// "visited" flag, no recency list, nothing written into the document. That requirement is unchanged
+    /// since Task 7; the PREDICATE it guards is what Task 10e replaced, and it was replaced by editing this
+    /// one method, which is the changeability the rule was bought for.
+    ///
+    /// N1, THE PREDICATE, restated by DM ruling at the Task 10c checkpoint: «все точки интереса, а также
+    /// сама карта мира в навигаторе должны находиться под заголовком "Мир" и только там». «Мир» is the
+    /// world's CONTENTS — the world map, and every world object, and nothing else. It used to be "every page
+    /// whose Bound names a place", which meant a place appeared only after some path had auto-created a note
+    /// about it, and appeared twice over (once in «Мир», once in its authored group — the double-listing an
+    /// earlier version of this very comment called out). NotesPage.Bound therefore no longer drives the
+    /// navigator at all; notes live in the groups the user authored them into, which is the other half of
+    /// the same ruling.
+    ///
+    /// The umbrella spec argued against this — listing every POI "would drown the tree" for a generated
+    /// world, which is why membership was narrowed to worked-on places in the first place. Overruled
+    /// deliberately by the user, in plain words, after using the narrowed version. Recorded, not acted on:
+    /// if it does drown, the predicate below is one loop and Ctrl+K still reaches everything.
     ///
     /// Deliberate narrowing from the umbrella spec: an earlier draft spoke of three fixed groups
     /// «МИР · ЛЮДИ · СЕССИИ». Only Мир is actually computed here — «Люди» and «Сессии» are ordinary
@@ -57,61 +77,67 @@ namespace WorldGen.Workspace.Data
         public const string WorldGroupTitle = "Мир";
 
         /// <summary>N3: filter matches on title with Trim().ToLowerInvariant().Contains; an empty filter
-        /// matches everything; a group left with no surviving nodes is omitted entirely, never shown empty.</summary>
-        public static List<NavGroup> Build(NotesDocument doc, string filter)
+        /// matches everything; a group left with no surviving nodes is omitted entirely, never shown empty.
+        ///
+        /// `world` is the world's contents as the Data layer is allowed to see it — WorldObjectRef, the pure
+        /// DTO Task 10b created for exactly this (see its own doc), never PoiData. That is what keeps this
+        /// file free of UnityEngine AND of WorldGen.Generation, so it still runs in Tools/notes-harness.
+        /// WorldObjectSource.Collect is the single mapper from the live PoiManager into it, shared with
+        /// QuickOpenPopup; null (or empty) is the ordinary pre-generation state, not an error.</summary>
+        public static List<NavGroup> Build(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string filter)
         {
             var groups = new List<NavGroup>();
             string needle = (filter ?? "").Trim().ToLowerInvariant();
 
-            // Pinned — P1: ONE hardcoded row, the world map, always first when it survives the filter.
-            // Deliberately NOT folded into Мир below: Мир's only membership rule is "p.Bound != null" (N1),
-            // scanned fresh off the document every call — see that group's own comment, "this one place is
-            // where 'what is a member' lives". A hardcoded head node is exactly the stored-membership
-            // exception that rule forbids, so the world map gets its OWN group instead (kind Pinned, empty
-            // Title/Id — there is no PageGroup behind it, the same reason Мир's own Id is empty).
+            // Мир — N1: the world's contents, in the order given, and nothing else. See the class doc for the
+            // ruling, and for why no page appears here even when one is bound to a place.
             //
-            // Built BEFORE the `doc == null` guard below, deliberately: unlike every other group in this
-            // method, the Pinned row names the world map, not anything derived from `doc` — so it must not
-            // be gated on a document existing. Gating it there (an earlier version of this method did) put
-            // the round's own defect back in a different shape: a scene where nothing has wired a
-            // NotesDocumentController yet (or, upstream of that, wherever WorkspaceBuilder.EnsureDocument
-            // Controller's discovery finds nothing) would lose the one row whose entire job is "the map must
-            // be reachable from something other than its default tab". NavigatorTreeSelfTests pins this with
-            // `Build(null, "")` returning exactly the Pinned group.
+            // Built BEFORE the `doc == null` guard below, deliberately: nothing in this group is derived from
+            // `doc` — the world map is a fixed surface and `world` is the caller's, so gating it on a
+            // document would lose the whole of «Мир» in a scene where nothing has wired a
+            // NotesDocumentController yet (or where WorkspaceBuilder.EnsureDocumentController's discovery
+            // finds no NotesRootBuilder at all). This arc has fixed that same shape twice — the pinned row in
+            // the checkpoint-3 round, and the world-map Ctrl+K hit in Task 10b (QuickOpen.Search's own
+            // CollectWorldMapHit sits above ITS doc==null guard for the identical reason). Its third
+            // relocation is prevented here rather than rediscovered: NavigatorTreeSelfTests pins
+            // `Build(null, world, "")` returning «Мир» in full, and NavigatorView.Rebuild passes a null
+            // document straight through instead of short-circuiting on it (see its own comment).
             //
-            // The SurfaceRef here must stay byte-identical to WorkspaceOps.NewDefault's own seed tab
-            // (WorkspaceOps.cs: Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface. A merely-equal-LOOKING
-            // ref (e.g. a different Id) would make WorkspaceOps.Open create a SECOND world-map tab instead
-            // of focusing the one NewDefault already opened, which is exactly the "map become unreachable"
-            // defect this group exists to fix, just relocated. NavigatorTreeSelfTests pins this by opening
-            // the target against a fresh NewDefault layout and asserting the tab count stays 1.
+            // The world map's SurfaceRef must stay byte-identical to WorkspaceOps.NewDefault's own seed tab
+            // (WorkspaceOps.cs:66 — Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface. A merely-
+            // equal-LOOKING ref (e.g. a different Id) would make WorkspaceOps.Open create a SECOND world-map
+            // tab instead of focusing the one NewDefault already opened, which is exactly the "the map became
+            // unreachable" defect this row exists to fix, just relocated. NavigatorTreeSelfTests pins it by
+            // opening the target against a fresh NewDefault layout and asserting the tab count stays 1.
             //
-            // Obeys N3 (the same Matches filter every other node uses) and, like every other group here, is
-            // omitted entirely rather than shown empty when it doesn't survive the filter.
-            var pinned = new NavGroup { Kind = NavGroupKind.Pinned, Title = "", Id = "" };
+            // Every node here obeys N3 like any other, the world map included: a filter matching no place
+            // leaves no «Мир» heading at all, rather than an empty one or one holding only the map.
+            var worldGroup = new NavGroup { Kind = NavGroupKind.World, Title = WorldGroupTitle };
             if (Matches(WorkspaceOps.DefaultWorldMapTitle, needle))
-                pinned.Nodes.Add(new NavNode
+                worldGroup.Nodes.Add(new NavNode
                 {
                     Title = WorkspaceOps.DefaultWorldMapTitle,
                     Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" },
                 });
-            if (pinned.Nodes.Count > 0) groups.Add(pinned);
+            if (world != null)
+                foreach (var w in world)
+                {
+                    // w.Kind is not read: WorldSurface.PoiEditor is the one place that decides which surface a
+                    // world object opens, and today every producer (WorldObjectSource.Collect) emits Poi. When
+                    // settlements/buildings become world objects in their own right, that factory grows a kind
+                    // switch — this loop does not, and neither does QuickOpenPopup's copy of the same decision.
+                    if (w != null && Matches(w.Name, needle))
+                        worldGroup.Nodes.Add(new NavNode { Title = w.Name, Target = WorldSurface.PoiEditor(w.Id) });
+                }
+            if (worldGroup.Nodes.Count > 0) groups.Add(worldGroup);
 
-            // Everything below IS document-derived (Мир scans doc.Groups directly, Authored mirrors
-            // doc.Groups as-is), so the null guard belongs HERE, after Pinned, not before it.
+            // Everything below IS document-derived (Authored mirrors doc.Groups as-is), so the null guard
+            // belongs HERE, after Мир, not before it.
             if (doc == null) return groups;
 
-            // Мир — N1: computed from Bound alone, in document order. A separate top-to-bottom scan rather
-            // than folded into the Authored loop below, so this one place is where "what is a member" lives.
-            var world = new NavGroup { Kind = NavGroupKind.World, Title = WorldGroupTitle };
-            foreach (var g in doc.Groups)
-                foreach (var p in g.Pages)
-                    if (p.Bound != null && Matches(p.Name, needle))
-                        world.Nodes.Add(MakeNode(p));
-            if (world.Nodes.Count > 0) groups.Add(world);
-
-            // Authored — N2: every stored group renders as-is, in stored order, with its stored pages. This
-            // loop never consults Bound, which is exactly what lets a bound page appear in Мир AND here.
+            // Authored — N2: every stored group renders as-is, in stored order, with its stored pages. A page
+            // bound to a place is an ordinary page here and appears ONLY here — «и только там» cuts both
+            // ways, and the double-listing this comment used to describe is gone with the old N1.
             foreach (var g in doc.Groups)
             {
                 var authored = new NavGroup { Kind = NavGroupKind.Authored, Title = g.Title, Id = g.Id };
