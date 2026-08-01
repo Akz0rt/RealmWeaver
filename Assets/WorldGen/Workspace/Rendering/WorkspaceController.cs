@@ -324,6 +324,34 @@ namespace WorldGen.Workspace.Rendering
             if (Layout.FocusedPane != before) RaiseChanged();
         }
 
+        /// <summary>Moves one tab, possibly across panes, through the tested WorkspaceOps.MoveTab — the drop
+        /// half of Task 10d's tab drag (TabStripView's TabDragHandler is the only caller). `toIndex` is a
+        /// PRE-REMOVAL index, an index into the destination pane's tab list AS IT LOOKS RIGHT NOW, including
+        /// the dragged tab when the destination is its own pane; WorkspaceOps.cs:210-213 is what
+        /// adjusts for the removal, and doing it a second time here would cancel every same-pane reorder.
+        ///
+        /// A drop that creates the split needs no separate door: MoveTab creates the destination pane on
+        /// demand exactly as Open(inOtherPane: true) does, and NormalizeSplit collapses it again if the move
+        /// emptied the source — so "drag the last tab out of a pane" self-corrects instead of leaving a hole.
+        ///
+        /// RAISES OnLayoutChanged (via RaiseChanged), unlike SetSplitRatioLive above: a drop is a discrete
+        /// commit, one per gesture, the same shape as CloseTab or CommitSplitRatio — not a per-frame value
+        /// Task 11 would then write to PlayerPrefs dozens of times. The DRAG itself raises nothing; only this.
+        ///
+        /// FOCUS FOLLOWS THE DROP, and not merely because a tab you just dragged is the one you are looking
+        /// at: SyncSurfaces iterates the FOCUSED pane first and lets it claim a shared ShareGroup, skipping
+        /// any other pane backed by the same physical surface (see SyncSurfaces' own doc). A cross-pane drop
+        /// that left focus behind could therefore land the tab in the other pane and never show it. Routed
+        /// through WorkspaceOps.Focus, which ignores a pane that no longer exists — after a move that emptied
+        /// the source, NormalizeSplit may have collapsed `toPane` away and already set FocusedPane itself.</summary>
+        public void MoveTab(int fromPane, int fromIndex, int toPane, int toIndex)
+        {
+            if (!WorkspaceOps.MoveTab(Layout, fromPane, fromIndex, toPane, toIndex)) return;
+            WorkspaceOps.Focus(Layout, toPane);
+            ReflowPanes();
+            RaiseChanged();
+        }
+
         // ── Split-ratio drag (wired by WorkspaceBuilder to the DraggableDivider) ─
 
         /// <summary>Called on every drag-delta frame: updates SplitRatio and reflows the pane widths + divider

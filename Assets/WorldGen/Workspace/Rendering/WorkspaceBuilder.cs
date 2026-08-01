@@ -178,8 +178,9 @@ namespace WorldGen.Workspace.Rendering
             // rather than a revived one). Both are recovered by WorkspaceController's own Ensure* methods —
             // see their docs. NOTHING here revives the tab strips/Navigator/QuickOpenPopup/divider-drag
             // delegates, so after a reload the correct SURFACE renders but the chrome around it stays inert
-            // until Task 11: clicking a tab, the navigator, «+», Ctrl+K or dragging the divider all still do
-            // nothing. That is the line — pane handles are read by SyncSurfaces, which runs post-reload; the
+            // until Task 11: clicking a tab, DRAGGING a tab (Task 10d — TabDragHandler's own guard makes that
+            // a silent no-op rather than an NRE on its wiped `strip`/`controller` fields), the navigator,
+            // «+», Ctrl+K or dragging the divider all still do nothing. That is the line — pane handles are read by SyncSurfaces, which runs post-reload; the
             // strips are read by nothing that runs post-reload.
             if (transform.childCount > 0)
             {
