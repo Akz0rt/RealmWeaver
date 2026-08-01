@@ -264,14 +264,39 @@ namespace WorldGen.Rendering
         /// the tab the DM lands back on. Every ex-screen kind describes a POI or an interior of the world that
         /// was just replaced, so all five go.
         ///
-        /// KIND-BASED, AND THAT IS WHY IT CANNOT SERVE A PROJECT LOAD TOO. See this method's caller for why
-        /// the predicate must be order-independent here; but a project load ALSO replaces the notes document
-        /// (ProjectMenuBar.LoadFrom -> NotesDocumentController.LoadDocument), so the very Page tabs this rule
-        /// deliberately keeps are exactly the ones that must not survive THAT. SurfaceExists below is the
-        /// resolution-based predicate for the load path, and WorkspaceController.EndProjectSwitch is what
-        /// applies it once the answer is knowable.</summary>
-        static bool SurvivesWorldChange(SurfaceRef s) =>
-            s != null && (s.Kind == SurfaceKind.Page || s.Kind == SurfaceKind.WorldMap);
+        /// A PAGE TAB MUST ALSO STILL NAME A PAGE, and this half was missing until the DM reported the ghost
+        /// it let through. Restoring the layout at startup deliberately prunes NOTHING — nothing has loaded
+        /// yet, so a real existence check would answer "no" to every tab and delete the whole layout on every
+        /// launch (WorkspaceController.RestoreFromPrefs states that trade explicitly). But the notes document
+        /// is not loaded, it is BUILT: NotesDocumentController.Awake makes a fresh «Сессия 1» with a fresh
+        /// GUID on every single Play. So a Page tab restored from a previous run names a page id that no
+        /// longer exists anywhere, while still carrying its old TITLE — and it looked entirely right, because
+        /// PageSurfaceHost falls back to whatever page is active. The DM saw it as: a «Сессия 1» tab that
+        /// opens a SECOND «Сессия 1» tab when its own row is clicked in the navigator. Two tabs, one name,
+        /// and only one of them attached to anything.
+        ///
+        /// This is the first moment the question can be asked honestly, which is why it is asked here: a world
+        /// arriving is long past every Awake, so the document is real. It also stays ORDER-INDEPENDENT, which
+        /// is the property this predicate's caller requires — a regeneration does not touch the notes document
+        /// at all, so no other handler of the same event can change this answer underneath us. That is exactly
+        /// what is NOT true of POIs and interiors, whose managers are cleared by their own handlers of this
+        /// same event in an order Unity does not define; those five kinds are therefore still refused by KIND,
+        /// never by resolution.
+        ///
+        /// STILL NOT A SUBSTITUTE FOR THE PROJECT-LOAD PREDICATE. A project load also replaces the document
+        /// wholesale (ProjectMenuBar.LoadFrom -> NotesDocumentController.LoadDocument), and it must drop POI
+        /// and interior tabs by resolution rather than keep them by kind. SurfaceExists is that predicate, and
+        /// WorkspaceController.EndProjectSwitch applies it.</summary>
+        bool SurvivesWorldChange(SurfaceRef s)
+        {
+            if (s == null) return false;
+            if (s.Kind == SurfaceKind.WorldMap) return true;
+            // Deliberately SurfaceExists' own Page branch rather than a second copy of the lookup — the same
+            // argument that method's doc makes for itself: "the tab survives" and "the page can be opened"
+            // must not be able to disagree.
+            if (s.Kind == SurfaceKind.Page) return SurfaceExists(s);
+            return false;
+        }
 
         // ── The project-switch seam (Task 11) ────────────────────────────────────────────────────────
         //
