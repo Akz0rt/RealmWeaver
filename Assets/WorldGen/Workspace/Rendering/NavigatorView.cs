@@ -12,7 +12,7 @@ namespace WorldGen.Workspace.Rendering
 {
     /// <summary>
     /// The navigator column: a header (with the collapse toggle), a search field, and a scrolling tree built
-    /// fresh from NavigatorTree.Build(doc, filter) on every rebuild. This view holds no "which row is active"
+    /// fresh from NavigatorTree.Build(doc, world, filter) on every rebuild. This view holds no "which row is active"
     /// or "which group is expanded" state of its own — every rebuild re-derives both the row list (from
     /// NavigatorTree, never reimplemented here) and which row counts as active (from WorkspaceLayout, via
     /// WorkspaceOps.PaneAt/SameSurface — see ActiveSurface below), the same "rebuild from the model" rule
@@ -345,8 +345,8 @@ namespace WorldGen.Workspace.Rendering
 
             // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
             // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
-            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:212 and
-            // MapScreenController.cs:848. A null document is no longer short-circuited before this line — see
+            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:219 and
+            // DocumentPageView.cs:70. A null document is no longer short-circuited before this line — see
             // the class doc.
             var doc = documentController != null ? documentController.Document : null;
             var activeSurface = ActiveSurface();
