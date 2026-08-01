@@ -11,8 +11,9 @@ using WorldGen.Workspace.Data;
 namespace WorldGen.Workspace.Rendering
 {
     /// <summary>
-    /// The navigator column: a header (with the collapse toggle), a search field, and a scrolling tree built
-    /// fresh from NavigatorTree.Build(doc, world, filter) on every rebuild. This view holds no "which row is active"
+    /// The navigator column: a header (with the collapse toggle), a search field, a scrolling tree built
+    /// fresh from NavigatorTree.Build(doc, world, filter) on every rebuild, and — since Task 10h — a «+ Группа»
+    /// bar under the tree. This view holds no "which row is active"
     /// or "which group is expanded" state of its own — every rebuild re-derives both the row list (from
     /// NavigatorTree, never reimplemented here) and which row counts as active (from WorkspaceLayout, via
     /// WorkspaceOps.PaneAt/SameSurface — see ActiveSurface below), the same "rebuild from the model" rule
@@ -118,10 +119,11 @@ namespace WorldGen.Workspace.Rendering
 
             var root = columnRect.transform;
 
-            // Stacks header/search/list top-to-bottom inside the column WorkspaceBuilder already sized.
-            // childForceExpandHeight=false so the list's own flexibleHeight=1 (below) is what claims
-            // whatever height header+search don't use — the same pattern BuildPane's own vLayout uses for
-            // TabStripView-over-ContentArea.
+            // Stacks header/search/list/create-bar top-to-bottom inside the column WorkspaceBuilder already
+            // sized. childForceExpandHeight=false so the list's own flexibleHeight=1 (below) is what claims
+            // whatever height the three FIXED-height children around it don't use — the same pattern
+            // BuildPane's own vLayout uses for TabStripView-over-ContentArea. That is also what pins the
+            // «+ Группа» bar to the bottom of the column; see BuildCreateGroupBar's call site below.
             var vLayout = columnRect.gameObject.AddComponent<VerticalLayoutGroup>();
             vLayout.childControlWidth = true;
             vLayout.childForceExpandWidth = true;
@@ -182,6 +184,8 @@ namespace WorldGen.Workspace.Rendering
         }
 
         // ── Construction (chrome — built once, never destroyed by Rebuild) ───────
+        // The one exception in this section is AddActionButton at its end: it is a shared BUILDER, and its
+        // other caller (BuildGroupHeader's «+») runs on every rebuild like the rest of the tree.
 
         void BuildHeader(Transform parent)
         {
@@ -317,8 +321,9 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>«+ Группа», restored from NotesTreeSidebar.cs:198-201 (the pre-deletion file, commit
         /// 9abca26^). Task 7 carried rename and delete into this view and Task 10c then deleted the sidebar,
         /// so BOTH create affordances left the app with it — «не вижу кнопок для добавления страниц заметок».
-        /// The visual treatment is the deleted AddSmallActionButton's, unchanged (Accent 0.8 fill, AccentInk
-        /// 11px label, left-aligned with a 6px inset), so the button the DM lost is the button they get back.
+        /// The visual treatment is the deleted AddSmallActionButton's (Accent 0.8 fill, AccentInk 11px label,
+        /// left-aligned with a 6px inset), so the button the DM lost is recognisably the button they get
+        /// back. Its HEIGHT is the one changed value — see ActionBarHeight's own doc.
         ///
         /// CHROME, not content: built once here, never destroyed by Rebuild — the same arrangement the header
         /// and the search field use. Rebuild only toggles its visibility with the collapse state (see there).
@@ -575,9 +580,12 @@ namespace WorldGen.Workspace.Rendering
             foreach (var node in group.Nodes)
             {
                 bool isActive = activeSurface != null && WorkspaceOps.SameSurface(node.Target, activeSurface);
-                // Matched on Target.Id AND Kind (inside BuildNodeRow), never on title: a page id and a POI
-                // guid are both opaque strings, and «Мир» rows carry POI guids — the same identity rule
-                // NavigatorTreeSelfTests' own fixture is built to enforce.
+                // Matched on Target.Kind AND Target.Id, never on title: a page id and a POI guid are both
+                // opaque strings, and «Мир» rows carry POI guids — the same identity rule
+                // NavigatorTreeSelfTests' own fixture (a POI and a page deliberately sharing a name) exists
+                // to enforce. Decided HERE rather than inside BuildNodeRow so the Kind test sits next to the
+                // isActive test it parallels, and so BuildNodeRow's Page-only branch receives a flag that is
+                // already known to be false for every other row.
                 bool autoRename = renamePageId != null && node.Target != null
                     && node.Target.Kind == SurfaceKind.Page && node.Target.Id == renamePageId;
                 BuildNodeRow(groupGO.transform, node, isActive, autoRename);
@@ -637,19 +645,25 @@ namespace WorldGen.Workspace.Rendering
             // two out of each other's way: the overlay inherits the narrowed rect, so an active rename never
             // reaches under the «+» and the «+» never steals a click from the input field's right end.
             // Moving this line (or the button) below the overlay would hand the overlay the full-width rect
-            // and put them back in contention. A long group title is clipped here too, before it can run
-            // underneath the «+» and read as garbage.
+            // and put them back in contention. It also keeps a long group title off the «+» — by uGUI's own
+            // text layout (this Text is left at the default Wrap/Truncate), NOT by a mask: this header has no
+            // RectMask2D, unlike a node row, so the containment BuildNodeRow's own comment insists on is
+            // absent here and the narrowed rect is all there is.
             textRect.offsetMax = new Vector2(-(AddPageButtonSize + 6f), 0f);
             //
             // The «+» therefore stays live DURING a rename, which is the harmless order: clicking it
             // deactivates the input field, so uGUI fires onEndEdit — the rename commits — before this
             // button's own onClick runs.
             //
-            // KNOWN, ACCEPTED: a Button consumes IPointerClickHandler, and uGUI's ExecuteHierarchy stops at
-            // the first handler it finds, so this button's rect is a right-click dead zone — the header's
-            // NavRowClickRouter never sees a right-click landing on the «+», and the
-            // «Переименовать»/«Удалить» menu is unreachable from those 18 pixels. The rest of the header
-            // still offers it.
+            // KNOWN, ACCEPTED: this button's rect is a right-click dead zone. NavRowClickRouter is reached
+            // today only through StandaloneInputModule's fallback — no component on the header handles
+            // pointerDOWN, so the module searches the hierarchy for an IPointerClickHandler and finds the
+            // router. A Button (Selectable) DOES handle pointerDown, and it handles it for every mouse
+            // button (its own early-out for non-left runs after the handler has already been counted), so
+            // over these 18 pixels the module settles on the button and dispatches the click to it alone.
+            // Button.OnPointerClick then ignores the right button and nothing happens: the
+            // «Переименовать»/«Удалить» menu is unreachable from the «+». The rest of the header still
+            // offers it.
             var addPageGO = AddActionButton(go.transform, "+", AddPageButtonSize, 14,
                 TextAnchor.MiddleCenter, 0f, () => CreatePageAndOpen(groupId));
             // Anchored to the header's right edge by hand: this GameObject's parent is a plain header rect
@@ -721,7 +735,14 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>The live PageGroup's actual page count, looked up fresh at call time (not baked in at
         /// row-build time) — mirrors NotesTreeSidebar.BuildGroupRow's own `group.Pages.Count`, just reached
         /// through documentController instead of holding a direct PageGroup reference the way the old
-        /// sidebar did. Null when the group can't be found (already deleted, or no document wired).</summary>
+        /// sidebar did. Null when the group can't be found (already deleted, or no document wired).
+        ///
+        /// TWO callers now, wanting the same number for opposite reasons: the group-delete confirm reports it
+        /// as a cost, and CreatePageAndOpen seeds «Страница N» from it. Both are call-time reads of the SAME
+        /// count the deleted sidebar's two call sites read, which is why they share one lookup rather than
+        /// each re-deriving it. They differ only in how they take the null: the confirm falls back to the
+        /// filtered node count it can see, the creator to 0 — after which CreatePage returns null for the
+        /// same missing group and the whole action stops.</summary>
         int? PageGroupPageCount(string groupId)
         {
             // Explicit ternary, not `documentController?.Document`: `?.` skips Unity's overloaded `==` and
@@ -813,9 +834,11 @@ namespace WorldGen.Workspace.Rendering
             if (node.Target.Kind == SurfaceKind.Page)
             {
                 // Rename overlay — built (but hidden) here, same rect as the label, exactly mirroring
-                // NotesTreeSidebar.AddRenameAndDelete. The trigger differs: the old sidebar started this
+                // NotesTreeSidebar.AddRenameAndDelete. The triggers differ: the old sidebar started this
                 // from a double-click; here it starts from the context menu's «Переименовать», since the
-                // brief moves rename/delete behind the right-click menu instead of always-on affordances.
+                // brief moves rename/delete behind the right-click menu instead of always-on affordances —
+                // and, since Task 10h, from `autoRename` at the end of this branch, for a page the user has
+                // just created and has not named yet.
                 //
                 // Built inside this Page-only branch, not unconditionally for every row (a prior round built
                 // it for every row and guarded only the menu item that could reach it): a hidden
@@ -825,7 +848,9 @@ namespace WorldGen.Workspace.Rendering
                 // directly (the double-click trigger this comment used to describe, before rename moved
                 // behind the context menu) would silently re-arm a rename that persists nothing. Not
                 // constructing the overlay at all for a non-Page row removes the hazard instead of merely
-                // leaving it untriggered.
+                // leaving it untriggered. That future affordance has since arrived — `autoRename` — and the
+                // rule held: it is computed in BuildGroup from Target.Kind==Page, so it cannot be true
+                // outside this branch, and the parameter's own doc says so rather than relying on it.
                 var inputGO = new GameObject("RenameInput", typeof(RectTransform));
                 inputGO.transform.SetParent(rowGO.transform, false);
                 var inputRect = inputGO.GetComponent<RectTransform>();
@@ -891,6 +916,11 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
+        /// <summary>The text arrives PRE-SELECTED, which Task 10h's auto-rename depends on (typing must
+        /// replace «Страница N», not append to it) and which the context-menu rename gets for free: uGUI's
+        /// ActivateInputField calls SelectAll on focus whenever InputField.onFocusSelectAll is set, and that
+        /// property defaults to true and is never turned off here. Written down so nobody adds a redundant
+        /// SelectAll — or, worse, "fixes" the defaults elsewhere and quietly breaks this.</summary>
         void StartRename(GameObject labelGO, InputField input, string rawValue)
         {
             activeRenameLabelGO = labelGO;
