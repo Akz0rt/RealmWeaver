@@ -31,6 +31,18 @@ namespace WorldGen.Notes.Rendering
         const float IndentPerLevel = 18f;
         const float VerticalPadding = 4f;
 
+        /// <summary>Clear space between the row's hit area and the first and last glyph on a line.
+        ///
+        /// WHY IT IS NOT THE ROW THAT SHRINKS. The row's whole width is a click target — clicking anywhere
+        /// in it places the caret, and on an EMPTY row there are no glyphs to aim at, so narrowing it would
+        /// make the margin a dead strip where a click does nothing. So the box stays wide and the TEXT moves
+        /// in. The DM asked for this twice: the first attempt widened the page's own side margins, which were
+        /// already 306px on their screen — the border their text was touching was this one, not the pane's.
+        ///
+        /// Applied to the resting text and to the editing field's viewport alike, or the line would shift
+        /// sideways at the moment the DM clicks into it.</summary>
+        const float TextInset = 12f;
+
         DocBlock data;
         LayoutElement layoutElement;
         RectTransform textArea;
@@ -209,7 +221,7 @@ namespace WorldGen.Notes.Rendering
             var displayGO = new GameObject("Display", typeof(RectTransform));
             displayGO.transform.SetParent(textArea, false);
             var r = displayGO.GetComponent<RectTransform>();
-            Stretch(r);
+            Stretch(r, TextInset);
 
             Display = displayGO.AddComponent<TextMeshProUGUI>();
             ApplyTextStyle(Display);
@@ -238,7 +250,9 @@ namespace WorldGen.Notes.Rendering
             var viewportGO = new GameObject("TextViewport", typeof(RectTransform));
             viewportGO.transform.SetParent(fieldGO.transform, false);
             var viewportRect = viewportGO.GetComponent<RectTransform>();
-            Stretch(viewportRect);
+            // The INSET lives here rather than on the field's own rect: the field carries the raycast target
+            // that keeps a click in the margin working while editing, so it must still span the whole row.
+            Stretch(viewportRect, TextInset);
             viewportGO.AddComponent<RectMask2D>();
 
             var textGO = new GameObject("Text", typeof(RectTransform));
@@ -320,12 +334,12 @@ namespace WorldGen.Notes.Rendering
             text.alignment = TextAlignmentOptions.TopLeft;
         }
 
-        static void Stretch(RectTransform r)
+        static void Stretch(RectTransform r, float horizontalInset = 0f)
         {
             r.anchorMin = Vector2.zero;
             r.anchorMax = Vector2.one;
-            r.offsetMin = Vector2.zero;
-            r.offsetMax = Vector2.zero;
+            r.offsetMin = new Vector2(horizontalInset, 0f);
+            r.offsetMax = new Vector2(-horizontalInset, 0f);
         }
 
         // ── editing ───────────────────────────────────────────────────────────

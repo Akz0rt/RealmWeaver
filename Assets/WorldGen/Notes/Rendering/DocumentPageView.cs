@@ -723,17 +723,6 @@ namespace WorldGen.Notes.Rendering
             rowLayout.padding.left = side;
             rowLayout.padding.right = side;
             LayoutRebuilder.MarkLayoutForRebuild(content);
-
-            // TEMPORARY — Р2 Task 6 checkpoint. DELETE with the [dockeys] block in DocKeyboardController.
-            //
-            // The DM reports no visible margin, and from here that is three different faults with one
-            // appearance: the pane could be reporting a width nothing else agrees with, the padding could be
-            // computed correctly and then overridden by the row's own geometry, or this could not be running
-            // at all. It only prints when the value actually CHANGES, so it costs one line per resize and not
-            // one per frame.
-            Debug.Log($"[docmeasure] viewport={available:0.#} column={column:0.#} side={side} " +
-                      $"(measure={NotesTypography.MeasureWidthPx:0.#}, min={MinSideMargin}) " +
-                      $"→ text starts {side + DocBlockView.IndentFor(0):0.#}px from the pane edge");
         }
 
         /// <summary>Rebuilds and then puts the caret where a keyboard operation asked for it. Rebuild throws
