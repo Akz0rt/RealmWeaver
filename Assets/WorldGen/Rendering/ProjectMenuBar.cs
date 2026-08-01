@@ -58,6 +58,28 @@ namespace WorldGen.Rendering
         /// because the caller's own rule (an empty answer never overrides a non-empty stored key) already
         /// makes this harmless in that direction.</summary>
         public string CurrentProjectPath => currentPath;
+
+        /// <summary>Forgets which project is open, so «Сохранить» stops meaning "overwrite that file".
+        /// Called by MapScreenController.RunGeneration at the moment a generated world replaces the loaded
+        /// one — see there for the loss this prevents.
+        ///
+        /// NO SAVE-SEMANTICS DECISION IS BEING MADE HERE, which is worth stating because it looks like one.
+        /// DoSave already branches on `currentPath == null` into DoSaveAs; this only makes that existing
+        /// branch reachable from a state it could never previously be reached from. Before this arc's
+        /// «Создать новый мир…» (c14736f) the generation form was ONLY shown when no world existed
+        /// (DesiredScreen's `!hasMap`), which implies nothing had ever been loaded or saved, which implies
+        /// currentPath was already null — so "the open project outlives the world it describes" was
+        /// unreachable by construction, and nothing had to clear anything.
+        ///
+        /// UpdateProjectNameText, not just the field: the bar's right-hand label is the only thing on screen
+        /// telling the DM which file «Сохранить» would write to, and leaving it showing the old project's
+        /// name while the field says otherwise is the same defect one layer up — the screen and the code
+        /// disagreeing about which project is open.</summary>
+        public void ForgetCurrentProject()
+        {
+            currentPath = null;
+            UpdateProjectNameText();
+        }
         Font builtinFont;
         Text projectNameText;
         Transform canvasTransform;

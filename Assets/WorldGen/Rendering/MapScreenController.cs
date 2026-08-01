@@ -352,6 +352,22 @@ namespace WorldGen.Rendering
 
         NotesRootBuilder notesRoot;
 
+        /// <summary>The app's menu bar, discovered on every miss exactly like Shell(), Pois() and Notes(),
+        /// and for the same two reasons: no Inspector slot without a scene edit, and a domain reload wipes
+        /// the cached reference while the component survives. Only RunGeneration needs it — to tell the bar
+        /// that the project it names no longer describes the world on screen.
+        ///
+        /// Null in a scene without one, and the single caller treats that as "do nothing", which is correct:
+        /// a scene with no menu bar has no «Сохранить» to mislead.</summary>
+        ProjectMenuBar Menu()
+        {
+            if (menuBar != null) return menuBar;
+            menuBar = FindFirstObjectByType<ProjectMenuBar>(FindObjectsInactive.Include);
+            return menuBar;
+        }
+
+        ProjectMenuBar menuBar;
+
         // ── Surfaces: opening and closing the tabs that used to be screens (Task 10c Step 2) ────────
         //
         // The Open* methods keep every line of the state-keeping they always had — Bind, the resolve-before-
@@ -1201,11 +1217,37 @@ namespace WorldGen.Rendering
             // happened would leave the workspace writing to the no-project slot while project A is still
             // open — staleness in exchange for preventing loss, when waiting one statement prevents both.
             //
-            // NOT FIXED HERE, and worth a DM ruling: ProjectMenuBar.currentPath is likewise never cleared by
-            // this path, so after generating a new world Ctrl+S still overwrites project A's FILE with it.
-            // That is a bigger loss than this one and it predates the workspace entirely; changing when
-            // «Сохранить» turns into «Сохранить как…» is a save-semantics decision, not Task 11's to make.
+            // THE FILE FOLLOWS THE LAYOUT, and it is the same question answered the same way. The re-key
+            // above says "these tabs no longer belong to project A"; without the line below,
+            // ProjectMenuBar.currentPath would go on saying the opposite about the WORLD — so «Файл →
+            // Сохранить» (there is no keyboard shortcut in this app) would silently write the generated
+            // world over project A's file, with no prompt and no «Сохранить как…».
+            //
+            // WHAT THAT COSTS, read from the handlers rather than guessed: PoiManager.ClearAll and
+            // DungeonManager.ClearAll are subscribed to this same OnWorldRegenerated, and
+            // DungeonManager.ClearAll is `dungeons.Clear()` — every town, dungeon, building interior and
+            // battle grid. The written file would be new terrain, zero POIs, zero interiors and the old
+            // notes: a campaign's entire world content, permanently. «Сохранить» is also the menu row
+            // IMMEDIATELY BELOW «Создать новый мир…» (ProjectMenuBar.OpenMenu), and the bar still shows A's
+            // name until this line runs.
+            //
+            // A REGRESSION THIS ARC INTRODUCED, not inherited debt — an earlier revision of this comment
+            // said it "predates the workspace entirely" and that was simply wrong. c14736f (Task 10c) added
+            // «Создать новый мир…»; before it the generation form was reachable ONLY when no world existed
+            // (DesiredScreen's `!hasMap`), so currentPath was necessarily still null and there was nothing
+            // to clear. RequestNewWorld's own doc quotes the spec on exactly that — "there is no way to
+            // create a second world without restarting the app". Introduced here, closed here.
+            //
+            // NOR IS IT A SAVE-SEMANTICS RULING: DoSave already branches on `currentPath == null` into
+            // DoSaveAs. This only makes that branch reachable from a state that could not previously exist.
+            //
+            // THE TWO CALLS MUST STAY TOGETHER — see WorkspaceController.ReconcileKeyWithLiveProject, whose
+            // "the stored key and the live path cannot legitimately disagree" rule is what lets a reload
+            // resolve the two against each other. Re-keying without forgetting would make this the one
+            // moment they diverge, and a recompile after a generation would then reconcile back onto A and
+            // resurrect the loss above.
             Shell()?.RekeyTo("");
+            Menu()?.ForgetCurrentProject();
             mapRenderer.FinishLoadFromCells();
 
             progressScreen.SetStep("Готово", 1f);

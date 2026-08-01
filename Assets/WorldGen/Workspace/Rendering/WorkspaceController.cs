@@ -275,9 +275,22 @@ namespace WorldGen.Workspace.Rendering
         ///   • both empty            -> "", the no-project slot. Correct for a cold start, and the harmless
         ///                              answer for a reload where both were lost (wrong tabs, not lost ones).
         ///   • one empty, one not    -> the non-empty one. Either survivor is enough.
-        ///   • both non-empty        -> the live one. They cannot legitimately disagree — EndProjectSwitch
-        ///                              and RekeyTo set this field at the same two moments ProjectMenuBar
-        ///                              sets currentPath — so a disagreement means the stored one is stale.
+        ///   • both non-empty        -> the live one. They cannot legitimately disagree, so a disagreement
+        ///                              means the stored one is stale.
+        ///
+        /// THAT LAST CASE RESTS ON A COUPLING THAT IS NOT LOCAL TO THIS FILE, and it is written out because
+        /// it was briefly false. There are THREE moments the key moves, and every one of them must move
+        /// ProjectMenuBar.currentPath in the same breath:
+        ///   1. EndProjectSwitch(path)  ← ProjectMenuBar.LoadFrom, beside `currentPath = path`
+        ///   2. RekeyTo(path)           ← ProjectMenuBar.SaveTo,   beside `currentPath = path`
+        ///   3. RekeyTo("")             ← MapScreenController.RunGeneration, beside ForgetCurrentProject()
+        /// The third was added when the generation path's own copy of Step 4's collision was closed, and for
+        /// one commit it re-keyed WITHOUT clearing currentPath — which made this paragraph untrue and left a
+        /// latent trap rather than a live bug: it was harmless only because a domain reload happens to wipe
+        /// both, so the disagreement could never be observed by this method. The moment the pre-existing
+        /// `currentPath` reload gap is fixed (see ProjectMenuBar's own note on it), a recompile after a
+        /// generation would have reconciled the key back onto the project the DM had just left, resurrecting
+        /// the very save this task removed. Any FOURTH mover must pair itself the same way.
         ///
         /// THE RESULT IS WRITTEN BACK, so PersistNow and every later save read one already-reconciled field
         /// rather than repeating this discovery. That is also why FindFirstObjectByType is affordable here:
