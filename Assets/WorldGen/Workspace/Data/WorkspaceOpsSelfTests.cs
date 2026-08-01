@@ -235,7 +235,7 @@ namespace WorldGen.Workspace.Data
 
         /// <summary>The outcomes Task 10d's tab drag newly depends on. The GESTURE (ghost, insertion marker,
         /// hit-testing a strip) is Unity-side and cannot run here; what CAN be pinned is the arithmetic every
-        /// drop lands on, and this suite pins the three properties the drop resolver assumes and that nothing
+        /// drop lands on, and this suite pins the four properties the drop resolver assumes and that nothing
         /// else asserted:
         ///
         /// 1. toIndex is a PRE-REMOVAL index. TabStripView.InsertIndexAt walks the strip with the dragged tab
@@ -245,7 +245,10 @@ namespace WorldGen.Workspace.Data
         ///    mutations: an unconditional decrement breaks the first, a deleted decrement breaks the second.
         /// 2. A move that empties the SOURCE pane collapses the split — R3/R4 through MoveTab's door rather
         ///    than CloseTab's, which is the door a drag actually uses.
-        /// 3. The moved tab is ACTIVE where it lands, including across panes. The drop relies on it: the
+        /// 3. A move into a pane that DOES NOT EXIST YET creates it. That branch of MoveTab is the entire
+        ///    split-producing drop, and every other move in this file — new and old — targets a pane
+        ///    Open(inOtherPane: true) had already built, so nothing pinned it.
+        /// 4. The moved tab is ACTIVE where it lands, including across panes. The drop relies on it: the
         ///    surface a drag puts in the other pane has to be the one that pane then shows.</summary>
         [ContextMenu("Self-Test: Workspace Move Tab Drop")]
         public void SelfTestMoveTabDrop()
@@ -296,7 +299,25 @@ namespace WorldGen.Workspace.Data
             if (l.FocusedPane != 0)
             { Debug.LogError($"FAIL move-drop: focus = {l.FocusedPane} after the split collapsed, want 0 (R3/R4 — FocusedPane may never name an absent pane)"); ok = false; }
 
-            // ── (3) The moved tab is the ACTIVE tab in the pane it lands in, across panes. ─────────
+            // ── (3) A move into a pane that does not exist yet CREATES it — the split-producing drop. ──
+            // The whole point of restoring this step («две вкладки рядом друг с другом перетаскиванием
+            // вкладки») rests on this one branch of MoveTab, and nothing anywhere pinned it: every other
+            // move in this file, new and old, targets a pane Open(inOtherPane: true) had already built. A
+            // plausible future "hardening" — refusing a destination pane that does not exist — would leave
+            // every other assertion green and silently delete the gesture.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);         // Primary: [Карта мира, *A], no split
+            bool made = WorkspaceOps.MoveTab(l, 0, 1, 1, 0);
+            if (!made)
+            { Debug.LogError("FAIL move-drop: MoveTab into a pane that does not exist yet returned false, want true — creating the destination pane on demand (R2's shape, through MoveTab's door) IS the split-producing drop"); ok = false; }
+            if (l.Secondary == null || Dump(l.Secondary) != "*A")
+            { Debug.LogError($"FAIL move-drop: secondary = [{Dump(l.Secondary)}], want «*A» — dragging a tab out of the only pane must CREATE the second pane and leave the tab active in it"); ok = false; }
+            if (Dump(l.Primary) != "*Карта мира")
+            { Debug.LogError($"FAIL move-drop: primary = [{Dump(l.Primary)}] after the split was created, want «*Карта мира» — the source pane keeps its remaining tab with ActiveIndex back in range (R5)"); ok = false; }
+            if (l.FocusedPane != 0)
+            { Debug.LogError($"FAIL move-drop: focus = {l.FocusedPane}, want 0 — MoveTab does not move focus itself; WorkspaceController.MoveTab focuses the destination deliberately and separately (see its doc)"); ok = false; }
+
+            // ── (4) The moved tab is the ACTIVE tab in the pane it lands in, across panes. ─────────
             // Asserted at a NON-ZERO destination index on purpose: a "make index 0 active" mutation would
             // pass at index 0 by coincidence.
             l = WorkspaceOps.NewDefault();

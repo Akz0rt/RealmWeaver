@@ -565,7 +565,16 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// Cancels the DROP, not the gesture: the pointer is still down, so uGUI will still deliver OnDrag
         /// and OnEndDrag: those see `cancelled` and leave the layout untouched, which is Step 3's third
-        /// outcome.</summary>
+        /// outcome.
+        ///
+        /// A RAW POLL IS SHARED, not owned: every Escape handler in this project reads the same hardware key
+        /// independently, so one press reaches all of them whose own guard is open. The only one that can be
+        /// open DURING a tab drag is BattleGridScreen.Update (BattleGridScreen.cs:255-257 — guarded merely on
+        /// its view being enabled, and its surface can be showing in a pane while the drag happens), so
+        /// Escape there both cancels the drag and closes that surface. NavigatorView's is gated on an active
+        /// rename, QuickOpenPopup's on the palette being open, DungeonViewController's on an armed brush —
+        /// none of which coexist with a drag. Left as it is: routing Escape through a modal stack is a change
+        /// to five existing screens, not to this gesture.</summary>
         void Update()
         {
             if (!dragging || cancelled) return;
@@ -602,7 +611,7 @@ namespace WorldGen.Workspace.Rendering
             if (ghostRect != null)
             {
                 ghostRect.gameObject.SetActive(true);
-                ghostRect.SetAsLastSibling();   // above RootRow, and above the other overlay
+                ghostRect.SetAsLastSibling();   // above RootRow — the marker below then goes above THIS,
                 ghostRect.sizeDelta = ghostSize;
                 // ScreenSpaceOverlay: world position IS screen-pixel position (SurfaceRegistry.cs:625), so the
                 // pointer's screen coordinate can be written straight into a world position, whatever the
@@ -614,7 +623,8 @@ namespace WorldGen.Workspace.Rendering
             if (markerRect == null) return;
             markerRect.gameObject.SetActive(target.Valid);
             if (!target.Valid) return;
-            markerRect.SetAsLastSibling();
+            markerRect.SetAsLastSibling();   // ...so the insertion line stays readable THROUGH the ghost,
+                                             // which is the pair's whole point at the moment of release.
             markerRect.sizeDelta = new Vector2(MarkerWidth, Mathf.Max(0f, target.MarkerYMax - target.MarkerYMin));
             markerRect.position = new Vector3(target.MarkerX, (target.MarkerYMin + target.MarkerYMax) * 0.5f, 0f);
         }
