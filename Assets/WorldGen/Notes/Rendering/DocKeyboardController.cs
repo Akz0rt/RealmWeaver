@@ -14,8 +14,8 @@ namespace WorldGen.Notes.Rendering
     /// ProcessNavigation sends updateSelectedHandler to the selected object
     /// (InputSystemUIInputModule.cs:807), and InputField.OnUpdateSelected (InputField.cs:2023) then drains the
     /// whole IMGUI event queue with Event.PopEvent, applying every character queued since the last drain and
-    /// raising onValueChanged for each. Call that moment THE DRAIN. Two values every key below needs sit on
-    /// opposite sides of it:
+    /// raising onValueChanged for each. Call that moment THE DRAIN. Two values the keys below are decided by
+    /// (Tab needs neither) sat on opposite sides of it:
     ///   • DocBlock.Text, which DocBlockView.OnFieldChanged writes from onValueChanged, i.e. DURING the drain,
     ///     and which DocKeyboardOps reads LIVE off the page;
     ///   • the caret, which this class caches for itself.
@@ -41,8 +41,9 @@ namespace WorldGen.Notes.Rendering
     /// Tab can, now that DocBlockView refuses the tab CHARACTER. Backspace cannot be told apart by the caret
     /// alone, because the field's own Backspace moves it — hence the "did this row's text change in this
     /// drain" test below. Up/Down cannot be shared at all on a wrapped row, because the field moves the caret
-    /// INSIDE it, so they are taken only where that movement is invisible. Consuming in Update hid all three
-    /// behind an ordering coin-flip; this is what they look like once the coin is gone.
+    /// INSIDE it, so they are taken only where that movement is invisible. None of that is new — consuming in
+    /// Update did not avoid a single one of these collisions, it only made each happen in one Update ordering
+    /// and not the other. This is what they look like once the coin-flip is gone.
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
@@ -112,19 +113,28 @@ namespace WorldGen.Notes.Rendering
                 // Backspace at offset 0 deletes nothing at all (InputField.cs:2335 needs
                 // caretPositionInternal > 0) and so raises no onValueChanged — "this row's text did not
                 // change in this frame's drain" is exactly what separates our case from the field's.
+                //
+                // `live != null` is a deliberate tightening, not a null-guard: Backspace pressed while NO row
+                // is being edited used to merge two rows anyway, off the cached id of whatever was focused
+                // last. Merging two blocks is a structural edit and the DM must be inside one of them to ask
+                // for it. Note this makes Backspace stricter than Enter, which still acts on the just-ended
+                // row through CaretWhenEditingEnded — that asymmetry is the point: Enter's row was torn down
+                // by Enter itself a moment ago, Backspace's was abandoned.
                 if (live != null && lastCaret == 0 && !live.TextChangedThisFrame && !HasSelection(live))
                     Handle(DocKey.Backspace);
                 return;
             }
 
             // Up/Down are ours ONLY on a row whose whole text is one visual line. On any other row the field
-            // has already moved the caret within the row during the drain — MoveUp/MoveDown at
-            // InputField.cs:1936/:1942 — so stealing the key as well would do two things at once: move the
-            // caret AND jump to another block. Consuming in LateUpdate made that double action reliable
-            // instead of ordering-dependent, which is how it was caught.
+            // has already moved the caret within the row during the drain — the UpArrow/DownArrow cases at
+            // InputField.cs:1936/:1942 call MoveUp/MoveDown — so stealing the key as well would do two things
+            // at once: move the caret AND jump to another block. Consuming in LateUpdate made that double
+            // action reliable instead of ordering-dependent, which is how it was caught.
             //
-            // On a single-line row the same double action is harmless and invisible: the field's MoveUp only
-            // walks the caret to the start (MoveDown, to the end) of the row we are leaving anyway. That is
+            // On a single-line row the same double action is harmless and invisible: LineUpCharacterPosition
+            // returns 0 for a caret already on the first line and LineDownCharacterPosition returns
+            // text.Length for one on the last, so the field only walks the caret to the start or the end of
+            // the row we are leaving anyway, and the row is repainted without focus regardless. That is
             // the whole reason the narrow version is safe where the wide one was not. A wrapped row now keeps
             // its arrows entirely — the caret moves inside it and focus stays — which is the behaviour uGUI
             // gives for free and the only one that can be right without InputField's private m_DrawStart.
@@ -136,9 +146,10 @@ namespace WorldGen.Notes.Rendering
             { if (VerticalIsOurs(live)) Handle(DocKey.Down); return; }
         }
 
-        /// <summary>Whether a vertical arrow belongs to this class rather than to the field. Requires a row
-        /// that is really being edited (a caret still PENDING means the field has not taken focus, so it has
-        /// not moved anything and the DM cannot see where the caret is either) and one that is provably a
+        /// <summary>Whether a vertical arrow belongs to this class rather than to the field. Two conditions:
+        /// the row's caret must actually have been placed — while it is still PENDING the field is showing
+        /// either SelectAll's whole-text selection or a caret this class has not yet moved to the offset it
+        /// asked for, so no reading of "where is the DM" is worth acting on — and the row must be provably a
         /// single visual line.</summary>
         static bool VerticalIsOurs(DocBlockView view)
             => view != null && !view.CaretPending && view.IsSingleVisualLine();
@@ -204,7 +215,9 @@ namespace WorldGen.Notes.Rendering
 
             // caretOffset < 0 is DocKeyResult's "put it at the end" — resolve it against the text now rather
             // than leaving a negative in the cache, which OnEnter would read as offset 0 and split on.
-            var block = pageView.Page != null ? pageView.Page.Blocks.Find(b => b.Id == blockId) : null;
+            // pageView.Page needs no guard: LateUpdate returns early without one, and it is Handle's only
+            // caller, which is AdoptFocus's only caller.
+            var block = pageView.Page.Blocks.Find(b => b.Id == blockId);
             lastCaret = block != null ? (block.Text ?? "").Length : 0;
         }
 

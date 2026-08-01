@@ -355,6 +355,12 @@ namespace WorldGen.Notes.Data
             { Debug.LogError($"FAIL clipboard: got [{Dump(copied)}], want [a/a1/b] in document order"); ok = false; }
 
             // Text carrying tabs and newlines survives, or a multi-line row would corrupt the payload.
+            //
+            // Still the right rule even though DocBlockView's onValidateInput now stops the DM from TYPING or
+            // pasting either character into a row (Task 10g). The two are about different layers: the view
+            // decides what may enter a block, this decides that whatever is already in one survives a
+            // round-trip. Blocks written before that guard, and Detail strings — which no InputField
+            // validates — still carry both, and a serializer that mangled them would corrupt real content.
             var tricky = Sheet();
             tricky[1].Text = "строка\tс табом\nи переносом";
             tricky[1].Detail = "деталь\nв две строки";

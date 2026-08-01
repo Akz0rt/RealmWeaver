@@ -34,9 +34,9 @@ namespace WorldGen.Notes.Rendering
         int pendingCaret;
         int caretWhenEditingEnded = -1;
         int textChangedOnFrame = -1;
-        // Ours alone, never the Text's own two generators: IsSingleVisualLine measures a different string
-        // (the field's whole text) than the render does, so sharing a cache would make each invalidate the
-        // other's every frame.
+        // Ours alone, never either of the Text's own generators: IsSingleVisualLine measures a different
+        // string (the field's whole text) than the render and the layout do, so sharing one would leave each
+        // repopulating over the other's result.
         TextGenerator lineProbe;
 
         public DocBlock Data => data;
@@ -51,7 +51,20 @@ namespace WorldGen.Notes.Rendering
         /// callback is therefore the last moment in the frame at which the caret is still the DM's and not
         /// yet zero, and it runs INSIDE the same event drain that applied the character they typed just
         /// before pressing Enter — so this value and DocBlock.Text describe the same instant, which is the
-        /// whole point (see DocKeyboardController's class doc).</summary>
+        /// whole point (see DocKeyboardController's class doc). The pair holds on EVERY route out of editing,
+        /// not just Enter: the caret is zeroed at exactly one place in InputField (:3262), after the one
+        /// SendOnEndEdit (:3254), and both sit inside the same `IsInteractable()` branch, so they can never
+        /// come apart.
+        ///
+        /// ONE ROUTE CAPTURES SOMETHING ELSE, deliberately unfixed: Escape on a row that was actually edited.
+        /// It reverts the text (`text = m_OriginalText`, :3252) BEFORE that SendOnEndEdit, and because this
+        /// row installs an onValidateInput, SetText's validating branch jams the caret to the end of what it
+        /// assigned (:493) — so the row records end-of-reverted-text rather than where the DM was. (Escape
+        /// with nothing changed is exact: SetText early-returns on an unchanged value and never touches the
+        /// caret.) It is not unreachable — Enter still acts on a row that has stopped being edited, through
+        /// this very value — but the outcome it produces there is "start a fresh row after this one", which
+        /// is both harmless and what Enter at the end of a row means anyway. Worth knowing before anyone
+        /// gives this value a reader that cares where inside the text the offset falls.</summary>
         public int CaretWhenEditingEnded => caretWhenEditingEnded;
 
         /// <summary>True when the field changed this block's text during THIS frame's event drain. The one
@@ -205,7 +218,10 @@ namespace WorldGen.Notes.Rendering
             // invisible; assigning into a focused field would now move the DM's caret. A block saved with a
             // stray tab from before this guard repairs itself on its next Refresh rather than disagreeing with
             // its field forever: the assignment strips the tab, and SetText's own onValueChanged writes the
-            // stripped text back into the block.
+            // stripped text back into the block. This does NOT retire the clipboard rule that tabs and
+            // newlines survive serialization (NotesDocOpsSelfTests, "Text carrying tabs and newlines
+            // survives") — that pins the data layer, which still has to carry both for old blocks and for
+            // Detail strings, and this only governs what a row will accept.
             Field.onValidateInput = (_, __, added) => added == '\t' || added == '\n' || added == '\r' ? '\0' : added;
             Field.text = data.Text ?? "";
             Field.onValueChanged.AddListener(OnFieldChanged);
@@ -264,10 +280,11 @@ namespace WorldGen.Notes.Rendering
         ///     string is indexed in window coordinates while the caret is indexed in whole-text ones, and
         ///     m_DrawStart is private, so the two cannot be reconciled from outside the class.
         ///
-        /// "Does the whole text fit on one line" dodges both, because it never mentions the caret and never
-        /// reads anything InputField owns. It measures `Field.text` — the full text (InputField.text returns
-        /// m_Text), NOT the windowed label — against the same width and the same generation settings the
-        /// render wraps with, into a generator of our own so the render's cache is left alone.</summary>
+        /// "Does the whole text fit on one line" dodges both, because it never mentions the caret and reads
+        /// nothing whose meaning depends on the field's private windowing. It measures `Field.text` — which
+        /// returns m_Text, the WHOLE text, not the windowed label the Text component is showing — against the
+        /// width the render wraps at and this Text's own generation settings, in a generator of our own.
+        /// (The height is zeroed, which changes no wrapping under this Text's Overflow mode; see below.)</summary>
         public bool IsSingleVisualLine()
         {
             if (TextComponent == null || Field == null) return false;
