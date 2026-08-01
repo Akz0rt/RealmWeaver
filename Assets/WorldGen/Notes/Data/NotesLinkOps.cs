@@ -17,6 +17,64 @@ namespace WorldGen.Notes.Data
         public int SourceLength;
     }
 
+    public class DisplaySpan : LinkSpan
+    {
+        /// <summary>False when the resolver returned null — the target is gone and Display's stored copy is
+        /// being shown instead. The renderer draws these as muted prose with no click target, and the
+        /// reference index drops them entirely (R3).</summary>
+        public bool Resolved;
+        public int DisplayStart;
+        public int DisplayLength;
+    }
+
+    /// <summary>Source text rendered for reading, plus the two-way index map that makes clicking it usable.
+    ///
+    /// The map exists for ONE job: the DM clicks a character in the rendered row, and the caret has to land
+    /// on the corresponding character of the RAW row that replaces it. Without it, every click into a row
+    /// containing a link would miss by exactly the machinery's length.</summary>
+    public class DisplayText
+    {
+        public string Text = "";
+        public List<DisplaySpan> Spans = new List<DisplaySpan>();
+
+        /// <summary>Display index → source index. An index strictly inside a rendered NAME collapses to the
+        /// token's start: there is no meaningful "middle of a token" for a caret to sit at, and a DM who
+        /// clicks a link's third letter means "edit this link", which begins at its beginning. Both
+        /// BOUNDARIES stay exact — the index at a link's first character maps to the token's first character,
+        /// and the index just past its last maps just past the closing brackets, which is where a click to
+        /// the right of a link lands.</summary>
+        public int ToSource(int displayIndex)
+        {
+            int delta = 0;
+            foreach (var s in Spans)
+            {
+                // `<=` rather than `<`, and the difference is EQUIVALENT, not load-bearing — checked by
+                // mutation, where `<` survived. At displayIndex == DisplayStart the two paths agree by
+                // construction: BuildDisplay lays each span down so SourceStart == DisplayStart + delta, so
+                // breaking here and falling through to the collapse below return the same number. The break
+                // is still needed for indices STRICTLY before the span, which would otherwise be swallowed
+                // by the collapse. Do not spend a second round proving this again.
+                if (displayIndex <= s.DisplayStart) break;
+                if (displayIndex < s.DisplayStart + s.DisplayLength) return s.SourceStart;
+                delta += s.SourceLength - s.DisplayLength;
+            }
+            return displayIndex + delta;
+        }
+
+        /// <summary>Source index → display index, with the same collapse in the other direction.</summary>
+        public int ToDisplay(int sourceIndex)
+        {
+            int delta = 0;
+            foreach (var s in Spans)
+            {
+                if (sourceIndex <= s.SourceStart) break;
+                if (sourceIndex < s.SourceStart + s.SourceLength) return s.DisplayStart;
+                delta += s.SourceLength - s.DisplayLength;
+            }
+            return sourceIndex - delta;
+        }
+    }
+
     /// <summary>
     /// The inline-link grammar: [[kind:id|Отображаемое имя]], where kind is "page" or one of the three
     /// WorldRefKind names lower-cased.
@@ -37,6 +95,15 @@ namespace WorldGen.Notes.Data
     /// </summary>
     public static class NotesLinkOps
     {
+        /// <summary>Answers "what is this object called RIGHT NOW", or null when it no longer exists. The
+        /// pure layer never implements one: the harness passes a dictionary, the app passes a lookup over the
+        /// document and the world. That is what makes "resolve, never rewrite" testable without Unity.
+        ///
+        /// Nested in NotesLinkOps rather than left at namespace scope so that every consumer names it
+        /// NotesLinkOps.NameResolver — the grammar owns the contract, and a bare `NameResolver` floating in
+        /// WorldGen.Notes.Data would invite a second, unrelated one.</summary>
+        public delegate string NameResolver(string kind, string id);
+
         public const string KindPage = "page";
         const string Open = "[[";
         const string Close = "]]";
@@ -102,6 +169,50 @@ namespace WorldGen.Notes.Data
                 }
             }
             return found;
+        }
+
+        /// <summary>Substitutes every well-formed token with its target's CURRENT name, falling back to the
+        /// copy stored in the token only when the resolver says the target is gone. Everything outside a
+        /// token is copied verbatim, so prose is never touched.
+        ///
+        /// A null resolver means "nothing resolves", not an error: a view calls this before the document is
+        /// wired, and the stored copies are exactly the right thing to show then.</summary>
+        public static DisplayText BuildDisplay(string source, NameResolver resolve)
+        {
+            var result = new DisplayText();
+            if (string.IsNullOrEmpty(source)) return result;
+
+            var spans = ParseSpans(source);
+            if (spans.Count == 0) { result.Text = source; return result; }
+
+            var sb = new System.Text.StringBuilder(source.Length);
+            int copied = 0;
+            foreach (var span in spans)
+            {
+                sb.Append(source, copied, span.SourceStart - copied);
+
+                string current = resolve != null ? resolve(span.Kind, span.Id) : null;
+                string shown = current ?? span.Display;
+
+                result.Spans.Add(new DisplaySpan
+                {
+                    Kind = span.Kind,
+                    Id = span.Id,
+                    Display = span.Display,
+                    SourceStart = span.SourceStart,
+                    SourceLength = span.SourceLength,
+                    Resolved = current != null,
+                    DisplayStart = sb.Length,
+                    DisplayLength = shown.Length,
+                });
+
+                sb.Append(shown);
+                copied = span.SourceStart + span.SourceLength;
+            }
+            sb.Append(source, copied, source.Length - copied);
+
+            result.Text = sb.ToString();
+            return result;
         }
 
         /// <summary>The inside of a candidate's brackets, or null if it is not a token at all. Note that `id`

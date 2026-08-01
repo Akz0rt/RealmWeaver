@@ -87,5 +87,87 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Link Grammar Parse: PASS" : "Self-Test Link Grammar Parse: FAIL");
         }
+
+        [ContextMenu("Self-Test: Link Display And Index Map")]
+        public void SelfTestLinkDisplay()
+        {
+            bool ok = true;
+
+            // The resolver knows the POI by its CURRENT name — which is NOT the name stored in the token.
+            NotesLinkOps.NameResolver resolve = (kind, id) =>
+                kind == "poi" && id == "a1" ? "Тихая Гавань" : null;
+
+            const string src = "Мы вошли в [[poi:a1|Ржавый Якорь]] под дождём";
+            var d = NotesLinkOps.BuildDisplay(src, resolve);
+
+            // D1 — the CURRENT name wins over the stored copy. This is the whole rename mechanism.
+            if (d.Text != "Мы вошли в Тихая Гавань под дождём")
+            { Debug.LogError($"FAIL D1: display = \"{d.Text}\", want the CURRENT name substituted"); ok = false; }
+            if (d.Spans.Count != 1 || !d.Spans[0].Resolved)
+            { Debug.LogError("FAIL D1: the span must be marked Resolved"); ok = false; }
+
+            // The stored copy is the fallback, and ONLY when the target is gone.
+            var gone = NotesLinkOps.BuildDisplay(src, (k, i) => null);
+            if (gone.Text != "Мы вошли в Ржавый Якорь под дождём")
+            { Debug.LogError($"FAIL D1: unresolved display = \"{gone.Text}\", want the stored copy"); ok = false; }
+            if (gone.Spans.Count != 1 || gone.Spans[0].Resolved)
+            { Debug.LogError("FAIL D1: an unresolved span must NOT be marked Resolved — the renderer mutes it"); ok = false; }
+
+            if (d.Spans.Count != 1)
+            { Debug.Log("Self-Test Link Display And Index Map: FAIL"); return; }
+            var sp = d.Spans[0];
+
+            // L3a — the span's display range cuts exactly the substituted name.
+            if (d.Text.Substring(sp.DisplayStart, sp.DisplayLength) != "Тихая Гавань")
+            { Debug.LogError($"FAIL L3: display range cuts \"{d.Text.Substring(sp.DisplayStart, sp.DisplayLength)}\""); ok = false; }
+
+            // L3b — OUTSIDE a token the map is exact in both directions, including both boundaries and the
+            // very end of the string.
+            for (int s = 0; s <= src.Length; s++)
+            {
+                bool insideToken = s > sp.SourceStart && s < sp.SourceStart + sp.SourceLength;
+                if (insideToken) continue;
+                int roundTrip = d.ToSource(d.ToDisplay(s));
+                if (roundTrip != s)
+                { Debug.LogError($"FAIL L3: source {s} round-tripped to {roundTrip}"); ok = false; break; }
+            }
+
+            // L3c — an index INSIDE the token's machinery collapses to the token's start, in both directions.
+            int mid = sp.SourceStart + 5;   // somewhere in "[[poi:"
+            if (d.ToDisplay(mid) != sp.DisplayStart)
+            { Debug.LogError($"FAIL L3: source inside a token mapped to {d.ToDisplay(mid)}, want {sp.DisplayStart}"); ok = false; }
+            if (d.ToSource(sp.DisplayStart + 3) != sp.SourceStart)
+            { Debug.LogError($"FAIL L3: display inside a name mapped to {d.ToSource(sp.DisplayStart + 3)}, want {sp.SourceStart}"); ok = false; }
+
+            // L3d — THE BOUNDARY THAT MATTERS MOST: a caret immediately AFTER a link must land past "]]",
+            // not inside the token. This is the offset a click just to the right of a link produces, which
+            // is the commonest caret position anywhere near one.
+            int afterLink = d.ToSource(sp.DisplayStart + sp.DisplayLength);
+            if (afterLink != sp.SourceStart + sp.SourceLength)
+            { Debug.LogError($"FAIL L3: the caret after a link mapped to source {afterLink}, want {sp.SourceStart + sp.SourceLength} — just past the closing brackets"); ok = false; }
+
+            // Two tokens: the second one's offsets must account for the FIRST one's length change.
+            var t = NotesLinkOps.BuildDisplay("[[poi:a1|Старое]] и [[poi:a1|Тоже]]", resolve);
+            if (t.Text != "Тихая Гавань и Тихая Гавань")
+            { Debug.LogError($"FAIL L3: two tokens gave \"{t.Text}\""); ok = false; }
+            if (t.Spans.Count == 2 && t.Text.Substring(t.Spans[1].DisplayStart, t.Spans[1].DisplayLength) != "Тихая Гавань")
+            { Debug.LogError("FAIL L3: the SECOND span's display range is wrong — the running offset is not accumulating"); ok = false; }
+
+            // A source with no tokens is its own display, and the map is the identity.
+            var plain = NotesLinkOps.BuildDisplay("никаких ссылок", resolve);
+            if (plain.Text != "никаких ссылок" || plain.ToSource(4) != 4 || plain.ToDisplay(4) != 4)
+            { Debug.LogError("FAIL L3: a token-free string must map as the identity"); ok = false; }
+
+            // Null and empty stay ordinary inputs here too.
+            if (NotesLinkOps.BuildDisplay(null, resolve).Text != "" || NotesLinkOps.BuildDisplay("", resolve).Spans.Count != 0)
+            { Debug.LogError("FAIL: null/empty source must give an empty DisplayText, never throw"); ok = false; }
+
+            // A null resolver is the "nothing resolves" case, not a crash — it is what a view uses before
+            // the document is wired.
+            if (NotesLinkOps.BuildDisplay(src, null).Text != "Мы вошли в Ржавый Якорь под дождём")
+            { Debug.LogError("FAIL: a null resolver must fall back to stored copies, not throw"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Link Display And Index Map: PASS" : "Self-Test Link Display And Index Map: FAIL");
+        }
     }
 }
