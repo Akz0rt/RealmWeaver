@@ -224,6 +224,38 @@ namespace WorldGen.Rendering
             editingDungeon = null; // a fresh world drops any open dungeon editor
             parentTown = null;   // ...and any building-from-town back-target it was carrying
             battleGridRoomId = 0;   // ...and the room id that named the battle grid's tab
+            // ...and the request to CREATE a world, which a world arriving has just satisfied. The asymmetry
+            // of leaving this one out was the tell: every other world-scoped field above is cleared here, and
+            // this is the only one that gates the whole SCREEN.
+            //
+            // THE DEFECT IT CLOSES — a regression this arc introduced, whose two halves lived in different
+            // tasks, which is why no per-task review could see it. `newWorldRequested` and DesiredScreen's
+            // `|| newWorldRequested` clause came from Task 10c; ProjectMenuBar.LoadFrom's project-switch
+            // bracket came from Task 11. Neither owned the pair. «Открыть…» is offered unconditionally, so it
+            // is live while the generation form is up:
+            //   «Создать новый мир…» -> confirm -> the form appears -> «Файл -> Открыть…» -> project B loads
+            //   COMPLETELY AND CORRECTLY (bracketed, layout restored, both keys on B) -> and then
+            //   DesiredScreen still reads newWorldRequested and returns Generation.
+            // The DM opens a project and the form stays on screen, with their freshly loaded world, POIs,
+            // notes and restored tabs behind a deactivated shell. Recoverable only through «Вернуться к
+            // текущему миру», which nobody would associate with "I just opened a project". At the merge-base
+            // DesiredScreen had no such clause, so a successful load made hasMap true and left the form
+            // immediately — impossible there, reachable here.
+            //
+            // SAFE ON THE GENERATION PATH BY CONSTRUCTION, not by luck: OnWorldRegenerated has exactly two
+            // raise sites (WorldMapRenderer.cs:294 and :349), both meaning "a new world now exists", and
+            // StartGeneration has already cleared this flag before RunGeneration reaches either. So this line
+            // is a no-op there and a fix on the load path.
+            //
+            // ONE REAL BEHAVIOUR CHANGE ON THE FAILURE PATH, and it is the trade this line accepts rather
+            // than an oversight. LoadFromCells — which raises this event — is the FIRST loader inside
+            // LoadFrom's try, so on a load that throws AFTER it, the flag is already cleared and the DM lands
+            // on the workspace over a half-replaced world instead of back on the generation form. That is the
+            // better outcome, and for the same reason AbortProjectSwitch gives for its own choices: the world
+            // HAS been partly replaced, so the honest screen is the one that shows it. Parking the DM on a
+            // generation form they did not ask to return to would hide the damage behind the very screen this
+            // fix exists to stop them being stranded on — the same defect, on the other path.
+            newWorldRequested = false;
             RefreshScreenState();
         }
 
