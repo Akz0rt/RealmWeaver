@@ -190,6 +190,7 @@ GameObject:
   - component: {fileID: 43948001}
   - component: {fileID: 43948002}
   - component: {fileID: 43948003}
+  - component: {fileID: 43948004}
   m_Layer: 0
   m_Name: Test&Debug
   m_TagString: Untagged
@@ -407,6 +408,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bd5630405a975e84895921b2e6dd8d08, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.PoiMigrationSelfTests
+--- !u!114 &43948004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 43947986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 90ce62470a318884cb5386d0356c194b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Persistence.NotesSerializationSelfTests
 --- !u!1 &71450242
 GameObject:
   m_ObjectHideFlags: 0
@@ -485,6 +498,56 @@ Transform:
   - {fileID: 1481348584}
   - {fileID: 889721668}
   - {fileID: 42026286}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &416609043
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 416609045}
+  - component: {fileID: 416609044}
+  m_Layer: 0
+  m_Name: WorkspaceBuilder
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &416609044
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 416609043}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7b08eebc186cc82428245d874069b13d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Workspace.Rendering.WorkspaceBuilder
+  documentController: {fileID: 0}
+  mapCamera: {fileID: 0}
+  mapChrome: []
+  poiEditorScreenOverride: {fileID: 0}
+  interiorScreenOverride: {fileID: 0}
+  battleGridScreenOverride: {fileID: 0}
+--- !u!4 &416609045
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 416609043}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &519420028
@@ -1081,7 +1144,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b91a35db6fec70543bb00b6f033c53d5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  mapCamera: {fileID: 519420031}
 --- !u!1 &914212971
 GameObject:
   m_ObjectHideFlags: 0
@@ -2045,3 +2107,4 @@ SceneRoots:
   - {fileID: 587299943}
   - {fileID: 914212973}
   - {fileID: 43947988}
+  - {fileID: 416609045}

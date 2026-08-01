@@ -15,9 +15,13 @@ namespace WorldGen.Notes.Rendering
     /// NotesTreeSidebar.cs outright, as Task 9 said it would — every comment elsewhere in the project that
     /// cites either of them by name is citing history, and git is where to read it.
     ///
-    /// SampleScene.unity held MonoBehaviour entries pointing at both deleted scripts — "missing script"
-    /// components — for the whole gap between Task 10c's deletion and Task 11, which was the only task
-    /// allowed to edit the scene. Task 11 removed them; nothing in the scene names either file now.
+    /// SampleScene.unity WAS EXPECTED to hold "missing script" MonoBehaviour entries pointing at both, left
+    /// behind by Task 10c's deletion for Task 11 to clean up. It never did, and Task 11 checked rather than
+    /// assumed: neither guid (d2428ca0…, c425a136…, recovered from the .meta files 9abca26 deleted) appears
+    /// in the scene at HEAD, at 9abca26, or at 9abca26^. Both classes were only ever CODE-CREATED — this
+    /// builder AddComponent-ed them — so deleting the .cs files orphaned nothing in the scene at all. Kept
+    /// as a note because "the scene still references the deleted sidebar" was carried as a to-do across
+    /// three tasks and was never true.
     ///
     /// DocumentView's root starts parked under a bare, non-Canvas holding transform (nothing renders
     /// there — Unity draws uGUI only under a Canvas) and is re-parented into whichever workspace pane
