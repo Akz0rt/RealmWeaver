@@ -451,6 +451,93 @@ namespace WorldGen.Notes.Data
             block.Kind = BlockKind.Item;
         }
 
+        /// <summary>One thing a page references, from EITHER link mechanism. See CollectReferences.</summary>
+        public class PageReference
+        {
+            public string Kind;
+            public string Id;
+            /// <summary>Resolved at collection time — never the copy stored inside a token.</summary>
+            public string CurrentName;
+            /// <summary>The FIRST block that mentions it (R2), so a summary row can scroll to the mention.</summary>
+            public string FirstBlockId;
+        }
+
+        /// <summary>THE single answer to "what does this page reference".
+        ///
+        /// Two link mechanisms exist and neither is going away: DocBlock.LinkedPageId is the structural 📄
+        /// link from a row to a page (invariant I3, delete-integrity through ClearLinksTo), while an inline
+        /// [[token]] is text carrying no integrity guarantee at all — it resolves lazily and degrades to
+        /// prose. Two mechanisms that can DISAGREE about what a page references would be a real failure, the
+        /// same shape this file already guards against elsewhere ("LinkedPoiId is null rather than paired
+        /// with an IsLinked bool: the two could otherwise disagree"). They cannot disagree here because
+        /// nothing reads them separately: «Итоги» and «Упомянута в» read this, and only this.
+        ///
+        /// R1 document order · R2 a repeat keeps its FIRST position and first block · R3 an unresolvable
+        /// target is absent rather than present with a blank name · R4 the two mechanisms naming one target
+        /// give one entry.
+        ///
+        /// Within a block the 📄 link is collected BEFORE that block's text: it belongs to the row as a whole
+        /// rather than to a position inside it.</summary>
+        public static List<PageReference> CollectReferences(NotesPage page, NotesLinkOps.NameResolver resolve)
+        {
+            var found = new List<PageReference>();
+            if (page == null || page.Blocks == null) return found;
+
+            var seen = new HashSet<string>();
+
+            void Add(string kind, string id, string blockId)
+            {
+                if (string.IsNullOrEmpty(id)) return;
+                // Resolve BEFORE de-duplicating. The other order needs a seen.Remove on the unresolvable
+                // path to undo an entry it should never have made, and that Remove would be dead code: the
+                // resolver is a pure function of (kind, id), so a target that fails once fails always. Two
+                // guards on one condition is the exact shape mutation testing already caught on Indent's
+                // redundant depth-jump check — one of them has to go, and it is that one.
+                string name = resolve != null ? resolve(kind, id) : null;
+                if (name == null) return;                      // R3
+                if (!seen.Add(kind + ":" + id)) return;        // R2/R4
+                found.Add(new PageReference { Kind = kind, Id = id, CurrentName = name, FirstBlockId = blockId });
+            }
+
+            foreach (var block in page.Blocks)
+            {
+                if (block == null) continue;
+                if (!string.IsNullOrEmpty(block.LinkedPageId))
+                    Add(NotesLinkOps.KindPage, block.LinkedPageId, block.Id);
+                foreach (var span in NotesLinkOps.ParseSpans(block.Text))
+                    Add(span.Kind, span.Id, block.Id);
+                foreach (var span in NotesLinkOps.ParseSpans(block.Detail))
+                    Add(span.Kind, span.Id, block.Id);
+            }
+            return found;
+        }
+
+        /// <summary>True when this block references that page by EITHER mechanism. Extracted so that
+        /// FindBacklinks, and nothing else, decides what "mentions" means.
+        ///
+        /// Kind is part of the identity: a [[poi:…]] token that happens to carry a page's id references a
+        /// POI, not that page, exactly as FindPageBoundTo already refuses a matching Id under the wrong
+        /// WorldRefKind.</summary>
+        static bool BlockReferencesPage(DocBlock block, string pageId)
+        {
+            if (block == null) return false;
+            if (block.LinkedPageId == pageId) return true;
+            foreach (var span in NotesLinkOps.ParseSpans(block.Text))
+                if (span.Kind == NotesLinkOps.KindPage && span.Id == pageId) return true;
+            foreach (var span in NotesLinkOps.ParseSpans(block.Detail))
+                if (span.Kind == NotesLinkOps.KindPage && span.Id == pageId) return true;
+            return false;
+        }
+
+        /// <summary>Every place this page is mentioned, for «Упомянута в».
+        ///
+        /// THE PREDICATE WIDENED IN Р2 and the walk deliberately did not. Before, only a 📄 LinkedPageId
+        /// counted, so a page named ten times in prose had no backlinks at all — which made «Упомянута в»
+        /// mean something narrower than it says. Now BlockReferencesPage answers for both mechanisms.
+        ///
+        /// This still walks the blocks itself rather than reading CollectReferences, because it needs the
+        /// block INDEX for SectionTitleFor, and a PageReference cannot supply one. That is the whole reason
+        /// this is a widening rather than a rewrite, and why every pre-existing backlink test still holds.</summary>
         public static List<Backlink> FindBacklinks(NotesDocument doc, string pageId)
         {
             var found = new List<Backlink>();
@@ -459,7 +546,7 @@ namespace WorldGen.Notes.Data
             foreach (var g in doc.Groups)
                 foreach (var p in g.Pages)
                     for (int i = 0; i < p.Blocks.Count; i++)
-                        if (p.Blocks[i].LinkedPageId == pageId)
+                        if (BlockReferencesPage(p.Blocks[i], pageId))
                             found.Add(new Backlink
                             {
                                 SourcePageId = p.Id,

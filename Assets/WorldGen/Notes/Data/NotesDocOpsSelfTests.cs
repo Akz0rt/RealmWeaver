@@ -718,5 +718,148 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Ensure Page For World Object: PASS" : "Self-Test Ensure Page For World Object: FAIL");
         }
+
+        [ContextMenu("Self-Test: Reference Index")]
+        public void SelfTestReferenceIndex()
+        {
+            bool ok = true;
+
+            NotesLinkOps.NameResolver resolve = (kind, id) =>
+            {
+                if (kind == "poi" && id == "p1") return "Ржавый Якорь";
+                if (kind == "poi" && id == "p2") return "Тихий Брод";
+                if (kind == NotesLinkOps.KindPage && id == "page-olga") return "Ольга";
+                return null;   // anything else has been deleted
+            };
+
+            var page = new NotesPage { Name = "Сессия 1" };
+            var b0 = NotesDocOps.NewBlock(BlockKind.Section, 0, "Завязка");
+            var b1 = NotesDocOps.NewBlock(BlockKind.Item, 1, "Отряд идёт в [[poi:p2|Тихий Брод]]");
+            var b2 = NotesDocOps.NewBlock(BlockKind.Item, 1, "снова [[poi:p2|Тихий Брод]], потом [[poi:p1|Якорь]]");
+            var b3 = NotesDocOps.NewBlock(BlockKind.Item, 1, "мёртвая [[poi:gone|Забытая Башня]]");
+            var b4 = NotesDocOps.NewBlock(BlockKind.Item, 1, "про неё");
+            b4.LinkedPageId = "page-olga";
+            page.Blocks.AddRange(new[] { b0, b1, b2, b3, b4 });
+
+            var refs = NotesDocOps.CollectReferences(page, resolve);
+
+            // R1 + R2 — document order, and a repeat keeps its FIRST position rather than moving to the end.
+            var ids = new List<string>();
+            foreach (var r in refs) ids.Add(r.Id);
+            if (string.Join(",", ids) != "p2,p1,page-olga")
+            { Debug.LogError($"FAIL R1/R2: index = [{string.Join(",", ids)}], want [p2,p1,page-olga]"); ok = false; }
+
+            // R2 — and it is the FIRST block that is remembered, not the last.
+            var first = refs.Find(r => r.Id == "p2");
+            if (first == null || first.FirstBlockId != b1.Id)
+            { Debug.LogError("FAIL R2: p2's FirstBlockId is not the first block that mentions it"); ok = false; }
+
+            // R3 — an unresolvable target is ABSENT, not present with a blank name.
+            if (refs.Exists(r => r.Id == "gone"))
+            { Debug.LogError("FAIL R3: a deleted target must not appear in the index at all"); ok = false; }
+
+            // The index carries the CURRENT name, never the copy stored in the token.
+            var pRef = refs.Find(r => r.Id == "p1");
+            if (pRef == null || pRef.CurrentName != "Ржавый Якорь")
+            { Debug.LogError($"FAIL: p1's name is \"{pRef?.CurrentName}\", want the resolved «Ржавый Якорь», not the stored «Якорь»"); ok = false; }
+
+            // The 📄 block link and an inline link are two mechanisms, and the index is where they unify —
+            // so a page reached only through LinkedPageId is in it, with its kind named.
+            var olga = refs.Find(r => r.Id == "page-olga");
+            if (olga == null || olga.Kind != NotesLinkOps.KindPage || olga.FirstBlockId != b4.Id)
+            { Debug.LogError("FAIL: a LinkedPageId must enter the index as a page reference on its own block"); ok = false; }
+
+            // A block's OWN 📄 link is collected before that block's text — the row's link belongs to the row
+            // as a whole rather than to a position inside it.
+            var mixed = new NotesPage();
+            var m0 = NotesDocOps.NewBlock(BlockKind.Item, 1, "ведёт к [[poi:p1|Якорь]]");
+            m0.LinkedPageId = "page-olga";
+            mixed.Blocks.Add(m0);
+            var mixedRefs = NotesDocOps.CollectReferences(mixed, resolve);
+            if (mixedRefs.Count != 2 || mixedRefs[0].Id != "page-olga" || mixedRefs[1].Id != "p1")
+            { Debug.LogError("FAIL: within one block the 📄 link must be collected before the inline ones"); ok = false; }
+
+            // R4 — a LinkedPageId and an inline link to the SAME page are one entry.
+            var b5 = NotesDocOps.NewBlock(BlockKind.Item, 1, "и снова [[page:page-olga|Ольга]]");
+            page.Blocks.Add(b5);
+            var again = NotesDocOps.CollectReferences(page, resolve);
+            int olgaCount = again.FindAll(r => r.Id == "page-olga").Count;
+            if (olgaCount != 1)
+            { Debug.LogError($"FAIL R4: «Ольга» appears {olgaCount} times, want 1 — the two mechanisms unify here"); ok = false; }
+
+            // A ⊕ detail body carries links too, and they must reach the index.
+            var withDetail = new NotesPage();
+            var d0 = NotesDocOps.NewBlock(BlockKind.Item, 1, "заметка");
+            d0.Detail = "внутри упомянут [[poi:p1|Якорь]]";
+            withDetail.Blocks.Add(d0);
+            if (!NotesDocOps.CollectReferences(withDetail, resolve).Exists(r => r.Id == "p1"))
+            { Debug.LogError("FAIL: a link inside a ⊕ Detail body must reach the index"); ok = false; }
+
+            // A page with no links at all yields an EMPTY index — this is what makes «Итоги» absent, not empty.
+            var bare = new NotesPage();
+            bare.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1, "просто текст"));
+            if (NotesDocOps.CollectReferences(bare, resolve).Count != 0)
+            { Debug.LogError("FAIL: a link-free page must produce an empty index"); ok = false; }
+
+            // Null inputs are ordinary, not special cases.
+            if (NotesDocOps.CollectReferences(null, resolve).Count != 0)
+            { Debug.LogError("FAIL: a null page must give an empty index, never throw"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Reference Index: PASS" : "Self-Test Reference Index: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Backlinks Count Inline Mentions")]
+        public void SelfTestBacklinksInline()
+        {
+            bool ok = true;
+
+            var target = new NotesPage { Name = "Ольга" };
+            var source = new NotesPage { Name = "Сессия 3" };
+            var sec = NotesDocOps.NewBlock(BlockKind.Section, 0, "Встречи");
+            var prose = NotesDocOps.NewBlock(BlockKind.Item, 1, "их встречает [[page:" + target.Id + "|Ольга]]");
+            source.Blocks.Add(sec);
+            source.Blocks.Add(prose);
+
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            g.Pages.Add(target);
+            g.Pages.Add(source);
+            doc.Groups.Add(g);
+
+            var back = NotesDocOps.FindBacklinks(doc, target.Id);
+
+            // The widening: before Р2 this was ZERO, because only LinkedPageId counted.
+            if (back.Count != 1)
+            { Debug.LogError($"FAIL: {back.Count} backlinks, want 1 — an inline mention IS a mention"); ok = false; }
+            else
+            {
+                // Everything FindBacklinks already produced must keep working — this is a widening, not a
+                // rewrite, and the section walk is the part that could not come from the reference index.
+                if (back[0].SourcePageName != "Сессия 3")
+                { Debug.LogError($"FAIL: SourcePageName = \"{back[0].SourcePageName}\""); ok = false; }
+                if (back[0].SectionTitle != "Встречи")
+                { Debug.LogError($"FAIL: SectionTitle = \"{back[0].SectionTitle}\", want «Встречи» — the section walk must survive"); ok = false; }
+                if (back[0].BlockId != prose.Id)
+                { Debug.LogError("FAIL: BlockId does not name the mentioning block"); ok = false; }
+            }
+
+            // A block carrying BOTH a LinkedPageId and an inline link to the same page is ONE backlink.
+            prose.LinkedPageId = target.Id;
+            if (NotesDocOps.FindBacklinks(doc, target.Id).Count != 1)
+            { Debug.LogError("FAIL: one block must produce one backlink, however many ways it references the page"); ok = false; }
+
+            // An inline link to a DIFFERENT page is not a backlink to this one.
+            prose.LinkedPageId = null;
+            prose.Text = "их встречает [[page:someone-else|Кто-то]]";
+            if (NotesDocOps.FindBacklinks(doc, target.Id).Count != 0)
+            { Debug.LogError("FAIL: a mention of another page must not count as a backlink here"); ok = false; }
+
+            // Neither is a WORLD link that happens to carry the same id — kind is part of the identity.
+            prose.Text = "их встречает [[poi:" + target.Id + "|Ольга]]";
+            if (NotesDocOps.FindBacklinks(doc, target.Id).Count != 0)
+            { Debug.LogError("FAIL: a POI link with a page's id must not count as a backlink to that page"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Backlinks Count Inline Mentions: PASS" : "Self-Test Backlinks Count Inline Mentions: FAIL");
+        }
     }
 }
