@@ -161,6 +161,16 @@ namespace WorldGen.Notes.Data
             if (r.Handled)
             { Debug.LogError("FAIL arrows: Up away from the first visual line must fall through"); ok = false; }
 
+            // The same rule from the other side. Pinned separately from the Up case above because atFirstLine
+            // and atLastLine gate two different branches of Apply, and because this is now the ONLY thing
+            // keeping the Down half of the rule alive: DocKeyboardController narrowed the gesture to rows that
+            // are a single visual line, so the view passes true for both flags and can no longer exercise
+            // either false branch in production. Non-vacuous — blocks[3] «Хель» is below blocks[2], so an
+            // atLastLine Down here really would move.
+            r = DocKeyboardOps.Apply(blocks, blocks[2].Id, 3, false, false, DocKey.Down);
+            if (r.Handled)
+            { Debug.LogError("FAIL arrows: Down away from the last visual line must fall through"); ok = false; }
+
             // At the first line it moves to the previous row, keeping the caret column where it fits.
             r = DocKeyboardOps.Apply(blocks, blocks[2].Id, 3, true, false, DocKey.Up);
             if (!r.Handled || r.FocusBlockId != blocks[1].Id)

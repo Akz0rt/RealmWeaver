@@ -39,9 +39,16 @@ namespace WorldGen.Notes.Data
     {
         /// <param name="caretOffset">Caret position inside the focused block's text; ignored for blocks that
         /// have no text field.</param>
-        /// <param name="atFirstLine">True when the caret sits on the focused field's FIRST visual line — only
-        /// the view can know this, since it depends on wrapping.</param>
-        /// <param name="atLastLine">Likewise for the last visual line.</param>
+        /// <param name="atFirstLine">True when the caret sits on the focused field's FIRST visual line. Still
+        /// honoured, and still something only a view could measure — but no longer something the view in this
+        /// project measures. DocKeyboardController now takes a vertical key only on a row it has proved to be
+        /// a SINGLE visual line, where first and last are the same line, and so passes true for this and for
+        /// atLastLine always; legacy InputField cannot be asked which visual line a caret is on without state
+        /// it keeps private (DocBlockView.IsSingleVisualLine records the two reasons). The false branches are
+        /// therefore exercised only by DocKeyboardOpsSelfTests, which pins both — the rule "an arrow inside a
+        /// wrapped row is not a block move" belongs here whether or not a caller can currently report it.</param>
+        /// <param name="atLastLine">Likewise for the last visual line, and likewise always true in
+        /// production.</param>
         public static DocKeyResult Apply(List<DocBlock> blocks, string focusedBlockId, int caretOffset,
                                         bool atFirstLine, bool atLastLine, DocKey key)
         {

@@ -24,7 +24,7 @@ namespace WorldGen.Notes.Rendering
     /// DM reported as «в новую строку переносится последний символ из предыдущей»: with the EventSystem's
     /// Update running first, the drain applied the final typed character (text length n) and then the Enter,
     /// which deactivated the field — so FindFocusedRow returned null, no refresh happened, and the caret left
-    /// over from the previous frame still said n-1. DocKeyboardOps.OnEnter (DocKeyboardOps.cs:81) saw
+    /// over from the previous frame still said n-1. DocKeyboardOps.OnEnter (DocKeyboardOps.cs:88) saw
     /// caretOffset < text.Length, took its mid-text branch, and NotesDocOps.SplitAt moved that one character
     /// into the new row. It needs no unusual typing speed: the final character and the Enter only have to
     /// arrive in the same drain, and at the frame rate a loaded Editor scene runs at they routinely do.
@@ -41,9 +41,11 @@ namespace WorldGen.Notes.Rendering
     /// Tab can, now that DocBlockView refuses the tab CHARACTER. Backspace cannot be told apart by the caret
     /// alone, because the field's own Backspace moves it — hence the "did this row's text change in this
     /// drain" test below. Up/Down cannot be shared at all on a wrapped row, because the field moves the caret
-    /// INSIDE it, so they are taken only where that movement is invisible. None of that is new — consuming in
-    /// Update did not avoid a single one of these collisions, it only made each happen in one Update ordering
-    /// and not the other. This is what they look like once the coin-flip is gone.
+    /// INSIDE it, so they are taken only where that movement is invisible. None of these collisions is new
+    /// and consuming in Update avoided none of them; it only decided, for SOME of them, which Update ordering
+    /// they surfaced in. Tab's happened in both — the tab character reached DocBlock.Text either way, and the
+    /// ordering chose only whether the DM saw it at once or at the next rebuild. This is what the whole set
+    /// looks like once the coin-flip is gone.
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
@@ -146,11 +148,22 @@ namespace WorldGen.Notes.Rendering
             { if (VerticalIsOurs(live)) Handle(DocKey.Down); return; }
         }
 
-        /// <summary>Whether a vertical arrow belongs to this class rather than to the field. Two conditions:
-        /// the row's caret must actually have been placed — while it is still PENDING the field is showing
-        /// either SelectAll's whole-text selection or a caret this class has not yet moved to the offset it
-        /// asked for, so no reading of "where is the DM" is worth acting on — and the row must be provably a
-        /// single visual line.</summary>
+        /// <summary>Whether a vertical arrow belongs to this class rather than to the field. THREE conditions,
+        /// and each one removes cross-block arrow navigation from a situation where it used to happen — worth
+        /// listing in full, because the wrapped row is the only one of the three that is obvious:
+        ///   • `view != null` — no row is being edited. Arrows used to move between blocks anyway, off the
+        ///     cached id of whatever was focused last, exactly as Backspace used to merge them; same
+        ///     tightening, same reason (a block move is a structural act and the DM must be inside a block to
+        ///     ask for it), and the same asymmetry with Enter, which still acts on the row it just tore down.
+        ///   • `!CaretPending` — the 1-2 frames between FocusAt and the frame that places the caret. The
+        ///     field is showing either SelectAll's whole-text selection or a caret not yet moved to the offset
+        ///     this class asked for, so no reading of "where is the DM" is worth acting on. Arrows in that
+        ///     window are DROPPED, not deferred; the alternative is acting on a position the DM cannot see.
+        ///     AdoptFocus used to keep them alive here by guessing the wrapping, which is what round 1 removed.
+        ///   • `IsSingleVisualLine()` — the wrapped row, where the field has already moved the caret inside
+        ///     the row and taking the key as well would do two things at once. Also false whenever the row
+        ///     cannot be measured, by that method's own guarantee.
+        /// The first two are microseconds wide in practice; the third is the one the DM can feel.</summary>
         static bool VerticalIsOurs(DocBlockView view)
             => view != null && !view.CaretPending && view.IsSingleVisualLine();
 

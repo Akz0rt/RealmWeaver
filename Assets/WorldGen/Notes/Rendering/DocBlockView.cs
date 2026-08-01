@@ -263,8 +263,10 @@ namespace WorldGen.Notes.Rendering
             Field.ActivateInputField();
         }
 
-        /// <summary>Whether this row's whole text occupies ONE visual line, measured now. False also means
-        /// "cannot prove it", which callers must treat as "do not act" — see the width guard below.
+        /// <summary>Whether this row's whole text occupies ONE visual line. False also means "cannot prove
+        /// it": every path that fails to measure answers false, so a caller may narrow a gesture on a true
+        /// answer and never on the absence of one. The single case answered WITHOUT measuring is the empty
+        /// row, which is one line by construction — see the body.
         ///
         /// This replaces a pair of CaretOnFirstLine/CaretOnLastLine flags that asked a question no caller can
         /// answer correctly from out here, and answering it wrongly cost the DM a double action on Up/Down
@@ -289,8 +291,19 @@ namespace WorldGen.Notes.Rendering
         {
             if (TextComponent == null || Field == null) return false;
 
-            // Before the first layout pass a fresh row's rect is still zero-wide, and wrapping text into a
-            // zero-width box reports a line per character. Unprovable, so: not single-line, do not act.
+            // An empty row is one line BY CONSTRUCTION, and is answered before anything is measured. This is
+            // not a shortcut: it is the case the guarantee would otherwise fail on, because a row Enter just
+            // created is both empty and un-laid-out, so the width guard below would refuse to prove it and the
+            // DM would lose the arrows on precisely the row they are most likely to arrow out of. Nothing can
+            // wrap a string with no characters in it, so there is no measurement left to be wrong about.
+            string text = Field.text;
+            if (string.IsNullOrEmpty(text)) return true;
+
+            // Everything past here is a measurement, and every way a measurement can fail to happen answers
+            // FALSE. "Cannot prove it is a single line" must never be read as "it is a single line" — the
+            // caller narrows a gesture on the strength of a true answer, so an unprovable row has to be left
+            // to the field. Before the first layout pass a fresh row's rect is still zero-wide, and wrapping
+            // text into a zero-width box would report a line per character anyway.
             float width = TextComponent.rectTransform.rect.width;
             if (width <= 1f) return false;
 
@@ -298,8 +311,14 @@ namespace WorldGen.Notes.Rendering
             // Height 0 with this Text's verticalOverflow (Overflow) generates every line rather than clipping;
             // only the width decides the wrapping, and it is the width the field itself wraps at
             // (UpdateLabel and Text.OnPopulateMesh both take m_TextComponent.rectTransform.rect).
-            lineProbe.Populate(Field.text ?? "", TextComponent.GetGenerationSettings(new Vector2(width, 0f)));
-            return lineProbe.lineCount <= 1;
+            if (!lineProbe.Populate(text, TextComponent.GetGenerationSettings(new Vector2(width, 0f))))
+                return false;   // generation failed outright (a missing font, most likely) — nothing measured
+
+            // A zero-line result for text that HAS characters is the stale-probe case: Populate can leave the
+            // previous run's contents in place, so lineCount 0 here means "this run produced nothing", not
+            // "this text occupies no lines". Reading it as <= 1 would have been the fail-open hole.
+            if (lineProbe.lineCount <= 0) return false;
+            return lineProbe.lineCount == 1;
         }
 
         void LateUpdate()
