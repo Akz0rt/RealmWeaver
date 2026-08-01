@@ -120,6 +120,9 @@ namespace WorldGen.Notes.Rendering
                           $"anchor={(hasField ? live.Field.selectionAnchorPosition : -1)} " +
                           $"focus={(hasField ? live.Field.selectionFocusPosition : -1)} " +
                           $"textChangedThisFrame={(live != null && live.TextChangedThisFrame)} " +
+                          $"len={(live != null && live.Data != null ? (live.Data.Text ?? "").Length : -1)} " +
+                          $"strAnchor={(hasField ? live.Field.selectionStringAnchorPosition : -1)} " +
+                          $"strFocus={(hasField ? live.Field.selectionStringFocusPosition : -1)} " +
                           $"lastFocusedId={(string.IsNullOrEmpty(lastFocusedId) ? "—" : lastFocusedId)}");
             }
 
@@ -203,6 +206,15 @@ namespace WorldGen.Notes.Rendering
         static bool VerticalIsOurs(DocBlockView view)
             => view != null && !view.CaretPending && view.IsSingleVisualLine();
 
+        /// <summary>Whether anything is HIGHLIGHTED — the caret pair, which is the one the DM can see.
+        ///
+        /// DELIBERATELY NOT TMP'S OWN NOTION. The field decides "is there a selection" from its STRING pair
+        /// instead (TMP_InputField.cs:996), and those two can disagree; that disagreement is the leading
+        /// suspect for the phantom onValueChanged that OnFieldChanged now filters out. Widening this method to
+        /// refuse whenever EITHER pair differs was written and then withdrawn, because it would block exactly
+        /// the keystroke the filter exists to let through — one fix undoing the other, in the same commit.
+        /// The rule that stands is the visible one: a Backspace with something highlighted belongs to the
+        /// field, and "highlighted" means what the DM sees.</summary>
         static bool HasSelection(DocBlockView view)
             => view != null && view.Field != null
                && view.Field.selectionAnchorPosition != view.Field.selectionFocusPosition;

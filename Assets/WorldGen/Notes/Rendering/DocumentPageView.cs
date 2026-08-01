@@ -133,7 +133,12 @@ namespace WorldGen.Notes.Rendering
             scroll.horizontal = false;
             scroll.vertical = true;
             scroll.movementType = ScrollRect.MovementType.Clamped;
-            scroll.scrollSensitivity = 24f;
+            // ZERO, and not because the wheel is unwanted — because PageWheelRelay below now owns it. The
+            // ScrollRect receives the same scroll event no matter what (see that class's doc: an event goes to
+            // every handler on the object), and a sensitivity of zero is the only way to stop it acting on the
+            // wheel a second time, in its own instant, unsmoothed way, on top of ours.
+            scroll.scrollSensitivity = 0f;
+            root.AddComponent<PageWheelRelay>().page = this;
 
             viewportGO = new GameObject("Viewport", typeof(RectTransform));
             viewportGO.transform.SetParent(root.transform, false);
@@ -609,7 +614,73 @@ namespace WorldGen.Notes.Rendering
         void LateUpdate()
         {
             ApplyColumnMeasure();
+            // Order is deliberate: the wheel glides toward wherever it was aimed, and THEN the caret gets its
+            // say. A reveal cancels the glide outright (see RevealCaretIfMoved's write), which is right — the
+            // DM has started typing somewhere, and finishing a scroll they began a moment earlier would carry
+            // them away from it.
+            AnimateScroll();
             RevealCaretIfMoved();
+        }
+
+        // Where the wheel is aiming. Invalid means "nothing is gliding" — not "aiming at zero".
+        float scrollTarget;
+        bool scrollTargetValid;
+        // The last value THIS class wrote, so a position that changed by any other means (a drag, the
+        // scrollbar handle, the ScrollRect's own clamp after the page got shorter) is recognised and the glide
+        // steps aside instead of yanking the page back to a target nobody is aiming at any more.
+        float lastScrollWritten;
+
+        /// <summary>How far one wheel notch travels, in pixels. The ScrollRect's own sensitivity was 24 and
+        /// moved the page in visible jerks of about a line and a half; the DM asked for faster AND smoother,
+        /// which are not the same request — this is the faster half.</summary>
+        const float WheelStep = 100f;
+
+        /// <summary>How quickly the page catches up with the wheel, per second, as an exponential rate. ~18
+        /// settles in about a fifth of a second: fast enough that the page never feels like it is lagging
+        /// behind the hand, slow enough that the eye can follow the text past rather than losing its place.
+        /// This is the smoother half.</summary>
+        const float ScrollSmoothing = 18f;
+
+        /// <summary>A wheel notch, relayed by PageWheelRelay. Aims the glide; it does not move anything
+        /// itself.
+        ///
+        /// AIMED FROM THE EXISTING TARGET, not from where the page happens to be at this instant — that is
+        /// what makes several quick notches ADD UP into one long travel instead of each one restarting the
+        /// same short hop from wherever the previous one had got to.</summary>
+        public void WheelScroll(float wheelDeltaY)
+        {
+            if (content == null || viewportGO == null) return;
+            if (Mathf.Abs(wheelDeltaY) < 0.01f) return;
+
+            float travel = Mathf.Max(0f, content.rect.height - ((RectTransform)viewportGO.transform).rect.height);
+            float from = scrollTargetValid ? scrollTarget : content.anchoredPosition.y;
+
+            // The sign mirrors ScrollRect.OnScroll, which flips scrollDelta.y before applying it: a wheel
+            // pushed away from the DM gives a POSITIVE delta and must move the page towards its start, which
+            // is a SMALLER anchoredPosition.y on a top-pivoted content.
+            scrollTarget = Mathf.Clamp(from - wheelDeltaY * WheelStep, 0f, travel);
+            scrollTargetValid = true;
+            lastScrollWritten = content.anchoredPosition.y;
+        }
+
+        /// <summary>Advances the glide by one frame. Exponential rather than linear, so the page starts
+        /// immediately and eases into its stop instead of arriving at full speed; unscaled time, because the
+        /// project pauses Time.timeScale during a project load and a scroll frozen mid-glide would look like
+        /// the window had hung.</summary>
+        void AnimateScroll()
+        {
+            if (!scrollTargetValid || content == null) return;
+
+            float current = content.anchoredPosition.y;
+            // Moved by something that is not us — a drag, the scrollbar, a rebuild's clamp. Whoever did that
+            // is the one the DM is watching; drop the glide rather than compete with it.
+            if (Mathf.Abs(current - lastScrollWritten) > 0.5f) { scrollTargetValid = false; return; }
+
+            float next = Mathf.Lerp(current, scrollTarget, 1f - Mathf.Exp(-ScrollSmoothing * Time.unscaledDeltaTime));
+            if (Mathf.Abs(next - scrollTarget) < 0.5f) { next = scrollTarget; scrollTargetValid = false; }
+
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x, next);
+            lastScrollWritten = next;
         }
 
         // What RevealCaretIfMoved saw last time, so it can tell "the caret moved" from "the DM scrolled".
@@ -684,6 +755,11 @@ namespace WorldGen.Notes.Rendering
             // barely taller than its window. The ScrollRect's own Clamped movement corrects any overshoot.
             content.anchoredPosition = new Vector2(content.anchoredPosition.x,
                                                    content.anchoredPosition.y + shift / scale);
+            // A wheel glide in flight is abandoned here rather than re-aimed: the DM has just typed
+            // somewhere, and carrying on to a target they chose a moment BEFORE that would take them straight
+            // back off the line they are writing on. Without this the two would also fight — AnimateScroll
+            // would see a position it did not write and stand down anyway, one frame later and less clearly.
+            scrollTargetValid = false;
         }
 
         /// <summary>How much clear space to leave between the caret's line and the edge it was approaching, so

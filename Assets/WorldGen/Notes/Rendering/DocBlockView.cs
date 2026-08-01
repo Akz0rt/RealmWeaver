@@ -402,10 +402,34 @@ namespace WorldGen.Notes.Rendering
             Field.onEndEdit.RemoveListener(OnFieldEndEdit);
         }
 
+        /// <summary>The field reporting a new value — which, and this is the whole reason for the comparison
+        /// below, does NOT mean the value is new.
+        ///
+        /// TMP RAISES onValueChanged FOR EDITS THAT REMOVED NOTHING. Its Backspace asks `hasSelection`, and
+        /// that property compares the STRING positions (TMP_InputField.cs:996), not the caret positions the
+        /// rest of the field exposes; when those two pairs disagree it takes the selection branch, calls
+        /// Delete() — which returns immediately, because by ITS measure the range is empty
+        /// (TMP_InputField.cs:3044) — and then fires the callback anyway, unconditionally
+        /// (TMP_InputField.cs:3168-3173). The value handed to us is byte-for-byte the one we already had.
+        ///
+        /// THE DEFECT THAT COST A CHECKPOINT ROUND. TextChangedThisFrame is the flag DocKeyboardController
+        /// uses to tell "the DM pressed Backspace at the START of the row" (ours: merge with the row above)
+        /// from "the DM deleted the first character and the field moved the caret to 0" (not ours). Setting it
+        /// on a callback that removed nothing made the FIRST case look like the second, so Backspace at offset
+        /// 0 silently did nothing at all — every time, on an empty row most of all. Comparing the strings
+        /// makes the flag mean what its name says, and it is the honest fix rather than reaching for TMP's
+        /// private notion of a selection: what the caller needs to know is whether the TEXT moved, and that
+        /// question has an exact answer right here.
+        ///
+        /// It also stops a no-op keystroke from marking the project dirty, which is a second, quieter thing
+        /// this was doing.</summary>
         void OnFieldChanged(string value)
         {
             if (data == null) return;
+            string previous = data.Text ?? "";
+            string next = value ?? "";
             data.Text = value;
+            if (previous == next) return;
             textChangedOnFrame = Time.frameCount;
             OnTextChanged?.Invoke(data.Id);
         }
