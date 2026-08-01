@@ -170,9 +170,10 @@ namespace WorldGen.Workspace.Data
         /// flagged Important against NavigatorTree.Build's world-map row (then a group of its own, called
         /// Pinned; folded into «Мир» in Task 10e), fixed there by moving it above that method's own doc==null
         /// guard — QuickOpen.Search does the identical move for the world map (see its class doc's W1
-        /// paragraph). A world-OBJECT hit (W2) still does NOT get this treatment: it stays gated on `doc`,
-        /// which was because choosing it was inert without one and is now a deliberately-kept leftover — see
-        /// the W1-W5 paragraph of QuickOpen's class doc. This test is the world map's half.</summary>
+        /// paragraph). A world-OBJECT hit (W2) now gets the same treatment for the same reason (Task 10e's
+        /// review round removed the gate along with W4); SelfTestQuickOpenWorldObjects owns that half, and
+        /// this test stays the world map's, which is why it passes `world: null` throughout — the two halves
+        /// fail separately rather than one masking the other.</summary>
         [ContextMenu("Self-Test: Quick Open World Map Survives Null Doc")]
         public void SelfTestQuickOpenWorldMapSurvivesNullDoc()
         {
@@ -193,9 +194,9 @@ namespace WorldGen.Workspace.Data
                 { Debug.LogError($"FAIL quickopen-nulldoc: world-map hit title «{hits[0].Title}», want «{WorkspaceOps.DefaultWorldMapTitle}»"); ok = false; }
             }
 
-            // A null doc must not throw, and a query the world map does NOT match must return an EMPTY list
-            // — not, say, every world-object hit (which stays correctly gated on doc, see the method doc) —
-            // confirming a null doc really does suppress every doc-dependent candidate and only that one.
+            // A null doc must not throw, and a query the world map does NOT match must return an EMPTY list —
+            // this call passes `world: null` too, so the only candidates a document could have contributed
+            // are page hits, and zero confirms a null doc really does suppress those and nothing else.
             var noMatch = QuickOpen.Search(null, null, "нет такого");
             if (noMatch.Count != 0)
             { Debug.LogError($"FAIL quickopen-nulldoc: Search(null, null, «нет такого») returned {noMatch.Count}, want 0"); ok = false; }
@@ -255,23 +256,30 @@ namespace WorldGen.Workspace.Data
                 { Debug.LogError("FAIL quickopen-world: a world-object hit must carry no Snippet, or its Kind label would never render (W3)"); ok = false; }
             }
 
-            // W4 — a POI that ALREADY has a bound page produces exactly one row, and it is the PAGE, not the
-            // POI. This pins the RULE, not its rationale: the rationale (both rows would open the same
-            // target) died with Task 10e, which made the world row open the place's editor while the page row
-            // still opens the note — see QuickOpen's class doc for why the rule is nonetheless kept for now.
+            // W4 IS GONE (Task 10e review round 1) — a POI that already has a bound page produces BOTH rows:
+            // the note AND the place. Two rows are correct here, not duplication, because they open two
+            // different things (the page hit a note, the world hit the POI's editor) — and suppressing the
+            // place made false the very promise the Task 10e brief accepts the «Мир» drowning risk on,
+            // «Ctrl+K still reaches everything», for exactly the POIs the DM worked on hardest.
+            //
+            // Asserted POSITIVELY on BOTH rows, by identity, not as a count of 2: a count alone would pass on
+            // two page hits, or two world hits, or one of each for the WRONG objects. The page row is
+            // recognised by World == null AND its own page id; the place row by World naming poi-2.
             var boundPage = new NotesPage { Name = "Тихий Брод", Bound = new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-2" } };
             g.Pages.Add(boundPage);
             var boundPoi = new WorldObjectRef { Kind = WorldRefKind.Poi, Id = "poi-2", Name = "Тихий Брод", KindLabel = "город" };
             var boundHits = QuickOpen.Search(doc, new List<WorldObjectRef> { boundPoi }, "брод");
-            if (boundHits.Count != 1)
-            { Debug.LogError($"FAIL quickopen-world: bound POI produced {boundHits.Count} hit(s), want exactly 1 — the page and the POI must not both appear (W4)"); ok = false; }
-            else
-            {
-                if (boundHits[0].World != null)
-                { Debug.LogError("FAIL quickopen-world: the surviving hit must be the PAGE hit (World == null), not the POI hit (W4)"); ok = false; }
-                if (boundHits[0].Target == null || boundHits[0].Target.Id != boundPage.Id)
-                { Debug.LogError("FAIL quickopen-world: the surviving hit's Target must name the bound page's own id (W4)"); ok = false; }
-            }
+            if (!boundHits.Exists(h => h.World != null && h.World.Kind == WorldRefKind.Poi && h.World.Id == "poi-2"))
+            { Debug.LogError($"FAIL quickopen-world: a POI with a bound page produced no PLACE row ({boundHits.Count} hit(s) total) — having a note must not hide the place itself"); ok = false; }
+            if (!boundHits.Exists(h => h.World == null && h.Target != null && h.Target.Id == boundPage.Id))
+            { Debug.LogError($"FAIL quickopen-world: the bound page's own row is missing ({boundHits.Count} hit(s) total) — removing W4 must add the place's row, never replace the note's"); ok = false; }
+
+            // The `doc == null` gate went with W4, and by construction: CollectWorldHits no longer TAKES a
+            // document, so it cannot be gated on one. Pinned behaviourally here rather than trusted to the
+            // signature — a future edit that re-added the parameter and the guard would fail this line.
+            var noDocWorldHits = QuickOpen.Search(null, new List<WorldObjectRef> { boundPoi }, "брод");
+            if (!noDocWorldHits.Exists(h => h.World != null && h.World.Id == "poi-2"))
+            { Debug.LogError($"FAIL quickopen-world: Search(null, world, «брод») returned {noDocWorldHits.Count} hit(s) with no place among them — a world object needs no document to be opened, so it must not be gated on one"); ok = false; }
 
             // W5 — `world == null` is the pre-generation state (no POIs placed yet, or PoiManager not found),
             // not an error: page hits still come back, and Search must not throw. Wrapped in try/catch, a

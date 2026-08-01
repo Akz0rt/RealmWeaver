@@ -67,26 +67,36 @@ namespace WorldGen.Workspace.Data
     /// W1-W5 — every WORLD OBJECT (a POI today; see WorldObjectRef's own doc for why settlements/buildings
     /// can join later without a second search path) is ALSO a candidate on every search, for the identical
     /// reason the world map is: the spec's explicit promise is "everything absent is still one keystroke
-    /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence. UNLIKE
-    /// the world map, this candidate stays gated behind `doc == null` (see Search's own comment on that
-    /// guard). THE REASON FOR THAT GATE EXPIRED IN TASK 10e and it is kept deliberately, not by inertia: a
-    /// world-object row used to be INERT without a document (choosing it called NotesDocOps.EnsurePageFor,
-    /// which returns null the instant `doc` is null — E4 — so the row did nothing when picked), and offering
-    /// an inert row is worse than offering none. Such a row now opens the POI's EDITOR and needs no document
-    /// at all, so the gate suppresses rows that would work. Widening it changes this method's contract, which
-    /// Task 10e's ruling did not ask for — it is recorded in that task's report, beside the same question
-    /// about W4 below, to be decided once rather than twice. The world map has no such dependency, which is
-    /// the whole reason it gets the different treatment above. CollectWorldHits
-    /// sits in the SAME spot CollectWorldMapHit does relative to the OTHER doc-dependent candidates — before
-    /// the name-hit loop — folded and ranked by the identical NamePrefix/NameContains rule (W1), for the same
-    /// reason: a world object is, for ranking purposes, one more page-NAME candidate. W4 suppresses a world
-    /// object once it already has a bound page — see FindPageBoundTo's own doc for why that check is NOT
-    /// reimplemented here. ITS ORIGINAL REASON NO LONGER HOLDS: the two rows opened the same target when a
-    /// world object's row created-and-opened that very page, and since Task 10e they open different things
-    /// (the page row a note, the world row the place's editor). W4 therefore now HIDES the place behind its
-    /// own note. Left standing on purpose — nothing writes Bound today (EnsurePageFor has no callers), so it
-    /// can only fire for a document saved by an earlier build, and undoing it means rewriting a rule the
-    /// Task 10e ruling never mentioned. Reported with the doc==null gate above as one Р3/DM decision.
+    /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence. It sits
+    /// beside CollectWorldMapHit, ABOVE the `doc == null` guard and before the name-hit loop, folded and
+    /// ranked by the identical NamePrefix/NameContains rule (W1) — a world object is, for ranking purposes,
+    /// one more page-NAME candidate, and its Seq stays below every page hit's exactly as before that move
+    /// (world-object hits rank 0/1, body hits 2/3, so Seq never breaks a tie between the two).
+    ///
+    /// EVERY POI IS A CANDIDATE, ALWAYS — W4 IS GONE (Task 10e, review round 1). Task 10b suppressed a world
+    /// object once some page's Bound named it (NotesDocOps.FindPageBoundTo), on the reasoning that the page
+    /// hit already stood for it and two rows would open one target. That reasoning died when a world row
+    /// stopped creating-and-opening that very page and started opening the PLACE: a note and the place it is
+    /// about are two different objects under the Task 10c ruling, so two rows opening two different things is
+    /// CORRECT, not duplication. What the rule did instead was hide a place behind its own note — for exactly
+    /// the POIs the DM has worked on hardest — which makes false the promise the Task 10e brief accepts the
+    /// «Мир» drowning risk ON: «Ctrl+K still reaches everything». A rule that contradicts the document
+    /// authorising it does not stand on seniority. (It was live, not theoretical: Bound is persisted at
+    /// format 13, so any project saved after the Task 10c checkpoint already carries bound pages.)
+    ///
+    /// THE `doc` PARAMETER WENT WITH IT, AND THAT IS THE POINT. FindPageBoundTo was the only thing
+    /// CollectWorldHits read a document for; with it gone the method cannot take one, so the candidate cannot
+    /// be gated on one — it moved above Search's `doc == null` guard by necessity rather than by choice. The
+    /// signature is the guarantee: re-introducing the gate would mean re-introducing the parameter, in the
+    /// open. This arc has now fixed "a result gated on something it does not depend on" four times (the
+    /// pinned row in the checkpoint-3 round, the world-map hit in Task 10b, NavigatorTree's «Мир» and
+    /// NavigatorView's own document guard in Task 10e); this is the fifth, and the last one that can be made
+    /// unreintroducible by construction.
+    ///
+    /// KNOWN WEAKNESS, deliberately not solved here: a page NAME hit carries Kind = "" (CollectNameHit), so a
+    /// place's row and its note's row differ only by «город» against a blank right-hand column. They are
+    /// distinguishable but weakly. Labelling page hits («заметка») is a separate improvement and is NOT a
+    /// reason to suppress either row.
     /// </summary>
     public static class QuickOpen
     {
@@ -102,9 +112,9 @@ namespace WorldGen.Workspace.Data
         /// empty list, never "everything". Q5: results are capped at <paramref name="limit"/>. W5: `world`
         /// may be null OR empty — that is the pre-generation state (no POIs placed yet, or PoiManager not
         /// found — see QuickOpenPopup.Attach), not an error, so this never throws or special-cases it beyond
-        /// CollectWorldHits' own null check. `doc` may ALSO be null (no NotesRootBuilder resolved yet) — see
-        /// the class doc for why the world-map candidate is unaffected by that while every other candidate
-        /// (body/name/world-object hits) is gated on it.</summary>
+        /// CollectWorldHits' own null check. `doc` may ALSO be null (no NotesRootBuilder resolved yet), and
+        /// as of Task 10e that only costs PAGE hits: both world candidates are collected above the guard —
+        /// see the class doc for why neither can be gated on a document any more.</summary>
         public static List<QuickHit> Search(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string query, int limit = 20)
         {
             var result = new List<QuickHit>();
@@ -123,21 +133,23 @@ namespace WorldGen.Workspace.Data
             var candidates = new List<(int Rank, int Seq, QuickHit Hit)>();
             int seq = 0;
 
-            // Unconditional, ABOVE the `doc == null` check below — see the class doc's W1 paragraph for why
-            // the world map is the one candidate that must not be gated on a document existing.
+            // BOTH world candidates are unconditional, ABOVE the `doc == null` check below: neither the world
+            // map nor a world OBJECT is reachable through a page any more, so neither has a document to be
+            // gated on. CollectWorldHits does not merely happen to sit here — it cannot take a `doc` to check
+            // (see the class doc's W1-W5 paragraph), which is what stops the gate coming back quietly.
+            //
+            // Order is unchanged by that move: world-object hits rank 0/1 and body hits 2/3, so Seq never
+            // decides between them, and worldmap < world < name within rank 0/1 is the same sequence it was.
             CollectWorldMapHit(needle, candidates, ref seq);
+            CollectWorldHits(world, needle, candidates, ref seq);
 
-            // Every OTHER candidate needs a document: body/name hits are read straight off doc.Groups, and a
-            // world-object hit (CollectWorldHits) is inert without one (see the class doc's W1-W5 paragraph).
+            // Page hits are the only candidates left that genuinely need a document — they are read straight
+            // off doc.Groups.
             if (doc != null)
             {
                 foreach (var g in doc.Groups)
                     foreach (var p in g.Pages)
                         CollectBodyHits(p, needle, candidates, ref seq);
-
-                // W1-W5 — same placement reasoning as CollectWorldMapHit above, relative to the name-hit loop
-                // below; see the class doc.
-                CollectWorldHits(doc, world, needle, candidates, ref seq);
 
                 foreach (var g in doc.Groups)
                     foreach (var p in g.Pages)
@@ -176,21 +188,18 @@ namespace WorldGen.Workspace.Data
         }
 
         /// <summary>W1-W5 — every candidate `world` object, folded and ranked exactly like CollectWorldMapHit
-        /// folds and ranks the world map (same NamePrefix/NameContains rule, no new ranking constants). W4:
-        /// an object already represented by a page (NotesDocOps.FindPageBoundTo — the SAME Kind+Id predicate
-        /// EnsurePageFor's own E1 reuse check defers to, not a second one invented here; NavigatorTree was a
-        /// third user of that idea until Task 10e stopped it reading pages at all) is skipped entirely — the
-        /// page hit from the name-hit loop below stands in for it. See the class doc for why that rule
-        /// outlived its reason and is kept anyway. W5: a null `world` is the pre-generation
-        /// state, not an error — this loop simply has nothing to add.</summary>
-        static void CollectWorldHits(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string needle,
+        /// folds and ranks the world map (same NamePrefix/NameContains rule, no new ranking constants). EVERY
+        /// object, unconditionally: the W4 suppression of objects that already had a bound page was removed in
+        /// Task 10e's review round, along with the `doc` this method used to take for it — see the class doc.
+        /// W5: a null `world` is the pre-generation state, not an error — this loop simply has nothing to
+        /// add.</summary>
+        static void CollectWorldHits(IReadOnlyList<WorldObjectRef> world, string needle,
             List<(int, int, QuickHit)> candidates, ref int seq)
         {
             if (world == null) return;
             foreach (var w in world)
             {
                 if (w == null) continue;
-                if (NotesDocOps.FindPageBoundTo(doc, w.Kind, w.Id) != null) continue;   // W4
 
                 string folded = (w.Name ?? "").Trim().ToLowerInvariant();
                 int idx = folded.IndexOf(needle, StringComparison.Ordinal);
