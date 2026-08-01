@@ -65,8 +65,11 @@ namespace WorldGen.Workspace.Rendering
         /// changed, per Task 10h's "say where you deviate from the restored source".</summary>
         const float ActionBarHeight = 22f;
 
-        /// <summary>Side of the square «+» on an Authored group header. Kept under GroupHeaderHeight so the
-        /// button cannot force the header taller than the 24f its LayoutElement asks for.</summary>
+        /// <summary>Side of the square «+» on an Authored group header. Under GroupHeaderHeight (24f) purely
+        /// so the button sits INSIDE the header with a margin instead of filling it edge to edge — it could
+        /// not force the header taller at any value, because the header has no LayoutGroup and no
+        /// ContentSizeFitter and this button is anchored by hand (the LayoutElement AddActionButton attaches
+        /// governs nothing there; see BuildGroupHeader's own note where the rect is set).</summary>
         const float AddPageButtonSize = 18f;
 
         WorkspaceController controller;
@@ -606,7 +609,7 @@ namespace WorldGen.Workspace.Rendering
             // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
             // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
             // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:218 and
-            // DocumentPageView.cs:70. A null document is no longer short-circuited before this line — see
+            // DocumentPageView.cs:86. A null document is no longer short-circuited before this line — see
             // the class doc.
             var doc = documentController != null ? documentController.Document : null;
             var activeSurface = ActiveSurface();
