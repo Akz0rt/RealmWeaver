@@ -449,6 +449,15 @@ namespace WorldGen.Notes.Data
             var s3 = NotesDocOps.CreateSessionSheet("Сессия 3"); g.Pages.Add(s3);
             // Each sheet needs a Section to hang its NPC row under — CreateSessionSheet no longer seeds one
             // (Task 10f), so this fixture makes its own rather than relying on the retired scaffold.
+            //
+            // s1 ALSO gets a decoy section ahead of «Важные NPC» — review round 1's Important #1: with only
+            // one section per sheet, "nearest preceding Section" and "the page's first Section" collapse to
+            // the same string, so the backs[0].SectionTitle assertion below stopped discriminating what
+            // SectionTitleFor (NotesDocOps.cs) actually promises — a BACKWARD walk to the NEAREST Section,
+            // not the page's first one. The proving mutant: rewrite SectionTitleFor to scan forward from
+            // index 0 instead of backward from the row; that mutant now fails here again (confirmed below),
+            // where it silently passed with a single-section fixture.
+            s1.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Другая секция"));
             s1.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
             s3.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
 

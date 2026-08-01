@@ -278,9 +278,20 @@ namespace WorldGen.Notes.Data
 
         // ── Pages and links ────────────────────────────────────────────────────
 
-        /// <summary>The single section a freshly promoted page opens with. A promoted page cannot start out
-        /// empty: I2 requires a page's first block to be a Section, so with no seed the DM would have nowhere
-        /// to type until they had somehow created one.</summary>
+        /// <summary>The single section a freshly promoted page opens with. This is NOT the Lazy-DM scaffold
+        /// Task 10f retired from CreateSessionSheet — one generic heading ("Описание"), not eight opinionated
+        /// ones — and PromoteToPage/EnsurePageFor were never in that task's scope (its brief), so this seed
+        /// is untouched by it.
+        ///
+        /// Formerly justified here as "I2 requires a page's first block to be a Section, so with no seed the
+        /// DM would have nowhere to type until they had somehow created one" — Task 10f review round 1's
+        /// Critical found that claim true and unresolved (CreateSessionSheet had just started producing
+        /// exactly that unreachable empty state), and the fix was DocumentPageView's «+ Раздел» button, which
+        /// now gives ANY empty Document page — including, in principle, one this method could leave unseeded
+        /// — a way to create its first block. So the claim as written no longer holds. Left seeding anyway:
+        /// whether a promoted/bound page should ALSO start empty is a product question of its own, out of
+        /// scope for a review finding about CreateSessionSheet, and changing it here would be exactly the
+        /// silent scope creep this arc's reviews keep watching for.</summary>
         public const string PromotedPageSectionTitle = "Описание";
 
         /// <summary>Trim- and case-insensitive name comparison. ToLowerInvariant rather than the current
@@ -362,8 +373,8 @@ namespace WorldGen.Notes.Data
                 // state through a shared reference.
                 Bound = new WorldRef { Kind = bound.Kind, Id = bound.Id },
             };
-            // A promoted page cannot start out empty (I2: first block must be a Section) — same seed
-            // PromoteToPage uses for the identical reason, see PromotedPageSectionTitle's own doc.
+            // Same seed PromoteToPage uses, and the same reasoning — see PromotedPageSectionTitle's own doc
+            // for why this is still here and what changed under it.
             page.Blocks.Add(NewBlock(BlockKind.Section, 0, PromotedPageSectionTitle));
             page.Blocks.Add(NewBlock(BlockKind.Item, 1));
             group.Pages.Add(page);

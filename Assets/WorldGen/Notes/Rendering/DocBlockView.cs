@@ -108,6 +108,17 @@ namespace WorldGen.Notes.Rendering
             else if (data.Kind == BlockKind.Prose)
             {
                 // No bullet — a read-aloud paragraph gets an accent bar down its left edge instead.
+                //
+                // Task 10f review round 1 (Minor): this branch is currently unreachable for NEW content —
+                // CreateSessionSheet's «Сильное начало» row was the only place a Prose block was ever
+                // created, and Task 10f removed it (the scaffold seeding, not this rendering). DocKeyboardOps
+                // only propagates an EXISTING Prose block's kind (Enter/split), never originates one, and
+                // TryDeserializeBlocks only round-trips one already present in a payload. A document saved
+                // before Task 10f still shows this bar correctly for its existing Prose rows — kept for
+                // exactly that reason — but the DM has lost the read-aloud-paragraph affordance for new
+                // writing. Recorded as a Р2 product gap, not fixed here: restoring it needs a UI decision
+                // (a second button next to «+ Раздел»? a Tab-cycle through kinds?) that is not this review's
+                // to make.
                 var barGO = new GameObject("AccentBar", typeof(RectTransform));
                 barGO.transform.SetParent(transform, false);
                 var barRect = barGO.GetComponent<RectTransform>();
