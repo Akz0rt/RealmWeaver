@@ -76,6 +76,13 @@ namespace WorldGen.Workspace.Rendering
             // RectMask2D, commit b533632), for the same reason: the arithmetic version silently stops holding
             // the moment the layout changes shape. Panels sized for a full window WILL look cramped in a
             // half-width pane; that is Р5's redesign to solve, and a clean cut is the honest interim.
+            //
+            // ONE PANEL NO LONGER RELIES ON THAT INTERIM. MapLegendUI's content-driven height grew tall enough
+            // to be cut in a short or split pane, which the DM reported as unreadable, so it now measures its
+            // own PARENT rect — this frame — and caps how many rows it builds (see its class doc and its
+            // MaxRowsForHeight). That is the PANEL adapting to the mask, not the mask making an exception: the
+            // clip below still applies to it unchanged, and is still what would catch a miscalculated cap. The
+            // other framed panels are untouched, and the sentence above still describes them.
             frame.gameObject.AddComponent<RectMask2D>();
 
             // Downward iteration keeps indices below `i` stable as children leave. worldPositionStays:false
