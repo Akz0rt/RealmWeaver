@@ -22,9 +22,12 @@ namespace WorldGen.Workspace.Data
         public string Snippet;
 
         /// <summary>Non-null ONLY for a world-object hit (W2) — the world identity to open, for the one case
-        /// where Target cannot yet name a page because none exists. Null for every other hit kind.
-        /// QuickOpenPopup.Choose branches on this: World != null means "create-or-find the page THEN open
-        /// it" (NotesDocOps.EnsurePageFor), everything else opens Target unchanged.</summary>
+        /// where Target names no page because no page is involved at all. Null for every other hit kind.
+        /// QuickOpenPopup.ChooseIndex branches on this: World != null means "open THE PLACE" — its editor, via
+        /// WorldSurface.PoiEditor, per Task 10e's ruling that a point of interest IS its editor menu — while
+        /// everything else opens Target unchanged. Until Task 10e that branch created a page (EnsurePageFor) and
+        /// opened it instead; the identity carried here is the same either way, which is why the retarget touched
+        /// no rule in this file.</summary>
         public WorldRef World;
     }
 
@@ -56,25 +59,34 @@ namespace WorldGen.Workspace.Data
     /// candidate here, opening the world map needs no document at all (it targets the surface directly, not
     /// a page — see QuickHit's own doc), so gating it on `doc` would make Ctrl+K unable to offer the one
     /// doc-independent escape hatch back to the map in exactly the scene state (no document resolved) that
-    /// most needs one. Mirrors NavigatorTree.Build's own Pinned group, built above THAT method's doc==null
-    /// guard for the identical reason (see its comment: "this one place... must not be gated on a document
-    /// existing") — a review of this task's own history flagged the same shape as Important there and it was
-    /// fixed by the same move.
+    /// most needs one. Mirrors NavigatorTree.Build's «Мир» group, built above THAT method's doc==null guard
+    /// for the identical reason (Task 10b did the same for the row «Мир» then called Pinned; Task 10e folded
+    /// that row into «Мир» itself and the doc-independence moved with it) — a review of this task's own
+    /// history flagged the same shape as Important there and it was fixed by the same move.
     ///
     /// W1-W5 — every WORLD OBJECT (a POI today; see WorldObjectRef's own doc for why settlements/buildings
     /// can join later without a second search path) is ALSO a candidate on every search, for the identical
     /// reason the world map is: the spec's explicit promise is "everything absent is still one keystroke
     /// away in Ctrl+K" (task-10b-brief.md), and a placed-but-unopened POI is exactly such an absence. UNLIKE
     /// the world map, this candidate stays gated behind `doc == null` (see Search's own comment on that
-    /// guard) — a world-object row is INERT without a document: choosing it calls
-    /// NotesDocOps.EnsurePageFor(doc, ...), which returns null the instant `doc` is null (E4), so the row
-    /// would do nothing when picked. Offering an inert row is worse than offering none; the world map has no
-    /// such dependency, which is the whole reason it gets the different treatment above. CollectWorldHits
+    /// guard). THE REASON FOR THAT GATE EXPIRED IN TASK 10e and it is kept deliberately, not by inertia: a
+    /// world-object row used to be INERT without a document (choosing it called NotesDocOps.EnsurePageFor,
+    /// which returns null the instant `doc` is null — E4 — so the row did nothing when picked), and offering
+    /// an inert row is worse than offering none. Such a row now opens the POI's EDITOR and needs no document
+    /// at all, so the gate suppresses rows that would work. Widening it changes this method's contract, which
+    /// Task 10e's ruling did not ask for — it is recorded in that task's report, beside the same question
+    /// about W4 below, to be decided once rather than twice. The world map has no such dependency, which is
+    /// the whole reason it gets the different treatment above. CollectWorldHits
     /// sits in the SAME spot CollectWorldMapHit does relative to the OTHER doc-dependent candidates — before
     /// the name-hit loop — folded and ranked by the identical NamePrefix/NameContains rule (W1), for the same
     /// reason: a world object is, for ranking purposes, one more page-NAME candidate. W4 suppresses a world
-    /// object once it already has a bound page, so a worked-on place never yields two rows that open the same
-    /// target — see FindPageBoundTo's own doc for why that check is NOT reimplemented here.
+    /// object once it already has a bound page — see FindPageBoundTo's own doc for why that check is NOT
+    /// reimplemented here. ITS ORIGINAL REASON NO LONGER HOLDS: the two rows opened the same target when a
+    /// world object's row created-and-opened that very page, and since Task 10e they open different things
+    /// (the page row a note, the world row the place's editor). W4 therefore now HIDES the place behind its
+    /// own note. Left standing on purpose — nothing writes Bound today (EnsurePageFor has no callers), so it
+    /// can only fire for a document saved by an earlier build, and undoing it means rewriting a rule the
+    /// Task 10e ruling never mentioned. Reported with the doc==null gate above as one Р3/DM decision.
     /// </summary>
     public static class QuickOpen
     {
@@ -145,7 +157,8 @@ namespace WorldGen.Workspace.Data
         /// invent a second folding scheme). Target is byte-identical to WorkspaceOps.NewDefault's own seed
         /// tab (Kind=WorldMap, Id="") — see WorkspaceOps.SameSurface — so opening this hit through
         /// WorkspaceController.Open focuses the world map's existing tab instead of adding a second one, the
-        /// same requirement NavigatorTree's Pinned node carries for the same reason.</summary>
+        /// same requirement NavigatorTree's own world-map row (the first node of «Мир») carries for the same
+        /// reason.</summary>
         static void CollectWorldMapHit(string needle, List<(int, int, QuickHit)> candidates, ref int seq)
         {
             string folded = WorkspaceOps.DefaultWorldMapTitle.Trim().ToLowerInvariant();
@@ -165,9 +178,10 @@ namespace WorldGen.Workspace.Data
         /// <summary>W1-W5 — every candidate `world` object, folded and ranked exactly like CollectWorldMapHit
         /// folds and ranks the world map (same NamePrefix/NameContains rule, no new ranking constants). W4:
         /// an object already represented by a page (NotesDocOps.FindPageBoundTo — the SAME Kind+Id predicate
-        /// EnsurePageFor and NavigatorTree's own Bound scan agree on, not a second one invented here) is
-        /// skipped entirely — the page hit from the name-hit loop below already stands for it, so showing
-        /// both would open the same target from two different rows. W5: a null `world` is the pre-generation
+        /// EnsurePageFor's own E1 reuse check defers to, not a second one invented here; NavigatorTree was a
+        /// third user of that idea until Task 10e stopped it reading pages at all) is skipped entirely — the
+        /// page hit from the name-hit loop below stands in for it. See the class doc for why that rule
+        /// outlived its reason and is kept anyway. W5: a null `world` is the pre-generation
         /// state, not an error — this loop simply has nothing to add.</summary>
         static void CollectWorldHits(NotesDocument doc, IReadOnlyList<WorldObjectRef> world, string needle,
             List<(int, int, QuickHit)> candidates, ref int seq)
@@ -185,10 +199,10 @@ namespace WorldGen.Workspace.Data
                 int rank = idx == 0 ? NamePrefix : NameContains;   // W1
                 candidates.Add((rank, seq++, new QuickHit
                 {
-                    // W2 — no page exists yet for a fresh world object, so Target carries no page id; the
-                    // world identity travels on World instead, and QuickOpenPopup.Choose creates the page
-                    // only at the moment the user actually picks this row (not on every keystroke that
-                    // merely matches it — see Choose's own comment).
+                    // W2 — a world object is not a page, so Target carries no page id; the world identity
+                    // travels on World instead, and QuickOpenPopup.ChooseIndex turns it into the place's own
+                    // editor surface at the moment the user picks the row. (Task 10b created a page there
+                    // instead — hence "no page EXISTS YET", the phrasing this comment used to carry.)
                     Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = "" },
                     World = new WorldRef { Kind = w.Kind, Id = w.Id },
                     Title = w.Name,

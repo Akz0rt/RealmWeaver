@@ -20,9 +20,13 @@ namespace WorldGen.Notes.Data
     /// «Открыть город» and friends already open through.</summary>
     public enum WorldRefKind { Poi = 0, Building = 1, Room = 2 }
 
-    /// <summary>What a page documents, if it documents a world object at all. This is the ONLY signal
-    /// NavigatorTree.Build reads to decide whether a page belongs to the computed «Мир» group — a page is a
-    /// member exactly when its Bound is non-null, and nothing else anywhere records that membership. Kept
+    /// <summary>What a page documents, if it documents a world object at all.
+    ///
+    /// IT NO LONGER DRIVES THE NAVIGATOR (Task 10e). Until then this was the only signal NavigatorTree.Build
+    /// read to decide «Мир» membership; «Мир» is now the world's own contents and consults no page at all
+    /// (see NavigatorTree's class doc for the ruling). What remains is the page-to-world link itself, whose
+    /// real consumers are QuickOpen's W4 row-suppression, NotesDocOps.FindPageBoundTo/EnsurePageFor, and
+    /// Р3's binding work — nothing derives a tree from it any more. Kept
     /// as a nullable reference rather than a bool flag beside an id, the same reason PageGroup.LinkedPoiId
     /// is null rather than paired with an "IsLinked" bool: the two could otherwise disagree.</summary>
     public class WorldRef

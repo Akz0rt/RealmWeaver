@@ -167,11 +167,12 @@ namespace WorldGen.Workspace.Data
         /// every other candidate: opening the map needs no document (it targets the surface directly, not a
         /// page — QuickHit's own doc), so a scene where no NotesRootBuilder was ever resolved must still be
         /// able to offer «Карта мира» from Ctrl+K. This is the SAME shape an earlier review in this arc
-        /// flagged Important against NavigatorTree.Build's Pinned row, fixed there by moving it above that
-        /// method's own doc==null guard — QuickOpen.Search now does the identical move for the world map (see
-        /// its class doc's W1 paragraph). A world-OBJECT hit (W2) does NOT get this treatment — it stays
-        /// gated on `doc`, because choosing it is inert without one (EnsurePageFor(null, ...) returns null,
-        /// E4) — SelfTestQuickOpenWorldObjects' own W5 case covers that half; this test is the world map's.</summary>
+        /// flagged Important against NavigatorTree.Build's world-map row (then a group of its own, called
+        /// Pinned; folded into «Мир» in Task 10e), fixed there by moving it above that method's own doc==null
+        /// guard — QuickOpen.Search does the identical move for the world map (see its class doc's W1
+        /// paragraph). A world-OBJECT hit (W2) still does NOT get this treatment: it stays gated on `doc`,
+        /// which was because choosing it was inert without one and is now a deliberately-kept leftover — see
+        /// the W1-W5 paragraph of QuickOpen's class doc. This test is the world map's half.</summary>
         [ContextMenu("Self-Test: Quick Open World Map Survives Null Doc")]
         public void SelfTestQuickOpenWorldMapSurvivesNullDoc()
         {
@@ -255,7 +256,9 @@ namespace WorldGen.Workspace.Data
             }
 
             // W4 — a POI that ALREADY has a bound page produces exactly one row, and it is the PAGE, not the
-            // POI: the page hit already represents it, so both appearing would open the same target twice.
+            // POI. This pins the RULE, not its rationale: the rationale (both rows would open the same
+            // target) died with Task 10e, which made the world row open the place's editor while the page row
+            // still opens the note — see QuickOpen's class doc for why the rule is nonetheless kept for now.
             var boundPage = new NotesPage { Name = "Тихий Брод", Bound = new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-2" } };
             g.Pages.Add(boundPage);
             var boundPoi = new WorldObjectRef { Kind = WorldRefKind.Poi, Id = "poi-2", Name = "Тихий Брод", KindLabel = "город" };

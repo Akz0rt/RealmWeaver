@@ -326,11 +326,11 @@ namespace WorldGen.Notes.Data
         }
 
         /// <summary>The page (if any) already bound to a given world object. THE one definition of "is this
-        /// world object already represented by a page" — NavigatorTree.Build's own Мир membership test reads
-        /// only `p.Bound != null` (it never needs to name a SPECIFIC object, just "is there one"), but the
-        /// two call sites that DO need to name one — QuickOpen's W4 row-suppression and EnsurePageFor's E1
-        /// reuse-not-duplicate check below — must not each hand-roll that comparison, or a future edit to one
-        /// could silently disagree with the other. Takes Kind+Id rather than a WorldRef instance so
+        /// world object already represented by a page", shared by the two call sites that need it —
+        /// QuickOpen's W4 row-suppression and EnsurePageFor's E1 reuse-not-duplicate check below — so neither
+        /// hand-rolls that comparison and a future edit to one cannot silently disagree with the other.
+        /// NavigatorTree used to be a third, weaker consumer (`p.Bound != null`, never naming a specific
+        /// object); Task 10e removed it — «Мир» is the world's contents now and reads no pages. Takes Kind+Id rather than a WorldRef instance so
         /// QuickOpen's per-keystroke, per-world-object caller (CollectWorldHits) allocates nothing extra per
         /// candidate — the same allocation concern Search's own class doc (Q3) already documents for this
         /// file's search path.</summary>
@@ -344,10 +344,17 @@ namespace WorldGen.Notes.Data
         }
 
         /// <summary>Returns the id of the page bound to `bound`, creating it if none exists. THE only writer
-        /// of NotesPage.Bound — which is what turns "the user worked on this place" into «Мир» membership
-        /// without anything storing tree state (see NavigatorTree.Build's own doc). Membership is decided by
-        /// FindPageBoundTo above, the same Kind+Id predicate this method and QuickOpen's W4 both defer to — a
-        /// second hand-rolled comparison here could silently disagree with it. A new page is filed into the
+        /// of NotesPage.Bound. Identity is decided by FindPageBoundTo above, the same Kind+Id predicate this
+        /// method and QuickOpen's W4 both defer to — a second hand-rolled comparison here could silently
+        /// disagree with it.
+        ///
+        /// NOTHING CALLS THIS TODAY, AND THAT IS DELIBERATE — it is not dead code awaiting deletion. Task 10b
+        /// wrote it to make «Мир» computable (a place appeared in the tree once some path had auto-created
+        /// its page); Task 10e's ruling made «Мир» the world's own contents, so all three call sites
+        /// (MapScreenController's editor and double-click paths, QuickOpenPopup's world-object row) were
+        /// removed rather than left creating notes the DM never asked for. The function and its self-tests
+        /// (NotesDocOpsSelfTests.SelfTestEnsurePageFor) stay because Р3's binding work — «привязать заметку к
+        /// месту» — is its real caller, and it is still the only writer of the field QuickOpen's W4 reads. A new page is filed into the
         /// IsReference group («Справочник»), which exists for exactly this — PageGroup.IsReference's own doc
         /// calls it "the single group that promoted pages are filed into" — and the group is created if the
         /// document has none. A dedicated «Места» group was rejected: it would be a second mechanism for the

@@ -31,10 +31,12 @@ namespace WorldGen.Persistence
     public static class ProjectSerializer
     {
         public const int CurrentFormatVersion = 13;  // 13: NotesPage.Bound (a WorldRef) — which world object,
-                                                     // if any, a page documents. It is the ONLY field the
-                                                     // computed «Мир» group in NavigatorTree reads (a page is
-                                                     // a member exactly when Bound != null; membership is
-                                                     // never itself stored). Bound is ABSENT from a v12 file
+                                                     // if any, a page documents. (It drove the computed «Мир»
+                                                     // group when this bump was written; Task 10e made «Мир»
+                                                     // the world's own contents, so the field's readers are
+                                                     // now QuickOpen's W4 and Р3's binding work. The STORED
+                                                     // format is unchanged either way — no migration was
+                                                     // added, and none was removed.) Bound is ABSENT from a v12 file
                                                      // and deserializes to null there, so no migration code
                                                      // exists or is needed. Bumped anyway, for the same reason
                                                      // 9 and 11 were: so an OLDER build WARNS on open instead

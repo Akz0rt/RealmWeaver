@@ -123,17 +123,15 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Raises OnDocumentChanged for a mutation made DIRECTLY against Document by a pure op
         /// rather than through one of this class's own wrappers above (Task 10c).
         ///
-        /// WHY THIS EXISTS AT ALL. NotesDocOps.EnsurePageFor is the only writer of NotesPage.Bound, and Bound
-        /// is what puts a place in the navigator's «Мир» group (NavigatorTree.Build derives membership, it
-        /// never stores it). But EnsurePageFor is a pure static that takes a NotesDocument — it has no
-        /// controller to fire an event on, so a page created that way is invisible to every listener.
-        /// NavigatorView subscribes to BOTH OnLayoutChanged and OnDocumentChanged (NavigatorView.cs:99-100),
-        /// and Task 10c's call sites happen to follow every EnsurePageFor with a WorkspaceController.Open,
-        /// which raises the FORMER — so the tree refreshes today by coincidence of ordering, not by
-        /// construction. Task 10b's review flagged exactly that as the cross-task trap a per-task reviewer
-        /// cannot catch. Calling this immediately after EnsurePageFor makes the dependency real instead of
-        /// incidental: the tree refreshes because the document changed, and it keeps refreshing if a future
-        /// call site ever creates a page without opening anything.
+        /// WHY THIS EXISTS AT ALL. A pure op (NotesDocOps.*) takes a NotesDocument and has no controller to
+        /// fire an event on, so a page it creates or changes is invisible to every listener until something
+        /// unrelated happens to raise one. The original case was EnsurePageFor: Task 10c's call sites each
+        /// followed it with a WorkspaceController.Open, which raises OnLayoutChanged, so the navigator
+        /// refreshed by coincidence of ordering rather than by construction — the cross-task trap Task 10b's
+        /// review flagged and a per-task reviewer cannot catch. Those call sites are gone (Task 10e removed
+        /// the auto-created page entirely, and «Мир» no longer reads pages at all), but the seam they exposed
+        /// is not: any future mutation made directly against Document — Р3's binding work first among them —
+        /// must call this rather than rely on an unrelated event arriving next.
         ///
         /// Cheap to over-call: every listener's handler is a request-a-rebuild flag coalesced in LateUpdate
         /// (NavigatorView.RequestRebuild and its siblings), so a redundant raise costs one bool write.</summary>
