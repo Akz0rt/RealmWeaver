@@ -12,9 +12,12 @@ namespace WorldGen.Workspace.Data
     /// OnOpenDungeonRequested, assigned at MapScreenController.cs:95) is the only path into the interior
     /// editor in the whole project, and the spec explicitly defers the page-side replacement («showing the
     /// settlement, «Открыть город», the inspector link — stays in Р3»). So the POI editor keeps existing as a
-    /// surface until Р5 redesigns it away; it is the tab the popup's «Редактировать» opens, while a
-    /// double-click on the map opens the place's PAGE (Task 10c Step 2a) — two different actions, two
-    /// different surfaces.
+    /// surface until Р5 redesigns it away — and since Task 10e it is what EVERY gesture aimed at a place
+    /// opens: the popup's «Редактировать», a double-click on the map, a «Мир» row in the navigator and a
+    /// world row in Ctrl+K all produce this one SurfaceRef (WorldSurface.PoiEditor). «Точка интереса ЕСТЬ
+    /// своё меню редактирования»; a note about a place is a separate object, opened as a Page like any other
+    /// note. Before that ruling the double-click opened the place's PAGE, which is the model this paragraph
+    /// used to describe.
     ///
     /// APPENDED at the end, never renumbered: WorkspaceOps.Serialize writes the enum's NAME (not its ordinal)
     /// and TryParseSurfaceKind reads it back by name, so the numbers are not themselves a wire format — but

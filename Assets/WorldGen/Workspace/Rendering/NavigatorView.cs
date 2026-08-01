@@ -490,7 +490,13 @@ namespace WorldGen.Workspace.Rendering
         /// sidebar did. Null when the group can't be found (already deleted, or no document wired).</summary>
         int? PageGroupPageCount(string groupId)
         {
-            var groups = documentController?.Document?.Groups;
+            // Explicit ternary, not `documentController?.Document`: `?.` skips Unity's overloaded `==` and
+            // would treat a DESTROYED controller as alive — the same idiom, and the same reason, as Rebuild's
+            // own read a few methods up. Harmless here today (a null flows to the `return null` the caller
+            // already handles), but a file that states the rule in one place and breaks it in another teaches
+            // the wrong one.
+            var doc = documentController != null ? documentController.Document : null;
+            var groups = doc != null ? doc.Groups : null;
             if (groups == null) return null;
             foreach (var g in groups)
                 if (g.Id == groupId) return g.Pages.Count;

@@ -571,9 +571,14 @@ namespace WorldGen.Rendering
 
         /// <summary>The tab a POI editor is shown in. PoiData.Id is a Guid string (PoiData.cs), so it names
         /// one POI unambiguously — the same identity Task 10b's WorldRef{Kind=Poi, Id} already relies on.
-        /// Null for a null POI so every call site can pass its field unguarded.</summary>
+        /// Null for a null POI so every call site can pass its field unguarded — the ONLY thing this method
+        /// still decides, since the ref itself comes from WorldSurface.PoiEditor, the same factory the
+        /// navigator's «Мир» rows and Ctrl+K's world rows go through. That is not tidiness: the map path and
+        /// the navigator/Ctrl+K path are precisely the two sides that must produce an identical ref, because
+        /// WorkspaceOps.SameSurface compares Kind AND Id and one character of disagreement is a second tab
+        /// for one place rather than a visible error.</summary>
         static SurfaceRef PoiEditorSurface(PoiData poi) =>
-            poi == null ? null : new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = poi.Id };
+            poi == null ? null : WorldSurface.PoiEditor(poi.Id);
 
         /// <summary>The tab an interior is shown in — Settlement, BuildingInterior or Dungeon, decided by the
         /// interior's own Kind rather than by which method opened it, so the two can never disagree.

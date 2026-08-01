@@ -8,7 +8,8 @@ namespace WorldGen.Rendering
     /// <summary>
     /// Handles all mouse interaction with POI markers:
     /// - Click on marker → select (highlight + show panel).
-    /// - Double-click on marker → open that place's page in the workspace (Task 10c Step 2a).
+    /// - Double-click on marker → open that PLACE — its editor — in the workspace, beside the map when a
+    ///   split exists (Task 10c Step 2a, retargeted from the place's page by Task 10e; see OnRelease).
     /// - Click on empty map → deselect.
     /// - Drag marker → reposition; commits WorldPosition + OwnerCellId on mouse-up.
     ///
@@ -28,7 +29,7 @@ namespace WorldGen.Rendering
         public Camera raycastCamera;
         [Tooltip("Info popup shown on a single click of a POI.")]
         public PoiInfoPopup infoPopup;
-        [Tooltip("Screen controller — a double-click opens the point's page in the workspace (Task 10c).")]
+        [Tooltip("Screen controller — a double-click opens the point itself (its editor) in the workspace.")]
         public MapScreenController mapScreenController;
 
         [Header("Interaction settings")]

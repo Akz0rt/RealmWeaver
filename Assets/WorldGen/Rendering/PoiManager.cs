@@ -190,6 +190,18 @@ namespace WorldGen.Rendering
             if (poi == null) return;
             poi.Name = name;
             if (markers.TryGetValue(id, out var m)) m.Refresh();
+            // Raised here as of Task 10e: a POI's name is now a ROW TITLE, in the navigator's «Мир» and in
+            // Ctrl+K (WorldObjectSource.Collect reads poi.Name through MapScreenController.PoiTitle), so a
+            // rename that raises nothing leaves the tree showing a name the DM just replaced until some
+            // unrelated OnLayoutChanged/OnDocumentChanged happens to arrive. Refreshing the marker alone was
+            // enough while the name only appeared on the map.
+            //
+            // Safe to raise from here specifically: both callers are onEndEdit handlers
+            // (PoiEditorScreen.cs:481, PoiEditPanel.cs:353), so this cannot fire per keystroke, and the two
+            // existing listeners (PoiToolPanel.RebuildList, PoiEditPanel.RefreshFromSelection) re-reading a
+            // COMMITTED rename is what they want anyway. NavigatorView coalesces it into one LateUpdate
+            // rebuild regardless (RequestRebuild).
+            OnPoisChanged?.Invoke();
         }
 
         public void UpdatePoiDescription(string id, string desc)

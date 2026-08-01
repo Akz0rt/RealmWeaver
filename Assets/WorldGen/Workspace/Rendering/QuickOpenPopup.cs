@@ -79,7 +79,11 @@ namespace WorldGen.Workspace.Rendering
             // documentController), and PoiManager already lives wherever the map's own scene objects do, not
             // under WorkspaceBuilder's GameObject. Absent entirely before generation runs — RunSearch's own
             // null check covers that, the same tolerance this class already extends to a null documentController.
-            popup.poiManager = FindFirstObjectByType<PoiManager>();
+            // FindObjectsInactive.Include, matching NavigatorView.ResolvePoiManager and
+            // MapScreenController.Pois(): this discovers ONCE (unlike those two, which retry on every miss),
+            // so a PoiManager whose GameObject happens to be inactive at shell-build time would otherwise
+            // leave Ctrl+K blind to every POI for the whole session while «Мир» still listed them.
+            popup.poiManager = FindFirstObjectByType<PoiManager>(FindObjectsInactive.Include);
             popup.builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             return popup;
         }
