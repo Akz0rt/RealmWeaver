@@ -32,11 +32,32 @@ namespace WorldGen.Notes.Rendering
         // would jam the caret to the end of the text the moment the DM clicked into the row by hand.
         bool caretPending;
         int pendingCaret;
+        int caretWhenEditingEnded = -1;
+        int textChangedOnFrame = -1;
 
         public DocBlock Data => data;
         public InputField Field { get; private set; }
         public Text TextComponent { get; private set; }
         public string BlockId => data != null ? data.Id : null;
+
+        /// <summary>Where the caret was at the instant this field stopped being edited, or -1 if it never has
+        /// been. This exists because Enter DESTROYS the answer: InputField.DeactivateInputField
+        /// (InputField.cs:3237) clears m_AllowInput — so `Field.isFocused` is already false — then fires
+        /// onEndEdit, and only after that sets m_CaretPosition = m_CaretSelectPosition = 0. The onEndEdit
+        /// callback is therefore the last moment in the frame at which the caret is still the DM's and not
+        /// yet zero, and it runs INSIDE the same event drain that applied the character they typed just
+        /// before pressing Enter — so this value and DocBlock.Text describe the same instant, which is the
+        /// whole point (see DocKeyboardController's class doc).</summary>
+        public int CaretWhenEditingEnded => caretWhenEditingEnded;
+
+        /// <summary>True when the field changed this block's text during THIS frame's event drain. The one
+        /// caller that needs it is DocKeyboardController's Backspace branch: the field performs its own
+        /// Backspace before that branch runs, so a caret sitting at 0 is ambiguous — it means either "the DM
+        /// pressed Backspace at the start of the row" (ours: merge with the row above) or "the DM deleted the
+        /// first character and the field moved the caret there" (not ours). The field's Backspace at offset 0
+        /// deletes nothing (InputField.cs:2335 requires caretPositionInternal > 0) and so raises no
+        /// onValueChanged, which makes this flag the exact discriminator.</summary>
+        public bool TextChangedThisFrame => textChangedOnFrame == Time.frameCount;
 
         public event System.Action<string> OnTextChanged;
         public event System.Action<string> OnToggleCollapse;
@@ -168,12 +189,15 @@ namespace WorldGen.Notes.Rendering
             Field.lineType = InputField.LineType.MultiLineSubmit;
             Field.text = data.Text ?? "";
             Field.onValueChanged.AddListener(OnFieldChanged);
+            // Fires from inside DeactivateInputField, before it zeroes the caret — see CaretWhenEditingEnded.
+            Field.onEndEdit.AddListener(_ => caretWhenEditingEnded = Field != null ? Field.caretPosition : -1);
         }
 
         void OnFieldChanged(string value)
         {
             if (data == null) return;
             data.Text = value;
+            textChangedOnFrame = Time.frameCount;
             OnTextChanged?.Invoke(data.Id);
         }
 
@@ -183,6 +207,14 @@ namespace WorldGen.Notes.Rendering
             if (Field != null && Field.text != (data.Text ?? "")) Field.text = data.Text ?? "";
             if (collapseGlyph != null) collapseGlyph.text = data.Collapsed ? "▸" : "▾";
         }
+
+        /// <summary>True between FocusAt and the frame LateUpdate manages to place the caret. In that gap the
+        /// field's own caret is NOT the one anyone asked for: ActivateInputField's activation runs OnFocus,
+        /// which calls SelectAll (InputField.cs:1285) and leaves caretPosition reading 0 with the whole text
+        /// selected. DocKeyboardController checks this before refreshing its cache from a live field, because
+        /// caching that 0 and then acting on it would split a row at the front instead of where focus was
+        /// requested.</summary>
+        public bool CaretPending => caretPending;
 
         /// <summary>Puts the caret in this row. offset &lt; 0 means the end of the text. The caret is applied
         /// on a later frame because ActivateInputField only takes effect once the field is actually focused,
@@ -197,7 +229,21 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>Which visual line the caret is on, and how many there are. Legacy InputField exposes
         /// neither, so this reads the text generator directly — it is what decides whether Up/Down move the
-        /// caret inside this row or jump to the next one.</summary>
+        /// caret inside this row or jump to the next one.
+        ///
+        /// KNOWN LAG, measured and left alone (Task 10g, Step 2). `Text.cachedTextGenerator` is a render-time
+        /// artefact — Text only repopulates it from OnPopulateMesh, during the canvas rebuild at the END of
+        /// the frame — while `Field.caretPosition` below is current. So for one frame after a keystroke that
+        /// changes the wrapping, the caret is compared against the previous frame's line map, and Up can jump
+        /// to the previous BLOCK instead of moving up a visual line inside this row. The obvious fix, calling
+        /// Populate here with the settings OnPopulateMesh uses, does NOT work and was reverted: while the
+        /// field is focused — the only time these flags are read — UpdateLabel assigns the Text component a
+        /// WINDOW into the field's text (`m_TextComponent.text = processed.Substring(m_DrawStart, …)`,
+        /// InputField.cs:2554-2558; the full range is restored only in the `!m_AllowInput` branch at :2531).
+        /// A line map built from that string is indexed in window coordinates while the caret is indexed in
+        /// whole-text coordinates, so refreshing it trades one disagreement for another. Doing this properly
+        /// means tracking m_DrawStart, which InputField keeps private, and it needs the Editor to validate —
+        /// so it is a task, not a line. The DM has not reported it; the window is one frame.</summary>
         public bool CaretOnFirstLine => CaretLine() <= 0;
 
         public bool CaretOnLastLine
