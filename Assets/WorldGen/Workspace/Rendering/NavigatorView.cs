@@ -4,6 +4,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
+using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
 using WorldGen.Workspace.Data;
 
@@ -21,15 +22,20 @@ namespace WorldGen.Workspace.Rendering
     /// NotesRootBuilder owns the live NotesDocumentController, not this class. WorkspaceBuilder.Awake wires
     /// the two together via EnsureDocumentController's FindFirstObjectByType discovery (Task 9), so this is
     /// non-null in the normal running app; it stays null only where that discovery finds no NotesRootBuilder
-    /// in the scene at all (a bare/partial scene, e.g. a harness or test host). While null, NavigatorView
-    /// still builds its chrome (header, search box, empty scroll area) but renders zero groups — Rebuild's
-    /// own `if (documentController == null) return;` short-circuits BEFORE ever calling NavigatorTree.Build,
-    /// so it does not matter here that Build(null, filter) itself no longer returns an empty list (the
-    /// Pinned world-map row does not depend on a document — see Build's own comment); that tolerance is
-    /// exercised by direct callers of Build (the self-tests) and stands as defense-in-depth against a future
-    /// change to THIS guard, not as something the rendered navigator relies on today. The remaining guard
-    /// this view does need is around the rename/delete calls, which would otherwise NRE on a null
-    /// documentController.
+    /// in the scene at all (a bare/partial scene, e.g. a harness or test host). A NULL DOCUMENT IS PASSED
+    /// STRAIGHT THROUGH to NavigatorTree.Build rather than short-circuited here, as of Task 10e: «Мир» is now
+    /// the world's contents (the world map plus every POI) and depends on no document at all, so the
+    /// `if (documentController == null) return;` this method used to open with would throw away the whole of
+    /// «Мир» in exactly the scene state that most needs the map to stay reachable. That is the same defect
+    /// Build's own comment says this arc has already fixed twice, and the version of this paragraph written
+    /// in Task 10b explicitly named THIS guard as where it would come back. The guard the view does still
+    /// need is around the rename/delete calls, which would otherwise NRE on a null documentController — those
+    /// are on Authored rows/headers, which a null document produces none of anyway.
+    ///
+    /// poiManager is the OTHER external reference, discovered rather than injected for the same reason
+    /// QuickOpenPopup.Attach discovers its own (no Inspector wiring until Task 11), but re-tried on every
+    /// miss instead of once — see ResolvePoiManager, which is also the single place this view subscribes to
+    /// OnPoisChanged so a newly placed POI appears in «Мир» without waiting for an unrelated layout change.
     ///
     /// Built via the static Create factory onto the GameObject WorkspaceBuilder.BuildNavigatorColumn already
     /// constructed (Image + fixed-width LayoutElement) — this class adds the VerticalLayoutGroup and children
@@ -50,6 +56,7 @@ namespace WorldGen.Workspace.Rendering
 
         WorkspaceController controller;
         NotesDocumentController documentController;
+        PoiManager poiManager;
         LayoutElement columnLayoutElement;
         Font builtinFont;
 
@@ -107,6 +114,37 @@ namespace WorldGen.Workspace.Rendering
         {
             if (controller != null) controller.OnLayoutChanged -= RequestRebuild;
             if (documentController != null) documentController.OnDocumentChanged -= RequestRebuild;
+            // PoiManager outlives this view (it is a scene component; the workspace column is built and torn
+            // down with the shell), so an un-removed handler would keep this destroyed MonoBehaviour alive in
+            // the manager's invocation list and fire RequestRebuild on it forever — the leak half of the pair
+            // ResolvePoiManager's own comment describes. Unity's `!=` reads a DESTROYED manager as null, in
+            // which case there is no list left to remove from and skipping is correct.
+            if (poiManager != null) poiManager.OnPoisChanged -= RequestRebuild;
+        }
+
+        /// <summary>The live POI store, discovered on every miss (the same shape MapScreenController.Pois()
+        /// uses, and for the first of its two reasons: no Inspector slot before Task 11's scene edit) — NOT
+        /// once at Create like QuickOpenPopup.Attach, because this view must also be able to find a
+        /// PoiManager that did not exist yet when the shell was built.
+        ///
+        /// SUBSCRIBING HERE, on the null→found transition, is what makes the subscription exactly-once
+        /// without a separate bool: the field IS the guard. Rebuild reads this every pass, so a re-discovery
+        /// can only happen after the field went null again (the manager was destroyed — its invocation list
+        /// died with it), never while a live handler is registered. Without any subscription at all this
+        /// view would only rebuild on OnLayoutChanged/OnDocumentChanged (an earlier review flagged that gap
+        /// while nothing world-shaped was in the tree yet), so placing a POI would leave «Мир» stale until
+        /// the user happened to click a tab.
+        ///
+        /// The other half of the domain-reload hazard is absent by construction here: a Play-mode recompile
+        /// wipes both this field and PoiManager's own event (both plain non-serialized), and nothing re-runs
+        /// Create — WorkspaceBuilder.Awake deliberately does NOT revive this view (see its own comment), so
+        /// there is no path that re-subscribes a still-subscribed instance and double-fires.</summary>
+        PoiManager ResolvePoiManager()
+        {
+            if (poiManager != null) return poiManager;
+            poiManager = FindFirstObjectByType<PoiManager>(FindObjectsInactive.Include);
+            if (poiManager != null) poiManager.OnPoisChanged += RequestRebuild;
+            return poiManager;
         }
 
         // ── Construction (chrome — built once, never destroyed by Rebuild) ───────
@@ -305,10 +343,14 @@ namespace WorldGen.Workspace.Rendering
                 Destroy(child);
             }
 
-            if (documentController == null) return;   // no document wired yet — Task 11's seam; chrome above still built.
-
+            // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
+            // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
+            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:212 and
+            // MapScreenController.cs:848. A null document is no longer short-circuited before this line — see
+            // the class doc.
+            var doc = documentController != null ? documentController.Document : null;
             var activeSurface = ActiveSurface();
-            var groups = NavigatorTree.Build(documentController.Document, filter);
+            var groups = NavigatorTree.Build(doc, WorldObjectSource.Collect(ResolvePoiManager()), filter);
             foreach (var group in groups)
                 BuildGroup(group, activeSurface);
         }
@@ -334,10 +376,10 @@ namespace WorldGen.Workspace.Rendering
             groupVLayout.childForceExpandWidth = true;
             groupGO.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            // Pinned renders its one row bare, no header — NavGroup.Title is "" for it (NavigatorTree.Build),
-            // so there is no label to show, and it is not a group the user would recognise as one (it is a
-            // single hardcoded row, not a titled collection like Мир or an Authored PageGroup).
-            if (group.Kind != NavGroupKind.Pinned) BuildGroupHeader(groupGO.transform, group);
+            // EVERY group has a header now. Task 10b's render-without-header branch existed for the one
+            // headerless Pinned group (the world map, above «Мир»); Task 10e folded that row into «Мир» as
+            // its first member and deleted the kind, so there is no longer any group whose Title is "".
+            BuildGroupHeader(groupGO.transform, group);
 
             foreach (var node in group.Nodes)
             {
@@ -346,8 +388,7 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
-        /// <summary>Called for World and Authored groups (BuildGroup skips it for Pinned — that group's
-        /// Title is "", so there is no label to show at all), but only Authored ones get a rename/delete menu
+        /// <summary>Called for every group, but only Authored ones get a rename/delete menu
         /// wired on: NavGroup.Id is only populated for Authored groups (see its own doc comment) — the
         /// computed Мир group is not a stored PageGroup at all, so there is nothing behind it for
         /// «Переименовать»/«Удалить» to act on. This is the one place NotesTreeSidebar's ported behaviour
@@ -458,9 +499,10 @@ namespace WorldGen.Workspace.Rendering
 
         void BuildNodeRow(Transform parent, NavNode node, bool isActive)
         {
-            // Falls back to Target.Kind when Id is empty (the pinned world-map row, and any future
-            // non-Page node) — otherwise this reads as "Node_" in the Hierarchy, indistinguishable from a
-            // bug, rather than naming what the row actually is.
+            // Falls back to Target.Kind when Id is empty (the world-map row, whose Id is "" by contract with
+            // WorkspaceOps.NewDefault's seed tab) — otherwise this reads as "Node_" in the Hierarchy,
+            // indistinguishable from a bug, rather than naming what the row actually is. A «Мир» POI row does
+            // carry an Id (the POI's guid), so it names itself.
             string idPart = string.IsNullOrEmpty(node.Target.Id) ? node.Target.Kind.ToString() : node.Target.Id;
             var rowGO = new GameObject($"Node_{idPart}", typeof(RectTransform));
             rowGO.transform.SetParent(parent, false);
@@ -514,12 +556,16 @@ namespace WorldGen.Workspace.Rendering
 
             var click = rowGO.AddComponent<NavRowClickRouter>();
             click.OnLeftClick = () => controller.Open(node.Target, node.Title, inOtherPane: false);
-            // Branch on Target.Kind, not on which group the row came from: today the pinned world-map row is
-            // the only non-Page node NavigatorTree ever produces, but the reason is about the TARGET, not
-            // its group — a node with no page behind it has nothing for «Переименовать»/«Удалить» to act on.
-            // «Удалить» would call documentController.DeletePage(pageId) with an id matching no page (a
-            // silent no-op at best); «Переименовать» would edit a label with no backing store to persist the
-            // new name into. Both stay off the menu rather than being wired to quietly do nothing.
+            // Branch on Target.Kind, not on which group the row came from — and as of Task 10e that
+            // distinction carries real weight rather than being a precaution: EVERY «Мир» row is a non-Page
+            // node now (the world map, and one PoiEditor row per POI), where before it was only the single
+            // pinned map row. The reason is about the TARGET: a node with no page behind it has nothing for
+            // «Переименовать»/«Удалить» to act on. «Удалить» would call documentController.DeletePage(pageId)
+            // with an id that is a POI's guid and matches no page — a silent no-op at best, and at worst a
+            // page id collision away from deleting an unrelated note; «Переименовать» would edit a label with
+            // no backing store to persist the new name into. Both stay off the menu (see the else branch:
+            // «Открыть рядом» is the only item a non-Page row gets) rather than being wired to quietly do
+            // nothing, and no path from here reaches documentController with a POI id.
             if (node.Target.Kind == SurfaceKind.Page)
             {
                 // Rename overlay — built (but hidden) here, same rect as the label, exactly mirroring
@@ -631,10 +677,10 @@ namespace WorldGen.Workspace.Rendering
     }
 
     /// <summary>The right-click menu, shared by three callers, all in BuildNodeRow/BuildGroupHeader above:
-    /// Page rows (Открыть рядом / Переименовать / Удалить), non-Page rows i.e. today only the pinned
-    /// world-map row (Открыть рядом ONLY — there is no page behind it for the other two items to act on),
-    /// and Authored group headers (Переименовать / Удалить; the World group gets none, since it is computed
-    /// with no PageGroup behind it). «рядом», not «справа» —
+    /// Page rows (Открыть рядом / Переименовать / Удалить), non-Page rows — the world map and every POI, i.e.
+    /// the whole of «Мир» since Task 10e (Открыть рядом ONLY — there is no page behind any of them for the
+    /// other two items to act on), and Authored group headers (Переименовать / Удалить; the World group gets
+    /// none, since it is computed with no PageGroup behind it). «рядом», not «справа» —
     /// WorkspaceOps.Open(inOtherPane) means "the pane that is NOT focused" (see the plan ledger's Task 1
     /// decision, carried to this task); with focus already on the right pane, "справа" would open on the
     /// LEFT and the label would lie.

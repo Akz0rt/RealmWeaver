@@ -2,8 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
-using WorldGen.Notes.Data;
-using WorldGen.Notes.Rendering;
 using WorldGen.Workspace.Data;
 using WorldGen.Workspace.Rendering;
 
@@ -230,34 +228,31 @@ namespace WorldGen.Rendering
         // the SCREEN question ("is there a world at all?") is unchanged and still this class's, while WHICH
         // surface is visible is now WorkspaceController's.
         //
-        // inOtherPane is FALSE everywhere here, deliberately, and it is not an oversight to revisit: the spec
-        // reserves the other pane for two explicit gestures (Shift+Enter in Ctrl+K, «Открыть рядом» in the
-        // navigator) plus double-clicking a place on the map, which is Step 2a's and lives in
-        // PoiInteractionController. Everything in THIS file is a drill-down from something already open — the
-        // POI editor's «КАРТА ЛОКАЦИИ», a room's «Боевая карта», a building inside a town — where the user is
-        // going deeper into one line of work, not putting two things side by side.
+        // inOtherPane is FALSE everywhere here except OpenPoiFromMap, deliberately, and that is not an
+        // oversight to revisit: the spec reserves the other pane for three explicit gestures — Shift+Enter in
+        // Ctrl+K, «Открыть рядом» in the navigator, and double-clicking a place on the map. The third one
+        // moved INTO this file in Task 10e (it used to open a page, and the page path lived here too); the
+        // gesture is still wired in PoiInteractionController, only its destination is here. Everything else
+        // in this file is a drill-down from something already open — the POI editor's «КАРТА ЛОКАЦИИ», a
+        // room's «Боевая карта», a building inside a town — where the user is going deeper into one line of
+        // work, not putting two things side by side.
 
         /// <summary>Opens the POI editor for a point (single source of truth for the info-popup's
         /// «Редактировать» button). Hides the popup, binds the editor and opens its TAB — as of Task 10c it no
         /// longer takes over the window, which is the «редактирование точки интереса происходит не в отдельной
         /// вкладке, а раскрывается на весь экран» the user reported at the Task 10a checkpoint.
         ///
-        /// ALSO ENSURES THE POI HAS A PAGE, which is what puts it in the navigator's «Мир» group — the spec's
-        /// "it appears in the tree as a consequence of being worked on rather than through a separate
-        /// mechanism", with opening the editor being the act of working on it. The page is CREATED, not
-        /// OPENED: a tab for it would be a second thing appearing from one click. Note this is a different
-        /// gesture from double-clicking the POI on the map (PoiInteractionController), which opens the page
-        /// itself and no editor.</summary>
-        public void OpenPoiEditor(PoiData poi)
-        {
-            if (poi == null) return;
-            editingPoi = poi;
-            if (poiInfoPopup != null) poiInfoPopup.Hide();
-            if (poiEditorScreen != null) poiEditorScreen.Bind(poi);
-            EnsurePageForPoi(poi);
-            OpenSurfaceTab(PoiEditorSurface(poi), PoiTitle(poi));
-            RefreshScreenState();
-        }
+        /// IT NO LONGER CREATES A PAGE FOR THE POI (Task 10e). That call existed to make the POI appear in
+        /// the navigator's «Мир» group, which was then computed from NotesPage.Bound; «Мир» is now the
+        /// world's contents and reads no pages at all (NavigatorTree's class doc), so the page had nothing
+        /// left to do but accumulate — one note per place the DM merely glanced at, against their own ruling
+        /// that notes are authored deliberately as separate objects.
+        ///
+        /// This is now the SAME destination double-clicking the POI on the map reaches (OpenPoiFromMap below,
+        /// which delegates here through OpenPoiEditorIn) and the same one the navigator and Ctrl+K open —
+        /// «двойное нажатие и выбор в навигаторе должен выдавать то же самое меню». The gestures differ only
+        /// in which pane they land in.</summary>
+        public void OpenPoiEditor(PoiData poi) => OpenPoiEditorIn(poi, inOtherPane: false);
 
         /// <summary>Closes the POI editor's tab. What the user sees next is whatever tab the workspace makes
         /// active in its place (WorkspaceOps.FixActiveIndexAfterRemoval decides), NOT "the world map" as the
@@ -779,7 +774,7 @@ namespace WorldGen.Rendering
             return $"Здание {roomId}";
         }
 
-        /// <summary>The live POI store, discovered on every miss like Shell()/Documents() and for the same two
+        /// <summary>The live POI store, discovered on every miss like Shell() and for the same two
         /// reasons: no Inspector slot without a scene edit, and a domain reload wipes the cached reference
         /// while the component survives. Only RebindPoiEditor needs it — every other Rebind* path resolves
         /// through dungeonManager, which this class has held as a serialized field since Ц1.</summary>
@@ -792,10 +787,13 @@ namespace WorldGen.Rendering
 
         PoiManager poiManager;
 
-        /// <summary>A POI's tab title. Falls back the same way NotesDocOps.EnsurePageFor's E3 does, and to the
-        /// same string, so a nameless POI reads identically in the tab strip and in «Мир» rather than being
-        /// «Без названия» in one place and blank in the other.</summary>
-        static string PoiTitle(PoiData poi) =>
+        /// <summary>A POI's tab title, and — since Task 10e — its «Мир» row's title and its Ctrl+K row's
+        /// title too: WorldObjectSource.Collect calls THIS method rather than copying poi.Name, so a nameless
+        /// POI reads «Без названия» in all three places instead of being «Без названия» in the tab strip and
+        /// blank in the tree. Public for that one caller (the same reason PoiInfoPopup.TypeLabel was made
+        /// public in Task 10b), and the fallback string is still the one NotesDocOps.EnsurePageFor's E3
+        /// uses, so a page Р3 later binds to a nameless POI still agrees with its row.</summary>
+        public static string PoiTitle(PoiData poi) =>
             poi != null && !string.IsNullOrWhiteSpace(poi.Name) ? poi.Name : "Без названия";
 
         /// <summary>An interior's tab title, used only on CloseDungeonEditor's «← Город» path where the town's
@@ -807,13 +805,18 @@ namespace WorldGen.Rendering
             interior == null ? "" : interior.Kind == InteriorKind.Settlement ? "Город"
                 : interior.Kind == InteriorKind.Building ? "Здание" : "Подземелье";
 
-        /// <summary>Opens (or focuses, per WorkspaceOps.Open's R1) `s` in the FOCUSED pane. A no-op when there
-        /// is no workspace in the scene — the transitional state this class's own doc names — and when `s` is
-        /// null, which is how the Close*/Open* paths pass state that is not set.</summary>
-        void OpenSurfaceTab(SurfaceRef s, string title)
+        /// <summary>Opens (or focuses, per WorkspaceOps.Open's R1) `s`, in the FOCUSED pane unless a caller
+        /// asks otherwise. A no-op when there is no workspace in the scene — the transitional state this
+        /// class's own doc names — and when `s` is null, which is how the Close*/Open* paths pass state that
+        /// is not set.
+        ///
+        /// The default is false and every call site but one takes it: OpenPoiFromMap (a double-click on the
+        /// map) is the single gesture in this file that opens beside rather than in front — see its own doc,
+        /// and the section comment above the Open* methods.</summary>
+        void OpenSurfaceTab(SurfaceRef s, string title, bool inOtherPane = false)
         {
             if (s == null) return;
-            Shell()?.Open(s, title, inOtherPane: false);
+            Shell()?.Open(s, title, inOtherPane);
         }
 
         /// <summary>Closes `s`'s tab wherever it is. Null-tolerant for the same reason OpenSurfaceTab is, and
@@ -825,78 +828,43 @@ namespace WorldGen.Rendering
             Shell()?.CloseSurface(s);
         }
 
-        /// <summary>Creates the POI's page if it has none, which is the ONLY thing that puts the POI in the
-        /// navigator's «Мир» group (NotesDocOps.EnsurePageFor is the single writer of NotesPage.Bound, and
-        /// NavigatorTree derives membership from it). Existing pages are reused, never duplicated — E1.
+        /// <summary>Double-clicking a place on the map — the Р1-reachable half of the spec's "clicking a
+        /// place": a single click only SELECTS (a stray click must never throw the user out of the map), and
+        /// the place opens on an explicit action. Wired from PoiInteractionController.OnRelease.
         ///
-        /// RAISES OnDocumentChanged EXPLICITLY rather than relying on the OpenSurfaceTab that follows it. The
-        /// navigator rebuilds on either OnDocumentChanged or WorkspaceController.OnLayoutChanged
-        /// (NavigatorView.cs:99-100), and every call site here does follow this with an Open — so the tree
-        /// would refresh anyway, today, by ordering. Task 10b's review flagged that as a trap worth closing
-        /// rather than documenting: a future path that creates a page WITHOUT opening a tab (or an Open that
-        /// no-ops because the tab was already there and focused — WorkspaceController.Open still raises, but
-        /// a future short-circuit might not) would leave the place silently absent from «Мир».
-        ///
-        /// The document controller is DISCOVERED, like the workspace: NotesRootBuilder owns the live
-        /// NotesDocumentController and this class has no Inspector reference to it (adding one would need a
-        /// scene edit Task 11 owns). EnsurePageFor(null-doc, ...) already returns null (E4), so a scene
-        /// without notes degrades to "no page, no «Мир» row" rather than throwing.</summary>
-        string EnsurePageForPoi(PoiData poi)
-        {
-            if (poi == null) return null;
-            var docController = Documents();
-            var doc = docController != null ? docController.Document : null;
-            if (doc == null) return null;
-
-            string pageId = NotesDocOps.EnsurePageFor(
-                doc, new WorldRef { Kind = WorldRefKind.Poi, Id = poi.Id }, PoiTitle(poi));
-            if (pageId == null) return null;
-            docController.NotifyDocumentChanged();
-            return pageId;
-        }
-
-        /// <summary>Opens a POI's PAGE — the Р1-reachable half of the spec's "clicking a place on the map":
-        /// a single click only SELECTS (a stray click must never throw the user out of the map), and the page
-        /// opens on an explicit action. Double-clicking the marker is that action for Р1; the inspector's
-        /// «Открыть страницу →» is Р5's. Wired from PoiInteractionController.OnRelease.
+        /// OPENS THE EDITOR, not a page (Task 10e). Until this task it created and opened the POI's note —
+        /// «двойное нажатие ... должен выдавать то же самое меню, именно оно соответствует точке интереса»
+        /// settles that: the place IS its editor, and there is no longer a second surface for the same
+        /// gesture to disagree about. It is literally the same call the popup's «Редактировать» makes.
         ///
         /// IN THE OTHER PANE WHEN A SPLIT EXISTS, per the spec, otherwise a new tab in the focused pane. That
         /// is the one place in this file that passes inOtherPane: true, and it is the point of the gesture —
-        /// the user is reading a place's notes NEXT TO the map they clicked it on, not instead of it.
-        ///
-        /// DELIBERATELY NOT the POI editor: OpenPoiEditor (the popup's «Редактировать») opens the editor's own
-        /// tab and merely ENSURES the page exists. Two gestures, two surfaces, one shared EnsurePageFor.
+        /// the user is opening a place NEXT TO the map they clicked it on, not instead of it.
         ///
         /// LIVES HERE, not in PoiInteractionController, even though the gesture is wired there: this class
-        /// already owns the discovered NotesDocumentController and WorkspaceController (see Documents() and
-        /// Shell()), and giving the interaction controller its own copies would be two more references to go
-        /// stale after a domain reload for no gain.</summary>
-        public void OpenPoiPage(PoiData poi)
+        /// already owns the discovered WorkspaceController (see Shell()) and the editor screen, and giving the
+        /// interaction controller its own copies would be more references to go stale after a domain reload
+        /// for no gain.</summary>
+        public void OpenPoiFromMap(PoiData poi)
         {
-            string pageId = EnsurePageForPoi(poi);
-            if (pageId == null) return;   // no document in this scene, or a null POI — nothing to open.
-
             var shell = Shell();
-            if (shell == null) return;
-            bool split = shell.Layout != null && shell.Layout.Secondary != null;
-            shell.Open(new SurfaceRef { Kind = SurfaceKind.Page, Id = pageId }, PoiTitle(poi), inOtherPane: split);
+            bool split = shell != null && shell.Layout != null && shell.Layout.Secondary != null;
+            OpenPoiEditorIn(poi, inOtherPane: split);
         }
 
-        /// <summary>The live notes document controller, discovered on every miss for the same reasons Shell()
-        /// is — no Inspector slot until Task 11, and a domain reload wipes the cached reference while the
-        /// component survives. FindObjectsInactive.Include because NotesRootBuilder's own GameObject may be
-        /// inactive depending on which screen is showing.</summary>
-        NotesDocumentController Documents()
+        /// <summary>The one implementation behind both entry points above; they differ only in the pane. Kept
+        /// private with two named public callers rather than exposed as one method with a bool, so the two
+        /// gestures stay readable at their call sites (PoiInfoPopup's «Редактировать» / a double-click) and
+        /// nothing else can invent a third pane rule.</summary>
+        void OpenPoiEditorIn(PoiData poi, bool inOtherPane)
         {
-            if (documentController != null) return documentController;
-            var notesRoot = FindFirstObjectByType<NotesRootBuilder>(FindObjectsInactive.Include);
-            if (notesRoot == null) return null;
-            notesRoot.EnsureBuilt();   // idempotent; Awake ordering across GameObjects is undefined.
-            documentController = notesRoot.DocumentController;
-            return documentController;
+            if (poi == null) return;
+            editingPoi = poi;
+            if (poiInfoPopup != null) poiInfoPopup.Hide();
+            if (poiEditorScreen != null) poiEditorScreen.Bind(poi);
+            OpenSurfaceTab(PoiEditorSurface(poi), PoiTitle(poi), inOtherPane);
+            RefreshScreenState();
         }
-
-        NotesDocumentController documentController;
 
         void RefreshScreenState()
         {

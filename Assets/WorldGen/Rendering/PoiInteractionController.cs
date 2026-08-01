@@ -139,7 +139,8 @@ namespace WorldGen.Rendering
                 var poi = poiManager.GetPoiById(trackedPoiId);
                 if (poi != null)
                 {
-                    // Single click → select + info popup; double click → the place's PAGE (Task 10c Step 2a).
+                    // Single click → select + info popup; double click → the PLACE itself, i.e. its editor
+                    // (Task 10c Step 2a, retargeted by Task 10e).
                     //
                     // The single-click half is the spec's hard rule and is why this is a DOUBLE-click at all:
                     // «клик выделяет ... случайный клик не должен выбрасывать пользователя с карты». Before
@@ -147,11 +148,13 @@ namespace WorldGen.Rendering
                     // exactly that — being thrown out of the map. It now opens a tab, and in the OTHER pane
                     // when a split exists, so the map the user just clicked stays on screen either way.
                     //
-                    // Opening the PAGE rather than the editor is also what makes the place appear in the
-                    // navigator's «Мир» group, since the page is what carries NotesPage.Bound. The editor is
-                    // still one click away — the info popup this same gesture's single click shows carries
-                    // «Редактировать» (PoiInfoPopup.cs:307 → MapScreenController.OpenPoiEditor).
-                    if (isDouble && mapScreenController != null) mapScreenController.OpenPoiPage(poi);
+                    // Task 10c opened the POI's PAGE here, because a page was what put the place in the
+                    // navigator's «Мир». The DM ruled otherwise after using it — «двойное нажатие и выбор в
+                    // навигаторе должен выдавать то же самое меню, именно оно соответствует точке интереса» —
+                    // so this now reaches the SAME destination the info popup's «Редактировать» does
+                    // (PoiInfoPopup.cs:307 → MapScreenController.OpenPoiEditor); OpenPoiFromMap differs from
+                    // it only by opening beside the map rather than in front of it.
+                    if (isDouble && mapScreenController != null) mapScreenController.OpenPoiFromMap(poi);
                     else if (infoPopup != null) infoPopup.Show(poi);
                 }
             }

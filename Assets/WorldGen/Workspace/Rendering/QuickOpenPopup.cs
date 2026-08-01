@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
 using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
@@ -206,41 +205,28 @@ namespace WorldGen.Workspace.Rendering
             // list rather than throwing (Q-guard in QuickOpen.cs), so this needs no extra null branch of its
             // own to stay crash-free. It does NOT mean Ctrl+K goes blank in that scene: Search's own class doc
             // explains why the world-map hit is unconditional (built above ITS OWN doc==null guard) while
-            // page and world-object hits stay gated — a world-object row is INERT without a document
-            // (choosing it calls NotesDocOps.EnsurePageFor(null, ...), which returns null and does nothing),
-            // so suppressing it here is correct, not merely deferred out of scope.
+            // page and world-object hits stay gated.
+            //
+            // THAT GATE HAS OUTLIVED ITS REASON, and is left in place on purpose rather than quietly widened.
+            // It was correct while choosing a world object called NotesDocOps.EnsurePageFor, which returns
+            // null on a null doc (E4) — the row really was inert. Task 10e retargeted that branch at the POI's
+            // EDITOR (see ChooseIndex), which needs no document at all, so a doc-less scene now suppresses
+            // rows that would work. Moving the gate means changing QuickOpen.Search's contract, which this
+            // task's ruling did not ask for; it is recorded in the task report beside the matching W4
+            // question, for one decision rather than two. It costs nothing today: NavigatorView's «Мир»
+            // reaches every POI without a document, and the only scene the gate can fire in is one where no
+            // NotesRootBuilder exists at all.
             var doc = documentController != null ? documentController.Document : null;
 
             hits.Clear();
-            hits.AddRange(QuickOpen.Search(doc, CollectWorldObjects(), query, ResultLimit));
+            // The world list is built fresh on every search, same as `doc` immediately above, and by the same
+            // mapper NavigatorView's «Мир» uses — WorldObjectSource.Collect, which this class's own private
+            // copy became in Task 10e (see that class's doc for why the two must not diverge). Subscribing to
+            // PoiManager.OnPoisChanged the way the navigator does would buy nothing here: a search runs on the
+            // keystroke, so it always reads the POIs as they are at that instant.
+            hits.AddRange(QuickOpen.Search(doc, WorldObjectSource.Collect(poiManager), query, ResultLimit));
             highlighted = hits.Count > 0 ? 0 : -1;
             RebuildRows();
-        }
-
-        /// <summary>Maps the live PoiManager's POIs into the pure WorldObjectRef DTO QuickOpen.Search takes
-        /// (Task 10b — see WorldObjectRef's own doc for why PoiData itself never crosses into QuickOpen).
-        /// Built fresh on every search, same as `doc` immediately above: PoiManager.OnPoisChanged exists, but
-        /// subscribing to it would only save re-walking a list that is, at most, a few hundred entries long
-        /// on every keystroke — the same cost QuickOpen.Search itself already pays walking every page. Null
-        /// when poiManager was never found (pre-generation, or a scene with no map at all yet); QuickOpen's
-        /// own W5 guard treats that exactly like "no POIs exist".</summary>
-        List<WorldObjectRef> CollectWorldObjects()
-        {
-            if (poiManager == null) return null;
-
-            var pois = poiManager.GetAllPois();
-            var world = new List<WorldObjectRef>(pois.Count);
-            foreach (var poi in pois)
-                world.Add(new WorldObjectRef
-                {
-                    Kind = WorldRefKind.Poi,
-                    Id = poi.Id,
-                    Name = poi.Name,
-                    // PoiInfoPopup.TypeLabel — the SAME Russian label switch that popup's own type line
-                    // shows, made public static for exactly this reuse (see its own doc); not copied here.
-                    KindLabel = PoiInfoPopup.TypeLabel(poi.Type),
-                });
-            return world;
         }
 
         void MoveHighlight(int delta)
@@ -263,19 +249,22 @@ namespace WorldGen.Workspace.Rendering
             QuickHit hit = hits[index];
             SurfaceRef target = hit.Target;
 
-            // World != null (Task 10b, W2): no page exists for this world object yet, so create-or-find it
-            // NOW — at the moment the user actually chooses the row, never while merely typing (RunSearch
-            // calls QuickOpen.Search on every keystroke; creating a page per keystroke would litter
-            // «Справочник» with pages nobody asked for). NotesDocOps.EnsurePageFor is THE only writer of
-            // NotesPage.Bound (see its own doc) — this is the one call site the brief's problem statement
-            // ("placing a POI creates no navigation link") is about.
-            if (hit.World != null)
-            {
-                var doc = documentController != null ? documentController.Document : null;
-                string pageId = NotesDocOps.EnsurePageFor(doc, hit.World, hit.Title);
-                if (pageId == null) return;   // E4 — null doc/bound; nothing was created, nothing to open.
-                target = new SurfaceRef { Kind = SurfaceKind.Page, Id = pageId };
-            }
+            // World != null (Task 10b, W2) means this row is a WORLD OBJECT, not a page: QuickHit.Target
+            // carries no usable id for it (Page/"" — no page is involved at all), and the identity to open
+            // travels on World instead. Opening it opens THE PLACE — its editor — per the Task 10c checkpoint
+            // ruling that a point of interest IS its editor menu; the same SurfaceRef the navigator's «Мир»
+            // row and the map popup's «Редактировать» produce, through the one factory all three share
+            // (WorldSurface.PoiEditor), so all three focus one tab rather than opening near-identical ones.
+            //
+            // Task 10b created a PAGE here instead (NotesDocOps.EnsurePageFor) and opened that. Removed, not
+            // merely bypassed: auto-creating a note for a place the user only looked at produced clutter with
+            // no function now that «Мир» no longer reads NotesPage.Bound, and it contradicted the second half
+            // of the same ruling — a note about a place is an ordinary note the user authors deliberately.
+            // EnsurePageFor itself stays (Р3's binding work is its real caller); this call site does not.
+            //
+            // The PAGE-hit path above is untouched: a page found by its own name is a note the user searched
+            // for by name, and opening anything else would not be the row they read.
+            if (hit.World != null) target = WorldSurface.PoiEditor(hit.World.Id);
 
             Close();   // before Open() — same ordering NavContextMenu.AddItem uses for its own onClick, so
                        // the palette is never still on screen (or the active canvas) underneath whatever
