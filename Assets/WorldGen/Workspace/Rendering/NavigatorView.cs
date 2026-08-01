@@ -29,8 +29,11 @@ namespace WorldGen.Workspace.Rendering
     /// «Мир» in exactly the scene state that most needs the map to stay reachable. That is the same defect
     /// Build's own comment says this arc has already fixed twice, and the version of this paragraph written
     /// in Task 10b explicitly named THIS guard as where it would come back. The guard the view does still
-    /// need is around the rename/delete calls, which would otherwise NRE on a null documentController — those
-    /// are on Authored rows/headers, which a null document produces none of anyway.
+    /// need is around every call that reaches INTO the document — rename, delete, and (Task 10h) create.
+    /// Rename/delete are self-limiting: they hang off Authored rows/headers, which a null document produces
+    /// none of anyway. «+ Группа» is NOT — it is chrome (BuildCreateGroupBar, built once, never rebuilt),
+    /// so it exists and is clickable in exactly the bare scene where documentController is null, and
+    /// CreateGroupWithFirstPage therefore opens with an explicit null check of its own.
     ///
     /// poiManager is the OTHER external reference, discovered rather than injected for the same reason
     /// QuickOpenPopup.Attach discovers its own (no Inspector wiring until Task 11), but re-tried on every
@@ -54,6 +57,16 @@ namespace WorldGen.Workspace.Rendering
         const float GroupHeaderHeight = 24f;
         const float RowHeight = 38f;
 
+        /// <summary>Height of the root «+ Группа» bar. NotesTreeSidebar's AddSmallActionButton used 18f, but
+        /// that button lived in a denser sidebar; here it has to read as a peer of this column's own controls,
+        /// so it sits between the group header (24) and the search field (30). Cited rather than silently
+        /// changed, per Task 10h's "say where you deviate from the restored source".</summary>
+        const float ActionBarHeight = 22f;
+
+        /// <summary>Side of the square «+» on an Authored group header. Kept under GroupHeaderHeight so the
+        /// button cannot force the header taller than the 24f its LayoutElement asks for.</summary>
+        const float AddPageButtonSize = 18f;
+
         WorkspaceController controller;
         NotesDocumentController documentController;
         PoiManager poiManager;
@@ -62,11 +75,28 @@ namespace WorldGen.Workspace.Rendering
 
         Text headerText;
         GameObject searchGO;
+        // The search field itself, not just its GameObject — ClearFilter has to write "" back into the
+        // VISIBLE field, not only into `filter`, or the box keeps showing a needle that no longer applies.
+        InputField searchInput;
         GameObject scrollGO;
+        GameObject createGroupGO;
         Transform listContent;
 
         string filter = "";
         bool rebuildPending;
+
+        /// <summary>Set by CreatePageAndOpen, consumed by the NEXT Rebuild and by that one only — Rebuild
+        /// reads it into a local and nulls the field on its very first lines. A newly created page has no row
+        /// yet at the moment of creation (creation raises OnDocumentChanged, which only sets rebuildPending;
+        /// the rows are built one LateUpdate later), so "rename it the instant it exists" has to be a note
+        /// left for the rebuild rather than a call made here.
+        ///
+        /// REJECTED: letting it live until it is consumed. A page can fail to appear in the very next
+        /// rebuild (a search filter that its «Страница N» name does not match), and a pending id that
+        /// survives would then fire a rename at some arbitrary later moment — a row the user is merely
+        /// looking at suddenly turning into an edit box. CreatePageAndOpen clears the filter instead, which
+        /// makes the row's appearance certain; the one-rebuild lifetime is the belt to that braces.</summary>
+        string pendingRenamePageId;
 
         // Rename bookkeeping, ported from NotesTreeSidebar — see StartRename/CancelActiveRename. A non-null
         // activeRenameInput both drives Update()'s Escape handler AND holds LateUpdate's rebuild (see its own
@@ -102,6 +132,10 @@ namespace WorldGen.Workspace.Rendering
             view.BuildHeader(root);
             view.BuildSearch(root);
             view.BuildScroll(root);
+            // AFTER BuildScroll, so the bar lands BELOW the tree: the List's flexibleHeight=1 claims every
+            // pixel header+search+this bar do not, which puts this at the bottom of the column and keeps it
+            // there at any column height. That is the brief's "a root-level action below the tree".
+            view.BuildCreateGroupBar(root);
 
             controller.OnLayoutChanged += view.RequestRebuild;
             if (documentController != null) documentController.OnDocumentChanged += view.RequestRebuild;
@@ -233,6 +267,7 @@ namespace WorldGen.Workspace.Rendering
             });
 
             searchGO = go;
+            searchInput = input;
         }
 
         void BuildScroll(Transform parent)
@@ -279,6 +314,143 @@ namespace WorldGen.Workspace.Rendering
             scrollGO = go;
         }
 
+        /// <summary>«+ Группа», restored from NotesTreeSidebar.cs:198-201 (the pre-deletion file, commit
+        /// 9abca26^). Task 7 carried rename and delete into this view and Task 10c then deleted the sidebar,
+        /// so BOTH create affordances left the app with it — «не вижу кнопок для добавления страниц заметок».
+        /// The visual treatment is the deleted AddSmallActionButton's, unchanged (Accent 0.8 fill, AccentInk
+        /// 11px label, left-aligned with a 6px inset), so the button the DM lost is the button they get back.
+        ///
+        /// CHROME, not content: built once here, never destroyed by Rebuild — the same arrangement the header
+        /// and the search field use. Rebuild only toggles its visibility with the collapse state (see there).
+        ///
+        /// THE DOMAIN-RELOAD QUESTION this arc has now had to answer eight times, answered explicitly rather
+        /// than left open. A runtime onClick listener is not [SerializeField]-persisted, so a Play-mode script
+        /// reload wipes it while this GameObject survives — the shape DocumentPageView.EnsureWired exists to
+        /// repair for its own «+ Раздел». It needs no repair HERE, and the difference is not luck: that class
+        /// HAS a post-reload recovery path (EnsureWired/RecoverBuiltObjects re-find its objects by name), so a
+        /// button it recovered without re-adding the listener came back visible and inert. This view has no
+        /// recovery path at all — WorkspaceBuilder.Awake refuses to revive it on purpose and says why ("a
+        /// functionally DEAD object… every tab/close/plus Button's runtime AddListener callback are all gone
+        /// too"). After a reload `controller`/`documentController` are null, every row's NavRowClickRouter
+        /// delegate is gone, and all three subscriptions that could set rebuildPending died with them, so
+        /// LateUpdate never rebuilds again either. This button is dead exactly like the collapse toggle, the
+        /// search box and every row — one inert view, Task 11's to revive wholesale, not a new gap to patch
+        /// with an EnsureWired that would have nothing to be called from.</summary>
+        void BuildCreateGroupBar(Transform parent)
+        {
+            createGroupGO = AddActionButton(parent, "+ Группа", ActionBarHeight, 11,
+                TextAnchor.MiddleLeft, 6f, CreateGroupWithFirstPage);
+        }
+
+        /// <summary>The one small-action button shape, shared by the root «+ Группа» bar and each Authored
+        /// group header's «+». Ported from the deleted NotesTreeSidebar.AddSmallActionButton (:521-547) with
+        /// the label metrics parameterised, because the header variant is a square «+» rather than a
+        /// full-width labelled bar — one builder over two near-copies, since the two must not drift apart in
+        /// colour or in the "invisible-fill trick does not apply here" sense (both are meant to be SEEN; that
+        /// was the whole complaint).</summary>
+        GameObject AddActionButton(Transform parent, string label, float height, int fontSize,
+            TextAnchor alignment, float leftInset, Action onClick)
+        {
+            var go = new GameObject($"Btn_{label}", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var img = go.AddComponent<Image>();
+            ThemeService.Tag(img, ThemeRole.Accent, 0.8f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => onClick?.Invoke());
+            go.AddComponent<LayoutElement>().preferredHeight = height;
+
+            var textGO = new GameObject("Text", typeof(RectTransform));
+            textGO.transform.SetParent(go.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = label;
+            text.font = builtinFont;
+            text.fontSize = fontSize;
+            ThemeService.Tag(text, ThemeRole.AccentInk);
+            text.alignment = alignment;
+            text.raycastTarget = false;   // clicks belong to btn's own image; same rule as every label here.
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = new Vector2(leftInset, 0f);
+            textRect.offsetMax = Vector2.zero;
+
+            return go;
+        }
+
+        // ── Creation (the two affordances Task 10c's deletion took with it) ──────
+
+        /// <summary>«+ Группа»: create the group, then create its first page — the SAME two-step
+        /// NotesTreeSidebar.cs:198-201 performed, and for a reason that is now written down in
+        /// NavigatorTree.Build's N3: a group whose node list comes out empty is omitted from the tree
+        /// entirely. Creating a bare group would therefore render as nothing at all, and the button would
+        /// look exactly as broken as the missing button it replaces.</summary>
+        void CreateGroupWithFirstPage()
+        {
+            // Explicit ternary/null-check, never `?.`: documentController is a UnityEngine.Object whose
+            // overloaded `==` reports a DESTROYED reference as null, and `?.` bypasses that overload — the
+            // same idiom and the same reason as Rebuild's and PageGroupPageCount's own reads. Reachable in a
+            // way the rename/delete calls are not: this button is chrome, so it exists even in the bare scene
+            // that has no NotesRootBuilder to discover (see the class doc).
+            if (documentController == null) return;
+            var group = documentController.CreateGroup("Новая группа");
+            if (group == null) return;
+            CreatePageAndOpen(group.Id);
+        }
+
+        /// <summary>The single path a newly created page takes, reached from both «+ Группа» and a group
+        /// header's «+» — create, show, offer the name. Not two paths: Step 4's "one path for «a page is now
+        /// on screen»" is what stops the two buttons from drifting into different post-create behaviour.
+        ///
+        /// NAMED BY RENAMING, NOT BY NUMBERING — a DELIBERATE improvement on the restored behaviour, not an
+        /// accident of reimplementation, and flagged here because a reviewer diffing against
+        /// NotesTreeSidebar.cs:362-364 will otherwise read it as a deviation to correct. The old sidebar
+        /// named the page «Страница N» and left the user to find rename afterwards (which, behind a
+        /// right-click menu since Task 7, is now less discoverable than it was). «Страница N» is still the
+        /// value the field STARTS with, computed exactly as the old call site computed it (the group's page
+        /// count before this insert, +1), so dismissing the rename with Escape still leaves a sensible name
+        /// rather than an empty one.
+        ///
+        /// OPENED THROUGH WorkspaceController.Open, the same call BuildNodeRow's left-click makes — not
+        /// through NotesDocumentController.OpenPage, which would change the notes controller's ActivePage
+        /// without any tab pointing at it (the exact drift ActiveSurface's own doc describes). PageSurfaceHost
+        /// .Show is what calls OpenPage, once the tab exists.
+        ///
+        /// THE FILTER IS CLEARED. With a needle in the search box, a page named «Страница N» almost certainly
+        /// does not match it, N3 then omits it (and possibly its whole group), and the button silently appears
+        /// to do nothing — the DM's original complaint reproduced one layer down. Rejected alternative:
+        /// leaving the filter alone and letting the pending rename wait for a rebuild that shows the row —
+        /// see pendingRenamePageId's own doc for why a long-lived pending rename is worse.
+        ///
+        /// Every step below raises something this view is subscribed to (OnDocumentChanged from CreatePage,
+        /// OnLayoutChanged from Open, onValueChanged from the cleared search field). All of them only set
+        /// rebuildPending, so they coalesce into ONE Rebuild in the next LateUpdate — the ordering here
+        /// carries no meaning beyond readability.</summary>
+        void CreatePageAndOpen(string groupId)
+        {
+            if (documentController == null || string.IsNullOrEmpty(groupId)) return;
+
+            int existing = PageGroupPageCount(groupId) ?? 0;
+            var page = documentController.CreatePage(groupId, $"Страница {existing + 1}");
+            if (page == null) return;   // the group id named nothing — CreatePage's own contract.
+
+            ClearFilter();
+            controller.Open(new SurfaceRef { Kind = SurfaceKind.Page, Id = page.Id }, page.Name, inOtherPane: false);
+            pendingRenamePageId = page.Id;
+        }
+
+        /// <summary>Writes the empty needle into BOTH the model and the visible field. `filter` first, so a
+        /// scene where the InputField somehow never got built (or was destroyed) still ends up with the right
+        /// model rather than a half-applied one; the field's own onValueChanged then redundantly assigns the
+        /// same "" and requests a rebuild, which is harmless. Setting .text to a value it already holds is a
+        /// no-op in uGUI's InputField (its setter compares first), so this fires nothing in the common case
+        /// of an empty search box.</summary>
+        void ClearFilter()
+        {
+            filter = "";
+            if (searchInput != null) searchInput.text = "";
+        }
+
         // ── Rebuild (content only — chrome above is never touched) ───────────────
 
         void RequestRebuild() => rebuildPending = true;
@@ -299,7 +471,13 @@ namespace WorldGen.Workspace.Rendering
         /// whatever they had typed with no commit and no cancel. rebuildPending stays true (not cleared),
         /// so the held rebuild runs on the first LateUpdate after the rename actually ends (StartRename's
         /// onEndEdit or CancelActiveRename both clear activeRenameInput) — the list is one rename stale in
-        /// the meantime, which is the deliberate trade-off, not a bug.</summary>
+        /// the meantime, which is the deliberate trade-off, not a bug.
+        ///
+        /// Since Task 10h a rename can also be started by Rebuild ITSELF, not only by a user picking
+        /// «Переименовать»: a page created from «+ Группа»/«+ Страница» arms one on the row it builds for it
+        /// (BuildNodeRow's `autoRename`). Nothing above changes — that rename is held, ended and cleared by
+        /// the same three paths as any other — but the entry point is named here so the next reader does not
+        /// have to conclude from the field alone that only a gesture can set it.</summary>
         void LateUpdate()
         {
             if (!rebuildPending) return;
@@ -325,6 +503,14 @@ namespace WorldGen.Workspace.Rendering
             activeRenameLabelGO = null;
             renameCancelled = false;
 
+            // Read-and-clear on the FIRST lines, before anything can throw or early-return below: the note
+            // is for THIS rebuild only, and a pass that fails to find the row must drop it rather than leave
+            // it armed for a later one (see pendingRenamePageId's own doc). Cleared even on the collapsed
+            // path, where no rows are built at all — a rename cannot be started on a hidden tree, and
+            // carrying the note until the column re-expands would fire it long after the gesture.
+            string renamePageId = pendingRenamePageId;
+            pendingRenamePageId = null;
+
             bool collapsed = controller.Layout.NavigatorCollapsed;
             // Applied every rebuild (not just on the toggle click) so a Task-11 restore that sets
             // NavigatorCollapsed/NavigatorWidth before this view's first Rebuild lands correctly with no
@@ -333,6 +519,10 @@ namespace WorldGen.Workspace.Rendering
             headerText.text = collapsed ? "☰" : "☰ НАВИГАТОР";
             searchGO.SetActive(!collapsed);
             scrollGO.SetActive(!collapsed);
+            // Hidden with the rest of the content, not merely narrowed: a 26px-wide column (CollapsedWidth)
+            // would render «+ Группа» as a clipped gold stub with no readable label — and the collapsed
+            // column's whole contract is "the ☰ toggle and nothing else".
+            createGroupGO.SetActive(!collapsed);
 
             // SetActive(false) takes effect immediately; Destroy() is deferred to end of frame — without
             // deactivating first, the old and newly-built rows would both render for one frame (same trap
@@ -353,7 +543,7 @@ namespace WorldGen.Workspace.Rendering
             var activeSurface = ActiveSurface();
             var groups = NavigatorTree.Build(doc, WorldObjectSource.Collect(ResolvePoiManager()), filter);
             foreach (var group in groups)
-                BuildGroup(group, activeSurface);
+                BuildGroup(group, activeSurface, renamePageId);
         }
 
         /// <summary>The row highlighted as "active" is the surface shown by the FOCUSED pane's active tab —
@@ -367,7 +557,7 @@ namespace WorldGen.Workspace.Rendering
             return pane.Tabs[pane.ActiveIndex].Surface;
         }
 
-        void BuildGroup(NavGroup group, SurfaceRef activeSurface)
+        void BuildGroup(NavGroup group, SurfaceRef activeSurface, string renamePageId)
         {
             var groupGO = new GameObject($"Group_{group.Kind}_{group.Title}", typeof(RectTransform));
             groupGO.transform.SetParent(listContent, false);
@@ -385,15 +575,23 @@ namespace WorldGen.Workspace.Rendering
             foreach (var node in group.Nodes)
             {
                 bool isActive = activeSurface != null && WorkspaceOps.SameSurface(node.Target, activeSurface);
-                BuildNodeRow(groupGO.transform, node, isActive);
+                // Matched on Target.Id AND Kind (inside BuildNodeRow), never on title: a page id and a POI
+                // guid are both opaque strings, and «Мир» rows carry POI guids — the same identity rule
+                // NavigatorTreeSelfTests' own fixture is built to enforce.
+                bool autoRename = renamePageId != null && node.Target != null
+                    && node.Target.Kind == SurfaceKind.Page && node.Target.Id == renamePageId;
+                BuildNodeRow(groupGO.transform, node, isActive, autoRename);
             }
         }
 
-        /// <summary>Called for every group, but only Authored ones get a rename/delete menu
-        /// wired on: NavGroup.Id is only populated for Authored groups (see its own doc comment) — the
-        /// computed Мир group is not a stored PageGroup at all, so there is nothing behind it for
-        /// «Переименовать»/«Удалить» to act on. This is the one place NotesTreeSidebar's ported behaviour
-        /// narrows: its group-delete confirm (with the page-count cost report) only has a home here for
+        /// <summary>Called for every group, but only Authored ones get the rename/delete menu — or, since
+        /// Task 10h, the «+» that adds a page to them. All three want the same thing and are refused for the
+        /// same reason: NavGroup.Id is only populated for Authored groups (see its own doc comment), the
+        /// computed «Мир» group is not a stored PageGroup at all, so there is no group for
+        /// «Переименовать»/«Удалить» to act on and none for CreatePage to add into. A «+» on «Мир» would be
+        /// an affordance for creating a page inside the world's contents, which is not a thing that exists.
+        /// This is the one place NotesTreeSidebar's ported behaviour narrows: its group-delete confirm (with
+        /// the page-count cost report) and its per-group «+ Страница» both only have a home here for
         /// Authored groups.</summary>
         void BuildGroupHeader(Transform parent, NavGroup group)
         {
@@ -426,6 +624,44 @@ namespace WorldGen.Workspace.Rendering
             var bg = go.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Panel, 0f);   // invisible, still raycasts (same trick as row bg).
 
+            string groupId = group.Id;
+            string rawTitle = group.Title;
+
+            // «+ Страница», restored from NotesTreeSidebar.cs:362-364. The old sidebar rendered it as a
+            // full-width labelled bar BELOW the group's last page; here it is a square «+» on the header
+            // itself, per the brief. Reachable at all times — the old placement scrolled away with a long
+            // group, and after Task 10c there is no other way to add a page to an existing group at all.
+            //
+            // The label's right edge is pulled in by the button's width FIRST, and this line must stay above
+            // the rename overlay below, which copies textRect's four values verbatim. That is what keeps the
+            // two out of each other's way: the overlay inherits the narrowed rect, so an active rename never
+            // reaches under the «+» and the «+» never steals a click from the input field's right end.
+            // Moving this line (or the button) below the overlay would hand the overlay the full-width rect
+            // and put them back in contention. A long group title is clipped here too, before it can run
+            // underneath the «+» and read as garbage.
+            textRect.offsetMax = new Vector2(-(AddPageButtonSize + 6f), 0f);
+            //
+            // The «+» therefore stays live DURING a rename, which is the harmless order: clicking it
+            // deactivates the input field, so uGUI fires onEndEdit — the rename commits — before this
+            // button's own onClick runs.
+            //
+            // KNOWN, ACCEPTED: a Button consumes IPointerClickHandler, and uGUI's ExecuteHierarchy stops at
+            // the first handler it finds, so this button's rect is a right-click dead zone — the header's
+            // NavRowClickRouter never sees a right-click landing on the «+», and the
+            // «Переименовать»/«Удалить» menu is unreachable from those 18 pixels. The rest of the header
+            // still offers it.
+            var addPageGO = AddActionButton(go.transform, "+", AddPageButtonSize, 14,
+                TextAnchor.MiddleCenter, 0f, () => CreatePageAndOpen(groupId));
+            // Anchored to the header's right edge by hand: this GameObject's parent is a plain header rect
+            // with no LayoutGroup on it, so the LayoutElement AddActionButton attaches (which the root bar's
+            // VerticalLayoutGroup parent DOES read) governs nothing here and the rect must be sized outright.
+            var addPageRect = addPageGO.GetComponent<RectTransform>();
+            addPageRect.anchorMin = new Vector2(1f, 0.5f);
+            addPageRect.anchorMax = new Vector2(1f, 0.5f);
+            addPageRect.pivot = new Vector2(1f, 0.5f);
+            addPageRect.sizeDelta = new Vector2(AddPageButtonSize, AddPageButtonSize);
+            addPageRect.anchoredPosition = new Vector2(-4f, 0f);
+
             // Rename overlay — same construction and StartRename/onEndEdit shape BuildNodeRow uses for a
             // page row, retargeted at RenameGroup. The input shows/submits the RAW stored title, not the
             // uppercased display string above.
@@ -456,9 +692,6 @@ namespace WorldGen.Workspace.Rendering
             inputTextRect.offsetMax = new Vector2(-4f, 0f);
             input.textComponent = inputText;
             inputGO.SetActive(false);
-
-            string groupId = group.Id;
-            string rawTitle = group.Title;
 
             input.onEndEdit.AddListener(newText =>
             {
@@ -504,7 +737,11 @@ namespace WorldGen.Workspace.Rendering
             return null;
         }
 
-        void BuildNodeRow(Transform parent, NavNode node, bool isActive)
+        /// <summary>`autoRename` is true for exactly one row per rebuild at most: the page CreatePageAndOpen
+        /// just made (see pendingRenamePageId). It can only ever be true inside the Page branch below —
+        /// BuildGroup computes it from Target.Kind==Page — which is what keeps the "no rename overlay is
+        /// even CONSTRUCTED for a non-Page row" rule that branch's own comment establishes.</summary>
+        void BuildNodeRow(Transform parent, NavNode node, bool isActive, bool autoRename)
         {
             // Falls back to Target.Kind when Id is empty (the world-map row, whose Id is "" by contract with
             // WorkspaceOps.NewDefault's seed tab) — otherwise this reads as "Node_" in the Hierarchy,
@@ -636,6 +873,16 @@ namespace WorldGen.Workspace.Rendering
                     {
                         if (confirmed) documentController?.DeletePage(pageId);
                     }), true));
+
+                // Last in this method, so the row is fully built (label, overlay, onEndEdit, menu) before the
+                // rename arms itself — StartRename hides the label and focuses the field, and doing that
+                // mid-construction would leave a half-wired row holding the user's keystrokes.
+                //
+                // Safe to set activeRenameInput from INSIDE a Rebuild: Rebuild's own defensive clearing of
+                // that field happens on its first lines, well above this, and LateUpdate already set
+                // rebuildPending=false before calling in — so this arms the rename-in-flight hold for the
+                // NEXT frame rather than fighting the pass that is running.
+                if (autoRename) StartRename(labelGO, input, rawTitle);
             }
             else
             {

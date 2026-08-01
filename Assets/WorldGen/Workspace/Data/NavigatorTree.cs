@@ -79,6 +79,14 @@ namespace WorldGen.Workspace.Data
         /// <summary>N3: filter matches on title with Trim().ToLowerInvariant().Contains; an empty filter
         /// matches everything; a group left with no surviving nodes is omitted entirely, never shown empty.
         ///
+        /// "OMITTED ENTIRELY" HAS A SECOND CONSUMER as of Task 10h, and it is not about filtering at all:
+        /// a group that stores no pages produces no nodes and so renders as nothing, which is why the
+        /// navigator's «+ Группа» creates a group AND its first page in one gesture
+        /// (NavigatorView.CreateGroupWithFirstPage) — a bare new group would leave the user looking at an
+        /// unchanged tree. NavigatorTreeSelfTests pins that empty side directly, with no filter in play;
+        /// before Task 10h only the filter-emptied case was covered, and the rule this now depends on could
+        /// have been narrowed to "filtering" by anyone reading it as a search behaviour.
+        ///
         /// `world` is the world's contents as the Data layer is allowed to see it — WorldObjectRef, the pure
         /// DTO Task 10b created for exactly this (see its own doc), never PoiData. That is what keeps this
         /// file free of UnityEngine AND of WorldGen.Generation, so it still runs in Tools/notes-harness.

@@ -242,6 +242,40 @@ namespace WorldGen.Workspace.Data
             if (!mapMatch.Exists(g => g.Kind == NavGroupKind.World && g.Nodes.Exists(n => n.Title == WorkspaceOps.DefaultWorldMapTitle)))
             { Debug.LogError("FAIL tree: filter «карта» dropped the world-map row, want it to still match «Карта мира» (N3)"); ok = false; }
 
+            // N3, THE EMPTY-GROUP SIDE, which nothing above pins. The «  ТИХИЙ  » checks prove a group
+            // emptied BY THE FILTER is omitted; this proves the same for a group that stores no pages at
+            // all, with no filter in play — a different code path in the reader's head, and the one the
+            // navigator now DEPENDS on: «+ Группа» creates a group and its first page in one gesture
+            // (NavigatorView.CreateGroupWithFirstPage) precisely because a bare group renders as nothing and
+            // the button would look broken. Before Task 10h nothing would have failed if that rule had been
+            // narrowed to "the filter can empty a group".
+            //
+            // A LOCAL document rather than the shared Fixture: a third group there would leave the
+            // `authored.Count != 2` assertion above passing while ITS comment («every stored group renders,
+            // in stored order») quietly became false — the stale-comment failure this arc keeps rediscovering.
+            var mixedDoc = new NotesDocument();
+            var filledGroup = new PageGroup { Title = "Полная" };
+            filledGroup.Pages.Add(new NotesPage { Name = "Страница 1" });
+            mixedDoc.Groups.Add(filledGroup);
+            mixedDoc.Groups.Add(new PageGroup { Title = "Пустая" });
+
+            var mixed = NavigatorTree.Build(mixedDoc, null, "");
+            // BOTH halves, because either alone passes vacuously: an implementation that dropped every
+            // authored group would satisfy "the empty one is gone", and one that kept every group would
+            // satisfy "the filled one is here".
+            if (!mixed.Exists(g => g.Kind == NavGroupKind.Authored && g.Title == "Полная" && g.Nodes.Count == 1))
+            {
+                var found = mixed.Find(g => g.Title == "Полная");
+                string actual = found == null ? "no «Полная» group" : $"{found.Nodes.Count} node(s)";
+                Debug.LogError($"FAIL tree: a group holding ONE page rendered as [{actual}], want 1 node — a group with a page must appear (N3)");
+                ok = false;
+            }
+            if (mixed.Exists(g => g.Title == "Пустая"))
+            {
+                Debug.LogError("FAIL tree: a group storing NO pages still produced a «Пустая» group, want it omitted entirely — this is what makes «+ Группа» create a first page too (N3)");
+                ok = false;
+            }
+
             // N4 — AUTHORED nodes target PAGES, by the page's own id. «Мир» is excluded from this loop on
             // purpose: its nodes deliberately target the world map and POI editors (N1's own checks above pin
             // their exact shape), so folding it in would make a CORRECT implementation fail.
