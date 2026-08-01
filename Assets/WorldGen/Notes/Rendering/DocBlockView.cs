@@ -115,8 +115,11 @@ namespace WorldGen.Notes.Rendering
             textArea = areaGO.GetComponent<RectTransform>();
             textArea.anchorMin = Vector2.zero;
             textArea.anchorMax = Vector2.one;
+            // The right inset matches the base indent, so at depth 0 the text has the SAME air on both sides.
+            // It used to be 8 against a left of 16, which read as a column leaning left. Deeper rows are
+            // deliberately still asymmetric — that gap IS the indentation.
             textArea.offsetMin = new Vector2(indent, VerticalPadding * 0.5f);
-            textArea.offsetMax = new Vector2(-8f, -VerticalPadding * 0.5f);
+            textArea.offsetMax = new Vector2(-IndentBase, -VerticalPadding * 0.5f);
 
             // Invisible, but the raycast target that makes a click anywhere in the row start editing —
             // including on an EMPTY row, which has no glyphs to hit. The click is handled by this component

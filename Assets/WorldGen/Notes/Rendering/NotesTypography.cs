@@ -56,7 +56,12 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Section headings stay on the PANEL type — Arial, small, uppercase, letter-spaced, in the
         /// accent colour. They are labels, not prose, and reading them as prose was part of what made the
         /// rejected editor feel like a form.</summary>
-        public const float HeadingSize = 11f;
+        /// <summary>Raised from 11 to 15 at the DM's second checkpoint. 11px is the size of a PANEL label,
+        /// where the label sits above a control that explains it; a section heading sits above prose at 16px
+        /// and has to hold its own against it. Still below the body size on purpose — the heading earns its
+        /// weight from being bold, uppercase, letter-spaced and in the accent colour, and a heading LARGER
+        /// than its own prose would turn a page of sections into a page of banners.</summary>
+        public const float HeadingSize = 15f;
         public const float HeadingLetterSpacing = 0.12f;
 
         const string ResourcePrefix = "Fonts/Literata-";

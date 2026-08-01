@@ -72,8 +72,13 @@ namespace WorldGen.Notes.Rendering
         float appliedSidePadding = -1f;
 
         /// <summary>How close prose may come to the pane's edge when the pane is narrower than the measure.
-        /// Matches the padding Initialize starts the group with, so a narrow pane looks unchanged.</summary>
-        const float MinSideMargin = 8f;
+        ///
+        /// Raised from 8 to 28 at the DM's second checkpoint. The measure only does something once the pane is
+        /// wider than 40em (640px), and a pane in a two-pane workspace often is not — so in practice the DM
+        /// was almost always seeing this number rather than the measure, and 8px of it put the text all but
+        /// against the edge. Air at the margin is not decoration: it is what tells the eye where the line
+        /// ends, and text flush to a border reads as text that has been cut off.</summary>
+        const float MinSideMargin = 28f;
 
         // Gates whether OnActivePageChanged is allowed to make `root` visible at all — set only by
         // PageSurfaceHost.Show/Hide (via SetSurfaceVisible). Without this gate, ActivePage can change from
