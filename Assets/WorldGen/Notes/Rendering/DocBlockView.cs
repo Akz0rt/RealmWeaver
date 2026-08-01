@@ -268,8 +268,14 @@ namespace WorldGen.Notes.Rendering
             // it at the source removes that state instead of detecting it afterwards.
             Field.onFocusSelectAll = false;
 
-            // Escape restores the text it started with — the same affordance legacy had, kept deliberately.
-            Field.restoreOriginalTextOnEscape = true;
+            // ESCAPE MUST NOT THROW THE TEXT AWAY. Legacy's affordance was to restore what the row started
+            // with, and TMP offers the same (DeactivateInputField reassigns m_OriginalText at
+            // TMP_InputField.cs:4430) — but on a WRITING SURFACE that means a paragraph the DM typed can
+            // vanish to one keystroke, with no undo behind it to get it back (page undo is still unbuilt).
+            // The DM hit exactly this at the first checkpoint. With the flag off, Escape means only "stop
+            // editing this row", the text stays, and discarding an edit becomes undo's job — which is where
+            // it belongs, because undo can also discard the edit BEFORE the one Escape happened to catch.
+            Field.restoreOriginalTextOnEscape = false;
 
             Field.caretWidth = 1;
             // customCaretColor FALSE on purpose: TMP then reports the text component's own colour as the
@@ -522,9 +528,21 @@ namespace WorldGen.Notes.Rendering
                 caretPending = false;
             }
 
-            // Grow the row to fit its text. Driven here rather than by a ContentSizeFitter (see the class
-            // comment), and written only when it actually changes, so this does not dirty the layout every
-            // frame for every row on the page.
+            ApplyHeightNow();
+        }
+
+        /// <summary>Grows the row to fit its text. Driven here rather than by a ContentSizeFitter (see the
+        /// class comment), and written only when it actually changes, so this does not dirty the layout every
+        /// frame for every row on the page.
+        ///
+        /// PUBLIC BECAUSE A REBUILD CANNOT WAIT FOR LateUpdate. DocumentPageView.Rebuild throws every row away
+        /// and makes new ones, and a new row starts at MinRowHeight; if the heights only arrived on the next
+        /// frame's LateUpdate, the whole column would be briefly ~22px per row, the ScrollRect would clamp a
+        /// scrolled page back to the top, and the DM's position would be gone before anything could restore
+        /// it. That was the «после Enter страницу перелистывает наверх» defect. Rebuild therefore lays out
+        /// once for widths, calls this on every row, and lays out again — all inside the one frame.</summary>
+        public void ApplyHeightNow()
+        {
             var measured = editing && fieldText != null ? fieldText : Display;
             if (measured == null || layoutElement == null) return;
             float desired = Mathf.Max(MinRowHeight, measured.preferredHeight + VerticalPadding);
@@ -534,5 +552,46 @@ namespace WorldGen.Notes.Rendering
                 layoutElement.preferredHeight = desired;
             }
         }
+
+        /// <summary>The world-space top and bottom of the LINE the caret is on, so the page can scroll it into
+        /// view. False whenever that cannot be answered honestly — the row is not being edited, the field has
+        /// not taken focus yet, or the caret this class asked for has not been applied (caretPending), where
+        /// the field still reports the position it had before FocusAt.
+        ///
+        /// THE LINE, NOT THE ROW. A row is one paragraph and a long one wraps to more lines than the pane is
+        /// tall; scrolling the whole row into view would then put the DM at its top while they are typing at
+        /// its bottom. lineInfo's ascender/descender bound exactly the strip the caret is drawn in.</summary>
+        public bool TryGetCaretLineWorldY(out float top, out float bottom)
+        {
+            top = bottom = 0f;
+            if (!editing || caretPending || Field == null || fieldText == null || !Field.isFocused) return false;
+
+            var rt = fieldText.rectTransform;
+            var info = fieldText.textInfo;
+
+            // No glyph to hang the caret on — an empty row, or text TMP has not laid out yet. The row's own
+            // rect is where the caret is drawn in that case, and it is one line tall by construction.
+            if (info == null || info.characterCount == 0 || info.lineCount == 0)
+            {
+                rt.GetWorldCorners(cornerBuffer);
+                bottom = cornerBuffer[0].y;
+                top = cornerBuffer[1].y;
+                return true;
+            }
+
+            // caretPosition may sit one past the last character (the caret at the end of the text); the last
+            // character's own line is the right answer there.
+            int idx = Mathf.Clamp(Field.caretPosition, 0, info.characterCount - 1);
+            int lineNumber = Mathf.Clamp(info.characterInfo[idx].lineNumber, 0, info.lineCount - 1);
+            var line = info.lineInfo[lineNumber];
+
+            top = rt.TransformPoint(new Vector3(0f, line.ascender, 0f)).y;
+            bottom = rt.TransformPoint(new Vector3(0f, line.descender, 0f)).y;
+            return true;
+        }
+
+        /// <summary>Reused by TryGetCaretLineWorldY so a per-frame reveal check does not allocate a Vector3[4]
+        /// every time it runs.</summary>
+        static readonly Vector3[] cornerBuffer = new Vector3[4];
     }
 }

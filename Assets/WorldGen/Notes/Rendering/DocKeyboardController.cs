@@ -102,6 +102,27 @@ namespace WorldGen.Notes.Rendering
                 if (ended != null && ended.CaretWhenEditingEnded >= 0) lastCaret = ended.CaretWhenEditingEnded;
             }
 
+            // TEMPORARY — Р2 Task 6 checkpoint, second round. DELETE with the LogIntents block in Handle.
+            //
+            // The DM reports that Backspace at the start of a row does not merge it with the row above, and
+            // the first round's log said only that Handle was never reached — which is equally consistent
+            // with the key not firing, with LateUpdate returning early below, and with any ONE of the four
+            // conditions in the Backspace branch refusing. Those are four different fixes. Printed HERE,
+            // ahead of every early return, so the absence of a line means the key itself never arrived and
+            // nothing else.
+            if (LogIntents && keyboard.backspaceKey.wasPressedThisFrame)
+            {
+                bool hasField = live != null && live.Field != null;
+                Debug.Log($"[dockeys] Backspace GATE live={(live != null ? live.BlockId : "—")} " +
+                          $"caretPending={(live != null && live.CaretPending)} " +
+                          $"lastCaret={lastCaret} " +
+                          $"fieldCaret={(hasField ? live.Field.caretPosition : -1)} " +
+                          $"anchor={(hasField ? live.Field.selectionAnchorPosition : -1)} " +
+                          $"focus={(hasField ? live.Field.selectionFocusPosition : -1)} " +
+                          $"textChangedThisFrame={(live != null && live.TextChangedThisFrame)} " +
+                          $"lastFocusedId={(string.IsNullOrEmpty(lastFocusedId) ? "—" : lastFocusedId)}");
+            }
+
             if (string.IsNullOrEmpty(lastFocusedId)) return;
 
             bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;

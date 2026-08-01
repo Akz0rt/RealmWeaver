@@ -40,9 +40,14 @@ namespace WorldGen.Notes.Rendering
         /// the design number and the engine number can never drift apart in someone's head.</summary>
         public const float LineSpacingPercent = (LineHeightMultiplier - 1f) * 100f;
 
-        /// <summary>The measure: how wide a column of prose is allowed to get, in ems. ~34em is about 70
-        /// characters, the width long-form text has been set at since before screens.</summary>
-        public const float MeasureEm = 34f;
+        /// <summary>The measure: how wide a column of prose is allowed to get, in ems.
+        ///
+        /// Started at 34em (~70 characters, the classical measure) and widened to 40 (~80) at the DM's first
+        /// checkpoint: the classical number assumes a printed page, and a pane inside a workspace already
+        /// spends width on the navigator and the other pane, so the same rule left the column looking pinched
+        /// rather than composed. 40em is still well inside the range the eye can return from — the failure
+        /// this cap exists to prevent is the FULL-WIDTH line, not the merely generous one.</summary>
+        public const float MeasureEm = 40f;
 
         /// <summary>The measure in pixels. A pane wider than this does NOT widen the prose — the column is
         /// centred and the extra space stays margin.</summary>

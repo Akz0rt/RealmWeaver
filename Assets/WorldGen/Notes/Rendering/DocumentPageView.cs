@@ -42,6 +42,11 @@ namespace WorldGen.Notes.Rendering
         /// size") the code didn't actually enforce.</summary>
         const float AddSectionBarHeight = 44f;
 
+        /// <summary>Width of the vertical scrollbar strip. Read twice — by the bar itself and by the viewport
+        /// that steps aside for it — for the same reason AddSectionBarHeight is: two literals that happen to
+        /// agree are not the same thing as one number.</summary>
+        const float ScrollbarWidth = 10f;
+
         NotesDocumentController documentController;
         GameObject boardViewport;
         GameObject root;
@@ -135,8 +140,12 @@ namespace WorldGen.Notes.Rendering
             // below) claimed it — the Critical review finding that an empty session page had no way to
             // create its first block. Reserved here, built there, off the SAME AddSectionBarHeight constant,
             // so the two cannot silently drift apart the way two independent literals could.
+            // The right edge is given to the scrollbar (BuildVerticalScrollbar, below) rather than shared with
+            // it. An overlaying bar would sit on top of the last few characters of every line, and — less
+            // visibly but worse — ApplyColumnMeasure centres the prose column inside THIS rect, so a viewport
+            // that still claimed the bar's width would centre the column a few pixels left of true.
             viewportRect.offsetMin = new Vector2(0f, 0f);
-            viewportRect.offsetMax = new Vector2(0f, -AddSectionBarHeight);
+            viewportRect.offsetMax = new Vector2(-ScrollbarWidth, -AddSectionBarHeight);
             viewportGO.AddComponent<RectMask2D>();
             scroll.viewport = viewportRect;
 
@@ -188,10 +197,68 @@ namespace WorldGen.Notes.Rendering
             // 44px strip viewportRect reserves above (see offsetMax there) rather than opening new screen
             // real estate. Deliberately ONE button, not the «Вставка»/«Ссылка» editor toolbar the DM has
             // separately asked for — that one is Р2 per the umbrella spec.
+            BuildVerticalScrollbar(root.transform, scroll);
+
             addSectionBarGO = BuildAddSectionBar(root.transform);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
             OnActivePageChanged(documentController.ActivePage);
+        }
+
+        /// <summary>Builds the page's vertical scrollbar, at the DM's first-checkpoint request: the page
+        /// scrolled with the wheel but showed nothing about WHERE in the page it was, which on a session
+        /// sheet a hundred blocks long is most of what a scrollbar is for.
+        ///
+        /// Hand-built rather than taken from a prefab because this whole shell is runtime-constructed, and
+        /// laid out in the standard uGUI three-part shape the Scrollbar component expects — bar ▸ sliding
+        /// area ▸ handle — because Scrollbar.UpdateVisuals drives the HANDLE's anchors inside its parent and
+        /// needs that parent to be a rect it can treat as the full travel.
+        ///
+        /// VISIBILITY IS AutoHide AND MUST NOT BE AutoHideAndExpandViewport. The latter makes the ScrollRect
+        /// drive the viewport's own sizeDelta, and this viewport has a hand-set offsetMax carving out both the
+        /// «+ Раздел» strip and this bar's width — the two would fight every frame, one of them winning by
+        /// frame order. AutoHide only toggles the bar's GameObject, leaving viewport geometry alone, so a page
+        /// too short to scroll simply has no bar and the prose column does not shift when one appears.</summary>
+        void BuildVerticalScrollbar(Transform parent, ScrollRect scroll)
+        {
+            var barGO = new GameObject("VScrollbar", typeof(RectTransform));
+            barGO.transform.SetParent(parent, false);
+            var barRect = (RectTransform)barGO.transform;
+            barRect.anchorMin = new Vector2(1f, 0f);
+            barRect.anchorMax = new Vector2(1f, 1f);
+            barRect.pivot = new Vector2(1f, 1f);
+            // Spans the full height MINUS the «+ Раздел» strip, so it lines up with the viewport it scrolls
+            // rather than running underneath a bar it has nothing to do with.
+            barRect.offsetMin = new Vector2(-ScrollbarWidth, 0f);
+            barRect.offsetMax = new Vector2(0f, -AddSectionBarHeight);
+            ThemeService.Tag(barGO.AddComponent<Image>(), ThemeRole.Panel2);
+
+            var bar = barGO.AddComponent<Scrollbar>();
+            bar.direction = Scrollbar.Direction.BottomToTop;
+
+            var slidingGO = new GameObject("SlidingArea", typeof(RectTransform));
+            slidingGO.transform.SetParent(barGO.transform, false);
+            var slidingRect = (RectTransform)slidingGO.transform;
+            slidingRect.anchorMin = Vector2.zero;
+            slidingRect.anchorMax = Vector2.one;
+            slidingRect.offsetMin = Vector2.zero;
+            slidingRect.offsetMax = Vector2.zero;
+
+            var handleGO = new GameObject("Handle", typeof(RectTransform));
+            handleGO.transform.SetParent(slidingGO.transform, false);
+            var handleRect = (RectTransform)handleGO.transform;
+            handleRect.anchorMin = Vector2.zero;
+            handleRect.anchorMax = Vector2.one;
+            handleRect.offsetMin = Vector2.zero;
+            handleRect.offsetMax = Vector2.zero;
+            var handleImage = handleGO.AddComponent<Image>();
+            ThemeService.Tag(handleImage, ThemeRole.Border);
+
+            bar.targetGraphic = handleImage;
+            bar.handleRect = handleRect;
+
+            scroll.verticalScrollbar = bar;
+            scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
         }
 
         /// <summary>Builds the «+ Раздел» bar — see its call site in Initialize for why it exists. Sits in
@@ -458,8 +525,20 @@ namespace WorldGen.Notes.Rendering
         {
             if (Page == null || content == null) return;
 
+            // WHERE THE DM WAS READING, remembered across the rebuild. See SettleHeights for the rest of the
+            // «после Enter страницу перелистывает наверх» defect; this is only the half that remembers.
+            float keepY = content.anchoredPosition.y;
+
             foreach (var row in rows)
-                if (row != null) Destroy(row.gameObject);
+                if (row != null)
+                {
+                    // OUT of the layout group NOW, not merely marked for destruction. Destroy is deferred to
+                    // the end of the frame, so a row that is only destroyed is still a child of `content`
+                    // with a live LayoutElement — and SettleHeights below forces a layout THIS frame, which
+                    // would then measure the old rows and the new ones stacked together.
+                    row.transform.SetParent(null, false);
+                    Destroy(row.gameObject);
+                }
             rows.Clear();
 
             var visible = NotesDocOps.VisibleIndices(Page.Blocks);
@@ -474,6 +553,42 @@ namespace WorldGen.Notes.Rendering
                 view.Refresh();
                 rows.Add(view);
             }
+
+            SettleHeights();
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x, keepY);
+        }
+
+        /// <summary>Gives every freshly built row its real height BEFORE this frame ends.
+        ///
+        /// THE DEFECT THIS FIXES, because the mechanism is not obvious from the symptom. A new row starts at
+        /// MinRowHeight (22px) and learns its true height in DocBlockView's own LateUpdate. So for one frame
+        /// after every rebuild, a page of forty rows was ~880px tall instead of several thousand — and a
+        /// ScrollRect in Clamped movement will not let content sit scrolled past its own end, so it dragged
+        /// the page back to the top. Restoring the remembered offset afterwards would not have helped either:
+        /// the collapse happened a frame AFTER the restore. The heights have to be right within the same
+        /// frame, which is what this does.
+        ///
+        /// TWO PASSES, and neither is redundant. A row cannot say how TALL it is until it knows how WIDE it
+        /// is, and its width comes from the layout group; so the first pass hands out widths, ApplyHeightNow
+        /// then measures each row's text against the width it just received, and the second pass turns those
+        /// heights into the column's own height through the ContentSizeFitter. ApplyColumnMeasure runs first
+        /// because the prose column's side padding is part of that width, and it would otherwise be applied
+        /// one LateUpdate later — measuring every row against a width that is about to change.</summary>
+        void SettleHeights()
+        {
+            if (content == null) return;
+            // Not laid out yet — the very first Rebuild runs from Initialize, before this column has a width
+            // at all. Measuring text against a zero-wide box makes TMP wrap it one character per line and
+            // report an absurd height, so the rows are left at MinRowHeight and DocBlockView's own LateUpdate
+            // sizes them a frame later, exactly as it did before this method existed. Nothing is lost: a page
+            // being built for the first time has no scroll position to protect.
+            if (content.rect.width <= 1f) return;
+            ApplyColumnMeasure();
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+            foreach (var row in rows)
+                if (row != null) row.ApplyHeightNow();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
         }
 
         void OnToggleCollapse(string blockId)
@@ -486,7 +601,91 @@ namespace WorldGen.Notes.Rendering
             OnDocumentMutated?.Invoke();
         }
 
-        void LateUpdate() => ApplyColumnMeasure();
+        void LateUpdate()
+        {
+            ApplyColumnMeasure();
+            RevealCaretIfMoved();
+        }
+
+        // What RevealCaretIfMoved saw last time, so it can tell "the caret moved" from "the DM scrolled".
+        string revealedRowId;
+        int revealedCaret = -1;
+        // Set by RebuildAndFocus: after a rebuild the caret can land on the same index of the same block id
+        // it had before (a merge, a collapse), which would look like "nothing moved" — but the row it lives
+        // in is a different object at a different height, so the page must reveal it anyway.
+        bool revealRequested;
+
+        /// <summary>Keeps the caret on screen while the DM types — «ты всегда должен видеть то, что
+        /// печатаешь».
+        ///
+        /// ONLY WHEN THE CARET MOVED, which is what stops this from fighting the DM's own scrolling. Reading
+        /// a page with the caret parked somewhere off screen is an ordinary thing to do, and a reveal that
+        /// fired every frame would yank the page back the moment they let go of the wheel. Typing always
+        /// changes the caret INDEX — a character inserted, a character deleted, an arrow pressed — so the
+        /// index is a complete signal for "the DM is doing something at this position" and scrolling is not
+        /// part of it.
+        ///
+        /// The caret's LINE is what gets revealed, not the row: see DocBlockView.TryGetCaretLineWorldY. That
+        /// method also answers false while the caret is still pending, so the frames between FocusAt and the
+        /// caret actually being placed reveal nothing — otherwise a rebuild would scroll to wherever the
+        /// field's leftover position happened to point. `revealRequested` survives those frames precisely so
+        /// the reveal still happens once the answer becomes truthful.</summary>
+        void RevealCaretIfMoved()
+        {
+            if (content == null || viewportGO == null) return;
+
+            DocBlockView editing = null;
+            foreach (var row in rows)
+                if (row != null && row.Field != null && row.Field.isFocused) { editing = row; break; }
+
+            if (editing == null)
+            {
+                revealedRowId = null;
+                revealedCaret = -1;
+                return;
+            }
+
+            int caret = editing.Field.caretPosition;
+            bool moved = revealRequested || editing.BlockId != revealedRowId || caret != revealedCaret;
+            if (!moved) return;
+
+            if (!editing.TryGetCaretLineWorldY(out float caretTop, out float caretBottom)) return;
+
+            revealedRowId = editing.BlockId;
+            revealedCaret = caret;
+            revealRequested = false;
+
+            var viewRect = (RectTransform)viewportGO.transform;
+            viewRect.GetWorldCorners(viewportCorners);
+            float viewBottom = viewportCorners[0].y;
+            float viewTop = viewportCorners[1].y;
+
+            // World units are canvas units times the canvas scale, so the margin has to be scaled too or it
+            // would mean something different on every display resolution.
+            float scale = content.lossyScale.y;
+            if (scale <= 0.0001f) return;
+            float margin = RevealMargin * scale;
+
+            // Positive shift moves the content UP in the world, which is what reveals something BELOW the
+            // window. The below case is tested first: on a row taller than the window both tests can pass at
+            // once, and the DM typing at its bottom is the case that matters.
+            float shift = 0f;
+            if (caretBottom < viewBottom + margin) shift = viewBottom + margin - caretBottom;
+            else if (caretTop > viewTop - margin) shift = viewTop - margin - caretTop;
+            if (Mathf.Abs(shift) < 0.5f) return;
+
+            // Written straight onto anchoredPosition rather than through verticalNormalizedPosition, which
+            // divides by (content height − viewport height) and loses all precision exactly when a page is
+            // barely taller than its window. The ScrollRect's own Clamped movement corrects any overshoot.
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x,
+                                                   content.anchoredPosition.y + shift / scale);
+        }
+
+        /// <summary>How much clear space to leave between the caret's line and the edge it was approaching, so
+        /// the line the DM is typing does not sit flush against the window's rim.</summary>
+        const float RevealMargin = 24f;
+
+        static readonly Vector3[] viewportCorners = new Vector3[4];
 
         /// <summary>THE MEASURE: prose never gets wider than ~34em, however wide the pane is.
         ///
@@ -529,6 +728,10 @@ namespace WorldGen.Notes.Rendering
             Rebuild();
             var view = ViewOf(blockId);
             if (view != null) view.FocusAt(caretOffset);
+            // The row this focuses may be off screen — a new block created below the fold, or the row a merge
+            // pulled the caret up into. Rebuild has already restored the DM's scroll position; this asks for
+            // it to be adjusted, once, as soon as the caret is real. See RevealCaretIfMoved.
+            revealRequested = true;
             OnDocumentMutated?.Invoke();
         }
     }
