@@ -613,7 +613,7 @@ namespace WorldGen.Workspace.Rendering
 
             // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
             // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
-            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:270 and
+            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:273 and
             // DocumentPageView.cs:86. A null document is no longer short-circuited before this line — see
             // the class doc.
             var doc = documentController != null ? documentController.Document : null;
@@ -1133,7 +1133,7 @@ namespace WorldGen.Workspace.Rendering
             // likewise collapse to sum-of-those-sizeDeltas + spacing + padding, not to ItemHeight-per-item.
             // Exactly the defect QuickOpenPopup.cs shipped once already in this same arc (commit b187ceb,
             // "quick-open rows need childControlHeight=true, not false") and ProjectMenuBar.cs's «Файл»/«Вид»
-            // dropdown (ProjectMenuBar.cs:436-437) avoids by using this same true/false pair for the
+            // dropdown (ProjectMenuBar.cs:499-500) avoids by using this same true/false pair for the
             // identical shape: control height, but don't force-expand it past the child's own preferredHeight.
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;
