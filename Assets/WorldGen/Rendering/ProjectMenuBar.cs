@@ -131,9 +131,16 @@ namespace WorldGen.Rendering
             currentPath = path;
             UpdateProjectNameText();
             RecentProjectsList.Push(path);
-            // «Сохранить как…» re-points the workspace's stored layout at the new file WITHOUT restoring
-            // anything: the tabs on screen are the ones this file should have, and the original project's
-            // stored layout is deliberately left alone. Task 11; see MapScreenController.RekeyWorkspaceTo.
+            // Re-points the workspace's stored layout at the file just written, WITHOUT restoring
+            // anything: the tabs on screen are the ones this file should have, and any OTHER project's
+            // stored layout is deliberately left alone. See MapScreenController.RekeyWorkspaceTo.
+            //
+            // BOTH SAVE PATHS REACH HERE, not just «Сохранить как…»: DoSave calls SaveTo(currentPath) for a
+            // plain «Сохранить» too. That is harmless and mildly useful rather than redundant — on the
+            // «Сохранить» path the key is normally already `path`, so this is an idempotent re-assignment
+            // plus one extra write; but after a domain reload that lost BOTH copies of the key (see
+            // WorkspaceController.ReconcileKeyWithLiveProject), a plain Ctrl+S is one of the things that
+            // puts the workspace back on the right slot.
             // Placed after currentPath so this method has exactly one notion of "the project is now `path`".
             MapScreens()?.RekeyWorkspaceTo(path);
         }

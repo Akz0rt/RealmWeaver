@@ -418,7 +418,10 @@ namespace WorldGen.Workspace.Data
         /// it is the app-start case stated honestly. At Awake nothing has loaded yet (no document, no POIs,
         /// no interiors), so a real existence predicate would answer "no" for every tab and prune the whole
         /// layout by construction; passing null says "I cannot answer this question yet" rather than
-        /// answering it wrongly. WorkspacePrefs.Restore's own doc says which caller passes what.</summary>
+        /// answering it wrongly. The three callers and what each passes are listed on
+        /// WorkspaceController.RestoreFromPrefs (null, at app start and on a shell rebuild) and
+        /// EndProjectSwitch (the real predicate, once a project load has made the answer knowable) — NOT on
+        /// WorkspacePrefs, which only forwards whatever it is given.</summary>
         public static WorkspaceLayout Restore(string payload, Func<SurfaceRef, bool> exists)
         {
             if (!TryDeserialize(payload, out WorkspaceLayout l)) return null;

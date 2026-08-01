@@ -322,12 +322,19 @@ namespace WorldGen.Workspace.Rendering
         ///   2. the stored layout is restored, which REPLACES Layout outright. That is why the mid-load
         ///      prune's effect on the in-memory layout does not need to be undone, or even reasoned about:
         ///      nothing of it survives a successful restore;
-        ///   3. and when there is nothing stored (a project opened for the first time), the fallback is a
-        ///      PRUNE of the layout the DM is carrying in from the previous project. That prune is not
-        ///      optional and is not covered by the one OnWorldRegenerated already ran: that one is
-        ///      KIND-based (SurvivesWorldChange keeps every Page, because notes are not world state), while a
-        ///      project load REPLACES the document too — so without this, page tabs from the previous
-        ///      project survive into a world that has never heard of them;
+        ///   3. and when the restore yields nothing, the fallback is a PRUNE of the layout the DM is
+        ///      carrying in from the previous project. That prune is not optional and is not covered by the
+        ///      one OnWorldRegenerated already ran: that one is KIND-based (SurvivesWorldChange keeps every
+        ///      Page, because notes are not world state), while a project load REPLACES the document too —
+        ///      so without this, page tabs from the previous project survive into a world that has never
+        ///      heard of them.
+        ///      "YIELDS NOTHING" IS TWO CASES, not one, and the second is easy to misread: nothing was
+        ///      stored (a project opened for the first time), OR something WAS stored and every tab in it
+        ///      pruned away, which WorkspaceOps.Restore also reports as null. In that second case the
+        ///      trailing save below replaces the incoming project's stored slot with the carried-in layout.
+        ///      That is correct — a stored layout none of whose tabs can be shown is worth nothing, and
+        ///      keeping it would mean the DM's next session opens onto the same nothing — but the code reads
+        ///      as "nothing was stored" when something was, so it is said here rather than inferred;
         ///   4. writes resume, and one save records the result, so the incoming project immediately owns a
         ///      stored layout rather than waiting for the DM's next click.
         ///
