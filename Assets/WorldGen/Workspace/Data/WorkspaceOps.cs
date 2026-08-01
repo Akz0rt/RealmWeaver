@@ -176,7 +176,16 @@ namespace WorldGen.Workspace.Data
 
         /// <summary>Moves one tab, possibly across panes. Creates the destination pane the same way Open's
         /// inOtherPane does if it does not exist yet. The moved tab becomes the active tab wherever it lands
-        /// — a tab you just dragged is the one you meant to look at.</summary>
+        /// — a tab you just dragged is the one you meant to look at.
+        ///
+        /// `toIndex` IS A PRE-REMOVAL INDEX: an index into the destination pane's tab list as it looks when
+        /// the call is made, INCLUDING the tab being moved when the destination is its own pane. The
+        /// insertAt-- below is what reconciles that with the removal, and it is the only place that
+        /// adjustment may happen — a caller that also subtracts one cancels every forward same-pane reorder
+        /// into a no-op. Stated here because the shape is genuinely ambiguous and has already been
+        /// misremembered once (Task 10d's brief asserted the opposite): the drag gesture computes its index
+        /// by walking a strip that still contains the dragged tab, so pre-removal is the index a UI naturally
+        /// has, and WorkspaceOpsSelfTests.SelfTestMoveTabDrop pins both no-op forms against it.</summary>
         public static bool MoveTab(WorkspaceLayout l, int fromPane, int fromIndex, int toPane, int toIndex)
         {
             if (l == null) return false;

@@ -233,6 +233,85 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Workspace Move And Prune: PASS" : "Self-Test Workspace Move And Prune: FAIL");
         }
 
+        /// <summary>The outcomes Task 10d's tab drag newly depends on. The GESTURE (ghost, insertion marker,
+        /// hit-testing a strip) is Unity-side and cannot run here; what CAN be pinned is the arithmetic every
+        /// drop lands on, and this suite pins the three properties the drop resolver assumes and that nothing
+        /// else asserted:
+        ///
+        /// 1. toIndex is a PRE-REMOVAL index. TabStripView.InsertIndexAt walks the strip with the dragged tab
+        ///    still in it, so the index it hands MoveTab counts that tab — MoveTab's own `if (samePane &&
+        ///    fromIndex &lt; toIndex) insertAt--` is what reconciles that with the removal. BOTH no-op forms
+        ///    are pinned (drop on itself, and drop directly after itself) because they fail for OPPOSITE
+        ///    mutations: an unconditional decrement breaks the first, a deleted decrement breaks the second.
+        /// 2. A move that empties the SOURCE pane collapses the split — R3/R4 through MoveTab's door rather
+        ///    than CloseTab's, which is the door a drag actually uses.
+        /// 3. The moved tab is ACTIVE where it lands, including across panes. The drop relies on it: the
+        ///    surface a drag puts in the other pane has to be the one that pane then shows.</summary>
+        [ContextMenu("Self-Test: Workspace Move Tab Drop")]
+        public void SelfTestMoveTabDrop()
+        {
+            bool ok = true;
+
+            // ── (1a) Dropping a tab on ITSELF (toIndex == fromIndex) changes nothing. ──────────────
+            var l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", false);        // Primary: [Карта мира, A, *B]
+            if (!WorkspaceOps.MoveTab(l, 0, 2, 0, 2))
+            { Debug.LogError("FAIL move-drop: MoveTab(0,2 -> 0,2) returned false, want true (a valid, if inert, move)"); ok = false; }
+            if (Dump(l.Primary) != "Карта мира,A,*B")
+            { Debug.LogError($"FAIL move-drop: dropping a tab on its own index reordered the pane — [{Dump(l.Primary)}], want «Карта мира,A,*B» (toIndex is PRE-removal: no adjustment may run when fromIndex == toIndex)"); ok = false; }
+
+            // ── (1b) Dropping it directly AFTER itself (toIndex == fromIndex + 1) also changes nothing. ──
+            // Here the adjustment DOES run and must cancel the removal out exactly. Asserted on the tab that
+            // is already active, so "the active tab did not change" is a real claim about this move and not
+            // an artefact of MoveTab re-activating whatever it moved.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", false);
+            WorkspaceOps.SetActiveTab(l, 0, 1);                 // Primary: [Карта мира, *A, B]
+            WorkspaceOps.MoveTab(l, 0, 1, 0, 2);
+            if (Dump(l.Primary) != "Карта мира,*A,B")
+            { Debug.LogError($"FAIL move-drop: dropping a tab just after itself moved it — [{Dump(l.Primary)}], want «Карта мира,*A,B» (PRE-removal toIndex: the fromIndex < toIndex adjustment must cancel the removal)"); ok = false; }
+
+            // ── (1c) A real same-pane reorder lands where the PRE-REMOVAL index points. ────────────
+            // [Карта мира, A, B], drag «Карта мира» onto the gap before B (index 2, counting the dragged tab
+            // itself) — it must end up BETWEEN A and B, not after B.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", false);
+            WorkspaceOps.MoveTab(l, 0, 0, 0, 2);
+            if (Dump(l.Primary) != "A,*Карта мира,B")
+            { Debug.LogError($"FAIL move-drop: same-pane reorder landed at [{Dump(l.Primary)}], want «A,*Карта мира,B» — toIndex 2 is PRE-removal, so the tab goes before the tab that was at index 2"); ok = false; }
+
+            // ── (2) A move that empties the PRIMARY promotes the secondary (R4 through MoveTab). ───
+            // The CloseTab door is already covered (SelfTestClose); the drag door is not, and it is the one
+            // that makes "drag your last tab into the other pane" survivable rather than a hole on the left.
+            l = WorkspaceOps.NewDefault();                       // Primary: [*Карта мира]
+            WorkspaceOps.Open(l, Page("a"), "A", true);          // Secondary: [*A], focus 1
+            WorkspaceOps.MoveTab(l, 0, 0, 1, 1);                 // drag the map tab into the secondary, at the end
+            if (l.Secondary != null)
+            { Debug.LogError($"FAIL move-drop: emptying the PRIMARY by dragging must promote the secondary, not leave one — secondary = [{Dump(l.Secondary)}], primary = [{Dump(l.Primary)}] (R4)"); ok = false; }
+            if (Dump(l.Primary) != "A,*Карта мира")
+            { Debug.LogError($"FAIL move-drop: after promotion primary = [{Dump(l.Primary)}], want «A,*Карта мира» (R4 — the promoted pane keeps its own tabs and the dragged tab stays active)"); ok = false; }
+            if (l.FocusedPane != 0)
+            { Debug.LogError($"FAIL move-drop: focus = {l.FocusedPane} after the split collapsed, want 0 (R3/R4 — FocusedPane may never name an absent pane)"); ok = false; }
+
+            // ── (3) The moved tab is the ACTIVE tab in the pane it lands in, across panes. ─────────
+            // Asserted at a NON-ZERO destination index on purpose: a "make index 0 active" mutation would
+            // pass at index 0 by coincidence.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);         // Primary: [Карта мира, *A]
+            WorkspaceOps.Open(l, Page("b"), "B", true);          // Secondary: [*B], focus 1
+            WorkspaceOps.Open(l, Page("c"), "C", false);         // Secondary: [B, *C]
+            WorkspaceOps.MoveTab(l, 1, 1, 0, 2);                 // drag C onto the end of the primary's strip
+            if (Dump(l.Primary) != "Карта мира,A,*C")
+            { Debug.LogError($"FAIL move-drop: primary = [{Dump(l.Primary)}], want «Карта мира,A,*C» — a tab dragged into a pane must be the ACTIVE tab there, at the index it was dropped"); ok = false; }
+            if (l.Secondary == null || Dump(l.Secondary) != "*B")
+            { Debug.LogError($"FAIL move-drop: secondary = [{Dump(l.Secondary)}], want «*B» — the source pane keeps its remaining tabs with a valid ActiveIndex (R5)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Move Tab Drop: PASS" : "Self-Test Workspace Move Tab Drop: FAIL");
+        }
+
         /// <summary>FindSurface (Task 10c): every Close* path in MapScreenController holds a SurfaceRef and no
         /// index, so "where is this open" has to be answerable from the layout alone.</summary>
         [ContextMenu("Self-Test: Workspace Find Surface")]
