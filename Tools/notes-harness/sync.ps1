@@ -3,9 +3,17 @@
 #
 #   powershell -File sync.ps1
 #
-# Unlike f2-harness's sync, a missing source is SKIPPED rather than fatal: during TDD the implementation
-# file legitimately does not exist yet, and the red state we want is a compile error naming the missing
-# type, not a PowerShell stop. Every skip is printed, so a typo in $files can never pass unnoticed.
+# EVERY .cs IN EACH DIRECTORY, BY GLOB — never a hand-written file list, and that is a correctness
+# property rather than a convenience. Program.cs reflects over every *SelfTests type it can see, under the
+# comment "adding a suite must never require remembering to register it here". That was true of Program.cs
+# and FALSE OF THE PIPELINE while this script copied by an explicit list: a new suite dropped into either
+# directory was never copied, never compiled, and therefore invisible to the reflection built to make
+# invisibility impossible. The old "every skip is printed" reassurance did not cover it either, because a
+# file that was never listed produces no skip line at all. Green by absence, inside the gate that measures
+# everything else, in a script already caught serving stale assemblies once.
+#
+# A file that does not exist yet is simply not copied, which preserves the TDD red state this script has
+# always wanted: a compile error naming the missing type, not a PowerShell stop.
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = (Resolve-Path (Join-Path $here '..\..')).Path
@@ -34,39 +42,29 @@ foreach ($stale in @('obj', 'bin')) {
   if (Test-Path $path) { Remove-Item -Recurse -Force $path }
 }
 
-# Each source directory paired with the files pulled from it. Two directories rather than one because the
-# workspace-shell layer (WorldGen.Workspace.Data) lives beside, not inside, the notes layer.
-$sources = @(
-  @{ Dir = (Join-Path $repo 'Assets\WorldGen\Notes\Data'); Files = @(
-      'NotesData.cs',
-      'NotesDocOps.cs',
-      'NotesDocOpsSelfTests.cs',
-      'DocKeyboardOps.cs',
-      'DocKeyboardOpsSelfTests.cs'
-    ) },
-  @{ Dir = (Join-Path $repo 'Assets\WorldGen\Workspace\Data'); Files = @(
-      'WorkspaceLayout.cs',
-      'WorkspaceOps.cs',
-      'WorkspaceOpsSelfTests.cs',
-      'NavigatorTree.cs',
-      'NavigatorTreeSelfTests.cs',
-      'QuickOpen.cs',
-      'QuickOpenSelfTests.cs',
-      'WorldObjectRef.cs',
-      'SurfaceIds.cs',
-      'SurfaceIdsSelfTests.cs'
-    ) }
+# Two directories rather than one because the workspace-shell layer (WorldGen.Workspace.Data) lives beside,
+# not inside, the notes layer. Both are PURE BY RULE — no UnityEngine outside the stubbed test attributes —
+# which is what makes "copy everything here" safe: a file that does not belong in the harness does not
+# belong in these directories either, so the glob and that boundary are the same rule, enforced once.
+$sourceDirs = @(
+  (Join-Path $repo 'Assets\WorldGen\Notes\Data'),
+  (Join-Path $repo 'Assets\WorldGen\Workspace\Data')
 )
 
 $copied = 0
-$skipped = @()
-foreach ($source in $sources) {
-  foreach ($f in $source.Files) {
-    $from = Join-Path $source.Dir $f
-    if (Test-Path $from) { Copy-Item $from (Join-Path $gen $f); $copied++ }
-    else { $skipped += $f }
+$names = @{}
+foreach ($dir in $sourceDirs) {
+  # Fatal, unlike a missing FILE: a missing source DIRECTORY means the layout moved, and silently syncing
+  # nothing from it would leave a green run over an empty suite — the exact failure this glob removes.
+  if (-not (Test-Path $dir)) { throw "sync.ps1: source directory not found: $dir" }
+  foreach ($file in Get-ChildItem -Path $dir -Filter *.cs -File) {
+    # gen/ is FLAT, so two same-named files in different source directories would silently overwrite each
+    # other while the count still looked right. Fatal rather than last-one-wins.
+    if ($names.ContainsKey($file.Name)) { throw "sync.ps1: duplicate file name across source directories: $($file.Name)" }
+    $names[$file.Name] = $true
+    Copy-Item $file.FullName (Join-Path $gen $file.Name)
+    $copied++
   }
 }
 
-Write-Host "synced $copied source(s) into gen/"
-if ($skipped.Count -gt 0) { Write-Host "SKIPPED (not present yet): $($skipped -join ', ')" }
+Write-Host "synced $copied source(s) into gen/ (every *.cs under $($sourceDirs.Count) source directories)"
