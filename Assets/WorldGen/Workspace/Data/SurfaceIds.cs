@@ -31,14 +31,15 @@ namespace WorldGen.Workspace.Data
     ///
     /// It is a property of the ids this app writes, NOT an invariant anything enforces: PoiData.Id is a
     /// public field Newtonsoft deserializes from the .dndproj with no validation, so a corrupted or
-    /// hand-edited project CAN carry a '#' in it, and such an id would split at the wrong place and resolve
-    /// to a different (poi, room) rather than being rejected. Nothing here should be read as ruling that out.
-    /// Deliberately NOT guarded here — validating ids is Task 11's call, since Task 11 is what starts
-    /// persisting them.
+    /// hand-edited project CAN carry a '#' in it. Task 11 is what made that matter, because Task 11 is what
+    /// started PERSISTING these ids: a transient wrong id died with the session, a stored one round-trips
+    /// into a different (poi, room) on every launch. IsWellFormed below is the guard, and its LIMIT is stated
+    /// there — it rejects an id no encoder here could have produced, and cannot possibly reject one that is
+    /// merely attributed to the wrong POI.
     ///
     /// These ids are persisted verbatim by WorkspaceOps.Serialize (which escapes only tabs and newlines and
-    /// has no opinion about anything else), so Task 11's WorkspacePrefs restores tabs through this exact
-    /// round-trip — the decoder is not test scaffolding, it is half the stored format.</summary>
+    /// has no opinion about anything else), so WorkspacePrefs restores tabs through this exact round-trip —
+    /// the decoder is not test scaffolding, it is half the stored format.</summary>
     public static class SurfaceIds
     {
         public const char Separator = '#';
@@ -115,6 +116,59 @@ namespace WorldGen.Workspace.Data
             floorIndex = floor;
             roomId = room;
             return true;
+        }
+
+        /// <summary>Could THIS file have written `id` for a tab of `kind`? The test is a round-trip — decode,
+        /// re-encode, compare — which is the totality property this class's doc already states, turned into a
+        /// predicate. Anything an encoder above cannot produce is rejected: a poi part containing a separator
+        /// («aa#bb», where the room part is not a number), an explicit «#0», a leading separator, a padded
+        /// number («aa#07» decodes to room 7 and re-encodes to «aa#7», which is not what was stored).
+        ///
+        /// WHY IT EXISTS AT ALL — Task 11 (persistence). Until then a SurfaceRef.Id was minted from live data
+        /// and consumed in the same session, so a malformed one could only appear if the DATA was malformed,
+        /// and it died with the session. WorkspacePrefs stores these strings in PlayerPrefs, a plain
+        /// user-writable file, and re-feeds them to MapScreenController.RebindSurface on every launch — so a
+        /// bad id stops being a transient and starts being a fixture. WorkspaceOps.Restore is the one caller;
+        /// see there for what a rejection costs (that ONE tab, silently, exactly as a deleted target does).
+        ///
+        /// THE LIMIT, stated because a reader will otherwise assume more: this CANNOT detect an id that is
+        /// well-formed but names the wrong thing. If a project's PoiData.Id genuinely were «aa#7», the
+        /// encoder writes «aa#7» and this accepts it — as it must, since a building in room 7 of town «aa»
+        /// writes the identical string. What separates those two is whether a POI «aa» with a room 7 actually
+        /// exists, which is the `exists` predicate's question, not this one's; WorkspaceOps.Restore applies
+        /// both, in that order. The residue is a world holding BOTH a POI literally named «aa#7» AND a POI
+        /// «aa» owning a room 7 — accepted, and not defended against.
+        ///
+        /// EVERY OTHER KIND RETURNS TRUE, and that is not laziness: Page and PoiEditor ids are opaque strings
+        /// (a page guid, a PoiData.Id) that nothing here splits, so a separator inside one is inert, and
+        /// WorldMap's id is "" by contract. There is no encoding to check, so there is nothing this method
+        /// could add that `exists` does not already say better. Written as an explicit switch with a `default`
+        /// rather than a list of "encoded" kinds, so a NEW SurfaceKind defaults to unvalidated-but-existence-
+        /// checked instead of silently rejected.</summary>
+        public static bool IsWellFormed(SurfaceKind kind, string id)
+        {
+            switch (kind)
+            {
+                case SurfaceKind.Settlement:
+                case SurfaceKind.BuildingInterior:
+                case SurfaceKind.Dungeon:
+                    return TryParseInterior(id, out string poiId, out int ownerRoomId)
+                           && Interior(poiId, ownerRoomId) == id;
+
+                case SurfaceKind.BattleGrid:
+                    // The interior PART is re-checked through this same method rather than merely parsed:
+                    // TryParseBattleGrid splits at the last two separators and hands back whatever precedes
+                    // them untouched, so «aa#bb#1#2» parses cleanly into an interior part «aa#bb» that
+                    // TryParseInterior itself would refuse. Kind.Dungeon is passed only to select the interior
+                    // branch above — the three interior kinds are indistinguishable to this check, which is
+                    // why the branch groups them.
+                    return TryParseBattleGrid(id, out string interiorId, out int floorIndex, out int roomId)
+                           && BattleGrid(interiorId, floorIndex, roomId) == id
+                           && IsWellFormed(SurfaceKind.Dungeon, interiorId);
+
+                default:
+                    return true;
+            }
         }
     }
 }

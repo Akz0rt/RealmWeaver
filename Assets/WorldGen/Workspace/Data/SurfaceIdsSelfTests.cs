@@ -85,6 +85,65 @@ namespace WorldGen.Workspace.Data
             Debug.Log(ok ? "Self-Test Surface Ids: PASS" : "Self-Test Surface Ids: FAIL");
         }
 
+        /// <summary>IsWellFormed, the guard WorkspacePrefs' stored ids pass through (Task 11). Asserted
+        /// against the ENCODERS, not against hand-written strings, wherever an encoder can produce the value
+        /// — a fixture that disagreed with Interior/BattleGrid would pin the wrong contract.
+        ///
+        /// The rejection cases are the point: each one is a string SOME path could put in PlayerPrefs (a
+        /// corrupted PoiData.Id carrying a '#', a hand edit, a future encoder that drifted) and none of them
+        /// is one the encoders above can emit.</summary>
+        [ContextMenu("Self-Test: Surface Ids Well-Formed")]
+        public void SelfTestSurfaceIdsWellFormed()
+        {
+            bool ok = true;
+
+            // ── Accepted: everything the encoders actually write ─────────────────────
+            foreach (var kind in new[] { SurfaceKind.Settlement, SurfaceKind.BuildingInterior, SurfaceKind.Dungeon })
+            {
+                if (!SurfaceIds.IsWellFormed(kind, SurfaceIds.Interior(Guid1, 0)))
+                { Debug.LogError($"FAIL wellformed: {kind}/«{SurfaceIds.Interior(Guid1, 0)}» (top-level) rejected, want accepted"); ok = false; }
+                if (!SurfaceIds.IsWellFormed(kind, SurfaceIds.Interior(Guid1, 7)))
+                { Debug.LogError($"FAIL wellformed: {kind}/«{SurfaceIds.Interior(Guid1, 7)}» (room-scoped) rejected, want accepted"); ok = false; }
+            }
+            string grid = SurfaceIds.BattleGrid(SurfaceIds.Interior(Guid2, 7), 3, 9);
+            if (!SurfaceIds.IsWellFormed(SurfaceKind.BattleGrid, grid))
+            { Debug.LogError($"FAIL wellformed: BattleGrid/«{grid}» rejected, want accepted"); ok = false; }
+            if (!SurfaceIds.IsWellFormed(SurfaceKind.BattleGrid, SurfaceIds.BattleGrid(SurfaceIds.Interior(Guid1, 0), 0, 1)))
+            { Debug.LogError("FAIL wellformed: a grid in a TOP-LEVEL interior was rejected, want accepted"); ok = false; }
+
+            // ── Accepted unconditionally: the kinds with no encoding at all ──────────
+            // A '#' inside a page id or a PoiData.Id is inert — nothing splits those — so refusing them would
+            // drop tabs for a character that costs nothing. WorldMap's id is "" by contract.
+            foreach (var kind in new[] { SurfaceKind.Page, SurfaceKind.PoiEditor })
+                if (!SurfaceIds.IsWellFormed(kind, "a#b#c") || !SurfaceIds.IsWellFormed(kind, ""))
+                { Debug.LogError($"FAIL wellformed: {kind} must accept any id, including «a#b#c» and «»"); ok = false; }
+            if (!SurfaceIds.IsWellFormed(SurfaceKind.WorldMap, ""))
+            { Debug.LogError("FAIL wellformed: WorldMap/«» rejected, want accepted"); ok = false; }
+
+            // ── Refused: nothing here can be produced by Interior() ──────────────────
+            // «#7» no poi part; «<guid>#» empty room part; «#0» the suffix the encoder omits; «#abc» a poi id
+            // carrying a separator (the corrupted-PoiData.Id case, which is the whole reason this exists);
+            // «#07» a padded number, which DECODES fine (room 7) and re-encodes to «#7» — caught only by the
+            // round-trip comparison, not by TryParseInterior alone.
+            foreach (string bad in new[] { null, "", "#7", Guid1 + "#", Guid1 + "#0", Guid1 + "#abc", Guid1 + "#07" })
+                if (SurfaceIds.IsWellFormed(SurfaceKind.Settlement, bad))
+                { Debug.LogError($"FAIL wellformed: Settlement/«{bad ?? "<null>"}» accepted, want refused"); ok = false; }
+
+            // ── Refused: battle grids, including a rotten INTERIOR part ──────────────
+            // «<guid>#bb#1#2» parses as a grid (last two separators are numeric) and its interior part
+            // «<guid>#bb» is what must fail — the recursion into the interior check is the only thing that
+            // catches it, and without it the tab would resolve against a poi id that is not the stored one.
+            foreach (string bad in new[]
+            {
+                null, "", Guid1, Guid1 + "#2", "#2#5", Guid1 + "#x#5", Guid1 + "#2#y",
+                Guid1 + "#bb#1#2", Guid1 + "#0#1#2",
+            })
+                if (SurfaceIds.IsWellFormed(SurfaceKind.BattleGrid, bad))
+                { Debug.LogError($"FAIL wellformed: BattleGrid/«{bad ?? "<null>"}» accepted, want refused"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Surface Ids Well-Formed: PASS" : "Self-Test Surface Ids Well-Formed: FAIL");
+        }
+
         /// <summary>Encode, decode, compare the PARTS — never the string. A helper rather than two copies so
         /// the top-level and room-scoped cases cannot drift into asserting different things.</summary>
         static bool InteriorRoundTrips(string poiId, int ownerRoomId)

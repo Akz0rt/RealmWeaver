@@ -558,5 +558,81 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Workspace Persistence: PASS" : "Self-Test Workspace Persistence: FAIL");
         }
+
+        /// <summary>WorkspaceOps.Restore — the pipeline WorkspacePrefs' three callers share (Task 11). Pinned
+        /// here rather than walked in the Editor because the three interesting outcomes are all invisible when
+        /// they go wrong: a restore that silently keeps a malformed id, a restore that silently applies an
+        /// EMPTY workspace, and a restore that drops a tab it should have kept all look like "persistence is
+        /// a bit flaky" from the outside.</summary>
+        [ContextMenu("Self-Test: Workspace Restore")]
+        public void SelfTestRestore()
+        {
+            bool ok = true;
+            const string Poi = "3f2a1c88-5b6d-4e21-9a70-0c1d2e3f4a5b";
+
+            // ── A null `exists` restores VERBATIM (the app-start case) ───────────────
+            var saved = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(saved, Page("a"), "Сессия 1", false);
+            WorkspaceOps.Open(saved, new SurfaceRef { Kind = SurfaceKind.Settlement, Id = SurfaceIds.Interior(Poi, 0) }, "Тихий Брод", true);
+            saved.SplitRatio = 0.62f;
+            string payload = WorkspaceOps.Serialize(saved);
+
+            var verbatim = WorkspaceOps.Restore(payload, null);
+            if (verbatim == null)
+            { Debug.LogError("FAIL restore: a valid payload with a null `exists` returned null, want the layout restored verbatim"); ok = false; }
+            else
+            {
+                if (Dump(verbatim.Primary) != Dump(saved.Primary) || Dump(verbatim.Secondary) != Dump(saved.Secondary))
+                { Debug.LogError($"FAIL restore: verbatim = [{Dump(verbatim.Primary)}] / [{Dump(verbatim.Secondary)}], want [{Dump(saved.Primary)}] / [{Dump(saved.Secondary)}]"); ok = false; }
+                if (System.Math.Abs(verbatim.SplitRatio - 0.62f) > 0.001f)
+                { Debug.LogError($"FAIL restore: SplitRatio {verbatim.SplitRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)}, want 0.62 — the settings line must survive the prune"); ok = false; }
+            }
+
+            // ── `exists` drops the tabs it rejects, and ONLY those ───────────────────
+            // The settlement's target is gone; the page and the world map are still there. The page must NOT
+            // go with it — a predicate applied per-tab is the difference between "one place was deleted" and
+            // "the whole session is gone".
+            var partial = WorkspaceOps.Restore(payload, s => s.Kind != SurfaceKind.Settlement);
+            if (partial == null)
+            { Debug.LogError("FAIL restore: dropping ONE tab returned null, want the surviving tabs restored"); ok = false; }
+            else
+            {
+                if (partial.Secondary != null)
+                { Debug.LogError($"FAIL restore: secondary = [{Dump(partial.Secondary)}], want null — emptying it must collapse the split"); ok = false; }
+                if (Dump(partial.Primary) != "Карта мира,*Сессия 1")
+                { Debug.LogError($"FAIL restore: survivors = [{Dump(partial.Primary)}], want [Карта мира,*Сессия 1]"); ok = false; }
+            }
+
+            // ── A MALFORMED id is dropped even though `exists` would have kept it ───
+            // «<poi>#abc» is what a PoiData.Id carrying a '#' encodes to (SurfaceIds' own doc). `exists` here
+            // says yes to everything, so the ONLY thing that can drop this tab is the well-formedness check —
+            // which is exactly the mutant this assertion guards.
+            var rotten = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(rotten, new SurfaceRef { Kind = SurfaceKind.Dungeon, Id = Poi + "#abc" }, "Пепельный Курган", false);
+            var rottenBack = WorkspaceOps.Restore(WorkspaceOps.Serialize(rotten), _ => true);
+            if (rottenBack == null)
+            { Debug.LogError("FAIL restore: a payload with one malformed id returned null, want the OTHER tabs kept"); ok = false; }
+            else if (Dump(rottenBack.Primary) != "*Карта мира")
+            { Debug.LogError($"FAIL restore: malformed-id payload restored [{Dump(rottenBack.Primary)}], want [*Карта мира] — the bad tab dropped, the good one kept"); ok = false; }
+
+            // ── Nothing usable left → null, NOT an empty workspace ──────────────────
+            // NormalizeSplit repairs an empty Primary only by promoting a non-empty Secondary, so with both
+            // panes emptied it leaves a legal ZERO-TAB layout — which is precisely what must never be applied
+            // over whatever the caller is already showing.
+            var everythingGone = WorkspaceOps.Restore(payload, _ => false);
+            if (everythingGone != null)
+            {
+                Debug.LogError($"FAIL restore: a payload whose every tab was pruned returned a layout with " +
+                               $"[{Dump(everythingGone.Primary)}] / [{Dump(everythingGone.Secondary)}], want null");
+                ok = false;
+            }
+
+            // ── Junk in, null out — the same payloads TryDeserialize refuses ────────
+            foreach (string junk in new[] { null, "", "мусор", "WORKSPACE/1\nnonsense" })
+                if (WorkspaceOps.Restore(junk, null) != null)
+                { Debug.LogError($"FAIL restore: «{(junk ?? "<null>").Replace("\n", "\\n")}» restored a layout, want null"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Restore: PASS" : "Self-Test Workspace Restore: FAIL");
+        }
     }
 }

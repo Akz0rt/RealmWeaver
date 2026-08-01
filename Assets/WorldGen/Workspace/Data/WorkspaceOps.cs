@@ -391,6 +391,51 @@ namespace WorldGen.Workspace.Data
             return true;
         }
 
+        /// <summary>The whole restore pipeline as ONE pure function: parse, drop every tab that cannot be
+        /// shown, and report whether anything usable survived. WorkspacePrefs' three callers (app start, a
+        /// project load, a Play-mode shell rebuild) all go through here, so "what a stored layout becomes"
+        /// has one definition and one set of tests instead of three call sites agreeing by inspection.
+        ///
+        /// NULL MEANS «KEEP WHAT YOU HAVE», never «show an empty workspace», and it is returned for three
+        /// different reasons that are deliberately not distinguished: nothing stored, a payload
+        /// TryDeserialize rejects, and — the one worth naming — a payload every one of whose tabs was pruned
+        /// away. That last case is NOT covered by any invariant in this file: NormalizeSplit repairs an empty
+        /// Primary only by PROMOTING a non-empty Secondary, so with both panes emptied it takes neither
+        /// branch and leaves a legal, zero-tab layout behind. Applying that would hand the DM a workspace
+        /// showing nothing at all in place of the one they were looking at, which is strictly worse than the
+        /// default map tab the caller already holds. (Not unrecoverable — each pane's tab strip keeps its
+        /// «+», and Ctrl+K is global — but a blank window is not a restore.)
+        ///
+        /// TWO DROP RULES, ONE PREDICATE, and the ORDER inside it is meaningful. SurfaceIds.IsWellFormed
+        /// first: an id no encoder in this codebase could have produced is refused outright, because the
+        /// alternative is handing it to a decoder that would split it at the wrong place and resolve it to a
+        /// DIFFERENT room under a correctly-labelled tab. `exists` second: a well-formed id whose target is
+        /// gone. Both drop exactly one tab, silently — deliberately the same outcome, because to the DM they
+        /// are the same event ("that tab is not coming back") and neither is worth an error tab. REJECTED:
+        /// refusing the whole payload on one bad id, which would cost every other tab for a fault in one.
+        ///
+        /// `exists` MAY BE NULL, meaning "assume every target exists". That is not a convenience default —
+        /// it is the app-start case stated honestly. At Awake nothing has loaded yet (no document, no POIs,
+        /// no interiors), so a real existence predicate would answer "no" for every tab and prune the whole
+        /// layout by construction; passing null says "I cannot answer this question yet" rather than
+        /// answering it wrongly. WorkspacePrefs.Restore's own doc says which caller passes what.</summary>
+        public static WorkspaceLayout Restore(string payload, Func<SurfaceRef, bool> exists)
+        {
+            if (!TryDeserialize(payload, out WorkspaceLayout l)) return null;
+
+            PruneMissing(l, s => IsRestorable(s, exists));
+
+            if (l.Primary?.Tabs == null || l.Primary.Tabs.Count == 0) return null;
+            return l;
+        }
+
+        static bool IsRestorable(SurfaceRef s, Func<SurfaceRef, bool> exists)
+        {
+            if (s == null) return false;
+            if (!SurfaceIds.IsWellFormed(s.Kind, s.Id)) return false;
+            return exists == null || exists(s);
+        }
+
         /// <summary>Explicit switch on the enum's written name, mirroring NotesDocOps.TryParseKind — NOT
         /// Enum.TryParse, which would happily accept a bare numeral like "7" and let an unrecognized kind
         /// through a hand-edited PlayerPrefs value.</summary>
