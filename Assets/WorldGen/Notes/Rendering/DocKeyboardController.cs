@@ -34,6 +34,15 @@ namespace WorldGen.Notes.Rendering
     /// Script Execution Order would also pin the ordering and is rejected: it lives in ProjectSettings, is
     /// invisible at this call site, and the next person to reorder scripts for an unrelated reason would
     /// silently break this again.
+    ///
+    /// THE PRICE OF ACTING AFTER THE DRAIN, and the rule the rest of this class follows: by the time we run,
+    /// the field has already acted on the same keystroke — nothing here consumes an event or hides it from
+    /// uGUI. So every key has to be checked for whether it can share. Enter can (the field only deactivates).
+    /// Tab can, now that DocBlockView refuses the tab CHARACTER. Backspace cannot be told apart by the caret
+    /// alone, because the field's own Backspace moves it — hence the "did this row's text change in this
+    /// drain" test below. Up/Down cannot be shared at all on a wrapped row, because the field moves the caret
+    /// INSIDE it, so they are taken only where that movement is invisible. Consuming in Update hid all three
+    /// behind an ordering coin-flip; this is what they look like once the coin is gone.
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
@@ -55,8 +64,6 @@ namespace WorldGen.Notes.Rendering
         // stands until the field can be believed again.
         string lastFocusedId;
         int lastCaret;
-        bool lastAtFirstLine = true;
-        bool lastAtLastLine = true;
 
         public string FocusedBlockId => lastFocusedId;
 
@@ -71,16 +78,12 @@ namespace WorldGen.Notes.Rendering
             {
                 lastFocusedId = live.BlockId;
                 lastCaret = live.Field != null ? live.Field.caretPosition : 0;
-                lastAtFirstLine = live.CaretOnFirstLine;
-                lastAtLastLine = live.CaretOnLastLine;
             }
             else if (live == null)
             {
                 // No live row: either an Enter just tore the field down (the case this exists for) or the DM
                 // clicked away. Both leave CaretWhenEditingEnded holding the caret as of the moment that row
-                // stopped being edited, which is the only honest answer for a key aimed at it. The line flags
-                // are deliberately NOT touched here — a deactivated field's caret is 0, so re-measuring them
-                // would record which line 0 is on rather than which line the DM was on.
+                // stopped being edited, which is the only honest answer for a key aimed at it.
                 var ended = pageView.ViewOf(lastFocusedId);
                 if (ended != null && ended.CaretWhenEditingEnded >= 0) lastCaret = ended.CaretWhenEditingEnded;
             }
@@ -114,12 +117,31 @@ namespace WorldGen.Notes.Rendering
                 return;
             }
 
-            if (keyboard.upArrowKey.wasPressedThisFrame && lastAtFirstLine)
-            { Handle(DocKey.Up); return; }
+            // Up/Down are ours ONLY on a row whose whole text is one visual line. On any other row the field
+            // has already moved the caret within the row during the drain — MoveUp/MoveDown at
+            // InputField.cs:1936/:1942 — so stealing the key as well would do two things at once: move the
+            // caret AND jump to another block. Consuming in LateUpdate made that double action reliable
+            // instead of ordering-dependent, which is how it was caught.
+            //
+            // On a single-line row the same double action is harmless and invisible: the field's MoveUp only
+            // walks the caret to the start (MoveDown, to the end) of the row we are leaving anyway. That is
+            // the whole reason the narrow version is safe where the wide one was not. A wrapped row now keeps
+            // its arrows entirely — the caret moves inside it and focus stays — which is the behaviour uGUI
+            // gives for free and the only one that can be right without InputField's private m_DrawStart.
+            // The gate answers "cannot prove it" as false, so an unmeasurable row is left to the field too.
+            if (keyboard.upArrowKey.wasPressedThisFrame)
+            { if (VerticalIsOurs(live)) Handle(DocKey.Up); return; }
 
-            if (keyboard.downArrowKey.wasPressedThisFrame && lastAtLastLine)
-            { Handle(DocKey.Down); return; }
+            if (keyboard.downArrowKey.wasPressedThisFrame)
+            { if (VerticalIsOurs(live)) Handle(DocKey.Down); return; }
         }
+
+        /// <summary>Whether a vertical arrow belongs to this class rather than to the field. Requires a row
+        /// that is really being edited (a caret still PENDING means the field has not taken focus, so it has
+        /// not moved anything and the DM cannot see where the caret is either) and one that is provably a
+        /// single visual line.</summary>
+        static bool VerticalIsOurs(DocBlockView view)
+            => view != null && !view.CaretPending && view.IsSingleVisualLine();
 
         static bool HasSelection(DocBlockView view)
             => view != null && view.Field != null
@@ -128,8 +150,13 @@ namespace WorldGen.Notes.Rendering
         void Handle(DocKey key)
         {
             var page = pageView.Page;
+            // atFirstLine/atLastLine are constants from THIS caller: a vertical key only reaches here from a
+            // row VerticalIsOurs proved to be a single visual line, where the caret is on the first and the
+            // last one at once. DocKeyboardOps keeps both parameters, and DocKeyboardOpsSelfTests still pins
+            // the false branches, because the rule "an arrow inside a wrapped row is not a block move" belongs
+            // to the pure layer even though the view can no longer be the one to report it.
             var result = DocKeyboardOps.Apply(page.Blocks, lastFocusedId, lastCaret,
-                                              lastAtFirstLine, lastAtLastLine, key);
+                                              atFirstLine: true, atLastLine: true, key);
             if (!result.Handled) return;
 
             if (result.Rebuild)
@@ -167,19 +194,12 @@ namespace WorldGen.Notes.Rendering
         /// LateUpdate managed to refresh it — and that refresh needs the new field to be focused, which costs
         /// a frame or two (FocusAt only queues ActivateInputField; InputField.LateUpdate is what actually
         /// takes focus, InputField.cs:1442). A key pressed inside that window would be answered with the
-        /// previous row's caret.
-        ///
-        /// The line flags reset to what a single-line row reports, which is right for the empty row Enter
-        /// usually makes and a guess for the two rows it is not — the tail half of a mid-text split, and a
-        /// row arrowed into. Getting it wrong there costs an Up/Down pressed within those same one or two
-        /// frames leaving the row instead of moving a visual line inside it; the next refresh replaces both
-        /// flags with a measured value (DocBlockView.CaretOnFirstLine, whose own doc records the one-frame
-        /// wrap lag those measurements still carry).</summary>
+        /// previous row's caret. Nothing about line wrapping is cached alongside it: the vertical keys measure
+        /// that at the moment they are pressed, off the live row, so there is no second value here to keep
+        /// honest.</summary>
         void AdoptFocus(string blockId, int caretOffset)
         {
             lastFocusedId = blockId;
-            lastAtFirstLine = true;
-            lastAtLastLine = true;
             if (caretOffset >= 0) { lastCaret = caretOffset; return; }
 
             // caretOffset < 0 is DocKeyResult's "put it at the end" — resolve it against the text now rather

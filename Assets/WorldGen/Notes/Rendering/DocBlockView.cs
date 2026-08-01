@@ -34,6 +34,10 @@ namespace WorldGen.Notes.Rendering
         int pendingCaret;
         int caretWhenEditingEnded = -1;
         int textChangedOnFrame = -1;
+        // Ours alone, never the Text's own two generators: IsSingleVisualLine measures a different string
+        // (the field's whole text) than the render does, so sharing a cache would make each invalidate the
+        // other's every frame.
+        TextGenerator lineProbe;
 
         public DocBlock Data => data;
         public InputField Field { get; private set; }
@@ -243,44 +247,42 @@ namespace WorldGen.Notes.Rendering
             Field.ActivateInputField();
         }
 
-        /// <summary>Which visual line the caret is on, and how many there are. Legacy InputField exposes
-        /// neither, so this reads the text generator directly — it is what decides whether Up/Down move the
-        /// caret inside this row or jump to the next one.
+        /// <summary>Whether this row's whole text occupies ONE visual line, measured now. False also means
+        /// "cannot prove it", which callers must treat as "do not act" — see the width guard below.
         ///
-        /// KNOWN LAG, measured and left alone (Task 10g, Step 2). `Text.cachedTextGenerator` is a render-time
-        /// artefact — Text only repopulates it from OnPopulateMesh, during the canvas rebuild at the END of
-        /// the frame — while `Field.caretPosition` below is current. So for one frame after a keystroke that
-        /// changes the wrapping, the caret is compared against the previous frame's line map, and Up can jump
-        /// to the previous BLOCK instead of moving up a visual line inside this row. The obvious fix, calling
-        /// Populate here with the settings OnPopulateMesh uses, does NOT work and was reverted: while the
-        /// field is focused — the only time these flags are read — UpdateLabel assigns the Text component a
-        /// WINDOW into the field's text (`m_TextComponent.text = processed.Substring(m_DrawStart, …)`,
-        /// InputField.cs:2554-2558; the full range is restored only in the `!m_AllowInput` branch at :2531).
-        /// A line map built from that string is indexed in window coordinates while the caret is indexed in
-        /// whole-text coordinates, so refreshing it trades one disagreement for another. Doing this properly
-        /// means tracking m_DrawStart, which InputField keeps private, and it needs the Editor to validate —
-        /// so it is a task, not a line. The DM has not reported it; the window is one frame.</summary>
-        public bool CaretOnFirstLine => CaretLine() <= 0;
-
-        public bool CaretOnLastLine
+        /// This replaces a pair of CaretOnFirstLine/CaretOnLastLine flags that asked a question no caller can
+        /// answer correctly from out here, and answering it wrongly cost the DM a double action on Up/Down
+        /// (DocKeyboardController's arrow branch says what that looked like). Two independent reasons the old
+        /// question was unanswerable, both verified in InputField's shipped source:
+        ///   • `Text.cachedTextGenerator` is a RENDER-time artefact — Text repopulates it only from
+        ///     OnPopulateMesh, during the canvas rebuild at the end of the frame — so a caret compared against
+        ///     it is compared against the previous frame's wrapping.
+        ///   • Repopulating it does not help, because while the field is focused (exactly when this is asked)
+        ///     UpdateLabel gives the Text component a WINDOW into the field's text
+        ///     (`m_TextComponent.text = processed.Substring(m_DrawStart, …)`, InputField.cs:2554-2558; the
+        ///     full range is restored only in the `!m_AllowInput` branch at :2531). A line map built from that
+        ///     string is indexed in window coordinates while the caret is indexed in whole-text ones, and
+        ///     m_DrawStart is private, so the two cannot be reconciled from outside the class.
+        ///
+        /// "Does the whole text fit on one line" dodges both, because it never mentions the caret and never
+        /// reads anything InputField owns. It measures `Field.text` — the full text (InputField.text returns
+        /// m_Text), NOT the windowed label — against the same width and the same generation settings the
+        /// render wraps with, into a generator of our own so the render's cache is left alone.</summary>
+        public bool IsSingleVisualLine()
         {
-            get
-            {
-                var gen = TextComponent != null ? TextComponent.cachedTextGenerator : null;
-                return gen == null || gen.lineCount <= 0 || CaretLine() >= gen.lineCount - 1;
-            }
-        }
+            if (TextComponent == null || Field == null) return false;
 
-        int CaretLine()
-        {
-            var gen = TextComponent != null ? TextComponent.cachedTextGenerator : null;
-            if (gen == null || gen.lineCount <= 0 || Field == null) return 0;
+            // Before the first layout pass a fresh row's rect is still zero-wide, and wrapping text into a
+            // zero-width box reports a line per character. Unprovable, so: not single-line, do not act.
+            float width = TextComponent.rectTransform.rect.width;
+            if (width <= 1f) return false;
 
-            int caret = Field.caretPosition;
-            int line = 0;
-            for (int i = 0; i < gen.lineCount; i++)
-                if (caret >= gen.lines[i].startCharIdx) line = i;
-            return line;
+            if (lineProbe == null) lineProbe = new TextGenerator();
+            // Height 0 with this Text's verticalOverflow (Overflow) generates every line rather than clipping;
+            // only the width decides the wrapping, and it is the width the field itself wraps at
+            // (UpdateLabel and Text.OnPopulateMesh both take m_TextComponent.rectTransform.rect).
+            lineProbe.Populate(Field.text ?? "", TextComponent.GetGenerationSettings(new Vector2(width, 0f)));
+            return lineProbe.lineCount <= 1;
         }
 
         void LateUpdate()
