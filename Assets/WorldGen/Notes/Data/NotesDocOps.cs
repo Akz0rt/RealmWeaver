@@ -28,51 +28,25 @@ namespace WorldGen.Notes.Data
     {
         public const string ReferenceGroupTitle = "Справочник";
 
-        /// <summary>The Lazy-DM prep sheet, in order. Hints are placeholder text shown while a section or a
-        /// row is empty — they are rendered, never stored, so they can be reworded without touching saves.</summary>
-        static readonly (string Title, string Hint)[] Template =
-        {
-            ("Персонажи игроков", "Что каждый персонаж хочет и за какую его зацепку можно дёрнуть."),
-            ("Сильное начало",    "Первая сцена целиком, готовая к чтению вслух. Единственный кусок, который пишется прозой."),
-            ("Возможные сцены",   "5–10 однострочников. Не сюжет и не порядок — просто что может случиться."),
-            ("Секреты и подсказки", "10 фактов, которые игроки могут узнать. Не привязывай к месту — выдавай там, где они окажутся."),
-            ("Яркие локации",     "3 детали на место: что видно, что слышно, чем пахнет. Планировка уже есть на карте."),
-            ("Важные NPC",        "Имя, одна строка внешности и главное — чего он хочет."),
-            ("Монстры",           "Кто и сколько. Статблок — ссылкой или вставленным текстом."),
-            ("Награды",           "Что можно унести: монеты, предметы, улики, сведения."),
-        };
-
-        static readonly Dictionary<string, string> hints = BuildHints();
-
-        static Dictionary<string, string> BuildHints()
-        {
-            var d = new Dictionary<string, string>();
-            foreach (var t in Template) d[t.Title] = t.Hint;
-            return d;
-        }
-
-        /// <summary>Section title -> placeholder text. Keyed by title so a renamed section simply loses its
-        /// hint instead of showing the wrong one.</summary>
-        public static IReadOnlyDictionary<string, string> SectionHints => hints;
-
         // ── Creation ───────────────────────────────────────────────────────────
 
         public static DocBlock NewBlock(BlockKind kind, int depth, string text = "")
             => new DocBlock { Kind = kind, Depth = depth, Text = text ?? "" };
 
+        /// <summary>A blank session page: PageKind.Document, no blocks. Before Task 10f this seeded an
+        /// eight-section Lazy-DM scaffold (title/hint pairs, a prose row under «Сильное начало») — a DM
+        /// ruling given after running a real session reversed that: sections are the DM's to make, not the
+        /// tool's to pre-fill («Страница сессии не должна быть автоматически разбита на разделы, это все то,
+        /// что делает сам пользователь»). BlockKind.Section itself is untouched; only the auto-seeding of it
+        /// is gone, which is why an empty NotesPage{Kind=Document} is exactly right here — the same shape an
+        /// ordinary new page already has.
+        ///
+        /// NO MIGRATION: a page saved before this change keeps whatever sections it already has. Once typed,
+        /// those sections are ordinary user-owned blocks — indistinguishable from ones the DM made by hand —
+        /// and stripping them on load would destroy real session content for a rule that only governs what a
+        /// NEW page starts with.</summary>
         public static NotesPage CreateSessionSheet(string name)
-        {
-            var page = new NotesPage { Name = name, Kind = PageKind.Document };
-            foreach (var t in Template)
-            {
-                page.Blocks.Add(NewBlock(BlockKind.Section, 0, t.Title));
-                // «Сильное начало» is the one section that is prose rather than a list, so it starts with an
-                // empty Prose row: the DM should meet a paragraph there, not a bullet.
-                if (t.Title == "Сильное начало")
-                    page.Blocks.Add(NewBlock(BlockKind.Prose, 1));
-            }
-            return page;
-        }
+            => new NotesPage { Name = name, Kind = PageKind.Document };
 
         // ── Lookup ─────────────────────────────────────────────────────────────
 
@@ -525,29 +499,6 @@ namespace WorldGen.Notes.Data
             ClampDepths(page.Blocks);
             return block;
         }
-
-        // ── Hints ──────────────────────────────────────────────────────────────
-
-        /// <summary>The grey placeholder a row should show, or null for none. Never stored: a hint is drawn,
-        /// so rewording one never touches a save file. An EMPTY section shows its own hint; a section that
-        /// already has rows does not, and the hint appears on its empty row instead, so the same sentence is
-        /// never on screen twice. A renamed or user-made section simply has no hint rather than borrowing
-        /// somebody else's.</summary>
-        public static string HintFor(IReadOnlyList<DocBlock> blocks, int index)
-        {
-            if (blocks == null || index < 0 || index >= blocks.Count) return null;
-            var b = blocks[index];
-            if (b.Kind == BlockKind.Image || b.Kind == BlockKind.BoardRef) return null;
-
-            if (b.Kind == BlockKind.Section)
-                return SubtreeLength(blocks, index) > 1 ? null : HintByTitle(b.Text);
-
-            if (!string.IsNullOrEmpty(b.Text)) return null;
-            return HintByTitle(SectionTitleFor(blocks, index));
-        }
-
-        static string HintByTitle(string title)
-            => title != null && hints.TryGetValue(title, out string hint) ? hint : null;
 
         // ── Block clipboard ────────────────────────────────────────────────────
 

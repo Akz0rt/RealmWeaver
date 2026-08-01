@@ -20,9 +20,10 @@ namespace WorldGen.Notes.Rendering
 
         void Awake()
         {
-            // The very first page is a SESSION SHEET, not an empty board. The whole point of shipping a prep
-            // method is that a first-time DM meets it immediately; leaving the template behind a sidebar
-            // button they have no reason to press would hide the one thing meant to teach them the craft.
+            // The very first page is a SESSION SHEET (PageKind.Document), not an empty board — a DM opens
+            // the app to write prose and bullets, not to stare at a blank canvas. Before Task 10f this also
+            // seeded an eight-section Lazy-DM scaffold; that seeding is gone (NotesDocOps.CreateSessionSheet's
+            // own doc), but starting on a document page rather than a board is a separate, still-live choice.
             var group = CreateGroup("Заметки");
             var sheet = CreateSessionSheet(group.Id);
             if (sheet != null) OpenPage(sheet.Id);
@@ -74,8 +75,9 @@ namespace WorldGen.Notes.Rendering
             return page;
         }
 
-        /// <summary>Creates a session sheet from the prep template, auto-named «Сессия N» where N is one past
-        /// the number of document pages already in that group.</summary>
+        /// <summary>Creates a blank session sheet (NotesDocOps.CreateSessionSheet — no seeded sections since
+        /// Task 10f), auto-named «Сессия N» where N is one past the number of document pages already in that
+        /// group.</summary>
         public NotesPage CreateSessionSheet(string groupId)
         {
             var group = FindGroup(groupId);

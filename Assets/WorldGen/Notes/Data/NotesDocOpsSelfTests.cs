@@ -46,46 +46,31 @@ namespace WorldGen.Notes.Data
 
         // ── Tests ──────────────────────────────────────────────────────────────
 
-        [ContextMenu("Self-Test: Session Sheet Template")]
-        public void SelfTestTemplate()
+        // Formerly SelfTestTemplate: pinned an 8-section Lazy-DM scaffold (8 sections, first «Персонажи
+        // игроков», last «Награды», 8 hints). Task 10f's DM ruling reversed that — sections are the DM's to
+        // make, not the tool's to pre-fill — so this asserts the opposite of what it used to: a fresh sheet
+        // starts with NOTHING. Replaced, not deleted, so "a new sheet stays empty" is still a checked rule and
+        // not just a fact nobody guards.
+        [ContextMenu("Self-Test: Session Sheet Starts Empty")]
+        public void SelfTestSessionSheetStartsEmpty()
         {
             bool ok = true;
             var page = NotesDocOps.CreateSessionSheet("Сессия 1");
 
             if (page.Kind != PageKind.Document)
-            { Debug.LogError($"FAIL template: Kind = {page.Kind}, want Document"); ok = false; }
+            { Debug.LogError($"FAIL empty sheet: Kind = {page.Kind}, want Document"); ok = false; }
 
-            var sections = page.Blocks.FindAll(b => b.Kind == BlockKind.Section);
-            if (sections.Count != 8)
-            { Debug.LogError($"FAIL template: {sections.Count} sections, want 8"); ok = false; }
-            if (ok && sections[0].Text != "Персонажи игроков")
-            { Debug.LogError($"FAIL template: first section «{sections[0].Text}», want «Персонажи игроков»"); ok = false; }
-            if (ok && sections[7].Text != "Награды")
-            { Debug.LogError($"FAIL template: last section «{sections[7].Text}», want «Награды»"); ok = false; }
-            foreach (var s in sections)
-                if (s.Depth != 0)
-                { Debug.LogError($"FAIL template: section «{s.Text}» has Depth {s.Depth}, want 0 (I1)"); ok = false; }
+            if (page.Blocks == null || page.Blocks.Count != 0)
+            { Debug.LogError($"FAIL empty sheet: {page.Blocks?.Count} blocks, want 0 — the DM makes the sections now, not CreateSessionSheet"); ok = false; }
 
-            // Section 2 is the ONLY seeded child, and it is Prose — that is what makes the read-aloud
-            // paragraph a paragraph rather than a bullet.
-            int idx2 = page.Blocks.FindIndex(b => b.Kind == BlockKind.Section && b.Text == "Сильное начало");
-            var seeded = page.Blocks.FindAll(b => b.Kind != BlockKind.Section);
-            if (seeded.Count != 1 || seeded[0].Kind != BlockKind.Prose)
-            { Debug.LogError($"FAIL template: {seeded.Count} seeded child blocks, want exactly 1 Prose"); ok = false; }
-            else if (page.Blocks.IndexOf(seeded[0]) != idx2 + 1)
-            { Debug.LogError("FAIL template: the Prose block must sit directly under «Сильное начало»"); ok = false; }
-
-            if (NotesDocOps.SectionHints.Count != 8)
-            { Debug.LogError($"FAIL template: {NotesDocOps.SectionHints.Count} hints, want 8"); ok = false; }
-            foreach (var s in sections)
-                if (!NotesDocOps.SectionHints.ContainsKey(s.Text))
-                { Debug.LogError($"FAIL template: no hint for section «{s.Text}»"); ok = false; }
-
+            // I2 only requires a Section-first block on a NON-empty page, so a zero-block page is valid as-is
+            // — no seed is needed to satisfy Validate, unlike EnsurePageFor/PromoteToPage which DO seed a
+            // Section for exactly that reason (see PromotedPageSectionTitle's own doc).
             var problems = NotesDocOps.Validate(Doc(page));
             if (problems.Count != 0)
-            { Debug.LogError($"FAIL template: a fresh sheet must be valid, got: {string.Join("; ", problems)}"); ok = false; }
+            { Debug.LogError($"FAIL empty sheet: an empty sheet must already be valid, got: {string.Join("; ", problems)}"); ok = false; }
 
-            Debug.Log(ok ? "Self-Test Session Sheet Template: PASS" : "Self-Test Session Sheet Template: FAIL");
+            Debug.Log(ok ? "Self-Test Session Sheet Starts Empty: PASS" : "Self-Test Session Sheet Starts Empty: FAIL");
         }
 
         [ContextMenu("Self-Test: Collapse Visibility")]
@@ -238,6 +223,11 @@ namespace WorldGen.Notes.Data
             bool ok = true;
             var page = NotesDocOps.CreateSessionSheet("С");
             var doc = Doc(page);
+
+            // CreateSessionSheet no longer seeds a Section (Task 10f) — this fixture adds its own, since I2
+            // requires a non-empty page's first block to BE one, and Normalize clamps depths against
+            // structure that already exists rather than inventing a missing leading Section.
+            page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "S"));
 
             // A depth jump of 2 is a violation, and Normalize clamps it instead of failing.
             page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 3, "too deep"));
@@ -403,57 +393,11 @@ namespace WorldGen.Notes.Data
             Debug.Log(ok ? "Self-Test Block Clipboard: PASS" : "Self-Test Block Clipboard: FAIL");
         }
 
-        [ContextMenu("Self-Test: Hints")]
-        public void SelfTestHints()
-        {
-            bool ok = true;
-            var page = NotesDocOps.CreateSessionSheet("Сессия 1");
-
-            // An EMPTY section shows its own hint...
-            int scenes = page.Blocks.FindIndex(b => b.Text == "Возможные сцены");
-            string hint = NotesDocOps.HintFor(page.Blocks, scenes);
-            if (hint == null || !hint.Contains("однострочник"))
-            { Debug.LogError($"FAIL hints: «Возможные сцены» gave «{hint}», want its own hint"); ok = false; }
-
-            // ...but a section that HAS a row does not — the hint moves to the empty row instead, so the same
-            // text never appears twice on screen.
-            int strong = page.Blocks.FindIndex(b => b.Text == "Сильное начало");
-            if (NotesDocOps.HintFor(page.Blocks, strong) != null)
-            { Debug.LogError("FAIL hints: a section with a row must not also show its hint"); ok = false; }
-            string proseHint = NotesDocOps.HintFor(page.Blocks, strong + 1);
-            if (proseHint == null || !proseHint.Contains("вслух"))
-            { Debug.LogError($"FAIL hints: the empty prose row gave «{proseHint}», want the «Сильное начало» hint"); ok = false; }
-
-            // Once something is typed, the hint goes away.
-            page.Blocks[strong + 1].Text = "Дождь идёт третий день";
-            if (NotesDocOps.HintFor(page.Blocks, strong + 1) != null)
-            { Debug.LogError("FAIL hints: a row with text must show no hint"); ok = false; }
-
-            // A renamed section loses its hint rather than showing another section's.
-            page.Blocks[scenes].Text = "Мои сцены";
-            if (NotesDocOps.HintFor(page.Blocks, scenes) != null)
-            { Debug.LogError("FAIL hints: a renamed section must show no hint, not the wrong one"); ok = false; }
-
-            // Rows under a renamed or user-made section have no hint either.
-            var custom = new List<DocBlock>
-            {
-                NotesDocOps.NewBlock(BlockKind.Section, 0, "Своё"),
-                NotesDocOps.NewBlock(BlockKind.Item, 1, ""),
-            };
-            if (NotesDocOps.HintFor(custom, 1) != null)
-            { Debug.LogError("FAIL hints: an empty row under a user-made section must show no hint"); ok = false; }
-
-            // Pictures and cards never carry a hint.
-            var media = new List<DocBlock>
-            {
-                NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"),
-                NotesDocOps.NewBlock(BlockKind.Image, 1),
-            };
-            if (NotesDocOps.HintFor(media, 1) != null)
-            { Debug.LogError("FAIL hints: an image row must never show a hint"); ok = false; }
-
-            Debug.Log(ok ? "Self-Test Hints: PASS" : "Self-Test Hints: FAIL");
-        }
+        // SelfTestHints (NotesDocOps.HintFor/SectionHints) removed in Task 10f: the hint text it rendered was
+        // placeholder copy for the Lazy-DM scaffold's titles, keyed by section Title. With the scaffold gone
+        // there is no title set left to key from, so HintFor would always return null — an always-empty
+        // lookup kept "for completeness" is the exact shape this branch keeps paying for (see the brief).
+        // DocBlockView's hint Text/GameObject and DocumentPageView's HintFor call went with it.
 
         // ── Task 2 fixture ─────────────────────────────────────────────────────
 
@@ -470,6 +414,9 @@ namespace WorldGen.Notes.Data
 
             sheet = NotesDocOps.CreateSessionSheet("Сессия 1");
             sessions.Pages.Add(sheet);
+            // CreateSessionSheet stopped seeding sections in Task 10f — this fixture adds the one section its
+            // own line/card need to hang under, the same way a DM would type it in by hand.
+            sheet.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
 
             var reference = NotesDocOps.EnsureReferenceGroup(doc);
             olga = new NotesPage { Name = "Староста Ольга", Kind = PageKind.Document };
@@ -500,6 +447,10 @@ namespace WorldGen.Notes.Data
             doc.Groups.Add(g);
             var s1 = NotesDocOps.CreateSessionSheet("Сессия 1"); g.Pages.Add(s1);
             var s3 = NotesDocOps.CreateSessionSheet("Сессия 3"); g.Pages.Add(s3);
+            // Each sheet needs a Section to hang its NPC row under — CreateSessionSheet no longer seeds one
+            // (Task 10f), so this fixture makes its own rather than relying on the retired scaffold.
+            s1.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
+            s3.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
 
             var olga1 = NotesDocOps.NewBlock(BlockKind.Item, 1, "Староста Ольга");
             NotesDocOps.Insert(s1.Blocks, s1.Blocks.FindIndex(b => b.Text == "Важные NPC") + 1, olga1);

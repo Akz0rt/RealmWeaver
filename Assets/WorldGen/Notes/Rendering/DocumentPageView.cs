@@ -319,7 +319,7 @@ namespace WorldGen.Notes.Rendering
                 var block = Page.Blocks[index];
                 var rowGO = new GameObject($"Row_{block.Kind}", typeof(RectTransform));
                 var view = rowGO.AddComponent<DocBlockView>();
-                view.Initialize(block, content, font, NotesDocOps.HintFor(Page.Blocks, index));
+                view.Initialize(block, content, font);
                 view.OnToggleCollapse += OnToggleCollapse;
                 view.OnTextChanged += _ => OnDocumentMutated?.Invoke();
                 view.Refresh();

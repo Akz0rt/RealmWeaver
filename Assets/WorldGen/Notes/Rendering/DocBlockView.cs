@@ -24,7 +24,6 @@ namespace WorldGen.Notes.Rendering
         DocBlock data;
         LayoutElement layoutElement;
         RectTransform textArea;
-        Text hintText;
         Text bulletText;
         Button collapseButton;
         Text collapseGlyph;
@@ -45,7 +44,7 @@ namespace WorldGen.Notes.Rendering
 
         public static float IndentFor(int depth) => IndentBase + Mathf.Max(0, depth) * IndentPerLevel;
 
-        public void Initialize(DocBlock block, RectTransform parent, Font font, string hint)
+        public void Initialize(DocBlock block, RectTransform parent, Font font)
         {
             data = block;
 
@@ -149,24 +148,6 @@ namespace WorldGen.Notes.Rendering
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
 
-            var hintGO = new GameObject("Hint");
-            hintGO.transform.SetParent(fieldGO.transform, false);
-            hintText = hintGO.AddComponent<Text>();
-            hintText.font = font;
-            hintText.fontSize = TextComponent.fontSize;
-            hintText.supportRichText = false;
-            hintText.horizontalOverflow = HorizontalWrapMode.Wrap;
-            hintText.verticalOverflow = VerticalWrapMode.Overflow;
-            hintText.alignment = TextAnchor.UpperLeft;
-            hintText.raycastTarget = false;
-            hintText.text = hint ?? "";
-            ThemeService.Tag(hintText, ThemeRole.Mut);
-            var hintRect = hintGO.GetComponent<RectTransform>();
-            hintRect.anchorMin = Vector2.zero;
-            hintRect.anchorMax = Vector2.one;
-            hintRect.offsetMin = Vector2.zero;
-            hintRect.offsetMax = Vector2.zero;
-
             Field = fieldGO.AddComponent<InputField>();
             Field.textComponent = TextComponent;
             Field.targetGraphic = fieldBg;
@@ -176,23 +157,13 @@ namespace WorldGen.Notes.Rendering
             Field.lineType = InputField.LineType.MultiLineSubmit;
             Field.text = data.Text ?? "";
             Field.onValueChanged.AddListener(OnFieldChanged);
-
-            SyncHintVisibility();
         }
 
         void OnFieldChanged(string value)
         {
             if (data == null) return;
             data.Text = value;
-            SyncHintVisibility();
             OnTextChanged?.Invoke(data.Id);
-        }
-
-        void SyncHintVisibility()
-        {
-            if (hintText == null) return;
-            bool empty = string.IsNullOrEmpty(data.Text);
-            hintText.gameObject.SetActive(empty && !string.IsNullOrEmpty(hintText.text));
         }
 
         public void Refresh()
@@ -200,7 +171,6 @@ namespace WorldGen.Notes.Rendering
             if (data == null) return;
             if (Field != null && Field.text != (data.Text ?? "")) Field.text = data.Text ?? "";
             if (collapseGlyph != null) collapseGlyph.text = data.Collapsed ? "▸" : "▾";
-            SyncHintVisibility();
         }
 
         /// <summary>Puts the caret in this row. offset &lt; 0 means the end of the text. The caret is applied
