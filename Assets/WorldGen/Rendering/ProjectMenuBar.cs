@@ -117,6 +117,11 @@ namespace WorldGen.Rendering
             currentPath = path;
             UpdateProjectNameText();
             RecentProjectsList.Push(path);
+            // «Сохранить как…» re-points the workspace's stored layout at the new file WITHOUT restoring
+            // anything: the tabs on screen are the ones this file should have, and the original project's
+            // stored layout is deliberately left alone. Task 11; see MapScreenController.RekeyWorkspaceTo.
+            // Placed after currentPath so this method has exactly one notion of "the project is now `path`".
+            MapScreens()?.RekeyWorkspaceTo(path);
         }
 
         void DoOpen()
@@ -166,29 +171,54 @@ namespace WorldGen.Rendering
             if (!string.IsNullOrEmpty(result.WarningMessage))
                 ConfirmDialog.ShowInfo(builtinFont, "Предупреждение", result.WarningMessage);
 
-            // Region metadata restored BEFORE LoadFromCells: LoadFromCells's own bake/BuildBorders
-            // (called internally) reads regionManager for per-region colours, so populating it first
-            // means that single pass already paints correctly - no second border/rebake pass needed,
-            // and the OnDisplayChanged it fires already carries the right data for listeners (e.g.
-            // MapLegendUI's region swatches).
-            mapRenderer.regionManager?.SetAll(result.Regions ?? new List<RegionData>());
-            if (result.Regions != null && result.Regions.Count > 0) mapRenderer.showRegionBordersLayer = true;
-
-            mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
-            poiManager?.LoadPois(result.Pois);
-            dungeonManager?.LoadDungeons(result.Dungeons);
-            regionLabelManager?.LoadLabels(result.RegionLabels);
-            notesRoot?.DocumentController.LoadDocument(result.Notes);
-
-            if (mapRenderer.regionManager != null)
+            // THE WORKSPACE'S PROJECT SWITCH BRACKETS EVERY LINE THAT REPLACES WORLD STATE (Task 11), and
+            // this is the earliest point it can open: both early returns above are refusals that change
+            // nothing, so a switch begun before them would have to be unwound. From here on the world is
+            // being replaced, and the very first line of it — LoadFromCells — raises OnWorldRegenerated,
+            // which prunes the workspace's tabs and would otherwise SAVE that pruned layout under the
+            // OUTGOING project's key. See WorkspaceController.BeginProjectSwitch for the full collision.
+            //
+            // try/finally, not two straight-line calls: if any loader below throws, the workspace must not be
+            // left permanently unable to persist. The `finally` runs after currentPath is assigned, so the
+            // path it re-keys to and the path this method now calls current are the same by construction
+            // rather than by both statements happening to say `path`.
+            var screens = MapScreens();
+            screens?.BeginProjectSwitch();
+            try
             {
-                mapRenderer.UploadRegionColors();   // GPU "Регионы" fill uniform table - not baked by LoadFromCells
-                mapRenderer.RefreshRegionLabels();  // political region-name label overlay - never rebuilt by LoadFromCells itself
-            }
+                // Region metadata restored BEFORE LoadFromCells: LoadFromCells's own bake/BuildBorders
+                // (called internally) reads regionManager for per-region colours, so populating it first
+                // means that single pass already paints correctly - no second border/rebake pass needed,
+                // and the OnDisplayChanged it fires already carries the right data for listeners (e.g.
+                // MapLegendUI's region swatches).
+                mapRenderer.regionManager?.SetAll(result.Regions ?? new List<RegionData>());
+                if (result.Regions != null && result.Regions.Count > 0) mapRenderer.showRegionBordersLayer = true;
 
-            currentPath = path;
-            UpdateProjectNameText();
-            RecentProjectsList.Push(path);
+                mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
+                poiManager?.LoadPois(result.Pois);
+                dungeonManager?.LoadDungeons(result.Dungeons);
+                regionLabelManager?.LoadLabels(result.RegionLabels);
+                notesRoot?.DocumentController.LoadDocument(result.Notes);
+
+                if (mapRenderer.regionManager != null)
+                {
+                    mapRenderer.UploadRegionColors();   // GPU "Регионы" fill uniform table - not baked by LoadFromCells
+                    mapRenderer.RefreshRegionLabels();  // political region-name label overlay - never rebuilt by LoadFromCells itself
+                }
+
+                currentPath = path;
+                UpdateProjectNameText();
+                RecentProjectsList.Push(path);
+            }
+            finally
+            {
+                // LAST, deliberately: the restore inside this call prunes against what exists, and every
+                // loader above has to have run for that question to have an answer. It is also what makes
+                // the ordering structural instead of incidental — the tabs are restored after the prune
+                // because the restore is the LOAD'S LAST ACT, not because two statements happen to be in
+                // that order.
+                screens?.EndProjectSwitch(path);
+            }
         }
 
         // ── UI construction ──────────────────────────────────────────────────

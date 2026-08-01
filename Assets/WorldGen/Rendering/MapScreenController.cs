@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using WorldGen.Generation;
+using WorldGen.Notes.Data;
+using WorldGen.Notes.Rendering;
 using WorldGen.Workspace.Data;
 using WorldGen.Workspace.Rendering;
 
@@ -219,9 +221,123 @@ namespace WorldGen.Rendering
         /// <summary>Which surfaces outlive a world regeneration: the document's pages (they are notes, not
         /// world state — the whole point of the world/session separation) and the world map itself, which is
         /// the tab the DM lands back on. Every ex-screen kind describes a POI or an interior of the world that
-        /// was just replaced, so all five go.</summary>
+        /// was just replaced, so all five go.
+        ///
+        /// KIND-BASED, AND THAT IS WHY IT CANNOT SERVE A PROJECT LOAD TOO. See this method's caller for why
+        /// the predicate must be order-independent here; but a project load ALSO replaces the notes document
+        /// (ProjectMenuBar.LoadFrom -> NotesDocumentController.LoadDocument), so the very Page tabs this rule
+        /// deliberately keeps are exactly the ones that must not survive THAT. SurfaceExists below is the
+        /// resolution-based predicate for the load path, and WorkspaceController.EndProjectSwitch is what
+        /// applies it once the answer is knowable.</summary>
         static bool SurvivesWorldChange(SurfaceRef s) =>
             s != null && (s.Kind == SurfaceKind.Page || s.Kind == SurfaceKind.WorldMap);
+
+        // ── The project-switch seam (Task 11) ────────────────────────────────────────────────────────
+        //
+        // ProjectMenuBar owns the file dialog and the load; this class owns the discovered
+        // WorkspaceController (Shell()) and every lookup that can turn a stored SurfaceRef back into an
+        // object (Pois/ResolveInterior/Notes, the same reversals RebindSurface uses). Routing the three calls
+        // through here rather than giving ProjectMenuBar its own shell discovery and its own copy of the
+        // resolution rules keeps both of those in one place — the same argument OpenPoiFromMap's doc makes
+        // for living here rather than in PoiInteractionController.
+
+        /// <summary>Called by ProjectMenuBar immediately before a project load starts touching the world.
+        /// See WorkspaceController.BeginProjectSwitch for the collision it prevents.</summary>
+        public void BeginProjectSwitch() => Shell()?.BeginProjectSwitch();
+
+        /// <summary>Called by ProjectMenuBar once the load has finished, with the path just opened. The
+        /// method-group argument is what supplies the "does this still exist" answer that
+        /// WorkspaceController.RestoreFromPrefs could not ask at startup.</summary>
+        public void EndProjectSwitch(string projectPath) => Shell()?.EndProjectSwitch(projectPath, SurfaceExists);
+
+        /// <summary>«Сохранить как…»: the tabs on screen now belong to the new file. No load, so no restore
+        /// and no prune — see WorkspaceController.RekeyTo.</summary>
+        public void RekeyWorkspaceTo(string projectPath) => Shell()?.RekeyTo(projectPath);
+
+        /// <summary>Does the object a stored tab names still exist? The prune predicate
+        /// WorkspaceController.EndProjectSwitch applies to a restored layout.
+        ///
+        /// EVERY BRANCH REUSES THE LOOKUP RebindSurface ALREADY USES for that kind, and that is a
+        /// requirement, not tidiness: this method decides whether a tab is KEPT, and RebindSurface decides
+        /// what the tab then SHOWS. If they disagreed in either direction the result is a defect with no
+        /// visible cause — a tab kept here but unresolvable there sits under a screen still bound to
+        /// something else (RebindSurface's own "wrong but harmless" early return), and a tab dropped here
+        /// that would have resolved is a place the DM had open and simply lost.
+        ///
+        /// WorldMap is always true: there is exactly one, it has no id, and the load just produced it.
+        /// A malformed id never reaches here — WorkspaceOps.Restore applies SurfaceIds.IsWellFormed first
+        /// (see its doc for the order and why) — so these branches only ever answer the existence question.
+        ///
+        /// An unknown kind returns FALSE, the opposite of SurfaceIds.IsWellFormed's default: there the
+        /// question is "could this id be malformed", and an unencoded kind honestly cannot be; here it is
+        /// "can this app show this", and for a kind nothing in this switch can resolve, the honest answer is
+        /// no. A new SurfaceKind therefore drops its tabs on a project load until someone adds it here —
+        /// visible, and recoverable by reopening the tab, unlike a kept tab that shows the wrong thing.</summary>
+        public bool SurfaceExists(SurfaceRef s)
+        {
+            if (s == null) return false;
+            switch (s.Kind)
+            {
+                case SurfaceKind.WorldMap:
+                    return true;
+
+                case SurfaceKind.Page:
+                    // NotesDocOps.FindPage, the same pure lookup NotesDocumentController.OpenPage resolves
+                    // through — so "the tab survives" and "the page can be opened" cannot disagree.
+                    //
+                    // Explicit null checks rather than `Notes()?.DocumentController?.Document`: both are
+                    // UnityEngine.Objects, whose overloaded `==` reports a DESTROYED reference as null, and
+                    // `?.` bypasses that overload — the same idiom, and the same reason, as
+                    // NavigatorView.Rebuild's own read of documentController.
+                    var notes = Notes();
+                    var docController = notes != null ? notes.DocumentController : null;
+                    var doc = docController != null ? docController.Document : null;
+                    return doc != null && NotesDocOps.FindPage(doc, s.Id) != null;
+
+                case SurfaceKind.PoiEditor:
+                    return Pois()?.GetPoiById(s.Id) != null;
+
+                case SurfaceKind.Settlement:
+                case SurfaceKind.BuildingInterior:
+                case SurfaceKind.Dungeon:
+                    return ResolveInterior(s.Id) != null;
+
+                case SurfaceKind.BattleGrid:
+                    return BattleGridExists(s.Id);
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>The three checks RebindBattleGrid makes before it binds — the interior resolves, the
+        /// floor index is in range, and the room is on that floor — asked as a question instead of performed
+        /// as a bind. Written out rather than shared with RebindBattleGrid because that method interleaves
+        /// them with the state assignments they guard; extracting a common helper would mean threading four
+        /// out-parameters through it for no gain in either place. The RULES are what must agree, and they are
+        /// listed in the same order here so a diff of the two is a diff of three lines.</summary>
+        bool BattleGridExists(string id)
+        {
+            if (!SurfaceIds.TryParseBattleGrid(id, out string interiorId, out int floorIndex, out int roomId))
+                return false;
+            var interior = ResolveInterior(interiorId);
+            if (interior == null) return false;
+            if (floorIndex < 0 || floorIndex >= interior.Floors.Count) return false;
+            return interior.Floors[floorIndex].GetRoom(roomId) != null;
+        }
+
+        /// <summary>The live notes document's owner, discovered on every miss exactly like Pois() and Shell()
+        /// and for the same two reasons: no Inspector slot without a scene edit, and a domain reload wipes
+        /// the cached reference while the component survives. Only SurfaceExists needs it — every other path
+        /// in this class deals in world objects, not pages.</summary>
+        NotesRootBuilder Notes()
+        {
+            if (notesRoot != null) return notesRoot;
+            notesRoot = FindFirstObjectByType<NotesRootBuilder>(FindObjectsInactive.Include);
+            return notesRoot;
+        }
+
+        NotesRootBuilder notesRoot;
 
         // ── Surfaces: opening and closing the tabs that used to be screens (Task 10c Step 2) ────────
         //

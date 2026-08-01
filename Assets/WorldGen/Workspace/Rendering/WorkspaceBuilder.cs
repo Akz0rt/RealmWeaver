@@ -199,6 +199,14 @@ namespace WorldGen.Workspace.Rendering
             Controller = EnsureComponent<WorkspaceController>();
             Controller.EnsureLayout();
 
+            // BEFORE the two Build* calls below, because they read the restored values directly:
+            // BuildNavigatorColumn seeds the column from Layout.NavigatorWidth and BuildPaneContainer anchors
+            // the divider at Layout.SplitRatio. Restoring afterwards would leave the first frame showing the
+            // DEFAULT geometry until the next OnLayoutChanged happened to reflow it — a visible flash of the
+            // wrong window on every launch. See RestoreFromPrefs for why this is unconditional and why it
+            // asks nothing about what exists yet.
+            Controller.RestoreFromPrefs();
+
             var canvasGO = new GameObject("WorkspaceCanvas", typeof(RectTransform));
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.AddComponent<Canvas>();

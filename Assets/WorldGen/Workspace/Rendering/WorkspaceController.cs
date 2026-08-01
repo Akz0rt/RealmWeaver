@@ -103,6 +103,31 @@ namespace WorldGen.Workspace.Rendering
 
         GameObject shellRoot;
 
+        // ── Persistence (Task 11) ──────────────────────────────────────────────
+        //
+        // THE KEY IS [SerializeField], AND THAT IS THE POINT OF THE FIELD'S SHAPE. Every other reference in
+        // this class is a plain field a Play-mode domain reload wipes — this arc's recurring defect family,
+        // now on its ninth sighting (see shellSuppressed's own doc for the running count). This one may NOT
+        // be wiped: the shell is demolished and rebuilt on that reload (WorkspaceBuilder.Awake), the rebuild
+        // restores from prefs, and a forgotten key would restore the WRONG project's tabs — or, worse, the
+        // next OnLayoutChanged would write this project's tabs into the no-project slot and leave the
+        // project's own stored layout frozen at whatever it held before the recompile. Unity restores
+        // [SerializeField] members across a domain reload by serialising and deserialising the component, so
+        // this survives exactly where the plain fields do not. It is also why WorkspaceBuilder REUSES this
+        // component instead of destroying it: a serialized field survives only on a component that does.
+        //
+        // "" IS A REAL VALUE, not "unset" — the session that has never been saved to a project. See
+        // WorkspacePrefs.KeyFor, which gives it its own slot on purpose.
+        [SerializeField] string prefsProjectPath = "";
+
+        /// <summary>True while a project is being swapped underneath the workspace, during which NOTHING is
+        /// written to PlayerPrefs. See BeginProjectSwitch for what this exists to prevent.
+        ///
+        /// STORED SUSPENDED-IS-TRUE so that `default(bool)` — the value a domain reload leaves behind — means
+        /// "persistence works", the same polarity argument shellSuppressed's doc makes. A reload landing
+        /// mid-load then resumes saving rather than silently never saving again.</summary>
+        bool persistSuspended;
+
         void Awake() => EnsureLayout();
 
         /// <summary>Guarantees Layout exists, whoever asks first. Awake() calls this, and so does
@@ -189,6 +214,153 @@ namespace WorldGen.Workspace.Rendering
             shellSuppressed = !active;
             SyncSurfaces();
         }
+
+        // ── Persistence: restore, re-key, and the project-switch seam (Task 11) ─
+
+        /// <summary>Restores the layout stored for the project this controller is currently keyed to, called
+        /// once by WorkspaceBuilder.Awake — on a cold start AND on every Play-mode shell rebuild, which is
+        /// what makes the rebuild lossless instead of a reset.
+        ///
+        /// UNCONDITIONAL, never gated on `Layout == null`, and this has been recorded since Task 1 (see
+        /// EnsureLayout's own doc, which names it): Awake seeds a default Layout eagerly, so a
+        /// `Layout == null` guard would mean the restore never fires and the defect reads as "persistence
+        /// silently does nothing".
+        ///
+        /// A NULL `exists` IS PASSED, DELIBERATELY, and it is the one thing about this method a reader is
+        /// likely to want changed. At the moment this runs nothing the tabs point at has loaded: no project
+        /// has been opened, so the document is empty and PoiManager/DungeonManager hold nothing. A real
+        /// existence predicate would therefore answer "no" to every page, POI and interior tab and prune the
+        /// whole layout away — persistence that deletes itself on every launch. WorkspaceOps.Restore's own
+        /// doc states what null means there. The existence prune is not skipped, only DEFERRED to the one
+        /// moment the answer is knowable: EndProjectSwitch, below.
+        ///
+        /// CONSEQUENCE, accepted: between launch and the first project open, a restored tab may name a page
+        /// or a place that does not exist in the empty world. Each host already tolerates that — PageSurface
+        /// Host.Show falls through to the placeholder, MapScreenController.RebindSurface silently keeps its
+        /// previous binding (its own doc calls that "wrong but harmless") — and opening the project is what
+        /// resolves it, in the direction the DM wanted.</summary>
+        public void RestoreFromPrefs()
+        {
+            ApplyRestored(WorkspacePrefs.Load(prefsProjectPath, null));
+        }
+
+        /// <summary>Announces that a project is about to be loaded UNDER the live workspace. Suspends every
+        /// write to PlayerPrefs until EndProjectSwitch; changes nothing else.
+        ///
+        /// THE COLLISION THIS EXISTS FOR, spelled out because it is invisible and destructive.
+        /// WorldMapRenderer.LoadFromCells raises OnWorldRegenerated (via FinishLoadFromCells), which reaches
+        /// MapScreenController.OnWorldRegenerated, which calls PruneSurfaces to drop every ex-screen tab —
+        /// correct on its own terms, and harmless while nothing was persisted. With persistence wired,
+        /// PruneSurfaces raises OnLayoutChanged, which SAVES. And at that instant the key still names the
+        /// OUTGOING project, because ProjectMenuBar.LoadFrom only assigns currentPath after the load
+        /// succeeds. So opening project B would overwrite project A's stored layout with A's tabs minus every
+        /// editor — silently, permanently, and only discoverable the next time A was opened.
+        ///
+        /// SUSPENDING, rather than re-keying first, is what makes the fix order-INDEPENDENT. Re-keying up
+        /// front would merely move the bad write onto B's key, where the restore below happens to overwrite
+        /// it — correct only for as long as those two stay in that order. With writes suspended there is no
+        /// window at all: whatever the load raises, nothing reaches storage, and the in-memory layout it
+        /// mangles is replaced wholesale by EndProjectSwitch anyway.
+        ///
+        /// PAIRED WITH EndProjectSwitch VIA try/finally at the call site, so a load that throws cannot leave
+        /// the workspace permanently unable to save.</summary>
+        public void BeginProjectSwitch() => persistSuspended = true;
+
+        /// <summary>Completes the switch begun above: re-keys to the project just loaded, restores THAT
+        /// project's stored layout over whatever the load left behind, resumes writing, and stores the
+        /// result once.
+        ///
+        /// THE ORDER IS THE WHOLE DESIGN, and it is stated here rather than left to emerge from statement
+        /// order in ProjectMenuBar:
+        ///   1. the key moves to the incoming project — before any write can happen, so no write can land on
+        ///      the outgoing project's slot;
+        ///   2. the stored layout is restored, which REPLACES Layout outright. That is why the mid-load
+        ///      prune's effect on the in-memory layout does not need to be undone, or even reasoned about:
+        ///      nothing of it survives a successful restore;
+        ///   3. and when there is nothing stored (a project opened for the first time), the fallback is a
+        ///      PRUNE of the layout the DM is carrying in from the previous project. That prune is not
+        ///      optional and is not covered by the one OnWorldRegenerated already ran: that one is
+        ///      KIND-based (SurvivesWorldChange keeps every Page, because notes are not world state), while a
+        ///      project load REPLACES the document too — so without this, page tabs from the previous
+        ///      project survive into a world that has never heard of them;
+        ///   4. writes resume, and one save records the result, so the incoming project immediately owns a
+        ///      stored layout rather than waiting for the DM's next click.
+        ///
+        /// `exists` is the real predicate here, unlike RestoreFromPrefs' null: everything a tab can name has
+        /// just been loaded, so "does this still exist" finally has an answer.</summary>
+        public void EndProjectSwitch(string projectPath, System.Func<SurfaceRef, bool> exists)
+        {
+            prefsProjectPath = projectPath ?? "";
+
+            WorkspaceLayout restored = WorkspacePrefs.Load(prefsProjectPath, exists);
+            persistSuspended = false;
+
+            if (restored != null) ApplyRestored(restored);
+            else PruneSurfaces(exists ?? (_ => true));
+
+            PersistNow();
+        }
+
+        /// <summary>Points persistence at a different project WITHOUT restoring anything — «Сохранить как…».
+        /// The layout on screen is the one the DM wants the new file to have, so it is written under the new
+        /// key and the OLD key is left exactly as it was: saving a copy must not disturb the original
+        /// project's stored layout, and nothing about the world changed, so there is nothing to prune and
+        /// nothing to restore over.</summary>
+        public void RekeyTo(string projectPath)
+        {
+            prefsProjectPath = projectPath ?? "";
+            PersistNow();
+        }
+
+        /// <summary>Replaces Layout with a restored one and makes the whole shell agree with it. Null is a
+        /// no-op — WorkspaceOps.Restore returns null for "keep what you have", and this is the one place
+        /// that contract is honoured, so no caller repeats the check.
+        ///
+        /// RaiseChanged, not just ReflowPanes: ReflowPanes turns Secondary/SplitRatio into pixels, but
+        /// NavigatorCollapsed and NavigatorWidth become pixels only in NavigatorView.Rebuild, which runs on
+        /// OnLayoutChanged and nothing else — SetNavigatorCollapsed's own doc flags this as LOAD-BEARING FOR
+        /// TASK 11 in exactly those words. Without it a restored collapsed navigator would stay open at the
+        /// wrong width until something unrelated happened to fire a rebuild.
+        ///
+        /// Harmless on the startup path, where WorkspaceBuilder calls this before any view or host exists:
+        /// ReflowPanes no-ops before Initialize, SyncSurfaces early-returns on a null registry, and
+        /// OnLayoutChanged has no subscribers yet. The build that follows reads the restored Layout directly
+        /// (NavigatorWidth for the column, SplitRatio for the divider), so the first frame is already
+        /// correct.</summary>
+        void ApplyRestored(WorkspaceLayout restored)
+        {
+            if (restored == null) return;
+            Layout = restored;
+            ReflowPanes();
+            RaiseChanged();
+        }
+
+        /// <summary>Writes the current layout under the current key, unless a project switch is in flight.
+        ///
+        /// CALLED DIRECTLY FROM RaiseChanged rather than subscribed to OnLayoutChanged, and that is not a
+        /// style choice: an event subscription is a runtime delegate, i.e. precisely the thing a Play-mode
+        /// domain reload wipes while the component survives. A `OnLayoutChanged += PersistNow` in Awake would
+        /// therefore work until the first recompile and then silently stop saving for the rest of the
+        /// session — the ninth instance of this arc's recurring defect, introduced by the fix for it. A call
+        /// inside RaiseChanged cannot come unsubscribed.</summary>
+        void PersistNow()
+        {
+            if (persistSuspended) return;
+            WorkspacePrefs.Save(prefsProjectPath, Layout);
+        }
+
+        /// <summary>Belt to RaiseChanged's braces. Everything that changes the layout already saves, so this
+        /// normally writes a payload identical to the stored one; it exists for the changes that reach Layout
+        /// WITHOUT going through RaiseChanged. There is one today and it is not hypothetical:
+        /// SetSplitRatioLive moves SplitRatio on every drag frame and deliberately raises nothing (its own
+        /// doc: firing per-frame would write to PlayerPrefs dozens of times per drag) — CommitSplitRatio on
+        /// drag-end is what saves it, and a drag the DM never released, because they alt-F4'd mid-gesture,
+        /// would otherwise be lost.
+        ///
+        /// Unity does not call this at all when the process is killed or when Play Mode is stopped in the
+        /// Editor, which is why it is not the mechanism persistence relies on — see WorkspacePrefs.Save on
+        /// why every ordinary write already flushes to disk by itself.</summary>
+        void OnApplicationQuit() => PersistNow();
 
         // ── Interface WorkspaceController produces ───────────────────────────────
 
@@ -377,9 +549,15 @@ namespace WorldGen.Workspace.Rendering
             dividerRect.anchorMax = new Vector2(ratio, 1f);
         }
 
+        /// <summary>The one place a structural change becomes visible: surfaces re-sync, the layout is
+        /// stored, and every view rebuilds. PersistNow sits BETWEEN the two rather than after both, purely so
+        /// that a subscriber which reacts by mutating the layout again (none does today) cannot save a
+        /// half-applied state — the pixels a subscriber draws are derived from Layout, which is already
+        /// final by then either way.</summary>
         void RaiseChanged()
         {
             SyncSurfaces();
+            PersistNow();
             OnLayoutChanged?.Invoke();
         }
 
