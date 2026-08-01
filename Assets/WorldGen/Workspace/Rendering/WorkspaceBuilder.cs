@@ -185,14 +185,24 @@ namespace WorldGen.Workspace.Rendering
             //     click-eating backdrops whose dismiss listener the reload deleted, so either one alone
             //     leaves a correctly rebuilt shell alive and still unusable — the palette at sortingOrder
             //     4000, the menu at 1000, both far above the shell's 70.
-            // The two cleanups live in different places for one reason: the palette is a COMPONENT, so its
-            // re-wiring and its cleanup belong together in QuickOpenPopup.Attach (which also has to Close a
-            // LIVE palette on a rebuild that did not follow a reload); NavContextMenu is a static class with
-            // nothing to attach to and nothing to re-wire, so DemolishForRebuild — the one method that runs
-            // only on a rebuild — is its only possible caller. See NavContextMenu.DismissStranded for why
-            // its own by-name recovery had been unreachable rather than absent.
-            // ConfirmDialog is deliberately not covered: it is app-wide rather than shell-owned, so a
-            // shell rebuild is the wrong event to hang its cleanup on.
+            //   • ConfirmDialog's modal is a root canvas too, and is the WORST of the three: an OPAQUE
+            //     backdrop at sortingOrder 32000 — above everything, including the palette — deliberately
+            //     non-dismissing, and with no by-name recovery anywhere in the class to be made reachable.
+            //     Same bug, not a different category.
+            // The three cleanups live in three places, and the split is by OWNERSHIP, not by importance:
+            //   • the palette is a COMPONENT, so its re-wiring and its cleanup belong together in
+            //     QuickOpenPopup.Attach (which also has to Close a LIVE palette on a rebuild that did not
+            //     follow a reload);
+            //   • NavContextMenu is a static class with nothing to attach to and nothing to re-wire, and it
+            //     is SHELL-owned — only the navigator raises it — so DemolishForRebuild below, the one
+            //     method that runs exactly on a shell rebuild, is its right and only caller;
+            //   • ConfirmDialog is APP-wide (this class never raises it; ProjectMenuBar's save/load errors
+            //     and «Создать новый мир?» do), so hanging it on a shell rebuild would both miss it in a
+            //     scene with no shell and tie an application modal's lifetime to a component that does not
+            //     own it. Its cleanup is called from ProjectMenuBar.Awake — the app's one always-present
+            //     chrome — and that call site carries the argument.
+            // See each DismissStranded for why two of the three could always FIND the strand and never be
+            // called, which is the actual shape of this defect.
             if (transform.childCount > 0) DemolishForRebuild();
             EnsureEventSystemExists();
 

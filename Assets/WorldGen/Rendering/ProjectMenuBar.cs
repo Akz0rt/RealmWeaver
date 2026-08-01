@@ -95,6 +95,20 @@ namespace WorldGen.Rendering
             builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             DisplayModeService.ApplySaved(); // restore windowed/fullscreen preference at launch
             EnsureEventSystemExists();
+            // Clears an opaque modal a Play-mode domain reload left covering the whole application — see
+            // ConfirmDialog.DismissStranded for what it is and why nothing else can reach it.
+            //
+            // HERE, AND NOT beside the other two stranded-overlay cleanups in WorkspaceBuilder, because
+            // ConfirmDialog is APP-WIDE where those are shell-owned: it is raised by this class's own
+            // save/load errors and by «Создать новый мир?» — neither of which involves the workspace — so a
+            // cleanup hung on a shell rebuild would miss it in any scene without a shell, and would tie the
+            // lifetime of an application modal to a component that does not own it. This Awake is the app's
+            // one always-present chrome, runs on every reload, and already carries the same shape of
+            // repair in EnsureEventSystemExists above.
+            //
+            // A no-op on the launch path and on every reload that did not land on an open dialog, which is
+            // nearly all of them.
+            ConfirmDialog.DismissStranded();
             BuildUI();
         }
 

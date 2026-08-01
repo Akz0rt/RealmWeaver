@@ -16,6 +16,44 @@ namespace WorldGen.Notes.Rendering
     {
         static GameObject activeDialogGO;
 
+        /// <summary>The dialog root's GameObject name. A named constant because DismissStranded looks it up
+        /// by name after a domain reload, where the name is the only handle that survives — the same rule
+        /// QuickOpenPopup.CanvasName and NavContextMenu.CanvasName state for their own overlays.</summary>
+        const string CanvasName = "ConfirmDialogCanvas";
+
+        /// <summary>Destroys a dialog that no live code can reach. Called from ProjectMenuBar.Awake — see
+        /// there for why this one's cleanup lives in the app's chrome rather than beside the other two.
+        ///
+        /// THE WORST OF THE THREE STRANDED OVERLAYS, and the only one with no recovery of its own.
+        /// `activeDialogGO` is a plain static that a Play-mode domain reload wipes while the canvas lives
+        /// on; every footer button's dismissal is a runtime `AddListener` closure the same reload deletes;
+        /// and unlike NavContextMenu there is no by-name lookup anywhere in this class to be made reachable
+        /// — BuildBase's `if (activeDialogGO != null) Destroy(...)` simply sees null and builds a second
+        /// dialog on top of the first. What is left on screen is an OPAQUE backdrop (ThemeRole.Bg, not the
+        /// menu's Color.clear) at sortingOrder 32000, above every other canvas in the project including the
+        /// palette's 4000, deliberately non-dismissing (the Button has no listener BY DESIGN — a confirm
+        /// must be explicit), covering the entire application with something no click can remove.
+        ///
+        /// Reached in ordinary use: this dialog is what «Создать новый мир?» and every save/load error use,
+        /// so a DM recompiling while checkpoint-testing meets it. Before Task 11 it was one dead thing among
+        /// many — the whole shell stayed inert after a reload — which is why it was never noticed; reviving
+        /// everything else is what made it the only thing left holding the session down.
+        ///
+        /// Deliberately NOT folded into BuildBase's existing null check: that only runs when a new dialog is
+        /// SHOWN, and nothing can be shown from under an opaque modal backdrop. Same trap NavContextMenu.Close
+        /// was in — able to find the strand, never able to be called.</summary>
+        public static void DismissStranded()
+        {
+            if (activeDialogGO == null) activeDialogGO = GameObject.Find(CanvasName);
+            if (activeDialogGO == null) return;
+            // SetActive(false) before the deferred Destroy, so the backdrop stops covering the app on THIS
+            // frame rather than at end of frame — the same precaution NavContextMenu.Close and
+            // QuickOpenPopup.DestroyStrandedCanvas take.
+            activeDialogGO.SetActive(false);
+            UnityEngine.Object.Destroy(activeDialogGO);
+            activeDialogGO = null;
+        }
+
         public static void Show(Font font, string title, string message, Action<bool> onResult)
         {
             var (_, footer) = BuildBase(font, title, message, danger: true);
@@ -54,7 +92,7 @@ namespace WorldGen.Notes.Rendering
         {
             if (activeDialogGO != null) UnityEngine.Object.Destroy(activeDialogGO);
 
-            var canvasGO = new GameObject("ConfirmDialogCanvas");
+            var canvasGO = new GameObject(CanvasName);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 32000;
