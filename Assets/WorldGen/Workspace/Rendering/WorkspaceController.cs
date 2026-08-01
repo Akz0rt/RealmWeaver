@@ -536,6 +536,21 @@ namespace WorldGen.Workspace.Rendering
             RaiseChanged();
         }
 
+        /// <summary>Makes `pane` the one every "open" lands in — WorkspaceOps.Open reads Layout.FocusedPane
+        /// under the hood, so this is what decides where the navigator, «Мир» and Ctrl+K put their results.
+        ///
+        /// THREE CALLERS, and the set is worth naming because a missing one is invisible: TabStripView's tab
+        /// button (clicking a TAB), QuickOpenPopup.OpenForPane (the «+» and Ctrl+K, focusing the REQUESTING
+        /// pane before it opens anything), and PaneFocusOnClick (clicking a pane's CONTENT area). The third
+        /// was absent through Task 11 and is the whole of the DM's "it threw me to the existing tab" report:
+        /// with focus only movable by a tab click, a DM working inside pane B still had A focused and every
+        /// navigator open landed there. See PaneFocusOnClick's class doc for why it observes rather than
+        /// handles. WorkspaceController.MoveTab focuses too, but through WorkspaceOps.Focus directly — it is
+        /// mid-mutation and must not raise a second event.
+        ///
+        /// The change check is not an optimisation: RaiseChanged runs SyncSurfaces, writes PlayerPrefs and
+        /// rebuilds every view, and PaneFocusOnClick calls this on every click into the already-focused
+        /// pane.</summary>
         public void FocusPane(int pane)
         {
             int before = Layout.FocusedPane;

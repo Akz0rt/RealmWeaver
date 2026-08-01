@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
@@ -323,6 +325,13 @@ namespace WorldGen.Workspace.Rendering
             PrimaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
             SecondaryTabStrip.OnRequestQuickOpen = QuickOpenPopup.OpenForPane;
 
+            // Click-to-focus on a pane's CONTENT (clicking a TAB already focuses, via TabStripView). Attached
+            // here, beside the palette, because it is the same shape of thing: a persistent component on this
+            // GameObject whose plain fields a domain reload wipes and whose Attach re-points them on the
+            // rebuild. Not exposed as a property like QuickOpenPopup/the tab strips — nothing reads it back;
+            // it only observes. Deliberately needs no Inspector slot and no scene edit.
+            PaneFocusOnClick.Attach(gameObject, Controller);
+
             // Surfaces (Task 9) — built last, once Controller/panes exist to hand hosts a real container and
             // SetSurfaceRegistry can run its first sync against a fully-Initialize()'d Layout. Page is
             // registered only when a live NotesRootBuilder was actually found; the map host is always
@@ -534,6 +543,191 @@ namespace WorldGen.Workspace.Rendering
             var go = new GameObject("EventSystem (auto-created)");
             go.AddComponent<EventSystem>();
             go.AddComponent<InputSystemUIInputModule>();
+        }
+    }
+
+    /// <summary>Focus follows a click into a pane's CONTENT AREA, the way it does in every editor with split
+    /// panes. Through Task 11 the only two things that focused a pane were clicking one of its TABS
+    /// (TabStripView.cs:179) and QuickOpenPopup.OpenForPane — so a DM whose last click was INSIDE pane B still
+    /// had pane A focused, and everything they opened from the navigator landed in A. From their side that
+    /// reads as "it threw me to the existing tab", which is what the DM reported.
+    ///
+    /// A PURE OBSERVER, NEVER A HANDLER, and this is the whole design rather than an implementation detail.
+    /// The obvious version — an Image + IPointerClickHandler on the ContentArea — fails twice over. It would
+    /// not RECEIVE most clicks: PoiEditorScreen/DungeonEditorScreen/BattleGridScreen are root canvases at
+    /// sortingOrder 100-102, above the shell's 70, so they consume the raycast before it reaches the pane
+    /// underneath; and for the map surface the ContentArea's Image is DISABLED outright
+    /// (MapSurfaceHost.SetBackgroundsEnabled), so it is not in the raycast at all. And where it did receive
+    /// one it would be a participant in the event — one more thing between a surface and its own input. This
+    /// class instead polls the mouse and hit-tests the pane rects itself. It never enters the raycast chain,
+    /// never sets eventData.Used, and cannot swallow, delay or reorder a single click: camera drag, POI click,
+    /// typing in a page and the tab drag all behave exactly as they did. Focusing is an addition.
+    ///
+    /// ARMED ON PRESS, APPLIED ON RELEASE, IN LateUpdate. FocusPane raises OnLayoutChanged, which runs
+    /// SyncSurfaces, a PlayerPrefs write and every view's rebuild — so firing it on pointer-DOWN would put all
+    /// of that between a press and the click uGUI dispatches from it. Every branch of
+    /// MapScreenController.RebindSurface early-outs when the binding is already correct (that file states it
+    /// as "a requirement, not an optimisation"), so the destructive case — a screen rebuilding and destroying
+    /// the button mid-gesture — does not arise today; deferring means it cannot arise from a later change
+    /// either. EventSystem.Update() is an Update, so a LateUpdate is guaranteed to run after this frame's
+    /// click dispatch. Requiring press and release in the SAME pane also drops a camera drag that leaves the
+    /// pane, for free.
+    ///
+    /// THE OVERLAY VERDICT IS TAKEN ON PRESS, and must be. QuickOpenPopup's palette is a full-screen backdrop
+    /// at sortingOrder 4000 whose result rows call Close() during dispatch — by release the raycast would see
+    /// the pane underneath and focus would drift to whichever pane the cursor happened to be over, landing the
+    /// DM's Ctrl+K result in the wrong pane (OpenForPane focuses the REQUESTING pane, and Open reads
+    /// Layout.FocusedPane under the hood). One sorting-order threshold covers every such overlay — the palette
+    /// (4000), NavigatorView's context menu (1000), EditorBrushPanel's dropdown template (30000) and
+    /// ConfirmDialog (32000) — which beats adding three public IsOpen properties that could each go stale.
+    ///
+    /// RECOMPILE GAP: every field here is plain and non-[SerializeField], so a Play-mode domain reload wipes
+    /// them — this arc's recurring defect family (WorkspaceController.shellSuppressed's doc carries the running
+    /// count). `controller` and the scratch list are re-pointed by Attach, which WorkspaceBuilder.Awake re-runs
+    /// on every shell rebuild. The two pane fields are deliberately NOT recovered: losing a half-finished click
+    /// gesture across a recompile costs the DM one click, and they are stored PLUS ONE precisely so that
+    /// default(int) == 0 means "nothing armed" rather than "pane 0 armed" — the same polarity discipline
+    /// shellSuppressed and persistSuspended state for their own bools.</summary>
+    public class PaneFocusOnClick : MonoBehaviour
+    {
+        /// <summary>The lowest canvas sortingOrder that means "an overlay owns this click, not a pane". 103 is
+        /// the first free number above the ex-screen band (PoiEditorScreen 100, DungeonEditorScreen 101,
+        /// BattleGridScreen 102) that WorkspaceBuilder.Awake's canvas-order comment enumerates — those five ARE
+        /// pane content, confined to a pane by ScreenSurfaceHosts' PaneChromeFrame, so a click on one of them
+        /// SHOULD focus its pane. ProjectMenuBar (100) is inside the band too and needs no exception: it draws
+        /// in the strip RootRow is inset out of, so no pane rect contains it. Everything above 103 in this
+        /// project is a popup or a modal that draws OVER the panes and must not move focus under itself.</summary>
+        const int OverlaySortingFloor = 103;
+
+        WorkspaceController controller;
+
+        /// <summary>Reused across clicks rather than allocated per click, the same scratch-buffer idiom
+        /// MapSurfaceHost.canvasScratch uses. NOT `readonly` with an initializer, and for the reason that
+        /// field's own doc gives: a domain reload restores a MonoBehaviour by DESERIALIZING it, so field
+        /// initializers do not re-run and this would come back NULL on a component that is otherwise alive.
+        /// Attach re-assigns it.</summary>
+        List<RaycastResult> raycastScratch = new List<RaycastResult>();
+
+        /// <summary>The pane the current press started in, PLUS ONE — 0 means "nothing armed", so the value a
+        /// domain reload leaves behind is the inert one (see the class doc's RECOMPILE GAP paragraph). Set to 0
+        /// when the press was over an overlay or outside every pane, which is how those presses are dropped
+        /// rather than merely ignored at release.</summary>
+        int armedPanePlusOne;
+
+        /// <summary>The pane a completed click decided on, PLUS ONE, handed from Update to LateUpdate. Same
+        /// plus-one polarity as armedPanePlusOne, and the same one-click loss across a reload.</summary>
+        int pendingFocusPlusOne;
+
+        /// <summary>REUSE-OR-ADD and idempotent, exactly as QuickOpenPopup.Attach is and for the same reason:
+        /// WorkspaceBuilder.Awake re-runs it on every Play-mode shell rebuild, where a second AddComponent
+        /// would leave two observers both calling FocusPane. Explicit null check rather than `??` — see
+        /// WorkspaceBuilder.EnsureComponent for why the operator is wrong against Unity's lifetime-aware `==`.
+        ///
+        /// Clears both gesture fields, so a rebuild that lands mid-click cannot apply a focus decided against
+        /// the layout that was just demolished.</summary>
+        public static PaneFocusOnClick Attach(GameObject host, WorkspaceController controller)
+        {
+            var existing = host.GetComponent<PaneFocusOnClick>();
+            var focus = existing != null ? existing : host.AddComponent<PaneFocusOnClick>();
+            focus.controller = controller;
+            focus.raycastScratch = new List<RaycastResult>();
+            focus.armedPanePlusOne = 0;
+            focus.pendingFocusPlusOne = 0;
+            return focus;
+        }
+
+        void Update()
+        {
+            // controller is null between a script reload wiping it and WorkspaceBuilder.Awake's rebuild
+            // calling Attach again, and for the whole session in a scene with no WorkspaceBuilder — the same
+            // window QuickOpenPopup.Update guards, and for the same reason: Update is a per-frame callback on
+            // a component someone else's Awake wires. Mouse.current is null on a device with no mouse.
+            if (controller == null) return;
+            var mouse = Mouse.current;
+            if (mouse == null) { armedPanePlusOne = 0; return; }
+
+            // Both branches, not else-if: the Input System coalesces a press and a release that happen inside
+            // one frame, setting BOTH flags, and such a click must still focus.
+            if (mouse.leftButton.wasPressedThisFrame)
+            {
+                Vector2 pressed = mouse.position.ReadValue();
+                armedPanePlusOne = OverlayOwnsClick(pressed) ? 0 : PaneUnder(pressed) + 1;
+            }
+
+            if (mouse.leftButton.wasReleasedThisFrame)
+            {
+                int armed = armedPanePlusOne;
+                armedPanePlusOne = 0;
+                // Same pane on press AND release, so a drag that started in a pane and ended somewhere else
+                // (a camera drag flung past the divider) is not a click into that pane.
+                if (armed > 0 && PaneUnder(mouse.position.ReadValue()) == armed - 1) pendingFocusPlusOne = armed;
+            }
+        }
+
+        /// <summary>Applies the click's focus AFTER this frame's EventSystem dispatch — see the class doc's
+        /// armed-on-press/applied-on-release paragraph for why the delay is the point rather than a detail.
+        /// FocusPane itself no-ops (and raises nothing) when the pane is already focused, so clicking around
+        /// inside the pane the DM is already working in costs one comparison per click, not a resync.</summary>
+        void LateUpdate()
+        {
+            if (pendingFocusPlusOne == 0) return;
+            int pane = pendingFocusPlusOne - 1;
+            pendingFocusPlusOne = 0;
+            if (controller != null) controller.FocusPane(pane);
+        }
+
+        /// <summary>Which pane's CONTENT AREA contains `screenPos`, or -1. The tab strips are deliberately
+        /// outside this: TabStripView's own onClick already focuses (TabStripView.cs:179), and leaving the
+        /// strip out keeps this from having any opinion about the tab-drag gesture.
+        ///
+        /// The two rects tile without overlapping, so the iteration order does not decide anything. Both
+        /// guards below are load-bearing rather than defensive: WorkspaceController.PaneContent(1) returns null
+        /// whenever Layout.Secondary is null, and ReflowPanes deactivates the whole secondary pane in the same
+        /// state — a collapsed pane's rect is stale, not absent. ShellRoot's active check covers the other
+        /// direction: ScreenSwitcher deactivates the shell's canvas while Generation/Progress owns the window
+        /// (WorkspaceController.shellSuppressed's doc), and the pane rects survive that deactivation intact, so
+        /// without it a click on the generation form would silently re-focus a pane behind it.</summary>
+        int PaneUnder(Vector2 screenPos)
+        {
+            GameObject shell = controller.ShellRoot;
+            if (shell == null || !shell.activeInHierarchy) return -1;
+
+            for (int pane = 0; pane <= 1; pane++)
+            {
+                RectTransform content = controller.PaneContent(pane);
+                if (content == null || !content.gameObject.activeInHierarchy) continue;
+                // Null camera: every canvas in this project is ScreenSpaceOverlay, the same identity
+                // PaneChromeFrame's class doc rests on.
+                if (RectTransformUtility.RectangleContainsScreenPoint(content, screenPos, null)) return pane;
+            }
+            return -1;
+        }
+
+        /// <summary>True when a popup or modal ABOVE the pane band is under the pointer — see the class doc for
+        /// why this verdict is taken at press and never at release.
+        ///
+        /// Reads RaycastResult.sortingOrder, which GraphicRaycaster copies verbatim from its canvas
+        /// (GraphicRaycaster.cs:279 in com.unity.ugui@52e65280e89e), and results[0] is the topmost hit because
+        /// EventSystem's own comparer sorts by module.sortOrderPriority first — which for a ScreenSpaceOverlay
+        /// canvas is that same canvas.sortingOrder (GraphicRaycaster.cs:53). All four overlays this has to
+        /// catch build their OWN root canvas with its OWN GraphicRaycaster, so each reports its own order
+        /// rather than an ancestor's.
+        ///
+        /// NO HITS AT ALL MEANS "NOT AN OVERLAY", which is the common case and must be: a click on the map
+        /// lands on a camera, and MapSurfaceHost has disabled every Image over that rect, so there is nothing
+        /// for a graphic raycast to return. Treating an empty result as blocked would disable this whole
+        /// feature exactly where the DM needs it most.</summary>
+        bool OverlayOwnsClick(Vector2 screenPos)
+        {
+            EventSystem events = EventSystem.current;
+            if (events == null || raycastScratch == null) return false;
+
+            events.RaycastAll(new PointerEventData(events) { position = screenPos }, raycastScratch);
+            bool blocked = raycastScratch.Count > 0 && raycastScratch[0].sortingOrder >= OverlaySortingFloor;
+            // Cleared rather than left populated: RaycastResult holds a GameObject reference, and this buffer
+            // lives for the session between clicks.
+            raycastScratch.Clear();
+            return blocked;
         }
     }
 }
