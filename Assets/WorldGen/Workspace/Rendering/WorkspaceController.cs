@@ -365,11 +365,20 @@ namespace WorldGen.Workspace.Rendering
         /// project the app still (partly) has.</summary>
         public void AbortProjectSwitch() => persistSuspended = false;
 
-        /// <summary>Points persistence at a different project WITHOUT restoring anything — «Сохранить как…».
-        /// The layout on screen is the one the DM wants the new file to have, so it is written under the new
-        /// key and the OLD key is left exactly as it was: saving a copy must not disturb the original
-        /// project's stored layout, and nothing about the world changed, so there is nothing to prune and
-        /// nothing to restore over.</summary>
+        /// <summary>Points persistence at a different project WITHOUT restoring anything. The layout on
+        /// screen is the one the destination should have, so it is written under the new key and the OLD key
+        /// is left exactly as it was.
+        ///
+        /// TWO CALLERS, and they want this for opposite-looking reasons that turn out to be the same one:
+        ///   • ProjectMenuBar.SaveTo (both «Сохранить» and «Сохранить как…» — see there) — the world did not
+        ///     change, so there is nothing to prune and nothing to restore over, and saving a COPY must not
+        ///     disturb the original project's stored layout.
+        ///   • MapScreenController.RunGeneration, with "" — the world is about to be REPLACED by one that
+        ///     belongs to no project, so the tabs must stop being attributed to the project the DM had open.
+        ///     A full Begin/EndProjectSwitch would be wrong there precisely because it restores; see that
+        ///     call site for the argument.
+        /// In both cases the answer to "should the tabs on screen follow the key?" is yes, which is what
+        /// separates this from EndProjectSwitch.</summary>
         public void RekeyTo(string projectPath)
         {
             prefsProjectPath = projectPath ?? "";

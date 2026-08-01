@@ -175,12 +175,24 @@ namespace WorldGen.Workspace.Rendering
             // DestroyImmediate is legal here (Awake is not one of the callbacks Unity forbids it in) and
             // removes the ambiguity outright rather than managing it.
             //
-            // The two stranded-overlay cleanups the old branch performed are not lost, they moved: the tab
-            // drag's ghost and insertion marker are parented to the canvas root (TabStripView's BuildGhost),
-            // so they die with it and TabDragHandler.HideStrandedOverlays is gone; QuickOpenPopup's palette
-            // is a ROOT canvas that does NOT, so QuickOpenPopup.Attach now drops it — see there for why a
-            // stranded palette is the one that actually matters (its backdrop eats every click, so a revived
-            // shell would come back alive and still unusable).
+            // STRANDED OVERLAYS, all three of them, because a reload that lands while one is open leaves it
+            // on screen with every reference to it wiped. They divide by parentage, not by importance:
+            //   • The tab drag's ghost and insertion marker are parented to the workspace canvas
+            //     (TabStripView.BuildGhost), so the demolition below takes them — which is why
+            //     TabDragHandler.HideStrandedOverlays could be deleted rather than moved.
+            //   • QuickOpenPopup's palette and NavContextMenu's menu are ROOT canvases (parented to nothing,
+            //     so they can draw over everything) and survive the demolition. Both are full-screen
+            //     click-eating backdrops whose dismiss listener the reload deleted, so either one alone
+            //     leaves a correctly rebuilt shell alive and still unusable — the palette at sortingOrder
+            //     4000, the menu at 1000, both far above the shell's 70.
+            // The two cleanups live in different places for one reason: the palette is a COMPONENT, so its
+            // re-wiring and its cleanup belong together in QuickOpenPopup.Attach (which also has to Close a
+            // LIVE palette on a rebuild that did not follow a reload); NavContextMenu is a static class with
+            // nothing to attach to and nothing to re-wire, so DemolishForRebuild — the one method that runs
+            // only on a rebuild — is its only possible caller. See NavContextMenu.DismissStranded for why
+            // its own by-name recovery had been unreachable rather than absent.
+            // ConfirmDialog is deliberately not covered: it is app-wide rather than shell-owned, so a
+            // shell rebuild is the wrong event to hang its cleanup on.
             if (transform.childCount > 0) DemolishForRebuild();
             EnsureEventSystemExists();
 
@@ -343,6 +355,12 @@ namespace WorldGen.Workspace.Rendering
         {
             for (int i = transform.childCount - 1; i >= 0; i--)
                 DestroyImmediate(transform.GetChild(i).gameObject);
+
+            // The one stranded root canvas that has no component to clean itself up — see Awake's own
+            // enumeration of all three overlays, and NavContextMenu.DismissStranded for what its backdrop
+            // does to a session if this is skipped. A no-op on every rebuild that did not follow a reload
+            // with a menu open, which is nearly all of them.
+            NavContextMenu.DismissStranded();
         }
 
         /// <summary>Reuse-or-add for the components Awake puts on its OWN GameObject. Written out rather than

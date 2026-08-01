@@ -1178,6 +1178,34 @@ namespace WorldGen.Rendering
 
             mapRenderer.PrepareLoadFromCells(generatedCells, genParams);
             yield return mapRenderer.RebakeAllStepped(bakeFrac => progressScreen.SetStep("Отрисовка карты", (5f + bakeFrac) / 6f));
+
+            // THE OTHER DOOR INTO STEP 4'S COLLISION, and it is the one ProjectMenuBar's bracket cannot
+            // reach. The next line raises OnWorldRegenerated, which reaches this class's own handler and
+            // prunes every ex-screen tab — and that prune raises OnLayoutChanged, which SAVES. On the
+            // «Создать новый мир…» path nothing has changed the workspace's key, so that save lands on the
+            // key of the project the DM had open a moment ago: A's stored layout is permanently degraded to
+            // "world map plus pages" by generating a world that has nothing to do with A. It bites only when
+            // an ex-screen tab is open (PruneSurfaces returns 0 and raises nothing otherwise), which is
+            // exactly what would have made it look intermittent.
+            //
+            // RE-KEY, NOT BRACKET, and the choice is not arbitrary. Begin/EndProjectSwitch would end in a
+            // RESTORE of the no-project slot — so generating a new world would swap the DM's tabs for
+            // whatever was last open in some unsaved session. What is wanted here is the opposite: the tabs
+            // on screen are the ones this new world starts with, minus the editors the prune is about to
+            // drop. That is exactly RekeyTo's contract ("point persistence at a different project without
+            // restoring anything"), with "" as the destination, since a freshly generated world belongs to
+            // no project until it is saved.
+            //
+            // PLACED HERE, immediately before the line that fires the event, rather than in StartGeneration:
+            // CancelGeneration can stop this coroutine at either yield above, and a re-key that had already
+            // happened would leave the workspace writing to the no-project slot while project A is still
+            // open — staleness in exchange for preventing loss, when waiting one statement prevents both.
+            //
+            // NOT FIXED HERE, and worth a DM ruling: ProjectMenuBar.currentPath is likewise never cleared by
+            // this path, so after generating a new world Ctrl+S still overwrites project A's FILE with it.
+            // That is a bigger loss than this one and it predates the workspace entirely; changing when
+            // «Сохранить» turns into «Сохранить как…» is a save-semantics decision, not Task 11's to make.
+            Shell()?.RekeyTo("");
             mapRenderer.FinishLoadFromCells();
 
             progressScreen.SetStep("Готово", 1f);

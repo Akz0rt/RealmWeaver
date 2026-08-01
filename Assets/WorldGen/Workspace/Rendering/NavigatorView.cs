@@ -1079,7 +1079,7 @@ namespace WorldGen.Workspace.Rendering
         {
             Close();
 
-            var canvasGO = new GameObject("NavContextMenuCanvas");
+            var canvasGO = new GameObject(CanvasName);
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 1000;
@@ -1230,16 +1230,52 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// ResolveRootRowBackground re-acquires via `transform.Find` on a known relative path, because that
         /// class is a MonoBehaviour anchored to a fixed parent. This is a static class with no such anchor
-        /// (the canvas is a root-level GameObject — see Show()'s `new GameObject("NavContextMenuCanvas")`
-        /// with no SetParent call), so `GameObject.Find` by that same exact name is the equivalent lookup
-        /// here. Not cached anywhere beyond the static field itself — this method already nulls that field
-        /// out on every call, so there is nothing extra to invalidate.</summary>
+        /// (the canvas is a root-level GameObject — see Show()'s `new GameObject(CanvasName)` with no
+        /// SetParent call), so `GameObject.Find` by that same exact name is the equivalent lookup here. Not
+        /// cached anywhere beyond the static field itself — this method already nulls that field out on
+        /// every call, so there is nothing extra to invalidate.
+        ///
+        /// FINDING IT WAS NEVER THE PROBLEM; being CALLED was. See DismissStranded below, which is the entry
+        /// point this recovery had been missing since it was written.</summary>
         static void Close()
         {
             if (activeMenuGO == null)
-                activeMenuGO = GameObject.Find("NavContextMenuCanvas");
-            if (activeMenuGO != null) UnityEngine.Object.Destroy(activeMenuGO);
+                activeMenuGO = GameObject.Find(CanvasName);
+            if (activeMenuGO != null)
+            {
+                // SetActive(false) before the deferred Destroy, so the full-screen backdrop stops swallowing
+                // clicks THIS frame rather than at end of frame. Immaterial on the ordinary dismiss path
+                // (nothing is trying to click through in the same frame the menu closes); it is the stranded
+                // path below that needs it, and one code path is better than a second Close.
+                activeMenuGO.SetActive(false);
+                UnityEngine.Object.Destroy(activeMenuGO);
+            }
             activeMenuGO = null;
         }
+
+        /// <summary>The menu's root canvas GameObject name. A named constant because Close() looks it up by
+        /// name after a domain reload, where the name is the only handle that survives — the same rule
+        /// QuickOpenPopup.CanvasName states for the palette.</summary>
+        internal const string CanvasName = "NavContextMenuCanvas";
+
+        /// <summary>Dismisses a menu that no live code can reach, called from
+        /// WorkspaceBuilder.DemolishForRebuild — see there for why this cleanup lives beside the shell's
+        /// rebuild rather than in this class.
+        ///
+        /// WHY Close()'s OWN by-name recovery was not enough, which is the part worth writing down. It has
+        /// always been able to FIND a stranded canvas; nothing was able to CALL it. A domain reload wipes
+        /// `activeMenuGO` (a plain static) while the canvas lives on, and Close is private with exactly one
+        /// entry point — Show, reached from NavigatorView's three `OnRightClick` lambdas. Those fire through
+        /// NavRowClickRouter, an IPointerClickHandler, so uGUI decides them BY SORTING ORDER: the rows sit
+        /// under the workspace canvas at 70, the stranded backdrop is at 1000, and it is invisible
+        /// (Color.clear) but still raycasts. Every click — including the very right-click that would reach
+        /// Show → Close — lands on a backdrop whose onClick listener the same reload deleted. Had the router
+        /// polled the mouse directly the strand would have cleared itself; it does not, so the session stays
+        /// dead until Play Mode is left.
+        ///
+        /// This predates Task 11 and cost nothing while it lasted, because the whole shell stayed inert
+        /// after a reload anyway — one dead thing among many. Task 11 revived everything else, which is what
+        /// promoted this from harmless to the only thing left holding the session down.</summary>
+        internal static void DismissStranded() => Close();
     }
 }
