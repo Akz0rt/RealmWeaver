@@ -9,7 +9,7 @@ namespace WorldGen.Workspace.Data
     /// oversight — the spec's own screen-layer section names it («`MapEditor`, `PoiEditor`, `Dungeon` and
     /// `BattleGrid` stop being screens and become surfaces a tab hosts»), and without it Р1 would ship with
     /// settlements and dungeons UNREACHABLE: PoiEditorScreen's «КАРТА ЛОКАЦИИ» row (PoiEditorScreen.cs:752 ->
-    /// OnOpenDungeonRequested, assigned at MapScreenController.cs:95) is the only path into the interior
+    /// OnOpenDungeonRequested, assigned at MapScreenController.cs:102) is the only path into the interior
     /// editor in the whole project, and the spec explicitly defers the page-side replacement («showing the
     /// settlement, «Открыть город», the inspector link — stays in Р3»). So the POI editor keeps existing as a
     /// surface until Р5 redesigns it away — and since Task 10e it is what EVERY gesture aimed at a place
@@ -21,8 +21,8 @@ namespace WorldGen.Workspace.Data
     ///
     /// APPENDED at the end, never renumbered: WorkspaceOps.Serialize writes the enum's NAME (not its ordinal)
     /// and TryParseSurfaceKind reads it back by name, so the numbers are not themselves a wire format — but
-    /// Task 11's WorkspacePrefs stores those payloads in PlayerPrefs across versions, so keeping additions
-    /// purely additive means an older payload keeps parsing unchanged.</summary>
+    /// WorkspacePrefs stores those payloads in PlayerPrefs, where they outlive the app version that wrote
+    /// them, so keeping additions purely additive means an older payload keeps parsing unchanged.</summary>
     public enum SurfaceKind { Page = 0, WorldMap = 1, Settlement = 2, BuildingInterior = 3, Dungeon = 4, BattleGrid = 5, PoiEditor = 6 }
 
     /// <summary>What a tab points at. Two refs name the same surface when Kind AND Id match — see

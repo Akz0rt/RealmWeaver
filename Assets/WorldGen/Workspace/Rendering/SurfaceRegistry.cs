@@ -93,10 +93,11 @@ namespace WorldGen.Workspace.Rendering
     /// order-of-iteration arbitrary, and (since Task 10c's fix round) means the losing pane costs nothing
     /// rather than doing a full show that is immediately overwritten.
     ///
-    /// RECOMPILE GAP — CLOSED in round 4, and the round-3 description of it below was wrong in a way worth
-    /// keeping on record. WorkspaceBuilder.Awake's guard branch reconstructs a FRESH PageSurfaceHost after a
-    /// reload from NotesRootBuilder's (correctly recovered) DocumentController/DocumentView, so this class and
-    /// the document MODEL it wraps were already sound. DocumentPageView's OWN `root`/`content`/`viewportGO`/
+    /// RECOMPILE GAP — CLOSED, and the round-3 description of it below was wrong in a way worth keeping on
+    /// record. WorkspaceBuilder.Awake constructs a FRESH PageSurfaceHost on every rebuild (Task 11 Step 5
+    /// made that the whole shell's behaviour; through Task 10 it was the guard branch's one exception) from
+    /// NotesRootBuilder's correctly recovered DocumentController/DocumentView, so this class and the document
+    /// MODEL it wraps were already sound. DocumentPageView's OWN `root`/`content`/`viewportGO`/
     /// `placeholderGO` were not — the same class of plain, non-serialized field this whole arc keeps finding.
     /// Round 3 characterised the consequence as "the VIEW may fail to reparent/redisplay", i.e. a page failing
     /// to APPEAR, and deferred it. That framing missed the damaging half: `root` is an OPAQUE ThemeRole.Bg
@@ -188,11 +189,11 @@ namespace WorldGen.Workspace.Rendering
     ///
     /// mapCamera/chrome are resolved by FindFirstObjectByType when Create's caller passes null/empty,
     /// mirroring the override-or-discover pattern already used elsewhere in this codebase (e.g.
-    /// PoiManager.cameraController, DungeonManager.poiManager): WorkspaceBuilder is not wired into the
-    /// scene yet (Task 11 does that), so nothing can drag a reference onto it through the Inspector before
-    /// then — discovery is what lets this host find the SAME camera/panels MapScreenController already
-    /// owns without any scene edit. WorkspaceBuilder still exposes override fields for Task 11 (or a
-    /// manual test) to pin down explicitly if discovery ever picks the wrong instance.
+    /// PoiManager.cameraController, DungeonManager.poiManager). It began as a way to work without a scene
+    /// edit — WorkspaceBuilder was in no scene until Task 11 — but it is not scaffolding that outlived its
+    /// reason: discovery finds the SAME camera/panels MapScreenController already owns, and Task 11's scene
+    /// edit deliberately left WorkspaceBuilder's override fields empty because there is exactly one of each
+    /// to find. The overrides remain for a scene that ever has two.
     ///
     /// THE KNOWN SEAM IS CLOSED (Task 10c). Through Task 10b this doc recorded that MapScreenController /
     /// ScreenSwitcher independently drove mapEditorPanelGO/mapLegendUiGO's active state via an
@@ -205,37 +206,30 @@ namespace WorldGen.Workspace.Rendering
     /// .SetShellActive suppresses SyncSurfaces, which Hides this host — a strict override, not a second
     /// opinion.
     ///
-    /// RECOMPILE GAP — PARTIALLY CLOSED, not left for Task 11: a domain reload (Play-mode script recompile)
-    /// resets every plain, non-`[SerializeField]` field on every surviving MonoBehaviour, including
-    /// `mapCamera`/`chrome`/`toolbar`/`rootRowBackground`/`shownIn`/`visible` here — while the Unity objects
-    /// they used to point at (the Camera, the chrome panels, RootRow's Image, whichever pane's ContentArea)
-    /// persist as native, live state completely unaware anything reset. WorkspaceBuilder.Awake's own
-    /// recompile guard (`if (transform.childCount > 0) return;`) always stopped a reload from
-    /// AddComponent-ing a SECOND MapSurfaceHost, so this component itself always survived — but through this
-    /// task's first two review rounds, the guard branch did nothing ELSE, so `WorkspaceController.
-    /// surfaceRegistry` (itself a plain field, wiped the same way) stayed null forever after a reload:
-    /// `SyncSurfaces` early-returns on a null registry, so NO tab switch/close/promotion showed or hid
-    /// anything for the rest of that session — a live-but-blind component, not merely one showing a stale
-    /// rect. The guard branch now calls this method (via `GetComponent<MapSurfaceHost>` — recovering the
-    /// EXISTING component, never `Create`-ing a second one) and re-registers a freshly-built SurfaceRegistry
-    /// with `WorkspaceController.SetSurfaceRegistry`, which is what makes `SyncSurfaces` (and therefore
-    /// `Show`/`Hide`, and therefore `rootRowBackground`'s own lazy re-acquisition in
-    /// ResolveRootRowBackground) reachable again — see WorkspaceBuilder.Awake's own comment for exactly which
-    /// half of "rebuild vs. re-wire" this is.
+    /// RECOMPILE GAP — CLOSED. A domain reload (Play-mode script recompile) resets every plain,
+    /// non-[SerializeField] field on every surviving MonoBehaviour, including mapCamera/chrome/toolbar/
+    /// rootRowBackground/shownIn/visible here — while the Unity objects they used to point at (the Camera,
+    /// the chrome panels, RootRow's Image, whichever pane's ContentArea) persist as native, live state
+    /// completely unaware anything reset. This is the arc's recurring defect family; see
+    /// WorkspaceController.shellSuppressed's doc for the running count.
     ///
-    /// ROUND 4 finished that job for the SURFACES specifically: the guard branch now also calls
-    /// WorkspaceController.EnsureLayout (without which SyncSurfaces threw an NRE on Layout.FocusedPane inside
-    /// this very recovery) and EnsurePaneHandles (without which PaneContent returned null forever, so the
-    /// recovered SyncSurfaces showed nothing and Hid every host — a blank workspace). The one SyncSurfaces
-    /// call at the end of that branch is therefore now authoritative: the map re-shows in the pane the
-    /// recovered (default) Layout says owns it, at the correct rect, with no staleness window.
+    /// HOW IT IS CLOSED, and the history matters because the mechanism changed twice. Through Task 9 the
+    /// builder's guard was `if (transform.childCount > 0) return;`, which at least stopped a reload from
+    /// AddComponent-ing a SECOND host — but it also meant WorkspaceController.surfaceRegistry (a plain field,
+    /// wiped the same way) stayed null forever afterwards, so SyncSurfaces early-returned and NO tab switch,
+    /// close or promotion showed or hid anything for the rest of the session: a live-but-blind component, not
+    /// merely one showing a stale rect. Task 9's later rounds made the guard branch re-wire the registry,
+    /// this host (via Rewire) and the controller's own Layout/pane handles, which fixed the SURFACES while
+    /// leaving the chrome around them inert. Task 11 replaced the branch outright: the shell is now
+    /// DEMOLISHED and rebuilt on every reload (WorkspaceBuilder.Awake), which re-runs everything including
+    /// Create -> Rewire below. This component is deliberately NOT destroyed by that demolition — it holds the
+    /// camera's viewport rect and which backgrounds are disabled, and a destroyed host cannot put either
+    /// back — so Create is reuse-or-add and Rewire is still what re-points the fields.
     ///
-    /// STILL OPEN, still Task 11's: the recovered Layout is a fresh WorkspaceOps.NewDefault(), so the user's
-    /// actual tabs/split/focus are still discarded by a reload (only WorkspacePrefs can fix that), and the
-    /// CHROME around the surface — tab strips, navigator, «+», Ctrl+K, divider drag — stays inert afterwards,
-    /// deliberately not partially revived here (see WorkspaceBuilder.Awake's comment for why). So there is no
-    /// second interaction that could re-sync anything: post-reload the surface is correct, and nothing the
-    /// user clicks changes it until they leave and re-enter Play Mode.</summary>
+    /// NOTHING IS LEFT OPEN HERE. The last gap this paragraph used to record — "the recovered Layout is a
+    /// fresh WorkspaceOps.NewDefault(), so the user's tabs are discarded, and the chrome around the surface
+    /// stays inert" — is closed by the same task: WorkspaceController.RestoreFromPrefs re-applies the stored
+    /// layout during the rebuild, and the rebuilt tab strips/navigator/Ctrl+K/divider respond again.</summary>
     public class MapSurfaceHost : MonoBehaviour, ISurfaceHost
     {
         Camera mapCamera;
@@ -289,18 +283,18 @@ namespace WorldGen.Workspace.Rendering
             return host;
         }
 
-        /// <summary>Re-runs Create's own discovery/assignment logic against THIS existing component, without
-        /// AddComponent-ing a new one — the "re-point the references, don't rebuild" half of
-        /// WorkspaceBuilder.Awake's recompile-guard branch. `mapCamera`/`chrome`/`toolbar` are plain private
+        /// <summary>Re-runs Create's own discovery/assignment logic against THIS component, without
+        /// AddComponent-ing a new one — the "re-point the references, don't rebuild" rule this host keeps
+        /// even though the shell around it is rebuilt wholesale. `mapCamera`/`chrome`/`toolbar` are plain private
         /// fields with no `[SerializeField]`, exactly the class of field the RECOMPILE GAP paragraph
         /// documents, so a Play-mode script reload wipes all three even though this MonoBehaviour ITSELF (and
         /// the camera/panels it used to point at) survive as live, findable objects — calling this again is
         /// what actually recovers them, rather than leaving a live-but-blind component behind that
         /// `WorkspaceController.SyncSurfaces` would otherwise call `Show`/`Hide` on for no visible effect.
-        /// `rootRowBackground` is deliberately allowed to stay null here (the caller has no local reference to
-        /// pass post-reload — see WorkspaceBuilder.Awake's guard branch) — ResolveRootRowBackground's own
-        /// hierarchy-path fallback re-acquires it lazily the first time SetBackgroundsEnabled actually needs
-        /// it, so there is nothing extra to do for that one specifically.</summary>
+        /// `rootRowBackground` is deliberately allowed to stay null here, for any caller with no local
+        /// reference to pass — ResolveRootRowBackground's own hierarchy-path fallback re-acquires it lazily
+        /// the first time SetBackgroundsEnabled actually needs it. WorkspaceBuilder's rebuild does pass a
+        /// live one (it has just built RootRow), so today that fallback is belt rather than the mechanism.</summary>
         public void Rewire(Camera cameraOverride, GameObject[] chromeOverride, Image rootRowBackground)
         {
             this.rootRowBackground = rootRowBackground;
@@ -345,9 +339,10 @@ namespace WorldGen.Workspace.Rendering
             // cleared one, which keeps this single line correct on BOTH paths with no branch to get wrong.
             //
             // Dropping the old `frames` without Reset()ing its entries first is safe ONLY because the root
-            // set cannot SHRINK between two Rewire calls: the only two callers are Create (once per
-            // component) and WorkspaceBuilder.Awake's reload branch (WorkspaceBuilder.cs:217), and both pass
-            // the same `mapChrome` field, so discovery yields the same set both times. A future caller that
+            // set cannot SHRINK between two Rewire calls. There is one caller — Create — and it can run more
+            // than once per component, because Task 11 made it reuse-or-add and WorkspaceBuilder.Awake
+            // re-runs the whole build on every Play-mode shell rebuild; every one of those calls passes the
+            // same WorkspaceBuilder.mapChrome field, so discovery yields the same set each time. A future caller that
             // narrowed the set would strand a __PaneFrame at its last-applied inset with nothing left
             // holding a reference to reset it — Reset the outgoing frames here if that ever becomes possible.
             pendingFrameRoots = new List<GameObject>();
@@ -494,8 +489,8 @@ namespace WorldGen.Workspace.Rendering
             // a panel would render inside a rect belonging to a pane that no longer shows the map. Task 10c
             // removed the legacy path that used to re-show these panels behind this host's back (see the class
             // doc's now-closed KNOWN SEAM paragraph), so this is no longer defending against a second owner —
-            // it is defending against this host's OWN next Show landing in a different pane, and against the
-            // un-hosted transitional state before Task 11 wires the shell into the scene. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
+            // it is defending against this host's OWN next Show landing in a different pane, and against a
+            // scene with no workspace shell in it at all. Show() -> ApplyViewport re-clamps on the very frame the map comes back, so this costs
             // nothing but a Vector2 write per frame object. Null-guarded because Hide is documented as safe to
             // call unconditionally, and `frames` is null on any path that reaches Hide before Rewire.
             if (frames != null)
@@ -680,7 +675,7 @@ namespace WorldGen.Workspace.Rendering
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
     /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:492-513), so three
+    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:603-652), so three
     /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
     /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
     /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
@@ -707,7 +702,9 @@ namespace WorldGen.Workspace.Rendering
     /// ProjectMenuBar (100), which no longer matters now that the frame's RectMask2D clips them to the pane's
     /// ContentArea — a rect that already excludes the menu-bar strip, since RootRow is inset by
     /// WorkspaceBuilder.MenuBarInset. Re-numbering them would be a change with no visible effect and a real
-    /// chance of regressing the un-hosted (Task 10c-to-11 transitional) path.
+    /// chance of regressing the un-hosted path — a scene with no workspace shell, where these screens are
+    /// never framed and their own sorting is all there is. That was the app's actual state between Tasks 10c
+    /// and 11 and is now only a bare rig, but the path is still live code.
     ///
     /// SINGLE INSTANCE PER SCREEN, accepted, same limitation PageSurfaceHost's own doc records: if both panes
     /// show interior tabs at once, only the FOCUSED pane's gets the screen. SyncSurfaces enforces that by
@@ -723,10 +720,13 @@ namespace WorldGen.Workspace.Rendering
     ///
     /// RECOMPILE GAP: every field here is plain and non-[SerializeField], so a Play-mode domain reload wipes
     /// all of them while the screen GameObjects, their canvases and their __PaneFrames survive as live
-    /// objects — this arc's recurring defect family, now on its seventh sighting (see MapSurfaceHost's own
-    /// RECOMPILE GAP paragraph for the previous six). Rewire() re-runs discovery against THIS existing
-    /// component and is called from WorkspaceBuilder.Awake's recompile-guard branch, exactly as
-    /// MapSurfaceHost.Rewire is. Slot.HasOwner comes back FALSE after such a reload, which is why Hide()
+    /// objects — this arc's recurring defect family (see WorkspaceController.shellSuppressed for the running
+    /// count, and MapSurfaceHost's own RECOMPILE GAP paragraph for how it is closed). Rewire() re-runs
+    /// discovery against THIS existing component and is reached from WorkspaceBuilder.Awake's rebuild through
+    /// Create, exactly as MapSurfaceHost.Rewire is — this component is reused rather than destroyed for a
+    /// reason sharper than the map host's: it holds WHICH screen is currently switched on, and a destroyed
+    /// one leaves that screen on with nothing able to retire it. Slot.HasOwner comes back FALSE after such a
+    /// reload, which is why Hide()
     /// treats "nobody owns this screen" as "nobody wants it" and deactivates — otherwise a screen that was
     /// visible at the moment of the reload could never be hidden again for the rest of the session, the same
     /// unrecoverable-visible-surface trap DocumentPageView hit (PageSurfaceHost's doc, round 3).</summary>
@@ -784,9 +784,9 @@ namespace WorldGen.Workspace.Rendering
             return hosts;
         }
 
-        /// <summary>Re-runs Create's discovery/assignment against THIS existing component — the "re-point the
-        /// references, don't rebuild" half of WorkspaceBuilder.Awake's recompile-guard branch, identical in
-        /// role to MapSurfaceHost.Rewire (see this class's RECOMPILE GAP paragraph).
+        /// <summary>Re-runs Create's discovery/assignment against THIS component — the "re-point the
+        /// references, don't rebuild" rule this component keeps even though the shell around it is rebuilt
+        /// wholesale, identical in role to MapSurfaceHost.Rewire (see this class's RECOMPILE GAP paragraph).
         ///
         /// FindObjectsInactive.Include is not optional here, unlike in MapSurfaceHost.Rewire's own discovery:
         /// the map chrome it looks for is active whenever a map exists, but these three screens are

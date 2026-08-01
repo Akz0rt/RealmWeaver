@@ -15,9 +15,9 @@ namespace WorldGen.Notes.Rendering
     /// NotesTreeSidebar.cs outright, as Task 9 said it would — every comment elsewhere in the project that
     /// cites either of them by name is citing history, and git is where to read it.
     ///
-    /// SampleScene.unity still holds MonoBehaviour entries pointing at both deleted scripts, which Unity
-    /// surfaces as "missing script" components. That is expected and deliberate: Task 11 is the only task
-    /// allowed to edit the scene, and it removes them.
+    /// SampleScene.unity held MonoBehaviour entries pointing at both deleted scripts — "missing script"
+    /// components — for the whole gap between Task 10c's deletion and Task 11, which was the only task
+    /// allowed to edit the scene. Task 11 removed them; nothing in the scene names either file now.
     ///
     /// DocumentView's root starts parked under a bare, non-Canvas holding transform (nothing renders
     /// there — Unity draws uGUI only under a Canvas) and is re-parented into whichever workspace pane
@@ -56,7 +56,11 @@ namespace WorldGen.Notes.Rendering
         /// failure mode WorkspaceBuilder.EnsureDocumentController exists to prevent from the OTHER direction.
         /// `transform.childCount > 0` is reload-SAFE (the GameObject/Transform hierarchy is native Unity
         /// object state, not a plain C# field) and was never accidental — it is the SAME technique
-        /// WorkspaceBuilder.Awake's own recompile guard uses for exactly the same reason. This method always
+        /// WorkspaceBuilder.Awake tests on for its own reload detection. The two then do OPPOSITE things with
+        /// the answer, and deliberately: this class returns early and re-points a handful of references,
+        /// because its one child holds no wiring that a reload could break; WorkspaceBuilder demolishes and
+        /// rebuilds, because its children are covered in runtime listeners that a reload does break (see its
+        /// own Awake for the argument). This method always
         /// creates exactly one child (`PageViewHolder`) when it runs to completion, so the check holds
         /// permanently once true, reload or not.
         ///

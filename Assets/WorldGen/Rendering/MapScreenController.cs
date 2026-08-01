@@ -23,11 +23,14 @@ namespace WorldGen.Rendering
     /// battleGridRoomId, which the screens themselves read through Bind), and open or close the tab that
     /// shows it.
     ///
-    /// THE WORKSPACE IS DISCOVERED, NOT WIRED (transitional, Task 11 closes it): WorkspaceBuilder is not in
-    /// any scene yet, so Shell() below returns null today and every Open*/Close* is a no-op — between
-    /// this task and Task 11 the app has a world map and no POI/interior/battle editing at all. That is the
-    /// same shape this arc already accepted once for Task 10a's shell-less path, and it is written down here
-    /// rather than left to be discovered at a checkpoint.
+    /// THE WORKSPACE IS DISCOVERED, NOT WIRED, and that is now a design choice rather than a transitional
+    /// state. Task 11 put a WorkspaceBuilder into SampleScene.unity, so Shell() below finds one and every
+    /// Open*/Close* works; between Task 10c and Task 11 it did not, and the app genuinely had a world map
+    /// and no POI/interior/battle editing at all. Discovery stayed, because it is also what recovers the
+    /// reference after a Play-mode domain reload and what lets a shell built later in the session be found
+    /// without a restart — see Shell()'s own doc. Every caller still treats null as "do nothing", which is
+    /// what keeps a bare scene (a test rig, a scene opened before the shell exists) inert rather than
+    /// throwing.
     /// </summary>
     public class MapScreenController : MonoBehaviour
     {
@@ -42,9 +45,11 @@ namespace WorldGen.Rendering
         // carrying MapLegendUI, i.e. exactly the two objects that discovery finds.
         //
         // The three fields are KEPT rather than deleted, deliberately. Deleting them would orphan three
-        // Inspector assignments in SampleScene.unity, which this task is not allowed to touch (Task 11 owns
-        // the scene), and they are the natural things for Task 11 to hand WorkspaceBuilder.mapChrome/mapCamera
-        // as explicit overrides if type discovery ever picks the wrong instance.
+        // Inspector assignments in SampleScene.unity, and they are the natural things to hand
+        // WorkspaceBuilder.mapChrome/mapCamera as explicit overrides if type discovery ever picks the wrong
+        // instance. Task 11's scene edit did NOT do that — discovery finds the same two objects these fields
+        // name, so pinning them would only add a second place to keep correct — but the assignments are
+        // there and ready if a scene ever has two of anything.
         public GameObject mapEditorPanelGO;
         public GameObject mapLegendUiGO;
         [Tooltip("Тулбар вкладок. Со времён Task 10c его видимостью управляет MapSurfaceHost (вкладка «Карта мира»), а не этот класс.")]
@@ -171,15 +176,19 @@ namespace WorldGen.Rendering
         /// which is harmless precisely because both are wiped together, so the pair is never half-stale.</summary>
         GameObject switcherShellRoot;
 
-        /// <summary>The workspace shell, discovered rather than wired — WorkspaceBuilder is not in any scene
-        /// until Task 11 (see this class's own doc), so there is no Inspector slot to drag it into and nothing
-        /// to find until then. Re-searched on every miss rather than once: that is also what recovers the
-        /// reference after a Play-mode domain reload wipes this field, and what would let a shell built later
-        /// in the session be picked up without a restart. FindObjectsInactive.Include because the shell's
-        /// component sits on a GameObject that the switcher itself may have deactivated.
+        /// <summary>The workspace shell, discovered rather than wired (see this class's own doc for why
+        /// that outlived the window in which it was the only option). Re-searched on every miss rather than
+        /// once: that is what recovers the reference after a Play-mode domain reload wipes this field, and
+        /// what lets a shell built later in the session be picked up without a restart.
+        /// FindObjectsInactive.Include because the shell's component sits on a GameObject that the switcher
+        /// itself may have deactivated.
         ///
-        /// Returns null in a scene with no workspace, and EVERY caller treats that as "do nothing" — the
-        /// transitional no-editing window this class's own doc names.</summary>
+        /// WorkspaceController, not WorkspaceBuilder, is what this looks for — and the two are on the same
+        /// GameObject, so it makes no difference to the search, but it does to the rebuild: Task 11's shell
+        /// rebuild destroys the canvas and REUSES the controller component, so a reference found here stays
+        /// valid across a recompile rather than pointing at a corpse.
+        ///
+        /// Returns null in a scene with no workspace, and EVERY caller treats that as "do nothing".</summary>
         WorkspaceController Shell()
         {
             if (workspace != null) return workspace;
@@ -761,17 +770,19 @@ namespace WorldGen.Rendering
         //
         // WHY THE ID IS ENOUGH: every surface id here is a pure function of the data (see PoiEditorSurface /
         // InteriorSurface / BattleGridSurface), so it can be reversed back to the object without any stored
-        // side table. That is the same property Task 11's WorkspacePrefs needs to restore tabs across a
-        // restart, so this reversal is not scaffolding — it is the half of the id contract that had no reader
-        // yet.
+        // side table. That is the same property WorkspacePrefs relies on to restore tabs across a restart —
+        // the id is all that is stored — and SurfaceExists below is the same reversal asked as a yes/no
+        // question. Three readers of one contract now; when this comment was written it had none.
         //
         // ACCEPTED CONSEQUENCE — RETURNING TO A MULTI-FLOOR INTERIOR'S TAB LANDS ON FLOOR 0.
         // DungeonEditorScreen.Bind ends in SetLevel(0), so a rebind resets the level tab (and the room
         // selection) exactly the way re-entering the editor from the map always has. Not a regression — it is
         // the pre-tab behaviour — but the rebind hook makes it ROUTINE where it previously took an explicit
-        // re-open. Left as-is rather than papered over: per-tab level/selection is real per-tab VIEW state,
-        // which is Task 11's (WorkspacePrefs) or Р5's to design, and faking it here would mean this class
-        // quietly keeping a second copy of the editor's own state. The early-out below is what stops it
+        // re-open. Still left as-is: per-tab level/selection is real per-tab VIEW state, and faking it here
+        // would mean this class quietly keeping a second copy of the editor's own state. Task 11 did NOT
+        // take it on — WorkspaceLayout stores what each tab POINTS AT (kind, id, title, which pane, which is
+        // active) and nothing about what the surface behind it was showing, and widening that would mean a
+        // stored format that has to know something about every surface kind. Р5's, if anyone's. The early-out below is what stops it
         // happening on syncs that change nothing, which is the common case.
         //
         // EVERY BRANCH EARLY-OUTS WHEN ALREADY BOUND, and that is a requirement, not an optimisation:
@@ -930,9 +941,8 @@ namespace WorldGen.Rendering
                 : interior.Kind == InteriorKind.Building ? "Здание" : "Подземелье";
 
         /// <summary>Opens (or focuses, per WorkspaceOps.Open's R1) `s`, in the FOCUSED pane unless a caller
-        /// asks otherwise. A no-op when there is no workspace in the scene — the transitional state this
-        /// class's own doc names — and when `s` is null, which is how the Close*/Open* paths pass state that
-        /// is not set.
+        /// asks otherwise. A no-op when there is no workspace in the scene (a bare rig — see Shell()) and
+        /// when `s` is null, which is how the Close*/Open* paths pass state that is not set.
         ///
         /// The default is false and every call site but one takes it: OpenPoiFromMap (a double-click on the
         /// map) is the single gesture in this file that opens beside rather than in front — see its own doc,

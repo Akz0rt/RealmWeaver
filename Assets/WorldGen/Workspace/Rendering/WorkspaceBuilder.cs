@@ -11,8 +11,11 @@ namespace WorldGen.Workspace.Rendering
     /// <summary>
     /// Builds the workspace shell skeleton imperatively at Awake, following the pattern
     /// NotesRootBuilder established: navigator column | draggable divider | pane container (itself
-    /// split Primary|Secondary). Attach to an empty GameObject; not yet wired into any scene — that
-    /// is Task 11, the only task allowed to touch the scene.
+    /// split Primary|Secondary). Lives on the "WorkspaceBuilder" GameObject in SampleScene.unity — an
+    /// otherwise empty object, with every external reference left unassigned so that discovery
+    /// (EnsureDocumentController, MapSurfaceHost.Rewire, ScreenSurfaceHosts.Rewire) resolves them. Task 11
+    /// added that object; through Tasks 5-10 this component was in no scene at all, which is what several
+    /// comments in this arc still explain the consequences of — in the past tense, where they are correct.
     ///
     /// Scope for Task 5 was deliberately narrow (see the plan's Task 5 step 6): navigator column as
     /// an empty sized container, the two pane containers, and the one divider that matters here —
@@ -63,9 +66,9 @@ namespace WorldGen.Workspace.Rendering
         [Tooltip("The document NavigatorView/QuickOpenPopup render. Left unassigned in the Inspector — Task 9 " +
                  "auto-discovers the live NotesRootBuilder already in the scene (FindFirstObjectByType) and " +
                  "reads its DocumentController, so the SAME instance is used everywhere without requiring a " +
-                 "scene edit this task is not allowed to make (see EnsureDocumentController). An explicit " +
-                 "Inspector assignment, once WorkspaceBuilder itself is wired into the scene (Task 11), still " +
-                 "wins over discovery.")]
+                 "scene edit (see EnsureDocumentController). Still unassigned now that Task 11 has put this " +
+                 "component in the scene, because discovery already finds the one live instance — an explicit " +
+                 "Inspector assignment would win over it, and is only worth making if a scene ever has two.")]
         public NotesDocumentController documentController;
 
         [Header("External refs — WorldMap surface")]
@@ -74,13 +77,12 @@ namespace WorldGen.Workspace.Rendering
         // mapChrome — the array a human actually populates — and an earlier revision put it on mapCamera,
         // where the Inspector rendered it on the Camera slot and the field it was written for showed nothing.
         [Tooltip("Override for MapSurfaceHost's camera discovery (FindFirstObjectByType<WorldMapRenderer>." +
-                 "targetCamera). Left null until Task 11 (or a manual test) has a reason to pin a specific " +
-                 "instance instead of whatever discovery finds.")]
+                 "targetCamera). Left null: Task 11 wired this component into the scene without pinning it, " +
+                 "because discovery finds the one camera. Assign only if a scene ever has two.")]
         public Camera mapCamera;
 
         [Tooltip("Override for MapSurfaceHost's chrome discovery (FindFirstObjectByType<PoiEditPanel>/" +
-                 "MapLegendUI). Left empty until Task 11 (or a manual test) has a reason to pin specific " +
-                 "instances instead of whatever discovery finds.\n\n" +
+                 "MapLegendUI). Left empty, for the same reason as the camera slot above.\n\n" +
                  "DO NOT LIST PoiInfoPopup OR THE REGION-LABEL OVERLAYS HERE. Everything in this array is " +
                  "both shown/hidden with the map AND confined to the map's pane by PaneChromeFrame. Those " +
                  "three place themselves with cam.WorldToScreenPoint, which already accounts for the " +
@@ -90,8 +92,8 @@ namespace WorldGen.Workspace.Rendering
 
         [Header("External refs — the five ex-screen surfaces (Task 10c)")]
         // Overrides for ScreenSurfaceHosts.Rewire's discovery, the same override-or-discover pattern the two
-        // map fields above use, and left null for the same reason: WorkspaceBuilder is not in the scene until
-        // Task 11, so nothing can drag a reference in before then. Three fields, not five — Settlement,
+        // map fields above use, and left null for the same reason: discovery finds the one instance of each,
+        // so Task 11's scene edit had nothing worth pinning. Three fields, not five — Settlement,
         // BuildingInterior and Dungeon are three SurfaceKinds served by the ONE DungeonEditorScreen object
         // (see ScreenSurfaceHosts' class doc), so there is only one thing to pin for all three.
         [Tooltip("Override for the PoiEditor surface's screen object (FindFirstObjectByType<PoiEditorScreen>).")]
@@ -357,10 +359,10 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Finds the NotesRootBuilder already living in the scene (this predates the workspace-shell
         /// plan) and, if `documentController` was not assigned in the Inspector, points it at THAT SAME
         /// instance's NotesDocumentController — never constructs a new one. WorkspaceBuilder itself is not
-        /// wired into the scene until Task 11, so there is no Inspector slot to drag a NotesRootBuilder
-        /// reference into before then; FindFirstObjectByType is what lets this resolve correctly the moment a
-        /// human (or Task 11) attaches this component anywhere in a scene that already has NotesRootBuilder in
-        /// it — no scene edit required for Task 9 itself.
+        /// in no scene at all when this was written (Task 9), so there was no Inspector slot to drag a
+        /// NotesRootBuilder reference into; FindFirstObjectByType is what let it resolve correctly the moment
+        /// a human attached this component to a scene that already had one. Task 11's scene edit did exactly
+        /// that and still leaves the slot empty — discovery was never scaffolding, it is how this resolves.
         ///
         /// Calls NotesRootBuilder.EnsureBuilt() explicitly rather than trusting its own Awake() already ran:
         /// Unity does not guarantee Awake ordering across components on different GameObjects, and this method

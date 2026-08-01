@@ -50,7 +50,7 @@ namespace WorldGen.Rendering
         /// every get made the property look free when it was not. Built lazily in the getter rather than in
         /// Awake because a Play-mode domain reload wipes this plain field while the serialized panel
         /// references above survive — the lazy form recovers with no Awake re-entry, which matters because
-        /// this class has no recompile guard of the kind WorkspaceBuilder/NotesRootBuilder carry.
+        /// this class has no reload-detecting Awake of the kind WorkspaceBuilder/NotesRootBuilder carry.
         ///
         /// ACCEPTED CONSEQUENCE of caching at all: re-assigning one of the four fields in the INSPECTOR
         /// mid-Play no longer takes effect immediately (the pre-cache version re-read them on every get); the

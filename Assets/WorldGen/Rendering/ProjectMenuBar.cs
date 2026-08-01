@@ -134,17 +134,18 @@ namespace WorldGen.Rendering
         /// <summary>Lets other screens (e.g. GenerationScreenUI's "Открыть проект…") trigger the same Open flow.</summary>
         public void TriggerOpenFromExternal() => DoOpen();
 
-        /// <summary>The screen controller «Создать новый мир…» routes to (Task 10c Step 4). DISCOVERED rather
-        /// than added as an Inspector field, for the same reason WorkspaceBuilder discovers its own external
-        /// refs: a new serialized field would need SampleScene.unity edited to be populated, and Task 11 is
-        /// the only task allowed to touch the scene. Re-searched on every miss, which also recovers the
-        /// reference after a Play-mode domain reload wipes it while the component itself survives — this arc's
-        /// recurring defect family. FindObjectsInactive.Include because nothing guarantees the controller's
-        /// GameObject is active.
+        /// <summary>The screen controller «Создать новый мир…» routes to (Task 10c Step 4), and — since
+        /// Task 11 — the workspace's project-switch seam as well (see LoadFrom/SaveTo). DISCOVERED rather
+        /// than added as an Inspector field: when this was written a new serialized field would have needed
+        /// SampleScene.unity edited, which only Task 11 was allowed to do, and it stayed discovered because
+        /// re-searching on every miss also recovers the reference after a Play-mode domain reload wipes it
+        /// while the component itself survives — this arc's recurring defect family.
+        /// FindObjectsInactive.Include because nothing guarantees the controller's GameObject is active.
         ///
-        /// Null in a scene without one, and every caller treats that as "offer neither world row" (see
-        /// OpenMenu's offerNewWorld/offerReturnToWorld), so the menu degrades to exactly what it was before
-        /// this task rather than showing a dead item.</summary>
+        /// Null in a scene without one. Every caller treats that as "do nothing": the two world rows are not
+        /// offered (see OpenMenu's offerNewWorld/offerReturnToWorld), and the project switch simply does not
+        /// happen — which is correct, because a scene with no MapScreenController has no workspace to switch
+        /// either.</summary>
         MapScreenController MapScreens()
         {
             if (mapScreens != null) return mapScreens;

@@ -86,8 +86,11 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>A screen with an EMPTY member array — the shape MapScreenController.EnsureSwitcher
-        /// produces for AppScreen.Workspace when no workspace shell exists in the scene (the transitional
-        /// state until Task 11 wires WorkspaceBuilder in). The switcher must still switch: `Current` and the
+        /// produces for AppScreen.Workspace when no workspace shell exists in the scene. SampleScene.unity
+        /// has carried one since Task 11, so this is no longer the app's ordinary state; it is still
+        /// reachable, because EnsureSwitcher runs before/without a shell in a bare scene, and it is exactly
+        /// the shape Shell()'s "returns null, every caller does nothing" contract produces. The switcher must
+        /// still switch: `Current` and the
         /// hook are what MapScreenController relies on, and a memberless screen must not stop the OTHER
         /// screens' members from being deactivated.</summary>
         [ContextMenu("Self-Test: ScreenSwitcher Memberless Screen")]

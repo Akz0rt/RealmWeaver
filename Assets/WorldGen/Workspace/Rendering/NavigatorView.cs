@@ -38,8 +38,8 @@ namespace WorldGen.Workspace.Rendering
     /// CreateGroupWithFirstPage therefore opens with an explicit null check of its own.
     ///
     /// poiManager is the OTHER external reference, discovered rather than injected for the same reason
-    /// QuickOpenPopup.Attach discovers its own (no Inspector wiring until Task 11), but re-tried on every
-    /// miss instead of once — see ResolvePoiManager, which is also the single place this view subscribes to
+    /// QuickOpenPopup.Attach discovers its own (this view has no Inspector slot at all — it is built in
+    /// code onto a code-built column), but re-tried on every miss instead of once — see ResolvePoiManager, which is also the single place this view subscribes to
     /// OnPoisChanged so a newly placed POI appears in «Мир» without waiting for an unrelated layout change.
     ///
     /// Built via the static Create factory onto the GameObject WorkspaceBuilder.BuildNavigatorColumn already
@@ -171,9 +171,9 @@ namespace WorldGen.Workspace.Rendering
         }
 
         /// <summary>The live POI store, discovered on every miss (the same shape MapScreenController.Pois()
-        /// uses, and for the first of its two reasons: no Inspector slot before Task 11's scene edit) — NOT
-        /// once at Create like QuickOpenPopup.Attach, because this view must also be able to find a
-        /// PoiManager that did not exist yet when the shell was built.
+        /// uses, and for the first of its two reasons: this view is built in code and has no Inspector slot
+        /// to drag one into) — NOT once at Create like QuickOpenPopup.Attach, because this view must also be
+        /// able to find a PoiManager that did not exist yet when the shell was built.
         ///
         /// SUBSCRIBING HERE, on the null→found transition, is what makes the subscription exactly-once
         /// without a separate bool: the field IS the guard. Rebuild reads this every pass, so a re-discovery
@@ -211,8 +211,8 @@ namespace WorldGen.Workspace.Rendering
             // Toggling routes through the controller (the ONLY place that mutates Layout — see
             // WorkspaceController's own class doc) rather than writing Layout.NavigatorCollapsed here
             // directly. Reads Layout fresh on click rather than caching a local `collapsed` bool, so this
-            // stays correct even if something else (Task 11's restore) changes NavigatorCollapsed between
-            // clicks without this view's Rebuild having run yet.
+            // stays correct even if something else (WorkspaceController.ApplyRestored, on a project switch)
+            // changes NavigatorCollapsed between clicks without this view's Rebuild having run yet.
             headerBtn.onClick.AddListener(() => controller.SetNavigatorCollapsed(!controller.Layout.NavigatorCollapsed));
 
             var headerTextGO = new GameObject("Text", typeof(RectTransform));
@@ -340,19 +340,24 @@ namespace WorldGen.Workspace.Rendering
         /// CHROME, not content: built once here, never destroyed by Rebuild — the same arrangement the header
         /// and the search field use. Rebuild only toggles its visibility with the collapse state (see there).
         ///
-        /// THE DOMAIN-RELOAD QUESTION this arc has now had to answer eight times, answered explicitly rather
-        /// than left open. A runtime onClick listener is not [SerializeField]-persisted, so a Play-mode script
-        /// reload wipes it while this GameObject survives — the shape DocumentPageView.EnsureWired exists to
-        /// repair for its own «+ Раздел». It needs no repair HERE, and the difference is not luck: that class
-        /// HAS a post-reload recovery path (EnsureWired/RecoverBuiltObjects re-find its objects by name), so a
-        /// button it recovered without re-adding the listener came back visible and inert. This view has no
-        /// recovery path at all — WorkspaceBuilder.Awake refuses to revive it on purpose and says why ("a
-        /// functionally DEAD object… every tab/close/plus Button's runtime AddListener callback are all gone
-        /// too"). After a reload `controller`/`documentController` are null, every row's NavRowClickRouter
-        /// delegate is gone, and all three subscriptions that could set rebuildPending died with them, so
-        /// LateUpdate never rebuilds again either. This button is dead exactly like the collapse toggle, the
-        /// search box and every row — one inert view, Task 11's to revive wholesale, not a new gap to patch
-        /// with an EnsureWired that would have nothing to be called from.</summary>
+        /// THE DOMAIN-RELOAD QUESTION this arc has had to answer at every button it added, answered
+        /// explicitly rather than left open. A runtime onClick listener is not [SerializeField]-persisted, so
+        /// a Play-mode script reload wipes it while this GameObject survives — the shape
+        /// DocumentPageView.EnsureWired exists to repair for its own «+ Раздел». It needs no repair HERE, and
+        /// the difference is not luck, but the reason CHANGED in Task 11 and the old one is worth keeping.
+        ///
+        /// It used to be that this view had no recovery path at all: after a reload `controller`/
+        /// `documentController` were null, every row's NavRowClickRouter delegate was gone, and all three
+        /// subscriptions that could set rebuildPending died with them, so LateUpdate never rebuilt again
+        /// either — this button was dead exactly like the collapse toggle, the search box and every row, and
+        /// an EnsureWired here would have had nothing to be called from.
+        ///
+        /// Task 11 revived it WHOLESALE instead: WorkspaceBuilder.Awake now demolishes the shell's child
+        /// hierarchy and re-runs its own build, so this view is DESTROYED and Create()d again, listener
+        /// included. That is why the "built once, never rebuilt" arrangement above is safe for chrome —
+        /// "once" means once per shell, and a reload produces a new shell. The one thing that must stay true
+        /// for this to keep holding is that every listener here is added during Create; a listener added
+        /// later, from somewhere a rebuild does not re-run, would be back to being unrecoverable.</summary>
         void BuildCreateGroupBar(Transform parent)
         {
             createGroupGO = AddActionButton(parent, "+ Группа", ActionBarHeight, 11,
@@ -608,7 +613,7 @@ namespace WorldGen.Workspace.Rendering
 
             // Explicit ternary, not `?.`: `documentController` is a UnityEngine.Object, whose overloaded `==`
             // reports a DESTROYED-but-not-null reference as null — `?.` bypasses that overload and would hand
-            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:218 and
+            // Build a live-looking corpse. Same idiom, same reason, at QuickOpenPopup.cs:268 and
             // DocumentPageView.cs:86. A null document is no longer short-circuited before this line — see
             // the class doc.
             var doc = documentController != null ? documentController.Document : null;
@@ -1128,7 +1133,7 @@ namespace WorldGen.Workspace.Rendering
             // likewise collapse to sum-of-those-sizeDeltas + spacing + padding, not to ItemHeight-per-item.
             // Exactly the defect QuickOpenPopup.cs shipped once already in this same arc (commit b187ceb,
             // "quick-open rows need childControlHeight=true, not false") and ProjectMenuBar.cs's «Файл»/«Вид»
-            // dropdown (ProjectMenuBar.cs:376-377) avoids by using this same true/false pair for the
+            // dropdown (ProjectMenuBar.cs:407-408) avoids by using this same true/false pair for the
             // identical shape: control height, but don't force-expand it past the child's own preferredHeight.
             vlg.childControlHeight = true;
             vlg.childForceExpandHeight = false;

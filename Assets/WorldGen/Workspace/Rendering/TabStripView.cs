@@ -366,7 +366,7 @@ namespace WorldGen.Workspace.Rendering
         }
 
         /// <summary>The tab index a drop at `pointerX` (a screen X, which for this ScreenSpaceOverlay canvas
-        /// is also a world X — same equivalence SurfaceRegistry.cs:625 relies on) would insert BEFORE: 0 left
+        /// is also a world X — same equivalence SurfaceRegistry.cs:629 relies on) would insert BEFORE: 0 left
         /// of the first tab, Count past the last.
         ///
         /// PRE-REMOVAL BY CONSTRUCTION, and that is load-bearing. The dragged tab stays visible in its strip
@@ -414,7 +414,7 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>Shared scratch for GetWorldCorners. Static readonly, so a Play-mode domain reload
         /// re-runs the initializer on the class's next touch rather than leaving a null field behind — the
         /// same reason MapSurfaceHost re-assigns its own collections in Rewire rather than trusting
-        /// initializers (SurfaceRegistry.cs:248-253). Single-threaded UI code, read and consumed before the
+        /// initializers (SurfaceRegistry.cs:242-250). Single-threaded UI code, read and consumed before the
         /// next call.</summary>
         internal static readonly Vector3[] WorldCorners = new Vector3[4];
     }
@@ -450,10 +450,10 @@ namespace WorldGen.Workspace.Rendering
     /// pointer has ALREADY moved further than any second threshold this class could sensibly impose — one
     /// added here would be code that reads like a safeguard and can never fire.
     ///
-    /// THAT THRESHOLD IS 10 AND HAS NO SCENE DEPENDENCY. There is no EventSystem in SampleScene.unity at
-    /// all: every one in this project is created in code (EnsureEventSystemExists in WorkspaceBuilder.cs,
-    /// and six siblings elsewhere), and AddComponent runs EventSystem's own `m_DragThreshold = 10` field
-    /// initializer. So nothing about this gesture is waiting on Task 11 to configure anything. What must
+    /// THAT THRESHOLD IS 10 AND HAS NO SCENE DEPENDENCY. There is still no EventSystem in
+    /// SampleScene.unity — Task 11's scene edit deliberately did not add one — so every EventSystem in this
+    /// project is created in code (EnsureEventSystemExists in WorkspaceBuilder.cs, and six siblings
+    /// elsewhere) and AddComponent runs EventSystem's own `m_DragThreshold = 10` field initializer. What must
     /// NOT happen is the inverse: adding a scene EventSystem with a lowered threshold, or lowering
     /// pixelDragThreshold in code. At 0 the casualty is not click-to-activate — that survives, since
     /// pointerPress and pointerDrag are both this tab so the click stays eligible, and Commit's no-op skip
@@ -463,8 +463,8 @@ namespace WorldGen.Workspace.Rendering
     ///
     /// THE GHOST AND THE MARKER ARE RE-ACQUIRED BY NAME, never re-created blind (EnsureOverlay). They are two
     /// long-lived GameObjects under the workspace canvas, tracked by plain non-[SerializeField] fields — the
-    /// exact shape this arc's recurring defect family takes (WorkspaceController.cs:61-69,
-    /// SurfaceRegistry.cs:248-253): a Play-mode domain reload nulls the field while the GameObject survives,
+    /// exact shape this arc's recurring defect family takes (WorkspaceController.cs:63-87,
+    /// SurfaceRegistry.cs:242-250): a Play-mode domain reload nulls the field while the GameObject survives,
     /// and a blind re-create would then leave an ORPHANED ghost on screen that nothing holds a reference to
     /// and nothing can hide. Transform.Find over the canvas root is the same recovery
     /// WorkspaceController.ShellRoot and MapSurfaceHost's frame lookup use, chosen over rebuilding because
@@ -629,7 +629,7 @@ namespace WorldGen.Workspace.Rendering
             {
                 ghostRect.gameObject.SetActive(true);
                 ghostRect.sizeDelta = ghostSize;
-                // ScreenSpaceOverlay: world position IS screen-pixel position (SurfaceRegistry.cs:625), so the
+                // ScreenSpaceOverlay: world position IS screen-pixel position (SurfaceRegistry.cs:629), so the
                 // pointer's screen coordinate can be written straight into a world position, whatever the
                 // ghost's parent happens to be.
                 ghostRect.position = new Vector3(screenPos.x, screenPos.y, 0f);
@@ -648,7 +648,7 @@ namespace WorldGen.Workspace.Rendering
         /// the topmost GRAPHIC, which over a pane's content area is whatever surface happens to be hosted
         /// there (a full-screen ex-screen canvas, or nothing at all where the map punches its hole), none of
         /// which can answer "which pane is this". The corners can, and are already this project's way of
-        /// turning a rect into screen pixels (SurfaceRegistry.cs:625).</summary>
+        /// turning a rect into screen pixels (SurfaceRegistry.cs:629).</summary>
         DropTarget ResolveDrop(Vector2 p)
         {
             WorkspaceController controller = strip.Controller;

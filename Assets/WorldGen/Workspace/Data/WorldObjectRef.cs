@@ -32,7 +32,8 @@ namespace WorldGen.Workspace.Data
     /// branch for a case nothing can produce.
     ///
     /// A null id yields Id="" rather than null, matching SurfaceIds' own "never emit a null id" rule — a null
-    /// would flow into WorkspaceOps.Serialize (Task 11's stored format) and SameSurface unchecked.</summary>
+    /// would flow into WorkspaceOps.Serialize (the format WorkspacePrefs stores) and SameSurface
+    /// unchecked.</summary>
     public static class WorldSurface
     {
         public static SurfaceRef PoiEditor(string poiId)

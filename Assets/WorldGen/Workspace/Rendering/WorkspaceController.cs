@@ -17,6 +17,11 @@ namespace WorldGen.Workspace.Rendering
     /// WorkspaceBuilder builds the RectTransform/LayoutElement hierarchy and hands the pieces this
     /// class needs to Initialize(); from then on this class applies Layout onto them and reports
     /// gestures (drag, click) back into Layout.
+    ///
+    /// SINCE TASK 11 IT ALSO OWNS WHEN THE LAYOUT IS STORED, which follows from owning the mutations: every
+    /// one of them ends in RaiseChanged, so that is the one place a write can be issued from without a
+    /// caller having to remember. The storage itself is WorkspacePrefs'; the project-switch ordering, which
+    /// is the part with a real rule in it, is BeginProjectSwitch/EndProjectSwitch below.
     /// </summary>
     public class WorkspaceController : MonoBehaviour
     {
@@ -60,8 +65,9 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// STORED NEGATED — `suppressed`, not `active` — and that is the whole point of the field's shape. A
         /// plain non-[SerializeField] field is reset to default() by a Play-mode domain reload while every
-        /// Unity object it describes survives untouched: this arc's recurring defect family, seven sightings
-        /// (see ScreenSurfaceHosts' and MapSurfaceHost's RECOMPILE GAP paragraphs). `default(bool)` is false,
+        /// Unity object it describes survives untouched: this arc's recurring defect family, eight sightings
+        /// by the time Task 10h stopped to count them (NavigatorView.BuildCreateGroupBar's own paragraph; see
+        /// also ScreenSurfaceHosts' and MapSurfaceHost's RECOMPILE GAP paragraphs). `default(bool)` is false,
         /// so with this polarity a reload lands on "the workspace owns the window", which is the state the app
         /// is in essentially all of the time once a world exists. An `active` field with an `= true`
         /// initializer would NOT survive — field initializers do not re-run on deserialization — so a reload
@@ -106,8 +112,8 @@ namespace WorldGen.Workspace.Rendering
         // ── Persistence (Task 11) ──────────────────────────────────────────────
         //
         // THE KEY IS [SerializeField], AND THAT IS THE POINT OF THE FIELD'S SHAPE. Every other reference in
-        // this class is a plain field a Play-mode domain reload wipes — this arc's recurring defect family,
-        // now on its ninth sighting (see shellSuppressed's own doc for the running count). This one may NOT
+        // this class is a plain field a Play-mode domain reload wipes — this arc's recurring defect family
+        // (see shellSuppressed's own doc for the running count). This one may NOT
         // be wiped: the shell is demolished and rebuilt on that reload (WorkspaceBuilder.Awake), the rebuild
         // restores from prefs, and a forgotten key would restore the WRONG project's tabs — or, worse, the
         // next OnLayoutChanged would write this project's tabs into the no-project slot and leave the
@@ -131,39 +137,38 @@ namespace WorldGen.Workspace.Rendering
         void Awake() => EnsureLayout();
 
         /// <summary>Guarantees Layout exists, whoever asks first. Awake() calls this, and so does
-        /// WorkspaceBuilder.Awake's recompile-guard branch DIRECTLY — that branch recovers this component
-        /// with GetComponent (which, unlike AddComponent, does NOT invoke Awake synchronously), so whether
-        /// this class's own Awake has already run by then depends on Unity's undefined Awake-dispatch order
-        /// between two components on the same GameObject. The likely order is the bad one: WorkspaceBuilder
-        /// is the PRE-EXISTING component and WorkspaceController was AddComponent-ed later, so the builder
-        /// tends to run first and would otherwise reach SetSurfaceRegistry -> SyncSurfaces -> Layout.FocusedPane
-        /// on a null Layout, throwing an NRE inside the very recovery path that exists to survive reloads.
-        /// Calling this explicitly is the same direct-call pattern NotesRootBuilder.EnsureBuilt already uses
-        /// for exactly this reason, rather than trusting an Awake that may not have fired yet.
+        /// WorkspaceBuilder.Awake DIRECTLY — it obtains this component with GetComponent on the rebuild path
+        /// (which, unlike AddComponent, does NOT invoke Awake synchronously), so whether this class's own
+        /// Awake has already run by then depends on Unity's undefined Awake-dispatch order between two
+        /// components on the same GameObject. The likely order is the bad one: WorkspaceBuilder is the
+        /// PRE-EXISTING component and WorkspaceController was AddComponent-ed later, so the builder tends to
+        /// run first and would otherwise reach RestoreFromPrefs -> ApplyRestored -> RaiseChanged (and later
+        /// SetSurfaceRegistry -> SyncSurfaces -> Layout.FocusedPane) on a null Layout. Calling this explicitly
+        /// is the same direct-call pattern NotesRootBuilder.EnsureBuilt already uses for exactly this reason.
         ///
-        /// `if (Layout == null)` guards a re-entrant Awake() on a LIVE object — e.g. some other
-        /// code path calling Awake() again without a reload in between — where Layout genuinely
-        /// still holds what it held before. It does NOT protect the case it looks like it
-        /// protects: a Play-mode script recompile. WorkspaceBuilder.cs:127-183 documents why —
-        /// Layout is a plain auto-property, not a [SerializeField], so its backing field does
-        /// NOT survive a script reload the way the GameObject/component hierarchy does. On that
-        /// exact path, Layout IS null when this runs, the condition is true, and a fresh
-        /// NewDefault() is created anyway — tabs, split and focus are silently discarded, same
-        /// as before this guard existed. Do not read this line as "recompiles are handled".
+        /// `if (Layout == null)` GUARDS ONLY A RE-ENTRANT Awake() ON A LIVE OBJECT — some other code path
+        /// calling Awake() again without a reload in between, where Layout genuinely still holds what it held
+        /// before. It does NOT protect the case it looks like it protects: a Play-mode script recompile.
+        /// Layout is a plain auto-property, not a [SerializeField], so its backing field does NOT survive a
+        /// script reload the way the GameObject/component hierarchy does. On that exact path Layout IS null
+        /// when this runs, the condition is true, and a fresh NewDefault() is created — tabs, split and focus
+        /// discarded. Do not read this line as "recompiles are handled".
         ///
-        /// Task 11 (WorkspacePrefs) is what actually has to fix this, and it must NOT gate its
-        /// restore on `Layout == null` — that condition is not a reliable "first run" signal (see
-        /// above, it is also true after every recompile that should instead be recovering saved
-        /// state). Task 11 needs to load from WorkspacePrefs unconditionally on startup and apply
-        /// the result, independent of whatever Awake() already put in Layout.</summary>
+        /// WHAT HANDLES THEM is RestoreFromPrefs, which WorkspaceBuilder calls immediately after this one on
+        /// the very same path, and which is deliberately NOT gated on `Layout == null` — that condition is
+        /// not a "first run" signal (see the paragraph above: it is also true after every recompile, which is
+        /// precisely when the saved state must come back). This method's job is only to guarantee something
+        /// non-null exists for the restore to overwrite.</summary>
         public void EnsureLayout()
         {
             if (Layout == null) Layout = WorkspaceOps.NewDefault();
         }
 
         /// <summary>Wires the RectTransforms/LayoutElements WorkspaceBuilder just constructed, then applies
-        /// the freshly-created default Layout onto them once so the initial frame is already correct
-        /// (single pane, secondary + divider hidden) instead of waiting for the first mutation.</summary>
+        /// the current Layout onto them once so the initial frame is already correct (the right pane widths,
+        /// the secondary + divider shown or hidden) instead of waiting for the first mutation. "Current", not
+        /// "freshly-created default": RestoreFromPrefs has already run by the time WorkspaceBuilder reaches
+        /// this, so on a launch with a stored split this applies the RESTORED ratio, not 0.5.</summary>
         public void Initialize(PaneHandles primary, PaneHandles secondary, RectTransform dividerRectTransform)
         {
             primaryContent = primary.ContentRect;
@@ -483,8 +488,10 @@ namespace WorldGen.Workspace.Rendering
 
         /// <summary>Called on every drag-delta frame: updates SplitRatio and reflows the pane widths + divider
         /// position immediately (the "live" half of "drags SplitRatio live and saves on drag-end"), but does
-        /// NOT raise OnLayoutChanged — once persistence is wired (Task 11: "save on every OnLayoutChanged"),
-        /// firing this every drag frame would write to PlayerPrefs dozens of times per drag.</summary>
+        /// NOT raise OnLayoutChanged. That is what keeps a drag to ONE PlayerPrefs write instead of dozens:
+        /// RaiseChanged calls PersistNow, so raising per drag-frame would persist per drag-frame.
+        /// CommitSplitRatio below is the single write, and OnApplicationQuit is the belt for a drag the DM
+        /// never released.</summary>
         public void SetSplitRatioLive(float desiredRatio)
         {
             if (Layout.Secondary == null) return;   // nothing to drag against; the divider is hidden anyway
@@ -496,8 +503,8 @@ namespace WorldGen.Workspace.Rendering
             ReflowPanes();
         }
 
-        /// <summary>The "saves on drag-end" half: raises OnLayoutChanged once, the hook a future persistence
-        /// listener (Task 11) attaches to. Called unconditionally on drag-end, matching the
+        /// <summary>The "saves on drag-end" half: raises OnLayoutChanged once, which is what reaches
+        /// PersistNow (see RaiseChanged). Called unconditionally on drag-end, matching the
         /// drag-end-always-saves behaviour of the retired notes split (NotesLayoutController.SaveSplitFraction,
         /// deleted in Task 10c — git history, not a file to open).</summary>
         public void CommitSplitRatio() => RaiseChanged();
@@ -600,8 +607,8 @@ namespace WorldGen.Workspace.Rendering
             if (surfaceRegistry == null) return;
 
             // Belt, not the fix: EnsureLayout is what actually guarantees a Layout on every path that
-            // reaches here (Awake for a first build, WorkspaceBuilder.Awake's guard branch for a reload —
-            // see EnsureLayout's own doc). This stays because SetSurfaceRegistry is public and calls straight
+            // reaches here — Awake, plus WorkspaceBuilder.Awake's own explicit call, which covers both a
+            // first build and a post-reload rebuild (see EnsureLayout's own doc). This stays because SetSurfaceRegistry is public and calls straight
             // through to here, so a future caller that skips EnsureLayout gets an inert no-op instead of an
             // NRE on Layout.FocusedPane / PaneContent / ActiveSurfaceOf below.
             if (Layout == null) return;

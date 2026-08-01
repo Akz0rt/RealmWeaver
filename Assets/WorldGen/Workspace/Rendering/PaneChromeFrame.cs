@@ -124,7 +124,7 @@ namespace WorldGen.Workspace.Rendering
         /// via an `AppScreen.MapEditor` that Task 10c deleted, so the chrome could be re-shown behind a Hide()
         /// this host had already issued (see MapSurfaceHost's now-closed KNOWN SEAM paragraph). What it
         /// defends against NOW is narrower and still real: this host's own next Show landing in a DIFFERENT
-        /// pane, and the un-hosted transitional state before Task 11 wires the shell into a scene.
+        /// pane, and a scene with no workspace shell in it at all, where this chrome is never hosted.
         ///
         /// WHY NOT PLAIN ZERO. Zeroing all four offsets restores the frame to the full canvas — which WAS the
         /// window-anchored geometry the chrome was written for, and stopped being it in the same change that

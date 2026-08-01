@@ -49,11 +49,11 @@ namespace WorldGen.Workspace.Rendering
         WorkspaceController controller;
         NotesDocumentController documentController;
 
-        /// <summary>Discovered once, in Attach, the same override-or-discover pattern MapSurfaceHost.Rewire
-        /// uses for mapCamera — except this class has no Rewire counterpart to re-run it after a domain
-        /// reload: `controller` itself is already documented (Update's own guard, above) as NOT revived post-
-        /// reload, and this field is a plain non-serialized reference beside it, so it is wiped right along
-        /// with `controller` and left null — the same accepted gap, not a new one. Passed straight to
+        /// <summary>Discovered once per Attach, the same override-or-discover pattern MapSurfaceHost.Rewire
+        /// uses for mapCamera — and Attach IS this class's Rewire counterpart, as of Task 11: a domain reload
+        /// wipes this field along with `controller`, and WorkspaceBuilder's shell rebuild calls Attach again
+        /// on the surviving component, which re-runs every assignment below. "Once" therefore means once per
+        /// shell, not once per session. Passed straight to
         /// WorldObjectSource.Collect, which treats null as "no POIs exist" (its own doc); this class holds no
         /// null branch of its own for it any more, the check went with the mapping in Task 10e.</summary>
         PoiManager poiManager;
@@ -106,9 +106,10 @@ namespace WorldGen.Workspace.Rendering
             }
             popup.controller = controller;
             popup.documentController = documentController;
-            // FindFirstObjectByType, not an Inspector slot — WorkspaceBuilder is not wired into the scene
-            // until Task 11 (see EnsureDocumentController's own doc for the identical reasoning applied to
-            // documentController), and PoiManager already lives wherever the map's own scene objects do, not
+            // FindFirstObjectByType, not an Inspector slot — this component is AddComponent-ed at runtime
+            // onto WorkspaceBuilder's GameObject, so there is no serialized slot on it at all (see
+            // EnsureDocumentController's own doc for the identical reasoning applied to documentController),
+            // and PoiManager already lives wherever the map's own scene objects do, not
             // under WorkspaceBuilder's GameObject. Absent entirely before generation runs — WorldObjectSource
             // .Collect returns null for a null manager and QuickOpen's W5 treats that as "no POIs", the same
             // tolerance this class already extends to a null documentController.
@@ -154,10 +155,12 @@ namespace WorldGen.Workspace.Rendering
 
         void Update()
         {
-            // controller can be null after a Play-mode script reload re-invokes Awake on the still-live host
-            // — WorkspaceBuilder.Awake's own comment documents this exact gap for PrimaryTabStrip/
-            // SecondaryTabStrip/Navigator; this component has the same one. Without this guard every Ctrl+K
-            // press after a reload would NRE instead of silently doing nothing.
+            // controller is null for the ONE FRAME-ish window between a Play-mode script reload wiping it
+            // and WorkspaceBuilder.Awake's rebuild calling Attach again — and for the whole session in a bare
+            // scene with no WorkspaceBuilder at all, where nothing ever calls Attach. Task 11 closed the
+            // "inert for the rest of the session after a reload" case this guard was written for; the guard
+            // stays because Update() is a per-frame callback on a component whose wiring is done by someone
+            // else's Awake, and Unity gives no ordering guarantee between the two.
             if (controller == null || Keyboard.current == null) return;
 
             if (popupGO == null)
