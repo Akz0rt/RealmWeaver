@@ -124,116 +124,62 @@ namespace WorldGen.Workspace.Rendering
 
         void Awake()
         {
-            // A script recompile while already in Play Mode re-invokes Awake() on existing
-            // components, but this method builds the entire shell imperatively with
-            // `new GameObject(...)` — without this guard, every such hot-reload would stack another
-            // full duplicate hierarchy on top of the one already built, exactly as NotesRootBuilder
-            // documents. The child GameObjects (and the WorkspaceController sibling component)
-            // survive the reload; only re-running Awake() is new, so recover the Controller
-            // reference here rather than leaving it null — the auto-property's backing field does
-            // NOT survive the reload (it is not a serialized Unity field), even though the component
-            // it points at does. Recovering Controller this way is genuinely useful: WorkspaceController's
-            // OWN Awake() re-runs on the same reload and rebuilds a fresh, USABLE (if reset) Layout.
+            // A script recompile while already in Play Mode re-invokes Awake() on existing components, and
+            // this method builds the entire shell imperatively with `new GameObject(...)` — so without a
+            // guard, every hot-reload would stack another full duplicate hierarchy on top of the one already
+            // built, exactly as NotesRootBuilder documents. The guard is DemolishForRebuild rather than an
+            // early return, and that inversion is the whole of Task 11 Step 5.
             //
-            // PrimaryTabStrip/SecondaryTabStrip/Navigator/QuickOpenPopup are deliberately NOT recovered the
-            // same way. A naive GetComponentsInChildren<TabStripView>() keyed by PaneIndex would not even find the right
-            // instance — PaneIndex is a plain auto-property, the exact construct this comment just said
-            // does not survive reload, so it reads 0 on BOTH surviving strips post-reload. But fixing the
-            // lookup (e.g. by GameObject name, which DOES survive) would still recover a functionally DEAD
-            // object: TabStripView has no Awake() of its own that re-wires anything, so its `controller`
-            // field, its `OnLayoutChanged` subscription, and every tab/close/plus Button's runtime
-            // AddListener callback are all gone too (none of that is Unity-serialized, exactly like
-            // Layout) — and NavigatorView is built the same imperative way, with the same gap.
-            // QuickOpenPopup has the mirror-image version of this same gap: its own `controller` field is
-            // gone too (see QuickOpenPopup.Update's `if (controller == null) return;` guard, which exists
-            // precisely for this case), so a naively-recovered instance would poll Keyboard.current forever
-            // and never actually be able to open anything. A non-null-but-inert reference is worse than
-            // leaving these properties null — Task 8 assigning OnRequestQuickOpen onto a dead strip would
-            // silently do nothing, which is harder to notice than a null reference. This is the same known
-            // gap WorkspaceController's own Awake() documents for Layout, extended to the tab strips and the
-            // navigator: Task 11 owns fixing THOSE, by rebuilding the whole shell (or at minimum re-running
-            // the affected Create methods) on restore, not by a partial reference recovery here.
+            // WHY WHOLESALE, having spent this arc arguing for the opposite. Through Task 10 the guard branch
+            // RE-POINTED references and rebuilt nothing, on the principle that a partially-recovered view is
+            // worse than an absent one. That principle is still right and is why the branch never grew: what
+            // it could not reach kept growing instead. A reload wipes every non-serialized field and every
+            // runtime AddListener, which for this shell means TabStripView.controller and its OnLayoutChanged
+            // subscription, every tab/close/«+» callback, NavigatorView's controller/documentController/
+            // columnLayoutElement and its three subscriptions, its header, search and «+ Группа» listeners
+            // (chrome it builds ONCE and never rebuilds, so no Rebuild could re-add them),
+            // QuickOpenPopup.controller, and the divider's two drag delegates. Re-pointing all of that is not
+            // a smaller job than rebuilding — it is the same job, spread over five files, with a new way to
+            // half-do it in each. The shell is built imperatively from Layout and nothing else, so
+            // demolishing and re-running this method produces EXACTLY what a cold start produces. That is the
+            // "rebuilding the whole shell" the previous revision of this comment named as Task 11's answer.
             //
-            // Surfaces (Task 9, review round 3) are the ONE exception to "don't partially recover here", and
-            // deliberately so: WorkspaceController.surfaceRegistry is ALSO a plain, non-serialized field, so
-            // without re-wiring it here `SyncSurfaces` early-returns on every call for the rest of the
-            // session — not merely a stale rect (the already-accepted class of gap above), but the ENTIRE
-            // surface system going silently dead: no tab switch, close or promotion shows or hides anything,
-            // with nothing in a standalone build to tell the user why. This branch re-wires it WITHOUT
-            // rebuilding any UI — the distinction the rest of this comment draws for tab strips/Navigator
-            // still holds and is not being abandoned: MapSurfaceHost is RECOVERED via GetComponent (never
-            // Create, which would AddComponent a duplicate) and only re-runs its OWN discovery
-            // (MapSurfaceHost.Rewire — camera/chrome/toolbar, the same plain-field class of gap on THAT
-            // component); NotesRootBuilder.EnsureDocumentController/EnsureBuilt were already reload-safe
-            // (childCount-guarded — see NotesRootBuilder's own doc) and cost nothing extra to call again;
-            // and `new SurfaceRegistry()` / `new PageSurfaceHost(...)` are cheap plain C# objects, not
-            // GameObjects, so reconstructing them is not "stacking a duplicate hierarchy" the way a second
-            // BuildPaneContainer call would be — there is no hierarchy involved in either at all.
+            // WHAT MAKES IT LOSSLESS is the other half of this task: WorkspaceController.RestoreFromPrefs
+            // re-applies the DM's stored tabs/split/navigator width during the rebuild, so a recompile no
+            // longer silently resets the workspace to WorkspaceOps.NewDefault() either. Before persistence
+            // existed, rebuilding would have thrown the layout away just as re-pointing did — which is part
+            // of why this step waited for Task 11 rather than being done in Task 9.
             //
-            // Round 4 extends that same exception to the two things SyncSurfaces reads BESIDES the registry,
-            // for the same reason and by the same rule (re-point references, never rebuild):
-            // WorkspaceController.Layout (null after a reload -> an NRE on Layout.FocusedPane INSIDE this
-            // recovery path) and WorkspaceController's six pane handles (null after a reload -> PaneContent
-            // returns null forever, so SyncSurfaces shows nothing and Hides every host: a blank workspace
-            // rather than a revived one). Both are recovered by WorkspaceController's own Ensure* methods —
-            // see their docs. NOTHING here revives the tab strips/Navigator/QuickOpenPopup/divider-drag
-            // delegates, so after a reload the correct SURFACE renders but the chrome around it stays inert
-            // until Task 11: clicking a tab, DRAGGING a tab (Task 10d — TabDragHandler's own guard makes that
-            // a silent no-op rather than an NRE on its wiped `strip`/`controller` fields), the navigator,
-            // «+», Ctrl+K or dragging the divider all still do nothing. That is the line — pane handles are
-            // read by SyncSurfaces, which runs post-reload; the strips are read by nothing that runs
-            // post-reload. The ONE thing this branch does clean up for the tab drag is the pair of overlays a
-            // reload could have left on screen mid-gesture — see the HideStrandedOverlays call below, which
-            // hides pixels rather than reviving behaviour.
-            if (transform.childCount > 0)
-            {
-                Controller = GetComponent<WorkspaceController>();
-                if (Controller != null)
-                {
-                    // GetComponent, unlike the AddComponent below, does NOT invoke Awake() synchronously, and
-                    // Unity's Awake dispatch order between two components on the SAME GameObject is undefined
-                    // — so WorkspaceController.Awake may not have run yet when SetSurfaceRegistry (and its
-                    // immediate SyncSurfaces) fires at the end of this branch. Call both Ensure* directly
-                    // instead of trusting that ordering, the same way EnsureDocumentController below calls
-                    // NotesRootBuilder.EnsureBuilt() directly rather than trusting ITS Awake. Layout first:
-                    // EnsurePaneHandles ends in ReflowPanes, which reads Layout.Secondary/SplitRatio.
-                    Controller.EnsureLayout();
-                    Controller.EnsurePaneHandles();
-
-                    // A reload landing MID-DRAG (Task 10d) strands the drag ghost and the insertion marker
-                    // visible: the reload nulls TabDragHandler's `dragging` flag and its `strip` reference,
-                    // so its OnBeginDrag guard early-returns forever and its own HideOverlays becomes
-                    // unreachable — the two GameObjects survive, switched on, with nothing left that can
-                    // switch them off. TabDragHandler's find-then-build recovery closes the DUPLICATE-orphan
-                    // case (a second ghost) but not this one, because the recovery only runs on a drag that
-                    // can no longer start. This branch is the only code that runs after a reload and knows
-                    // where the canvas is, which is why the cleanup lives here rather than there. It hides
-                    // PIXELS, not behaviour: the strips stay as inert as the paragraph above says.
-                    TabDragHandler.HideStrandedOverlays(Controller.ShellRoot);
-                }
-
-                var recoveredNotesRoot = EnsureDocumentController();
-                var recoveredMapHost = GetComponent<MapSurfaceHost>();
-                recoveredMapHost?.Rewire(mapCamera, mapChrome, rootRowBackground: null);
-                // Same GetComponent-then-Rewire recovery as the map host on the line above, and needed for the
-                // same reason (ScreenSurfaceHosts' own RECOMPILE GAP paragraph): the component survives the
-                // reload, every reference inside it does not. Recovering it also has a visible consequence the
-                // map host's does not — a screen that was ON at the moment of the reload can only be turned
-                // off again by a host that still holds it.
-                var recoveredScreenHosts = GetComponent<ScreenSurfaceHosts>();
-                recoveredScreenHosts?.Rewire(poiEditorScreenOverride, interiorScreenOverride, battleGridScreenOverride);
-
-                var recoveredRegistry = new SurfaceRegistry();
-                if (recoveredNotesRoot != null)
-                    recoveredRegistry.Register(new PageSurfaceHost(recoveredNotesRoot.DocumentController, recoveredNotesRoot.DocumentView));
-                if (recoveredMapHost != null) recoveredRegistry.Register(recoveredMapHost);
-                if (recoveredScreenHosts != null)
-                    foreach (var host in recoveredScreenHosts.Hosts) recoveredRegistry.Register(host);
-                if (Controller != null) Controller.SetSurfaceRegistry(recoveredRegistry);
-
-                return;
-            }
-
+            // WHAT IS NOT DESTROYED, and why the two rules differ. The CHILD hierarchy is demolished; the
+            // four components this method AddComponents onto its OWN GameObject (WorkspaceController,
+            // QuickOpenPopup, MapSurfaceHost, ScreenSurfaceHosts) are REUSED — see EnsureComponent, and see
+            // each Create/Attach, which are reuse-or-add for this reason. Two arguments, both load-bearing:
+            //   • MapSurfaceHost/ScreenSurfaceHosts hold the map camera's viewport rect, the disabled pane
+            //     backgrounds and which legacy screen is currently ON. Destroy() is deferred to end of frame,
+            //     so a destroy-then-AddComponent pair leaves two live hosts asserting opposite things for a
+            //     frame; and a destroyed host cannot turn off the screen it was holding. Rewire() — which
+            //     both already have, for precisely this reload — re-points them with no such window.
+            //   • WorkspaceController carries the ONLY [SerializeField] state in this shell
+            //     (prefsProjectPath), and a serialized field survives a domain reload only on a component
+            //     that itself survives. Destroying it would lose the very key the restore needs.
+            //
+            // DestroyImmediate, not Destroy, for the children — and this is not a stylistic preference.
+            // Destroy defers to end of frame, so the OLD "WorkspaceCanvas" would still be a child (and still
+            // answer Transform.Find, and still read non-null through Unity's lifetime-aware ==) while this
+            // method builds a SECOND one with the same name. WorkspaceController.ShellRoot and
+            // MapSurfaceHost.ResolveRootRowBackground both resolve by that exact path, so they would have a
+            // 50/50 chance of latching onto the corpse for the rest of the session — and
+            // MapScreenController.EnsureSwitcher would bake it into AppScreen.Workspace's member table.
+            // DestroyImmediate is legal here (Awake is not one of the callbacks Unity forbids it in) and
+            // removes the ambiguity outright rather than managing it.
+            //
+            // The two stranded-overlay cleanups the old branch performed are not lost, they moved: the tab
+            // drag's ghost and insertion marker are parented to the canvas root (TabStripView's BuildGhost),
+            // so they die with it and TabDragHandler.HideStrandedOverlays is gone; QuickOpenPopup's palette
+            // is a ROOT canvas that does NOT, so QuickOpenPopup.Attach now drops it — see there for why a
+            // stranded palette is the one that actually matters (its backdrop eats every click, so a revived
+            // shell would come back alive and still unusable).
+            if (transform.childCount > 0) DemolishForRebuild();
             EnsureEventSystemExists();
 
             // Resolves the live NotesRootBuilder BEFORE anything below reads documentController — see
@@ -242,7 +188,16 @@ namespace WorldGen.Workspace.Rendering
 
             // WorkspaceController owns Layout independently of any Unity view state, so it is built
             // first — NavigatorColumn's initial width below reads Controller.Layout.NavigatorWidth.
-            Controller = gameObject.AddComponent<WorkspaceController>();
+            //
+            // EnsureComponent, not AddComponent: on the rebuild path this component already exists and must
+            // be kept, not replaced (see Awake's own comment on the two things it carries that a fresh one
+            // would not). EnsureLayout is then called EXPLICITLY, because GetComponent — unlike AddComponent
+            // — does not invoke Awake() synchronously, and Unity's Awake dispatch order between two
+            // components on the same GameObject is undefined: on the rebuild path this class is the
+            // PRE-EXISTING component and the controller was AddComponent-ed later, so the builder tends to
+            // run first. Same direct-call pattern EnsureDocumentController uses on NotesRootBuilder.EnsureBuilt.
+            Controller = EnsureComponent<WorkspaceController>();
+            Controller.EnsureLayout();
 
             var canvasGO = new GameObject("WorkspaceCanvas", typeof(RectTransform));
             canvasGO.transform.SetParent(transform, false);
@@ -351,6 +306,44 @@ namespace WorldGen.Workspace.Rendering
                          interiorScreenOverride, battleGridScreenOverride).Hosts)
                 registry.Register(host);
             Controller.SetSurfaceRegistry(registry);
+        }
+
+        /// <summary>Tears down everything Awake built LAST time, so Awake can build it again from scratch —
+        /// the demolition half of the wholesale rebuild (see Awake's own comment for why wholesale).
+        ///
+        /// ONE CHILD is expected in practice ("WorkspaceCanvas"), but this loops over all of them rather than
+        /// naming it: every other root this shell creates is deliberately NOT a child (QuickOpenPopup's
+        /// palette, NavContextMenu's menu and ConfirmDialog's dialog are all root canvases so they can draw
+        /// over everything), so anything that IS a child got here from this method and belongs to it. Naming
+        /// the canvas would silently leak a child a future step adds beside it.
+        ///
+        /// DestroyImmediate — see Awake for the argument. In short: a deferred Destroy leaves the old
+        /// "WorkspaceCanvas" answering Transform.Find alongside the new one for a frame, and two resolvers in
+        /// this arc (WorkspaceController.ShellRoot, MapSurfaceHost.ResolveRootRowBackground) find their
+        /// targets by exactly that path. Iterating BACKWARDS because DestroyImmediate re-indexes the child
+        /// list on the spot — a forward loop would skip every second child.
+        ///
+        /// Each demolished view's OnDestroy runs synchronously from here. That is wanted, not tolerated:
+        /// NavigatorView.OnDestroy unsubscribes from OnLayoutChanged/OnDocumentChanged/OnPoisChanged, and
+        /// PoiManager is a SCENE component that outlives the shell — so on any rebuild where those references
+        /// are still live (an Awake re-entered without a domain reload), skipping it would leave a destroyed
+        /// MonoBehaviour in the manager's invocation list. After a real reload the references are already
+        /// null and every unsubscribe is a no-op, which is why this costs nothing on the common path.</summary>
+        void DemolishForRebuild()
+        {
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                DestroyImmediate(transform.GetChild(i).gameObject);
+        }
+
+        /// <summary>Reuse-or-add for the components Awake puts on its OWN GameObject. Written out rather than
+        /// `GetComponent<T>() ?? gameObject.AddComponent<T>()`: `??` bypasses UnityEngine.Object's overloaded
+        /// `==`, so a destroyed-but-not-yet-collected component would slip through as if it were live. The
+        /// explicit null check goes through that operator. Same idiom, same reason, as
+        /// TabDragHandler.EnsureOverlay and NavigatorView.Rebuild's read of documentController.</summary>
+        T EnsureComponent<T>() where T : Component
+        {
+            var existing = GetComponent<T>();
+            return existing != null ? existing : gameObject.AddComponent<T>();
         }
 
         /// <summary>Finds the NotesRootBuilder already living in the scene (this predates the workspace-shell

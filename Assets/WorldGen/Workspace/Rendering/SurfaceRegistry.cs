@@ -272,10 +272,19 @@ namespace WorldGen.Workspace.Rendering
         RectTransform shownIn;
         bool visible;
 
+        /// <summary>REUSE-OR-ADD, not plain AddComponent: WorkspaceBuilder.Awake re-runs this whole method on
+        /// every Play-mode shell rebuild (Task 11 Step 5), and a second AddComponent would leave two live
+        /// hosts arguing over one camera's viewport rect and one set of background Images. Reusing is also
+        /// strictly better than destroy-then-add — a destroyed host cannot turn OFF the chrome it was holding
+        /// on, and Destroy is deferred to end of frame — which is the whole reason Rewire below exists and is
+        /// called from here rather than being a second, parallel assignment path.</summary>
         public static MapSurfaceHost Create(GameObject owner, Camera cameraOverride, GameObject[] chromeOverride,
             Image rootRowBackground)
         {
-            var host = owner.AddComponent<MapSurfaceHost>();
+            // Explicit null check, never `??`: Unity's lifetime-aware `==` is what distinguishes a destroyed
+            // component from a live one, and `??` bypasses the overload.
+            var existing = owner.GetComponent<MapSurfaceHost>();
+            var host = existing != null ? existing : owner.AddComponent<MapSurfaceHost>();
             host.Rewire(cameraOverride, chromeOverride, rootRowBackground);
             return host;
         }
@@ -762,10 +771,15 @@ namespace WorldGen.Workspace.Rendering
         /// unresolved. Same non-readonly/re-assigned-in-Rewire rule as the two collections above.</summary>
         List<Canvas> canvasScratch = new List<Canvas>();
 
+        /// <summary>REUSE-OR-ADD for the same reason MapSurfaceHost.Create is (see there), and with a sharper
+        /// consequence: this component holds WHICH legacy screen is currently switched on, and those screens
+        /// are full-pane canvases. A duplicate — or a destroyed original — leaves whichever screen was
+        /// visible on with nothing left that can retire it.</summary>
         public static ScreenSurfaceHosts Create(GameObject owner, GameObject poiEditorOverride,
             GameObject interiorOverride, GameObject battleGridOverride)
         {
-            var hosts = owner.AddComponent<ScreenSurfaceHosts>();
+            var existing = owner.GetComponent<ScreenSurfaceHosts>();
+            var hosts = existing != null ? existing : owner.AddComponent<ScreenSurfaceHosts>();
             hosts.Rewire(poiEditorOverride, interiorOverride, battleGridOverride);
             return hosts;
         }

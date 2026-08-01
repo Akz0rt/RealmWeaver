@@ -41,6 +41,11 @@ namespace WorldGen.Workspace.Rendering
         // alongside either, but staying inside that band keeps future stacking sane rather than accidental.
         const int CanvasSortingOrder = 4000;
 
+        /// <summary>The palette root's GameObject name. A named constant because it is read back by
+        /// DestroyStrandedCanvas, where the name is the ONLY handle that survives a domain reload — a literal
+        /// in two places would be a rename away from silently never matching again.</summary>
+        const string CanvasName = "QuickOpenCanvas";
+
         WorkspaceController controller;
         NotesDocumentController documentController;
 
@@ -70,9 +75,35 @@ namespace WorldGen.Workspace.Rendering
         bool focusPending;
         bool searchPending;
 
+        /// <summary>REUSE-OR-ADD, and idempotent: WorkspaceBuilder.Awake re-runs this on every Play-mode
+        /// shell rebuild (Task 11 Step 5), and every field it assigns below is a plain non-serialized one a
+        /// domain reload has already wiped — so a second call is exactly the re-wiring that revives Ctrl+K,
+        /// where a second AddComponent would give the GameObject two palettes both polling the chord.
+        ///
+        /// DROPPING A STRANDED PALETTE is the other half, and it is the one that would actually be noticed. A
+        /// reload landing while the palette is OPEN leaves `popupGO` null on this component while the canvas
+        /// itself lives on — and unlike the tab drag's ghost and marker, which are parented to the workspace
+        /// canvas and die when WorkspaceBuilder demolishes it, "QuickOpenCanvas" is a ROOT GameObject
+        /// (BuildPopup parents it to nothing, so it can draw over everything). Close() cannot reach it: its
+        /// first line is `if (popupGO == null) return;`. What is left is a full-screen backdrop with
+        /// raycastTarget on and a click-to-dismiss handler that no longer exists — so a shell that had just
+        /// been rebuilt correctly would come back alive and still eat every click. Found BY NAME because the
+        /// name is the only handle that survives a reload, which is the same rule TabDragHandler.EnsureOverlay
+        /// states for the overlays it re-finds.</summary>
         public static QuickOpenPopup Attach(GameObject host, WorkspaceController controller, NotesDocumentController documentController)
         {
-            var popup = host.AddComponent<QuickOpenPopup>();
+            // Explicit null check, never `??` — see WorkspaceBuilder.EnsureComponent for the operator reason.
+            var existing = host.GetComponent<QuickOpenPopup>();
+            var popup = existing != null ? existing : host.AddComponent<QuickOpenPopup>();
+            if (existing != null)
+            {
+                // Close() first, for the rebuild that did NOT follow a domain reload: there `popupGO` is
+                // still live and Close is the path that also resets inputField/hits/highlighted, which
+                // DestroyStrandedCanvas deliberately knows nothing about. After a real reload Close is a
+                // no-op on its own first line and the second call is the one that does the work.
+                popup.Close();
+                DestroyStrandedCanvas();
+            }
             popup.controller = controller;
             popup.documentController = documentController;
             // FindFirstObjectByType, not an Inspector slot — WorkspaceBuilder is not wired into the scene
@@ -88,6 +119,22 @@ namespace WorldGen.Workspace.Rendering
             popup.poiManager = FindFirstObjectByType<PoiManager>(FindObjectsInactive.Include);
             popup.builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             return popup;
+        }
+
+        /// <summary>Switches off and destroys a palette canvas that no live QuickOpenPopup can reach — see
+        /// Attach, its only caller, for when that happens and why it matters.
+        ///
+        /// GameObject.Find locates ACTIVE root objects only, which is exactly the right scope here: an
+        /// INACTIVE stranded palette is invisible and eats no clicks, so it is not the case this exists for,
+        /// and a Destroy already issued on a previous call has left the object switched off by the line
+        /// below. SetActive(false) before Destroy so the backdrop stops swallowing clicks THIS frame rather
+        /// than at end of frame — the same immediate-hide-before-deferred-destroy precaution Close() takes.</summary>
+        static void DestroyStrandedCanvas()
+        {
+            var stranded = GameObject.Find(CanvasName);
+            if (stranded == null) return;
+            stranded.SetActive(false);
+            Destroy(stranded);
         }
 
         // The popup canvas is a ROOT GameObject (parented to nothing — see BuildPopup), same as
@@ -278,7 +325,7 @@ namespace WorldGen.Workspace.Rendering
 
         void BuildPopup()
         {
-            var canvasGO = new GameObject("QuickOpenCanvas", typeof(RectTransform));
+            var canvasGO = new GameObject(CanvasName, typeof(RectTransform));
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = CanvasSortingOrder;

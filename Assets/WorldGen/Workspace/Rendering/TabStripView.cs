@@ -767,27 +767,15 @@ namespace WorldGen.Workspace.Rendering
 
         // ── The two reused overlays ────────────────────────────────────────────
 
-        /// <summary>Switches off any ghost/marker a domain reload left stranded VISIBLE, given the workspace
-        /// canvas. Called from WorkspaceBuilder.Awake's recompile branch, which is the only code that runs
-        /// after a reload and knows where the canvas is — see that call site for why the cleanup cannot live
-        /// in this class: after a reload every surviving TabDragHandler has `dragging` false and `strip`
-        /// null, so OnBeginDrag early-returns and HideOverlays below is unreachable forever, leaving two
-        /// switched-on GameObjects nothing holds a reference to. Looked up BY NAME for the same reason
-        /// EnsureOverlay does: the name is the only handle that survives a reload.
-        ///
-        /// Static, and takes the root as an argument rather than finding it: there is no live instance to
-        /// call it on (the tabs it would belong to are the inert ones), and the caller already holds the
-        /// canvas via WorkspaceController.ShellRoot. Tolerates a null root, and a canvas with neither
-        /// overlay under it — the ordinary case, since most reloads do not land mid-drag.</summary>
-        internal static void HideStrandedOverlays(GameObject canvasRoot)
-        {
-            if (canvasRoot == null) return;
-            foreach (string overlayName in new[] { GhostName, MarkerName })
-            {
-                Transform overlay = canvasRoot.transform.Find(overlayName);
-                if (overlay != null) overlay.gameObject.SetActive(false);
-            }
-        }
+        // A HideStrandedOverlays(canvasRoot) static used to live here, called from WorkspaceBuilder.Awake's
+        // recompile branch: a reload landing mid-drag left the ghost and the marker switched ON with nothing
+        // able to switch them off, because every surviving TabDragHandler comes back with `dragging` false
+        // and `strip` null, so OnBeginDrag early-returns and HideOverlays below is unreachable forever. Task
+        // 11 removed it rather than kept it: both overlays are parented to the WORKSPACE CANVAS (see
+        // BuildGhost), and that canvas is now demolished and rebuilt on every reload
+        // (WorkspaceBuilder.DemolishForRebuild), so the strand cannot outlive the gesture. QuickOpenPopup's
+        // palette is the one overlay in this shell that is NOT a canvas child, which is why the equivalent
+        // cleanup still exists there (QuickOpenPopup.DestroyStrandedCanvas) and only there.
 
         void HideOverlays()
         {

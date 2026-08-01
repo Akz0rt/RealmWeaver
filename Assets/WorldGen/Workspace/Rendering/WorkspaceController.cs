@@ -151,61 +151,15 @@ namespace WorldGen.Workspace.Rendering
             ReflowPanes();
         }
 
-        /// <summary>Re-acquires the six handles Initialize normally supplies, by hierarchy path, when a
-        /// Play-mode script reload has wiped them — the "re-point the references, don't rebuild" pattern
-        /// MapSurfaceHost.Rewire/ResolveRootRowBackground already use in this same arc, applied to this
-        /// class's own fields. No GameObject is created, moved or duplicated here.
-        ///
-        /// WHY THIS IS NEEDED AT ALL, and why a null Layout was only half the reload story: every field
-        /// Initialize writes is a plain, non-[SerializeField] field, so a domain reload nulls all six —
-        /// and Initialize's ONLY caller is WorkspaceBuilder.BuildPaneContainer, on the first-build path
-        /// the recompile guard skips. Without this, PaneContent(0) returns null forever after a reload,
-        /// so SyncSurfaces shows NOTHING and Hides EVERY host: a blank workspace, not the "surface system
-        /// revived" the guard branch is written to produce. The paths below are exactly where
-        /// WorkspaceBuilder.BuildPaneContainer/BuildPane construct them, relative to THIS transform —
-        /// which is also WorkspaceBuilder's own transform, since WorkspaceBuilder AddComponents this
-        /// class onto its own GameObject. Transform.Find locates INACTIVE children too, which matters:
-        /// ReflowPanes deactivates SecondaryPane and the divider whenever there is no split.
-        ///
-        /// ALL-OR-NOTHING on purpose: nothing is assigned until every lookup has succeeded, so a renamed
-        /// or restructured hierarchy leaves this class in its existing safe state (ReflowPanes' own
-        /// `primaryLayoutElement == null` early-return, PaneContent returning null) instead of half-wired
-        /// — ReflowPanes dereferences secondaryPaneRect/dividerRect unguarded once past that check, so a
-        /// partial recovery would turn a silent no-op into an NRE.
-        ///
-        /// Calls EnsureLayout() itself rather than documenting an ordering requirement it would then NRE on:
-        /// Initialize below ends in ReflowPanes, which reads Layout.Secondary/SplitRatio. WorkspaceBuilder's
-        /// guard branch still calls EnsureLayout explicitly right before this, because the registry it wires
-        /// afterwards needs a Layout too — this is belt for any other caller, not a duplicate of that.
-        ///
-        /// This deliberately does NOT try to revive TabStripView /
-        /// NavigatorView / QuickOpenPopup / the divider's drag delegates — see WorkspaceBuilder.Awake's
-        /// comment for why a partial recovery THERE is worse than none, and Task 11 for the real fix. The
-        /// line between the two: these handles are read by SyncSurfaces, which round 3 made run again
-        /// after a reload; the strips and the navigator are read by nothing that runs post-reload.</summary>
-        public void EnsurePaneHandles()
-        {
-            if (primaryContent != null) return;
-
-            EnsureLayout();
-
-            const string PaneContainerPath = "WorkspaceCanvas/RootRow/PaneContainer/";
-            var primaryPane = transform.Find(PaneContainerPath + "PrimaryPane") as RectTransform;
-            var secondaryPane = transform.Find(PaneContainerPath + "SecondaryPane") as RectTransform;
-            var divider = transform.Find(PaneContainerPath + "DraggableDivider") as RectTransform;
-            if (primaryPane == null || secondaryPane == null || divider == null) return;
-
-            var primaryContentRect = primaryPane.Find("ContentArea") as RectTransform;
-            var secondaryContentRect = secondaryPane.Find("ContentArea") as RectTransform;
-            var primaryElement = primaryPane.GetComponent<LayoutElement>();
-            var secondaryElement = secondaryPane.GetComponent<LayoutElement>();
-            if (primaryContentRect == null || secondaryContentRect == null ||
-                primaryElement == null || secondaryElement == null) return;
-
-            Initialize(new PaneHandles(primaryPane, primaryElement, primaryContentRect),
-                       new PaneHandles(secondaryPane, secondaryElement, secondaryContentRect),
-                       divider);
-        }
+        // An EnsurePaneHandles() used to sit here: it re-acquired the six fields Initialize writes by walking
+        // "WorkspaceCanvas/RootRow/PaneContainer/…" with Transform.Find, because a domain reload nulls all
+        // six (they are plain non-[SerializeField] fields) while Initialize's only caller runs on the
+        // first-build path a recompile skipped. Task 11 deleted it because that premise is gone: the shell is
+        // now demolished and rebuilt on every reload (WorkspaceBuilder.Awake), so Initialize runs again with
+        // freshly constructed handles and there is nothing left to re-find. Recorded rather than silently
+        // dropped — the failure it existed for (PaneContent returning null forever, so SyncSurfaces showed
+        // nothing and Hid every host: a blank workspace) is real, and a future change that stops rebuilding
+        // the hierarchy would bring it straight back.
 
         /// <summary>Wires the surface registry (Task 9) and runs the first sync immediately — WorkspaceBuilder
         /// calls this AFTER registering every host it built (page, map), which is necessarily after
