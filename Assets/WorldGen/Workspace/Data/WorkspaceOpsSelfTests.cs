@@ -15,6 +15,22 @@ namespace WorldGen.Workspace.Data
     {
         static SurfaceRef Page(string id) => new SurfaceRef { Kind = SurfaceKind.Page, Id = id };
 
+        /// <summary>A layout with `s` open in BOTH panes — the state R1b stops Open from ever producing, and
+        /// which a WorkspacePrefs payload written before R1b can still restore. Assembled directly rather
+        /// than through Open for that reason: routing it through Open would build a MOVE and leave the
+        /// duplicate-handling rules (FindSurface's Primary-first tie-break, PruneMissing's drop-every-match)
+        /// tested against a state they never see.</summary>
+        static WorkspaceLayout Duplicated(SurfaceRef s, string title)
+        {
+            var l = WorkspaceOps.NewDefault();                      // Primary: [Карта мира]
+            l.Primary.Tabs.Add(new TabState { Surface = s, Title = title });
+            l.Primary.ActiveIndex = l.Primary.Tabs.Count - 1;
+            l.Secondary = new PaneState();
+            l.Secondary.Tabs.Add(new TabState { Surface = s, Title = title });
+            l.Secondary.ActiveIndex = 0;
+            return l;
+        }
+
         static string Dump(PaneState p)
         {
             if (p == null) return "-";
@@ -79,6 +95,98 @@ namespace WorldGen.Workspace.Data
             { Debug.LogError("FAIL open: a plain open must land in the focused pane"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Workspace Open: PASS" : "Self-Test Workspace Open: FAIL");
+        }
+
+        /// <summary>R1b — opening a surface that is already open in the OTHER pane MOVES its tab into the
+        /// target pane instead of creating a second one. R1's other half; see WorkspaceOps.Open's own doc for
+        /// why moving is right (every surface host is single-instance, so a duplicate tab is a permanently
+        /// blank one) and why the rule is written against the TARGET pane rather than the focused one.
+        ///
+        /// FOUR RULES, FOUR MUTANTS, each assertion aimed at the geometry the rule changes rather than at a
+        /// derived count:
+        ///   1. the tab MOVES — it leaves the source pane and appears in the target, and the total tab count
+        ///      across both panes does not grow. A duplicating implementation passes any test that only
+        ///      checks "the target pane now contains it";
+        ///   2. the moved tab is ACTIVE in the target pane, and the target pane is focused — an implementation
+        ///      that appends without touching ActiveIndex leaves the DM staring at a different tab;
+        ///   3. a SAME-pane reopen still ACTIVATES (R1), and specifically does not fall through into the move
+        ///      branch — the failure mode of writing R1b as a bare "is it open anywhere" check;
+        ///   4. emptying the source pane collapses the split through the existing NormalizeSplit, with focus
+        ///      and the tab landing in the promoted pane — the case where `target` is stale by the time
+        ///      MoveTab returns.</summary>
+        [ContextMenu("Self-Test: Workspace Open Moves From The Other Pane")]
+        public void SelfTestOpenMovesFromOtherPane()
+        {
+            bool ok = true;
+
+            // ── 1 + 2: the move, and where it lands ────────────────────────────────
+            // Primary [Карта мира, A, B], Secondary [C], focus back on Primary.
+            var l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", false);
+            WorkspaceOps.Open(l, Page("c"), "C", true);
+            WorkspaceOps.Focus(l, 0);
+
+            WorkspaceOps.Open(l, Page("c"), "C", false);
+
+            if (Dump(l.Primary) != "Карта мира,A,B,*C")
+            { Debug.LogError($"FAIL move-open: primary = [{Dump(l.Primary)}], want [Карта мира,A,B,*C] — the tab must MOVE here and be active (R1b)"); ok = false; }
+            if (l.Secondary != null)
+            { Debug.LogError($"FAIL move-open: secondary = [{Dump(l.Secondary)}], want null — moving its only tab out must collapse the split via NormalizeSplit (R1b/R3)"); ok = false; }
+            if (l.FocusedPane != 0)
+            { Debug.LogError($"FAIL move-open: focus = {l.FocusedPane}, want 0 (R1b)"); ok = false; }
+
+            // ── 1, the half a "does the target have it?" assertion cannot see ─────
+            // The SOURCE pane must have lost it, and the workspace must hold exactly ONE tab for the surface.
+            // Built with tabs on both sides of the move so the collapse cannot mask a copy left behind.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("a"), "A", false);            // Primary [Карта мира, A]
+            WorkspaceOps.Open(l, Page("c"), "C", true);             // Secondary [C], focus 1
+            WorkspaceOps.Open(l, Page("d"), "D", false);            // Secondary [C, D], focus 1
+            WorkspaceOps.Focus(l, 0);
+            WorkspaceOps.Open(l, Page("c"), "C", false);
+
+            int copies = 0;
+            foreach (var pane in new[] { l.Primary, l.Secondary })
+            {
+                if (pane == null) continue;
+                foreach (var tab in pane.Tabs)
+                    if (tab.Surface != null && tab.Surface.Kind == SurfaceKind.Page && tab.Surface.Id == "c") copies++;
+            }
+            if (copies != 1)
+            { Debug.LogError($"FAIL move-open: the surface has {copies} tab(s) across both panes, want exactly 1 — R1b must MOVE, never duplicate"); ok = false; }
+            if (Dump(l.Primary) != "Карта мира,A,*C")
+            { Debug.LogError($"FAIL move-open: primary = [{Dump(l.Primary)}], want [Карта мира,A,*C] (R1b)"); ok = false; }
+            if (Dump(l.Secondary) != "*D")
+            { Debug.LogError($"FAIL move-open: secondary = [{Dump(l.Secondary)}], want [*D] — the source pane must lose the tab and keep a valid ActiveIndex (R1b/R5)"); ok = false; }
+
+            // ── 3: R1 still wins inside the target pane ───────────────────────────
+            // Re-opening A, which lives in the FOCUSED pane, must activate it in place — not route through
+            // the move branch and push it to the end of its own pane, and not touch the other pane at all.
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            if (Dump(l.Primary) != "Карта мира,*A,C")
+            { Debug.LogError($"FAIL move-open: primary = [{Dump(l.Primary)}], want [Карта мира,*A,C] — a same-pane reopen ACTIVATES in place (R1)"); ok = false; }
+            if (Dump(l.Secondary) != "*D")
+            { Debug.LogError($"FAIL move-open: a same-pane reopen disturbed the other pane — secondary = [{Dump(l.Secondary)}], want [*D] (R1)"); ok = false; }
+
+            // ── 4: the source pane was PRIMARY, so the collapse PROMOTES ──────────
+            // Primary [X] alone, Secondary [Y]; opening X from the secondary empties Primary, and R4 promotes
+            // Secondary into Primary's slot — so `target` (1) names a pane that no longer exists by the time
+            // MoveTab returns. Focus and ActiveIndex must follow where the tab actually landed.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.CloseTab(l, 0, 0);                          // drop the seeded map tab
+            WorkspaceOps.Open(l, Page("x"), "X", false);             // Primary [*X], focus 0
+            WorkspaceOps.Open(l, Page("y"), "Y", true);              // Secondary [*Y], focus 1
+            WorkspaceOps.Open(l, Page("x"), "X", false);             // focused pane is 1 -> move X out of Primary
+
+            if (l.Secondary != null)
+            { Debug.LogError($"FAIL move-open: secondary = [{Dump(l.Secondary)}], want null — emptying PRIMARY must promote, not leave two panes (R1b/R4)"); ok = false; }
+            if (Dump(l.Primary) != "Y,*X")
+            { Debug.LogError($"FAIL move-open: primary = [{Dump(l.Primary)}], want [Y,*X] — the promoted pane keeps the moved tab active (R1b/R4)"); ok = false; }
+            if (l.FocusedPane != 0)
+            { Debug.LogError($"FAIL move-open: focus = {l.FocusedPane} after promotion, want 0 — focus must follow the tab, not the stale target index (R1b/R4)"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Open Moves From Other Pane: PASS" : "Self-Test Workspace Open Moves From Other Pane: FAIL");
         }
 
         [ContextMenu("Self-Test: Workspace Close And Collapse")]
@@ -380,11 +488,14 @@ namespace WorldGen.Workspace.Data
             catch (System.Exception ex)
             { Debug.LogError($"FAIL find: a null argument threw {ex.GetType().Name}, want false with -1/-1"); ok = false; }
 
-            // Open in BOTH panes: Primary wins, deterministically. Open only dedupes within its target pane,
-            // so this is a state a user reaches by «Открыть рядом» on something already open.
-            var both = WorkspaceOps.NewDefault();
-            WorkspaceOps.Open(both, Page("dup"), "Dup", false);
-            WorkspaceOps.Open(both, Page("dup"), "Dup", true);
+            // Open in BOTH panes: Primary wins, deterministically.
+            //
+            // BUILT BY HAND, and it has to be since R1b: Open no longer produces this state at all (an open
+            // of a surface living in the other pane MOVES it), so constructing it through Open would silently
+            // stop testing the tie-break and start testing the move. The state is still REACHABLE — a
+            // WorkspacePrefs payload written before R1b existed restores whatever it holds, duplicates
+            // included — which is exactly why the tie-break is still live code worth pinning.
+            var both = Duplicated(Page("dup"), "Dup");
             if (!WorkspaceOps.FindSurface(both, Page("dup"), out int paneB, out int indexB) || paneB != 0)
             { Debug.LogError($"FAIL find: a surface open in both panes reported pane {paneB}/index {indexB}, want pane 0 (Primary first)"); ok = false; }
 
@@ -395,7 +506,13 @@ namespace WorldGen.Workspace.Data
         /// property MapScreenController.OnWorldRegenerated relies on since Task 10c's fix round. The old
         /// close-by-named-ref version of that method passed a single-instance check and still left duplicates
         /// behind, so both duplicate shapes are pinned here: the SAME surface open in both panes, and two
-        /// DIFFERENT surfaces of a rejected kind.</summary>
+        /// DIFFERENT surfaces of a rejected kind.
+        ///
+        /// THE SAME-SURFACE-IN-BOTH-PANES HALF IS NOW BUILT BY HAND. It used to be assembled through
+        /// Open(…, inOtherPane) — which R1b turned into a MOVE, so that construction would quietly leave this
+        /// test asserting against three tabs in one pane and no duplicate at all. Restoring a pre-R1b
+        /// WorkspacePrefs payload is the remaining way to reach the state, and it is a live one, so the shape
+        /// stays tested; only the way it is built changed. See Duplicated().</summary>
         [ContextMenu("Self-Test: Workspace Prune Drops Every Match")]
         public void SelfTestPruneDropsEveryMatch()
         {
@@ -409,14 +526,17 @@ namespace WorldGen.Workspace.Data
             WorkspaceOps.Open(l, grid1, "Бой 3", false);                          // Primary
             WorkspaceOps.Open(l, grid2, "Бой 4", false);                          // Primary — a SECOND grid
             WorkspaceOps.Open(l, Page("notes"), "Заметки", false);                // Primary — must survive
-            WorkspaceOps.Open(l, poiEd, "Тихий Брод", true);                      // Secondary; focus moves to 1
-            // Focus explicitly rather than assuming: Open(…, inOtherPane: true) leaves the focus in the pane
-            // it opened into, so without this the next Open would land in Secondary too and the
-            // same-surface-in-both-panes case would never be built.
-            WorkspaceOps.Focus(l, 0);
-            // The same surface open in BOTH panes — reachable via «Открыть рядом», and the shape a
-            // close-the-first-match call can never clear (Open only dedupes within its TARGET pane).
-            WorkspaceOps.Open(l, new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" }, "Тихий Брод", false);
+            WorkspaceOps.Open(l, poiEd, "Тихий Брод", false);                     // Primary; focus stays at 0
+            // The SAME surface open in BOTH panes, written straight into the layout — see this method's doc
+            // for why Open can no longer build it (R1b) and why the shape is still worth pinning. A separate
+            // SurfaceRef instance with equal Kind/Id, so the prune cannot pass by reference identity.
+            l.Secondary = new PaneState();
+            l.Secondary.Tabs.Add(new TabState
+            {
+                Surface = new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" },
+                Title = "Тихий Брод",
+            });
+            l.Secondary.ActiveIndex = 0;
 
             // Same predicate MapScreenController.SurvivesWorldChange uses: pages and the world map survive a
             // regeneration, every ex-screen kind does not.

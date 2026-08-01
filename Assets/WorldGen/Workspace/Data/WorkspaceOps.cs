@@ -84,7 +84,46 @@ namespace WorldGen.Workspace.Data
         /// <summary>Opens a surface as a tab. Without inOtherPane it lands in whichever pane currently has
         /// focus. WITH it, it lands in the OTHER pane instead, creating Secondary first if the workspace was
         /// not yet split (R2). Either way the target pane ends up focused — for a plain open that is a no-op,
-        /// since the target already was the focused pane.</summary>
+        /// since the target already was the focused pane.
+        ///
+        /// A SURFACE IS NEVER OPEN IN TWO PANES AT ONCE. That is R1 and R1b together, one rule with two
+        /// halves, and they must be read as a pair:
+        ///   • R1  — already open in the TARGET pane      -> activate it there.
+        ///   • R1b — already open in the OTHER pane       -> MOVE that tab into the target pane.
+        /// Only a surface open NOWHERE creates a tab.
+        ///
+        /// WHY MOVING AND NOT DUPLICATING, which is what R1b changed. Every surface host in this project is
+        /// SINGLE-INSTANCE — verified across all three families, not assumed: MapSurfaceHost owns the one map
+        /// camera, PageSurfaceHost wraps the one DocumentPageView, and ScreenSurfaceHosts owns one physical
+        /// screen GameObject per Slot (with the three interior kinds sharing one). None can render into two
+        /// panes, which is why every one of them returns a stable ShareGroup and why
+        /// WorkspaceController.SyncSurfaces lets the focused pane CLAIM that group and skips the other pane
+        /// outright. So a duplicate tab is not a second view — it is a tab that is permanently blank, still
+        /// labelled as though it showed something. Duplicating would have delivered the letter of "open it
+        /// here" while failing its intent; moving gives the DM the one instance in the pane they asked for and
+        /// leaves nothing blank behind.
+        ///
+        /// «ОТКРЫТЬ РЯДОМ» IS COVERED BY THE SAME RULE, deliberately, and this is the one generalisation worth
+        /// stating: the halves are written against the TARGET pane, not against the focused one, so an
+        /// inOtherPane open of a surface living in the focused pane also MOVES it. It has to — duplicating
+        /// there produces exactly the same permanently-blank tab, on the path («Открыть рядом», the map's
+        /// double-click) where a split is most likely to exist. The degenerate case follows from the existing
+        /// rules rather than needing its own: asking to open the ONLY tab of an unsplit workspace "beside"
+        /// itself moves it into a fresh Secondary, which empties Primary, which NormalizeSplit collapses
+        /// straight back (R4) — so nothing happens, which is the honest answer, since a single-instance
+        /// surface cannot be beside itself.
+        ///
+        /// THE MOVE GOES THROUGH MoveTab, never a hand-rolled second one: MoveTab already owns the
+        /// pre-removal-index contract, creating the destination pane on demand, and the NormalizeSplit call
+        /// that collapses or promotes when the SOURCE pane is emptied. `toIndex` is passed as the destination's
+        /// CURRENT tab count, i.e. "append" — the cross-pane case, where MoveTab's insertAt-- adjustment does
+        /// not apply at all.
+        ///
+        /// WHERE IT LANDED IS RE-DERIVED AFTERWARDS rather than assumed to be `target`, and that is not
+        /// defensive: moving the last tab OUT of Primary makes NormalizeSplit promote Secondary into Primary's
+        /// slot (R4), so a tab moved to pane 1 can be sitting in pane 0 by the time MoveTab returns. Setting
+        /// ActiveIndex and FocusedPane from a stale `target` would leave the DM focused on a pane that no
+        /// longer exists, with the wrong tab active in the one that does.</summary>
         public static void Open(WorkspaceLayout l, SurfaceRef s, string title, bool inOtherPane)
         {
             if (l == null || s == null) return;
@@ -93,24 +132,44 @@ namespace WorldGen.Workspace.Data
             if (target != 0 && target != 1) target = 0;
 
             PaneState pane = PaneAt(l, target);
+
+            // R1 — reopening a surface already open in the TARGET pane activates it; it never duplicates.
+            // Asked BEFORE the pane is created below, so an absent target pane simply falls through with
+            // `existing` at -1 rather than needing a null branch of its own.
+            int existing = IndexOfSurface(pane, s);
+            if (existing >= 0)
+            {
+                pane.ActiveIndex = existing;
+                l.FocusedPane = target;
+                return;
+            }
+
+            // R1b — open in the OTHER pane: move it here rather than opening a second, permanently blank tab.
+            // See the doc above for why moving is the correct half of R1 and not an exception to it.
+            int otherPane = OtherPane(target);
+            int otherIndex = IndexOfSurface(PaneAt(l, otherPane), s);
+            if (otherIndex >= 0)
+            {
+                int appendAt = pane != null ? pane.Tabs.Count : 0;
+                MoveTab(l, otherPane, otherIndex, target, appendAt);
+                // MoveTab already made it the active tab of the pane it inserted into, but NormalizeSplit may
+                // have moved that pane afterwards — so the authority on where it ended up is a fresh lookup.
+                if (FindSurface(l, s, out int landedPane, out int landedIndex))
+                {
+                    PaneAt(l, landedPane).ActiveIndex = landedIndex;
+                    l.FocusedPane = landedPane;
+                }
+                return;
+            }
+
             if (pane == null)
             {
                 pane = new PaneState();
                 if (target == 1) l.Secondary = pane; else l.Primary = pane;
             }
 
-            int existing = IndexOfSurface(pane, s);
-            if (existing >= 0)
-            {
-                // R1 — reopening a surface already open in the TARGET pane activates it; it never duplicates.
-                pane.ActiveIndex = existing;
-            }
-            else
-            {
-                pane.Tabs.Add(new TabState { Surface = s, Title = title ?? "" });
-                pane.ActiveIndex = pane.Tabs.Count - 1;
-            }
-
+            pane.Tabs.Add(new TabState { Surface = s, Title = title ?? "" });
+            pane.ActiveIndex = pane.Tabs.Count - 1;
             l.FocusedPane = target;
         }
 
@@ -123,11 +182,21 @@ namespace WorldGen.Workspace.Data
         /// reopen-does-not-duplicate rule uses — R1 and "close the tab I opened" have to agree about what
         /// counts as the same surface, or a Close could miss the very tab a preceding Open had focused.
         ///
-        /// PRIMARY FIRST, and the first match wins. A surface CAN be open in both panes at once (Open only
-        /// dedupes within its TARGET pane — see R1's own wording), so "where is it" genuinely has two answers
-        /// sometimes; picking Primary deterministically beats an ordering that depends on FocusedPane, because
-        /// a Close that closed a different tab depending on which pane happened to be focused would be
-        /// unpredictable in exactly the situation the user is least able to reason about.</summary>
+        /// PRIMARY FIRST, and the first match wins, because "where is it" can still have two answers.
+        ///
+        /// IT CAN NO LONGER GET TWO ANSWERS THROUGH Open, and this paragraph used to say the opposite ("A
+        /// surface CAN be open in both panes at once — Open only dedupes within its TARGET pane"). R1b closed
+        /// that door: an open of a surface living in the other pane MOVES it rather than duplicating it, and
+        /// MoveTab moves rather than copies, so nothing in this layer creates a second tab for one surface any
+        /// more. What still can: a STORED layout — WorkspacePrefs payloads live in PlayerPrefs, a plain
+        /// user-writable file, and every payload written before R1b existed may hold a duplicate that Restore
+        /// will faithfully bring back. So the tie-break is live code, not vestigial, and both this method and
+        /// PruneMissing are pinned against a duplicate built by hand rather than through Open
+        /// (WorkspaceOpsSelfTests).
+        ///
+        /// Picking Primary deterministically beats an ordering that depends on FocusedPane: a Close that
+        /// closed a different tab depending on which pane happened to be focused would be unpredictable in
+        /// exactly the situation the user is least able to reason about.</summary>
         public static bool FindSurface(WorkspaceLayout l, SurfaceRef s, out int pane, out int index)
         {
             pane = -1;

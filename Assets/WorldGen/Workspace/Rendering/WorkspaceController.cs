@@ -493,9 +493,14 @@ namespace WorldGen.Workspace.Rendering
         /// is an ORDINARY outcome, not an error: the user may have closed the tab themselves from the strip,
         /// and the editor screen's own «Назад» button would then still call through to here.
         ///
-        /// Closes ONE tab, the first FindSurface reports. A surface open in both panes therefore survives in
-        /// the other — deliberate: «Открыть рядом» on a POI editor is the user asking for two views, and a
-        /// «Назад» in one of them should not reach across and shut the other.</summary>
+        /// Closes ONE tab, the first FindSurface reports. That used to be justified by «Открыть рядом» on a
+        /// POI editor being "the user asking for two views" — which R1b has since made impossible: an open of
+        /// a surface living in the other pane MOVES it, so no path in this app produces two tabs for one
+        /// surface any more (WorkspaceOps.Open's own doc has the argument). The one-tab behaviour is kept
+        /// because the duplicate state itself is not gone: a WorkspacePrefs payload written before R1b can
+        /// still restore one. Closing the first match then leaves the other behind, which is the same harmless
+        /// outcome as before — and PruneSurfaces below, not this, is what clears every copy when the world a
+        /// tab names is destroyed.</summary>
         public void CloseSurface(SurfaceRef s)
         {
             if (!WorkspaceOps.FindSurface(Layout, s, out int pane, out int index)) return;
