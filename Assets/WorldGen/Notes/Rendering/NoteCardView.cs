@@ -36,6 +36,15 @@ namespace WorldGen.Notes.Rendering
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
 
+        /// <summary>The DM has begun moving this object — raised on the FIRST movement of a press, not on the
+        /// press itself, so a plain click does not spend an undo step.
+        ///
+        /// IT EXISTS ONLY SO THE UNDO SNAPSHOT IS TAKEN IN TIME. OnDragEnded fires after this view has already
+        /// written the new position into the data, and a snapshot taken then would record the very state it
+        /// is supposed to undo — the board would jump back to where it already is. See
+        /// CanvasInteractionController.HandleObjectDragStarted.</summary>
+        public event System.Action<string> OnDragStarted;
+
         /// <summary>Builds the card. `editable` is FALSE for a canvas shown inline in a page.
         ///
         /// NOT A COSMETIC SWITCH. A TMP_InputField is an IScrollHandler and swallows the wheel over itself
@@ -146,6 +155,7 @@ namespace WorldGen.Notes.Rendering
         public void OnDrag(PointerEventData eventData)
         {
             if (!CanSelfMove) return;
+            if (!dragging) OnDragStarted?.Invoke(data.Id);
             dragging = true;
             rect.anchoredPosition = dragStartLocalPos + eventData.position - pressScreenPos;
         }

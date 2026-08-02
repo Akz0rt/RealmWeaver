@@ -385,6 +385,11 @@ namespace WorldGen.Notes.Rendering
 
             var bg = frameGO.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Panel2);
+            // NOT A RAYCAST TARGET, so the board's empty space swallows nothing and answers nothing. As a
+            // target it would bubble every click on the board — including the press that starts dragging a
+            // card — up to this row's OnPointerClick, which puts a caret in the CAPTION. The cards, the grip
+            // and «развернуть» carry their own targets and are unaffected.
+            bg.raycastTarget = false;
             frameGO.AddComponent<RectMask2D>();
 
             // «развернуть» — top right, inside the frame. Legacy uGUI and the builtin font, like the collapse
@@ -745,6 +750,14 @@ namespace WorldGen.Notes.Rendering
                 OnSelectRequested?.Invoke(data.Id);
                 return;
             }
+
+            // ON A BOARD ROW ONLY THE CAPTION TAKES A CARET. Unity delivers a click to the nearest ancestor
+            // carrying IPointerClickHandler, and nothing on the board has one — a card handles press/drag/
+            // release, not click — so every click INSIDE the board would arrive here and put a caret in the
+            // caption, including the press that begins dragging a card.
+            if (data != null && data.Kind == BlockKind.Canvas && textArea != null
+                && !RectTransformUtility.RectangleContainsScreenPoint(textArea, eventData.position, eventData.pressEventCamera))
+                return;
 
             if (editing || Display == null) return;
             if (TryActivateLink(eventData)) return;

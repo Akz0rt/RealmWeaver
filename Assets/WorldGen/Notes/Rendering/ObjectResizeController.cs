@@ -110,9 +110,16 @@ namespace WorldGen.Notes.Rendering
             return false;
         }
 
+        /// <summary>Whether THIS drag has already taken its undo snapshot. The snapshot is taken on the first
+        /// movement rather than on the press, so pressing a handle and letting go without moving does not
+        /// spend a step — and it cannot wait for the release, because ApplyResizePreview has been writing the
+        /// object's size into the data all along.</summary>
+        bool resizeSnapshotTaken;
+
         public void BeginDrag(int cornerIndex, Vector2 screenPos)
         {
             draggingCornerIndex = cornerIndex;
+            resizeSnapshotTaken = false;
             dragStartPosition = hostRect.anchoredPosition;
             dragStartSize = hostRect.sizeDelta;
             Vector2 half = dragStartSize * 0.5f;
@@ -128,6 +135,12 @@ namespace WorldGen.Notes.Rendering
 
             ComputeResize(draggingCornerIndex, fixedCorner, mouseLocal, MinObjectSize, out var newCenter, out var newSize);
 
+            if (!resizeSnapshotTaken)
+            {
+                resizeSnapshotTaken = true;
+                interactionController.BeginResize(hostObjectId);
+            }
+
             interactionController.ApplyResizePreview(hostObjectId,
                 new System.Numerics.Vector2(newCenter.x, newCenter.y),
                 new System.Numerics.Vector2(newSize.x, newSize.y));
@@ -137,6 +150,8 @@ namespace WorldGen.Notes.Rendering
         {
             if (draggingCornerIndex < 0) return;
             draggingCornerIndex = -1;
+            if (!resizeSnapshotTaken) return;   // a press with no movement changed nothing
+            resizeSnapshotTaken = false;
             interactionController.CommitResize(hostObjectId,
                 new System.Numerics.Vector2(dragStartPosition.x, dragStartPosition.y),
                 new System.Numerics.Vector2(dragStartSize.x, dragStartSize.y));

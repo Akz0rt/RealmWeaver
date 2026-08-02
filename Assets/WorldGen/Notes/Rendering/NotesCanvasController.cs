@@ -5,17 +5,40 @@ using WorldGen.Notes.Data;
 
 namespace WorldGen.Notes.Rendering
 {
+    public enum CanvasMode { Inline, Expanded }
+
     /// <summary>
-    /// Renders the NotesDocumentController's active page: spawns/destroys object and link
-    /// views to match the page data, and owns pan/zoom of the canvas content root.
+    /// Renders ONE canvas BLOCK into ONE frame — not "the active page", which is what it rendered until Р4.
+    /// That change is the arc: a page can hold several boards, and the same board can be drawn twice at once
+    /// (inline in the page and expanded in the other pane), so nothing here may reach for "the current page"
+    /// and nothing here owns state. Both copies read the same DocBlock; neither is the original.
+    ///
+    /// ONE CONTROLLER PER BOARD. The dictionaries below are keyed by object id and shared across the whole
+    /// controller, which is correct exactly while there is one controller per block — a single controller
+    /// serving two boards would collide on the first duplicated id.
+    ///
+    /// IT DOES NOT KNOW WHAT UNDO IS. BeforeMutation is called immediately before every change to the block;
+    /// whoever built this canvas supplies it (DocumentPageView for an inline board, CanvasSurfaceHost for an
+    /// expanded one), because the page's history belongs to the page and a canvas has no way to find its own.
     /// </summary>
     public class NotesCanvasController : MonoBehaviour
     {
         [Header("Dependencies")]
-        public NotesDocumentController documentController;
         [Tooltip("Viewport RectTransform that clips the canvas content (mask/scroll area).")]
         public RectTransform viewport;
         public CanvasInteractionController interactionController;
+
+        DocBlock block;
+        CanvasMode mode;
+
+        public DocBlock Block => block;
+        public CanvasMode Mode => mode;
+
+        /// <summary>Remember the page as it is NOW — called immediately BEFORE any change to the block, never
+        /// after: the snapshot is what Ctrl+Z goes back to.</summary>
+        public System.Action BeforeMutation;
+        /// <summary>The document changed: mark the project dirty and let the page redraw.</summary>
+        public System.Action AfterMutation;
 
         public RectTransform CanvasContainer { get; private set; }
 
@@ -39,32 +62,23 @@ namespace WorldGen.Notes.Rendering
             CanvasContainer.sizeDelta = Vector2.zero;
         }
 
-        // AddComponent<NotesCanvasController>() runs Awake/OnEnable synchronously before the
-        // caller can assign documentController/viewport/interactionController — subscribing in
-        // OnEnable would silently see a null documentController and never subscribe at all, so
-        // page switches would never re-render. Callers must use Initialize, not the raw fields.
-        public void Initialize(NotesDocumentController docController, RectTransform viewportRect, CanvasInteractionController interaction)
+        // AddComponent<NotesCanvasController>() runs Awake/OnEnable synchronously before the caller can
+        // assign viewport/interactionController, so callers must use Initialize, not the raw fields. There is
+        // nothing to subscribe to any more: this controller used to listen for "the active page changed" and
+        // redraw itself, which is exactly the reach-for-the-current-page the class comment now forbids. Its
+        // owner rebuilds it instead.
+        public void Initialize(DocBlock canvasBlock, RectTransform frame, CanvasInteractionController interaction, CanvasMode canvasMode)
         {
-            documentController = docController;
-            viewport = viewportRect;
+            block = canvasBlock;
+            viewport = frame;
             interactionController = interaction;
-            documentController.OnActivePageChanged += HandleActivePageChanged;
-        }
-
-        void OnDisable()
-        {
-            if (documentController != null)
-                documentController.OnActivePageChanged -= HandleActivePageChanged;
-        }
-
-        void HandleActivePageChanged(NotesPage page)
-        {
-            RebuildFromPage(page);
+            mode = canvasMode;
+            RebuildFromBlock();
         }
 
         // ── Rebuild ────────────────────────────────────────────────────────────
 
-        public void RebuildFromPage(NotesPage page)
+        public void RebuildFromBlock()
         {
             EnsureContainer();
             foreach (var view in objectViews.Values)
@@ -81,16 +95,19 @@ namespace WorldGen.Notes.Rendering
             resizeControllers.Clear();
             OnSelectionCleared?.Invoke();
 
-            if (page == null) return;
+            if (block == null) return;
 
-            CanvasContainer.anchoredPosition = new Vector2(page.CameraPan.X, page.CameraPan.Y);
-            CanvasContainer.localScale = new Vector3(page.CameraZoom, page.CameraZoom, 1f);
+            CanvasContainer.anchoredPosition = new Vector2(block.CanvasPan.X, block.CanvasPan.Y);
+            float zoom = block.CanvasZoom > 0.0001f ? block.CanvasZoom : 1f;
+            CanvasContainer.localScale = new Vector3(zoom, zoom, 1f);
 
-            foreach (var obj in page.Objects)
-                SpawnView(obj);
+            if (block.CanvasObjects != null)
+                foreach (var obj in block.CanvasObjects)
+                    SpawnView(obj);
 
-            foreach (var link in page.Links)
-                SpawnLink(link);
+            if (block.CanvasLinks != null)
+                foreach (var link in block.CanvasLinks)
+                    SpawnLink(link);
         }
 
         void SpawnView(CanvasObjectData obj)
@@ -101,10 +118,9 @@ namespace WorldGen.Notes.Rendering
                 {
                     var go = new GameObject($"Note_{card.Id}");
                     var view = go.AddComponent<NoteCardView>();
-                    // Always editable for now; the inline-vs-expanded mode arrives with the block renderer.
-                    view.Initialize(card, CanvasContainer, editable: true);
+                    view.Initialize(card, CanvasContainer, editable: mode == CanvasMode.Expanded);
                     view.interactionController = interactionController;
-                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragStarted += ev.onDragStarted; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
                     AddResizeHandles(view.ObjectId, view.RectTransform);
@@ -116,7 +132,7 @@ namespace WorldGen.Notes.Rendering
                     var view = go.AddComponent<ImageObjectView>();
                     view.Initialize(image, CanvasContainer);
                     view.interactionController = interactionController;
-                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragStarted += ev.onDragStarted; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[image.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
                     AddResizeHandles(view.ObjectId, view.RectTransform);
@@ -128,7 +144,7 @@ namespace WorldGen.Notes.Rendering
                     var view = go.AddComponent<DrawingObjectView>();
                     view.Initialize(drawing, CanvasContainer);
                     view.interactionController = interactionController;
-                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
+                    WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragStarted += ev.onDragStarted; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[drawing.Id] = view;
                     AddLinkAnchors(view.ObjectId, view.RectTransform);
                     AddResizeHandles(view.ObjectId, view.RectTransform);
@@ -137,9 +153,13 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        /// <summary>The hover dots that start a link drag. NOT BUILT INLINE, which is the same argument the
+        /// inline card makes about its input field: an anchor dot and a resize handle each carry their own
+        /// IDragHandler, so they answer the mouse whatever CanvasInteractionController's Update does or does
+        /// not do. Making the reduced mode real means not building them, not disabling a poll.</summary>
         void AddLinkAnchors(string objectId, RectTransform hostRect)
         {
-            if (interactionController == null) return;
+            if (interactionController == null || mode != CanvasMode.Expanded) return;
             var anchorGO = new GameObject($"LinkAnchors_{objectId}");
             anchorGO.transform.SetParent(CanvasContainer, false);
             var anchors = anchorGO.AddComponent<LinkAnchorController>();
@@ -147,9 +167,11 @@ namespace WorldGen.Notes.Rendering
             linkAnchors[objectId] = anchors;
         }
 
+        /// <summary>The four corner handles of the selected object — expanded view only, for the reason
+        /// AddLinkAnchors gives.</summary>
         void AddResizeHandles(string objectId, RectTransform hostRect)
         {
-            if (interactionController == null) return;
+            if (interactionController == null || mode != CanvasMode.Expanded) return;
             var resizeGO = new GameObject($"ResizeHandles_{objectId}");
             resizeGO.transform.SetParent(CanvasContainer, false);
             var resize = resizeGO.AddComponent<ObjectResizeController>();
@@ -190,11 +212,12 @@ namespace WorldGen.Notes.Rendering
         }
 
         void WireEvents(string objectId,
-            System.Action<(System.Action<string> onClicked, System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> onDragEnded)> subscribe)
+            System.Action<(System.Action<string> onClicked, System.Action<string> onDragStarted, System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> onDragEnded)> subscribe)
         {
             if (interactionController == null) return;
             subscribe((
                 onClicked: id => interactionController.HandleObjectClicked(id),
+                onDragStarted: id => interactionController.HandleObjectDragStarted(id),
                 onDragEnded: (id, oldPos, newPos) => interactionController.HandleObjectDragEnded(id, oldPos, newPos)
             ));
         }
@@ -256,55 +279,89 @@ namespace WorldGen.Notes.Rendering
 
         // ── Mutation ───────────────────────────────────────────────────────────
 
+        /// <summary>The block's own lists, created on demand. A block loaded from an older project — or one
+        /// built by anything that forgot — carries nulls here, and a mutator that assumed otherwise would
+        /// throw on the DM's first card.</summary>
+        List<CanvasObjectData> Objects
+        {
+            get
+            {
+                if (block.CanvasObjects == null) block.CanvasObjects = new List<CanvasObjectData>();
+                return block.CanvasObjects;
+            }
+        }
+
+        List<LinkData> Links
+        {
+            get
+            {
+                if (block.CanvasLinks == null) block.CanvasLinks = new List<LinkData>();
+                return block.CanvasLinks;
+            }
+        }
+
         public NoteCardData AddNoteCard(System.Numerics.Vector2 position)
         {
-            var page = documentController.ActivePage;
-            if (page == null) return null;
+            if (block == null) return null;
+            BeforeMutation?.Invoke();
             var data = new NoteCardData { Position = position, Title = "Заметка" };
-            page.Objects.Add(data);
+            Objects.Add(data);
             SpawnView(data);
+            AfterMutation?.Invoke();
             return data;
         }
 
         public ImageObjectData AddImage(System.Numerics.Vector2 position, byte[] imageBytes)
         {
-            var page = documentController.ActivePage;
-            if (page == null) return null;
+            if (block == null) return null;
+            BeforeMutation?.Invoke();
             var data = new ImageObjectData { Position = position, ImageBytes = imageBytes };
-            page.Objects.Add(data);
+            Objects.Add(data);
             SpawnView(data);
+            AfterMutation?.Invoke();
             return data;
         }
 
         public DrawingObjectData AddDrawing(System.Numerics.Vector2 position, int pixelWidth, int pixelHeight)
         {
-            var page = documentController.ActivePage;
-            if (page == null) return null;
+            if (block == null) return null;
+            BeforeMutation?.Invoke();
             var data = new DrawingObjectData(pixelWidth, pixelHeight) { Position = position };
-            page.Objects.Add(data);
+            Objects.Add(data);
             SpawnView(data);
+            AfterMutation?.Invoke();
             return data;
         }
 
         public LinkData AddLink(string fromObjectId, string toObjectId)
         {
-            var page = documentController.ActivePage;
-            if (page == null || fromObjectId == toObjectId) return null;
+            if (block == null || fromObjectId == toObjectId) return null;
+            BeforeMutation?.Invoke();
             var data = new LinkData { FromObjectId = fromObjectId, ToObjectId = toObjectId };
-            page.Links.Add(data);
+            Links.Add(data);
             SpawnLink(data);
+            AfterMutation?.Invoke();
             return data;
         }
 
+        /// <summary>Removes an object and every link that touched it — ONE undo step for the whole cascade.
+        /// The orphaned links go through RemoveLinkCore rather than RemoveLink for exactly that reason: a
+        /// nested BeforeMutation would snapshot a half-deleted board, and the first Ctrl+Z would restore THAT
+        /// — an object still gone with its links back.</summary>
         public void RemoveObject(string objectId)
         {
-            var page = documentController.ActivePage;
-            if (page == null) return;
+            if (block == null) return;
+            BeforeMutation?.Invoke();
+            RemoveObjectCore(objectId);
+            AfterMutation?.Invoke();
+        }
 
-            page.Objects.RemoveAll(o => o.Id == objectId);
-            var orphanLinks = page.Links.Where(l => l.FromObjectId == objectId || l.ToObjectId == objectId).ToList();
+        void RemoveObjectCore(string objectId)
+        {
+            Objects.RemoveAll(o => o.Id == objectId);
+            var orphanLinks = Links.Where(l => l.FromObjectId == objectId || l.ToObjectId == objectId).ToList();
             foreach (var link in orphanLinks)
-                RemoveLink(link.Id);
+                RemoveLinkCore(link.Id);
 
             if (objectViews.TryGetValue(objectId, out var view))
             {
@@ -326,9 +383,15 @@ namespace WorldGen.Notes.Rendering
 
         public void RemoveLink(string linkId)
         {
-            var page = documentController.ActivePage;
-            if (page == null) return;
-            page.Links.RemoveAll(l => l.Id == linkId);
+            if (block == null) return;
+            BeforeMutation?.Invoke();
+            RemoveLinkCore(linkId);
+            AfterMutation?.Invoke();
+        }
+
+        void RemoveLinkCore(string linkId)
+        {
+            Links.RemoveAll(l => l.Id == linkId);
             if (linkViews.TryGetValue(linkId, out var view))
             {
                 if (view != null) Destroy(view.gameObject);
@@ -355,10 +418,7 @@ namespace WorldGen.Notes.Rendering
         }
 
         public LinkData FindLinkData(string linkId)
-        {
-            var page = documentController?.ActivePage;
-            return page?.Links.FirstOrDefault(l => l.Id == linkId);
-        }
+            => block?.CanvasLinks?.FirstOrDefault(l => l.Id == linkId);
 
         public MonoBehaviour GetView(string objectId)
         {
@@ -373,7 +433,7 @@ namespace WorldGen.Notes.Rendering
         }
 
         /// <summary>Re-reads the given object's current Position/Size from its data into its live
-        /// view — used during a resize drag (and by ResizeCommand.Undo) instead of duplicating
+        /// view — used during a resize drag instead of duplicating
         /// the per-view-type switch at every call site.</summary>
         public void RefreshView(string objectId)
         {
@@ -421,12 +481,16 @@ namespace WorldGen.Notes.Rendering
             SaveCameraState();
         }
 
+        /// <summary>Where the expanded view was left looking. DELIBERATELY OUTSIDE THE HISTORY: it calls
+        /// neither BeforeMutation nor AfterMutation, because pan and zoom are how the DM LOOKS at a board, not
+        /// a change to what the board is. Recording them would fill the page's one undo stack with camera
+        /// moves and make Ctrl+Z after a paragraph scroll a board instead of restoring the text. This is not
+        /// an oversight to be tidied up later.</summary>
         void SaveCameraState()
         {
-            var page = documentController?.ActivePage;
-            if (page == null) return;
-            page.CameraPan = new System.Numerics.Vector2(CanvasContainer.anchoredPosition.x, CanvasContainer.anchoredPosition.y);
-            page.CameraZoom = CanvasContainer.localScale.x;
+            if (block == null) return;
+            block.CanvasPan = new System.Numerics.Vector2(CanvasContainer.anchoredPosition.x, CanvasContainer.anchoredPosition.y);
+            block.CanvasZoom = CanvasContainer.localScale.x;
         }
     }
 }

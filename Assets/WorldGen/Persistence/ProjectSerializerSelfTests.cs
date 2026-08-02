@@ -64,10 +64,17 @@ namespace WorldGen.Persistence
             var card = new NoteCardData { Title = "Заметка", Body = "Текст" };
             var image = new ImageObjectData { ImageBytes = new byte[] { 5, 6, 7 } };
             var drawing = new DrawingObjectData(64, 32) { PixelDataPng = new byte[] { 8, 9 } };
-            page.Objects.Add(card);
-            page.Objects.Add(image);
-            page.Objects.Add(drawing);
-            page.Links.Add(new LinkData { FromObjectId = card.Id, ToObjectId = image.Id, Directed = true, ControlPointOffset = new System.Numerics.Vector2(5f, 5f) });
+            // A BOARD IS A BLOCK, since format 14. The page's own Objects/Links still exist, but only so a v13
+            // file has somewhere to deserialize into — they are never saved, and the migration nulls them, so
+            // a round-trip test that filled them would be testing a field that cannot survive a save.
+            page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Раздел"));
+            var canvasBlock = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "Доска");
+            canvasBlock.CanvasObjects = new List<CanvasObjectData> { card, image, drawing };
+            canvasBlock.CanvasLinks = new List<LinkData>
+            {
+                new LinkData { FromObjectId = card.Id, ToObjectId = image.Id, Directed = true, ControlPointOffset = new System.Numerics.Vector2(5f, 5f) }
+            };
+            page.Blocks.Add(canvasBlock);
             var group = new PageGroup { Title = "Группа", Pages = new List<NotesPage> { page } };
             var notes = new NotesDocument { Groups = new List<PageGroup> { group } };
 
@@ -100,17 +107,19 @@ namespace WorldGen.Persistence
 
             ok &= result.Notes.Groups.Count == 1;
             var loadedPage = result.Notes.Groups[0].Pages.FirstOrDefault();
-            ok &= loadedPage != null && loadedPage.Objects.Count == 3 && loadedPage.Links.Count == 1;
+            var loadedCanvas = loadedPage?.Blocks.FirstOrDefault(b => b.Kind == BlockKind.Canvas);
+            ok &= loadedCanvas != null && loadedCanvas.CanvasObjects != null && loadedCanvas.CanvasObjects.Count == 3
+                && loadedCanvas.CanvasLinks != null && loadedCanvas.CanvasLinks.Count == 1;
 
-            var loadedCard = loadedPage?.Objects.OfType<NoteCardData>().FirstOrDefault();
-            var loadedImage = loadedPage?.Objects.OfType<ImageObjectData>().FirstOrDefault();
-            var loadedDrawing = loadedPage?.Objects.OfType<DrawingObjectData>().FirstOrDefault();
+            var loadedCard = loadedCanvas?.CanvasObjects.OfType<NoteCardData>().FirstOrDefault();
+            var loadedImage = loadedCanvas?.CanvasObjects.OfType<ImageObjectData>().FirstOrDefault();
+            var loadedDrawing = loadedCanvas?.CanvasObjects.OfType<DrawingObjectData>().FirstOrDefault();
             ok &= loadedCard != null && loadedCard.Title == "Заметка" && loadedCard.Body == "Текст";
             ok &= loadedImage != null && loadedImage.ImageBytes != null && loadedImage.ImageBytes.SequenceEqual(new byte[] { 5, 6, 7 });
             ok &= loadedDrawing != null && loadedDrawing.PixelWidth == 64 && loadedDrawing.PixelHeight == 32
                 && loadedDrawing.PixelDataPng != null && loadedDrawing.PixelDataPng.SequenceEqual(new byte[] { 8, 9 });
 
-            var loadedLink = loadedPage?.Links.FirstOrDefault();
+            var loadedLink = loadedCanvas?.CanvasLinks.FirstOrDefault();
             ok &= loadedLink != null && loadedLink.Directed && loadedLink.ControlPointOffset == new System.Numerics.Vector2(5f, 5f);
 
             Debug.Log(ok

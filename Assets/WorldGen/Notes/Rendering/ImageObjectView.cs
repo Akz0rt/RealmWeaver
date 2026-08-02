@@ -29,6 +29,10 @@ namespace WorldGen.Notes.Rendering
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
 
+        /// <summary>The DM has begun moving this object. See NoteCardView.OnDragStarted for why the undo
+        /// snapshot cannot wait for OnDragEnded.</summary>
+        public event System.Action<string> OnDragStarted;
+
         public void Initialize(ImageObjectData imageData, RectTransform canvasContainer)
         {
             data = imageData;
@@ -68,6 +72,7 @@ namespace WorldGen.Notes.Rendering
         public void OnDrag(PointerEventData eventData)
         {
             if (!CanSelfMove) return;
+            if (!dragging) OnDragStarted?.Invoke(data.Id);
             dragging = true;
             rect.anchoredPosition = dragStartLocalPos + eventData.position - pressScreenPos;
         }

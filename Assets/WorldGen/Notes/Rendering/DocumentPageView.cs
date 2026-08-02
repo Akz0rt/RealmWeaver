@@ -400,6 +400,38 @@ namespace WorldGen.Notes.Rendering
             return true;
         }
 
+        /// <summary>Draws a board inside its row's frame, in the reduced mode.
+        ///
+        /// BUILT PER REBUILD, like the row itself, and holding no state worth keeping: everything the board
+        /// shows lives in the DocBlock. That is what lets Undo simply rebuild the page.
+        ///
+        /// THE PAGE'S HISTORY IS THE BOARD'S HISTORY. The canvas knows nothing about undo and asks whoever
+        /// built it to remember the state before each change — one stack, one Ctrl+Z, whatever the mouse
+        /// happens to be over. See the spec's «Отмена — один стек».</summary>
+        void BuildInlineCanvas(DocBlock block, DocBlockView view)
+        {
+            var interactionGO = new GameObject($"CanvasInput_{block.Id}", typeof(RectTransform));
+            interactionGO.transform.SetParent(view.CanvasFrame, false);
+            var interaction = interactionGO.AddComponent<CanvasInteractionController>();
+            interaction.Mode = CanvasMode.Inline;
+            interaction.viewportRect = view.CanvasFrame;
+            interaction.builtinFont = font;
+
+            var canvasGO = new GameObject($"Canvas_{block.Id}", typeof(RectTransform));
+            canvasGO.transform.SetParent(view.CanvasFrame, false);
+            var canvasController = canvasGO.AddComponent<NotesCanvasController>();
+            interaction.canvasController = canvasController;
+            canvasController.BeforeMutation = () => PushHistory(LastFocusedBlockId, LastFocusedCaret);
+            canvasController.AfterMutation = () => OnDocumentMutated?.Invoke();
+            canvasController.Initialize(block, view.CanvasFrame, interaction, CanvasMode.Inline);
+
+            // BEHIND THE FRAME'S OWN CHROME. The container is created as a child of the frame at Initialize
+            // time, which makes it the LAST sibling — and in uGUI the last sibling draws on top. Left alone it
+            // would cover «развернуть» and the resize grip with the board's own cards.
+            if (canvasController.CanvasContainer != null)
+                canvasController.CanvasContainer.SetAsFirstSibling();
+        }
+
         // ── the board rows' own gestures (Р4 Task 8) ─────────────────────────────
 
         /// <summary>The widest a board block may be: the pane, less the margin the prose already keeps. The
@@ -1097,6 +1129,7 @@ namespace WorldGen.Notes.Rendering
                 // one here work: the field does its nothing, and the page scrolls. Wired from here rather
                 // than from inside the row, so a row still knows nothing about the page it sits on.
                 if (view.Field != null) view.Field.gameObject.AddComponent<PageWheelRelay>().page = this;
+                if (block.Kind == BlockKind.Canvas && view.CanvasFrame != null) BuildInlineCanvas(block, view);
                 view.Refresh();
                 rows.Add(view);
             }

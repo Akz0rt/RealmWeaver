@@ -16,14 +16,19 @@ namespace WorldGen.Notes.Data
     /// <summary>
     /// Undo and redo for a document page, as whole-list snapshots.
     ///
-    /// WHY SNAPSHOTS AND NOT COMMANDS. NotesUndoManager is a command stack, and every command it owns knows
-    /// only how to UNDO itself — there is no redo path in it at all, and none can be retrofitted, because a
-    /// command like "the object was deleted" cannot replay what it destroyed. Р2's toolbar carries ↷ as well
-    /// as ↶, so the page needs a history that can go both ways. A document is also small — a session sheet
-    /// is on the order of a hundred short blocks — so copying the list costs less than the bookkeeping an
-    /// inverse-command per operation would need, and it cannot drift from the document the way a hand-written
-    /// inverse can. The canvas keeps NotesUndoManager exactly as it is; this is a second history for a second
-    /// kind of page, not a replacement.
+    /// WHY SNAPSHOTS AND NOT COMMANDS. The canvas used to carry its own command stack (NotesUndoManager,
+    /// deleted in Р4), and every command in it knew only how to UNDO itself — there was no redo path and none
+    /// could be retrofitted, because a command like "the object was deleted" cannot replay what it destroyed.
+    /// Р2's toolbar carries ↷ as well as ↶, so the page needs a history that can go both ways. A document is
+    /// also small — a session sheet is on the order of a hundred short blocks — so copying the list costs less
+    /// than the bookkeeping an inverse-command per operation would need, and it cannot drift from the document
+    /// the way a hand-written inverse can.
+    ///
+    /// Р4 then removed the second stack outright: a board lives INSIDE a DocBlock now, so a page snapshot
+    /// already contains it, and two stacks on one page would have made Ctrl+Z mean different things depending
+    /// on where the mouse was. This is a deliberate reversal of Р2's "the canvas keeps NotesUndoManager
+    /// exactly as it is", not a forgotten decision — the premise it rested on (a board is a separate KIND of
+    /// page) is gone.
     ///
     /// WHAT COUNTS AS ONE STEP. Every structural change is one — a new row, a split, a merge, an indent, a
     /// kind change, an inserted image or link. TYPING is one step per visit to a row: the state is remembered
@@ -35,8 +40,9 @@ namespace WorldGen.Notes.Data
     ///
     /// IDS SURVIVE. Copy carries DocBlock.Id verbatim rather than letting the field initializer mint a new
     /// one — the id is promised stable across "edit, reorder and undo" because П6's session state will point
-    /// at blocks from outside the document, and the canvas side already lost this exact fight once
-    /// (NotesUndoManager.DeleteObjectCommand's own note: "re-created object gets a new Id").
+    /// at blocks from outside the document, and the canvas side already lost this exact fight once: its
+    /// command stack "undid" a deletion by re-creating the object with a fresh id, which broke every link that
+    /// had pointed at it.
     /// </summary>
     public class DocHistory
     {

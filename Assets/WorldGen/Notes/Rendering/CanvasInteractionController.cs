@@ -16,10 +16,20 @@ namespace WorldGen.Notes.Rendering
     {
         [Header("Dependencies")]
         public NotesCanvasController canvasController;
-        public NotesUndoManager undoManager;
         public RectTransform viewportRect;
         public RectTransform toolbarRect;
         public Camera uiCamera; // null for ScreenSpaceOverlay canvases
+
+        /// <summary>The reduced mode — a board in the flow of a page — permits exactly two gestures: dragging
+        /// a card (which the card's own IDragHandler performs) and resizing the block (which the row's grip
+        /// performs). Panning, zooming, drawing and link-dragging are the four gestures that FIGHT the page's
+        /// scroll, and П1 refused to nest a board in a document because of them. They live only in the
+        /// expanded view, so the conflict is removed by construction rather than settled by arbitration.</summary>
+        public CanvasMode Mode = CanvasMode.Expanded;
+
+        /// <summary>Used only by the confirm dialog this controller raises. Legacy chrome, deliberately.</summary>
+        [Header("Confirm dialog")]
+        public Font builtinFont;
 
         [Header("Drawing settings")]
         public float brushRadius = 6f;
@@ -39,6 +49,14 @@ namespace WorldGen.Notes.Rendering
         float zoomStartScale;
         const float ZoomDragSensitivity = 0.005f;
 
+        // The same fallback the deleted NotesUndoManager carried: the confirm dialog is built at runtime and
+        // needs a font, and every caller that forgets to hand one over would otherwise raise a dialog with
+        // invisible text.
+        void Awake()
+        {
+            if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        }
+
         public void SetTool(NotesTool tool)
         {
             ActiveTool = tool;
@@ -53,6 +71,9 @@ namespace WorldGen.Notes.Rendering
 
         void Update()
         {
+            // Everything below this line is a gesture the reduced mode does not have — including the wheel,
+            // which in the flow of a page belongs to the page and nothing else.
+            if (Mode == CanvasMode.Inline) return;
             if (canvasController == null || Mouse.current == null) return;
 
             HandleClipboardPaste();
@@ -123,24 +144,29 @@ namespace WorldGen.Notes.Rendering
                     lastPanScreenPos = screenPos;
                     break;
                 case NotesTool.Note:
-                    undoManager.PushCreateNoteCard(canvasController, ScreenToCanvasPoint(screenPos));
+                    canvasController.AddNoteCard(ScreenToCanvasPoint(screenPos));
                     break;
                 case NotesTool.Drawing:
                     var existingDrawing = FindDrawingObjectAt(screenPos);
                     if (existingDrawing != null)
                     {
+                        // ONE undo step per STROKE, taken here because the pixels start changing on this very
+                        // press. CommitToData replaces the whole PNG at the end of the stroke rather than
+                        // writing into the old array, which is what makes a snapshot taken now still hold the
+                        // pixels as they were — see DocHistory.CopyObjects on why byte arrays are shared.
+                        canvasController.BeforeMutation?.Invoke();
                         paintingDrawingObjectId = existingDrawing.ObjectId;
                         PaintAtScreenPos(existingDrawing, screenPos);
                     }
                     else
                     {
-                        undoManager.PushCreateDrawing(canvasController, ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
+                        canvasController.AddDrawing(ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
                     }
                     break;
                 case NotesTool.Image:
                     var bytes = ImagePicker.OpenFileDialog();
                     if (bytes != null)
-                        undoManager.PushCreateImage(canvasController, ScreenToCanvasPoint(screenPos), bytes);
+                        canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
                     break;
                 case NotesTool.Zoom:
                     zooming = true;
@@ -185,15 +211,16 @@ namespace WorldGen.Notes.Rendering
                 if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view)
                     view.CommitToData();
                 paintingDrawingObjectId = null;
+                canvasController.AfterMutation?.Invoke();
             }
         }
 
         /// <summary>Finds the topmost existing DrawingObjectView on the active page whose rect contains the given screen point, or null.</summary>
         DrawingObjectView FindDrawingObjectAt(Vector2 screenPos)
         {
-            var page = canvasController.documentController.ActivePage;
-            if (page == null) return null;
-            foreach (var obj in page.Objects)
+            var objects = canvasController.Block?.CanvasObjects;
+            if (objects == null) return null;
+            foreach (var obj in objects)
             {
                 if (obj is not DrawingObjectData) continue;
                 if (canvasController.GetView(obj.Id) is DrawingObjectView view
@@ -242,10 +269,11 @@ namespace WorldGen.Notes.Rendering
                 if (linkData == null) { selectedLinkId = null; return; }
 
                 string linkIdToDelete = selectedLinkId;
-                undoManager.RequestDeleteLink(canvasController, linkData, confirmed =>
+                ConfirmDialog.Show(builtinFont, "Удалить связь?", "", confirmed =>
                 {
-                    if (confirmed && selectedLinkId == linkIdToDelete)
-                        selectedLinkId = null;
+                    if (!confirmed) return;
+                    canvasController.RemoveLink(linkIdToDelete);   // pushes history itself, via BeforeMutation
+                    if (selectedLinkId == linkIdToDelete) selectedLinkId = null;
                 });
                 return;
             }
@@ -255,13 +283,26 @@ namespace WorldGen.Notes.Rendering
             var data = FindObjectData(selectedObjectId);
             if (data == null) { selectedObjectId = null; return; }
 
+            // KEPT, EVEN THOUGH UNDO IS REAL NOW. Р4 replaced the canvas's own command stack — where deleting
+            // was genuinely irreversible, since the "undo" re-created the object with a fresh id and lost its
+            // links — with the page's snapshot history, which restores it exactly. Removing the confirmation
+            // would still be a behaviour change the spec did not ask for.
             string idToDelete = selectedObjectId;
-            undoManager.RequestDeleteObject(canvasController, data, confirmed =>
+            ConfirmDialog.Show(builtinFont, "Удалить объект?", $"«{DescribeObject(data)}»", confirmed =>
             {
-                if (confirmed && selectedObjectId == idToDelete)
-                    SetSelectedObjectId(null);
+                if (!confirmed) return;
+                canvasController.RemoveObject(idToDelete);
+                if (selectedObjectId == idToDelete) SetSelectedObjectId(null);
             });
         }
+
+        static string DescribeObject(CanvasObjectData data) => data switch
+        {
+            NoteCardData c => string.IsNullOrEmpty(c.Title) ? "заметку" : c.Title,
+            ImageObjectData => "изображение",
+            DrawingObjectData => "рисунок",
+            _ => "объект"
+        };
 
         void HandleClipboardPaste()
         {
@@ -274,7 +315,7 @@ namespace WorldGen.Notes.Rendering
             if (bytes == null) return;
 
             var screenPos = Mouse.current.position.ReadValue();
-            undoManager.PushCreateImage(canvasController, ScreenToCanvasPoint(screenPos), bytes);
+            canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
         }
 
         // ── Called by object views on click/drag, wired externally by NotesCanvasController's spawn sites ──
@@ -292,18 +333,25 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        /// <summary>The object is about to move. This — not HandleObjectDragEnded — is where the undo step is
+        /// taken: by the time the drag ends the view has already written the new position into the data, and a
+        /// snapshot of that would restore the object to where it already is.</summary>
+        public void HandleObjectDragStarted(string objectId)
+        {
+            canvasController.BeforeMutation?.Invoke();
+        }
+
         public void HandleObjectDragEnded(string objectId, System.Numerics.Vector2 oldPos, System.Numerics.Vector2 newPos)
         {
             SetSelectedObjectId(objectId);
-            undoManager.PushMove(canvasController, FindObjectData(objectId), oldPos, newPos);
             canvasController.RefreshLinksFor(objectId);
+            canvasController.AfterMutation?.Invoke();
         }
 
-        /// <summary>Called by LinkAnchorController when an anchor-drag is released over another
-        /// object — creates the link through the undo stack, same as the old click-click flow.</summary>
+        /// <summary>Called by LinkAnchorController when an anchor-drag is released over another object.</summary>
         public void CreateLinkFromAnchorDrag(string fromObjectId, string toObjectId)
         {
-            undoManager.PushCreateLink(canvasController, fromObjectId, toObjectId);
+            canvasController.AddLink(fromObjectId, toObjectId);
         }
 
         /// <summary>Called live while ObjectResizeController drags a corner handle — applies the
@@ -319,18 +367,27 @@ namespace WorldGen.Notes.Rendering
             canvasController.RefreshLinksFor(objectId);
         }
 
+        /// <summary>The corner handle was pressed and the object is about to change size. Same timing rule as
+        /// HandleObjectDragStarted, and here it is not merely tidier but required: ApplyResizePreview writes
+        /// the data on every frame of the drag, so by CommitResize there is nothing left of the old size to
+        /// snapshot.</summary>
+        public void BeginResize(string objectId)
+        {
+            canvasController.BeforeMutation?.Invoke();
+        }
+
         public void CommitResize(string objectId, System.Numerics.Vector2 oldPosition, System.Numerics.Vector2 oldSize)
         {
             var data = FindObjectData(objectId);
             if (data == null) return;
-            undoManager.PushResize(canvasController, data, oldPosition, oldSize);
+            canvasController.AfterMutation?.Invoke();
         }
 
         CanvasObjectData FindObjectData(string objectId)
         {
-            var page = canvasController.documentController.ActivePage;
-            if (page == null) return null;
-            foreach (var obj in page.Objects)
+            var objects = canvasController.Block?.CanvasObjects;
+            if (objects == null) return null;
+            foreach (var obj in objects)
                 if (obj.Id == objectId) return obj;
             return null;
         }
