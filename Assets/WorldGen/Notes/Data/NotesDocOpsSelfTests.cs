@@ -950,5 +950,56 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Canvas Invariants: PASS" : "Self-Test Canvas Invariants: FAIL");
         }
+
+        /// <summary>A canvas block travels through BOTH clipboard payloads as a plain row saying what it was.
+        /// The text clipboard is text — cards, links and image bytes in it would make the format binary — and
+        /// the internal payload follows the same rule so the two cannot disagree about what a paste produces.</summary>
+        [ContextMenu("Self-Test: Canvas Clipboard")]
+        public void SelfTestCanvasClipboard()
+        {
+            bool ok = true;
+
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "Схема сюжета");
+            canvas.CanvasObjects = new List<CanvasObjectData> { new NoteCardData { Title = "Пролог" } };
+            canvas.DisplayWidth = 640f;
+            canvas.DisplayHeight = 400f;
+
+            var blocks = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Section, 0, "S"), canvas };
+            var ids = new List<string> { canvas.Id };
+
+            string plain = NotesDocOps.ToIndentedText(blocks, ids);
+            if (plain != "[доска: Схема сюжета]")
+            { Debug.LogError($"FAIL clipboard: plain text = «{plain}», want «[доска: Схема сюжета]»"); ok = false; }
+
+            string payload = NotesDocOps.SerializeBlocks(blocks, ids);
+            if (payload.Contains("Canvas"))
+            { Debug.LogError("FAIL clipboard: the internal payload names the Canvas kind — a paste could then fabricate a board"); ok = false; }
+
+            if (!NotesDocOps.TryDeserializeBlocks(payload, out var pasted) || pasted.Count != 1)
+            { Debug.LogError($"FAIL clipboard: the payload did not parse back ({pasted?.Count} blocks)"); ok = false; }
+            else
+            {
+                if (pasted[0].Kind != BlockKind.Item)
+                { Debug.LogError($"FAIL clipboard: pasted kind = {pasted[0].Kind}, want Item"); ok = false; }
+                if (pasted[0].Text != "[доска: Схема сюжета]")
+                { Debug.LogError($"FAIL clipboard: pasted text = «{pasted[0].Text}», want the placeholder"); ok = false; }
+                if (pasted[0].CanvasObjects != null || pasted[0].DisplayWidth != 0f)
+                { Debug.LogError("FAIL clipboard: the pasted row carries canvas fields it must not have (I7)"); ok = false; }
+                if (pasted[0].Id == canvas.Id)
+                { Debug.LogError("FAIL clipboard: the pasted row reused the source id (I6)"); ok = false; }
+            }
+
+            // Строка-заглушка, пришедшая обратно как текст, тоже обязана разбираться в Item, а не в доску.
+            if (!NotesDocOps.TryDeserializeBlocks("NOTESBLOCKS/1\nCanvas\t0\t0\tx\t\t\t0\t", out _))
+            { /* ожидаемо: неизвестный кинд отвергается целиком */ }
+            else
+            { Debug.LogError("FAIL clipboard: a payload naming the Canvas kind was accepted"); ok = false; }
+
+            var untitled = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "");
+            if (NotesDocOps.CanvasPlaceholder(untitled) != "[доска: без названия]")
+            { Debug.LogError($"FAIL clipboard: an unnamed board reads «{NotesDocOps.CanvasPlaceholder(untitled)}», want «[доска: без названия]»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Canvas Clipboard: PASS" : "Self-Test Canvas Clipboard: FAIL");
+        }
     }
 }

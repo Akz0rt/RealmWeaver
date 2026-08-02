@@ -691,14 +691,18 @@ namespace WorldGen.Notes.Data
             foreach (int i in indices)
             {
                 var b = blocks[i];
+                // A canvas leaves as an Item carrying its placeholder — the same rule ToIndentedText applies,
+                // written once so the two payloads cannot produce different pastes. It also means TryParseKind
+                // never needs a "Canvas" case, so a hand-crafted payload cannot fabricate a board.
+                bool canvas = b.Kind == BlockKind.Canvas;
                 sb.Append('\n')
-                  .Append(b.Kind).Append('\t')
+                  .Append(canvas ? BlockKind.Item : b.Kind).Append('\t')
                   .Append((b.Depth - baseDepth).ToString(CultureInfo.InvariantCulture)).Append('\t')
                   .Append(b.Collapsed ? '1' : '0').Append('\t')
-                  .Append(Escape(b.Text)).Append('\t')
+                  .Append(Escape(canvas ? CanvasPlaceholder(b) : b.Text)).Append('\t')
                   .Append(Escape(b.Detail)).Append('\t')
                   .Append(Escape(b.LinkedPageId)).Append('\t')
-                  .Append(b.DisplayHeight.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                  .Append((canvas ? 0f : b.DisplayHeight).ToString(CultureInfo.InvariantCulture)).Append('\t')
                   .Append(b.ImageBytes != null ? Convert.ToBase64String(b.ImageBytes) : "");
             }
             return sb.ToString();
@@ -763,9 +767,23 @@ namespace WorldGen.Notes.Data
                 var b = blocks[indices[n]];
                 if (n > 0) sb.Append('\n');
                 sb.Append(new string(' ', 2 * (b.Depth - baseDepth)));
-                sb.Append(b.Kind == BlockKind.Image && string.IsNullOrEmpty(b.Text) ? "[изображение]" : b.Text);
+                sb.Append(b.Kind == BlockKind.Canvas
+                          ? CanvasPlaceholder(b)
+                          : b.Kind == BlockKind.Image && string.IsNullOrEmpty(b.Text) ? "[изображение]" : b.Text);
             }
             return sb.ToString();
+        }
+
+        /// <summary>What a canvas block looks like as TEXT — the one string both clipboard payloads use.
+        ///
+        /// The text clipboard is text. Cards, links, bend offsets and embedded image bytes in it would turn a
+        /// tab-separated line format into a binary one, and the DM's likeliest use of the plain payload is
+        /// pasting a chunk of prose into Discord. So a board becomes a line that says what it was and where to
+        /// find it. Copying a whole board WITHIN the app is a separate feature, and Р4 does not have it.</summary>
+        public static string CanvasPlaceholder(DocBlock block)
+        {
+            string name = block != null ? (block.Text ?? "").Trim() : "";
+            return "[доска: " + (name.Length > 0 ? name : "без названия") + "]";
         }
 
         static bool TryParseKind(string raw, out BlockKind kind)
