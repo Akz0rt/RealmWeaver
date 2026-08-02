@@ -481,11 +481,18 @@ namespace WorldGen.Notes.Rendering
         }
 
         /// <summary>ONE undo step per drag, pushed against the state the drag STARTED from — which is why the
-        /// snapshot is taken at the beginning and used here, rather than pushed at either end alone.</summary>
+        /// snapshot is taken at the beginning and used here, rather than pushed at either end alone.
+        ///
+        /// THE RESIZED ROW IS THE FOCUS TO RESTORE, not LastFocusedBlockId — the same rule the two board-
+        /// mutation paths carry (BuildInlineCanvas and CanvasSurfaceHost.Show). It matters more here than it
+        /// reads: RebuildAndFocus asks to SCROLL the caret into view, so undoing a resize while
+        /// LastFocusedBlockId pointed at some earlier row would carry the page away from the board the DM had
+        /// hold of a moment ago. Caret -1 means "end of that row", and a board row has no field to put a
+        /// caret in — DocBlockView.BeginEdit returns at once — so the focus is only ever the scroll target.</summary>
         void EndCanvasResize(string blockId)
         {
             if (Page == null || canvasResizeBefore == null) return;
-            PushHistoryOf(canvasResizeBefore, LastFocusedBlockId, LastFocusedCaret);
+            PushHistoryOf(canvasResizeBefore, blockId, -1);
             canvasResizeBefore = null;
             OnDocumentMutated?.Invoke();
         }

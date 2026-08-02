@@ -414,9 +414,11 @@ namespace WorldGen.Notes.Rendering
             canvasController.AddLink(fromObjectId, toObjectId);
         }
 
-        /// <summary>Called live while ObjectResizeController drags a corner handle — applies the
-        /// new size/position immediately for responsive feedback; the undo entry is only pushed
-        /// once, in CommitResize, when the drag ends.</summary>
+        /// <summary>Called live while ObjectResizeController drags a corner handle — applies the new
+        /// size/position immediately for responsive feedback. The undo entry is pushed once per drag, by
+        /// BeginResize below, on the FIRST movement: this method writes the data on every frame, so by the
+        /// end of the drag the old size is gone. (It used to be pushed at the end, and that is what the
+        /// snapshot then held: the new size, restoring the object to where it already was.)</summary>
         public void ApplyResizePreview(string objectId, System.Numerics.Vector2 newPosition, System.Numerics.Vector2 newSize)
         {
             var data = FindObjectData(objectId);
