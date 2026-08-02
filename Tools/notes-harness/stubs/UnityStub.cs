@@ -12,6 +12,18 @@ namespace UnityEngine
         public static void LogError(object o) { Errors++; Console.WriteLine("ERR: " + o); }
         public static void LogWarning(object o) => Console.WriteLine("WARN: " + o);
     }
+    /// <summary>NOT USED BY ANY SYNCED SOURCE — it exists so the gate can FAIL. UnityEngine really does
+    /// declare a Vector2, and the pure notes layer really does use System.Numerics.Vector2, so a file that
+    /// imports both namespaces and writes a bare `Vector2` is ambiguous (CS0104) in the Editor. While this
+    /// stub had no Vector2 at all, that file compiled clean here and broke the real build — a self-test suite
+    /// shipped green through the gate and failed on the DM's machine. A stub that is MISSING a type does not
+    /// merely fail to test it; it actively hides a conflict the real assembly would raise.</summary>
+    public struct Vector2
+    {
+        public float x, y;
+        public Vector2(float x, float y) { this.x = x; this.y = y; }
+    }
+
     public static class Mathf
     {
         public static float Abs(float v) => Math.Abs(v);

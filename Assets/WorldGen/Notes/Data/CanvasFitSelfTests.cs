@@ -1,6 +1,12 @@
 using System.Collections.Generic;
-using System.Numerics;
 using UnityEngine;
+
+// AN ALIAS, NOT `using System.Numerics`. This suite needs UnityEngine for Debug.Log AND the pure layer's
+// vectors for its fixtures, and both namespaces declare a Vector2 — which is ambiguous in the Editor and
+// silently is NOT in the offline harness, whose UnityEngine stub has no Vector2 at all. So the plain import
+// compiled clean on the gate and broke the real build: exactly the shadowing this project has now been bitten
+// by four times. Naming the one that is meant removes the question rather than resolving it by luck.
+using Vector2 = System.Numerics.Vector2;
 
 namespace WorldGen.Notes.Data
 {
