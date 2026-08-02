@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -15,8 +16,12 @@ namespace WorldGen.Notes.Rendering
     {
         NoteCardData data;
         RectTransform rect;
-        Text titleText;
-        InputField bodyField;
+        TMP_Text titleText;
+        TMP_InputField bodyField;
+
+        /// <summary>The body when it is NOT editable. Exactly one of this and bodyField is ever non-null —
+        /// which is what Refresh reads to know which half was built.</summary>
+        TMP_Text bodyLabel;
         Vector2 dragStartLocalPos;
         Vector2 pressScreenPos;
         bool dragging;
@@ -31,13 +36,19 @@ namespace WorldGen.Notes.Rendering
         public event System.Action<string, System.Numerics.Vector2, System.Numerics.Vector2> OnDragEnded;
         public event System.Action<string> OnClicked;
 
-        static Font builtinFont;
-
-        public void Initialize(NoteCardData cardData, RectTransform canvasContainer)
+        /// <summary>Builds the card. `editable` is FALSE for a canvas shown inline in a page.
+        ///
+        /// NOT A COSMETIC SWITCH. A TMP_InputField is an IScrollHandler and swallows the wheel over itself
+        /// (TMP_InputField.cs:2414-2423) — the exact defect Р2 spent a checkpoint round on for page rows. In
+        /// the flow of a page the wheel ALWAYS belongs to the page, so the editing half simply is not built.
+        /// The DM edits a card in the expanded view, where the page is not underneath it.
+        ///
+        /// TMP AND LITERATA, unlike every other panel in the app: a card on a board is body text of a page,
+        /// which is exactly the boundary the arc's "panels do not migrate" rule draws. The toolbar, the
+        /// inspectors and the confirm dialogs stay on LegacyRuntime.ttf.</summary>
+        public void Initialize(NoteCardData cardData, RectTransform canvasContainer, bool editable)
         {
             data = cardData;
-            if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-
             rect = GetComponent<RectTransform>();
             transform.SetParent(canvasContainer, false);
             rect.pivot = new Vector2(0.5f, 0.5f);
@@ -45,14 +56,17 @@ namespace WorldGen.Notes.Rendering
             var bg = gameObject.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
 
-            var titleGO = new GameObject("Title");
+            var titleGO = new GameObject("Title", typeof(RectTransform));
             titleGO.transform.SetParent(transform, false);
-            titleText = titleGO.AddComponent<Text>();
-            titleText.font = builtinFont;
-            titleText.fontSize = 14;
-            titleText.fontStyle = FontStyle.Bold;
+            titleText = titleGO.AddComponent<TextMeshProUGUI>();
+            // Guarded rather than assigned outright, the way NotesTypography.ApplyBody guards: a missing
+            // font asset is a real state (it complains loudly and returns null), and writing null into
+            // TMP_Text.font turns a legible fallback into a NullReferenceException at first layout.
+            if (NotesTypography.Bold != null) titleText.font = NotesTypography.Bold;
+            titleText.fontSize = 14f;
+            titleText.alignment = TextAlignmentOptions.TopLeft;
+            titleText.raycastTarget = false;
             ThemeService.Tag(titleText, ThemeRole.Txt);
-            titleText.alignment = TextAnchor.UpperLeft;
             var titleRect = titleGO.GetComponent<RectTransform>();
             titleRect.anchorMin = new Vector2(0f, 1f);
             titleRect.anchorMax = new Vector2(1f, 1f);
@@ -60,36 +74,53 @@ namespace WorldGen.Notes.Rendering
             titleRect.anchoredPosition = new Vector2(0f, -4f);
             titleRect.sizeDelta = new Vector2(-8f, 22f);
 
-            var bodyGO = new GameObject("Body");
+            var bodyGO = new GameObject("Body", typeof(RectTransform));
             bodyGO.transform.SetParent(transform, false);
-            var bodyBg = bodyGO.AddComponent<Image>();
-            bodyBg.color = new Color(1f, 1f, 1f, 0.01f);
-            bodyField = bodyGO.AddComponent<InputField>();
-            bodyField.targetGraphic = bodyBg;
-            bodyField.lineType = InputField.LineType.MultiLineNewline;
             var bodyRect = bodyGO.GetComponent<RectTransform>();
             bodyRect.anchorMin = Vector2.zero;
             bodyRect.anchorMax = Vector2.one;
             bodyRect.offsetMin = new Vector2(4f, 4f);
             bodyRect.offsetMax = new Vector2(-4f, -26f);
 
-            var bodyTextGO = new GameObject("Text");
+            var bodyTextGO = new GameObject("Text", typeof(RectTransform));
             bodyTextGO.transform.SetParent(bodyGO.transform, false);
-            var bodyText = bodyTextGO.AddComponent<Text>();
-            bodyText.font = builtinFont;
-            bodyText.fontSize = 12;
+            var bodyText = bodyTextGO.AddComponent<TextMeshProUGUI>();
+            if (NotesTypography.Body != null) bodyText.font = NotesTypography.Body;
+            bodyText.fontSize = 12f;
             ThemeService.Tag(bodyText, ThemeRole.Txt);
-            bodyText.supportRichText = false;
             var bodyTextRect = bodyTextGO.GetComponent<RectTransform>();
             bodyTextRect.anchorMin = Vector2.zero;
             bodyTextRect.anchorMax = Vector2.one;
             bodyTextRect.sizeDelta = Vector2.zero;
-            bodyField.textComponent = bodyText;
-            bodyField.onEndEdit.AddListener(v => data.Body = v);
+
+            if (editable)
+            {
+                var bodyBg = bodyGO.AddComponent<Image>();
+                bodyBg.color = new Color(1f, 1f, 1f, 0.01f);
+                bodyField = bodyGO.AddComponent<TMP_InputField>();
+                bodyField.targetGraphic = bodyBg;
+                bodyField.textComponent = bodyText;
+                bodyField.lineType = TMP_InputField.LineType.MultiLineNewline;
+                // Kept from the legacy card, where it was supportRichText=false: a body the DM typed is
+                // TEXT, and a stray '<' in it must stay a '<' rather than be eaten as markup. Set on the
+                // FIELD, not the label — TMP_InputField pushes its own richText onto its text component.
+                bodyField.richText = false;
+                // Off, for the same reason DocBlockView turns it off: on a writing surface it loses a
+                // paragraph to one keystroke with no undo behind it.
+                bodyField.restoreOriginalTextOnEscape = false;
+                bodyField.onEndEdit.AddListener(v => data.Body = v);
+                bodyField.text = data.Body;
+            }
+            else
+            {
+                // No field, so no IScrollHandler, so the wheel over an inline board belongs to the page.
+                bodyLabel = bodyText;
+                bodyText.richText = false;
+                bodyText.raycastTarget = false;
+                bodyText.text = data.Body;
+            }
 
             titleText.text = data.Title;
-            bodyField.text = data.Body;
-
             Refresh();
         }
 
@@ -98,6 +129,7 @@ namespace WorldGen.Notes.Rendering
             if (data == null) return;
             titleText.text = data.Title;
             if (bodyField != null) bodyField.text = data.Body;
+            else if (bodyLabel != null) bodyLabel.text = data.Body;
             rect.anchoredPosition = new Vector2(data.Position.X, data.Position.Y);
             rect.sizeDelta = new Vector2(data.Size.X, data.Size.Y);
         }

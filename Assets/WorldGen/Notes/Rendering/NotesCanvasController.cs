@@ -101,7 +101,8 @@ namespace WorldGen.Notes.Rendering
                 {
                     var go = new GameObject($"Note_{card.Id}");
                     var view = go.AddComponent<NoteCardView>();
-                    view.Initialize(card, CanvasContainer);
+                    // Always editable for now; the inline-vs-expanded mode arrives with the block renderer.
+                    view.Initialize(card, CanvasContainer, editable: true);
                     view.interactionController = interactionController;
                     WireEvents(view.ObjectId, ev => { view.OnClicked += ev.onClicked; view.OnDragEnded += ev.onDragEnded; });
                     objectViews[card.Id] = view;
