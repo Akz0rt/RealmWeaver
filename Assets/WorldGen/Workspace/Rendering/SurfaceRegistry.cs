@@ -1,8 +1,10 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
 using WorldGen.Rendering;
+using WorldGen.Rendering.Theme;
 using WorldGen.Workspace.Data;
 
 namespace WorldGen.Workspace.Rendering
@@ -164,6 +166,165 @@ namespace WorldGen.Workspace.Rendering
                 foreach (var page in group.Pages)
                     if (page.Id == id) return page.Name;
             return "";
+        }
+    }
+
+    /// <summary>Hosts the Canvas surface: a board opened FULL-PANE, addressed by its DocBlock.Id — the other
+    /// half of Р4, whose first half is the same board drawn inline in the page's flow (DocumentPageView
+    /// .BuildInlineCanvas).
+    ///
+    /// BOTH COPIES ARE LIVE, and neither owns the data. The same DocBlock is drawn by two different
+    /// NotesCanvasControllers, both reading it; what one changes, the other shows on its next rebuild. That is
+    /// why AfterMutation asks the PAGE to rebuild rather than either side pushing state at the other — there
+    /// is no "the real one" to push from. The reverse direction (a card dragged INLINE while this tab is open)
+    /// is covered by Show() re-Initialize-ing unconditionally; see its own comment.
+    ///
+    /// THE TOOLBAR IS BUILT HERE AND ONLY HERE. Five tools, pan, zoom, links and drawing exist in the expanded
+    /// view alone — which is precisely what lets the inline block have no gesture that fights the page's
+    /// scroll. NotesToolbar has no other caller (verified by grep, Task 10 step 3).
+    ///
+    /// NO RECOMPILE GAP, and the plan for this task predicted one — worth recording, because the reasoning
+    /// that makes it not apply is the same reasoning that makes it apply everywhere else. `root` is a plain
+    /// non-[SerializeField] field on a non-MonoBehaviour, and WorkspaceBuilder.Awake constructs a FRESH host on
+    /// every Play-mode rebuild, so EnsureBuilt would indeed build a SECOND ExpandedCanvas — except that the
+    /// first one no longer exists by then. ExpandedCanvas lives under a pane's ContentArea, i.e. under
+    /// WorkspaceCanvas, and WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s that whole subtree before
+    /// Awake rebuilds it. The fresh host therefore starts with root == null and is correct by construction.
+    /// This is exactly what distinguishes it from PageSurfaceHost, whose DocumentPageView hangs off
+    /// NotesRootBuilder — a different GameObject entirely, untouched by the demolition, which is why THAT one
+    /// needs EnsureWired and this one needs nothing.</summary>
+    public class CanvasSurfaceHost : ISurfaceHost
+    {
+        readonly NotesDocumentController documentController;
+        readonly DocumentPageView pageView;
+
+        RectTransform root;
+        NotesCanvasController canvasController;
+        CanvasInteractionController interaction;
+
+        public CanvasSurfaceHost(NotesDocumentController documentController, DocumentPageView pageView)
+        {
+            this.documentController = documentController;
+            this.pageView = pageView;
+        }
+
+        public SurfaceKind Kind => SurfaceKind.Canvas;
+
+        /// <summary>Its own group — one expanded board at a time, the same single-instance limitation
+        /// PageSurfaceHost's doc records and for the same reason: one host, no pane parameter.</summary>
+        public object ShareGroup => this;
+
+        public string TitleFor(string id) => NotesSurface.TitleOf(FindCanvas(id, out _));
+
+        public void Show(RectTransform paneContent, string id)
+        {
+            if (paneContent == null || pageView == null) return;
+            var block = FindCanvas(id, out NotesPage owner);
+            EnsureBuilt(paneContent);
+            if (root == null) return;
+
+            // Re-parented UNCONDITIONALLY on every Show, never once — WorkspaceOps.NormalizeSplit can promote
+            // Secondary into Primary's slot, and a host that cached its container would keep drawing into the
+            // old one. The same rule ISurfaceHost's own doc states for every host here.
+            root.SetParent(paneContent, false);
+            root.anchorMin = Vector2.zero;
+            root.anchorMax = Vector2.one;
+            root.offsetMin = Vector2.zero;
+            root.offsetMax = Vector2.zero;
+            // A block this cannot resolve is shown as NOTHING rather than as a stale board: the DM can delete
+            // the block, or its page, from the navigator while this tab is open. Task 11 prunes the tab; the
+            // two must not disagree in the window between.
+            root.gameObject.SetActive(block != null);
+            if (block == null) return;
+
+            // WHOSE HISTORY. A snapshot is a PAGE's whole block list, so pushing one taken against page A onto
+            // page B would replace B's content with A's — the very thing DocumentPageView.OnActivePageChanged
+            // guards with History.Clear(). So the board only writes history when the page it lives on is the
+            // page currently open; otherwise the change still happens and still marks the project dirty, it
+            // just is not undoable from a page that is not on screen.
+            //
+            // THE BOARD'S OWN ROW IS THE FOCUS TO RESTORE, not LastFocusedBlockId — the same fix the inline
+            // path carries (DocumentPageView.cs, BuildInlineCanvas), and more clearly right here: the DM
+            // working in an expanded board in one pane last typed in some unrelated row of some page in the
+            // OTHER pane, and undo landing them there would be baffling. Caret -1 means "end of that row".
+            var ownerPage = owner;
+            string canvasId = block.Id;
+            canvasController.BeforeMutation = () =>
+            {
+                if (ownerPage != null && ReferenceEquals(ownerPage, pageView.Page))
+                    pageView.PushHistory(canvasId, -1);
+            };
+            canvasController.AfterMutation = () =>
+            {
+                // Dirty ALWAYS (a card added here must survive the DM closing the project), redraw only the
+                // page that actually contains this board — rebuilding some other open page would be a wasted
+                // full rebuild that redraws nothing this change touched.
+                pageView.MarkDocumentMutated();
+                if (ownerPage != null && ReferenceEquals(ownerPage, pageView.Page)) pageView.Rebuild();
+            };
+
+            // RE-INITIALIZED ON EVERY Show, deliberately, and this is the ONLY path by which an inline edit
+            // reaches this copy: the page's own rebuild redraws the row, not this. NotesCanvasController
+            // .EnsureContainer reuses its container, so this respawns the views into the same object rather
+            // than building a second board. It cannot land mid-gesture — every caller of SyncSurfaces is a
+            // discrete event (tab click, close, open, divider COMMIT), and PaneFocusOnClick deliberately
+            // applies a pane focus at RELEASE, after the drag it might have interrupted is already over.
+            interaction.Mode = CanvasMode.Expanded;
+            canvasController.Initialize(block, root, interaction, CanvasMode.Expanded);
+
+            // The board's contents are created AFTER the toolbar (EnsureBuilt runs once, Initialize runs
+            // every Show), and in uGUI a later sibling draws on top — so without this the board would paint
+            // over its own five tools. Same one-line fix, same reason, as the inline «↗» button's.
+            if (canvasController.CanvasContainer != null)
+                canvasController.CanvasContainer.SetAsFirstSibling();
+        }
+
+        public void Hide()
+        {
+            if (root != null) root.gameObject.SetActive(false);
+        }
+
+        /// <summary>Resolved FRESH on every call, never held — see Show's SetActive(block != null) for what a
+        /// held reference would keep drawing after the DM deleted the block or its page, which LOOKS correct
+        /// and is the whole trouble.</summary>
+        DocBlock FindCanvas(string id, out NotesPage owner)
+        {
+            owner = null;
+            var doc = documentController != null ? documentController.Document : null;
+            if (doc == null) return null;
+            var block = NotesDocOps.FindBlock(doc, id, out owner);
+            return block != null && block.Kind == BlockKind.Canvas ? block : null;
+        }
+
+        /// <summary>Builds the expanded board's own chrome, once. The font comes from the page view rather
+        /// than a second Resources.GetBuiltinResource call, so the two cannot drift apart; a null one is
+        /// tolerated because CanvasInteractionController.Awake falls back to the same builtin asset.</summary>
+        void EnsureBuilt(RectTransform paneContent)
+        {
+            if (root != null) return;
+
+            var rootGO = new GameObject("ExpandedCanvas", typeof(RectTransform));
+            rootGO.transform.SetParent(paneContent, false);
+            root = rootGO.GetComponent<RectTransform>();
+            var bg = rootGO.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Bg);
+            rootGO.AddComponent<RectMask2D>();
+
+            var interactionGO = new GameObject("CanvasInput", typeof(RectTransform));
+            interactionGO.transform.SetParent(root, false);
+            interaction = interactionGO.AddComponent<CanvasInteractionController>();
+            interaction.viewportRect = root;
+            interaction.builtinFont = pageView != null ? pageView.BodyFont : null;
+
+            var canvasGO = new GameObject("Canvas", typeof(RectTransform));
+            canvasGO.transform.SetParent(root, false);
+            canvasController = canvasGO.AddComponent<NotesCanvasController>();
+            interaction.canvasController = canvasController;
+
+            var toolbar = rootGO.AddComponent<NotesToolbar>();
+            toolbar.Initialize(interaction, root);
+            // What tells the interaction controller that a click landed on a TOOL, not on the board under it.
+            interaction.toolbarRect = toolbar.RowRect;
         }
     }
 

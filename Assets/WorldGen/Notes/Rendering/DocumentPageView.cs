@@ -8,18 +8,19 @@ using WorldGen.Workspace.Data;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Draws a Document page as a scrolling list of rows, and owns the board-vs-document switch. The board
-    /// renderer (NotesCanvasController) is NOT modified by this class — historically it hid a caller-supplied
-    /// boardViewport and showed its own, both children of the same RightColumn.
+    /// Draws a Document page as a scrolling list of rows. Every page is a document — there is no longer a
+    /// board-vs-document switch, and this class no longer takes a board viewport to hide.
     ///
-    /// Task 9 (workspace shell surfaces): NotesRootBuilder stops building that RightColumn/CanvasViewport
-    /// split entirely — canvas rendering is later work (see the workspace-shell spec's Р4) — so its one
-    /// remaining caller always passes boardViewportGO: null now. A Board-kind page can still exist (POI
-    /// editor «Открыть страницу» flows still create one with the default kind — see
-    /// NotesDocumentController.CreatePage's callers), and can still be opened as a workspace tab through the
-    /// navigator, so this view now shows a one-line placeholder for that case instead of nothing — see
-    /// OnActivePageChanged/placeholderGO. The mutual-exclusion path for a real caller-supplied
-    /// boardViewportGO is left intact and untouched for exactly the callers that still pass one.
+    /// THE HISTORY, because the shape of this file still shows it. A board used to be a KIND OF PAGE: the
+    /// caller handed this view a `boardViewport` GameObject, and it hid that and showed its own rows, or the
+    /// reverse, both children of one RightColumn. Task 9 of the workspace-shell arc stopped building that
+    /// split (its one remaining caller passed null), which left a placeholder row standing in for a board
+    /// page; Р4 finished the job by making a board a BLOCK inside a page instead (BlockKind.Canvas), drawn
+    /// inline by BuildInlineCanvas and full-pane by CanvasSurfaceHost. The parameter and the field went with
+    /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` is the last
+    /// piece still standing: built, and SetActive(false)d on every path that could show it. Left in place
+    /// rather than removed here because EnsureWired re-finds it by name after a domain reload, and deleting a
+    /// recovery path is a different change from deleting a parameter no caller supplied.
     ///
     /// `root` is re-parented by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs)
     /// into whichever pane is currently showing a Page tab — see the public Root accessor below. Because that
@@ -49,7 +50,6 @@ namespace WorldGen.Notes.Rendering
         const float ScrollbarWidth = 10f;
 
         NotesDocumentController documentController;
-        GameObject boardViewport;
         GameObject root;
         GameObject viewportGO;
         GameObject placeholderGO;
@@ -113,6 +113,17 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Fires whenever the block list changed shape, so the project can be marked dirty and
         /// dependent panels (backlinks) can refresh.</summary>
         public event System.Action OnDocumentMutated;
+
+        /// <summary>Raises OnDocumentMutated for a change made OUTSIDE this view — today only by a board
+        /// opened as its own surface (CanvasSurfaceHost), which edits a DocBlock this page owns without going
+        /// through any of this class's own mutators.
+        ///
+        /// A C# event can only be raised from the class that declares it, so an outside editor of this
+        /// document has no way to say "the project is dirty now" without a method like this one. Rebuild() is
+        /// deliberately NOT folded in: the caller decides whether a rebuild is even meaningful (see
+        /// CanvasSurfaceHost.Show — a board on a page that is not the open one must still mark the project
+        /// dirty, and must NOT redraw the page it is not on).</summary>
+        public void MarkDocumentMutated() => OnDocumentMutated?.Invoke();
 
         // ── undo/redo and selection (Р2 Task 8) ─────────────────────────────────
 
@@ -621,11 +632,9 @@ namespace WorldGen.Notes.Rendering
             return null;
         }
 
-        public void Initialize(NotesDocumentController docController, RectTransform parent, Font builtinFont,
-                              GameObject boardViewportGO)
+        public void Initialize(NotesDocumentController docController, RectTransform parent, Font builtinFont)
         {
             documentController = docController;
-            boardViewport = boardViewportGO;
             font = builtinFont;
 
             root = new GameObject(RootObjectName, typeof(RectTransform));
@@ -1051,7 +1060,7 @@ namespace WorldGen.Notes.Rendering
             }
 
             // Every page is a document since Р4 — the placeholder that used to stand in for a board page, and
-            // the boardViewport hand-off that no caller ever supplied, both go with PageKind. surfaceVisible
+            // the board-viewport hand-off no caller ever supplied, both went with PageKind. surfaceVisible
             // is what stops this from firing when NO pane's active tab is a Page at all — see the field's own
             // doc for the concrete PoiEditorScreen/PoiEditPanel path that needs it.
             if (root != null) root.SetActive(surfaceVisible && showDocument);

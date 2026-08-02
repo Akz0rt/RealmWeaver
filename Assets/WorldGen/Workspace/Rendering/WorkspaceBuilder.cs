@@ -343,6 +343,25 @@ namespace WorldGen.Workspace.Rendering
             if (notesRoot != null)
             {
                 registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+
+                // Р4: a board expanded out of a page's flow, drawn full-pane over the SAME DocBlock the page
+                // keeps drawing inline — see CanvasSurfaceHost. Registered beside the page host because it
+                // needs exactly what the page host needs and nothing else.
+                registry.Register(new CanvasSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+                if (notesRoot.DocumentView != null)
+                {
+                    // The «↗» button on an inline board. Opens in the OTHER pane, the same rule a clicked POI
+                    // link follows: a board in one pane and the session text in the other is what two panes
+                    // are FOR. Wired here rather than in PageLinkBridge because it needs the document to read
+                    // the caption from, and because it is not a link.
+                    var view = notesRoot.DocumentView;
+                    view.CanvasRouter = blockId =>
+                    {
+                        var doc = documentController != null ? documentController.Document : null;
+                        var block = doc != null ? NotesDocOps.FindBlock(doc, blockId, out _) : null;
+                        Controller.Open(NotesSurface.Canvas(blockId), NotesSurface.TitleOf(block), inOtherPane: true);
+                    };
+                }
                 // What the page's inline links resolve against and where they open — see PageLinkBridge.
                 // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
                 // subscription that has to be dropped again on the next rebuild.

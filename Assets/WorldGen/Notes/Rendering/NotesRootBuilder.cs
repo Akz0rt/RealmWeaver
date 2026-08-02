@@ -110,8 +110,7 @@ namespace WorldGen.Notes.Rendering
             holderGO.transform.SetParent(transform, false);
 
             DocumentView = gameObject.AddComponent<DocumentPageView>();
-            DocumentView.Initialize(DocumentController, holderGO.GetComponent<RectTransform>(), builtinFont,
-                                    boardViewportGO: null);
+            DocumentView.Initialize(DocumentController, holderGO.GetComponent<RectTransform>(), builtinFont);
 
             var keyboard = gameObject.AddComponent<DocKeyboardController>();
             keyboard.pageView = DocumentView;
