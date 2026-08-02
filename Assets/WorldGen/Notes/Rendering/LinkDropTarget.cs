@@ -68,6 +68,14 @@ namespace WorldGen.Notes.Rendering
             var existing = page.Root.GetComponent<LinkDropTarget>();
             if (existing != null) DestroyImmediate(existing);
 
+            // AND THE MARKER WITH IT, which is not tidiness. A reload never runs OnDisable, so a marker left
+            // drawn by a drag that was in flight survives as a live GameObject — while the fresh component's
+            // own `marker` field is null, so HideMarker has nothing to hide and Update never reaches it. The
+            // page would carry an accent line across it for the rest of the session with nothing able to
+            // remove it.
+            var staleMarker = page.Root.Find(ObjectName);
+            if (staleMarker != null) DestroyImmediate(staleMarker.gameObject);
+
             var target = page.Root.gameObject.AddComponent<LinkDropTarget>();
             target.page = page;
             target.self = page.Root;
@@ -220,10 +228,9 @@ namespace WorldGen.Notes.Rendering
 
             // A child of the page ROOT rather than of the scrolling Content: Content is driven by a
             // VerticalLayoutGroup, which would take a marker parented there for another row and lay it out
-            // as one.
-            var existing = self.Find(ObjectName);
-            if (existing != null) return (RectTransform)existing;
-
+            // as one. No look-up for an existing one — Attach has already destroyed any, deliberately (see
+            // its own note), so finding one here could only ever mean finding the stale object that note is
+            // about.
             var go = new GameObject(ObjectName, typeof(RectTransform));
             go.transform.SetParent(self, false);
             var rect = go.GetComponent<RectTransform>();

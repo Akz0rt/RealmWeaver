@@ -160,9 +160,11 @@ namespace WorldGen.Notes.Rendering
             rowGO.transform.SetParent(self, false);
             Stretch((RectTransform)rowGO.transform, RowHeight, y, 0f);
 
-            // Transparent, but a raycast target — otherwise the row is only clickable where its letters are.
+            // Invisible but still raycasts — otherwise the row is only clickable where its letters are.
+            // Tagged at alpha 0 rather than given a bare transparent colour, which is the idiom
+            // NavigatorView's own rows use and keeps every runtime graphic on this page themed.
             var image = rowGO.AddComponent<Image>();
-            image.color = new Color(0f, 0f, 0f, 0f);
+            ThemeService.Tag(image, ThemeRole.Panel, 0f);
 
             var button = rowGO.AddComponent<Button>();
             button.targetGraphic = image;
