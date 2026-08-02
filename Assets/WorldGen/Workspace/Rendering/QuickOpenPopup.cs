@@ -158,6 +158,35 @@ namespace WorldGen.Workspace.Rendering
             Open();
         }
 
+        /// <summary>Opens the SAME palette with a different ending: accepting a row hands it to
+        /// <paramref name="onChosen"/> instead of opening it as a tab.
+        ///
+        /// THE POINT IS THAT THERE IS NO SECOND SEARCH. Making a link has to include FINDING the object —
+        /// the DM must not be asked to recall a name exactly, let alone an id — and this list already does
+        /// that, over the same document and the same world, with the same ranking. A cloned picker would
+        /// start by agreeing with this one and end by disagreeing with it, in the way that is only noticed
+        /// when a page is findable one way and not the other.
+        ///
+        /// Everything about the palette's behaviour is unchanged: the same keys, the same rows, the same
+        /// search. Only ChooseIndex branches, and only while this callback is set — Close clears it, so an
+        /// Escape out of link mode leaves Ctrl+K exactly as it was.</summary>
+        public void OpenForLink(System.Action<QuickHit> onChosen)
+        {
+            if (onChosen == null || popupGO != null) return;
+            acceptChosen = onChosen;
+            Open();
+        }
+
+        /// <summary>Non-null while the palette is picking a link target rather than a tab to open. See
+        /// OpenForLink.</summary>
+        System.Action<QuickHit> acceptChosen;
+
+        /// <summary>Whether the palette is on screen. Read by PageLinkBridge, which uses it to stand the
+        /// page's own keyboard handling down: both this class and DocKeyboardController poll the hardware
+        /// directly (each for its own good reason — see this class's Update), so with a page row focused and
+        /// the palette open, one Enter would BOTH choose a row here and split the row there.</summary>
+        public bool IsOpen => popupGO != null;
+
         void Update()
         {
             // controller is null for the ONE FRAME-ish window between a Play-mode script reload wiping it
@@ -250,6 +279,9 @@ namespace WorldGen.Workspace.Rendering
             highlighted = -1;
             focusPending = false;
             searchPending = false;
+            // Link mode lasts exactly as long as the palette it was opened for — an Escape out of it leaves
+            // Ctrl+K byte-for-byte what it was.
+            acceptChosen = null;
         }
 
         // ── Search / selection ────────────────────────────────────────────────────
@@ -279,6 +311,14 @@ namespace WorldGen.Workspace.Rendering
             // PoiManager.OnPoisChanged the way the navigator does would buy nothing here: a search runs on the
             // keystroke, so it always reads the POIs as they are at that instant.
             hits.AddRange(QuickOpen.Search(doc, WorldObjectSource.Collect(poiManager), query, ResultLimit));
+
+            // THE WORLD MAP IS NOT A LINK TARGET. Its hit exists so Ctrl+K can open the map tab, and it
+            // carries no id at all (QuickOpen.CollectWorldMapHit builds Target with Id="" and no World) —
+            // the one row in this list with nothing for [[kind:id|name]] to point at. Dropped from the LIST
+            // rather than refused at accept time, so link mode never offers a row that would do nothing.
+            if (acceptChosen != null)
+                hits.RemoveAll(h => h == null || h.World == null && (h.Target == null || string.IsNullOrEmpty(h.Target.Id)));
+
             highlighted = hits.Count > 0 ? 0 : -1;
             RebuildRows();
         }
@@ -303,6 +343,18 @@ namespace WorldGen.Workspace.Rendering
             if (index < 0 || index >= hits.Count) return;
 
             QuickHit hit = hits[index];
+
+            // LINK MODE: the row is a target to point AT, not a tab to open. Closed first, for the same
+            // reason the open path closes first — the palette must not still be on screen while whatever
+            // accepting does runs, and here that includes putting the caret back in the row it came from.
+            if (acceptChosen != null)
+            {
+                var accept = acceptChosen;
+                Close();                 // clears acceptChosen, hence the local copy above
+                accept(hit);
+                return;
+            }
+
             SurfaceRef target = hit.Target;
 
             // World != null (Task 10b, W2) means this row is a WORLD OBJECT, not a page: QuickHit.Target

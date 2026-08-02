@@ -37,9 +37,8 @@ namespace WorldGen.Notes.Rendering
 
         Button convertSection, convertItem, convertProse, insertImage, insertLink, undo, redo;
 
-        /// <summary>Filled by Task 9's link picker. Until it is, «Ссылка» has nowhere to go and says so by
-        /// being disabled — the honest state, and one the DM can tell apart from a broken button.</summary>
-        public System.Action OnInsertLinkRequested;
+        // «Ссылка» asks the PAGE rather than holding its own hook: the page outlives this bar, which is
+        // rebuilt whole after a domain reload (see Attach), and a hook stored here would be lost with it.
 
         /// <summary>Builds the bar into the strip the page reserves for it, replacing any previous one.
         ///
@@ -84,7 +83,7 @@ namespace WorldGen.Notes.Rendering
             bar.convertItem = bar.BuildButton(barRect, "→ Пункт", () => page.ConvertFocused(BlockKind.Item));
             bar.convertProse = bar.BuildButton(barRect, "→ Проза", () => page.ConvertFocused(BlockKind.Prose));
             bar.insertImage = bar.BuildButton(barRect, "Картинка", bar.PickAndInsertImage);
-            bar.insertLink = bar.BuildButton(barRect, "Ссылка", () => bar.OnInsertLinkRequested?.Invoke());
+            bar.insertLink = bar.BuildButton(barRect, "Ссылка", page.RequestInsertLink);
             bar.undo = bar.BuildButton(barRect, "Отменить", page.Undo);
             bar.redo = bar.BuildButton(barRect, "Вернуть", page.Redo);
 
@@ -151,7 +150,7 @@ namespace WorldGen.Notes.Rendering
             SetInteractable(convertItem, hasRow);
             SetInteractable(convertProse, hasRow);
             SetInteractable(insertImage, hasRow);
-            SetInteractable(insertLink, hasRow && OnInsertLinkRequested != null);
+            SetInteractable(insertLink, hasRow && page.CanInsertLink);
             SetInteractable(undo, page != null && page.CanUndo);
             SetInteractable(redo, page != null && page.CanRedo);
         }

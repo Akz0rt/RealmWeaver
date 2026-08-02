@@ -242,6 +242,38 @@ namespace WorldGen.Workspace.Data
             }));
         }
 
+        /// <summary>Turns a search hit into the three parts of an inline link, or refuses.
+        ///
+        /// WHICH HALF CARRIES THE IDENTITY IS NOT SYMMETRICAL, which is the whole reason this is a function
+        /// and not three lines at the call site. A WORLD hit's identity travels on `World` and its `Target`
+        /// carries no usable id at all; a PAGE hit is the other way round. Reading the wrong half would not
+        /// throw — it would quietly make a token pointing at "" that renders as prose forever.
+        ///
+        /// THE WORLD MAP IS REFUSED. Its hit exists so Ctrl+K can open the map tab; it has no World and an
+        /// empty Target id, so there is nothing for [[kind:id|name]] to point at. The picker also drops it
+        /// from the list (QuickOpenPopup.RunSearch), so this is the second of two guards on the same case —
+        /// deliberately, because the first is a UI decision and this one is the rule.</summary>
+        public static bool TryTokenFor(QuickHit hit, out string kind, out string id, out string name)
+        {
+            kind = null;
+            id = null;
+            name = hit != null ? hit.Title : null;
+            if (hit == null) return false;
+
+            if (hit.World != null)
+            {
+                if (string.IsNullOrEmpty(hit.World.Id)) return false;
+                kind = NotesLinkOps.KindOf(hit.World.Kind);
+                id = hit.World.Id;
+                return true;
+            }
+
+            if (hit.Target == null || string.IsNullOrEmpty(hit.Target.Id)) return false;
+            kind = NotesLinkOps.KindPage;
+            id = hit.Target.Id;
+            return true;
+        }
+
         /// <summary>Resolves a link token's target to its CURRENT name, from the two sources Search already
         /// receives: the document for "page", the world list for the three WorldRefKind names. Returns null
         /// for a target that no longer exists, which makes BuildDisplay fall back to the copy stored in the

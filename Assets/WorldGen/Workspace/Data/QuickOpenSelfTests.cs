@@ -367,5 +367,54 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Body Search Reads Display Text: PASS" : "Self-Test Body Search Reads Display Text: FAIL");
         }
+
+        [ContextMenu("Self-Test: Hit To Link Token")]
+        public void SelfTestHitToLinkToken()
+        {
+            bool ok = true;
+
+            // A WORLD hit's identity is on World, and its Target carries an EMPTY page id — reading the
+            // Target here would make a token pointing at nothing, which renders as prose forever and never
+            // throws.
+            var worldHit = new QuickHit
+            {
+                Title = "Ржавый Якорь",
+                World = new WorldRef { Kind = WorldRefKind.Poi, Id = "poi-1" },
+                Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = "" },
+            };
+            if (!QuickOpen.TryTokenFor(worldHit, out var kind, out var id, out var name)
+                || kind != "poi" || id != "poi-1" || name != "Ржавый Якорь")
+            { Debug.LogError($"FAIL: a POI hit gave ({kind}/{id}/{name}), want (poi/poi-1/Ржавый Якорь)"); ok = false; }
+
+            // A PAGE hit is the other way round: no World, and the id on Target.
+            var pageHit = new QuickHit
+            {
+                Title = "Сессия 1",
+                Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = "page-7" },
+            };
+            if (!QuickOpen.TryTokenFor(pageHit, out kind, out id, out name)
+                || kind != NotesLinkOps.KindPage || id != "page-7" || name != "Сессия 1")
+            { Debug.LogError($"FAIL: a page hit gave ({kind}/{id}/{name}), want (page/page-7/Сессия 1)"); ok = false; }
+
+            // The world MAP has nothing to point at — no World, and an empty Target id.
+            var mapHit = new QuickHit { Title = "Карта мира", Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" } };
+            if (QuickOpen.TryTokenFor(mapHit, out _, out _, out _))
+            { Debug.LogError("FAIL: the world map was accepted as a link target"); ok = false; }
+
+            // A round trip through the grammar: what this produces must read back as what it described.
+            if (QuickOpen.TryTokenFor(worldHit, out kind, out id, out name))
+            {
+                var spans = NotesLinkOps.ParseSpans(NotesLinkOps.MakeToken(kind, id, name));
+                if (spans.Count != 1 || spans[0].Kind != "poi" || spans[0].Id != "poi-1" || spans[0].Display != "Ржавый Якорь")
+                { Debug.LogError("FAIL: the token built from a hit did not parse back into the same hit"); ok = false; }
+            }
+
+            // Null and a hit with no identity at all are ordinary inputs.
+            if (QuickOpen.TryTokenFor(null, out _, out _, out _)
+                || QuickOpen.TryTokenFor(new QuickHit { Title = "пусто" }, out _, out _, out _))
+            { Debug.LogError("FAIL: a hit with no identity was accepted"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Hit To Link Token: PASS" : "Self-Test Hit To Link Token: FAIL");
+        }
     }
 }

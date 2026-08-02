@@ -82,6 +82,13 @@ namespace WorldGen.Notes.Rendering
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
 
+            // Something is over the page and owns the keys — today the Ctrl+K palette, in either of its two
+            // roles. This class polls the hardware directly (see the class doc for why), and so does the
+            // palette, and a row stays "focused" in the cache below after its field is deactivated: without
+            // this line, one Enter would choose a row in the palette AND split the row behind it. Undo is
+            // gated too, deliberately — the DM pressing Ctrl+Z at a search prompt means the prompt.
+            if (pageView.KeyboardSuspended) return;
+
             var live = FindFocusedRow();
 
             // A PICTURE IS "FOCUSED" BY BEING SELECTED. It has no field to focus, so the page holds that

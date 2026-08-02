@@ -4,6 +4,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
+using WorldGen.Notes.Data;
 using WorldGen.Notes.Rendering;
 using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
@@ -345,7 +346,7 @@ namespace WorldGen.Workspace.Rendering
                 // What the page's inline links resolve against and where they open — see PageLinkBridge.
                 // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
                 // subscription that has to be dropped again on the next rebuild.
-                PageLinkBridge.Attach(gameObject, notesRoot.DocumentView, Controller);
+                PageLinkBridge.Attach(gameObject, notesRoot.DocumentView, Controller, QuickOpenPopup);
             }
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
             // Task 10c: the five ex-screens. Registered unconditionally — ScreenSurfaceHosts registers a host
@@ -762,9 +763,11 @@ namespace WorldGen.Workspace.Rendering
     {
         DocumentPageView pageView;
         WorkspaceController controller;
+        QuickOpenPopup palette;
         PoiManager poiManager;
 
-        public static PageLinkBridge Attach(GameObject host, DocumentPageView pageView, WorkspaceController controller)
+        public static PageLinkBridge Attach(GameObject host, DocumentPageView pageView, WorkspaceController controller,
+                                            QuickOpenPopup palette)
         {
             var existing = host.GetComponent<PageLinkBridge>();
             var bridge = existing != null ? existing : host.AddComponent<PageLinkBridge>();
@@ -774,12 +777,14 @@ namespace WorldGen.Workspace.Rendering
             bridge.Unsubscribe();
             bridge.pageView = pageView;
             bridge.controller = controller;
+            bridge.palette = palette;
             bridge.poiManager = null;
 
             if (pageView != null)
             {
                 pageView.WorldSource = bridge.CollectWorld;
                 pageView.LinkRouter = bridge.Open;
+                pageView.LinkPicker = palette != null ? (System.Action)bridge.PickLink : null;
                 // The page may already be showing rows built with no resolver at all (its first Rebuild runs
                 // from Initialize, before this attaches), so their links would be stored names until the next
                 // rebuild. One refresh here settles that.
@@ -796,6 +801,31 @@ namespace WorldGen.Workspace.Rendering
         {
             if (controller == null || surface == null) return;
             controller.Open(surface, title, inOtherPane);
+        }
+
+        /// <summary>Hands the page one fact it cannot learn on its own: a palette is up, so the keys belong to
+        /// it. Both the palette and DocKeyboardController poll the hardware directly, and a page row stays
+        /// "focused" in the keyboard controller's cache after its field is deactivated — so without this, one
+        /// Enter pressed in Ctrl+K would choose a row AND split the row behind it. That collision predates
+        /// the link picker; building the picker is what walked into it.
+        ///
+        /// Polled here rather than pushed from the palette, so the palette keeps knowing nothing about pages.</summary>
+        void Update()
+        {
+            if (pageView != null) pageView.KeyboardSuspended = palette != null && palette.IsOpen;
+        }
+
+        /// <summary>«Ссылка» on the page toolbar: Ctrl+K's own palette, ending in a token instead of a tab.</summary>
+        void PickLink()
+        {
+            if (palette == null || pageView == null) return;
+            palette.OpenForLink(hit =>
+            {
+                // The mapping itself is QuickOpen.TryTokenFor — pure, tested offline, and the one place that
+                // knows which half of a hit carries the identity.
+                if (QuickOpen.TryTokenFor(hit, out var kind, out var id, out var name))
+                    pageView.InsertTokenAtCaret(kind, id, name);
+            });
         }
 
         /// <summary>Found on demand and re-tried on every miss, exactly as NavigatorView.ResolvePoiManager

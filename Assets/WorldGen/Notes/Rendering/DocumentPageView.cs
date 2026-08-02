@@ -240,6 +240,53 @@ namespace WorldGen.Notes.Rendering
             return true;
         }
 
+        /// <summary>True while something else owns the keyboard — the Ctrl+K palette, whether opened as
+        /// itself or as the link picker. Set by PageLinkBridge, read by DocKeyboardController, which stands
+        /// down entirely: the page's keys are only the page's while nothing is over it.</summary>
+        public bool KeyboardSuspended { get; set; }
+
+        /// <summary>Opens the link picker, injected by PageLinkBridge because the picker is Ctrl+K's own
+        /// palette and lives on the workspace side of the layer boundary. Null in a scene without a
+        /// workspace, which is why the toolbar's «Ссылка» reads CanInsertLink rather than assuming.</summary>
+        public System.Action LinkPicker;
+
+        public bool CanInsertLink => LinkPicker != null;
+
+        public void RequestInsertLink() => LinkPicker?.Invoke();
+
+        /// <summary>Writes a link into the row the caret was last in, at the offset it was last at.
+        ///
+        /// THE TOKEN IS BUILT BY NotesLinkOps.MakeToken AND BY NOTHING ELSE, so what is inserted here and
+        /// what ParseSpans reads back cannot drift. The name goes in as the object is called right now; from
+        /// then on it is only a fallback, since rendering resolves the id every time (see NotesLinkOps' class
+        /// doc).
+        ///
+        /// The caret lands AFTER the token, where the DM was going to keep typing.</summary>
+        public bool InsertTokenAtCaret(string kind, string id, string name)
+        {
+            if (Page == null || string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(id)) return false;
+            if (string.IsNullOrEmpty(LastFocusedBlockId)) return false;
+
+            DocBlock target = null;
+            foreach (var b in Page.Blocks)
+                if (b.Id == LastFocusedBlockId) { target = b; break; }
+            if (target == null) return false;
+
+            string text = target.Text ?? "";
+            // -1 is the "end of the text" convention DocKeyResult uses, and a caret recorded against a
+            // LONGER version of this row (an undo since, say) must not index past its end.
+            int caret = LastFocusedCaret < 0 || LastFocusedCaret > text.Length ? text.Length : LastFocusedCaret;
+
+            PushHistory(LastFocusedBlockId, caret);
+
+            string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
+            target.Text = text.Substring(0, caret) + token + text.Substring(caret);
+
+            OnDocumentMutated?.Invoke();
+            RebuildAndFocus(target.Id, caret + token.Length);
+            return true;
+        }
+
         /// <summary>Puts a picture into the prose, immediately after the row the caret was last in — and
         /// after that row's CHILDREN, so an image dropped under a row with sub-rows lands below the whole
         /// thought rather than inside it.
