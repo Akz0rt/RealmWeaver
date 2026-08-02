@@ -169,5 +169,62 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Link Display And Index Map: PASS" : "Self-Test Link Display And Index Map: FAIL");
         }
+
+        [ContextMenu("Self-Test: Stored Names Self-Heal")]
+        public void SelfTestRefreshStoredNames()
+        {
+            bool ok = true;
+
+            NotesLinkOps.NameResolver resolve = (kind, id) =>
+            {
+                if (kind == "poi" && id == "a1") return "Тихая Гавань";
+                if (kind == NotesLinkOps.KindPage && id == "p1") return "Первая сессия";
+                return null;   // anything else has been deleted
+            };
+
+            // The stored copy is brought up to date, and only the copy — the id and the prose around it are
+            // untouched, which is what makes this safe to run after every edit.
+            var healed = NotesLinkOps.RefreshStoredNames("Мы вошли в [[poi:a1|Ржавый Якорь]] под дождём", resolve, out bool changed);
+            if (healed != "Мы вошли в [[poi:a1|Тихая Гавань]] под дождём")
+            { Debug.LogError($"FAIL: healed to \"{healed}\""); ok = false; }
+            if (!changed)
+            { Debug.LogError("FAIL: a rewritten name must report changed=true — the caller marks the project dirty from it"); ok = false; }
+
+            // NOTHING CHANGED MEANS NOTHING CHANGED. An unconditional rewrite would dirty the project on
+            // every focus change, which is the defect this flag exists to prevent.
+            var already = "[[poi:a1|Тихая Гавань]] и [[page:p1|Первая сессия]]";
+            var same = NotesLinkOps.RefreshStoredNames(already, resolve, out bool changed2);
+            if (same != already || changed2)
+            { Debug.LogError($"FAIL: up-to-date names reported changed={changed2}, text \"{same}\""); ok = false; }
+
+            // A DELETED target keeps its stored name — it is the only trace left of what the sentence meant.
+            const string dead = "у [[poi:gone|Старой Мельницы]] нет хозяина";
+            var kept = NotesLinkOps.RefreshStoredNames(dead, resolve, out bool changed3);
+            if (kept != dead || changed3)
+            { Debug.LogError($"FAIL: an unresolved token was rewritten to \"{kept}\""); ok = false; }
+
+            // A mixed row heals only the half that resolves, and the offsets of the second token still land
+            // right after the first one changed length.
+            var mixed = NotesLinkOps.RefreshStoredNames(
+                "[[poi:gone|Мельница]], [[poi:a1|Якорь]], [[page:p1|Сессия]]", resolve, out bool changed4);
+            if (mixed != "[[poi:gone|Мельница]], [[poi:a1|Тихая Гавань]], [[page:p1|Первая сессия]]")
+            { Debug.LogError($"FAIL: mixed row healed to \"{mixed}\""); ok = false; }
+            if (!changed4)
+            { Debug.LogError("FAIL: mixed row must report changed=true"); ok = false; }
+
+            // Prose is prose: no tokens, no rewrite, and a malformed candidate is not a token (L1).
+            var prose = NotesLinkOps.RefreshStoredNames("просто [[ текст", resolve, out bool changed5);
+            if (prose != "просто [[ текст" || changed5)
+            { Debug.LogError($"FAIL: prose was rewritten to \"{prose}\""); ok = false; }
+
+            // Null source and null resolver are ordinary inputs — a row refreshes before the document is wired.
+            if (NotesLinkOps.RefreshStoredNames(null, resolve, out _) != null)
+            { Debug.LogError("FAIL: a null source must come back null, never throw"); ok = false; }
+            var unwired = NotesLinkOps.RefreshStoredNames(dead, null, out bool changed6);
+            if (unwired != dead || changed6)
+            { Debug.LogError("FAIL: a null resolver must leave the text alone"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Stored Names Self-Heal: PASS" : "Self-Test Stored Names Self-Heal: FAIL");
+        }
     }
 }

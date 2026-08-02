@@ -249,8 +249,12 @@ namespace WorldGen.Workspace.Data
         /// which is the only name the DM can still remember it by.
         ///
         /// Building and Room resolve to null today because no producer emits them yet (see WorldObjectRef's
-        /// own doc); the branch exists so that when one does, search follows without a second edit here.</summary>
-        static NotesLinkOps.NameResolver ResolverFor(NotesDocument doc, IReadOnlyList<WorldObjectRef> world)
+        /// own doc); the branch exists so that when one does, search follows without a second edit here.
+        ///
+        /// PUBLIC SINCE Р2 TASK 7, and shared rather than copied: the page renders the same links Ctrl+K
+        /// searches, so a second implementation would be two answers to "what is this called now" — and the
+        /// day they disagreed, a link would render one name and be findable under another.</summary>
+        public static NotesLinkOps.NameResolver ResolverFor(NotesDocument doc, IReadOnlyList<WorldObjectRef> world)
         {
             return (kind, id) =>
             {

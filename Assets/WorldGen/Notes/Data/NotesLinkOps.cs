@@ -215,6 +215,48 @@ namespace WorldGen.Notes.Data
             return result;
         }
 
+        /// <summary>Rewrites every token's STORED name to its target's current one, and reports whether that
+        /// changed anything.
+        ///
+        /// COSMETIC, AND DELIBERATELY SO. Nothing reads the stored copy while the target exists — rendering,
+        /// search and the reference index all resolve by id — so this changes no meaning anywhere. What it
+        /// buys is the raw text the DM edits next time: after «Ржавый Якорь» is renamed to «Тихая Гавань»,
+        /// the page reads correctly but the source behind it still says the old name, and a DM who clicks
+        /// into that row to fix a typo meets a token naming something that no longer exists.
+        ///
+        /// A TARGET THAT IS GONE KEEPS ITS COPY. The resolver answering null is the one case the stored name
+        /// is load-bearing (see the class doc), so overwriting it with anything would delete the only trace
+        /// of what the sentence was about.
+        ///
+        /// `changed` EXISTS SO THE CALLER CAN STAY SILENT. The row calls this every time an edit ends, and an
+        /// unconditional write would mark the project dirty on every focus change — a save prompt for having
+        /// looked at a line.</summary>
+        public static string RefreshStoredNames(string source, NameResolver resolve, out bool changed)
+        {
+            changed = false;
+            if (string.IsNullOrEmpty(source) || resolve == null) return source;
+
+            var spans = ParseSpans(source);
+            if (spans.Count == 0) return source;
+
+            var sb = new System.Text.StringBuilder(source.Length);
+            int copied = 0;
+            foreach (var span in spans)
+            {
+                string current = resolve(span.Kind, span.Id);
+                if (current == null || current == span.Display) continue;
+
+                sb.Append(source, copied, span.SourceStart - copied);
+                sb.Append(MakeToken(span.Kind, span.Id, current));
+                copied = span.SourceStart + span.SourceLength;
+                changed = true;
+            }
+            if (!changed) return source;
+
+            sb.Append(source, copied, source.Length - copied);
+            return sb.ToString();
+        }
+
         /// <summary>The inside of a candidate's brackets, or null if it is not a token at all. Note that `id`
         /// is cut at the FIRST pipe after the colon, so it can never itself contain one — a guard against that
         /// would be unreachable code.</summary>

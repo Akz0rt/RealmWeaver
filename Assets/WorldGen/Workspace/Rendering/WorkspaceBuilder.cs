@@ -7,6 +7,7 @@ using UnityEngine.UI;
 using WorldGen.Notes.Rendering;
 using WorldGen.Rendering;
 using WorldGen.Rendering.Theme;
+using WorldGen.Workspace.Data;
 
 namespace WorldGen.Workspace.Rendering
 {
@@ -338,7 +339,14 @@ namespace WorldGen.Workspace.Rendering
             // registered — MapSurfaceHost.Create tolerates a null camera/empty chrome (nothing to Show/Hide),
             // the same null-tolerance NavigatorView/QuickOpenPopup already extend to a null documentController.
             var registry = new SurfaceRegistry();
-            if (notesRoot != null) registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+            if (notesRoot != null)
+            {
+                registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+                // What the page's inline links resolve against and where they open — see PageLinkBridge.
+                // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
+                // subscription that has to be dropped again on the next rebuild.
+                PageLinkBridge.Attach(gameObject, notesRoot.DocumentView, Controller);
+            }
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
             // Task 10c: the five ex-screens. Registered unconditionally — ScreenSurfaceHosts registers a host
             // only for the kinds whose screen it actually found (AddSlot's null check), so a scene missing one
@@ -728,6 +736,93 @@ namespace WorldGen.Workspace.Rendering
             // lives for the session between clicks.
             raycastScratch.Clear();
             return blocked;
+        }
+    }
+
+    /// <summary>
+    /// Everything a page's inline links need from OUTSIDE the notes layer: what the world currently contains,
+    /// where a clicked link opens, and the one event that says a POI was renamed.
+    ///
+    /// WHY A COMPONENT AND NOT TWO LINES IN Awake. The world list has to be re-read when POIs change, and
+    /// PoiManager is a SCENE component that outlives this shell — so somebody has to unsubscribe, or a
+    /// rebuilt workspace leaves a destroyed observer in the manager's invocation list (the same hazard
+    /// NavigatorView.OnDestroy exists for). WorkspaceBuilder itself is the wrong owner: its rebuild path
+    /// demolishes its CHILDREN, not itself, and it has no OnDestroy at all.
+    ///
+    /// WHY THE NOTES LAYER DOES NOT DO THIS ITSELF. DocumentPageView has no reference to PoiManager or to
+    /// WorkspaceController and gains none here — WorldGen.Notes has never referenced WorldGen.Rendering, and
+    /// keeping it that way is what lets its whole Data half run in Tools/notes-harness. This class sits on
+    /// the workspace side of that line and hands the page two delegates over it.
+    ///
+    /// Same Attach shape as PaneFocusOnClick above, for the same reason: WorkspaceBuilder.Awake re-runs on
+    /// every Play-mode shell rebuild, and a second AddComponent would leave two bridges refreshing the same
+    /// page.
+    /// </summary>
+    public class PageLinkBridge : MonoBehaviour
+    {
+        DocumentPageView pageView;
+        WorkspaceController controller;
+        PoiManager poiManager;
+
+        public static PageLinkBridge Attach(GameObject host, DocumentPageView pageView, WorkspaceController controller)
+        {
+            var existing = host.GetComponent<PageLinkBridge>();
+            var bridge = existing != null ? existing : host.AddComponent<PageLinkBridge>();
+
+            // Dropped before the fields are re-pointed: on a rebuild these still hold the PREVIOUS shell's
+            // subscription, and re-resolving would otherwise add a second one to the same manager.
+            bridge.Unsubscribe();
+            bridge.pageView = pageView;
+            bridge.controller = controller;
+            bridge.poiManager = null;
+
+            if (pageView != null)
+            {
+                pageView.WorldSource = bridge.CollectWorld;
+                pageView.LinkRouter = bridge.Open;
+                // The page may already be showing rows built with no resolver at all (its first Rebuild runs
+                // from Initialize, before this attaches), so their links would be stored names until the next
+                // rebuild. One refresh here settles that.
+                pageView.RefreshLinks();
+            }
+            return bridge;
+        }
+
+        /// <summary>Rebuilt per call, never cached — the same "no invalidation protocol" rule
+        /// WorldObjectSource's own doc states, and the reason a rename needs nothing but a refresh.</summary>
+        List<WorldObjectRef> CollectWorld() => WorldObjectSource.Collect(ResolvePoiManager());
+
+        void Open(SurfaceRef surface, string title, bool inOtherPane)
+        {
+            if (controller == null || surface == null) return;
+            controller.Open(surface, title, inOtherPane);
+        }
+
+        /// <summary>Found on demand and re-tried on every miss, exactly as NavigatorView.ResolvePoiManager
+        /// does: before the world is generated there is no manager to find, and the page must not be stuck
+        /// with that answer for the session. Inactive objects included — the manager can legitimately be on a
+        /// deactivated object while another surface is showing.</summary>
+        PoiManager ResolvePoiManager()
+        {
+            if (poiManager != null) return poiManager;
+            poiManager = FindFirstObjectByType<PoiManager>(FindObjectsInactive.Include);
+            if (poiManager != null) poiManager.OnPoisChanged += OnPoisChanged;
+            return poiManager;
+        }
+
+        /// <summary>A POI was added, renamed or deleted. The page re-resolves every link, which is what makes
+        /// «переименовал — и в тексте новое имя» true without the page having been edited.</summary>
+        void OnPoisChanged()
+        {
+            if (pageView != null) pageView.RefreshLinks();
+        }
+
+        void OnDestroy() => Unsubscribe();
+
+        void Unsubscribe()
+        {
+            if (poiManager != null) poiManager.OnPoisChanged -= OnPoisChanged;
+            poiManager = null;
         }
     }
 }

@@ -105,11 +105,37 @@ namespace WorldGen.Notes.Rendering
         public event System.Action<string> OnToggleCollapse;
         public event System.Action<string> OnBulletPressed;
 
+        /// <summary>The DM clicked a rendered link. Carries the token's kind and id — never a name, which is
+        /// exactly the thing that goes stale. The row does not know what a "poi" is or where it opens;
+        /// DocumentPageView.RouteLink answers both.</summary>
+        public event System.Action<string, string> OnLinkActivated;
+
+        /// <summary>What every [[token]] in this row currently points at, or null before the page is wired.
+        ///
+        /// Assigned by DocumentPageView, never built here: the answer needs the whole document and the whole
+        /// world list, and a row that could reach those would be a row that could reach anything. A null one
+        /// is the honest pre-wiring state and renders every token as its stored copy — see
+        /// NotesLinkOps.BuildDisplay's own null-resolver rule.</summary>
+        public NotesLinkOps.NameResolver Resolver;
+
+        /// <summary>The last display built for the resting row: the rendered string plus the two-way index
+        /// map. Kept so a click can be turned into a SOURCE caret without re-parsing, and so the caret lands
+        /// on the character the DM aimed at rather than that character plus the machinery in front of it.</summary>
+        DisplayText displayText = new DisplayText();
+
+        /// <summary>The accent colour the current markup was built with. Link colours are baked into the
+        /// string as `<color=#…>` tags, and ThemedGraphic cannot repaint those — it owns the component's own
+        /// colour, not the tags inside its text — so a theme switch has to rebuild the markup. Stored as the
+        /// COLOUR rather than the theme enum on purpose: `Theme` is also the name of the namespace it lives
+        /// in, and this project has been bitten three times by that shadowing.</summary>
+        Color markupAccent;
+
         public static float IndentFor(int depth) => IndentBase + Mathf.Max(0, depth) * IndentPerLevel;
 
-        public void Initialize(DocBlock block, RectTransform parent, Font font)
+        public void Initialize(DocBlock block, RectTransform parent, Font font, NotesLinkOps.NameResolver resolve)
         {
             data = block;
+            Resolver = resolve;
 
             var rect = GetComponent<RectTransform>();
             if (rect == null) rect = gameObject.AddComponent<RectTransform>();
@@ -395,7 +421,31 @@ namespace WorldGen.Notes.Rendering
             caretPending = false;
             if (Field != null) Field.gameObject.SetActive(false);
             if (Display != null) Display.gameObject.SetActive(true);
+            HealStoredNames();
             RefreshDisplay();
+        }
+
+        /// <summary>Brings each token's stored name up to date with its target's current one, as the row
+        /// stops being edited. Purely cosmetic — resolution is the mechanism, and nothing reads the stored
+        /// copy while the target exists — but it keeps the RAW text the DM meets next time from naming
+        /// something that was renamed months ago. NotesLinkOps.RefreshStoredNames owns the rule and its
+        /// tests; this is only where it is applied.
+        ///
+        /// Silent when nothing changed, and that is the point: the project is marked dirty from
+        /// OnTextChanged, so an unconditional rewrite would ask the DM to save for having looked at a line.
+        ///
+        /// The one corner it can be wrong in, named rather than guarded: if a target is renamed WHILE this
+        /// row is open and the DM leaves it with Enter, the text under a caret DocKeyboardController already
+        /// read shifts by the name's change in length, so the split lands a few characters off. It needs a
+        /// rename in another pane during an open edit, it loses no text, and the alternative — deferring the
+        /// heal until the row is provably idle — is machinery for a case the DM cannot reach on purpose.</summary>
+        void HealStoredNames()
+        {
+            if (data == null || Resolver == null) return;
+            string healed = NotesLinkOps.RefreshStoredNames(data.Text ?? "", Resolver, out bool changed);
+            if (!changed) return;
+            data.Text = healed;
+            OnTextChanged?.Invoke(data.Id);
         }
 
         /// <summary>Rows are destroyed and rebuilt wholesale on every mutation (DocumentPageView.Rebuild), and
@@ -446,7 +496,30 @@ namespace WorldGen.Notes.Rendering
         public void OnPointerClick(PointerEventData eventData)
         {
             if (editing || Display == null) return;
+            if (TryActivateLink(eventData)) return;
             BeginEdit(SourceCaretFromPointer(eventData));
+        }
+
+        /// <summary>A click that landed on a rendered link goes to the link's target instead of into the
+        /// text. Only an activated link returns true, so everything else still opens the row for editing —
+        /// including a click on a MUTED span, which carries no `<link>` tag at all and therefore cannot be
+        /// found here (the deleted-target rule: it is prose again, and prose is editable).
+        ///
+        /// The id travels as the token's own "kind:id", split at the FIRST colon exactly as the grammar
+        /// itself splits it, so the two can never drift apart in what they consider an id.</summary>
+        bool TryActivateLink(PointerEventData eventData)
+        {
+            if (OnLinkActivated == null) return false;
+
+            int index = TMP_TextUtilities.FindIntersectingLink(Display, eventData.position, eventData.pressEventCamera);
+            if (index < 0 || Display.textInfo == null || index >= Display.textInfo.linkCount) return false;
+
+            string payload = Display.textInfo.linkInfo[index].GetLinkID();
+            int colon = string.IsNullOrEmpty(payload) ? -1 : payload.IndexOf(':');
+            if (colon <= 0 || colon >= payload.Length - 1) return false;
+
+            OnLinkActivated.Invoke(payload.Substring(0, colon), payload.Substring(colon + 1));
+            return true;
         }
 
         /// <summary>Which SOURCE offset a click landed on.
@@ -474,9 +547,14 @@ namespace WorldGen.Notes.Rendering
             return DisplayToSource(displayCaret);
         }
 
-        /// <summary>Display offset → source offset. The identity here because Task 6's display IS the source;
-        /// Task 7 replaces the body with NotesLinkOps' index map and nothing else in this file moves.</summary>
-        int DisplayToSource(int displayCaret) => displayCaret;
+        /// <summary>Display offset → source offset, through the map the last RefreshDisplay built. Without it
+        /// every click into a row containing a link would miss by exactly the machinery's length — the
+        /// brackets, the kind, the id and the pipe the DM never sees.</summary>
+        // The null case is a row that survived a domain reload: field initializers do not re-run on
+        // deserialization, so this comes back null on a component that is otherwise alive. Such a row is
+        // destroyed by the next Rebuild (DocumentPageView.EnsureWired's own note), but a click can reach it
+        // first, and the identity is the right answer for a row that has rendered nothing since.
+        int DisplayToSource(int displayCaret) => displayText != null ? displayText.ToSource(displayCaret) : displayCaret;
 
         // ── refresh ───────────────────────────────────────────────────────────
 
@@ -497,12 +575,67 @@ namespace WorldGen.Notes.Rendering
             if (collapseGlyph != null) collapseGlyph.text = data.Collapsed ? "▸" : "▾";
         }
 
-        /// <summary>What the row shows at rest. Task 7 puts NotesLinkOps.BuildDisplay behind this, which is
-        /// the only reason it is a method rather than one line inside Refresh.</summary>
+        /// <summary>What the row shows at rest: every [[token]] replaced by its target's CURRENT name, drawn
+        /// in the accent colour and made clickable — or, when the target is gone, drawn muted and NOT
+        /// clickable, because prose about something that no longer exists has nowhere to go.
+        ///
+        /// THE COLOUR TAG SITS INSIDE THE LINK TAG, and that nesting was verified against TMP's parser rather
+        /// than assumed: `</link>` closes with `linkTextLength = m_characterCount - linkTextfirstCharacterIndex`
+        /// (TMP_Text.cs:7620), and a `<color>` tag advances no character count, so the link's character range —
+        /// the only thing FindIntersectingLink hit-tests (TMP_TextUtilities.cs:1377-1381) — is unaffected by
+        /// what is nested inside it.
+        ///
+        /// The index map built here is kept: it is what turns a click at a rendered character into a caret in
+        /// the RAW text the editing field shows.</summary>
         void RefreshDisplay()
         {
             if (Display == null || data == null) return;
-            Display.text = data.Text ?? "";
+
+            displayText = NotesLinkOps.BuildDisplay(data.Text ?? "", Resolver);
+            markupAccent = ThemeService.Get(ThemeRole.Accent);
+            Display.text = BuildMarkup(displayText);
+        }
+
+        /// <summary>The rendered string with TMP tags around each span. Prose between spans is copied
+        /// verbatim — including any `<` the DM typed, which TMP will read as a tag it does not know and drop.
+        /// That is Task 6's behaviour unchanged (the resting row has had rich text on since the port) and it
+        /// is left for a later cleanup rather than fixed here with `<noparse>`, which would put a second class
+        /// of tag inside the index map in the very task that first makes display and source differ.</summary>
+        string BuildMarkup(DisplayText d)
+        {
+            if (d == null || d.Spans.Count == 0) return d?.Text ?? "";
+
+            string accent = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Accent));
+            string muted = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Mut));
+
+            var sb = new System.Text.StringBuilder(d.Text.Length + d.Spans.Count * 48);
+            int copied = 0;
+            foreach (var span in d.Spans)
+            {
+                sb.Append(d.Text, copied, span.DisplayStart - copied);
+                string name = d.Text.Substring(span.DisplayStart, span.DisplayLength);
+                if (span.Resolved)
+                    sb.Append("<link=\"").Append(span.Kind).Append(':').Append(span.Id).Append("\">")
+                      .Append("<color=#").Append(accent).Append('>').Append(name).Append("</color></link>");
+                else
+                    sb.Append("<color=#").Append(muted).Append('>').Append(name).Append("</color>");
+                copied = span.DisplayStart + span.DisplayLength;
+            }
+            sb.Append(d.Text, copied, d.Text.Length - copied);
+            return sb.ToString();
+        }
+
+        /// <summary>Re-renders when the theme changed under a resting row — the link colours are baked into
+        /// the markup and nothing else repaints them (see markupAccent). Called from LateUpdate rather than
+        /// from a ThemeService subscription so the row keeps knowing nothing about who else is on screen; the
+        /// comparison is one Color per row per frame, against a rebuild that runs only when it actually
+        /// differs.</summary>
+        void RefreshMarkupIfThemeChanged()
+        {
+            if (editing || Display == null || data == null) return;
+            if (displayText == null || displayText.Spans.Count == 0) return;
+            if (markupAccent == ThemeService.Get(ThemeRole.Accent)) return;
+            RefreshDisplay();
         }
 
         // ── measurement ───────────────────────────────────────────────────────
@@ -575,6 +708,7 @@ namespace WorldGen.Notes.Rendering
                 caretPending = false;
             }
 
+            RefreshMarkupIfThemeChanged();
             ApplyHeightNow();
         }
 

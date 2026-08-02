@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
 using WorldGen.Rendering.Theme;
+using WorldGen.Workspace.Data;
 
 namespace WorldGen.Notes.Rendering
 {
@@ -113,6 +114,97 @@ namespace WorldGen.Notes.Rendering
         /// dependent panels (backlinks) can refresh.</summary>
         public event System.Action OnDocumentMutated;
 
+        // ── inline links (Р2 Task 7) ─────────────────────────────────────────────
+        //
+        // BOTH OF THESE ARE INJECTED, and from the same place — PageLinkBridge, which WorkspaceBuilder
+        // attaches beside this view. The notes layer knows nothing about PoiManager or WorkspaceController,
+        // and this is the seam that keeps it that way: it deals in a list of plain WorldObjectRefs and a
+        // SurfaceRef to open, both of which live in the Data half that already crosses this boundary (the
+        // harness syncs Notes/Data and Workspace/Data side by side for exactly this reason).
+        //
+        // Null is a working state, not a broken one. Before the bridge runs — and in any scene without a
+        // workspace at all — links render as their stored names and a click on one does nothing, which is
+        // the same graceful degradation NavigatorView/QuickOpenPopup extend to a null document.
+
+        /// <summary>Every world object as it is RIGHT NOW. A function rather than a list because a rename or
+        /// a new POI must not need an invalidation protocol — see RefreshLinks for when it is called.</summary>
+        public System.Func<IReadOnlyList<WorldObjectRef>> WorldSource;
+
+        /// <summary>Opens a surface: (what, tab title, in the other pane). WorkspaceController.Open, reached
+        /// as a delegate.</summary>
+        public System.Action<SurfaceRef, string, bool> LinkRouter;
+
+        /// <summary>The world list as of the last RefreshLinks. Cached because the resolver is asked once per
+        /// token per render and collecting is a walk over every POI — but never cached ACROSS a refresh, so
+        /// nothing has to remember to invalidate it.</summary>
+        IReadOnlyList<WorldObjectRef> worldCache;
+
+        /// <summary>What a [[token]] points at right now. Handed to every row, which holds it for its whole
+        /// life: it reads `documentController` and `worldCache` live, so a refresh changes what it answers
+        /// without any row being told anything.</summary>
+        string ResolveName(string kind, string id)
+            => QuickOpen.ResolverFor(documentController != null ? documentController.Document : null, worldCache)(kind, id);
+
+        /// <summary>Re-reads the world and re-renders every resting row, so a POI renamed in the other pane
+        /// changes the prose here with no edit to the page — D1's whole promise.
+        ///
+        /// Refresh(), NOT Rebuild(): a rebuild destroys every row, and the DM may well be typing in one of
+        /// them while the rename lands in the pane next door. Refresh leaves a row that is being edited
+        /// exactly as it is (see DocBlockView.Refresh) and re-renders the rest.</summary>
+        public void RefreshLinks()
+        {
+            worldCache = WorldSource != null ? WorldSource() : null;
+            foreach (var row in rows)
+                if (row != null) row.Refresh();
+        }
+
+        /// <summary>Where a clicked link goes. The rules, in one place:
+        ///
+        /// A PAGE OPENS IN THE OTHER PANE — Р1's rule, unchanged: a page is opened explicitly and never on
+        /// top of what the DM is reading.
+        ///
+        /// A POI OPENS ITS EDITOR, per the Task 10c checkpoint ruling that a point of interest IS its editor,
+        /// through the one WorldSurface.PoiEditor factory the navigator, Ctrl+K and the map all share — so
+        /// this focuses the same tab they do rather than opening a near-identical second one. ALSO in the
+        /// other pane, which the plan left to this task: the DM clicked a name inside a sentence they are
+        /// reading, and replacing that sentence with the editor is the one outcome they cannot have meant.
+        /// Say so at the next checkpoint if it should differ.
+        ///
+        /// BUILDING AND ROOM cannot be produced yet — nothing emits a token for them, because they are not
+        /// addressable by a bare id (WorldSurface's own doc) — so they are logged and ignored rather than
+        /// guessed at.</summary>
+        void RouteLink(string kind, string id)
+        {
+            if (LinkRouter == null || string.IsNullOrEmpty(id)) return;
+
+            if (kind == NotesLinkOps.KindPage)
+            {
+                string title = PageNameOf(id);
+                if (title == null) return;   // the page is gone; the row shows muted prose, not a dead link
+                LinkRouter(new SurfaceRef { Kind = SurfaceKind.Page, Id = id }, title, true);
+                return;
+            }
+
+            if (kind == NotesLinkOps.KindOf(WorldRefKind.Poi))
+            {
+                LinkRouter(WorldSurface.PoiEditor(id), ResolveName(kind, id) ?? "", true);
+                return;
+            }
+
+            Debug.Log($"DocumentPageView: a [[{kind}:{id}]] link has no surface to open yet — " +
+                      "building and room become addressable in Р3.");
+        }
+
+        string PageNameOf(string pageId)
+        {
+            var doc = documentController != null ? documentController.Document : null;
+            if (doc == null) return null;
+            foreach (var group in doc.Groups)
+                foreach (var page in group.Pages)
+                    if (page.Id == pageId) return page.Name;
+            return null;
+        }
+
         public void Initialize(NotesDocumentController docController, RectTransform parent, Font builtinFont,
                               GameObject boardViewportGO)
         {
@@ -212,6 +304,11 @@ namespace WorldGen.Notes.Rendering
             addSectionBarGO = BuildAddSectionBar(root.transform);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
+            // Structural document changes only — creating, renaming or deleting a group or a page, never a
+            // keystroke (NotesDocumentController raises this from its CRUD alone). A [[page:…]] link renders
+            // the target page's CURRENT name, so a rename in the navigator has to reach the prose here, and
+            // this is the event that carries it.
+            documentController.OnDocumentChanged += RefreshLinks;
             OnActivePageChanged(documentController.ActivePage);
         }
 
@@ -340,7 +437,11 @@ namespace WorldGen.Notes.Rendering
 
         void OnDestroy()
         {
-            if (documentController != null) documentController.OnActivePageChanged -= OnActivePageChanged;
+            if (documentController != null)
+            {
+                documentController.OnActivePageChanged -= OnActivePageChanged;
+                documentController.OnDocumentChanged -= RefreshLinks;
+            }
         }
 
         /// <summary>Re-establishes everything a Play-mode script reload wipes on THIS component, so Show/Hide
@@ -401,6 +502,10 @@ namespace WorldGen.Notes.Rendering
             {
                 documentController.OnActivePageChanged -= OnActivePageChanged;
                 documentController.OnActivePageChanged += OnActivePageChanged;
+                // Same -=/+= discipline, same reason: a C# event subscription is never serialized, so the
+                // page-rename refresh (see Initialize) is gone after a reload however the fields recovered.
+                documentController.OnDocumentChanged -= RefreshLinks;
+                documentController.OnDocumentChanged += RefreshLinks;
             }
 
             // Same discipline, same reason, for the «+ Раздел» button's onClick — a UnityEvent listener list
@@ -551,14 +656,20 @@ namespace WorldGen.Notes.Rendering
                 }
             rows.Clear();
 
+            // The world as of THIS rebuild, so every row on the page resolves its links against one list
+            // rather than each row collecting its own — and so a page opened after a rename never renders the
+            // old name even once.
+            worldCache = WorldSource != null ? WorldSource() : null;
+
             var visible = NotesDocOps.VisibleIndices(Page.Blocks);
             foreach (int index in visible)
             {
                 var block = Page.Blocks[index];
                 var rowGO = new GameObject($"Row_{block.Kind}", typeof(RectTransform));
                 var view = rowGO.AddComponent<DocBlockView>();
-                view.Initialize(block, content, font);
+                view.Initialize(block, content, font, ResolveName);
                 view.OnToggleCollapse += OnToggleCollapse;
+                view.OnLinkActivated += RouteLink;
                 view.OnTextChanged += _ => OnDocumentMutated?.Invoke();
                 // THE WHEEL STOPS AT AN EDITING ROW WITHOUT THIS. A scroll event travels up only as far as
                 // the first object carrying ANY scroll handler, and TMP_InputField is one — it takes the
