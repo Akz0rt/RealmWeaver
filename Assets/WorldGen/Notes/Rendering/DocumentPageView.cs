@@ -114,6 +114,162 @@ namespace WorldGen.Notes.Rendering
         /// dependent panels (backlinks) can refresh.</summary>
         public event System.Action OnDocumentMutated;
 
+        // ── undo/redo and selection (Р2 Task 8) ─────────────────────────────────
+
+        /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Rebuilt by EnsureWired
+        /// after a domain reload, which is why nothing should cache it across frames.</summary>
+        public PageToolbar Toolbar { get; private set; }
+
+        /// <summary>Fires whenever undo or redo becomes possible or impossible, so the toolbar's ↶/↷ can be
+        /// enabled or disabled without polling.</summary>
+        public event System.Action OnHistoryChanged;
+
+        /// <summary>NOT a field initializer and not readonly: a domain reload restores a MonoBehaviour by
+        /// deserializing it, and neither runs again — the same trap PaneFocusOnClick.raycastScratch documents.
+        /// A history lost to a reload is correct, since the rows it described are lost too.</summary>
+        DocHistory history;
+        DocHistory History => history ?? (history = new DocHistory());
+
+        public bool CanUndo => History.CanUndo;
+        public bool CanRedo => History.CanRedo;
+
+        /// <summary>The row drawn as selected — a picture, which cannot hold a caret. At most one, which is
+        /// why this lives on the page and not on a row.</summary>
+        public string SelectedBlockId { get; private set; }
+
+        public void SetSelectedBlock(string blockId)
+        {
+            if (SelectedBlockId == blockId) return;
+            SelectedBlockId = blockId;
+            foreach (var row in rows)
+                if (row != null) row.SetSelected(row.BlockId == blockId);
+        }
+
+        /// <summary>Remembers the page as it is NOW, before a change is made to it. Every caller does this
+        /// immediately before mutating — the snapshot is where Ctrl+Z goes back to.</summary>
+        public void PushHistory(string focusId, int caret)
+        {
+            if (Page == null) return;
+            History.Push(Page.Blocks, focusId, caret);
+            OnHistoryChanged?.Invoke();
+        }
+
+        /// <summary>Remembers a state the caller already holds a copy of — DocKeyboardController takes one
+        /// before a key it cannot know in advance will change anything, and commits it only if the key did.</summary>
+        public void PushHistoryOf(IReadOnlyList<DocBlock> blocks, string focusId, int caret)
+        {
+            History.Push(blocks, focusId, caret);
+            OnHistoryChanged?.Invoke();
+        }
+
+        /// <summary>Remembers the page with ONE row's text as it was before the DM's first keystroke in it —
+        /// the rest of the page is already correct, since nothing else has changed yet. Reconstructed rather
+        /// than snapshotted on focus, so a row that is only looked at never becomes a step.</summary>
+        void PushHistoryBeforeFirstEdit(string blockId, string textBefore)
+        {
+            if (Page == null) return;
+
+            var before = DocHistory.Copy(Page.Blocks);
+            foreach (var b in before)
+                if (b.Id == blockId) { b.Text = textBefore; break; }
+
+            History.Push(before, blockId, (textBefore ?? "").Length);
+            OnHistoryChanged?.Invoke();
+        }
+
+        public void Undo() => Apply(History.Undo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
+        public void Redo() => Apply(History.Redo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
+
+        /// <summary>Puts a remembered state back on the page. The block list is replaced IN PLACE rather than
+        /// reassigned: NotesPage.Blocks is what the serializer writes and what every op holds, and swapping
+        /// the list object would leave anything holding the old one editing a document that is no longer
+        /// saved.</summary>
+        void Apply(DocSnapshot snapshot)
+        {
+            if (snapshot == null || Page == null) return;
+
+            Page.Blocks.Clear();
+            Page.Blocks.AddRange(snapshot.Blocks);
+            SetSelectedBlock(null);
+            OnHistoryChanged?.Invoke();
+            OnDocumentMutated?.Invoke();
+
+            // The remembered row may not exist in the state being restored — undoing the creation of a row
+            // whose id the snapshot recorded as focused, for instance — and RebuildAndFocus would then ask a
+            // row that is not there to take the caret.
+            bool focusExists = false;
+            if (!string.IsNullOrEmpty(snapshot.FocusId))
+                foreach (var b in Page.Blocks)
+                    if (b.Id == snapshot.FocusId) { focusExists = true; break; }
+
+            if (focusExists) RebuildAndFocus(snapshot.FocusId, snapshot.Caret);
+            else Rebuild();
+        }
+
+        /// <summary>The row the caret was last in, and where in it — TOLD to this class by
+        /// DocKeyboardController rather than worked out here, so there is exactly one answer to "where is the
+        /// caret" and it lives where the keyboard already tracks it.
+        ///
+        /// LAST, not current, and that is the whole point: clicking a toolbar button moves Unity's selection
+        /// to the button, which deactivates the input field before onClick runs. A toolbar that asked which
+        /// row is focused AT THE MOMENT OF THE CLICK would always be told "none".</summary>
+        public string LastFocusedBlockId { get; private set; }
+        public int LastFocusedCaret { get; private set; } = -1;
+
+        public void NoteFocus(string blockId, int caret)
+        {
+            LastFocusedBlockId = blockId;
+            LastFocusedCaret = caret;
+        }
+
+        // ── what the toolbar asks for (the rules stay in NotesDocOps; this is where they are applied) ──
+
+        /// <summary>Turns the row the caret was last in into another kind. False when there was no such row
+        /// or the change was refused — NotesDocOps.SetKind owns every reason, and the undo step is pushed
+        /// only once it has said yes, so a refused button press does not leave a Ctrl+Z that does nothing.</summary>
+        public bool ConvertFocused(BlockKind kind)
+        {
+            if (Page == null || string.IsNullOrEmpty(LastFocusedBlockId)) return false;
+
+            var before = DocHistory.Copy(Page.Blocks);
+            if (!NotesDocOps.SetKind(Page.Blocks, LastFocusedBlockId, kind)) return false;
+
+            PushHistoryOf(before, LastFocusedBlockId, LastFocusedCaret);
+            OnDocumentMutated?.Invoke();
+            RebuildAndFocus(LastFocusedBlockId, LastFocusedCaret);
+            return true;
+        }
+
+        /// <summary>Puts a picture into the prose, immediately after the row the caret was last in — and
+        /// after that row's CHILDREN, so an image dropped under a row with sub-rows lands below the whole
+        /// thought rather than inside it.
+        ///
+        /// It goes in at the focused row's depth, never at 0: I2 says a non-empty page starts with a Section,
+        /// and a picture is not one. It also becomes the SELECTED row, so the DM can undo it with Ctrl+Z or
+        /// delete it with the very next Backspace.</summary>
+        public bool InsertImageAfterFocused(byte[] bytes)
+        {
+            if (Page == null || bytes == null || bytes.Length == 0) return false;
+            if (string.IsNullOrEmpty(LastFocusedBlockId)) return false;
+
+            int at = -1;
+            for (int i = 0; i < Page.Blocks.Count; i++)
+                if (Page.Blocks[i].Id == LastFocusedBlockId) { at = i; break; }
+            if (at < 0) return false;
+
+            PushHistory(LastFocusedBlockId, LastFocusedCaret);
+
+            int depth = Page.Blocks[at].Depth < 1 ? 1 : Page.Blocks[at].Depth;
+            var block = NotesDocOps.NewBlock(BlockKind.Image, depth);
+            block.ImageBytes = bytes;
+            NotesDocOps.Insert(Page.Blocks, at + NotesDocOps.SubtreeLength(Page.Blocks, at), block);
+
+            OnDocumentMutated?.Invoke();
+            Rebuild();
+            SetSelectedBlock(block.Id);
+            return true;
+        }
+
         // ── inline links (Р2 Task 7) ─────────────────────────────────────────────
         //
         // BOTH OF THESE ARE INJECTED, and from the same place — PageLinkBridge, which WorkspaceBuilder
@@ -302,6 +458,9 @@ namespace WorldGen.Notes.Rendering
             BuildVerticalScrollbar(root.transform, scroll);
 
             addSectionBarGO = BuildAddSectionBar(root.transform);
+            // The editing toolbar shares that strip, anchored to its right edge — one band of chrome above
+            // the prose rather than two.
+            Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
@@ -430,6 +589,7 @@ namespace WorldGen.Notes.Rendering
         public void AddSection()
         {
             if (Page == null) return;
+            PushHistory(LastFocusedBlockId, LastFocusedCaret);
             var section = NotesDocOps.NewBlock(BlockKind.Section, 0);
             NotesDocOps.Insert(Page.Blocks, Page.Blocks.Count, section);
             RebuildAndFocus(section.Id, 0);
@@ -518,6 +678,12 @@ namespace WorldGen.Notes.Rendering
                 addSectionButton.onClick.AddListener(AddSection);
             }
 
+            // The toolbar is rebuilt rather than repaired, for the same reason and one more: its buttons'
+            // listeners are as unserialized as the one above, AND it holds a reference to this view which the
+            // reload nulled. Attach throws the old bar away, so this is idempotent for the ordinary call too.
+            if (addSectionBarGO != null)
+                Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
+
             // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
             // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
             // the next Rebuild() would find nothing to destroy and stack a SECOND full set of rows on top of
@@ -587,8 +753,20 @@ namespace WorldGen.Notes.Rendering
 
         void OnActivePageChanged(NotesPage page)
         {
+            var previous = Page;
             Page = page != null && page.Kind == PageKind.Document ? page : null;
             bool showDocument = Page != null;
+
+            // A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one
+            // to another page would replace that page's content with this one's. Compared by identity rather
+            // than cleared unconditionally, because this method also runs on every Show of an UNCHANGED page
+            // (PageSurfaceHost.Show → SetSurfaceVisible), and a tab switch must not cost the DM their undo.
+            if (!ReferenceEquals(previous, Page))
+            {
+                History.Clear();
+                SetSelectedBlock(null);
+                OnHistoryChanged?.Invoke();
+            }
 
             if (boardViewport != null)
             {
@@ -670,6 +848,9 @@ namespace WorldGen.Notes.Rendering
                 view.Initialize(block, content, font, ResolveName);
                 view.OnToggleCollapse += OnToggleCollapse;
                 view.OnLinkActivated += RouteLink;
+                view.OnSelectRequested += SetSelectedBlock;
+                view.OnBeforeFirstEdit += PushHistoryBeforeFirstEdit;
+                view.SetSelected(block.Id == SelectedBlockId);
                 view.OnTextChanged += _ => OnDocumentMutated?.Invoke();
                 // THE WHEEL STOPS AT AN EDITING ROW WITHOUT THIS. A scroll event travels up only as far as
                 // the first object carrying ANY scroll handler, and TMP_InputField is one — it takes the

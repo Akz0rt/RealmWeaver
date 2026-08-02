@@ -83,6 +83,34 @@ namespace WorldGen.Notes.Rendering
             if (keyboard == null) return;
 
             var live = FindFocusedRow();
+
+            // A PICTURE IS "FOCUSED" BY BEING SELECTED. It has no field to focus, so the page holds that
+            // state (DocumentPageView.SelectedBlockId) and this class reads it — which is how a Backspace
+            // aimed at an image the DM merely CLICKED reaches DocKeyboardOps' delete branch, and not only one
+            // they arrowed into. A text row taking focus ends the selection: the two are the same idea for
+            // two kinds of row, and both cannot be true at once.
+            if (live != null) pageView.SetSelectedBlock(null);
+            else if (!string.IsNullOrEmpty(pageView.SelectedBlockId))
+            {
+                lastFocusedId = pageView.SelectedBlockId;
+                lastCaret = 0;
+            }
+
+            // Undo and redo, before every early return below: they must work with nothing focused at all,
+            // which is exactly the state the DM is in right after an undo rebuilt the page. Neither
+            // TMP_InputField nor legacy uGUI implements Ctrl+Z of its own, so there is no second handler to
+            // fight over the key — unlike the wheel, which had one.
+            if (keyboard.ctrlKey.isPressed || keyboard.rightCtrlKey.isPressed)
+            {
+                bool shifted = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+                if (keyboard.zKey.wasPressedThisFrame)
+                {
+                    if (shifted) pageView.Redo(); else pageView.Undo();
+                    return;
+                }
+                if (keyboard.yKey.wasPressedThisFrame) { pageView.Redo(); return; }
+            }
+
             if (live != null && !live.CaretPending)
             {
                 lastFocusedId = live.BlockId;
@@ -96,6 +124,11 @@ namespace WorldGen.Notes.Rendering
                 var ended = pageView.ViewOf(lastFocusedId);
                 if (ended != null && ended.CaretWhenEditingEnded >= 0) lastCaret = ended.CaretWhenEditingEnded;
             }
+
+            // The page needs the same answer for its toolbar, and taking it from here rather than working it
+            // out again is what keeps "where is the caret" a question with one owner. See
+            // DocumentPageView.NoteFocus for why the page needs the LAST focus rather than the live one.
+            pageView.NoteFocus(lastFocusedId, lastCaret);
 
             if (string.IsNullOrEmpty(lastFocusedId)) return;
 
@@ -198,6 +231,14 @@ namespace WorldGen.Notes.Rendering
             // last one at once. DocKeyboardOps keeps both parameters, and DocKeyboardOpsSelfTests still pins
             // the false branches, because the rule "an arrow inside a wrapped row is not a block move" belongs
             // to the pure layer even though the view can no longer be the one to report it.
+            // THE PAGE AS IT IS BEFORE THE KEY, kept only long enough to find out whether the key changed
+            // anything. Apply mutates the list in place, so there is no reading the old state afterwards —
+            // and pushing UNCONDITIONALLY would fill the history with steps for keys that did nothing (a
+            // refused Tab, a Backspace mid-word that falls through to the field), each of which would look to
+            // the DM like a Ctrl+Z that did nothing at all. `Rebuild` is precisely "the block list changed
+            // shape", so it is the honest gate. The copy costs a hundred small objects on a structural key.
+            var before = DocHistory.Copy(page.Blocks);
+
             var result = DocKeyboardOps.Apply(page.Blocks, lastFocusedId, lastCaret,
                                               atFirstLine: true, atLastLine: true, key);
 
@@ -205,6 +246,7 @@ namespace WorldGen.Notes.Rendering
 
             if (result.Rebuild)
             {
+                pageView.PushHistoryOf(before, lastFocusedId, lastCaret);
                 string focusId = result.FocusBlockId ?? lastFocusedId;
                 AdoptFocus(focusId, result.CaretOffset);
                 pageView.RebuildAndFocus(focusId, result.CaretOffset);
@@ -221,8 +263,11 @@ namespace WorldGen.Notes.Rendering
 
             if (!string.IsNullOrEmpty(result.SelectBlockId))
             {
-                // Images and cards have no text field to focus; selection is theirs (task 7/8). Until those
-                // land, the keystroke is still swallowed so nothing else grabs it.
+                // A picture cannot take a caret, so it takes SELECTION instead — the first half of the
+                // two-step DocKeyboardOps.OnBackspace describes: this press selects it, the next one deletes
+                // it. AdoptFocus as well as the ring, because the delete branch keys off lastFocusedId.
+                AdoptFocus(result.SelectBlockId, 0);
+                pageView.SetSelectedBlock(result.SelectBlockId);
                 return;
             }
 

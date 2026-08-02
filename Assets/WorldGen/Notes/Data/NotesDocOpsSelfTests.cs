@@ -861,5 +861,75 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Backlinks Count Inline Mentions: PASS" : "Self-Test Backlinks Count Inline Mentions: FAIL");
         }
+
+        [ContextMenu("Self-Test: Set Kind")]
+        public void SelfTestSetKind()
+        {
+            bool ok = true;
+
+            // A nested row promoted to a Section goes to the left margin (I1) and its former child cannot
+            // stay two levels below it (I2) — the depth rules the toolbar must not have to know.
+            var blocks = new List<DocBlock>
+            {
+                NotesDocOps.NewBlock(BlockKind.Section, 0, "Раздел"),
+                NotesDocOps.NewBlock(BlockKind.Item, 1, "строка"),
+                NotesDocOps.NewBlock(BlockKind.Item, 2, "вложенная"),
+                NotesDocOps.NewBlock(BlockKind.Item, 3, "ещё глубже"),
+            };
+            if (!NotesDocOps.SetKind(blocks, blocks[2].Id, BlockKind.Section))
+            { Debug.LogError("FAIL: promoting an Item to a Section was refused"); ok = false; }
+            if (blocks[2].Kind != BlockKind.Section || blocks[2].Depth != 0)
+            { Debug.LogError($"FAIL I1: the new Section sits at depth {blocks[2].Depth}, want 0"); ok = false; }
+            if (blocks[3].Depth > 1)
+            { Debug.LogError($"FAIL I2: the child stayed at depth {blocks[3].Depth} under a Section at 0"); ok = false; }
+
+            // The other direction: a Section demoted to an Item cannot stay at depth 0.
+            if (!NotesDocOps.SetKind(blocks, blocks[2].Id, BlockKind.Item) || blocks[2].Depth < 1)
+            { Debug.LogError($"FAIL I1: a demoted Section sits at depth {blocks[2].Depth}, want at least 1"); ok = false; }
+
+            // WHAT BELONGED TO THE OLD KIND GOES WITH IT. Detail and 📄 are an Item's affordances (I7), so a
+            // row converted to Prose must not keep carrying them into a kind that cannot show them.
+            var carrying = new List<DocBlock>
+            {
+                NotesDocOps.NewBlock(BlockKind.Section, 0, "Раздел"),
+                NotesDocOps.NewBlock(BlockKind.Item, 1, "с деталью"),
+            };
+            carrying[1].Detail = "подробности";
+            carrying[1].LinkedPageId = "page-1";
+            NotesDocOps.SetKind(carrying, carrying[1].Id, BlockKind.Prose);
+            if (carrying[1].Detail != null || carrying[1].LinkedPageId != null)
+            { Debug.LogError("FAIL I7: a Prose row kept an Item's Detail/LinkedPageId"); ok = false; }
+
+            // Converting to the SAME kind changes nothing and says so, which is what lets a caller drop the
+            // undo step it had already pushed.
+            if (NotesDocOps.SetKind(carrying, carrying[1].Id, BlockKind.Prose))
+            { Debug.LogError("FAIL: converting to the kind it already is reported a change"); ok = false; }
+
+            // A picture and a board card are not text kinds: a toolbar button must not turn one into a row
+            // and silently drop the image or the link that IS the block.
+            var special = new List<DocBlock>
+            {
+                NotesDocOps.NewBlock(BlockKind.Section, 0, "Раздел"),
+                NotesDocOps.NewBlock(BlockKind.Image, 1),
+                NotesDocOps.NewBlock(BlockKind.BoardRef, 1),
+            };
+            special[1].ImageBytes = new byte[] { 7 };
+            special[2].LinkedPageId = "board-1";
+            if (NotesDocOps.SetKind(special, special[1].Id, BlockKind.Item) || special[1].ImageBytes == null)
+            { Debug.LogError("FAIL: an Image was converted, and its bytes went with it"); ok = false; }
+            if (NotesDocOps.SetKind(special, special[2].Id, BlockKind.Item) || special[2].LinkedPageId == null)
+            { Debug.LogError("FAIL: a BoardRef was converted away from the board it points at"); ok = false; }
+
+            // Only the three text kinds are offered as targets — Image needs bytes and BoardRef needs a
+            // board, and neither can be conjured from a row of text.
+            if (NotesDocOps.SetKind(carrying, carrying[1].Id, BlockKind.Image))
+            { Debug.LogError("FAIL: a row was converted INTO an Image with no bytes to show"); ok = false; }
+
+            // An id that is not there, and a null list, are ordinary inputs.
+            if (NotesDocOps.SetKind(carrying, "no-such-id", BlockKind.Item) || NotesDocOps.SetKind(null, "x", BlockKind.Item))
+            { Debug.LogError("FAIL: SetKind claimed to change something that does not exist"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Set Kind: PASS" : "Self-Test Set Kind: FAIL");
+        }
     }
 }

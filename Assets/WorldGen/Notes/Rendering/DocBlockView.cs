@@ -27,6 +27,9 @@ namespace WorldGen.Notes.Rendering
     public class DocBlockView : MonoBehaviour, IPointerClickHandler
     {
         public const float MinRowHeight = 22f;
+        /// <summary>Height of a picture row whose image could not be measured — no texture, or a column that
+        /// has not been laid out yet. Big enough to be obviously a picture and to be clicked.</summary>
+        const float PictureFallbackHeight = 160f;
         const float IndentBase = 16f;
         const float IndentPerLevel = 18f;
         const float VerticalPadding = 4f;
@@ -44,6 +47,12 @@ namespace WorldGen.Notes.Rendering
         const float TextInset = 12f;
 
         DocBlock data;
+        RawImage picture;
+        Image selectionRing;
+        /// <summary>width / height of the loaded texture, or 0 when there is none to measure. Drives the row
+        /// height at the column's width, which is what DocBlock.DisplayHeight's own doc means by "0 means
+        /// derive the height from the aspect ratio".</summary>
+        float pictureAspect;
         LayoutElement layoutElement;
         RectTransform textArea;
         Text bulletText;
@@ -57,6 +66,9 @@ namespace WorldGen.Notes.Rendering
         int pendingCaret;
         int caretWhenEditingEnded = -1;
         int textChangedOnFrame = -1;
+        /// <summary>Whether this visit to the row has already contributed an undo step. Reset when the row is
+        /// entered, so a second visit is a second step and a hundred keystrokes in one visit are still one.</summary>
+        bool historyPushedThisVisit;
         bool editing;
         bool endEditPending;
 
@@ -104,6 +116,16 @@ namespace WorldGen.Notes.Rendering
         public event System.Action<string> OnTextChanged;
         public event System.Action<string> OnToggleCollapse;
         public event System.Action<string> OnBulletPressed;
+
+        /// <summary>The DM's first keystroke of this visit to the row is about to change its text. Carries the
+        /// block's id and the text as it was BEFORE that keystroke, which is exactly what the page needs to
+        /// remember one undo step per visit — see OnFieldChanged.</summary>
+        public event System.Action<string, string> OnBeforeFirstEdit;
+
+        /// <summary>The DM clicked a row that cannot hold a caret — a picture — and it should become the
+        /// selected one. The page routes it, because selection is a property of the page (only one row can
+        /// be selected) and not of any row.</summary>
+        public event System.Action<string> OnSelectRequested;
 
         /// <summary>The DM clicked a rendered link. Carries the token's kind and id — never a name, which is
         /// exactly the thing that goes stale. The row does not know what a "poi" is or where it opens;
@@ -171,10 +193,68 @@ namespace WorldGen.Notes.Rendering
             var areaBg = areaGO.AddComponent<Image>();
             areaBg.color = new Color(1f, 1f, 1f, 0.01f);
 
+            if (data.Kind == BlockKind.Image)
+            {
+                BuildPicture();
+                return;
+            }
+
             BuildDisplay();
             BuildField();
 
             RefreshDisplay();
+        }
+
+        /// <summary>An image row: a picture and a selection ring, and none of the text machinery.
+        ///
+        /// IT HAS NO TEXT STATE AT ALL — no display, no field — which every text path in this class already
+        /// tolerates by null-guarding `Display`/`Field`, and which the PURE layer already agrees with:
+        /// DocKeyboardOps.HasText excludes Image, so no rule tries to put a caret in one. Selection replaces
+        /// focus for it (see SetSelected), because the only thing a DM does to a picture in prose is remove
+        /// it.
+        ///
+        /// NOT RESIZABLE and with no caption in Р2. DisplayHeight is stored and honoured, so a later task can
+        /// add a drag handle that writes it, and a row saved with one already renders at that height.</summary>
+        void BuildPicture()
+        {
+            var frameGO = new GameObject("Picture", typeof(RectTransform));
+            frameGO.transform.SetParent(textArea, false);
+            Stretch(frameGO.GetComponent<RectTransform>(), TextInset);
+
+            // The ring is BEHIND the picture and slightly larger, so a selected image is outlined rather than
+            // tinted — a tint over a photograph reads as damage to the photograph.
+            var ringGO = new GameObject("SelectionRing", typeof(RectTransform));
+            ringGO.transform.SetParent(frameGO.transform, false);
+            var ringRect = ringGO.GetComponent<RectTransform>();
+            ringRect.anchorMin = Vector2.zero;
+            ringRect.anchorMax = Vector2.one;
+            ringRect.offsetMin = new Vector2(-3f, -3f);
+            ringRect.offsetMax = new Vector2(3f, 3f);
+            selectionRing = ringGO.AddComponent<Image>();
+            ThemeService.Tag(selectionRing, ThemeRole.Accent);
+            ringGO.SetActive(false);
+
+            var pictureGO = new GameObject("Bitmap", typeof(RectTransform));
+            pictureGO.transform.SetParent(frameGO.transform, false);
+            Stretch(pictureGO.GetComponent<RectTransform>());
+            picture = pictureGO.AddComponent<RawImage>();
+
+            // Texture2D.LoadImage the same way ImageObjectView does it — one decode at build time, and the
+            // first frame only for an animated GIF, which is that class's documented limitation and equally
+            // this one's.
+            var texture = new Texture2D(2, 2);
+            if (data.ImageBytes != null && data.ImageBytes.Length > 0 && texture.LoadImage(data.ImageBytes))
+            {
+                picture.texture = texture;
+                pictureAspect = texture.height > 0 ? (float)texture.width / texture.height : 0f;
+            }
+            else
+            {
+                // A row whose bytes are missing or unreadable stays visible as an empty frame rather than
+                // collapsing to nothing: a picture the DM cannot see but CAN select is one they can delete.
+                picture.color = ThemeService.Get(ThemeRole.Panel2);
+                pictureAspect = 0f;
+            }
         }
 
         void BuildChrome(Font font, float indent)
@@ -385,6 +465,7 @@ namespace WorldGen.Notes.Rendering
             if (!editing)
             {
                 editing = true;
+                historyPushedThisVisit = false;
                 Display.gameObject.SetActive(false);
                 Field.gameObject.SetActive(true);
                 Field.SetTextWithoutNotify(data.Text ?? "");
@@ -486,6 +567,17 @@ namespace WorldGen.Notes.Rendering
             string next = value ?? "";
             data.Text = value;
             if (previous == next) return;
+
+            // ONE UNDO STEP PER VISIT TO A ROW. The page is told the text as it was BEFORE this first
+            // keystroke, and not again until the DM leaves the row and comes back — so Ctrl+Z takes a row
+            // back to what it was when they entered it. Raised from here rather than from BeginEdit because
+            // merely LOOKING at a row must not become a step in the history.
+            if (!historyPushedThisVisit)
+            {
+                historyPushedThisVisit = true;
+                OnBeforeFirstEdit?.Invoke(data.Id, previous);
+            }
+
             textChangedOnFrame = Time.frameCount;
             OnTextChanged?.Invoke(data.Id);
         }
@@ -495,6 +587,13 @@ namespace WorldGen.Notes.Rendering
         /// collapse arrow are Buttons and consume their own clicks before this ever sees them.</summary>
         public void OnPointerClick(PointerEventData eventData)
         {
+            // A picture takes selection instead of a caret — see SetSelected.
+            if (data != null && data.Kind == BlockKind.Image)
+            {
+                OnSelectRequested?.Invoke(data.Id);
+                return;
+            }
+
             if (editing || Display == null) return;
             if (TryActivateLink(eventData)) return;
             BeginEdit(SourceCaretFromPointer(eventData));
@@ -724,14 +823,57 @@ namespace WorldGen.Notes.Rendering
         /// once for widths, calls this on every row, and lays out again — all inside the one frame.</summary>
         public void ApplyHeightNow()
         {
+            if (layoutElement == null || data == null) return;
+
+            if (data.Kind == BlockKind.Image)
+            {
+                ApplyPictureHeight();
+                return;
+            }
+
             var measured = editing && fieldText != null ? fieldText : Display;
-            if (measured == null || layoutElement == null) return;
+            if (measured == null) return;
             float desired = Mathf.Max(MinRowHeight, measured.preferredHeight + VerticalPadding);
             if (Mathf.Abs(desired - appliedHeight) > 0.5f)
             {
                 appliedHeight = desired;
                 layoutElement.preferredHeight = desired;
             }
+        }
+
+        /// <summary>How tall a picture row is: its stored height if it has one, and otherwise the height that
+        /// keeps the image's own proportions at the width the column gives it. Falls back to a fixed height
+        /// while the column has no width yet (the first frame after a rebuild) or when there was no texture
+        /// to measure, so an unreadable image is still a row the DM can see and select.</summary>
+        void ApplyPictureHeight()
+        {
+            float stored = data.DisplayHeight;
+            float desired;
+            if (stored > 0f)
+            {
+                desired = stored;
+            }
+            else
+            {
+                float width = textArea != null ? textArea.rect.width - TextInset * 2f : 0f;
+                desired = width > 1f && pictureAspect > 0f ? width / pictureAspect : PictureFallbackHeight;
+            }
+
+            desired = Mathf.Max(MinRowHeight, desired + VerticalPadding);
+            if (Mathf.Abs(desired - appliedHeight) > 0.5f)
+            {
+                appliedHeight = desired;
+                layoutElement.preferredHeight = desired;
+            }
+        }
+
+        /// <summary>Draws this row as selected. A picture cannot hold a caret, so selection is what focus is
+        /// for it: DocKeyboardOps answers a Backspace or an arrow that reaches one with SelectBlockId, and the
+        /// next Backspace deletes it (DocKeyboardOps.OnBackspace's first branch). Harmless on a text row,
+        /// which simply has no ring to show.</summary>
+        public void SetSelected(bool selected)
+        {
+            if (selectionRing != null) selectionRing.gameObject.SetActive(selected);
         }
 
         /// <summary>The world-space top and bottom of the LINE the caret is on, so the page can scroll it into

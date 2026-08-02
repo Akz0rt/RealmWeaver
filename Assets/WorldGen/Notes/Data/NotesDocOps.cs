@@ -184,6 +184,47 @@ namespace WorldGen.Notes.Data
             blocks.InsertRange(destination, slice);
         }
 
+        /// <summary>Turns one block into another kind — what the page toolbar's Раздел/Пункт/Проза buttons
+        /// do — keeping the same invariants Normalize would enforce afterwards, and keeping them HERE so the
+        /// toolbar carries no rule of its own.
+        ///
+        /// DEPTH FOLLOWS THE KIND — a Section is always at depth 0 and everything else at least 1 (I1) — and
+        /// this method does NOT write that itself. ClampDepths does, for this block and for the rows that
+        /// were its children in one pass, so promoting a nested row to a Section pulls it to the left margin
+        /// and pulls its children up behind it. An explicit assignment here was written first and deleted:
+        /// mutation testing showed it could not fail, because the very next line already guaranteed it, and
+        /// two statements enforcing one rule is one of them silently rotting.
+        ///
+        /// THE PAYLOAD OF THE OLD KIND GOES WITH IT. A Detail belongs to an Item and image bytes to an Image,
+        /// so a converted block drops what its new kind has no meaning for — the same clean-up Normalize does,
+        /// applied at the moment of the change rather than at the next load, where it would look to the DM
+        /// like data lost overnight.
+        ///
+        /// REFUSES a block that cannot survive the trip: BoardRef is a card that must keep pointing at a
+        /// board (I8), and Image/BoardRef are not text kinds a toolbar button offers. False means nothing was
+        /// touched, so a caller that pushed an undo step can drop it.</summary>
+        public static bool SetKind(List<DocBlock> blocks, string blockId, BlockKind kind)
+        {
+            if (blocks == null) return false;
+            if (kind != BlockKind.Section && kind != BlockKind.Item && kind != BlockKind.Prose) return false;
+
+            int i = IndexOf(blocks, blockId);
+            if (i < 0) return false;
+
+            var b = blocks[i];
+            if (b.Kind == kind) return false;
+            if (b.Kind == BlockKind.BoardRef || b.Kind == BlockKind.Image) return false;
+
+            b.Kind = kind;
+            if (kind != BlockKind.Item)
+            {
+                b.Detail = null;
+                b.LinkedPageId = null;   // 📄 is an Item's affordance (I7)
+            }
+            ClampDepths(blocks);
+            return true;
+        }
+
         public static bool Indent(List<DocBlock> blocks, string blockId)
         {
             int i = IndexOf(blocks, blockId);
