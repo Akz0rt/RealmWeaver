@@ -880,8 +880,12 @@ namespace WorldGen.Notes.Data
                         {
                             if (b.CanvasObjects != null || b.CanvasLinks != null)
                                 problems.Add($"{b.Kind} block «{b.Text}» carries canvas content (I7)");
-                            // 1 is the neutral zoom, not 0 — see DocBlock.CanvasZoom.
-                            if (b.DisplayWidth != 0f || b.CanvasPan != default || b.CanvasZoom != 1f)
+                            // 1 is the neutral zoom, not 0 — see DocBlock.CanvasZoom. Both cameras are
+                            // checked: a board has two (inline frame and expanded pane), so a row that is not
+                            // a board must carry neither.
+                            if (b.DisplayWidth != 0f || b.CanvasPan != default || b.CanvasZoom != 1f
+                                || b.CanvasViewSet || b.CanvasInlinePan != default || b.CanvasInlineZoom != 1f
+                                || b.CanvasInlineViewSet)
                                 problems.Add($"{b.Kind} block «{b.Text}» carries canvas geometry (I7)");
                         }
 
@@ -957,6 +961,10 @@ namespace WorldGen.Notes.Data
                             b.CanvasLinks = null;
                             b.CanvasPan = default;
                             b.CanvasZoom = 1f;
+                            b.CanvasViewSet = false;
+                            b.CanvasInlinePan = default;
+                            b.CanvasInlineZoom = 1f;
+                            b.CanvasInlineViewSet = false;
                             b.DisplayWidth = 0f;
                         }
 
@@ -1005,6 +1013,10 @@ namespace WorldGen.Notes.Data
             canvas.CanvasLinks = p.Links ?? new List<LinkData>();
             canvas.CanvasPan = p.CameraPan;
             canvas.CanvasZoom = p.CameraZoom;
+            // A board page the DM actually looked at carries a camera they aimed themselves, so the migrated
+            // block must count as "pointed" — otherwise opening it would silently refit and throw that away.
+            // A page never opened carries zoom 0, which is not a camera at all; that one is left to fit.
+            canvas.CanvasViewSet = p.CameraZoom > 0.0001f;
 
             p.Blocks.Insert(0, canvas);
             p.Blocks.Insert(0, NewBlock(BlockKind.Section, 0, name));

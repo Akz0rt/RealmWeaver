@@ -145,13 +145,40 @@ namespace WorldGen.Notes.Data
         [JsonProperty("CanvasLinks", NullValueHandling = NullValueHandling.Ignore)]
         public List<LinkData> CanvasLinks;
 
-        /// <summary>Canvas only — where the board is scrolled to. System.Numerics.Vector2, like every vector
-        /// in this file: UnityEngine's same-named type would tie the whole pure layer to an Editor.</summary>
+        /// <summary>Canvas only — where the EXPANDED board is scrolled to. System.Numerics.Vector2, like every
+        /// vector in this file: UnityEngine's same-named type would tie the whole pure layer to an Editor.
+        ///
+        /// TWO VIEWS, TWO CAMERAS, and the second pair below is not duplication. The same board is drawn in
+        /// two places at once — a 320px frame in the page's flow and a whole pane — and one shared camera made
+        /// the small one unusable: zoom the expanded board to 2×, pan into a corner, go back to the page, and
+        /// the frame shows that same empty corner with no gesture able to fix it. The DM's ruling was that the
+        /// two are different tasks (glance vs. work), so they get different cameras.</summary>
         public Vector2 CanvasPan;
 
         /// <summary>Canvas only. 1 is the NEUTRAL value, not 0 — so Normalize resets a non-Canvas block to 1
         /// rather than to zero, and "the field is at its default" is what I7 checks.</summary>
         public float CanvasZoom = 1f;
+
+        /// <summary>Has the DM ever pointed the EXPANDED view themselves? Until they have, opening the board
+        /// FITS it — CanvasFit.Compute picks a zoom and pan that put every object on screen at once.
+        ///
+        /// A BOOL AND NOT "zoom == 0", which is the tempting encoding and the wrong one here: CanvasZoom's
+        /// documented neutral value is 1, an old file carries no key at all so Newtonsoft leaves the field at
+        /// that 1, and a board saved by any earlier build is therefore indistinguishable from one the DM
+        /// deliberately set to 1×. False is the default of a bool for the same reason Section is the zero
+        /// BlockKind — "never written" and "the DM never touched it" have to be the same state.</summary>
+        public bool CanvasViewSet;
+
+        /// <summary>Canvas only — where the INLINE frame (the board drawn in the page's own flow) is looking.
+        /// Separate from CanvasPan for the reason that field's doc gives.</summary>
+        public Vector2 CanvasInlinePan;
+
+        /// <summary>Canvas only — the INLINE frame's zoom. Neutral 1, same convention as CanvasZoom.</summary>
+        public float CanvasInlineZoom = 1f;
+
+        /// <summary>Whether the DM has Ctrl+wheeled the INLINE frame themselves — see CanvasViewSet, same rule
+        /// and same reason for being a bool.</summary>
+        public bool CanvasInlineViewSet;
 
         // Keeps three floats' worth of neutral canvas geometry off the wire for every ordinary row. Plain
         // ShouldSerializeX() methods rather than [DefaultValue] + DefaultValueHandling: Newtonsoft finds these
@@ -159,6 +186,10 @@ namespace WorldGen.Notes.Data
         // otherwise need widening for an attribute it does not have.
         public bool ShouldSerializeCanvasPan() => Kind == BlockKind.Canvas;
         public bool ShouldSerializeCanvasZoom() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeCanvasViewSet() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeCanvasInlinePan() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeCanvasInlineZoom() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeCanvasInlineViewSet() => Kind == BlockKind.Canvas;
         public bool ShouldSerializeDisplayWidth() => Kind == BlockKind.Canvas;
     }
 

@@ -385,11 +385,17 @@ namespace WorldGen.Notes.Rendering
 
             var bg = frameGO.AddComponent<Image>();
             ThemeService.Tag(bg, ThemeRole.Panel2);
-            // NOT A RAYCAST TARGET, so the board's empty space swallows nothing and answers nothing. As a
-            // target it would bubble every click on the board — including the press that starts dragging a
-            // card — up to this row's OnPointerClick, which puts a caret in the CAPTION. The cards, the grip
-            // and «развернуть» carry their own targets and are unaffected.
-            bg.raycastTarget = false;
+            // A RAYCAST TARGET, and it has to be: Ctrl+wheel zooms the board (CanvasWheelRelay, attached to
+            // this same object), and uGUI delivers a scroll by walking UP from whatever the pointer is over —
+            // so over the board's EMPTY space, where no card is, nothing would be walked up from and the
+            // gesture would work on the cards and nowhere else.
+            //
+            // This was false through Task 8, for a real defect: as a target it bubbles every click on the
+            // board up to this row's OnPointerClick, which put a caret in the CAPTION. That is fixed at the
+            // handler instead — OnPointerClick now ignores a click that did not land in the caption strip —
+            // which is the narrower fix of the two and the one that survives this object needing to be
+            // hittable. The cards, the grip and «развернуть» carry their own targets and are unaffected.
+            bg.raycastTarget = true;
             frameGO.AddComponent<RectMask2D>();
 
             // «развернуть» — top right, inside the frame. Legacy uGUI and the builtin font, like the collapse

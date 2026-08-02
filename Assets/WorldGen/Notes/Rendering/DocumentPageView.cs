@@ -446,6 +446,13 @@ namespace WorldGen.Notes.Rendering
             // would cover «развернуть» and the resize grip with the board's own cards.
             if (canvasController.CanvasContainer != null)
                 canvasController.CanvasContainer.SetAsFirstSibling();
+
+            // Ctrl+wheel zooms this board; a plain wheel goes on scrolling the page. On the FRAME rather than
+            // on either child, because uGUI hands a scroll to the first IScrollHandler above whatever the
+            // pointer is over, and the frame is the one object that is above ALL of the board — its cards and
+            // its empty space alike. See CanvasWheelRelay for why the plain wheel has to be forwarded by hand.
+            var wheel = view.CanvasFrame.gameObject.AddComponent<CanvasWheelRelay>();
+            wheel.canvasController = canvasController;
         }
 
         // ── the board rows' own gestures (Р4 Task 8) ─────────────────────────────

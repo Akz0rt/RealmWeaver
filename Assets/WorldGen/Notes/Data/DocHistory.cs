@@ -134,6 +134,13 @@ namespace WorldGen.Notes.Data
                     DisplayWidth = b.DisplayWidth,
                     CanvasPan = b.CanvasPan,
                     CanvasZoom = b.CanvasZoom,
+                    // Both cameras ride along for the same reason the first one always did: a snapshot that
+                    // dropped them would have Ctrl+Z reset the board's view to "never pointed", so the next
+                    // frame would refit — an undo of a card move that also moved the camera.
+                    CanvasViewSet = b.CanvasViewSet,
+                    CanvasInlinePan = b.CanvasInlinePan,
+                    CanvasInlineZoom = b.CanvasInlineZoom,
+                    CanvasInlineViewSet = b.CanvasInlineViewSet,
                     CanvasObjects = CopyObjects(b.CanvasObjects),
                     CanvasLinks = CopyLinks(b.CanvasLinks),
                 });

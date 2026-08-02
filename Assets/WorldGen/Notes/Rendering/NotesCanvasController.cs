@@ -97,9 +97,7 @@ namespace WorldGen.Notes.Rendering
 
             if (block == null) return;
 
-            CanvasContainer.anchoredPosition = new Vector2(block.CanvasPan.X, block.CanvasPan.Y);
-            float zoom = block.CanvasZoom > 0.0001f ? block.CanvasZoom : 1f;
-            CanvasContainer.localScale = new Vector3(zoom, zoom, 1f);
+            ApplyCamera();
 
             if (block.CanvasObjects != null)
                 foreach (var obj in block.CanvasObjects)
@@ -488,9 +486,102 @@ namespace WorldGen.Notes.Rendering
         /// an oversight to be tidied up later.</summary>
         void SaveCameraState()
         {
-            if (block == null) return;
-            block.CanvasPan = new System.Numerics.Vector2(CanvasContainer.anchoredPosition.x, CanvasContainer.anchoredPosition.y);
-            block.CanvasZoom = CanvasContainer.localScale.x;
+            if (block == null || CanvasContainer == null) return;
+            var pan = new System.Numerics.Vector2(CanvasContainer.anchoredPosition.x, CanvasContainer.anchoredPosition.y);
+            float zoom = CanvasContainer.localScale.x;
+
+            // WHICHEVER VIEW THIS IS. The two are stored apart (see DocBlock.CanvasPan's own doc): the frame
+            // in the page's flow and the expanded pane are different tasks, and one shared camera made the
+            // small one unusable. Writing the flag here — and ONLY here — is what "the DM has pointed this
+            // view themselves" means: fitting never touches it, so a board nobody has aimed keeps re-fitting
+            // as its contents change, and the moment they aim it, it stays where they put it.
+            if (mode == CanvasMode.Expanded)
+            {
+                block.CanvasPan = pan;
+                block.CanvasZoom = zoom;
+                block.CanvasViewSet = true;
+            }
+            else
+            {
+                block.CanvasInlinePan = pan;
+                block.CanvasInlineZoom = zoom;
+                block.CanvasInlineViewSet = true;
+            }
+        }
+
+        /// <summary>Points the camera at whatever this view should be looking at: the stored one if the DM has
+        /// ever aimed it, otherwise a fit that puts every object on screen at once.
+        ///
+        /// A FIT MAY HAVE TO WAIT A FRAME, which is the whole reason `awaitingFit` exists rather than this
+        /// being three lines inside RebuildFromBlock. The fit needs the viewport's PIXEL SIZE, and a
+        /// RectTransform that was created or resized this frame reports a stale (often zero) rect until uGUI's
+        /// deferred layout pass has run — and both callers rebuild during exactly that window: the inline
+        /// frame is built inside the page's row rebuild, and CanvasSurfaceHost's Show can run from
+        /// WorkspaceBuilder.Awake, before uGUI has laid the pane out even once. Fitting against a zero
+        /// viewport yields the MinZoom floor and a board that looks empty, so a zero rect defers instead of
+        /// guessing. LateUpdate retries until the rect is real.</summary>
+        void ApplyCamera()
+        {
+            if (block == null || CanvasContainer == null) return;
+
+            // CLEARED FIRST, ALWAYS. The expanded controller is REUSED as the DM switches boards, so a fit
+            // measured against the previous board would otherwise still be recorded — and LateUpdate, seeing
+            // the same viewport size, would decide the new board was already fitted and leave it wearing the
+            // old one's camera. Zero means "no fit applied", which is exactly true at this instant.
+            lastFitViewport = Vector2.zero;
+
+            bool viewSet = mode == CanvasMode.Expanded ? block.CanvasViewSet : block.CanvasInlineViewSet;
+            if (viewSet)
+            {
+                var storedPan = mode == CanvasMode.Expanded ? block.CanvasPan : block.CanvasInlinePan;
+                float storedZoom = mode == CanvasMode.Expanded ? block.CanvasZoom : block.CanvasInlineZoom;
+                if (storedZoom < 0.0001f) storedZoom = 1f;
+                CanvasContainer.anchoredPosition = new Vector2(storedPan.X, storedPan.Y);
+                CanvasContainer.localScale = new Vector3(storedZoom, storedZoom, 1f);
+                return;
+            }
+
+            TryFitNow();
+        }
+
+        /// <summary>True when the viewport was measurable and the fit was applied. Deliberately does NOT write
+        /// the result back to the block: a fit is a DEFAULT, not a decision, and storing it would consume the
+        /// "never aimed" state that makes the board re-fit as objects are added to it.</summary>
+        bool TryFitNow()
+        {
+            if (block == null || CanvasContainer == null || viewport == null) return false;
+            var size = viewport.rect.size;
+            if (size.x < 1f || size.y < 1f) return false;
+
+            CanvasFit.Compute(block.CanvasObjects, new System.Numerics.Vector2(size.x, size.y),
+                              out var pan, out float zoom);
+            CanvasContainer.anchoredPosition = new Vector2(pan.X, pan.Y);
+            CanvasContainer.localScale = new Vector3(zoom, zoom, 1f);
+            lastFitViewport = size;
+            return true;
+        }
+
+        /// <summary>The viewport size the current fit was computed against, or zero when no fit has been
+        /// applied — which is both "the rect was not measurable yet" and "this view is showing a stored
+        /// camera instead". One field covers the retry and the re-fit; see LateUpdate.</summary>
+        Vector2 lastFitViewport;
+
+        /// <summary>Re-fits an UNAIMED board whenever the size it was fitted against stops being the size it
+        /// has. Two cases, one rule: the first frame, where the rect was still zero when RebuildFromBlock ran
+        /// (see ApplyCamera), and a later resize — the inline frame has a grip the DM drags, and the expanded
+        /// one follows the divider and the window. A board the DM HAS aimed is left alone: they chose that
+        /// view, and having it snap back on every window resize would be the bug this method is preventing,
+        /// in the other direction.</summary>
+        void LateUpdate()
+        {
+            if (block == null || CanvasContainer == null || viewport == null) return;
+            bool viewSet = mode == CanvasMode.Expanded ? block.CanvasViewSet : block.CanvasInlineViewSet;
+            if (viewSet) return;
+
+            var size = viewport.rect.size;
+            if (size.x < 1f || size.y < 1f) return;
+            if (Mathf.Approximately(size.x, lastFitViewport.x) && Mathf.Approximately(size.y, lastFitViewport.y)) return;
+            TryFitNow();
         }
     }
 }

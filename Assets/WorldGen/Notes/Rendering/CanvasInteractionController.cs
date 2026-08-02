@@ -93,7 +93,7 @@ namespace WorldGen.Notes.Rendering
             var scrollScreenPos = Mouse.current.position.ReadValue();
             float scroll = Mouse.current.scroll.ReadValue().y;
             if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(scrollScreenPos) && !IsOverToolbar(scrollScreenPos))
-                canvasController.Zoom(scroll * 0.001f, scrollScreenPos);
+                CanvasWheelZoom.Apply(canvasController, scroll, scrollScreenPos, uiCamera);
         }
 
         void HandlePress()
