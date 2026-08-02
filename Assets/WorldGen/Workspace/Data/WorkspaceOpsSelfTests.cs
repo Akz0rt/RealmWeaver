@@ -14,6 +14,7 @@ namespace WorldGen.Workspace.Data
     public class WorkspaceOpsSelfTests : MonoBehaviour
     {
         static SurfaceRef Page(string id) => new SurfaceRef { Kind = SurfaceKind.Page, Id = id };
+        static SurfaceRef Canvas(string id) => new SurfaceRef { Kind = SurfaceKind.Canvas, Id = id };
 
         /// <summary>A layout with `s` open in BOTH panes — the state R1b stops Open from ever producing, and
         /// which a WorkspacePrefs payload written before R1b can still restore. Assembled directly rather
@@ -339,6 +340,49 @@ namespace WorldGen.Workspace.Data
             }
 
             Debug.Log(ok ? "Self-Test Workspace Move And Prune: PASS" : "Self-Test Workspace Move And Prune: FAIL");
+        }
+
+        /// <summary>HasSurfaceOfKind — the guard CanvasTabPruner asks before every prune.
+        ///
+        /// THE MUTANT THIS IS BUILT AGAINST is "looks only at Primary". It is the natural thing to write and
+        /// it passes any fixture that opens the board in the first pane — so every case below that involves a
+        /// board opens it in the SECONDARY, because that is where «↗» actually puts one (inOtherPane: true).
+        /// The Primary case is here too, but as the weaker half.
+        ///
+        /// The last case is the other direction: a layout full of tabs of OTHER kinds must answer no, or the
+        /// guard is a constant true and buys nothing.</summary>
+        [ContextMenu("Self-Test: Workspace Has Surface Of Kind")]
+        public void SelfTestHasSurfaceOfKind()
+        {
+            bool ok = true;
+
+            // No layout at all, and an empty one: false, not a throw. WorkspacePrefs can hand back either.
+            if (WorkspaceOps.HasSurfaceOfKind(null, SurfaceKind.Canvas))
+            { Debug.LogError("FAIL kind: a null layout must answer no"); ok = false; }
+            if (WorkspaceOps.HasSurfaceOfKind(new WorkspaceLayout(), SurfaceKind.Canvas))
+            { Debug.LogError("FAIL kind: an empty layout must answer no"); ok = false; }
+
+            // A board in the SECONDARY pane — the mutant's case. «↗» opens boards there and nowhere else.
+            var l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Page("p"), "Страница", false);
+            WorkspaceOps.Open(l, Canvas("b1"), "Доска", true);
+            if (!WorkspaceOps.HasSurfaceOfKind(l, SurfaceKind.Canvas))
+            { Debug.LogError("FAIL kind: a board in the SECONDARY pane must be found — reading only Primary is the mutant"); ok = false; }
+
+            // ...and in the primary, through the same call.
+            l = WorkspaceOps.NewDefault();
+            WorkspaceOps.Open(l, Canvas("b2"), "Доска", false);
+            if (!WorkspaceOps.HasSurfaceOfKind(l, SurfaceKind.Canvas))
+            { Debug.LogError("FAIL kind: a board in the PRIMARY pane must be found"); ok = false; }
+
+            // Pages and the world map across both panes: no board anywhere, so no prune.
+            l = WorkspaceOps.NewDefault();                          // Primary: [Карта мира]
+            WorkspaceOps.Open(l, Page("a"), "A", false);
+            WorkspaceOps.Open(l, Page("b"), "B", true);              // Secondary: [B]
+            if (WorkspaceOps.HasSurfaceOfKind(l, SurfaceKind.Canvas))
+            { Debug.LogError("FAIL kind: a layout of pages and the map must answer no — otherwise the guard is a constant true"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Workspace Has Surface Of Kind: PASS" : "Self-Test Workspace Has Surface Of Kind: FAIL");
         }
 
         /// <summary>The outcomes Task 10d's tab drag newly depends on. The GESTURE (ghost, insertion marker,

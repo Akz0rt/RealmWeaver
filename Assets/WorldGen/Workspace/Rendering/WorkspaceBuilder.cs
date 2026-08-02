@@ -366,6 +366,10 @@ namespace WorldGen.Workspace.Rendering
                 // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
                 // subscription that has to be dropped again on the next rebuild.
                 PageLinkBridge.Attach(gameObject, notesRoot.DocumentView, Controller, QuickOpenPopup);
+
+                // Р4: a board tab must not outlive its block, its page or its page's group — see
+                // CanvasTabPruner for why all three are answered in one place rather than at each seam.
+                CanvasTabPruner.Attach(gameObject, notesRoot.DocumentController, notesRoot.DocumentView, Controller);
             }
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
             // Task 10c: the five ex-screens. Registered unconditionally — ScreenSurfaceHosts registers a host
@@ -874,6 +878,102 @@ namespace WorldGen.Workspace.Rendering
         {
             if (poiManager != null) poiManager.OnPoisChanged -= OnPoisChanged;
             poiManager = null;
+        }
+    }
+
+    /// <summary>
+    /// A board's tab dies with the thing it names — its block, its page, or the whole group its page was in.
+    ///
+    /// ONE SINK, NOT THREE CALL SITES. A canvas tab can be orphaned at three seams: the DM deletes the board
+    /// BLOCK from the page, deletes the PAGE, or deletes a GROUP — and a group takes its pages with it, which
+    /// is the seam NotesDocOps.ClearLinksTo's own doc warns is the one people forget. Pruning at each of the
+    /// three means three chances to forget, and a forgotten one LOOKS fine: the surface simply draws nothing
+    /// under a live tab, which is the exact defect Р1 shipped for pages (f635cc1). So instead of remembering,
+    /// this listens to the document itself — all three raise something. Page and group deletion raise
+    /// NotesDocumentController.OnDocumentChanged; a block deleted from a page raises
+    /// DocumentPageView.OnDocumentMutated. A fourth seam nobody has built yet raises one of the two as well.
+    ///
+    /// WHY THE PREDICATE IS MapScreenController.SurfaceExists AND NOT A CANVAS-ONLY ONE. PruneSurfaces judges
+    /// EVERY tab, so a predicate that only knew about boards would close the map. SurfaceExists is the tested
+    /// answer for all kinds and the same one a project load uses — "the tab survives" and "the surface can be
+    /// shown" must not be able to disagree.
+    ///
+    /// WHY THE GUARD. OnDocumentMutated fires on every edit-visit to a page row, several times a second while
+    /// the DM types. With no board open anywhere, HasSurfaceOfKind turns that into a dozen enum comparisons
+    /// instead of a walk that resolves every tab against the document, the POI manager and the interior store.
+    ///
+    /// A PROJECT LOAD passes through here too — LoadDocument raises OnDocumentChanged — and pruning at that
+    /// instant is harmless rather than merely tolerated: the document is loaded LAST, so the answer is the
+    /// incoming project's, which is the answer EndProjectSwitch is about to apply anyway, and writes are
+    /// suspended until it does (WorkspaceController.persistSuspended).
+    ///
+    /// Same Attach shape, and the same rebuild hazard, as PageLinkBridge above: WorkspaceBuilder.Awake re-runs
+    /// on every Play-mode shell rebuild while NotesRootBuilder's controller SURVIVES it, so a second
+    /// AddComponent — or a re-subscribe without a drop — would leave the old, destroyed pruner in the
+    /// document's invocation list.
+    /// </summary>
+    public class CanvasTabPruner : MonoBehaviour
+    {
+        NotesDocumentController documentController;
+        DocumentPageView pageView;
+        WorkspaceController controller;
+        MapScreenController map;
+        bool pruning;
+
+        public static CanvasTabPruner Attach(GameObject host, NotesDocumentController documentController,
+                                             DocumentPageView pageView, WorkspaceController controller)
+        {
+            var existing = host.GetComponent<CanvasTabPruner>();
+            var pruner = existing != null ? existing : host.AddComponent<CanvasTabPruner>();
+
+            // Dropped before the fields are re-pointed, exactly as PageLinkBridge does: on a rebuild these
+            // still hold the PREVIOUS shell's subscriptions to objects that outlived it.
+            pruner.Unsubscribe();
+            pruner.documentController = documentController;
+            pruner.pageView = pageView;
+            pruner.controller = controller;
+            pruner.map = null;
+
+            if (documentController != null) documentController.OnDocumentChanged += pruner.Prune;
+            if (pageView != null) pageView.OnDocumentMutated += pruner.Prune;
+            return pruner;
+        }
+
+        void Prune()
+        {
+            // Closing a tab hides a surface, and a surface being hidden is allowed to write to the document
+            // (a board saves its camera). Without this, that write would re-enter mid-prune.
+            if (pruning) return;
+            if (controller == null) return;
+            if (!WorkspaceOps.HasSurfaceOfKind(controller.Layout, SurfaceKind.Canvas)) return;
+
+            var screen = ResolveMap();
+            if (screen == null) return;
+
+            pruning = true;
+            try { controller.PruneSurfaces(screen.SurfaceExists); }
+            finally { pruning = false; }
+        }
+
+        /// <summary>Found on demand and re-tried on every miss, like PageLinkBridge.ResolvePoiManager and for
+        /// the second of its two reasons: a domain reload wipes a plain field while the component it names
+        /// survives. Inactive included — the map screen is deactivated whenever another surface is showing,
+        /// which is precisely when a board tab is open.</summary>
+        MapScreenController ResolveMap()
+        {
+            if (map != null) return map;
+            map = FindFirstObjectByType<MapScreenController>(FindObjectsInactive.Include);
+            return map;
+        }
+
+        void OnDestroy() => Unsubscribe();
+
+        void Unsubscribe()
+        {
+            if (documentController != null) documentController.OnDocumentChanged -= Prune;
+            if (pageView != null) pageView.OnDocumentMutated -= Prune;
+            documentController = null;
+            pageView = null;
         }
     }
 }

@@ -304,6 +304,36 @@ namespace WorldGen.Workspace.Data
             l.FocusedPane = pane;
         }
 
+        /// <summary>Is a tab of this kind open in EITHER pane? A cheap question asked before an expensive
+        /// answer: the caller that needs it (CanvasTabPruner) runs on every document mutation — every visit
+        /// to a page row — and the prune it guards resolves each tab against the live document, the POI
+        /// manager and the interior store. With no board open that whole walk is pointless, and this replaces
+        /// it with a scan of at most a dozen enum comparisons.
+        ///
+        /// BOTH PANES, and that is the mutant worth naming: a version reading only Primary answers "no" for a
+        /// board the DM expanded into the pane next door — which is the ONLY place «↗» ever opens one
+        /// (WorkspaceBuilder's CanvasRouter passes inOtherPane: true), so the guard would swallow exactly the
+        /// case it exists to serve.
+        ///
+        /// Lives here rather than as a loop at the call site for the same reason every other pane walk does:
+        /// WorkspaceOps is the one place that knows a layout has two panes, either of which may be null.</summary>
+        public static bool HasSurfaceOfKind(WorkspaceLayout l, SurfaceKind kind)
+        {
+            if (l == null) return false;
+            return PaneHasKind(l.Primary, kind) || PaneHasKind(l.Secondary, kind);
+        }
+
+        static bool PaneHasKind(PaneState p, SurfaceKind kind)
+        {
+            if (p?.Tabs == null) return false;
+            for (int i = 0; i < p.Tabs.Count; i++)
+            {
+                var s = p.Tabs[i].Surface;
+                if (s != null && s.Kind == kind) return true;
+            }
+            return false;
+        }
+
         /// <summary>Drops every tab whose surface no longer exists (a deleted page, settlement, etc.),
         /// across both panes, and reports how many were dropped. May collapse the split via R3/R4, through
         /// the same NormalizeSplit every other structural op uses.</summary>
