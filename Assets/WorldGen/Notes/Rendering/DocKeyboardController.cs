@@ -49,11 +49,6 @@ namespace WorldGen.Notes.Rendering
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
-        /// <summary>TEMPORARY, Р2 Task 6 only — see the call site below. Delete this and its `if` block once
-        /// the DM has signed off on typing feel; it is a const so the compiler removes the block outright
-        /// rather than leaving a per-keystroke branch behind if anyone forgets.</summary>
-        const bool LogIntents = true;
-
         public DocumentPageView pageView;
 
         // Refreshed in LateUpdate from whichever row is focused THEN — i.e. after the drain, so the caret
@@ -100,30 +95,6 @@ namespace WorldGen.Notes.Rendering
                 // stopped being edited, which is the only honest answer for a key aimed at it.
                 var ended = pageView.ViewOf(lastFocusedId);
                 if (ended != null && ended.CaretWhenEditingEnded >= 0) lastCaret = ended.CaretWhenEditingEnded;
-            }
-
-            // TEMPORARY — Р2 Task 6 checkpoint, second round. DELETE with the LogIntents block in Handle.
-            //
-            // The DM reports that Backspace at the start of a row does not merge it with the row above, and
-            // the first round's log said only that Handle was never reached — which is equally consistent
-            // with the key not firing, with LateUpdate returning early below, and with any ONE of the four
-            // conditions in the Backspace branch refusing. Those are four different fixes. Printed HERE,
-            // ahead of every early return, so the absence of a line means the key itself never arrived and
-            // nothing else.
-            if (LogIntents && keyboard.backspaceKey.wasPressedThisFrame)
-            {
-                bool hasField = live != null && live.Field != null;
-                Debug.Log($"[dockeys] Backspace GATE live={(live != null ? live.BlockId : "—")} " +
-                          $"caretPending={(live != null && live.CaretPending)} " +
-                          $"lastCaret={lastCaret} " +
-                          $"fieldCaret={(hasField ? live.Field.caretPosition : -1)} " +
-                          $"anchor={(hasField ? live.Field.selectionAnchorPosition : -1)} " +
-                          $"focus={(hasField ? live.Field.selectionFocusPosition : -1)} " +
-                          $"textChangedThisFrame={(live != null && live.TextChangedThisFrame)} " +
-                          $"len={(live != null && live.Data != null ? (live.Data.Text ?? "").Length : -1)} " +
-                          $"strAnchor={(hasField ? live.Field.selectionStringAnchorPosition : -1)} " +
-                          $"strFocus={(hasField ? live.Field.selectionStringFocusPosition : -1)} " +
-                          $"lastFocusedId={(string.IsNullOrEmpty(lastFocusedId) ? "—" : lastFocusedId)}");
             }
 
             if (string.IsNullOrEmpty(lastFocusedId)) return;
@@ -229,21 +200,6 @@ namespace WorldGen.Notes.Rendering
             // to the pure layer even though the view can no longer be the one to report it.
             var result = DocKeyboardOps.Apply(page.Blocks, lastFocusedId, lastCaret,
                                               atFirstLine: true, atLastLine: true, key);
-
-            // TEMPORARY — Р2 Task 6 checkpoint only. DELETE once the DM has confirmed typing feel.
-            //
-            // The offline suite proves nothing about the TextMeshPro port: no pure file changed, so it stays
-            // green whatever the port broke. What the port CAN break silently is the wiring that turns the
-            // field's caret state into the triple DocKeyboardOps is handed — the rules themselves are already
-            // covered by DocKeyboardOpsSelfTests. Printing that triple turns "typing feels off" into a wrong
-            // number with a name on it, which is the difference between one checkpoint round and four.
-            if (LogIntents)
-            {
-                var block = page.Blocks.Find(b => b.Id == lastFocusedId);
-                Debug.Log($"[dockeys] {key} caret={lastCaret} len={(block?.Text ?? "").Length} " +
-                          $"→ handled={result.Handled} rebuild={result.Rebuild} " +
-                          $"focus={(result.FocusBlockId ?? "—")} newCaret={result.CaretOffset}");
-            }
 
             if (!result.Handled) return;
 
