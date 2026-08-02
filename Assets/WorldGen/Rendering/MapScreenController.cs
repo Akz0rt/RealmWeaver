@@ -291,10 +291,15 @@ namespace WorldGen.Rendering
         {
             if (s == null) return false;
             if (s.Kind == SurfaceKind.WorldMap) return true;
-            // Deliberately SurfaceExists' own Page branch rather than a second copy of the lookup — the same
+            // Deliberately SurfaceExists' own branches rather than a second copy of the lookup — the same
             // argument that method's doc makes for itself: "the tab survives" and "the page can be opened"
             // must not be able to disagree.
-            if (s.Kind == SurfaceKind.Page) return SurfaceExists(s);
+            //
+            // Page and Canvas both live in the notes document, which a REGENERATION does not touch — so both
+            // survive it, and both are checked by resolution rather than kept by kind, so a tab can never name
+            // something that is gone. (The five world kinds below are still refused by KIND: their managers are
+            // cleared by sibling handlers of this same event, in an order Unity does not define.)
+            if (s.Kind == SurfaceKind.Page || s.Kind == SurfaceKind.Canvas) return SurfaceExists(s);
             return false;
         }
 
@@ -363,6 +368,22 @@ namespace WorldGen.Rendering
                     var docController = notes != null ? notes.DocumentController : null;
                     var doc = docController != null ? docController.Document : null;
                     return doc != null && NotesDocOps.FindPage(doc, s.Id) != null;
+
+                case SurfaceKind.Canvas:
+                {
+                    // Same lookup chain as Page above, and the same reason for the explicit null checks rather
+                    // than `?.`: both are UnityEngine.Objects, whose overloaded == reports a DESTROYED
+                    // reference as null while `?.` bypasses that overload.
+                    //
+                    // The KIND is checked, not merely the block's existence: a row the DM turned into an
+                    // ordinary Item is no longer a board, and its tab must close rather than open on nothing.
+                    var canvasNotes = Notes();
+                    var canvasController = canvasNotes != null ? canvasNotes.DocumentController : null;
+                    var canvasDoc = canvasController != null ? canvasController.Document : null;
+                    if (canvasDoc == null) return false;
+                    var block = NotesDocOps.FindBlock(canvasDoc, s.Id, out _);
+                    return block != null && block.Kind == BlockKind.Canvas;
+                }
 
                 case SurfaceKind.PoiEditor:
                     return Pois()?.GetPoiById(s.Id) != null;

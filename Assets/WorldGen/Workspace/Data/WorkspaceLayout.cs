@@ -22,8 +22,12 @@ namespace WorldGen.Workspace.Data
     /// APPENDED at the end, never renumbered: WorkspaceOps.Serialize writes the enum's NAME (not its ordinal)
     /// and TryParseSurfaceKind reads it back by name, so the numbers are not themselves a wire format — but
     /// WorkspacePrefs stores those payloads in PlayerPrefs, where they outlive the app version that wrote
-    /// them, so keeping additions purely additive means an older payload keeps parsing unchanged.</summary>
-    public enum SurfaceKind { Page = 0, WorldMap = 1, Settlement = 2, BuildingInterior = 3, Dungeon = 4, BattleGrid = 5, PoiEditor = 6 }
+    /// them, so keeping additions purely additive means an older payload keeps parsing unchanged.
+    ///
+    /// Canvas (Р4) is a BLOCK inside a page, not a page: its Id is a DocBlock.Id, which I6 makes unique across
+    /// the WHOLE document — that uniqueness is what makes the address unambiguous, and it is why I6 stopped
+    /// being a tidiness rule and became a load-bearing one.</summary>
+    public enum SurfaceKind { Page = 0, WorldMap = 1, Settlement = 2, BuildingInterior = 3, Dungeon = 4, BattleGrid = 5, PoiEditor = 6, Canvas = 7 }
 
     /// <summary>What a tab points at. Two refs name the same surface when Kind AND Id match — see
     /// WorkspaceOps.SameSurface, the one place that comparison is made.</summary>

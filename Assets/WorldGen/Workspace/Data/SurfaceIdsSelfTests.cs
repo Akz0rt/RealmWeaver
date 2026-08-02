@@ -1,4 +1,5 @@
 using UnityEngine;
+using WorldGen.Notes.Data;
 
 namespace WorldGen.Workspace.Data
 {
@@ -142,6 +143,39 @@ namespace WorldGen.Workspace.Data
                 { Debug.LogError($"FAIL wellformed: BattleGrid/«{bad ?? "<null>"}» accepted, want refused"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Surface Ids Well-Formed: PASS" : "Self-Test Surface Ids Well-Formed: FAIL");
+        }
+
+        /// <summary>The canvas surface's id is a bare DocBlock id, so SurfaceIds.IsWellFormed has nothing to
+        /// check and must not start refusing it — WorkspaceOps.Restore applies that predicate BEFORE any
+        /// existence check, so a false here silently drops a restored tab. And the ref is built by ONE helper:
+        /// WorkspaceOps.SameSurface compares Kind AND Id, so a hand-built ref that differs by one character is
+        /// not a visible error, it is a second tab for the same board.</summary>
+        [ContextMenu("Self-Test: Canvas Surface Ref")]
+        public void SelfTestCanvasSurfaceRef()
+        {
+            bool ok = true;
+
+            var block = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "  Схема сюжета  ");
+            var surface = NotesSurface.Canvas(block.Id);
+
+            if (surface.Kind != SurfaceKind.Canvas)
+            { Debug.LogError($"FAIL canvas ref: kind = {surface.Kind}, want Canvas"); ok = false; }
+            if (surface.Id != block.Id)
+            { Debug.LogError($"FAIL canvas ref: id = «{surface.Id}», want the block id"); ok = false; }
+            if (NotesSurface.Canvas(null).Id != "")
+            { Debug.LogError("FAIL canvas ref: a null id must become \"\", never null — it flows into Serialize and SameSurface unchecked"); ok = false; }
+
+            if (!SurfaceIds.IsWellFormed(SurfaceKind.Canvas, block.Id))
+            { Debug.LogError("FAIL canvas ref: IsWellFormed refuses a bare block id — restored tabs would be dropped"); ok = false; }
+
+            if (NotesSurface.TitleOf(block) != "Схема сюжета")
+            { Debug.LogError($"FAIL canvas title: «{NotesSurface.TitleOf(block)}», want the trimmed caption"); ok = false; }
+            if (NotesSurface.TitleOf(NotesDocOps.NewBlock(BlockKind.Canvas, 1, "   ")) != "Доска")
+            { Debug.LogError("FAIL canvas title: a blank caption must give «Доска», not an empty tab"); ok = false; }
+            if (NotesSurface.TitleOf(null) != "Доска")
+            { Debug.LogError("FAIL canvas title: a null block must still give a title"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Canvas Surface Ref: PASS" : "Self-Test Canvas Surface Ref: FAIL");
         }
 
         /// <summary>Encode, decode, compare the PARTS — never the string. A helper rather than two copies so
