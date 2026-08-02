@@ -43,6 +43,10 @@ namespace WorldGen.Notes.Rendering
         string selectedObjectId;
         string selectedLinkId;
         bool panning;
+
+        /// <summary>A middle-button drag is in progress — see Update. Separate from `panning`, which belongs to
+        /// the Select tool's left-drag, so the two gestures cannot end each other.</summary>
+        bool middlePanning;
         Vector2 lastPanScreenPos;
         bool zooming;
         Vector2 zoomStartScreenPos;
@@ -99,6 +103,34 @@ namespace WorldGen.Notes.Rendering
 
             HandleClipboardPaste();
             HandleDeleteKey();
+
+            // MIDDLE-BUTTON DRAG PANS, with any tool and over anything — including over a card, which is
+            // exactly where the left button cannot pan and must not: there, a left drag moves the CARD.
+            //
+            // Left-drag-on-empty-space still pans (the Select branch of HandlePress), and this does not
+            // replace it. It covers the case that one cannot: a board zoomed in far enough to be worth moving
+            // around is a board whose objects fill the frame, so "empty space to grab" is precisely what runs
+            // out at the moment panning becomes necessary. Every canvas tool the DM has used works this way.
+            var mouseScreenPos = Mouse.current.position.ReadValue();
+            if (Mouse.current.middleButton.wasPressedThisFrame
+                && IsOverViewport(mouseScreenPos) && !IsOverToolbar(mouseScreenPos))
+            {
+                middlePanning = true;
+                lastPanScreenPos = mouseScreenPos;
+            }
+            else if (Mouse.current.middleButton.wasReleasedThisFrame)
+            {
+                middlePanning = false;
+            }
+
+            // A middle-drag owns the frame outright: no tool action, no wheel zoom underneath it. Its own flag
+            // rather than `panning`, so a left-button release cannot end it and a middle-drag cannot be
+            // mistaken for the Select tool's pan half-way through.
+            if (middlePanning && Mouse.current.middleButton.isPressed)
+            {
+                HandlePan();
+                return;
+            }
 
             if (Mouse.current.leftButton.wasPressedThisFrame)
                 HandlePress();
@@ -196,6 +228,7 @@ namespace WorldGen.Notes.Rendering
                     }
                     break;
                 case NotesTool.Zoom:
+                    canvasController.CancelZoomAnimation();
                     zooming = true;
                     zoomStartScreenPos = screenPos;
                     zoomStartScale = canvasController.CanvasContainer.localScale.x;

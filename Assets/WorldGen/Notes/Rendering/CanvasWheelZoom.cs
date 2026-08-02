@@ -24,7 +24,7 @@ namespace WorldGen.Notes.Rendering
         /// this large without becoming unusable when zoomed out.</summary>
         public const float ExpandedStepPerTick = 0.22f;
 
-        /// <summary>The INLINE frame's Ctrl+wheel step: e^0.08 ≈ 1.083, a notch is about 8%. A THIRD of the
+        /// <summary>The INLINE frame's Ctrl+wheel step: e^0.055 ≈ 1.057, a notch is under 6%. A QUARTER of the
         /// expanded step, and that difference is deliberate rather than an oversight to be unified later.
         ///
         /// The two views are aimed at different things. The expanded board is a whole pane the DM is working
@@ -34,7 +34,7 @@ namespace WorldGen.Notes.Rendering
         /// it happens while the DM's other hand is on Ctrl and the page is scrolling underneath. Small steps
         /// are what "smoother" means here — there is no animation to add, only a distance per notch to
         /// choose, and this one is gentler than even the pre-Р4 rule was.</summary>
-        public const float InlineStepPerTick = 0.08f;
+        public const float InlineStepPerTick = 0.055f;
 
         /// <summary>Wheel notches from whatever the caller had. Unity's Input System reports the raw device
         /// value (120 per notch on Windows), while uGUI's PointerEventData.scrollDelta is already normalised to
@@ -43,10 +43,12 @@ namespace WorldGen.Notes.Rendering
         /// from silently zooming a hundredth of a notch.</summary>
         public static float ToTicks(float raw) => Mathf.Abs(raw) > 10f ? raw / 120f : raw;
 
-        /// <summary>Zooms around the CURSOR, not the viewport centre — which the old polled path did not do.
-        /// The two changes go together: a 25% step around a fixed centre flings whatever the DM was looking at
-        /// out of the frame, and anchoring at the pointer is what makes a big step feel like moving closer
-        /// rather than like the board jumping.</summary>
+        /// <summary>Starts a smoothed zoom around the CURSOR — not an instant one, and not around the viewport
+        /// centre, which is what the old polled path did. All three parts answer the same complaint. A step
+        /// around a fixed centre flings whatever the DM was looking at out of the frame; a step applied in one
+        /// frame reads as the board teleporting however small the step is; and anchoring at the pointer is
+        /// what makes zooming feel like moving closer rather than like the board jumping. The glide itself
+        /// belongs to NotesCanvasController.ZoomTowards, which re-applies the anchor every frame.</summary>
         /// <param name="stepPerTick">ExpandedStepPerTick or InlineStepPerTick — passed rather than read from
         /// the controller's Mode so the number is chosen at the CALL SITE, where the gesture it belongs to is
         /// visible.</param>
@@ -57,11 +59,14 @@ namespace WorldGen.Notes.Rendering
             float ticks = ToTicks(rawScroll);
             if (Mathf.Abs(ticks) < 0.001f) return;
 
-            float current = controller.CanvasContainer.localScale.x;
-            if (current < 0.0001f) current = 1f;
-            // ZoomAroundScreenPoint does the clamping to [0.25, 3] and the pan correction that keeps the point
-            // under the cursor where it is, and it is the one path that saves the camera afterwards.
-            controller.ZoomAroundScreenPoint(current * Mathf.Exp(ticks * stepPerTick), screenPos, uiCamera);
+            // FROM THE TARGET, not from what is on screen — see NotesCanvasController.ZoomTarget. While a
+            // previous notch is still gliding, multiplying the LIVE scale would make each notch of a fast
+            // scroll shorter than the one before it.
+            float from = controller.ZoomTarget;
+            if (from < 0.0001f) from = 1f;
+            // ZoomTowards glides there over the next few frames, clamping to [0.25, 3] and keeping the point
+            // under the cursor fixed the whole way.
+            controller.ZoomTowards(from * Mathf.Exp(ticks * stepPerTick), screenPos, uiCamera);
         }
     }
 

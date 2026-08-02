@@ -509,6 +509,67 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        // ── smoothed wheel zoom ────────────────────────────────────────────────
+
+        /// <summary>How fast the animated zoom closes the remaining distance, per second, as the rate of an
+        /// exponential approach: at 12 the gap is down to a few percent in about a fifth of a second. An
+        /// exponential rather than a fixed duration because wheel notches ARRIVE WHILE ONE IS RUNNING — a
+        /// duration-based tween has to decide whether to restart its clock (which stalls a fast scroll) or
+        /// keep it (which makes the second notch land in a fraction of the time). Approaching a target that
+        /// simply moves has no such question: three quick notches read as one continuous glide.</summary>
+        const float ZoomSmoothingPerSecond = 12f;
+
+        float zoomTarget;
+        Vector2 zoomAnchorScreen;
+        Camera zoomAnchorCamera;
+        bool zoomAnimating;
+
+        /// <summary>Where the next wheel notch should multiply FROM: the zoom being animated towards if one is
+        /// running, otherwise what is on screen. Reading the live scale mid-animation would make every notch
+        /// after the first one smaller than the last — the DM spins the wheel and the board slows down.</summary>
+        public float ZoomTarget => zoomAnimating ? zoomTarget : (CanvasContainer != null ? CanvasContainer.localScale.x : 1f);
+
+        /// <summary>Zooms to `targetScale` over the next few frames instead of in one jump, keeping the point
+        /// under `screenPos` fixed throughout. The anchor is stored as a SCREEN point and re-applied every
+        /// frame of the animation, which is what makes a smoothed zoom still land where the cursor is: the
+        /// canvas point under that pixel changes as the scale changes, so a canvas-space anchor captured once
+        /// would drift.</summary>
+        public void ZoomTowards(float targetScale, Vector2 screenPos, Camera uiCamera)
+        {
+            if (CanvasContainer == null) return;
+            zoomTarget = Mathf.Clamp(targetScale, 0.25f, 3f);
+            zoomAnchorScreen = screenPos;
+            zoomAnchorCamera = uiCamera;
+            zoomAnimating = true;
+        }
+
+        /// <summary>Drops any running wheel animation. Called when a gesture takes DIRECT control of the zoom —
+        /// the Zoom tool's drag — because that drag writes the scale from its own Update and the animation
+        /// writes it from LateUpdate, so the later writer would win every frame and the drag would do nothing
+        /// visible.</summary>
+        public void CancelZoomAnimation() => zoomAnimating = false;
+
+        void StepZoomAnimation()
+        {
+            if (!zoomAnimating || CanvasContainer == null) { zoomAnimating = false; return; }
+
+            float current = CanvasContainer.localScale.x;
+            // unscaledDeltaTime, not deltaTime: a UI gesture must not slow down with Time.timeScale, and
+            // nothing in this app sets it to 1 on purpose — it is simply never touched, which is exactly the
+            // kind of assumption that breaks silently later.
+            float t = 1f - Mathf.Exp(-ZoomSmoothingPerSecond * Time.unscaledDeltaTime);
+            float next = Mathf.Lerp(current, zoomTarget, t);
+
+            // Snap and stop rather than approach forever: an exponential never actually arrives, and every
+            // frame of it costs a SaveCameraState write plus a layout-affecting scale change.
+            if (Mathf.Abs(zoomTarget - next) < 0.002f)
+            {
+                next = zoomTarget;
+                zoomAnimating = false;
+            }
+            ZoomAroundScreenPoint(next, zoomAnchorScreen, zoomAnchorCamera);
+        }
+
         /// <summary>Points the camera at whatever this view should be looking at: the stored one if the DM has
         /// ever aimed it, otherwise a fit that puts every object on screen at once.
         ///
@@ -574,6 +635,8 @@ namespace WorldGen.Notes.Rendering
         /// in the other direction.</summary>
         void LateUpdate()
         {
+            StepZoomAnimation();
+
             if (block == null || CanvasContainer == null || viewport == null) return;
             bool viewSet = mode == CanvasMode.Expanded ? block.CanvasViewSet : block.CanvasInlineViewSet;
             if (viewSet) return;
