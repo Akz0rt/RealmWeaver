@@ -120,6 +120,10 @@ namespace WorldGen.Notes.Rendering
         /// after a domain reload, which is why nothing should cache it across frames.</summary>
         public PageToolbar Toolbar { get; private set; }
 
+        /// <summary>«Итоги» and «Упомянута в», drawn under the last row. Lives in `content` so it scrolls
+        /// with the prose it summarises. Rebuilt by EnsureWired, like the toolbar and for the same reason.</summary>
+        PageFooterView footer;
+
         /// <summary>Fires whenever undo or redo becomes possible or impossible, so the toolbar's ↶/↷ can be
         /// enabled or disabled without polling.</summary>
         public event System.Action OnHistoryChanged;
@@ -359,6 +363,11 @@ namespace WorldGen.Notes.Rendering
             worldCache = WorldSource != null ? WorldSource() : null;
             foreach (var row in rows)
                 if (row != null) row.Refresh();
+            // «Итоги» is a list of NAMES, so it goes stale on exactly the events this method exists for — a
+            // POI renamed or deleted in the other pane. Refreshing the rows and not the summary would leave
+            // the page telling the DM two different things about the same object. Safe to rebuild here for
+            // the same reason the rows are not: the footer holds no editing state to interrupt.
+            if (footer != null) footer.Refresh();
         }
 
         /// <summary>Where a clicked link goes. The rules, in one place:
@@ -376,7 +385,7 @@ namespace WorldGen.Notes.Rendering
         /// BUILDING AND ROOM cannot be produced yet — nothing emits a token for them, because they are not
         /// addressable by a bare id (WorldSurface's own doc) — so they are logged and ignored rather than
         /// guessed at.</summary>
-        void RouteLink(string kind, string id)
+        public void RouteLink(string kind, string id)
         {
             if (LinkRouter == null || string.IsNullOrEmpty(id)) return;
 
@@ -397,6 +406,53 @@ namespace WorldGen.Notes.Rendering
             Debug.Log($"DocumentPageView: a [[{kind}:{id}]] link has no surface to open yet — " +
                       "building and room become addressable in Р3.");
         }
+
+        // ── what the footer reads (Р2 Task 10) ───────────────────────────────────
+        //
+        // Three thin accessors rather than handing PageFooterView the controller: the footer is a list of
+        // labels and a click, and giving it the document would let it grow opinions about what a page
+        // references. CollectReferences and FindBacklinks already are the answer — see their docs.
+
+        /// <summary>Everything this page references, resolved as of the CURRENT world. Never stored: the
+        /// summary is a view of the prose, not a second copy of it that could disagree with it.</summary>
+        public List<NotesDocOps.PageReference> PageReferences()
+            => NotesDocOps.CollectReferences(Page, ResolveName);
+
+        /// <summary>Every place this page is mentioned from.</summary>
+        public List<Backlink> PageBacklinks()
+            => documentController != null && Page != null
+                ? NotesDocOps.FindBacklinks(documentController.Document, Page.Id)
+                : new List<Backlink>();
+
+        /// <summary>What to call a referenced object's kind, in the DM's words.
+        ///
+        /// A world object answers with its OWN label — «город», «деревня» — because that is what the
+        /// navigator and Ctrl+K already show for it, and «точка» would be a third, vaguer name for the same
+        /// thing in a third place. The generic word is the fallback for an object the world list does not
+        /// have (a page, or a kind nothing produces yet), never the first choice.
+        ///
+        /// Reads `worldCache` rather than calling WorldSource: Rebuild refreshed it on the very pass that is
+        /// about to draw this row, so a second collection would be the same list, more slowly.</summary>
+        public string KindLabelFor(string kind, string id)
+        {
+            if (kind == NotesLinkOps.KindPage) return "страница";
+
+            if (worldCache != null && !string.IsNullOrEmpty(id))
+                foreach (var obj in worldCache)
+                    if (obj != null && obj.Id == id && !string.IsNullOrEmpty(obj.KindLabel)
+                        && NotesLinkOps.KindOf(obj.Kind) == kind)
+                        return obj.KindLabel;
+
+            if (kind == NotesLinkOps.KindOf(WorldRefKind.Poi)) return "точка";
+            if (kind == NotesLinkOps.KindOf(WorldRefKind.Building)) return "здание";
+            if (kind == NotesLinkOps.KindOf(WorldRefKind.Room)) return "комната";
+            return "";
+        }
+
+        /// <summary>The font the page was built with, read live rather than copied into the footer: a domain
+        /// reload nulls a MonoBehaviour's plain fields, and a footer holding its own copy would draw a
+        /// refresh's worth of fontless — i.e. invisible — rows before EnsureWired got to it.</summary>
+        public Font BodyFont => font;
 
         string PageNameOf(string pageId)
         {
@@ -508,6 +564,9 @@ namespace WorldGen.Notes.Rendering
             // The editing toolbar shares that strip, anchored to its right edge — one band of chrome above
             // the prose rather than two.
             Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
+            // Under the rows, inside the scrolling column — see PageFooterView's own doc for why it is a
+            // child of Content rather than another fixed strip.
+            footer = PageFooterView.Attach(content, this);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
@@ -731,6 +790,10 @@ namespace WorldGen.Notes.Rendering
             if (addSectionBarGO != null)
                 Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
 
+            // Same treatment, same reasons — its rows are buttons whose onClick lists a reload does not
+            // restore, and Attach replaces any bar it finds rather than trying to repair one.
+            if (content != null) footer = PageFooterView.Attach(content, this);
+
             // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
             // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
             // the next Rebuild() would find nothing to destroy and stack a SECOND full set of rows on top of
@@ -739,11 +802,12 @@ namespace WorldGen.Notes.Rendering
             // second one added here.
             //
             // Guarded on the hazard ITSELF (a tracking list that disagrees with the live children) rather than
-            // on `lostToReload`, which is only a proxy for it: Rebuild is the sole thing that ever parents a
-            // child to `content`, so "no rows tracked but children present" IS the desynchronised state and
-            // cannot arise any other way. On the ordinary non-reload call this is a no-op — an empty `rows`
-            // there means Rebuild never produced any, so childCount is 0 — and it stays correct if a future
-            // change ever makes `root` recoverable without `content` being.
+            // on `lostToReload`, which is only a proxy for it. `content` holds ONE child that is not a row —
+            // the footer above — which is why the adoption below filters by COMPONENT TYPE rather than
+            // trusting childCount to mean "rows exist": a page with no blocks at all still has a childCount of
+            // 1, and GetComponentsInChildren then correctly finds nothing to adopt. Rebuild remains the sole
+            // producer of DocBlockView children, so "no rows tracked but a DocBlockView present" is still the
+            // desynchronised state and still cannot arise any other way.
             if (rows.Count == 0 && content != null && content.childCount > 0)
                 rows.AddRange(content.GetComponentsInChildren<DocBlockView>(true));
 
@@ -910,6 +974,12 @@ namespace WorldGen.Notes.Rendering
                 view.Refresh();
                 rows.Add(view);
             }
+
+            // AFTER the rows and BEFORE the heights settle. After, because Refresh puts the footer back at
+            // the end of the column — the rows above were just created and are therefore its later siblings.
+            // Before, because SettleHeights is what turns every LayoutElement.preferredHeight on this column
+            // into the column's own height, and the footer's is one of them.
+            if (footer != null) footer.Refresh();
 
             SettleHeights();
             content.anchoredPosition = new Vector2(content.anchoredPosition.x, keepY);
