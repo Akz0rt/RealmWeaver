@@ -5,20 +5,36 @@ using UnityEngine.InputSystem;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// The wheel's zoom step, in ONE place, because two different callers now produce it: the expanded view
-    /// polls the mouse directly (CanvasInteractionController.Update) and the inline frame receives uGUI's own
-    /// scroll event (CanvasWheelRelay below). Two copies of this arithmetic would drift, and a zoom that feels
-    /// different in the two views reads as a bug in whichever one the DM used second.
+    /// The wheel's zoom ARITHMETIC, in one place, because two different callers now produce it: the expanded
+    /// view polls the mouse directly (CanvasInteractionController.Update) and the inline frame receives uGUI's
+    /// own scroll event (CanvasWheelRelay below). Two copies of the exponent, the tick normalisation and the
+    /// cursor anchoring would drift apart, and the drift would show up as one of the two views feeling broken.
+    ///
+    /// THE STEP ITSELF IS NOT SHARED, and that is not the same thing. The two views have different step
+    /// constants on purpose — see each one's doc — because one is a whole pane being worked in and the other
+    /// is a small frame inside text being read. Same rule, two distances.
     /// </summary>
     public static class CanvasWheelZoom
     {
-        /// <summary>How much one wheel notch multiplies the zoom by: e^0.22 ≈ 1.25, so a notch is 25% in or
-        /// out. MULTIPLICATIVE, not additive, and that is the half of "make the wheel faster" that matters
-        /// more than the number. The old rule ADDED 0.12 to the scale per notch, which is a twelfth of a step
-        /// at 1.5× and half a step at 0.25× — near the bottom of the range the board leapt, near the top it
-        /// crawled. A factor feels identical everywhere, which is what lets the step be this large without
-        /// becoming unusable when zoomed out.</summary>
-        public const float StepPerTick = 0.22f;
+        /// <summary>How much one wheel notch multiplies the zoom by in the EXPANDED view: e^0.22 ≈ 1.25, so a
+        /// notch is 25% in or out. MULTIPLICATIVE, not additive, and that is the half of "make the wheel
+        /// faster" that matters more than the number. The old rule ADDED 0.12 to the scale per notch, which is
+        /// a twelfth of a step at 1.5× and half a step at 0.25× — near the bottom of the range the board
+        /// leapt, near the top it crawled. A factor feels identical everywhere, which is what lets the step be
+        /// this large without becoming unusable when zoomed out.</summary>
+        public const float ExpandedStepPerTick = 0.22f;
+
+        /// <summary>The INLINE frame's Ctrl+wheel step: e^0.08 ≈ 1.083, a notch is about 8%. A THIRD of the
+        /// expanded step, and that difference is deliberate rather than an oversight to be unified later.
+        ///
+        /// The two views are aimed at different things. The expanded board is a whole pane the DM is working
+        /// in, where a quarter per notch is how you cross the range in a couple of flicks. The inline frame is
+        /// a 320-pixel window inside a page they are READING: the same quarter throws the contents past the
+        /// edges of a small frame in one notch, which reads as the board jumping rather than as zooming, and
+        /// it happens while the DM's other hand is on Ctrl and the page is scrolling underneath. Small steps
+        /// are what "smoother" means here — there is no animation to add, only a distance per notch to
+        /// choose, and this one is gentler than even the pre-Р4 rule was.</summary>
+        public const float InlineStepPerTick = 0.08f;
 
         /// <summary>Wheel notches from whatever the caller had. Unity's Input System reports the raw device
         /// value (120 per notch on Windows), while uGUI's PointerEventData.scrollDelta is already normalised to
@@ -31,7 +47,11 @@ namespace WorldGen.Notes.Rendering
         /// The two changes go together: a 25% step around a fixed centre flings whatever the DM was looking at
         /// out of the frame, and anchoring at the pointer is what makes a big step feel like moving closer
         /// rather than like the board jumping.</summary>
-        public static void Apply(NotesCanvasController controller, float rawScroll, Vector2 screenPos, Camera uiCamera)
+        /// <param name="stepPerTick">ExpandedStepPerTick or InlineStepPerTick — passed rather than read from
+        /// the controller's Mode so the number is chosen at the CALL SITE, where the gesture it belongs to is
+        /// visible.</param>
+        public static void Apply(NotesCanvasController controller, float rawScroll, Vector2 screenPos,
+                                 Camera uiCamera, float stepPerTick)
         {
             if (controller == null || controller.CanvasContainer == null) return;
             float ticks = ToTicks(rawScroll);
@@ -41,7 +61,7 @@ namespace WorldGen.Notes.Rendering
             if (current < 0.0001f) current = 1f;
             // ZoomAroundScreenPoint does the clamping to [0.25, 3] and the pan correction that keeps the point
             // under the cursor where it is, and it is the one path that saves the camera afterwards.
-            controller.ZoomAroundScreenPoint(current * Mathf.Exp(ticks * StepPerTick), screenPos, uiCamera);
+            controller.ZoomAroundScreenPoint(current * Mathf.Exp(ticks * stepPerTick), screenPos, uiCamera);
         }
     }
 
@@ -75,7 +95,8 @@ namespace WorldGen.Notes.Rendering
 
             if (ctrl && canvasController != null)
             {
-                CanvasWheelZoom.Apply(canvasController, eventData.scrollDelta.y, eventData.position, uiCamera);
+                CanvasWheelZoom.Apply(canvasController, eventData.scrollDelta.y, eventData.position, uiCamera,
+                                      CanvasWheelZoom.InlineStepPerTick);
                 return;
             }
 
