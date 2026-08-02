@@ -134,5 +134,80 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Document History: PASS" : "Self-Test Document History: FAIL");
         }
+
+        /// <summary>A canvas block's contents are copied DEEP.
+        ///
+        /// The fixture is built so that a copy-by-reference and a real copy give DIFFERENT answers: after the
+        /// snapshot is taken we move a card, resize a drawing and straighten a link, then ask the snapshot
+        /// whether it noticed. It must not have. Without that, dragging a card would move the very instance
+        /// the snapshot points at and Ctrl+Z would silently do nothing — the shape of defect that looks like
+        /// the feature simply not being wired.</summary>
+        [ContextMenu("Self-Test: Canvas Block Deep Copy")]
+        public void SelfTestCanvasBlockDeepCopy()
+        {
+            bool ok = true;
+
+            var card = new NoteCardData { Title = "Ольга", Body = "ждёт у ворот" };
+            card.Position = new System.Numerics.Vector2(10f, 20f);
+            var drawing = new DrawingObjectData(256, 128);
+            drawing.Size = new System.Numerics.Vector2(300f, 150f);   // stretched by hand, unlike the constructor's
+            var link = new LinkData
+            {
+                FromObjectId = card.Id,
+                ToObjectId = drawing.Id,
+                Directed = false,
+                ControlPointOffset = new System.Numerics.Vector2(7f, -3f),
+            };
+
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "Связи");
+            canvas.CanvasObjects = new List<CanvasObjectData> { card, drawing };
+            canvas.CanvasLinks = new List<LinkData> { link };
+            canvas.CanvasPan = new System.Numerics.Vector2(-40f, 12f);
+            canvas.CanvasZoom = 1.5f;
+            canvas.DisplayWidth = 640f;
+            canvas.DisplayHeight = 400f;
+
+            var blocks = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Section, 0, "S"), canvas };
+            var copy = DocHistory.Copy(blocks);
+
+            if (ReferenceEquals(copy[1].CanvasObjects, canvas.CanvasObjects))
+            { Debug.LogError("FAIL deep copy: CanvasObjects is the SAME list instance — undo would restore what it is undoing"); ok = false; }
+            if (ReferenceEquals(copy[1].CanvasObjects[0], card))
+            { Debug.LogError("FAIL deep copy: the card itself is shared, not copied"); ok = false; }
+
+            // Mutate the ORIGINAL after the snapshot. The copy must not have noticed.
+            card.Position = new System.Numerics.Vector2(999f, 999f);
+            drawing.Size = new System.Numerics.Vector2(1f, 1f);
+            link.ControlPointOffset = null;
+            canvas.CanvasZoom = 3f;
+
+            var copiedCard = copy[1].CanvasObjects[0] as NoteCardData;
+            if (copiedCard == null || copiedCard.Position.X != 10f || copiedCard.Position.Y != 20f)
+            { Debug.LogError($"FAIL deep copy: card position = {copiedCard?.Position}, want (10, 20)"); ok = false; }
+            if (copiedCard == null || copiedCard.Id != card.Id || copiedCard.Title != "Ольга" || copiedCard.Body != "ждёт у ворот")
+            { Debug.LogError($"FAIL deep copy: card identity/text lost (id match={copiedCard?.Id == card.Id}, title={copiedCard?.Title})"); ok = false; }
+
+            var copiedDrawing = copy[1].CanvasObjects[1] as DrawingObjectData;
+            if (copiedDrawing == null || copiedDrawing.Size.X != 300f || copiedDrawing.Size.Y != 150f)
+            { Debug.LogError($"FAIL deep copy: drawing size = {copiedDrawing?.Size}, want (300, 150) — the constructor's own Size must be overwritten after it runs"); ok = false; }
+            if (copiedDrawing == null || copiedDrawing.PixelWidth != 256 || copiedDrawing.PixelHeight != 128)
+            { Debug.LogError($"FAIL deep copy: drawing pixels = {copiedDrawing?.PixelWidth}x{copiedDrawing?.PixelHeight}, want 256x128"); ok = false; }
+
+            var copiedLink = copy[1].CanvasLinks[0];
+            if (copiedLink.ControlPointOffset == null
+                || copiedLink.ControlPointOffset.Value.X != 7f || copiedLink.ControlPointOffset.Value.Y != -3f)
+            { Debug.LogError($"FAIL deep copy: link bend = {copiedLink.ControlPointOffset}, want (7, -3)"); ok = false; }
+            if (copiedLink.Directed)
+            { Debug.LogError("FAIL deep copy: link Directed came back true, want false"); ok = false; }
+            if (copiedLink.Id != link.Id || copiedLink.FromObjectId != card.Id || copiedLink.ToObjectId != drawing.Id)
+            { Debug.LogError("FAIL deep copy: link identity/endpoints lost"); ok = false; }
+
+            if (copy[1].CanvasZoom != 1.5f || copy[1].CanvasPan.X != -40f || copy[1].CanvasPan.Y != 12f)
+            { Debug.LogError($"FAIL deep copy: pan/zoom = {copy[1].CanvasPan}/{copy[1].CanvasZoom}, want (-40, 12)/1.5"); ok = false; }
+            if (copy[1].DisplayWidth != 640f || copy[1].DisplayHeight != 400f)
+            { Debug.LogError($"FAIL deep copy: size = {copy[1].DisplayWidth}x{copy[1].DisplayHeight}, want 640x400"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Canvas Block Deep Copy: PASS" : "Self-Test Canvas Block Deep Copy: FAIL");
+        }
     }
 }

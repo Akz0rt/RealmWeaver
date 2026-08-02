@@ -12,8 +12,14 @@ namespace WorldGen.Notes.Data
     public enum PageKind { Board = 0, Document = 1 }
 
     /// <summary>What one row of a document page is. Section MUST stay the zero value for the same reason
-    /// Board does.</summary>
-    public enum BlockKind { Section = 0, Item = 1, Prose = 2, Image = 3, BoardRef = 4 }
+    /// Board does.
+    ///
+    /// CANVAS TAKES 5, NOT THE FREED 4. BoardRef = 4 is already written as a four in saved files, and an
+    /// int-backed C# enum accepts any value of its underlying type without complaint — so an old BoardRef row
+    /// would deserialize as a Canvas block that silently carries no board. BoardRef stays as a TOMBSTONE: the
+    /// value is spent forever, no new code creates one, and NotesDocOps.Normalize degrades any it finds into
+    /// the plain row it always looked like.</summary>
+    public enum BlockKind { Section = 0, Item = 1, Prose = 2, Image = 3, BoardRef = 4, Canvas = 5 }
 
     /// <summary>Which kind of world object a NotesPage.Bound names. Poi covers a settlement/POI on the map;
     /// Building and Room narrow to a building interior and a room within it, mirroring the levels Р3's
@@ -104,8 +110,42 @@ namespace WorldGen.Notes.Data
         [JsonProperty("ImageBytes", NullValueHandling = NullValueHandling.Ignore)]
         public byte[] ImageBytes;
 
-        /// <summary>Image only — 0 means derive the height from the aspect ratio at the column width.</summary>
+        /// <summary>Image and Canvas. For an image, 0 means derive the height from the aspect ratio at the
+        /// column width; for a canvas, 0 means the default block height. Not stored for any other kind — see
+        /// I7 and Normalize, which clears it.</summary>
         public float DisplayHeight;
+
+        /// <summary>Canvas only — how wide the block is drawn. 0 means the text column's own width
+        /// (NotesTypography.MeasureWidthPx). A canvas is the ONE row allowed to be wider than the column, so
+        /// it is the one row that stores a width; an image is always exactly the column wide and stores
+        /// none.</summary>
+        public float DisplayWidth;
+
+        /// <summary>Canvas only — the board's objects, null on every other kind (I7). Held by the BLOCK rather
+        /// than by the page, which is the whole of Р4: a page snapshot then already contains the board, so
+        /// DocHistory is the page's single undo stack and the canvas's own command stack could be deleted.</summary>
+        [JsonProperty("CanvasObjects", NullValueHandling = NullValueHandling.Ignore)]
+        public List<CanvasObjectData> CanvasObjects;
+
+        /// <summary>Canvas only — the links between those objects, null on every other kind (I7).</summary>
+        [JsonProperty("CanvasLinks", NullValueHandling = NullValueHandling.Ignore)]
+        public List<LinkData> CanvasLinks;
+
+        /// <summary>Canvas only — where the board is scrolled to. System.Numerics.Vector2, like every vector
+        /// in this file: UnityEngine's same-named type would tie the whole pure layer to an Editor.</summary>
+        public Vector2 CanvasPan;
+
+        /// <summary>Canvas only. 1 is the NEUTRAL value, not 0 — so Normalize resets a non-Canvas block to 1
+        /// rather than to zero, and "the field is at its default" is what I7 checks.</summary>
+        public float CanvasZoom = 1f;
+
+        // Keeps three floats' worth of neutral canvas geometry off the wire for every ordinary row. Plain
+        // ShouldSerializeX() methods rather than [DefaultValue] + DefaultValueHandling: Newtonsoft finds these
+        // by convention, and the offline harness compiles against stubs/NewtonsoftStub.cs, which would
+        // otherwise need widening for an attribute it does not have.
+        public bool ShouldSerializeCanvasPan() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeCanvasZoom() => Kind == BlockKind.Canvas;
+        public bool ShouldSerializeDisplayWidth() => Kind == BlockKind.Canvas;
     }
 
     /// <summary>One "this page is mentioned here" entry, computed by NotesDocOps.FindBacklinks and never

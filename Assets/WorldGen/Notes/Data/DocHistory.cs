@@ -125,6 +125,71 @@ namespace WorldGen.Notes.Data
                     Collapsed = b.Collapsed,
                     ImageBytes = b.ImageBytes,
                     DisplayHeight = b.DisplayHeight,
+                    DisplayWidth = b.DisplayWidth,
+                    CanvasPan = b.CanvasPan,
+                    CanvasZoom = b.CanvasZoom,
+                    CanvasObjects = CopyObjects(b.CanvasObjects),
+                    CanvasLinks = CopyLinks(b.CanvasLinks),
+                });
+            }
+            return copy;
+        }
+
+        /// <summary>A deep copy of a canvas block's objects — the reason this method exists at all.
+        ///
+        /// Without it, dragging a card would move the VERY instance the snapshot points at, and Ctrl+Z would
+        /// silently do nothing: the "restored" state and the current one would be the same objects. Byte
+        /// arrays are SHARED, for exactly the reason DocBlock.ImageBytes is (see Copy's own doc) — an image or
+        /// a drawing is replaced whole, never written into.
+        ///
+        /// SIZE IS ASSIGNED AFTER CONSTRUCTION, and that is not style. NoteCardData's and DrawingObjectData's
+        /// constructors both WRITE Size, so a card or a drawing the DM has resized would come back from an
+        /// undo at its default size if the copy left that to them.
+        ///
+        /// A NEW CanvasObjectData SUBCLASS MUST BE ADDED HERE. The default arm drops what it does not
+        /// recognise, which is silent data loss on undo; DocHistorySelfTests.SelfTestCanvasBlockDeepCopy pins
+        /// the three subclasses that exist.</summary>
+        static List<CanvasObjectData> CopyObjects(IReadOnlyList<CanvasObjectData> objects)
+        {
+            if (objects == null) return null;
+            var copy = new List<CanvasObjectData>(objects.Count);
+            foreach (var o in objects)
+            {
+                if (o == null) continue;
+                CanvasObjectData c;
+                switch (o)
+                {
+                    case NoteCardData n:    c = new NoteCardData { Title = n.Title, Body = n.Body }; break;
+                    case ImageObjectData i: c = new ImageObjectData { ImageBytes = i.ImageBytes }; break;
+                    case DrawingObjectData d:
+                        c = new DrawingObjectData(d.PixelWidth, d.PixelHeight) { PixelDataPng = d.PixelDataPng };
+                        break;
+                    default: continue;
+                }
+                c.Id = o.Id;
+                c.Position = o.Position;
+                c.Size = o.Size;
+                copy.Add(c);
+            }
+            return copy;
+        }
+
+        /// <summary>A deep copy of a canvas block's links. ControlPointOffset is a Vector2? and travels as it
+        /// is — a link whose bend the DM adjusted must come back bent, not straightened.</summary>
+        static List<LinkData> CopyLinks(IReadOnlyList<LinkData> links)
+        {
+            if (links == null) return null;
+            var copy = new List<LinkData>(links.Count);
+            foreach (var l in links)
+            {
+                if (l == null) continue;
+                copy.Add(new LinkData
+                {
+                    Id = l.Id,
+                    FromObjectId = l.FromObjectId,
+                    ToObjectId = l.ToObjectId,
+                    Directed = l.Directed,
+                    ControlPointOffset = l.ControlPointOffset,
                 });
             }
             return copy;
