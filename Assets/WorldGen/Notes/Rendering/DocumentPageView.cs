@@ -453,6 +453,12 @@ namespace WorldGen.Notes.Rendering
             // its empty space alike. See CanvasWheelRelay for why the plain wheel has to be forwarded by hand.
             var wheel = view.CanvasFrame.gameObject.AddComponent<CanvasWheelRelay>();
             wheel.canvasController = canvasController;
+
+            // Drag the board to move it, double-click it to fit it back. On the FRAME for the same reason the
+            // wheel relay is: a drag that starts on a card is delivered to the CARD and never reaches here, so
+            // "move the board" and "move a card" are told apart by where the press landed.
+            var pan = view.CanvasFrame.gameObject.AddComponent<CanvasInlinePan>();
+            pan.canvasController = canvasController;
         }
 
         // ── the board rows' own gestures (Р4 Task 8) ─────────────────────────────

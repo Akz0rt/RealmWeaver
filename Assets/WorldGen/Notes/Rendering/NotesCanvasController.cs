@@ -549,6 +549,22 @@ namespace WorldGen.Notes.Rendering
         /// visible.</summary>
         public void CancelZoomAnimation() => zoomAnimating = false;
 
+        /// <summary>Forgets that the DM ever aimed THIS view, so the board fits itself again — and goes on
+        /// fitting itself as its contents change, until they aim it once more. The way back from a pan or a
+        /// zoom that lost the contents off the edge of the frame.
+        ///
+        /// Clears the flag rather than computing a fit and storing it: those are different states, and only
+        /// the flag one keeps re-fitting. LateUpdate does the arithmetic on the next frame, which also means
+        /// this is correct while the rect is still being laid out.</summary>
+        public void ResetViewToFit()
+        {
+            if (block == null) return;
+            CancelZoomAnimation();
+            if (mode == CanvasMode.Expanded) block.CanvasViewSet = false;
+            else block.CanvasInlineViewSet = false;
+            lastFitViewport = Vector2.zero;
+        }
+
         void StepZoomAnimation()
         {
             if (!zoomAnimating || CanvasContainer == null) { zoomAnimating = false; return; }

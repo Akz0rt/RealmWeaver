@@ -110,4 +110,44 @@ namespace WorldGen.Notes.Rendering
                 ExecuteEvents.ExecuteHierarchy(parent.gameObject, eventData, ExecuteEvents.scrollHandler);
         }
     }
+
+    /// <summary>
+    /// Drag the board inside a page to move it, and double-click it to fit it back.
+    ///
+    /// THE SECOND HALF IS NOT A BONUS. Panning is the first gesture that can put the board's contents somewhere
+    /// the DM cannot see, and the automatic fit stops the moment they aim the view themselves (by design — see
+    /// DocBlock.CanvasViewSet). Inside a page there is no toolbar, no scrollbar and no «reset» anywhere, so a
+    /// pan with no way back is a way to lose a board's contents inside a 320-pixel window. The double-click
+    /// gives the fit back and costs nothing.
+    ///
+    /// EMPTY SPACE ONLY, and that falls out of uGUI rather than being checked here: a drag that starts on a
+    /// CARD is delivered to the card's own IDragHandler, which moves the card, and never reaches this
+    /// component at all. So "drag the board" and "drag a card on the board" are told apart by where the press
+    /// landed, with no rule to get wrong.
+    ///
+    /// ANY BUTTON, deliberately. The expanded view pans with the MIDDLE button (its left button belongs to the
+    /// active tool); here there is no tool, so the left button is free and is what a DM will actually try.
+    /// Accepting both means the habit built in one view works in the other.
+    /// </summary>
+    public class CanvasInlinePan : MonoBehaviour, IBeginDragHandler, IDragHandler, IPointerClickHandler
+    {
+        public NotesCanvasController canvasController;
+
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            // A glide still running would keep writing the scale — and the pan correction inside it would drag
+            // the board back out from under the cursor for as long as it lasted.
+            if (canvasController != null) canvasController.CancelZoomAnimation();
+        }
+
+        public void OnDrag(PointerEventData eventData)
+        {
+            if (canvasController != null) canvasController.Pan(eventData.delta);
+        }
+
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            if (eventData.clickCount >= 2 && canvasController != null) canvasController.ResetViewToFit();
+        }
+    }
 }
