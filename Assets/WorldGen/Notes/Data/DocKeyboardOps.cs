@@ -80,6 +80,24 @@ namespace WorldGen.Notes.Data
                 return new DocKeyResult { Handled = true, Rebuild = true, FocusBlockId = row.Id, CaretOffset = 0 };
             }
 
+            // A BOARD'S CAPTION IS ONE LINE, and Enter in it always starts an ORDINARY row after the board —
+            // wherever the caret happens to be.
+            //
+            // Two separate wrongs are being prevented, and the DM hit the first one at the Р4 checkpoint:
+            // «после создания доски все последующие Enter создают доски». The rule below this propagates the
+            // focused block's kind, which is right for headings and items and absurd for a board — the DM
+            // typing under one got board after board. And a mid-caption Enter would have SPLIT it, leaving
+            // half a caption on a second board holding no objects at all.
+            //
+            // A board is not in HasText's exclusion list, unlike a picture, and that is deliberate: its
+            // caption really is an editable row of text. This is the one rule where it differs.
+            if (b.Kind == BlockKind.Canvas)
+            {
+                var after = NotesDocOps.NewBlock(BlockKind.Item, b.Depth);
+                NotesDocOps.Insert(blocks, i + NotesDocOps.SubtreeLength(blocks, i), after);
+                return new DocKeyResult { Handled = true, Rebuild = true, FocusBlockId = after.Id, CaretOffset = 0 };
+            }
+
             string text = b.Text ?? "";
             if (caretOffset < 0) caretOffset = 0;
             if (caretOffset > text.Length) caretOffset = text.Length;

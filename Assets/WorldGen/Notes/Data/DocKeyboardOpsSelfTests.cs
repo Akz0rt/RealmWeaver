@@ -72,6 +72,31 @@ namespace WorldGen.Notes.Data
             if (created == null || created.Kind != BlockKind.Item || blocks.IndexOf(created) != 2)
             { Debug.LogError("FAIL enter: Enter on an image must insert a row directly below it"); ok = false; }
 
+            // A BOARD'S CAPTION, mid-word. Three different wrong answers are ruled out by one fixture, which is
+            // why the caret is put in the MIDDLE of a caption on a board that HOLDS something:
+            //   • propagating the kind (the rule for every other row) → a second Canvas;
+            //   • splitting the caption (the rule for mid-text Enter) → caption «До» and a second board;
+            //   • both at once, which is what the code did before the Р4 checkpoint.
+            // The DM reported it as «после создания доски все последующие Enter создают доски».
+            blocks = Page();
+            var board = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "Доска");
+            board.CanvasObjects = new List<CanvasObjectData> { new NoteCardData { Title = "Гарет" } };
+            NotesDocOps.Insert(blocks, 1, board);
+            r = DocKeyboardOps.Apply(blocks, board.Id, 2, false, false, DocKey.Enter);
+            created = blocks.Find(b => b.Id == r.FocusBlockId);
+            if (created == null || created.Kind != BlockKind.Item)
+            { Debug.LogError($"FAIL enter: Enter in a board's caption created {created?.Kind}, want Item — a board must never beget a board"); ok = false; }
+            if (blocks.IndexOf(created) != 2)
+            { Debug.LogError($"FAIL enter: the new row sits at {blocks.IndexOf(created)}, want 2 (directly after the board)"); ok = false; }
+            if (board.Text != "Доска")
+            { Debug.LogError($"FAIL enter: the caption became «{board.Text}» — Enter must not split a caption"); ok = false; }
+            int boardCount = 0;
+            foreach (var b2 in blocks) if (b2.Kind == BlockKind.Canvas) boardCount++;
+            if (boardCount != 1)
+            { Debug.LogError($"FAIL enter: the page holds {boardCount} boards, want 1"); ok = false; }
+            if (board.CanvasObjects == null || board.CanvasObjects.Count != 1)
+            { Debug.LogError("FAIL enter: the board lost what was on it"); ok = false; }
+
             Debug.Log(ok ? "Self-Test Keyboard Enter: PASS" : "Self-Test Keyboard Enter: FAIL");
         }
 
