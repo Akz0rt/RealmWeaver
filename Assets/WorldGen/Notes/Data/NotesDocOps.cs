@@ -20,9 +20,11 @@ namespace WorldGen.Notes.Data
     ///   I4  a block never links to the page that contains it.
     ///   I5  at most one group carries IsReference.
     ///   I6  block ids are unique across the whole document.
-    ///   I7  only Item takes children; Detail only on Item; ImageBytes/DisplayHeight only on Image;
-    ///       LinkedPageId only on Item (optional) or BoardRef (required).
-    ///   I8  a BoardRef's target page has Kind == Board.
+    ///   I7  only Item takes children; Detail only on Item; ImageBytes only on Image; DisplayHeight on Image
+    ///       and Canvas; DisplayWidth and CanvasObjects/CanvasLinks/CanvasPan/CanvasZoom only on Canvas;
+    ///       LinkedPageId only on Item (optional).
+    ///   I8  RETIRED with PageKind in Р4 — it said "a BoardRef's target page has Kind == Board", and neither
+    ///       half of that sentence exists any more. BoardRef is a tombstone Normalize degrades on sight.
     /// </summary>
     public static class NotesDocOps
     {
@@ -489,11 +491,10 @@ namespace WorldGen.Notes.Data
         {
             var block = FindBlock(doc, blockId, out NotesPage owner);
             if (block == null) return;
-            if (block.Kind != BlockKind.Item && block.Kind != BlockKind.BoardRef) return;   // I7
+            if (block.Kind != BlockKind.Item) return;   // I7 — BoardRef is a tombstone, never a link target kind
 
             var target = FindPage(doc, pageId);
-            if (target == null || target == owner) return;                                   // I3, I4
-            if (block.Kind == BlockKind.BoardRef && target.Kind != PageKind.Board) return;    // I8
+            if (target == null || target == owner) return;   // I3, I4
 
             block.LinkedPageId = target.Id;
         }
@@ -645,23 +646,6 @@ namespace WorldGen.Notes.Data
                         b.LinkedPageId = null;
                     }
             return (lines, cards);
-        }
-
-        /// <summary>Inserts a card that points at a board page. Index 0 is nudged to 1 on a non-empty page:
-        /// a page must start with a Section (I2), so a card can never be its first block.</summary>
-        public static DocBlock InsertBoardRef(NotesDocument doc, NotesPage page, int index, string boardPageId)
-        {
-            if (doc == null || page == null) return null;
-            var target = FindPage(doc, boardPageId);
-            if (target == null || target == page) return null;        // I3, I4
-            if (target.Kind != PageKind.Board) return null;           // I8
-
-            var block = NewBlock(BlockKind.BoardRef, 1);
-            block.LinkedPageId = target.Id;
-            if (index <= 0 && page.Blocks.Count > 0) index = 1;
-            Insert(page.Blocks, index, block);
-            ClampDepths(page.Blocks);
-            return block;
         }
 
         // ── Block clipboard ────────────────────────────────────────────────────
@@ -877,21 +861,28 @@ namespace WorldGen.Notes.Data
                             problems.Add($"{b.Kind} block «{b.Text}» carries Detail (I7)");
                         if (b.ImageBytes != null && b.Kind != BlockKind.Image)
                             problems.Add($"{b.Kind} block «{b.Text}» carries ImageBytes (I7)");
+                        if (b.DisplayHeight != 0f && b.Kind != BlockKind.Image && b.Kind != BlockKind.Canvas)
+                            problems.Add($"{b.Kind} block «{b.Text}» carries DisplayHeight (I7)");
+                        if (b.Kind != BlockKind.Canvas)
+                        {
+                            if (b.CanvasObjects != null || b.CanvasLinks != null)
+                                problems.Add($"{b.Kind} block «{b.Text}» carries canvas content (I7)");
+                            // 1 is the neutral zoom, not 0 — see DocBlock.CanvasZoom.
+                            if (b.DisplayWidth != 0f || b.CanvasPan != default || b.CanvasZoom != 1f)
+                                problems.Add($"{b.Kind} block «{b.Text}» carries canvas geometry (I7)");
+                        }
 
                         if (!string.IsNullOrEmpty(b.LinkedPageId))
                         {
-                            if (b.Kind != BlockKind.Item && b.Kind != BlockKind.BoardRef)
+                            if (b.Kind != BlockKind.Item)
                                 problems.Add($"{b.Kind} block «{b.Text}» carries LinkedPageId (I7)");
                             if (b.LinkedPageId == p.Id)
                                 problems.Add($"block «{b.Text}» links to its own page (I4)");
-                            var target = FindPage(doc, b.LinkedPageId);
-                            if (target == null)
+                            if (FindPage(doc, b.LinkedPageId) == null)
                                 problems.Add($"block «{b.Text}» links to missing page {b.LinkedPageId} (I3)");
-                            else if (b.Kind == BlockKind.BoardRef && target.Kind != PageKind.Board)
-                                problems.Add($"BoardRef «{b.Text}» targets a {target.Kind} page (I8)");
                         }
-                        else if (b.Kind == BlockKind.BoardRef)
-                            problems.Add($"BoardRef «{b.Text}» has no target (I7)");
+                        if (b.Kind == BlockKind.BoardRef)
+                            problems.Add($"block «{b.Text}» is a BoardRef, a kind no code creates any more");
                     }
                 }
             }
@@ -929,30 +920,36 @@ namespace WorldGen.Notes.Data
                         if (b.Kind == BlockKind.Section) b.Depth = 0;
                         else if (b.Depth < 1) b.Depth = 1;
 
-                        if (b.Kind != BlockKind.Item && !string.IsNullOrEmpty(b.Detail)) b.Detail = null;
-                        if (b.Kind != BlockKind.Image) { b.ImageBytes = null; b.DisplayHeight = 0f; }
-
-                        if (!string.IsNullOrEmpty(b.LinkedPageId))
+                        // A BoardRef is a tombstone: the kind is never created any more, and one found in a
+                        // file becomes the plain row it always LOOKED like, carrying the name of whatever it
+                        // used to point at, so nothing vanishes without a trace.
+                        if (b.Kind == BlockKind.BoardRef)
                         {
-                            var target = FindPage(doc, b.LinkedPageId);
-                            bool bad = b.Kind != BlockKind.Item && b.Kind != BlockKind.BoardRef
-                                       || b.LinkedPageId == p.Id
-                                       || target == null
-                                       || b.Kind == BlockKind.BoardRef && target.Kind != PageKind.Board;
-                            if (bad)
-                            {
-                                // A BoardRef with no reachable board is meaningless as a card, so it degrades
-                                // to a plain row carrying what it used to point at — nothing vanishes silently.
-                                if (b.Kind == BlockKind.BoardRef)
-                                {
-                                    b.Kind = BlockKind.Item;
-                                    if (string.IsNullOrEmpty(b.Text) && target != null) b.Text = target.Name;
-                                }
-                                b.LinkedPageId = null;
-                            }
+                            DegradeIfBoardRef(doc, b);
+                            b.LinkedPageId = null;
                         }
-                        else if (b.Kind == BlockKind.BoardRef)
-                            b.Kind = BlockKind.Item;
+
+                        if (b.Kind != BlockKind.Item && !string.IsNullOrEmpty(b.Detail)) b.Detail = null;
+                        if (b.Kind != BlockKind.Image) b.ImageBytes = null;
+                        if (b.Kind != BlockKind.Image && b.Kind != BlockKind.Canvas) b.DisplayHeight = 0f;
+
+                        if (b.Kind == BlockKind.Canvas)
+                        {
+                            if (b.CanvasObjects == null) b.CanvasObjects = new List<CanvasObjectData>();
+                            if (b.CanvasLinks == null) b.CanvasLinks = new List<LinkData>();
+                        }
+                        else
+                        {
+                            b.CanvasObjects = null;
+                            b.CanvasLinks = null;
+                            b.CanvasPan = default;
+                            b.CanvasZoom = 1f;
+                            b.DisplayWidth = 0f;
+                        }
+
+                        if (!string.IsNullOrEmpty(b.LinkedPageId)
+                            && (b.Kind != BlockKind.Item || b.LinkedPageId == p.Id || FindPage(doc, b.LinkedPageId) == null))
+                            b.LinkedPageId = null;
                     }
 
                     ClampDepths(p.Blocks);

@@ -161,6 +161,8 @@ namespace WorldGen.Notes.Data
             return new DocKeyResult { Handled = true, FocusBlockId = target.Id, CaretOffset = caret };
         }
 
+        /// <summary>Which kinds can hold a caret. Canvas is deliberately ABSENT from the exclusions: its
+        /// caption is DocBlock.Text, an ordinary editable row of text under an unordinary row of picture.</summary>
         static bool HasText(DocBlock b) => b.Kind != BlockKind.Image && b.Kind != BlockKind.BoardRef;
 
         static int IndexOf(IReadOnlyList<DocBlock> blocks, string blockId)

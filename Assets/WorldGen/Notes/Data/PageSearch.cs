@@ -55,6 +55,7 @@ namespace WorldGen.Notes.Data
                 var block = blocks[i];
                 if (block == null || string.IsNullOrEmpty(block.Text)) continue;
                 if (block.Kind == BlockKind.Image) continue;   // no text to see, whatever it may store
+                                                              // (Canvas is NOT skipped — its caption is text)
 
                 string display = NotesLinkOps.BuildDisplay(block.Text, resolve).Text;
                 if (string.IsNullOrEmpty(display)) continue;

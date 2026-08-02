@@ -536,8 +536,11 @@ namespace WorldGen.Notes.Data
             // Seam 1 — deleting one referenced page: the row's text survives, its link goes, nothing dangles.
             var doc = BuildDocWithOlgaAndBoard(out NotesPage sheet, out NotesPage olga, out NotesPage board,
                                                out DocBlock line, out DocBlock card);
-            if (NotesDocOps.Validate(doc).Count != 0)
-            { Debug.LogError($"FAIL delete: the fixture itself is invalid: {string.Join("; ", NotesDocOps.Validate(doc))}"); ok = false; }
+            // The fixture is deliberately a PRE-Р4 document — it carries a BoardRef, which Validate now reports
+            // as a tombstone, and that report is the point of task 2. Everything ELSE about it must be clean.
+            foreach (string problem in NotesDocOps.Validate(doc))
+                if (!problem.Contains("BoardRef"))
+                { Debug.LogError($"FAIL delete: the fixture itself is invalid: {problem}"); ok = false; }
 
             var counts = NotesDocOps.ClearLinksTo(doc, olga.Id);
             if (counts.lines != 1 || counts.cards != 0)
@@ -556,7 +559,7 @@ namespace WorldGen.Notes.Data
             if (card.Text != "Связи культа")
             { Debug.LogError($"FAIL delete: degraded card text «{card.Text}», want «Связи культа»"); ok = false; }
             if (!string.IsNullOrEmpty(card.LinkedPageId))
-            { Debug.LogError("FAIL delete: the degraded card must hold no LinkedPageId (I8)"); ok = false; }
+            { Debug.LogError("FAIL delete: the degraded card must hold no LinkedPageId (I3)"); ok = false; }
 
             // Seam 2 — deleting the whole GROUP. This is the seam the spec's first draft missed entirely.
             doc = BuildDocWithOlgaAndBoard(out sheet, out olga, out board, out line, out card);
@@ -577,39 +580,10 @@ namespace WorldGen.Notes.Data
             Debug.Log(ok ? "Self-Test Delete Integrity Both Seams: PASS" : "Self-Test Delete Integrity Both Seams: FAIL");
         }
 
-        [ContextMenu("Self-Test: BoardRef Rules")]
-        public void SelfTestBoardRef()
-        {
-            bool ok = true;
-            var doc = BuildDocWithOlgaAndBoard(out NotesPage sheet, out NotesPage olga, out NotesPage board,
-                                               out _, out _);
-
-            if (board.Objects.Count != 7)
-            { Debug.LogError($"FAIL boardref: fixture board holds {board.Objects.Count} objects, want 7"); ok = false; }
-
-            // A BoardRef may only target a Board page (I8).
-            var bad = NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, olga.Id);
-            if (bad != null)
-            { Debug.LogError("FAIL boardref: pointing a BoardRef at a Document page must be refused (I8)"); ok = false; }
-
-            var good = NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, board.Id);
-            if (good == null || good.Kind != BlockKind.BoardRef || good.LinkedPageId != board.Id)
-            { Debug.LogError("FAIL boardref: a Board target must produce a BoardRef pointing at it"); ok = false; }
-            if (good != null && good.Depth < 1)
-            { Debug.LogError($"FAIL boardref: Depth = {good?.Depth}, want >= 1 (I1)"); ok = false; }
-            if (good != null && !string.IsNullOrEmpty(good.Detail))
-            { Debug.LogError("FAIL boardref: a BoardRef must carry no Detail (I7)"); ok = false; }
-
-            // Linking a card at its own page is refused (I4).
-            if (NotesDocOps.InsertBoardRef(doc, sheet, sheet.Blocks.Count, sheet.Id) != null)
-            { Debug.LogError("FAIL boardref: a card pointing at its own page must be refused (I4)"); ok = false; }
-
-            var problems = NotesDocOps.Validate(doc);
-            if (problems.Count != 0)
-            { Debug.LogError($"FAIL boardref: document invalid: {string.Join("; ", problems)}"); ok = false; }
-
-            Debug.Log(ok ? "Self-Test BoardRef Rules: PASS" : "Self-Test BoardRef Rules: FAIL");
-        }
+        // SelfTestBoardRef lived here and was deleted with Р4's task 2. It pinned I8 ("a BoardRef targets a
+        // Board page") and InsertBoardRef, and both are gone: no code creates a BoardRef any more, so there is
+        // no rule left about what one may point at. What a FOUND BoardRef becomes is pinned instead by the
+        // migration test (NotesMigrationSelfTests) and by Normalize's tombstone branch.
 
         // ── Task 10b: EnsurePageFor / FindPageBoundTo ─────────────────────────────
 
@@ -930,6 +904,64 @@ namespace WorldGen.Notes.Data
             { Debug.LogError("FAIL: SetKind claimed to change something that does not exist"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Set Kind: PASS" : "Self-Test Set Kind: FAIL");
+        }
+
+        /// <summary>I7 after Р4: ImageBytes only on Image; DisplayHeight on Image AND Canvas; DisplayWidth and
+        /// the canvas content only on Canvas; and — the half that is easy to get wrong — a board's CAPTION is
+        /// the row's ordinary text, not "a canvas has no text". The fixture puts canvas fields on an Item,
+        /// where they are illegal, and a caption on the canvas, where it must live.</summary>
+        [ContextMenu("Self-Test: Canvas Invariants")]
+        public void SelfTestCanvasInvariants()
+        {
+            bool ok = true;
+
+            var blocks = Sheet();
+            blocks[1].CanvasObjects = new List<CanvasObjectData> { new NoteCardData() };
+            blocks[1].DisplayWidth = 500f;
+            blocks[1].CanvasZoom = 2f;
+            blocks[1].DisplayHeight = 300f;
+
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 1, "Схема сюжета");
+            canvas.CanvasObjects = new List<CanvasObjectData> { new NoteCardData { Title = "Пролог" } };
+            canvas.DisplayWidth = 640f;
+            canvas.DisplayHeight = 400f;
+            canvas.CanvasZoom = 1.5f;
+            blocks.Add(canvas);
+
+            var page = new NotesPage { Name = "Сессия 1" };
+            page.Blocks = blocks;
+            var doc = Doc(page);
+
+            var problems = NotesDocOps.Validate(doc);
+            if (problems.Count == 0)
+            { Debug.LogError("FAIL I7: an Item carrying canvas content and a width must be reported"); ok = false; }
+
+            NotesDocOps.Normalize(doc);
+
+            if (blocks[1].CanvasObjects != null || blocks[1].DisplayWidth != 0f || blocks[1].DisplayHeight != 0f)
+            { Debug.LogError($"FAIL I7: the Item kept canvas fields (objects={blocks[1].CanvasObjects?.Count}, w={blocks[1].DisplayWidth}, h={blocks[1].DisplayHeight})"); ok = false; }
+            if (blocks[1].CanvasZoom != 1f)
+            { Debug.LogError($"FAIL I7: the Item's CanvasZoom = {blocks[1].CanvasZoom}, want 1 — 1 is the neutral value, not 0"); ok = false; }
+
+            if (canvas.CanvasObjects == null || canvas.CanvasObjects.Count != 1)
+            { Debug.LogError($"FAIL I7: Normalize emptied the CANVAS's own objects ({canvas.CanvasObjects?.Count})"); ok = false; }
+            if (canvas.DisplayWidth != 640f || canvas.DisplayHeight != 400f || canvas.CanvasZoom != 1.5f)
+            { Debug.LogError($"FAIL I7: Normalize reset the canvas's own geometry ({canvas.DisplayWidth}x{canvas.DisplayHeight}, zoom {canvas.CanvasZoom})"); ok = false; }
+            if (canvas.Text != "Схема сюжета")
+            { Debug.LogError($"FAIL I7: the canvas caption = «{canvas.Text}», want «Схема сюжета» — the caption IS DocBlock.Text"); ok = false; }
+
+            var after = NotesDocOps.Validate(doc);
+            if (after.Count != 0)
+            { Debug.LogError($"FAIL I7: still invalid after Normalize: {string.Join("; ", after)}"); ok = false; }
+
+            // A caption is ordinary text: Ctrl+F finds it, and the caret is allowed into it.
+            var hits = PageSearch.Find(page.Blocks, "сюжет", null);
+            bool foundCaption = false;
+            foreach (var h in hits) if (h.BlockId == canvas.Id) foundCaption = true;
+            if (!foundCaption)
+            { Debug.LogError("FAIL: Ctrl+F does not find a canvas caption — a caption is text, not a picture"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Canvas Invariants: PASS" : "Self-Test Canvas Invariants: FAIL");
         }
     }
 }
