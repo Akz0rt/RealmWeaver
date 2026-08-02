@@ -57,10 +57,31 @@ namespace WorldGen.Notes.Rendering
             if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         }
 
+        /// <summary>The active tool changed — including when THIS class changed it on its own, which is the
+        /// case the toolbar could not otherwise know about. Raised on every SetTool, so a subscriber must not
+        /// call SetTool back from it; NotesToolbar's handler only repaints.</summary>
+        public event System.Action<NotesTool> OnToolChanged;
+
         public void SetTool(NotesTool tool)
         {
             ActiveTool = tool;
             paintingDrawingObjectId = null;
+            OnToolChanged?.Invoke(tool);
+        }
+
+        /// <summary>Disarms an inserting tool the moment it has inserted something — a note, an image, or a
+        /// new drawing. Without this, the tool stays armed and every further click on the board makes ANOTHER
+        /// one: the DM places a card, clicks it to start typing, and gets a second card under the cursor.
+        ///
+        /// PAINTING AN EXISTING DRAWING IS NOT AN INSERTION and deliberately does not disarm — a drawing is
+        /// made of many strokes, and dropping the brush after each one would be unusable. The rule is exactly
+        /// "the click that ADDS an object is the tool's last click", nothing wider.
+        ///
+        /// A CANCELLED FILE DIALOG DOES NOT DISARM EITHER: nothing was inserted, so the DM is still trying to
+        /// place an image, and taking the tool away would punish them for changing their mind about which file.</summary>
+        void ReturnToSelect()
+        {
+            if (ActiveTool != NotesTool.Select) SetTool(NotesTool.Select);
         }
 
         void SetSelectedObjectId(string objectId)
@@ -145,6 +166,7 @@ namespace WorldGen.Notes.Rendering
                     break;
                 case NotesTool.Note:
                     canvasController.AddNoteCard(ScreenToCanvasPoint(screenPos));
+                    ReturnToSelect();
                     break;
                 case NotesTool.Drawing:
                     var existingDrawing = FindDrawingObjectAt(screenPos);
@@ -161,12 +183,16 @@ namespace WorldGen.Notes.Rendering
                     else
                     {
                         canvasController.AddDrawing(ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
+                        ReturnToSelect();
                     }
                     break;
                 case NotesTool.Image:
                     var bytes = ImagePicker.OpenFileDialog();
                     if (bytes != null)
+                    {
                         canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
+                        ReturnToSelect();
+                    }
                     break;
                 case NotesTool.Zoom:
                     zooming = true;

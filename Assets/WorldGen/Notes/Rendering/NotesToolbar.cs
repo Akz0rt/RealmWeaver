@@ -123,7 +123,29 @@ namespace WorldGen.Notes.Rendering
                 iconRect.sizeDelta = Vector2.zero;
             }
 
+            // The controller disarms an inserting tool by itself the moment it has inserted something (see
+            // CanvasInteractionController.ReturnToSelect), and the row has no other way to hear about it — the
+            // button that would show «Курсор» as active was never clicked. Without this the tool would BE
+            // Select while the row still lit «Заметка», which is worse than not disarming at all: the DM would
+            // click expecting a card and get nothing, with the toolbar agreeing with them.
+            //
+            // ShowActive only repaints — it must never call back into SetTool, which is what SetActive below
+            // does and what would make this a loop.
+            controller.OnToolChanged += ShowActive;
+
             SetActive(NotesTool.Select);
+        }
+
+        void OnDestroy()
+        {
+            if (controller != null) controller.OnToolChanged -= ShowActive;
+        }
+
+        /// <summary>Repaints the row for a tool change this row did not make. See the subscription above.</summary>
+        void ShowActive(NotesTool tool)
+        {
+            activeTool = tool;
+            if (buttons != null) RefreshButtonVisuals();
         }
 
         void Update()
