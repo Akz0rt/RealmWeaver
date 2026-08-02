@@ -35,6 +35,14 @@ namespace WorldGen.Notes.Rendering
         const float IndentPerLevel = 18f;
         const float VerticalPadding = 4f;
 
+        /// <summary>How tall a board is when the DM has not resized it. Big enough that a relationship web is
+        /// legible without being opened, small enough that it does not push the prose off the screen.</summary>
+        public const float DefaultCanvasHeight = 320f;
+        public const float MinCanvasHeight = 120f;
+        public const float MinCanvasWidth = 240f;
+        /// <summary>The strip under the frame that holds the board's caption.</summary>
+        const float CaptionHeight = 22f;
+
         /// <summary>Clear space between the row's hit area and the first and last glyph on a line.
         ///
         /// WHY IT IS NOT THE ROW THAT SHRINKS. The row's whole width is a click target — clicking anywhere
@@ -114,9 +122,20 @@ namespace WorldGen.Notes.Rendering
         /// nothing and so raises no onValueChanged, which makes this flag the exact discriminator.</summary>
         public bool TextChangedThisFrame => textChangedOnFrame == Time.frameCount;
 
+        RectTransform canvasFrame;
+        public RectTransform CanvasFrame => canvasFrame;
+
+        /// <summary>The widest a board may be drawn: the PANE's width less its margins, assigned by
+        /// DocumentPageView, which is the only thing that knows how wide the pane is. 0 = not measured yet, in
+        /// which case the frame stays at the column width.</summary>
+        public float MaxCanvasWidth;
+
         public event System.Action<string> OnTextChanged;
         public event System.Action<string> OnToggleCollapse;
         public event System.Action<string> OnBulletPressed;
+        public event System.Action<string> OnExpandCanvasRequested;
+        public event System.Action<string> OnCanvasResizeBegan;
+        public event System.Action<string> OnCanvasResizeEnded;
 
         /// <summary>The DM's first keystroke of this visit to the row is about to change its text. Carries the
         /// block's id and the text as it was BEFORE that keystroke, which is exactly what the page needs to
@@ -198,6 +217,24 @@ namespace WorldGen.Notes.Rendering
             {
                 BuildPicture();
                 return;
+            }
+
+            if (data.Kind == BlockKind.Canvas)
+            {
+                // A board row is a picture AND a line of text: the frame on top, the caption under it, and the
+                // caption is DocBlock.Text edited exactly like any other row — so the text machinery is built
+                // as usual, only pushed down into its own strip.
+                //
+                // ANCHORS FIRST, THEN OFFSETS, and never sizeDelta: writing anchorMin/anchorMax from script
+                // leaves offsetMin/offsetMax alone, so the box the lines above described (stretched top to
+                // bottom) would collapse to zero height ON the row's bottom edge, and a sizeDelta.y written
+                // afterwards would grow it symmetrically around the pivot — hanging half the caption below
+                // the row.
+                BuildCanvasFrame(font);
+                textArea.anchorMin = new Vector2(0f, 0f);
+                textArea.anchorMax = new Vector2(1f, 0f);
+                textArea.offsetMin = new Vector2(indent, 0f);
+                textArea.offsetMax = new Vector2(-IndentBase, CaptionHeight);
             }
 
             BuildDisplay();
@@ -328,6 +365,120 @@ namespace WorldGen.Notes.Rendering
                 ThemeService.Tag(barGO.AddComponent<Image>(), ThemeRole.Accent);
             }
         }
+
+        /// <summary>The board's frame: a masked box, its own resize grip, and an «развернуть» button.
+        ///
+        /// A CENTRED CHILD ALLOWED TO EXCEED ITS PARENT, and this is the whole trick of "wider than the text
+        /// column". The row's WIDTH is owned by the column's VerticalLayoutGroup and cannot be argued with —
+        /// so the frame is not the row, it is a child anchored to the row's horizontal centre with an explicit
+        /// width of its own. uGUI does not clip a child that overflows unless something masks it, and the mask
+        /// here belongs to the frame. The row's HEIGHT is still the block's to decide (ApplyHeightNow).</summary>
+        void BuildCanvasFrame(Font font)
+        {
+            var frameGO = new GameObject("CanvasFrame", typeof(RectTransform));
+            frameGO.transform.SetParent(transform, false);
+            canvasFrame = frameGO.GetComponent<RectTransform>();
+            canvasFrame.anchorMin = new Vector2(0.5f, 1f);
+            canvasFrame.anchorMax = new Vector2(0.5f, 1f);
+            canvasFrame.pivot = new Vector2(0.5f, 1f);
+            canvasFrame.anchoredPosition = new Vector2(0f, -VerticalPadding * 0.5f);
+
+            var bg = frameGO.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Panel2);
+            frameGO.AddComponent<RectMask2D>();
+
+            // «развернуть» — top right, inside the frame. Legacy uGUI and the builtin font, like the collapse
+            // arrow and the bullet: this is chrome, and chrome does not migrate to TMP.
+            var expandGO = new GameObject("Expand", typeof(RectTransform));
+            expandGO.transform.SetParent(frameGO.transform, false);
+            var expandRect = expandGO.GetComponent<RectTransform>();
+            expandRect.anchorMin = new Vector2(1f, 1f);
+            expandRect.anchorMax = new Vector2(1f, 1f);
+            expandRect.pivot = new Vector2(1f, 1f);
+            expandRect.anchoredPosition = new Vector2(-4f, -4f);
+            expandRect.sizeDelta = new Vector2(20f, 20f);
+            var expandBg = expandGO.AddComponent<Image>();
+            ThemeService.Tag(expandBg, ThemeRole.Panel2, 0.9f);
+            var expandButton = expandGO.AddComponent<Button>();
+            expandButton.targetGraphic = expandBg;
+            expandButton.onClick.AddListener(() => OnExpandCanvasRequested?.Invoke(data.Id));
+
+            var expandGlyphGO = new GameObject("Glyph", typeof(RectTransform));
+            expandGlyphGO.transform.SetParent(expandGO.transform, false);
+            var expandGlyph = expandGlyphGO.AddComponent<Text>();
+            expandGlyph.font = font;
+            expandGlyph.fontSize = 13;
+            // ↗ (U+2197) rather than the ⤢ the plan named: ⤢ is U+2922, in Supplemental Arrows-B, which the
+            // builtin LegacyRuntime font does not carry — it would draw as an empty box. This one is in the
+            // same Arrows block as the ↑↓ already shipping in QuickOpenPopup's hint line.
+            expandGlyph.text = "↗";
+            expandGlyph.alignment = TextAnchor.MiddleCenter;
+            expandGlyph.raycastTarget = false;
+            ThemeService.Tag(expandGlyph, ThemeRole.Txt);
+            var expandGlyphRect = expandGlyphGO.GetComponent<RectTransform>();
+            expandGlyphRect.anchorMin = Vector2.zero;
+            expandGlyphRect.anchorMax = Vector2.one;
+            expandGlyphRect.sizeDelta = Vector2.zero;
+
+            // The grip — bottom right, both axes.
+            var gripGO = new GameObject("ResizeGrip", typeof(RectTransform));
+            gripGO.transform.SetParent(frameGO.transform, false);
+            var gripRect = gripGO.GetComponent<RectTransform>();
+            gripRect.anchorMin = new Vector2(1f, 0f);
+            gripRect.anchorMax = new Vector2(1f, 0f);
+            gripRect.pivot = new Vector2(1f, 0f);
+            gripRect.sizeDelta = new Vector2(16f, 16f);
+            var gripImage = gripGO.AddComponent<Image>();
+            ThemeService.Tag(gripImage, ThemeRole.Accent, 0.6f);
+            var resizer = gripGO.AddComponent<CanvasBlockResizer>();
+            resizer.Initialize(this);
+
+            ApplyCanvasFrameSize();
+        }
+
+        /// <summary>Writes the frame's current size from the block's stored one. 0 means "the default": the
+        /// text column's width, and DefaultCanvasHeight.
+        ///
+        /// PUBLIC AND CALLED TWICE PER REBUILD. Initialize runs before DocumentPageView has had a chance to
+        /// assign MaxCanvasWidth, so the first sizing cannot know the pane's width; the page calls this again
+        /// right after the assignment. Without that second call a board saved wider than the pane it is
+        /// reopened in would render unclamped until the DM happened to drag its grip.</summary>
+        public void ApplyCanvasFrameSize()
+        {
+            if (canvasFrame == null || data == null) return;
+            float width = data.DisplayWidth > 0f ? data.DisplayWidth : NotesTypography.MeasureWidthPx;
+            if (MaxCanvasWidth > 1f) width = Mathf.Min(width, MaxCanvasWidth);
+            width = Mathf.Max(MinCanvasWidth, width);
+            float height = Mathf.Max(MinCanvasHeight, data.DisplayHeight > 0f ? data.DisplayHeight : DefaultCanvasHeight);
+            canvasFrame.sizeDelta = new Vector2(width, height);
+        }
+
+        /// <summary>Called live by CanvasBlockResizer while the grip is dragged: writes the block, resizes the
+        /// frame and re-measures the row, all within the frame the DM is dragging in. The UNDO step is not
+        /// pushed here — one per drag, at its end, see DocumentPageView.
+        ///
+        /// SEEDED FROM THE FRAME ON SCREEN, not from the stored size. The two disagree exactly when the stored
+        /// width was clamped to a narrower pane — and starting from the stored value there would re-clamp to
+        /// the same number, so the first several pixels of the drag would visibly do nothing.</summary>
+        public void ResizeCanvasBy(Vector2 delta)
+        {
+            if (data == null || data.Kind != BlockKind.Canvas) return;
+            float shownWidth = canvasFrame != null ? canvasFrame.rect.width : 0f;
+            float shownHeight = canvasFrame != null ? canvasFrame.rect.height : 0f;
+            float width = (shownWidth > 1f ? shownWidth : (data.DisplayWidth > 0f ? data.DisplayWidth : NotesTypography.MeasureWidthPx)) + delta.x;
+            // Minus: PointerEventData.delta is screen-space with +y up, so dragging the grip DOWN is negative
+            // and must make the board taller.
+            float height = (shownHeight > 1f ? shownHeight : (data.DisplayHeight > 0f ? data.DisplayHeight : DefaultCanvasHeight)) - delta.y;
+            float maxWidth = MaxCanvasWidth > 1f ? MaxCanvasWidth : NotesTypography.MeasureWidthPx;
+            data.DisplayWidth = Mathf.Clamp(width, MinCanvasWidth, Mathf.Max(MinCanvasWidth, maxWidth));
+            data.DisplayHeight = Mathf.Max(MinCanvasHeight, height);
+            ApplyCanvasFrameSize();
+            ApplyHeightNow();
+            LayoutRebuilder.MarkLayoutForRebuild((RectTransform)transform.parent);
+        }
+
+        public void RaiseCanvasResizeBegan() => OnCanvasResizeBegan?.Invoke(data != null ? data.Id : null);
+        public void RaiseCanvasResizeEnded() => OnCanvasResizeEnded?.Invoke(data != null ? data.Id : null);
 
         void BuildDisplay()
         {
@@ -958,6 +1109,20 @@ namespace WorldGen.Notes.Rendering
             if (data.Kind == BlockKind.Image)
             {
                 ApplyPictureHeight();
+                return;
+            }
+
+            if (data.Kind == BlockKind.Canvas)
+            {
+                // The board's own height plus the caption strip under it — the caption is a fixed one-line
+                // strip, so unlike a prose row this height is not measured from any text.
+                float board = Mathf.Max(MinCanvasHeight, data.DisplayHeight > 0f ? data.DisplayHeight : DefaultCanvasHeight);
+                float desiredCanvas = board + CaptionHeight + VerticalPadding;
+                if (Mathf.Abs(desiredCanvas - appliedHeight) > 0.5f)
+                {
+                    appliedHeight = desiredCanvas;
+                    layoutElement.preferredHeight = desiredCanvas;
+                }
                 return;
             }
 

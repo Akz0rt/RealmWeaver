@@ -35,7 +35,7 @@ namespace WorldGen.Notes.Rendering
         DocumentPageView page;
         Font font;
 
-        Button convertSection, convertItem, convertProse, insertImage, insertLink, undo, redo;
+        Button convertSection, convertItem, convertProse, insertImage, insertCanvas, insertLink, undo, redo;
 
         // «Ссылка» asks the PAGE rather than holding its own hook: the page outlives this bar, which is
         // rebuilt whole after a domain reload (see Attach), and a hook stored here would be lost with it.
@@ -83,6 +83,7 @@ namespace WorldGen.Notes.Rendering
             bar.convertItem = bar.BuildButton(barRect, "→ Пункт", () => page.ConvertFocused(BlockKind.Item));
             bar.convertProse = bar.BuildButton(barRect, "→ Проза", () => page.ConvertFocused(BlockKind.Prose));
             bar.insertImage = bar.BuildButton(barRect, "Картинка", bar.PickAndInsertImage);
+            bar.insertCanvas = bar.BuildButton(barRect, "Доска", () => page.InsertCanvasAfterFocused());
             bar.insertLink = bar.BuildButton(barRect, "Ссылка", page.RequestInsertLink);
             bar.undo = bar.BuildButton(barRect, "Отменить", page.Undo);
             bar.redo = bar.BuildButton(barRect, "Вернуть", page.Redo);
@@ -150,6 +151,9 @@ namespace WorldGen.Notes.Rendering
             SetInteractable(convertItem, hasRow);
             SetInteractable(convertProse, hasRow);
             SetInteractable(insertImage, hasRow);
+            // Same gate as «Картинка», and for the same reason: both insert AFTER the focused row, so with no
+            // focused row there is nowhere to put them and the click would be a silent no-op.
+            SetInteractable(insertCanvas, hasRow);
             SetInteractable(insertLink, hasRow && page.CanInsertLink);
             SetInteractable(undo, page != null && page.CanUndo);
             SetInteractable(redo, page != null && page.CanRedo);

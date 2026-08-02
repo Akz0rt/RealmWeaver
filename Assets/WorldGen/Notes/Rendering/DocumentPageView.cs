@@ -374,6 +374,68 @@ namespace WorldGen.Notes.Rendering
             return true;
         }
 
+        /// <summary>Puts a board into the prose, after the focused row and its children — the same placement
+        /// rule an inserted picture follows, and for the same reason: a board dropped under a row with
+        /// sub-rows belongs below the whole thought, not inside it.</summary>
+        public bool InsertCanvasAfterFocused()
+        {
+            if (Page == null || string.IsNullOrEmpty(LastFocusedBlockId)) return false;
+
+            int at = -1;
+            for (int i = 0; i < Page.Blocks.Count; i++)
+                if (Page.Blocks[i].Id == LastFocusedBlockId) { at = i; break; }
+            if (at < 0) return false;
+
+            PushHistory(LastFocusedBlockId, LastFocusedCaret);
+
+            int depth = Page.Blocks[at].Depth < 1 ? 1 : Page.Blocks[at].Depth;
+            var block = NotesDocOps.NewBlock(BlockKind.Canvas, depth, "Доска");
+            block.CanvasObjects = new List<CanvasObjectData>();
+            block.CanvasLinks = new List<LinkData>();
+            NotesDocOps.Insert(Page.Blocks, at + NotesDocOps.SubtreeLength(Page.Blocks, at), block);
+
+            OnDocumentMutated?.Invoke();
+            Rebuild();
+            SetSelectedBlock(block.Id);
+            return true;
+        }
+
+        // ── the board rows' own gestures (Р4 Task 8) ─────────────────────────────
+
+        /// <summary>The widest a board block may be: the pane, less the margin the prose already keeps. The
+        /// column's own measure does not apply — a board is the one row deliberately allowed past it.</summary>
+        float MaxCanvasWidthNow()
+        {
+            if (viewportGO == null) return 0f;
+            float available = ((RectTransform)viewportGO.transform).rect.width;
+            return available > 1f ? available - MinSideMargin * 2f : 0f;
+        }
+
+        List<DocBlock> canvasResizeBefore;
+
+        void BeginCanvasResize(string blockId)
+        {
+            if (Page == null) return;
+            canvasResizeBefore = DocHistory.Copy(Page.Blocks);
+        }
+
+        /// <summary>ONE undo step per drag, pushed against the state the drag STARTED from — which is why the
+        /// snapshot is taken at the beginning and used here, rather than pushed at either end alone.</summary>
+        void EndCanvasResize(string blockId)
+        {
+            if (Page == null || canvasResizeBefore == null) return;
+            PushHistoryOf(canvasResizeBefore, LastFocusedBlockId, LastFocusedCaret);
+            canvasResizeBefore = null;
+            OnDocumentMutated?.Invoke();
+        }
+
+        /// <summary>Opens a board as a surface of its own. Assigned from outside, exactly like LinkRouter, so
+        /// the notes layer keeps knowing nothing about WorkspaceController — null until Task 10 wires it, and
+        /// a null one simply makes «развернуть» do nothing.</summary>
+        public System.Action<string> CanvasRouter;
+
+        void ExpandCanvas(string blockId) => CanvasRouter?.Invoke(blockId);
+
         // ── inline links (Р2 Task 7) ─────────────────────────────────────────────
         //
         // BOTH OF THESE ARE INJECTED, and from the same place — PageLinkBridge, which WorkspaceBuilder
@@ -1016,6 +1078,15 @@ namespace WorldGen.Notes.Rendering
                 view.OnLinkActivated += RouteLink;
                 view.OnSelectRequested += SetSelectedBlock;
                 view.OnBeforeFirstEdit += PushHistoryBeforeFirstEdit;
+                view.OnExpandCanvasRequested += ExpandCanvas;
+                view.OnCanvasResizeBegan += BeginCanvasResize;
+                view.OnCanvasResizeEnded += EndCanvasResize;
+                // ASSIGNED AFTER Initialize AND THEREFORE RE-APPLIED. Initialize builds the board's frame and
+                // sizes it, and at that moment the row does not yet know how wide the pane is — so a board
+                // stored wider than the pane it is reopened in would draw unclamped. Harmless on every other
+                // kind of row: ApplyCanvasFrameSize returns at once when there is no frame.
+                view.MaxCanvasWidth = MaxCanvasWidthNow();
+                view.ApplyCanvasFrameSize();
                 view.SetSelected(block.Id == SelectedBlockId);
                 view.OnTextChanged += _ => OnDocumentMutated?.Invoke();
                 // THE WHEEL STOPS AT AN EDITING ROW WITHOUT THIS. A scroll event travels up only as far as
