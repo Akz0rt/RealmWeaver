@@ -421,7 +421,12 @@ namespace WorldGen.Notes.Rendering
             canvasGO.transform.SetParent(view.CanvasFrame, false);
             var canvasController = canvasGO.AddComponent<NotesCanvasController>();
             interaction.canvasController = canvasController;
-            canvasController.BeforeMutation = () => PushHistory(LastFocusedBlockId, LastFocusedCaret);
+            // THE BOARD'S OWN ROW IS THE FOCUS TO RESTORE, not LastFocusedBlockId. A DM who drags a card on a
+            // board they never typed in leaves that pointing at some earlier row — or at a row that no longer
+            // exists — and undo would put the caret somewhere unrelated to what it just undid. The block id is
+            // captured as a string because Apply replaces every DocBlock with a copy from the snapshot.
+            string canvasBlockId = block.Id;
+            canvasController.BeforeMutation = () => PushHistory(canvasBlockId, -1);
             canvasController.AfterMutation = () => OnDocumentMutated?.Invoke();
             canvasController.Initialize(block, view.CanvasFrame, interaction, CanvasMode.Inline);
 
