@@ -78,6 +78,31 @@ namespace WorldGen.Notes.Data
             return -1;
         }
 
+        /// <summary>Opens whatever is hiding a block, so something found inside a collapsed section can be
+        /// shown. True when anything actually opened.
+        ///
+        /// THE RULE IS VisibleIndices' RULE, read backwards. That method hides a block when some EARLIER
+        /// block is collapsed and shallower — it does not care what Kind that block is — so this walks back
+        /// from the target opening every strictly-shallower block it meets, which is exactly the ancestor
+        /// chain and nothing else. Checking for Section here instead would agree with it today (only sections
+        /// are ever collapsed) and disagree the moment anything else can be, which is the shape of bug where
+        /// a search reports a hit it then cannot show.</summary>
+        public static bool ExpandTo(List<DocBlock> blocks, string blockId)
+        {
+            int target = IndexOf(blocks, blockId);
+            if (target < 0) return false;
+
+            bool changed = false;
+            int depth = blocks[target].Depth;
+            for (int i = target - 1; i >= 0 && depth > 0; i--)
+            {
+                if (blocks[i].Depth >= depth) continue;   // a sibling or something deeper — not an ancestor
+                depth = blocks[i].Depth;
+                if (blocks[i].Collapsed) { blocks[i].Collapsed = false; changed = true; }
+            }
+            return changed;
+        }
+
         /// <summary>1 plus the run of immediately-following blocks deeper than blocks[index]. The single
         /// place "with its children" is defined.</summary>
         public static int SubtreeLength(IReadOnlyList<DocBlock> blocks, int index)

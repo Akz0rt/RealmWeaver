@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -755,26 +756,102 @@ namespace WorldGen.Notes.Rendering
         /// of tag inside the index map in the very task that first makes display and source differ.</summary>
         string BuildMarkup(DisplayText d)
         {
-            if (d == null || d.Spans.Count == 0) return d?.Text ?? "";
+            if (d == null) return "";
+            bool hasSpans = d.Spans.Count > 0;
+            bool hasHits = searchHits != null && searchHits.Count > 0;
+            if (!hasSpans && !hasHits) return d.Text;
 
             string accent = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Accent));
             string muted = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Mut));
 
-            var sb = new System.Text.StringBuilder(d.Text.Length + d.Spans.Count * 48);
-            int copied = 0;
+            // TAGS AS INSERTIONS AT POSITIONS, rather than as a single walk over the spans, because two
+            // INDEPENDENT sets of ranges now cover the same display text — the links, and the search hits —
+            // and they overlap freely: a searched-for word can sit inside a link's name, start before it and
+            // end inside it, or contain the whole link. A walk that owned one set and spliced the other into
+            // it would have to reason about every one of those cases. Collecting both as boundary markers and
+            // sorting them does not: TMP keeps a separate stack per tag type, so `<mark>` opened inside a
+            // `<link>` and closed after it is read exactly as written.
+            insertions.Clear();
+
             foreach (var span in d.Spans)
             {
-                sb.Append(d.Text, copied, span.DisplayStart - copied);
-                string name = d.Text.Substring(span.DisplayStart, span.DisplayLength);
+                int end = span.DisplayStart + span.DisplayLength;
                 if (span.Resolved)
-                    sb.Append("<link=\"").Append(span.Kind).Append(':').Append(span.Id).Append("\">")
-                      .Append("<color=#").Append(accent).Append('>').Append(name).Append("</color></link>");
+                {
+                    insertions.Add((span.DisplayStart, false, "<link=\"" + span.Kind + ":" + span.Id + "\"><color=#" + accent + ">"));
+                    insertions.Add((end, true, "</color></link>"));
+                }
                 else
-                    sb.Append("<color=#").Append(muted).Append('>').Append(name).Append("</color>");
-                copied = span.DisplayStart + span.DisplayLength;
+                {
+                    insertions.Add((span.DisplayStart, false, "<color=#" + muted + ">"));
+                    insertions.Add((end, true, "</color>"));
+                }
+            }
+
+            if (hasHits)
+            {
+                // The current hit is painted stronger than the rest — «эта, из двенадцати» has to be legible
+                // at a glance, or stepping through matches tells the DM nothing.
+                var accentColor = ThemeService.Get(ThemeRole.Accent);
+                string rest = ColorUtility.ToHtmlStringRGB(accentColor) + "44";
+                string here = ColorUtility.ToHtmlStringRGB(accentColor) + "99";
+                foreach (var hit in searchHits)
+                {
+                    if (hit == null || hit.Length <= 0) continue;
+                    int start = Mathf.Clamp(hit.DisplayStart, 0, d.Text.Length);
+                    int end = Mathf.Clamp(start + hit.Length, start, d.Text.Length);
+                    if (end == start) continue;
+                    insertions.Add((start, false, "<mark=#" + (ReferenceEquals(hit, currentSearchHit) ? here : rest) + ">"));
+                    insertions.Add((end, true, "</mark>"));
+                }
+            }
+
+            // At one position every CLOSING tag comes before every opening one, so a link that ends exactly
+            // where the next begins does not get them interleaved. Sorted stably by position first so the
+            // text between two insertions is always a forward slice.
+            insertions.Sort((a, b) => a.At != b.At ? a.At.CompareTo(b.At)
+                                                  : (a.Closing == b.Closing ? 0 : a.Closing ? -1 : 1));
+
+            var sb = new System.Text.StringBuilder(d.Text.Length + insertions.Count * 24);
+            int copied = 0;
+            foreach (var insertion in insertions)
+            {
+                int at = Mathf.Clamp(insertion.At, copied, d.Text.Length);
+                sb.Append(d.Text, copied, at - copied);
+                sb.Append(insertion.Tag);
+                copied = at;
             }
             sb.Append(d.Text, copied, d.Text.Length - copied);
             return sb.ToString();
+        }
+
+        /// <summary>Scratch for BuildMarkup. NOT a field initializer for the usual reason — a domain reload
+        /// deserializes this component without running one — so it is created on demand instead.</summary>
+        List<(int At, bool Closing, string Tag)> insertionBuffer;
+        List<(int At, bool Closing, string Tag)> insertions
+            => insertionBuffer ?? (insertionBuffer = new List<(int, bool, string)>());
+
+        // ── search highlighting (page search) ────────────────────────────────────
+
+        List<PageSearch.PageHit> searchHits;
+        PageSearch.PageHit currentSearchHit;
+
+        /// <summary>Paints this row's search matches. `hits` are the ones in THIS block — the bar has already
+        /// split them up — and `current` is the one the DM is standing on, which may belong to another row, in
+        /// which case none here is painted as current.
+        ///
+        /// A row with no hits before and none now is left alone: the bar hands this to EVERY row on every
+        /// keystroke in the search field, and on a page-long document most rows never match anything. The
+        /// guard skips only that case — it never skips a repaint a change actually needs.</summary>
+        public void SetSearchHighlights(List<PageSearch.PageHit> hits, PageSearch.PageHit current)
+        {
+            bool had = searchHits != null && searchHits.Count > 0;
+            bool has = hits != null && hits.Count > 0;
+            if (!had && !has && ReferenceEquals(current, currentSearchHit)) return;
+
+            searchHits = hits;
+            currentSearchHit = current;
+            RefreshDisplay();
         }
 
         /// <summary>Re-renders when the theme changed under a resting row — the link colours are baked into

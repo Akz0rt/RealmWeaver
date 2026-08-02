@@ -124,6 +124,9 @@ namespace WorldGen.Notes.Rendering
         /// with the prose it summarises. Rebuilt by EnsureWired, like the toolbar and for the same reason.</summary>
         PageFooterView footer;
 
+        /// <summary>Ctrl+F. Lives on `root` rather than being the hidden box itself — see its own doc.</summary>
+        PageSearchBar searchBar;
+
         /// <summary>Fires whenever undo or redo becomes possible or impossible, so the toolbar's ↶/↷ can be
         /// enabled or disabled without polling.</summary>
         public event System.Action OnHistoryChanged;
@@ -244,10 +247,21 @@ namespace WorldGen.Notes.Rendering
             return true;
         }
 
-        /// <summary>True while something else owns the keyboard — the Ctrl+K palette, whether opened as
-        /// itself or as the link picker. Set by PageLinkBridge, read by DocKeyboardController, which stands
-        /// down entirely: the page's keys are only the page's while nothing is over it.</summary>
-        public bool KeyboardSuspended { get; set; }
+        /// <summary>The Ctrl+K palette is up, whether opened as itself or as the link picker. Set by
+        /// PageLinkBridge.</summary>
+        public bool PaletteOpen { get; set; }
+
+        /// <summary>The Ctrl+F field has the caret. Set by PageSearchBar.</summary>
+        public bool SearchOwnsKeys { get; set; }
+
+        /// <summary>True while something else owns the keyboard. Read by DocKeyboardController, which stands
+        /// down entirely: the page's keys are only the page's while nothing is over it.
+        ///
+        /// AN OR OF TWO INDEPENDENT FLAGS, not one shared bool. Two unrelated things can suspend this at
+        /// once — a DM can open the search bar and then press Ctrl+K — and with a single switch whichever of
+        /// them finished last would speak for both, handing the page's keys back while the other still had
+        /// them.</summary>
+        public bool KeyboardSuspended => PaletteOpen || SearchOwnsKeys;
 
         /// <summary>Opens the link picker, injected by PageLinkBridge because the picker is Ctrl+K's own
         /// palette and lives on the workspace side of the layer boundary. Null in a scene without a
@@ -390,6 +404,11 @@ namespace WorldGen.Notes.Rendering
         /// without any row being told anything.</summary>
         string ResolveName(string kind, string id)
             => QuickOpen.ResolverFor(documentController != null ? documentController.Document : null, worldCache)(kind, id);
+
+        /// <summary>The same resolver, handed out so the page search renders the text it searches exactly as
+        /// the rows do. A search that folded names differently from the display would report matches at
+        /// offsets the highlight could not use.</summary>
+        public NotesLinkOps.NameResolver ResolveNameFor => ResolveName;
 
         /// <summary>Re-reads the world and re-renders every resting row, so a POI renamed in the other pane
         /// changes the prose here with no edit to the page — D1's whole promise.
@@ -609,6 +628,7 @@ namespace WorldGen.Notes.Rendering
             // On `root`, which is where a drop that landed on any row is delivered — see LinkDropTarget's
             // own doc. Needs nothing from the workspace, so it is wired here rather than through the bridge.
             LinkDropTarget.Attach(this);
+            searchBar = PageSearchBar.Attach(this, font);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
@@ -840,6 +860,7 @@ namespace WorldGen.Notes.Rendering
             // alive on the recovered root with every field it needs nulled, so it is replaced rather than
             // found.
             LinkDropTarget.Attach(this);
+            searchBar = PageSearchBar.Attach(this, font);
 
             // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
             // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
@@ -924,6 +945,10 @@ namespace WorldGen.Notes.Rendering
                 History.Clear();
                 SetSelectedBlock(null);
                 OnHistoryChanged?.Invoke();
+                // Results belong to the page they were found on. Same identity test, same reason as the
+                // history above: a tab switch back must not cost the DM their search either, but a switch to
+                // a DIFFERENT page must not leave «3 из 12» standing over text that never said it.
+                if (searchBar != null) searchBar.Close();
             }
 
             if (boardViewport != null)
@@ -1027,6 +1052,9 @@ namespace WorldGen.Notes.Rendering
             // Before, because SettleHeights is what turns every LayoutElement.preferredHeight on this column
             // into the column's own height, and the footer's is one of them.
             if (footer != null) footer.Refresh();
+            // The rows the search had painted were just destroyed and remade, and the block list may have
+            // changed under the query too — see PageSearchBar.Reapply.
+            if (searchBar != null) searchBar.Reapply();
 
             SettleHeights();
             content.anchoredPosition = new Vector2(content.anchoredPosition.x, keepY);
@@ -1223,6 +1251,47 @@ namespace WorldGen.Notes.Rendering
             // somewhere, and carrying on to a target they chose a moment BEFORE that would take them straight
             // back off the line they are writing on. Without this the two would also fight — AnimateScroll
             // would see a position it did not write and stand down anyway, one frame later and less clearly.
+            scrollTargetValid = false;
+        }
+
+        /// <summary>Scrolls a whole ROW into view — what a search hit needs, where RevealCaretIfMoved answers
+        /// for a caret in a row being edited. Separate because the trigger is different in kind: that one
+        /// fires every frame and must decide for itself whether anything moved, while this is a single
+        /// deliberate jump, asked for once.
+        ///
+        /// Does nothing when the row is already on screen, so stepping between two matches in the same
+        /// paragraph does not jerk the page for each one.
+        ///
+        /// The row must EXIST as a view — a hit inside a collapsed section has no rect to scroll to, which is
+        /// why PageSearchBar.Reveal opens the section and rebuilds before calling this.</summary>
+        public void RevealRow(string blockId)
+        {
+            var view = ViewOf(blockId);
+            if (view == null || content == null || viewportGO == null) return;
+
+            ((RectTransform)view.transform).GetWorldCorners(viewportCorners);
+            float rowBottom = viewportCorners[0].y;
+            float rowTop = viewportCorners[1].y;
+
+            ((RectTransform)viewportGO.transform).GetWorldCorners(viewportCorners);
+            float viewBottom = viewportCorners[0].y;
+            float viewTop = viewportCorners[1].y;
+
+            float scale = content.lossyScale.y;
+            if (scale <= 0.0001f) return;
+            float margin = RevealMargin * scale;
+
+            // Below the window is tested first, for the same reason RevealCaretIfMoved does it: a row taller
+            // than the viewport satisfies both tests at once, and its top is the part worth showing.
+            float shift = 0f;
+            if (rowTop > viewTop - margin) shift = viewTop - margin - rowTop;
+            else if (rowBottom < viewBottom + margin) shift = viewBottom + margin - rowBottom;
+            if (Mathf.Abs(shift) < 0.5f) return;
+
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x,
+                                                   content.anchoredPosition.y + shift / scale);
+            // A wheel glide in flight would carry the page straight back off the match — the DM asked to be
+            // taken somewhere, and that request is newer than the wheel's.
             scrollTargetValid = false;
         }
 

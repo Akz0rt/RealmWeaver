@@ -812,7 +812,9 @@ namespace WorldGen.Workspace.Rendering
         /// Polled here rather than pushed from the palette, so the palette keeps knowing nothing about pages.</summary>
         void Update()
         {
-            if (pageView != null) pageView.KeyboardSuspended = palette != null && palette.IsOpen;
+            // PaletteOpen, not KeyboardSuspended: that one is now the OR of this flag and the search bar's,
+            // and writing it here would have this bridge speak for a bar it knows nothing about.
+            if (pageView != null) pageView.PaletteOpen = palette != null && palette.IsOpen;
         }
 
         /// <summary>«Ссылка» on the page toolbar: Ctrl+K's own palette, ending in a token instead of a tab.</summary>
