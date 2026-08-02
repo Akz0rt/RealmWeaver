@@ -427,6 +427,9 @@ namespace WorldGen.Notes.Data
             var reference = NotesDocOps.EnsureReferenceGroup(doc);
             olga = new NotesPage { Name = "Староста Ольга", Kind = PageKind.Document };
             board = new NotesPage { Name = "Связи культа", Kind = PageKind.Board };
+            // Assigned rather than .Add()ed: NotesPage.Objects lost its `= new List<>()` initializer in Р4,
+            // because a null is exactly what MigrateBoardPage reads as "this page has already been migrated".
+            board.Objects = new List<CanvasObjectData>();
             for (int i = 0; i < 7; i++) board.Objects.Add(new NoteCardData());
             reference.Pages.Add(olga);
             reference.Pages.Add(board);

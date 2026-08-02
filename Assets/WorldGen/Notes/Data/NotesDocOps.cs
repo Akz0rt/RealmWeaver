@@ -912,6 +912,7 @@ namespace WorldGen.Notes.Data
                 foreach (var p in g.Pages)
                 {
                     if (p.Blocks == null) p.Blocks = new List<DocBlock>();
+                    MigrateBoardPage(p);
                     if (p.Blocks.Count > 0 && p.Kind == PageKind.Board) p.Kind = PageKind.Document;
 
                     foreach (var b in p.Blocks)
@@ -955,6 +956,51 @@ namespace WorldGen.Notes.Data
                     ClampDepths(p.Blocks);
                 }
             }
+        }
+
+        /// <summary>v13 → v14: a page that WAS a board becomes a page that HAS one.
+        ///
+        /// UNGATED BY VERSION and idempotent, following the rule ProjectSerializer.Load already documents — "a
+        /// version guard is a thing the NEXT format bump forgets to widen". What makes re-running it a no-op is
+        /// the emptying at the end: once the page's own Objects/Links/camera are gone, the guard below sees
+        /// nothing to move and returns.
+        ///
+        /// A SECTION GOES IN FRONT OF THE CANVAS. I2 requires a non-empty page to start with a Section, and a
+        /// canvas is not one. Widening the list of kinds allowed to stand first would have been the other way
+        /// to satisfy it, and it is the wrong way: I2 stays exactly as it was, and a migrated page ends up
+        /// SHAPED like a page the DM built by hand — a heading, then a board under it.
+        ///
+        /// AT THE FRONT, not appended, and the odd case is deliberate: a page carrying BOTH blocks and stale
+        /// canvas objects (which format 13 could not produce, but a half-written file could) keeps everything
+        /// — its board first, its prose after. Two Sections in a row is valid; losing either half is not.</summary>
+        static void MigrateBoardPage(NotesPage p)
+        {
+            bool hasObjects = p.Objects != null && p.Objects.Count > 0;
+            bool hasLinks = p.Links != null && p.Links.Count > 0;
+            bool hasCamera = p.CameraPan != default || p.CameraZoom != 1f;
+            if (!hasObjects && !hasLinks && !hasCamera)
+            {
+                // Nothing to move, but the empty lists still have to go: they are the only thing that would
+                // make a THIRD run of this method differ from the second.
+                p.Objects = null;
+                p.Links = null;
+                return;
+            }
+
+            string name = p.Name ?? "";
+            var canvas = NewBlock(BlockKind.Canvas, 1, name);
+            canvas.CanvasObjects = p.Objects ?? new List<CanvasObjectData>();
+            canvas.CanvasLinks = p.Links ?? new List<LinkData>();
+            canvas.CanvasPan = p.CameraPan;
+            canvas.CanvasZoom = p.CameraZoom;
+
+            p.Blocks.Insert(0, canvas);
+            p.Blocks.Insert(0, NewBlock(BlockKind.Section, 0, name));
+
+            p.Objects = null;
+            p.Links = null;
+            p.CameraPan = default;
+            p.CameraZoom = 1f;
         }
 
         /// <summary>Walks a block list once and pulls any depth that violates I2 or I7 back to the deepest

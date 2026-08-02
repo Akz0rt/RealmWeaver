@@ -67,10 +67,23 @@ namespace WorldGen.Notes.Data
         /// which makes reorder, collapse and JSON round-trip trivial at the cost of nothing, since nothing
         /// here goes deeper than three levels.</summary>
         public List<DocBlock> Blocks = new List<DocBlock>();
-        public List<CanvasObjectData> Objects = new List<CanvasObjectData>();
-        public List<LinkData> Links = new List<LinkData>();
+        /// <summary>READ ON LOAD, NEVER WRITTEN. A page's own board is what format 13 stored; format 14 keeps
+        /// boards inside DocBlock (see NotesDocOps.MigrateBoardPage), and these four fields exist only so
+        /// there is something for an old file to deserialize INTO. Nulled by the migration, and kept off every
+        /// save by the ShouldSerialize methods below — removing the fields outright would leave nothing to
+        /// read a v13 file with.
+        ///
+        /// No `= new List&lt;&gt;()` initializer, deliberately: the migration nulls them, and a null is what the
+        /// guard reads as "already migrated".</summary>
+        public List<CanvasObjectData> Objects;
+        public List<LinkData> Links;
         public Vector2 CameraPan;
         public float CameraZoom = 1f;
+
+        public bool ShouldSerializeObjects() => false;
+        public bool ShouldSerializeLinks() => false;
+        public bool ShouldSerializeCameraPan() => false;
+        public bool ShouldSerializeCameraZoom() => false;
 
         /// <summary>Which world object this page documents, if any — null for an ordinary authored page.
         /// See WorldRef: this is the single field NavigatorTree.Build reads for МИР membership. Additive,
