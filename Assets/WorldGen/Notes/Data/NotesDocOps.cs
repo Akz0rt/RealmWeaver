@@ -35,12 +35,12 @@ namespace WorldGen.Notes.Data
         public static DocBlock NewBlock(BlockKind kind, int depth, string text = "")
             => new DocBlock { Kind = kind, Depth = depth, Text = text ?? "" };
 
-        /// <summary>A blank session page: PageKind.Document, no blocks. Before Task 10f this seeded an
+        /// <summary>A blank session page: no blocks. Before Task 10f this seeded an
         /// eight-section Lazy-DM scaffold (title/hint pairs, a prose row under «Сильное начало») — a DM
         /// ruling given after running a real session reversed that: sections are the DM's to make, not the
         /// tool's to pre-fill («Страница сессии не должна быть автоматически разбита на разделы, это все то,
         /// что делает сам пользователь»). BlockKind.Section itself is untouched; only the auto-seeding of it
-        /// is gone, which is why an empty NotesPage{Kind=Document} is exactly right here — the same shape an
+        /// is gone, which is why an empty NotesPage is exactly right here — the same shape an
         /// ordinary new page already has.
         ///
         /// NO MIGRATION: a page saved before this change keeps whatever sections it already has. Once typed,
@@ -48,7 +48,7 @@ namespace WorldGen.Notes.Data
         /// and stripping them on load would destroy real session content for a rule that only governs what a
         /// NEW page starts with.</summary>
         public static NotesPage CreateSessionSheet(string name)
-            => new NotesPage { Name = name, Kind = PageKind.Document };
+            => new NotesPage { Name = name };
 
         // ── Lookup ─────────────────────────────────────────────────────────────
 
@@ -433,9 +433,6 @@ namespace WorldGen.Notes.Data
             var page = new NotesPage
             {
                 Name = name,
-                Kind = PageKind.Document,   // NotesPage.Kind defaults to Board (NotesData.cs) — must be said
-                                            // explicitly, or Validate would flag a Document-shaped page (it
-                                            // is about to carry Blocks) claiming to be a Board.
                 // E2 — a COPY of `bound`, never the caller's own instance: a later caller-side mutation of
                 // the WorldObjectRef/WorldRef it built this call from must not be able to rewrite stored
                 // state through a shared reference.
@@ -479,7 +476,7 @@ namespace WorldGen.Notes.Data
                 return match;
             }
 
-            var page = new NotesPage { Name = name, Kind = PageKind.Document };
+            var page = new NotesPage { Name = name };
             page.Blocks.Add(NewBlock(BlockKind.Section, 0, PromotedPageSectionTitle));
             page.Blocks.Add(NewBlock(BlockKind.Item, 1));
             group.Pages.Add(page);
@@ -834,8 +831,6 @@ namespace WorldGen.Notes.Data
                 if (g.IsReference) referenceGroups++;
                 foreach (var p in g.Pages)
                 {
-                    if (p.Kind == PageKind.Board && p.Blocks != null && p.Blocks.Count > 0)
-                        problems.Add($"page «{p.Name}» is a Board but carries {p.Blocks.Count} blocks");
                     if (p.Blocks == null) continue;
 
                     for (int i = 0; i < p.Blocks.Count; i++)
@@ -913,7 +908,6 @@ namespace WorldGen.Notes.Data
                 {
                     if (p.Blocks == null) p.Blocks = new List<DocBlock>();
                     MigrateBoardPage(p);
-                    if (p.Blocks.Count > 0 && p.Kind == PageKind.Board) p.Kind = PageKind.Document;
 
                     foreach (var b in p.Blocks)
                     {

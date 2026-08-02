@@ -30,7 +30,18 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 13;  // 13: NotesPage.Bound (a WorldRef) — which world object,
+        public const int CurrentFormatVersion = 14;  // 14: boards move INSIDE pages. NotesPage.Kind (PageKind)
+                                                     // is gone, and NotesPage.Objects/Links/CameraPan/
+                                                     // CameraZoom are read-on-load only — a page's board is
+                                                     // now a DocBlock of Kind Canvas carrying its own objects,
+                                                     // links, pan and zoom. THIS ONE IS A REAL MIGRATION, not
+                                                     // an additive bump: NotesDocOps.Normalize (called below,
+                                                     // ungated, idempotent) moves the data and the old keys
+                                                     // are never written again. An older build opening a v14
+                                                     // file therefore sees pages with no boards — which is why
+                                                     // the version warning matters here more than it did at 13.
+                                                     //
+                                                     // 13: NotesPage.Bound (a WorldRef) — which world object,
                                                      // if any, a page documents. (It drove the computed «Мир»
                                                      // group when this bump was written; Task 10e made «Мир»
                                                      // the world's own contents, so the field's readers are
@@ -41,14 +52,14 @@ namespace WorldGen.Persistence
                                                      // exists or is needed. Bumped anyway, for the same reason
                                                      // 9 and 11 were: so an OLDER build WARNS on open instead
                                                      // of silently dropping every page's world binding on its
-                                                     // next save. The next sub-project's Board→Canvas
-                                                     // migration will take 14.
+                                                     // next save. (The Board→Canvas migration it anticipated is
+                                                     // the 14 above.)
                                                      //
                                                      // 12: document pages — NotesPage.Kind + NotesPage.Blocks
                                                      // (List<DocBlock>) and PageGroup.IsReference. All three
                                                      // are ABSENT from an older file and deserialize to their
-                                                     // defaults: Kind to PageKind.Board (which is exactly why
-                                                     // Board must be the enum's zero value), Blocks to an
+                                                     // defaults: Kind to Board (the page-kind enum's zero
+                                                     // value, and RETIRED at 14 above), Blocks to an
                                                      // empty list, IsReference to false. So every page written
                                                      // before documents existed loads back as the board it is
                                                      // and NOTHING the DM wrote is lost — no migration code at
@@ -217,6 +228,14 @@ namespace WorldGen.Persistence
                     foreach (var f in d.Floors)
                         if (f != null && f.SettlementParams != null) SettlementStreetOps.EnsureAccess(f);
             }
+
+            //   • NotesDocOps.Normalize — the notes document's own repair pass, and the ONLY place it is
+            //     called from. It enforces I1-I7 (depths, kind-appropriate fields, dangling page links) and
+            //     carries the v13 -> v14 board migration: a page that stored Objects/Links/camera gets a
+            //     Section and a Canvas block holding them, and its own copies are dropped. UNGATED like its
+            //     three neighbours and for the same reason, and idempotent by construction — a migrated page
+            //     has nothing left to move, so re-running it on every load is a walk and no writes.
+            NotesDocOps.Normalize(result.Notes);
 
             // v11 lattice migration. VERSION-GATED, unlike its three neighbours above, and BOTH passes are:
             // recentring is a one-time repair of coordinates authored on the old 0.07 pitch, not a

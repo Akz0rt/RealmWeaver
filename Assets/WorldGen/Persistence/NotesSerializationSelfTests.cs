@@ -56,8 +56,6 @@ namespace WorldGen.Persistence
             { Debug.LogError("FAIL round-trip: no page came back"); ok = false; }
             else
             {
-                if (back.Kind != PageKind.Document)
-                { Debug.LogError($"FAIL round-trip: Kind = {back.Kind}, want Document"); ok = false; }
                 if (back.Blocks.Count != page.Blocks.Count)
                 { Debug.LogError($"FAIL round-trip: {back.Blocks.Count} blocks, want {page.Blocks.Count}"); ok = false; }
                 else
@@ -96,13 +94,20 @@ namespace WorldGen.Persistence
             Debug.Log(ok ? "Self-Test Notes Document Round-Trip: PASS" : "Self-Test Notes Document Round-Trip: FAIL");
         }
 
-        [ContextMenu("Self-Test: Old Format Pages Are Boards")]
-        public void SelfTestOldFormatDefaultsToBoard()
+        /// <summary>THE MIGRATION AT ITS REAL SEAM. NotesMigrationSelfTests pins what Normalize does to a
+        /// document held in memory; only this test proves the two things that live outside the pure layer and
+        /// so outside the offline harness — that Load actually CALLS Normalize, and that a page's board
+        /// survives Newtonsoft's polymorphic reader on the way in. Before Р4 this test asserted the opposite
+        /// («an old page comes back as the Board it is»), which was the right assertion while boards were a
+        /// kind of page; it is rewritten rather than deleted because the file it reads is the same real
+        /// format-9 file, and that file is the whole point.</summary>
+        [ContextMenu("Self-Test: Old Format Board Migrates On Load")]
+        public void SelfTestOldFormatBoardMigratesOnLoad()
         {
             bool ok = true;
 
             // A minimal pre-document file: its page carries neither Kind nor Blocks, and its group carries no
-            // IsReference. Nothing the DM wrote may be lost, and the page must come back as the board it is.
+            // IsReference. Nothing the DM wrote may be lost — the card must arrive inside a Canvas block.
             // FormatVersion 9 is what this branch's base actually shipped.
             string json =
                 "{ \"FormatVersion\": 9, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
@@ -128,14 +133,22 @@ namespace WorldGen.Persistence
             {
                 if (page.Name != "Страница 1")
                 { Debug.LogError($"FAIL old format: name «{page.Name}» — existing content must survive"); ok = false; }
-                if (page.Kind != PageKind.Board)
-                { Debug.LogError($"FAIL old format: Kind = {page.Kind}, want Board — this is why Board must be the zero value"); ok = false; }
-                if (page.Blocks == null)
-                { Debug.LogError("FAIL old format: Blocks came back null; every consumer expects an empty list"); ok = false; }
-                else if (page.Blocks.Count != 0)
-                { Debug.LogError($"FAIL old format: Blocks holds {page.Blocks.Count} entries, want 0"); ok = false; }
-                if (page.Objects.Count != 1)
-                { Debug.LogError($"FAIL old format: {page.Objects.Count} board objects survived, want 1 — the DM's card must not be dropped"); ok = false; }
+                if (page.Blocks == null || page.Blocks.Count != 2)
+                { Debug.LogError($"FAIL old format: {page.Blocks?.Count} blocks, want 2 (a Section then a Canvas) — Load is where Normalize must be called"); ok = false; }
+                else
+                {
+                    if (page.Blocks[0].Kind != BlockKind.Section)
+                    { Debug.LogError($"FAIL old format: first block is {page.Blocks[0].Kind}, want Section (I2)"); ok = false; }
+                    var canvas = page.Blocks[1];
+                    if (canvas.Kind != BlockKind.Canvas)
+                    { Debug.LogError($"FAIL old format: second block is {canvas.Kind}, want Canvas"); ok = false; }
+                    else if (canvas.CanvasObjects == null || canvas.CanvasObjects.Count != 1)
+                    { Debug.LogError($"FAIL old format: the canvas holds {canvas.CanvasObjects?.Count} objects, want 1 — the DM's card must not be dropped"); ok = false; }
+                    else if (!(canvas.CanvasObjects[0] is NoteCardData card) || card.Title != "Гарет")
+                    { Debug.LogError("FAIL old format: the card came back as the wrong type or lost its title"); ok = false; }
+                }
+                if (page.Objects != null || page.Links != null)
+                { Debug.LogError("FAIL old format: the PAGE still carries its own board after the load"); ok = false; }
             }
 
             if (loaded.Notes != null && loaded.Notes.Groups.Count > 0 && loaded.Notes.Groups[0].IsReference)
@@ -148,7 +161,7 @@ namespace WorldGen.Persistence
                 { Debug.LogError($"FAIL old format: loaded document is invalid: {string.Join("; ", problems)}"); ok = false; }
             }
 
-            Debug.Log(ok ? "Self-Test Old Format Pages Are Boards: PASS" : "Self-Test Old Format Pages Are Boards: FAIL");
+            Debug.Log(ok ? "Self-Test Old Format Board Migrates On Load: PASS" : "Self-Test Old Format Board Migrates On Load: FAIL");
         }
     }
 }

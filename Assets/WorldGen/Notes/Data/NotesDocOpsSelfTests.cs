@@ -57,9 +57,6 @@ namespace WorldGen.Notes.Data
             bool ok = true;
             var page = NotesDocOps.CreateSessionSheet("Сессия 1");
 
-            if (page.Kind != PageKind.Document)
-            { Debug.LogError($"FAIL empty sheet: Kind = {page.Kind}, want Document"); ok = false; }
-
             if (page.Blocks == null || page.Blocks.Count != 0)
             { Debug.LogError($"FAIL empty sheet: {page.Blocks?.Count} blocks, want 0 — the DM makes the sections now, not CreateSessionSheet"); ok = false; }
 
@@ -248,12 +245,6 @@ namespace WorldGen.Notes.Data
             if (!string.IsNullOrEmpty(item.LinkedPageId))
             { Debug.LogError($"FAIL normalize: unresolvable LinkedPageId «{item.LinkedPageId}» must be cleared (I3)"); ok = false; }
 
-            // A page carrying blocks but claiming Board is repaired to Document.
-            page.Kind = PageKind.Board;
-            NotesDocOps.Normalize(doc);
-            if (page.Kind != PageKind.Document)
-            { Debug.LogError($"FAIL normalize: Kind = {page.Kind}, want Document for a page that has blocks"); ok = false; }
-
             // Idempotence: a second pass changes nothing — neither text, nor depths, nor ids.
             string beforeText = Dump(page.Blocks);
             var beforeIds = new List<string>();
@@ -278,15 +269,12 @@ namespace WorldGen.Notes.Data
         {
             bool ok = true;
 
-            // This is the whole basis of "an older project loses nothing": a file written before document
-            // pages existed carries no Kind, Blocks or IsReference key, and Newtonsoft leaves such fields at
-            // their default. So the defaults ARE the migration, and they are worth pinning here rather than
-            // only in the Editor-only serializer test.
+            // This is the whole basis of "an older project loses nothing": a file written before a field
+            // existed carries no key for it, and Newtonsoft leaves such a field at its default. So the
+            // defaults ARE the migration for every ADDITIVE change, and they are worth pinning here rather
+            // than only in the Editor-only serializer test. (The board-inside-a-page change of Р4 is NOT
+            // additive, and needs real migration code — NotesMigrationSelfTests owns that.)
             var page = new NotesPage();
-            if (page.Kind != PageKind.Board)
-            { Debug.LogError($"FAIL defaults: a new page's Kind is {page.Kind}, want Board — Board must be the enum's zero value"); ok = false; }
-            if ((int)PageKind.Board != 0)
-            { Debug.LogError($"FAIL defaults: PageKind.Board = {(int)PageKind.Board}, want 0"); ok = false; }
             if (page.Blocks == null || page.Blocks.Count != 0)
             { Debug.LogError("FAIL defaults: a new page must start with an EMPTY, non-null block list"); ok = false; }
 
@@ -303,15 +291,15 @@ namespace WorldGen.Notes.Data
 
             // A hand-edited or truncated file can present a page with a null Blocks list. Normalize must
             // repair that rather than let every consumer guard for null.
-            var doc = Doc(new NotesPage { Name = "Доска", Kind = PageKind.Board });
+            var doc = Doc(new NotesPage { Name = "Доска" });
             doc.Groups[0].Pages[0].Blocks = null;
             NotesDocOps.Normalize(doc);
             if (doc.Groups[0].Pages[0].Blocks == null)
             { Debug.LogError("FAIL defaults: Normalize must replace a null block list with an empty one"); ok = false; }
-            if (doc.Groups[0].Pages[0].Kind != PageKind.Board)
-            { Debug.LogError("FAIL defaults: a board with no blocks must stay a Board"); ok = false; }
+            if (doc.Groups[0].Pages[0].Blocks.Count != 0)
+            { Debug.LogError("FAIL defaults: a page with nothing on it must stay empty — the migration has no board to move"); ok = false; }
             if (NotesDocOps.Validate(doc).Count != 0)
-            { Debug.LogError($"FAIL defaults: an empty board is valid, got: {string.Join("; ", NotesDocOps.Validate(doc))}"); ok = false; }
+            { Debug.LogError($"FAIL defaults: an empty page is valid, got: {string.Join("; ", NotesDocOps.Validate(doc))}"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Defaults Match Absent Json Keys: PASS" : "Self-Test Defaults Match Absent Json Keys: FAIL");
         }
@@ -425,8 +413,8 @@ namespace WorldGen.Notes.Data
             sheet.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Важные NPC"));
 
             var reference = NotesDocOps.EnsureReferenceGroup(doc);
-            olga = new NotesPage { Name = "Староста Ольга", Kind = PageKind.Document };
-            board = new NotesPage { Name = "Связи культа", Kind = PageKind.Board };
+            olga = new NotesPage { Name = "Староста Ольга" };
+            board = new NotesPage { Name = "Связи культа" };
             // Assigned rather than .Add()ed: NotesPage.Objects lost its `= new List<>()` initializer in Р4,
             // because a null is exactly what MigrateBoardPage reads as "this page has already been migrated".
             board.Objects = new List<CanvasObjectData>();
@@ -480,8 +468,6 @@ namespace WorldGen.Notes.Data
             { Debug.LogError("FAIL promote: the first promotion must CREATE, not link"); ok = false; }
             if (page != null && olga1.LinkedPageId != page.Id)
             { Debug.LogError("FAIL promote: the source row must point at the new page"); ok = false; }
-            if (page != null && page.Kind != PageKind.Document)
-            { Debug.LogError($"FAIL promote: promoted page Kind = {page.Kind}, want Document"); ok = false; }
 
             var refGroup = doc.Groups.Find(x => x.IsReference);
             if (refGroup == null || refGroup.Title != NotesDocOps.ReferenceGroupTitle || !refGroup.Pages.Contains(page))
@@ -608,8 +594,6 @@ namespace WorldGen.Notes.Data
             var created = NotesDocOps.FindPage(doc, firstId);
             if (created == null || created.Name != "Тихий Брод")
             { Debug.LogError($"FAIL ensurepage: page name «{created?.Name}», want «Тихий Брод» (E3)"); ok = false; }
-            if (created != null && created.Kind != PageKind.Document)
-            { Debug.LogError($"FAIL ensurepage: page Kind = {created?.Kind}, want Document — it defaults to Board (NotesData.cs) and must be said explicitly"); ok = false; }
             if (created != null && (created.Bound == null || created.Bound.Kind != WorldRefKind.Poi || created.Bound.Id != "poi-1"))
             { Debug.LogError("FAIL ensurepage: created page's Bound must carry Kind=Poi, Id=«poi-1»"); ok = false; }
             // E2 — Bound is a COPY of `bound`, not the same instance: mutating the caller's WorldRef after

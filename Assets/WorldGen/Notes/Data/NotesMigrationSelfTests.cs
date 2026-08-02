@@ -27,7 +27,7 @@ namespace WorldGen.Notes.Data
             var b = new NoteCardData { Title = "Гильдия", Body = "должна ей денег" };
             b.Position = new System.Numerics.Vector2(120f, -30f);
 
-            board = new NotesPage { Name = "Связи в городе", Kind = PageKind.Board };
+            board = new NotesPage { Name = "Связи в городе" };
             // Assigned, not .Add()ed: step 5 of this task drops the fields' `= new List<>()` initializers, and
             // assignment is the form that compiles on both sides of that change.
             board.Objects = new List<CanvasObjectData> { a, b };
@@ -35,7 +35,7 @@ namespace WorldGen.Notes.Data
             board.CameraPan = new System.Numerics.Vector2(-15f, 33f);
             board.CameraZoom = 1.75f;
 
-            sheet = new NotesPage { Name = "Сессия 1", Kind = PageKind.Document };
+            sheet = new NotesPage { Name = "Сессия 1" };
             sheet.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, "Сцены"));
             boardRef = NotesDocOps.NewBlock(BlockKind.BoardRef, 1);
             boardRef.LinkedPageId = board.Id;

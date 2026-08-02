@@ -5,18 +5,16 @@ using Newtonsoft.Json;
 
 namespace WorldGen.Notes.Data
 {
-    /// <summary>Which representation a page uses. Board MUST stay the zero value: a page saved before
-    /// document pages existed carries no "Kind" key at all, and Newtonsoft then leaves the field at
-    /// default(PageKind) — so zero is what makes every pre-existing page load back as the board it is,
-    /// with no migration code.</summary>
-    public enum PageKind { Board = 0, Document = 1 }
-
-    /// <summary>What one row of a document page is. Section MUST stay the zero value for the same reason
-    /// Board does.
+    /// <summary>What one row of a document page is. Section MUST stay the zero value: a row saved before a
+    /// field existed carries no key at all, and Newtonsoft then leaves the field at its default, so zero has
+    /// to be the kind an old row already is.
     ///
     /// CANVAS TAKES 5, NOT THE FREED 4. BoardRef = 4 is already written as a four in saved files, and an
     /// int-backed C# enum accepts any value of its underlying type without complaint — so an old BoardRef row
-    /// would deserialize as a Canvas block that silently carries no board. BoardRef stays as a TOMBSTONE: the
+    /// would deserialize as a Canvas block that silently carries no board. MEASURED, not assumed: run against
+    /// the very Newtonsoft.Json Unity ships (com.unity.nuget.newtonsoft-json 3.2.1), `{"Kind": 99}` comes back
+    /// as 99 with no exception and no fallback to zero, `{"Kind": 4}` comes back as BoardRef, an absent key
+    /// comes back as the zero value, and an unknown key is ignored. BoardRef stays as a TOMBSTONE: the
     /// value is spent forever, no new code creates one, and NotesDocOps.Normalize degrades any it finds into
     /// the plain row it always looked like.</summary>
     public enum BlockKind { Section = 0, Item = 1, Prose = 2, Image = 3, BoardRef = 4, Canvas = 5 }
@@ -58,12 +56,15 @@ namespace WorldGen.Notes.Data
         public List<NotesPage> Pages = new List<NotesPage>();
     }
 
+    /// <summary>One page. There is only ONE kind of page since Р4 — PageKind (Board/Document) is gone, and a
+    /// board is now a Canvas BLOCK inside a page like any other row. A file written before that carries a
+    /// "Kind" key which Newtonsoft simply ignores (MissingMemberHandling is Ignore by default), and
+    /// NotesDocOps.MigrateBoardPage is what turns the data it described into blocks.</summary>
     public class NotesPage
     {
         public string Id = Guid.NewGuid().ToString();
         public string Name = "Новая страница";
-        public PageKind Kind = PageKind.Board;
-        /// <summary>Document rows, empty for a Board. A FLAT list — nesting is carried by DocBlock.Depth,
+        /// <summary>Document rows. A FLAT list — nesting is carried by DocBlock.Depth,
         /// which makes reorder, collapse and JSON round-trip trivial at the cost of nothing, since nothing
         /// here goes deeper than three levels.</summary>
         public List<DocBlock> Blocks = new List<DocBlock>();

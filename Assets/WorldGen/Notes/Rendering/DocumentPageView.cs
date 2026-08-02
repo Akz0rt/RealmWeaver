@@ -933,7 +933,7 @@ namespace WorldGen.Notes.Rendering
         void OnActivePageChanged(NotesPage page)
         {
             var previous = Page;
-            Page = page != null && page.Kind == PageKind.Document ? page : null;
+            Page = page;
             bool showDocument = Page != null;
 
             // A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one
@@ -951,31 +951,14 @@ namespace WorldGen.Notes.Rendering
                 if (searchBar != null) searchBar.Close();
             }
 
-            if (boardViewport != null)
-            {
-                // A real board viewport was supplied (no current caller does this — see the class doc) —
-                // preserve the original mutual-exclusion behaviour exactly, gated by surfaceVisible the same
-                // way the no-boardViewport branch below is.
-                if (root != null) root.SetActive(surfaceVisible && showDocument);
-                boardViewport.SetActive(surfaceVisible && !showDocument);
-                if (placeholderGO != null) placeholderGO.SetActive(false);
-                if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
-            }
-            else
-            {
-                // No board viewport to hand off to: a Board-kind page still gets root shown, with the
-                // scrollable block list swapped for a one-line placeholder instead of rendering nothing.
-                // surfaceVisible is what stops this from firing when NO pane's active tab is a Page at all —
-                // see the field's own doc for the concrete PoiEditorScreen/PoiEditPanel path that needs it.
-                bool boardPage = page != null && !showDocument;
-                if (root != null) root.SetActive(surfaceVisible && (showDocument || boardPage));
-                if (viewportGO != null) viewportGO.SetActive(showDocument);
-                if (placeholderGO != null) placeholderGO.SetActive(boardPage);
-                // «+ Раздел» only makes sense for a Document page — a Board page has no Blocks/Sections to
-                // add one to, and its full-rect placeholder already spans this strip (and the rest of root)
-                // with its own message, so there is nothing left for the button to sit over.
-                if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
-            }
+            // Every page is a document since Р4 — the placeholder that used to stand in for a board page, and
+            // the boardViewport hand-off that no caller ever supplied, both go with PageKind. surfaceVisible
+            // is what stops this from firing when NO pane's active tab is a Page at all — see the field's own
+            // doc for the concrete PoiEditorScreen/PoiEditPanel path that needs it.
+            if (root != null) root.SetActive(surfaceVisible && showDocument);
+            if (viewportGO != null) viewportGO.SetActive(showDocument);
+            if (placeholderGO != null) placeholderGO.SetActive(false);
+            if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
 
             if (showDocument) Rebuild();
         }

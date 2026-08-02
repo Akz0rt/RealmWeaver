@@ -472,21 +472,7 @@ namespace WorldGen.Workspace.Rendering
             if (documentController == null || string.IsNullOrEmpty(groupId)) return;
 
             int existing = PageGroupPageCount(groupId) ?? 0;
-            // PageKind.Document EXPLICITLY, overriding CreatePage's `kind = PageKind.Board` default. The
-            // deleted sidebar relied on that default and so did the first cut of this method — faithful to
-            // the restored source, and wrong for the DM. A Board page has no editor in this shell:
-            // DocumentPageView.OnActivePageChanged (DocumentPageView.cs:395-419) nulls `Page` for anything
-            // that is not Document, hides the block viewport, shows the one-line placeholder «Холст ещё не
-            // переехал в новую оболочку.» and hides the «+ Раздел» bar with it. So «+ Страница» would hand
-            // back a page with nothing to type into — «не вижу кнопок для добавления страниц заметок» for
-            // the third time, one layer deeper each time (no button → a button the search filter hid → a
-            // button whose page cannot be written on).
-            //
-            // The DEFAULT stays Board deliberately and must not be flipped: CreatePage's own doc says it is
-            // there so every pre-existing call site keeps its behaviour, and the canvas work a later
-            // sub-project owns is what will need it. The kind is decided HERE, at the one call site that
-            // wants a writable page, which is also why no test can carry this rule — see the task report.
-            var page = documentController.CreatePage(groupId, $"Страница {existing + 1}", PageKind.Document);
+            var page = documentController.CreatePage(groupId, $"Страница {existing + 1}");
             if (page == null) return;   // the group id named nothing — CreatePage's own contract.
 
             ClearFilter();

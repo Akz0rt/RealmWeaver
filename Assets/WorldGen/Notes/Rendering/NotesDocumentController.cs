@@ -20,10 +20,10 @@ namespace WorldGen.Notes.Rendering
 
         void Awake()
         {
-            // The very first page is a SESSION SHEET (PageKind.Document), not an empty board — a DM opens
-            // the app to write prose and bullets, not to stare at a blank canvas. Before Task 10f this also
-            // seeded an eight-section Lazy-DM scaffold; that seeding is gone (NotesDocOps.CreateSessionSheet's
-            // own doc), but starting on a document page rather than a board is a separate, still-live choice.
+            // The very first page is a SESSION SHEET — a DM opens the app to write prose and bullets. Before
+            // Task 10f this also seeded an eight-section Lazy-DM scaffold; that seeding is gone
+            // (NotesDocOps.CreateSessionSheet's own doc), but the named, ready-to-write page is still a choice
+            // rather than an accident.
             var group = CreateGroup("Заметки");
             var sheet = CreateSessionSheet(group.Id);
             if (sheet != null) OpenPage(sheet.Id);
@@ -63,13 +63,13 @@ namespace WorldGen.Notes.Rendering
 
         // ── Page CRUD ──────────────────────────────────────────────────────────
 
-        /// <summary>Creates a page of the given kind. The kind defaults to Board so every existing call site
-        /// keeps its current behaviour; callers that want a document say so explicitly.</summary>
-        public NotesPage CreatePage(string groupId, string name, PageKind kind = PageKind.Board)
+        /// <summary>Creates a page. There is one kind of page since Р4 — the `kind` parameter that used to
+        /// default to Board is gone with PageKind itself.</summary>
+        public NotesPage CreatePage(string groupId, string name)
         {
             var group = FindGroup(groupId);
             if (group == null) return null;
-            var page = new NotesPage { Name = name, Kind = kind };
+            var page = new NotesPage { Name = name };
             group.Pages.Add(page);
             OnDocumentChanged?.Invoke();
             return page;
@@ -77,15 +77,13 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>Creates a blank session sheet (NotesDocOps.CreateSessionSheet — no seeded sections since
         /// Task 10f), auto-named «Сессия N» where N is one past the number of document pages already in that
-        /// group.</summary>
+        /// group. Every page in a group counts since Р4 — there is no second kind left to filter out.</summary>
         public NotesPage CreateSessionSheet(string groupId)
         {
             var group = FindGroup(groupId);
             if (group == null) return null;
 
-            int existing = 0;
-            foreach (var p in group.Pages)
-                if (p.Kind == PageKind.Document) existing++;
+            int existing = group.Pages.Count;
 
             var page = NotesDocOps.CreateSessionSheet($"Сессия {existing + 1}");
             group.Pages.Add(page);
