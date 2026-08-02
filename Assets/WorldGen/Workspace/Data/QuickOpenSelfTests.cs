@@ -416,5 +416,51 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Hit To Link Token: PASS" : "Self-Test Hit To Link Token: FAIL");
         }
+
+        /// <summary>The drag gesture's half of the same rule — see QuickOpen.TryTokenForSurface. A wrong
+        /// answer here never throws: it makes a token pointing at something the resolver cannot find, which
+        /// renders as permanently muted prose and looks like the DM mistyped a name.</summary>
+        [ContextMenu("Self-Test: Surface To Link Token")]
+        public void SelfTestSurfaceToLinkToken()
+        {
+            bool ok = true;
+
+            if (!QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = SurfaceKind.Page, Id = "page-7" },
+                                              out var kind, out var id)
+                || kind != NotesLinkOps.KindPage || id != "page-7")
+            { Debug.LogError($"FAIL: a page surface gave ({kind}/{id}), want (page/page-7)"); ok = false; }
+
+            if (!QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" },
+                                              out kind, out id)
+                || kind != "poi" || id != "poi-1")
+            { Debug.LogError($"FAIL: a POI editor surface gave ({kind}/{id}), want (poi/poi-1)"); ok = false; }
+
+            // The world map carries an empty id by contract — nothing to point at.
+            if (QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" }, out _, out _))
+            { Debug.LogError("FAIL: the world map was accepted as a drag source"); ok = false; }
+
+            // The interior surfaces are addressed by a SurfaceIds composite, which is not what [[poi:…]]
+            // means — an accepted one would produce a link that can never resolve.
+            string interior = SurfaceIds.Interior("poi-1", 4);
+            foreach (var refused in new[] { SurfaceKind.Settlement, SurfaceKind.BuildingInterior,
+                                            SurfaceKind.Dungeon, SurfaceKind.BattleGrid })
+                if (QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = refused, Id = interior }, out _, out _))
+                { Debug.LogError($"FAIL: {refused} was accepted as a drag source"); ok = false; }
+
+            if (QuickOpen.TryTokenForSurface(null, out _, out _)
+                || QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = SurfaceKind.Page, Id = "" }, out _, out _))
+            { Debug.LogError("FAIL: a surface with no id was accepted"); ok = false; }
+
+            // The same round trip the hit test makes: what this describes must read back as itself.
+            if (QuickOpen.TryTokenForSurface(new SurfaceRef { Kind = SurfaceKind.PoiEditor, Id = "poi-1" },
+                                             out kind, out id))
+            {
+                var spans = NotesLinkOps.ParseSpans(NotesLinkOps.MakeToken(kind, id, "Ржавый Якорь"));
+                if (spans.Count != 1 || spans[0].Kind != "poi" || spans[0].Id != "poi-1")
+                { Debug.LogError("FAIL: the token built from a surface did not parse back into it"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Surface To Link Token: PASS" : "Self-Test Surface To Link Token: FAIL");
+        }
     }
 }

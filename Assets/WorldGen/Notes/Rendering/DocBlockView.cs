@@ -630,21 +630,74 @@ namespace WorldGen.Notes.Rendering
         /// therefore the display offset that Task 7's DisplayText.ToSource expects, and picking it now means
         /// that task changes one line here instead of discovering an off-by-a-tag.</summary>
         int SourceCaretFromPointer(PointerEventData eventData)
-        {
-            string source = data?.Text ?? "";
-            if (source.Length == 0) return 0;
+            => SourceCaretFromScreen(eventData.position, eventData.pressEventCamera, out _);
 
-            int nearest = TMP_TextUtilities.FindNearestCharacter(Display, eventData.position, eventData.pressEventCamera, true);
+        /// <summary>The same answer for a pointer that is not a click — a drag hovering over this row (Task
+        /// 11). Reports the DISPLAY offset as well, because an insertion marker has to be drawn against the
+        /// glyphs the DM can see, and converting a source offset back into a display one would be a second
+        /// mapping that could disagree with this one.</summary>
+        public int SourceCaretFromScreen(Vector2 screenPos, Camera cam, out int displayCaret)
+        {
+            displayCaret = 0;
+            string source = data?.Text ?? "";
+            if (source.Length == 0 || Display == null) return 0;
+
+            int nearest = TMP_TextUtilities.FindNearestCharacter(Display, screenPos, cam, true);
             var info = Display.textInfo;
-            if (nearest < 0 || info == null || nearest >= info.characterCount) return source.Length;
+            if (nearest < 0 || info == null || nearest >= info.characterCount)
+            {
+                displayCaret = info != null ? info.characterCount : 0;
+                return source.Length;
+            }
 
             RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                Display.rectTransform, eventData.position, eventData.pressEventCamera, out var local);
+                Display.rectTransform, screenPos, cam, out var local);
 
             var ci = info.characterInfo[nearest];
-            int displayCaret = local.x < (ci.origin + ci.xAdvance) * 0.5f ? nearest : nearest + 1;
+            displayCaret = local.x < (ci.origin + ci.xAdvance) * 0.5f ? nearest : nearest + 1;
             return DisplayToSource(displayCaret);
         }
+
+        /// <summary>Where to draw an insertion marker for a display offset, in world space: the top and
+        /// bottom of the caret's line, and the x it sits at.
+        ///
+        /// READS THE RESTING LABEL (`Display`), not the edit field, because this answers for a row nobody is
+        /// editing — the row a drag is hovering over. TryGetCaretLineWorldY is its counterpart for the row
+        /// that IS being edited, and the two are separate for exactly that reason rather than by
+        /// oversight.</summary>
+        public bool TryGetDropMarker(int displayCaret, out Vector3 top, out Vector3 bottom)
+        {
+            top = bottom = Vector3.zero;
+            if (Display == null) return false;
+
+            var rt = Display.rectTransform;
+            var info = Display.textInfo;
+            if (info == null || info.characterCount == 0 || info.lineCount == 0)
+            {
+                // An empty row still has a place to drop into — its own rect, one line tall by construction.
+                rt.GetWorldCorners(cornerBuffer);
+                top = cornerBuffer[1];
+                bottom = cornerBuffer[0];
+                return true;
+            }
+
+            // A caret one past the last character sits at that character's TRAILING edge; every other caret
+            // sits at its own character's leading edge.
+            bool afterLast = displayCaret >= info.characterCount;
+            int index = Mathf.Clamp(afterLast ? info.characterCount - 1 : displayCaret, 0, info.characterCount - 1);
+            var ci = info.characterInfo[index];
+            float x = afterLast ? ci.origin + ci.xAdvance : ci.origin;
+
+            var line = info.lineInfo[Mathf.Clamp(ci.lineNumber, 0, info.lineCount - 1)];
+            top = rt.TransformPoint(new Vector3(x, line.ascender, 0f));
+            bottom = rt.TransformPoint(new Vector3(x, line.descender, 0f));
+            return true;
+        }
+
+        /// <summary>Whether a link can be dropped INTO this row's text at all. A picture has no text to put
+        /// one in, and a card's row is a rendered reference rather than prose the DM owns — both take a drop
+        /// as a new row beside them instead.</summary>
+        public bool AcceptsText => data != null && data.Kind != BlockKind.Image && data.Kind != BlockKind.BoardRef;
 
         /// <summary>Display offset → source offset, through the map the last RefreshDisplay built. Without it
         /// every click into a row containing a link would miss by exactly the machinery's length — the

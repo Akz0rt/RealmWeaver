@@ -1004,6 +1004,23 @@ namespace WorldGen.Workspace.Rendering
                 click.OnRightClick = screenPos => NavContextMenu.Show(builtinFont, screenPos,
                     ("Открыть рядом", () => controller.Open(node.Target, node.Title, inOtherPane: true), false));
             }
+
+            // The row becomes a drag source, if what it names can be a link at all — the world map
+            // cannot (no id), and QuickOpen.TryTokenForSurface is where that rule lives rather than here, so
+            // the drag and the Ctrl+K picker cannot come to different conclusions about the same row.
+            //
+            // Added LAST, after every other wiring, so a row that begins a drag is a fully built one. It does
+            // NOT disturb the click above: uGUI starts a drag only past its own movement threshold, and a
+            // release over the row it was pressed on is delivered as a click INSTEAD of a drop (the two are
+            // opposite branches of one `if` in the input module), so the two gestures cannot both fire.
+            if (QuickOpen.TryTokenForSurface(node.Target, out string linkKind, out string linkId))
+            {
+                var drag = rowGO.AddComponent<NavRowDragSource>();
+                drag.Kind = linkKind;
+                drag.Id = linkId;
+                drag.Name = node.Title;
+                drag.Font = builtinFont;
+            }
         }
 
         /// <summary>The text arrives PRE-SELECTED, which Task 10h's auto-rename depends on (typing must
@@ -1038,6 +1055,110 @@ namespace WorldGen.Workspace.Rendering
     /// IPointerClickHandler on the row's own GameObject. Deliberately not a Button (whose own OnPointerClick
     /// would fire alongside this one on the SAME GameObject, double-dispatching the left-click) — a plain
     /// sibling class in this file, the same arrangement TabStripView.cs uses for TabHoverReveal.</summary>
+    /// <summary>Lets a row be dragged out of the navigator and onto a page, where LinkDropTarget turns it
+    /// into a link (Р2 Task 11). Only the payload and the ghost live here — the whole question of WHERE a
+    /// drop lands, and what it does, belongs to the page.
+    ///
+    /// THE PAYLOAD IS CLEARED UNCONDITIONALLY on end-drag, including when the drop landed on nothing at all.
+    /// uGUI delivers the drop BEFORE the end-drag (opposite branches of one release path, in that order), so
+    /// clearing here cannot arrive too early — and a drag that ends over the desktop must not leave the next
+    /// one carrying this object.
+    ///
+    /// THE GHOST RAYCASTS NOTHING. It follows the cursor, so anything it caught would be caught instead of
+    /// the row underneath — the drop would resolve against the label the DM is dragging rather than the prose
+    /// they are aiming at. Its own overlay Canvas puts it above every panel, the same arrangement
+    /// NavContextMenu uses for the same reason.</summary>
+    class NavRowDragSource : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
+    {
+        public string Kind;
+        public string Id;
+        public string Name;
+        public Font Font;
+
+        const string GhostCanvasName = "NavDragGhostCanvas";
+
+        GameObject ghostGO;
+        RectTransform ghostRect;
+
+        public void OnBeginDrag(PointerEventData eventData)
+        {
+            if (eventData.button != PointerEventData.InputButton.Left) return;
+            LinkDropTarget.Dragging = new LinkDropTarget.LinkDragPayload { Kind = Kind, Id = Id, Name = Name };
+            BuildGhost();
+            MoveGhost(eventData.position);
+        }
+
+        public void OnDrag(PointerEventData eventData) => MoveGhost(eventData.position);
+
+        public void OnEndDrag(PointerEventData eventData)
+        {
+            LinkDropTarget.Dragging = null;
+            if (ghostGO != null) Destroy(ghostGO);
+            ghostGO = null;
+            ghostRect = null;
+        }
+
+        /// <summary>A row destroyed mid-drag — the navigator rebuilds on every document change, including one
+        /// the drag itself could cause — never receives its own OnEndDrag, and the payload would outlive the
+        /// gesture. Cleared here too, guarded so that a row destroyed by an ordinary rebuild while some OTHER
+        /// row is being dragged does not cancel that drag.</summary>
+        void OnDestroy()
+        {
+            if (ghostGO != null) Destroy(ghostGO);
+            if (LinkDropTarget.Dragging != null && ghostRect != null) LinkDropTarget.Dragging = null;
+        }
+
+        void MoveGhost(Vector2 screenPos)
+        {
+            if (ghostRect == null) return;
+            // Offset so the label sits beside the cursor rather than under it, where it would cover the very
+            // character the drop is being aimed at.
+            ghostRect.position = new Vector3(screenPos.x + 12f, screenPos.y - 12f, 0f);
+        }
+
+        void BuildGhost()
+        {
+            if (ghostGO != null) return;
+
+            var canvasGO = new GameObject(GhostCanvasName);
+            var canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 1000;
+            canvasGO.AddComponent<CanvasScaler>();
+            ghostGO = canvasGO;
+
+            var labelGO = new GameObject("Ghost", typeof(RectTransform));
+            labelGO.transform.SetParent(canvasGO.transform, false);
+            ghostRect = labelGO.GetComponent<RectTransform>();
+            ghostRect.pivot = new Vector2(0f, 1f);
+            ghostRect.sizeDelta = new Vector2(200f, 24f);
+
+            var bg = labelGO.AddComponent<Image>();
+            ThemeService.Tag(bg, ThemeRole.Elev, 0.92f);
+            bg.raycastTarget = false;
+
+            var textGO = new GameObject("Label", typeof(RectTransform));
+            textGO.transform.SetParent(labelGO.transform, false);
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = new Vector2(8f, 0f);
+            textRect.offsetMax = new Vector2(-8f, 0f);
+            var text = textGO.AddComponent<Text>();
+            text.text = Name;
+            text.font = Font;
+            text.fontSize = 13;
+            text.alignment = TextAnchor.MiddleLeft;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Truncate;
+            text.raycastTarget = false;
+            ThemeService.Tag(text, ThemeRole.Txt);
+
+            // Exactly as wide as the name it carries, so a short one does not drag a long empty plate around.
+            ghostRect.sizeDelta = new Vector2(text.preferredWidth + 16f, 24f);
+        }
+    }
+
     class NavRowClickRouter : MonoBehaviour, IPointerClickHandler
     {
         public Action OnLeftClick;

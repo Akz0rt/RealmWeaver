@@ -274,6 +274,33 @@ namespace WorldGen.Workspace.Data
             return true;
         }
 
+        /// <summary>The same question asked of a SURFACE rather than a search hit: what would a link to this
+        /// tab's target look like, if it can be one at all. The navigator's rows are SurfaceRefs, so the drag
+        /// gesture (Р2 Task 11) asks this; the palette's rows are QuickHits, so the button asks the one above.
+        ///
+        /// TWO FUNCTIONS, ONE RULE, AND THEY CANNOT DISAGREE — but only because of a fact worth writing down
+        /// rather than assuming: WorldSurface.PoiEditor is the sole producer of SurfaceKind.PoiEditor and it
+        /// takes a bare POI id, the same id a WorldObjectRef carries. The other world surfaces do NOT have
+        /// that property — Settlement/BuildingInterior/Dungeon ids are SurfaceIds.Interior composites
+        /// (`poiId#roomId`), which are not what [[poi:…]] means — and they are refused here by simply not
+        /// being listed, rather than by a second check that would be the redundant half of one guard.
+        ///
+        /// THE WORLD MAP IS REFUSED for the same reason as above: SurfaceKind.WorldMap carries an empty id by
+        /// contract, so there is nothing to point at.</summary>
+        public static bool TryTokenForSurface(SurfaceRef target, out string kind, out string id)
+        {
+            kind = null;
+            id = null;
+            if (target == null || string.IsNullOrEmpty(target.Id)) return false;
+
+            if (target.Kind == SurfaceKind.Page) kind = NotesLinkOps.KindPage;
+            else if (target.Kind == SurfaceKind.PoiEditor) kind = NotesLinkOps.KindOf(WorldRefKind.Poi);
+            else return false;
+
+            id = target.Id;
+            return true;
+        }
+
         /// <summary>Resolves a link token's target to its CURRENT name, from the two sources Search already
         /// receives: the document for "page", the world list for the three WorldRefKind names. Returns null
         /// for a target that no longer exists, which makes BuildDisplay fall back to the copy stored in the

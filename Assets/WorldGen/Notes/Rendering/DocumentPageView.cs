@@ -267,27 +267,66 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The caret lands AFTER the token, where the DM was going to keep typing.</summary>
         public bool InsertTokenAtCaret(string kind, string id, string name)
+            => InsertTokenInto(LastFocusedBlockId, LastFocusedCaret, kind, id, name);
+
+        /// <summary>Writes a link into a NAMED row at a named offset — the toolbar's route above passes the
+        /// row the caret was last in, the drag (Task 11) passes the row the pointer was over. One
+        /// implementation, so a dropped link and a chosen one are the same edit.</summary>
+        public bool InsertTokenInto(string blockId, int caretOffset, string kind, string id, string name)
         {
             if (Page == null || string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(id)) return false;
-            if (string.IsNullOrEmpty(LastFocusedBlockId)) return false;
+            if (string.IsNullOrEmpty(blockId)) return false;
 
             DocBlock target = null;
             foreach (var b in Page.Blocks)
-                if (b.Id == LastFocusedBlockId) { target = b; break; }
+                if (b.Id == blockId) { target = b; break; }
             if (target == null) return false;
 
             string text = target.Text ?? "";
             // -1 is the "end of the text" convention DocKeyResult uses, and a caret recorded against a
             // LONGER version of this row (an undo since, say) must not index past its end.
-            int caret = LastFocusedCaret < 0 || LastFocusedCaret > text.Length ? text.Length : LastFocusedCaret;
+            int caret = caretOffset < 0 || caretOffset > text.Length ? text.Length : caretOffset;
 
-            PushHistory(LastFocusedBlockId, caret);
+            PushHistory(blockId, caret);
 
             string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
             target.Text = text.Substring(0, caret) + token + text.Substring(caret);
 
             OnDocumentMutated?.Invoke();
             RebuildAndFocus(target.Id, caret + token.Length);
+            return true;
+        }
+
+        /// <summary>A link dropped BETWEEN rows becomes a row of its own, holding nothing else.
+        ///
+        /// I2 IS THIS METHOD'S TO KEEP: NotesDocOps.Insert is a bare list insert that clamps no depths, so a
+        /// wrong answer here ships silently until Validate runs. A non-empty page's first block must be a
+        /// Section, so a drop aimed above the very first row lands just BELOW it instead of displacing it —
+        /// the DM sees the link one row further down than they aimed, which is a visible, correctable
+        /// surprise rather than an invalid document. On a page with no blocks at all the drop makes the
+        /// Section itself: there is no other block whose depth it could take, and a page has to start with
+        /// one.
+        ///
+        /// ONE UNDO for the whole drop, pushed before anything changes — Ctrl+Z removes the row, not just
+        /// the token inside it.</summary>
+        public bool DropLinkAsNewBlock(int blockIndex, string kind, string id, string name)
+        {
+            if (Page == null || string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(id)) return false;
+
+            bool empty = Page.Blocks.Count == 0;
+            int at = empty ? 0 : Mathf.Clamp(blockIndex, 1, Page.Blocks.Count);
+            // The row above is what the new one belongs with — dropping under a sub-point puts the link at
+            // that sub-point's level rather than snapping back out to the section.
+            int depth = empty ? 0 : Mathf.Max(1, Page.Blocks[at - 1].Depth);
+
+            PushHistory(LastFocusedBlockId, LastFocusedCaret);
+
+            string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
+            var block = NotesDocOps.NewBlock(empty ? BlockKind.Section : BlockKind.Item, depth, token);
+            NotesDocOps.Insert(Page.Blocks, at, block);
+
+            OnDocumentMutated?.Invoke();
+            RebuildAndFocus(block.Id, token.Length);
             return true;
         }
 
@@ -567,6 +606,9 @@ namespace WorldGen.Notes.Rendering
             // Under the rows, inside the scrolling column — see PageFooterView's own doc for why it is a
             // child of Content rather than another fixed strip.
             footer = PageFooterView.Attach(content, this);
+            // On `root`, which is where a drop that landed on any row is delivered — see LinkDropTarget's
+            // own doc. Needs nothing from the workspace, so it is wired here rather than through the bridge.
+            LinkDropTarget.Attach(this);
 
             documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
@@ -793,6 +835,11 @@ namespace WorldGen.Notes.Rendering
             // Same treatment, same reasons — its rows are buttons whose onClick lists a reload does not
             // restore, and Attach replaces any bar it finds rather than trying to repair one.
             if (content != null) footer = PageFooterView.Attach(content, this);
+
+            // And the drop target, for the third time and the third reason: a reload leaves the component
+            // alive on the recovered root with every field it needs nulled, so it is replaced rather than
+            // found.
+            LinkDropTarget.Attach(this);
 
             // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
             // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
