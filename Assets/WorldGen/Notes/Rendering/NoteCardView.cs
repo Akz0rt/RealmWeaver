@@ -122,6 +122,18 @@ namespace WorldGen.Notes.Rendering
                 // TEXT, and a stray '<' in it must stay a '<' rather than be eaten as markup. Set on the
                 // FIELD, not the label — TMP_InputField pushes its own richText onto its text component.
                 bodyField.richText = false;
+                // ВИДНО, ГДЕ ПЕЧАТАЕШЬ И ЧТО ВЫДЕЛЕНО. По умолчанию каретка TMP — это одна серая линия в
+                // цвет текста шириной 1 px, а доска рисуется в масштабе (зум меньше единицы делает её
+                // тоньше пикселя и она пропадает). Акцентный цвет и двойная ширина держатся на любом зуме.
+                //
+                // Цвета взяты у темы разово, а не тегом: caretColor и selectionColor — обычные поля
+                // TMP_InputField, а не Graphic, и ThemeService.Tag их не перекрашивает. Переключение
+                // темы при открытой карточке оставит их прежними до следующей перестройки доски.
+                bodyField.customCaretColor = true;
+                bodyField.caretColor = ThemeService.Get(ThemeRole.Accent);
+                bodyField.caretWidth = 2;
+                var sel = ThemeService.Get(ThemeRole.Accent);
+                bodyField.selectionColor = new Color(sel.r, sel.g, sel.b, 0.35f);
                 // Off, for the same reason DocBlockView turns it off: on a writing surface it loses a
                 // paragraph to one keystroke with no undo behind it.
                 bodyField.restoreOriginalTextOnEscape = false;
