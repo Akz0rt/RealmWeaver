@@ -1,4 +1,6 @@
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using WorldGen.Notes.Data;
 
@@ -380,6 +382,13 @@ namespace WorldGen.Notes.Rendering
         {
             if (Keyboard.current == null) return;
             if (!Keyboard.current.deleteKey.wasPressedThisFrame) return;
+
+            // ПОКА КАРЕТКА В ПОЛЕ ВВОДА, DELETE ПРАВИТ ТЕКСТ. Мина лежала здесь и до этого арка, просто
+            // редко стреляла: чтобы попасть в поле карточки, надо было сначала кликнуть по нему, а объект
+            // к тому моменту уже выделен. Теперь каретка встаёт в текст сама при каждой новой заметке, и
+            // первая же опечатка на Delete предлагала бы удалить саму карточку.
+            var focused = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
+            if (focused != null && focused.GetComponent<TMP_InputField>() != null) return;
 
             if (selectedLinkId != null)
             {
