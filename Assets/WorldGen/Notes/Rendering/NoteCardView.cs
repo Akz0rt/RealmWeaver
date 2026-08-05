@@ -133,6 +133,19 @@ namespace WorldGen.Notes.Rendering
             Refresh();
         }
 
+        /// <summary>Ставит каретку в текст карточки — вызывается сразу после того, как карточку вставили,
+        /// чтобы ДМ печатал без лишнего клика.
+        ///
+        /// Молча ничего не делает у карточки, построенной с editable: false — у неё поля ввода не
+        /// существует вовсе (см. Initialize: в потоке страницы TMP_InputField съедал бы колесо). Это
+        /// обычное состояние, а не ошибка.</summary>
+        public void FocusBody()
+        {
+            if (bodyField == null) return;
+            bodyField.Select();
+            bodyField.ActivateInputField();
+        }
+
         public void Refresh()
         {
             if (data == null) return;

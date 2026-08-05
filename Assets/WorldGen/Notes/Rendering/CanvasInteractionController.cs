@@ -277,9 +277,21 @@ namespace WorldGen.Notes.Rendering
             _ => CanvasToolKind.Select,
         };
 
-        /// <summary>Ставит каретку в текст только что созданной карточки. Тело — в следующей задаче.</summary>
+        /// <summary>КАДРОМ ПОЗЖЕ, И ЭТО НЕ ПЕРЕСТРАХОВКА. TMP_InputField, собранный в этом же кадре, ещё не
+        /// проходил вёрстку и фокус не принимает — Р2 потратил на родственную задержку («новая строка узнаёт
+        /// свою высоту кадром позже») целый круг проверок у ДМ.</summary>
         void FocusNoteBodyNextFrame(string objectId)
         {
+            if (!isActiveAndEnabled) return;
+            StartCoroutine(FocusNoteBodyCoroutine(objectId));
+        }
+
+        System.Collections.IEnumerator FocusNoteBodyCoroutine(string objectId)
+        {
+            yield return null;
+            // За этот кадр карточку могли успеть отменить через Ctrl+Z — тогда вида просто нет.
+            if (canvasController != null && canvasController.GetView(objectId) is NoteCardView card)
+                card.FocusBody();
         }
 
         void HandlePan()
