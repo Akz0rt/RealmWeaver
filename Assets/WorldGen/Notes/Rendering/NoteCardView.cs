@@ -19,6 +19,21 @@ namespace WorldGen.Notes.Rendering
         TMP_Text titleText;
         TMP_InputField bodyField;
 
+        /// <summary>Рамка карточки — она же корневой Image. Цвет ей ставит ApplyStyle из палитры, и
+        /// ИМЕННО ПОЭТОМУ на неё не вешается тег темы: тег перекрасил бы её при смене темы, стерев
+        /// выбор ДМ. Рабочая область (bodyBg) тег, наоборот, сохраняет и за темой следует.</summary>
+        Image frameImage;
+        RectTransform titleRoot;
+        TMP_InputField titleField;
+        TMP_Text titlePlaceholder;
+        RectTransform bodyRect;
+        TMP_Text bodyText;
+        bool editable;
+
+        /// <summary>Шаг отмены за этот заход в ЗАГОЛОВОК уже взят. Отдельный от textEditPushed:
+        /// заголовок и текст — два разных поля, и заход в одно не закрывает заход в другое.</summary>
+        bool titleEditPushed;
+
         /// <summary>The body when it is NOT editable. Exactly one of this and bodyField is ever non-null —
         /// which is what Refresh reads to know which half was built.</summary>
         TMP_Text bodyLabel;
@@ -62,54 +77,75 @@ namespace WorldGen.Notes.Rendering
         public void Initialize(NoteCardData cardData, RectTransform canvasContainer, bool editable)
         {
             data = cardData;
+            this.editable = editable;
             rect = GetComponent<RectTransform>();
             transform.SetParent(canvasContainer, false);
             rect.pivot = new Vector2(0.5f, 0.5f);
 
+            // Фон карточки стал РАМКОЙ: рабочая область лежит поверх него и не достаёт до краёв на
+            // CardChrome.BorderPx. Тега темы здесь больше нет — цвет приходит из палитры (см. frameImage).
             var bg = gameObject.AddComponent<Image>();
-            ThemeService.Tag(bg, ThemeRole.Panel2, 0.95f);
+            bg.sprite = RoundedRectSprite.Get();
+            bg.type = Image.Type.Sliced;
+            frameImage = bg;
 
             var titleGO = new GameObject("Title", typeof(RectTransform));
             titleGO.transform.SetParent(transform, false);
-            titleText = titleGO.AddComponent<TextMeshProUGUI>();
+            titleRoot = titleGO.GetComponent<RectTransform>();
+            titleRoot.anchorMin = new Vector2(0f, 1f);
+            titleRoot.anchorMax = new Vector2(1f, 1f);
+            titleRoot.pivot = new Vector2(0.5f, 1f);
+            titleRoot.anchoredPosition = new Vector2(0f, -CardChrome.BorderPx);
+            titleRoot.sizeDelta = new Vector2(-12f, CardChrome.HeaderHeightPx);
+
+            var titleTextGO = new GameObject("Text", typeof(RectTransform));
+            titleTextGO.transform.SetParent(titleGO.transform, false);
+            titleText = titleTextGO.AddComponent<TextMeshProUGUI>();
             // Guarded rather than assigned outright, the way NotesTypography.ApplyBody guards: a missing
             // font asset is a real state (it complains loudly and returns null), and writing null into
             // TMP_Text.font turns a legible fallback into a NullReferenceException at first layout.
             if (NotesTypography.Bold != null) titleText.font = NotesTypography.Bold;
-            titleText.fontSize = 14f;
-            titleText.alignment = TextAlignmentOptions.TopLeft;
+            titleText.fontSize = CardChrome.TitlePointSize;
+            titleText.alignment = TextAlignmentOptions.Left;
             titleText.raycastTarget = false;
-            ThemeService.Tag(titleText, ThemeRole.Txt);
-            var titleRect = titleGO.GetComponent<RectTransform>();
-            titleRect.anchorMin = new Vector2(0f, 1f);
-            titleRect.anchorMax = new Vector2(1f, 1f);
-            titleRect.pivot = new Vector2(0.5f, 1f);
-            titleRect.anchoredPosition = new Vector2(0f, -4f);
-            titleRect.sizeDelta = new Vector2(-8f, 22f);
+            // Тега темы у заголовка НЕТ намеренно: он лежит на цветной рамке, и его цвет считает
+            // ApplyStyle по яркости этой рамки. Тег вернул бы его к цвету темы на первой же смене темы.
+            var titleTextRect = titleTextGO.GetComponent<RectTransform>();
+            titleTextRect.anchorMin = Vector2.zero;
+            titleTextRect.anchorMax = Vector2.one;
+            titleTextRect.sizeDelta = Vector2.zero;
 
             var bodyGO = new GameObject("Body", typeof(RectTransform));
             bodyGO.transform.SetParent(transform, false);
-            var bodyRect = bodyGO.GetComponent<RectTransform>();
+            bodyRect = bodyGO.GetComponent<RectTransform>();
             bodyRect.anchorMin = Vector2.zero;
             bodyRect.anchorMax = Vector2.one;
-            bodyRect.offsetMin = new Vector2(4f, 4f);
-            bodyRect.offsetMax = new Vector2(-4f, -26f);
+            bodyRect.offsetMin = new Vector2(CardChrome.BorderPx, CardChrome.BorderPx);
+            bodyRect.offsetMax = new Vector2(-CardChrome.BorderPx, -(CardChrome.BorderPx + CardChrome.HeaderHeightPx));
+
+            // РАБОЧАЯ ОБЛАСТЬ ОСТАЁТСЯ ЦВЕТА ТЕМЫ — цвет ДМ задаёт только рамке. Поэтому тег Panel2
+            // переезжает сюда с корневого фона, а не пропадает: иначе внутренность карточки застыла
+            // бы в цвете, который был на момент сборки, и перестала бы следить за светлой/тёмной темой.
+            var bodyBg = bodyGO.AddComponent<Image>();
+            bodyBg.sprite = RoundedRectSprite.Get();
+            bodyBg.type = Image.Type.Sliced;
+            ThemeService.Tag(bodyBg, ThemeRole.Panel2, 0.95f);
 
             var bodyTextGO = new GameObject("Text", typeof(RectTransform));
             bodyTextGO.transform.SetParent(bodyGO.transform, false);
-            var bodyText = bodyTextGO.AddComponent<TextMeshProUGUI>();
+            bodyText = bodyTextGO.AddComponent<TextMeshProUGUI>();
             if (NotesTypography.Body != null) bodyText.font = NotesTypography.Body;
-            bodyText.fontSize = 12f;
+            bodyText.fontSize = CardChrome.BodyPointSize(data.FontSize);
             ThemeService.Tag(bodyText, ThemeRole.Txt);
             var bodyTextRect = bodyTextGO.GetComponent<RectTransform>();
             bodyTextRect.anchorMin = Vector2.zero;
             bodyTextRect.anchorMax = Vector2.one;
-            bodyTextRect.sizeDelta = Vector2.zero;
+            bodyTextRect.offsetMin = new Vector2(4f, 4f);
+            bodyTextRect.offsetMax = new Vector2(-4f, -4f);
 
             if (editable)
             {
-                var bodyBg = bodyGO.AddComponent<Image>();
-                bodyBg.color = new Color(1f, 1f, 1f, 0.01f);
+                BuildTitleField(titleGO);
 
                 // ВЫКЛЮЧАЕМ ОБЪЕКТ ДО AddComponent И ВКЛЮЧАЕМ ПОСЛЕ — это не осторожность, это единственный
                 // способ вообще получить каретку. TMP_InputField создаёт объект каретки в OnEnable и только
@@ -124,6 +160,11 @@ namespace WorldGen.Notes.Rendering
 
                 bodyField = bodyGO.AddComponent<TMP_InputField>();
                 bodyField.targetGraphic = bodyBg;
+                // TMP_InputField — это Selectable, и её ColorTint по умолчанию перекрашивает
+                // targetGraphic на наведении и фокусе, воюя с ThemeService.Tag. Пока фон рабочей
+                // области был прозрачным на 0.01, этого не было видно; теперь он непрозрачный, и без
+                // этой строки карточка темнела бы под курсором. Та же ловушка — в NotesToolbar.cs:107.
+                bodyField.transition = Selectable.Transition.None;
                 // ОБЯЗАТЕЛЬНО, ХОТЯ ВЫГЛЯДИТ НЕОБЯЗАТЕЛЬНЫМ. TMP_InputField разыменовывает m_TextViewport
                 // без единой проверки, как только курсор выделения уезжает за границу поля
                 // (MouseDragOutsideRect, TMP_InputField.cs:1936) — а туда попадает всякий, кто тянет мышью
@@ -200,8 +241,65 @@ namespace WorldGen.Notes.Rendering
                 bodyText.text = data.Body;
             }
 
-            titleText.text = data.Title;
+            if (titleField == null) titleText.text = data.Title;
             Refresh();
+        }
+
+        /// <summary>Заголовок в развёрнутой доске редактируется так же, как текст карточки, и по тем же
+        /// правилам: объект выключается до AddComponent (иначе TMP не создаст каретку — см. длинный
+        /// комментарий у тела карточки), а шаг отмены берётся раз за заход и на каждом пробеле.</summary>
+        void BuildTitleField(GameObject titleGO)
+        {
+            var placeholderGO = new GameObject("Placeholder", typeof(RectTransform));
+            placeholderGO.transform.SetParent(titleGO.transform, false);
+            titlePlaceholder = placeholderGO.AddComponent<TextMeshProUGUI>();
+            if (NotesTypography.Bold != null) titlePlaceholder.font = NotesTypography.Bold;
+            titlePlaceholder.fontSize = CardChrome.TitlePointSize;
+            titlePlaceholder.alignment = TextAlignmentOptions.Left;
+            titlePlaceholder.raycastTarget = false;
+            titlePlaceholder.text = "Заголовок";
+            var placeholderRect = placeholderGO.GetComponent<RectTransform>();
+            placeholderRect.anchorMin = Vector2.zero;
+            placeholderRect.anchorMax = Vector2.one;
+            placeholderRect.sizeDelta = Vector2.zero;
+
+            titleGO.SetActive(false);
+
+            titleField = titleGO.AddComponent<TMP_InputField>();
+            titleField.transition = Selectable.Transition.None;
+            titleField.textViewport = titleRoot;
+            titleField.textComponent = titleText;
+            titleField.placeholder = titlePlaceholder;
+            titleField.lineType = TMP_InputField.LineType.SingleLine;
+            titleField.richText = false;
+            titleField.customCaretColor = true;
+            titleField.caretColor = ThemeService.Get(ThemeRole.Accent);
+            titleField.caretWidth = 2;
+            var sel = ThemeService.Get(ThemeRole.Accent);
+            titleField.selectionColor = new Color(sel.r, sel.g, sel.b, 0.35f);
+            // Как и у тела карточки: Esc иначе теряет написанное, и позади этого нет шага отмены.
+            titleField.restoreOriginalTextOnEscape = false;
+
+            titleField.onValueChanged.AddListener(v =>
+            {
+                bool wordFinished = CountWhitespace(v) > CountWhitespace(data.Title);
+                if (!titleEditPushed || wordFinished)
+                {
+                    titleEditPushed = true;
+                    if (interactionController != null) interactionController.HandleTextEditStarted(ObjectId);
+                }
+                data.Title = v;
+            });
+            titleField.onEndEdit.AddListener(v =>
+            {
+                data.Title = v;
+                if (!titleEditPushed) return;
+                titleEditPushed = false;
+                if (interactionController != null) interactionController.HandleTextEditEnded(ObjectId);
+            });
+            titleField.SetTextWithoutNotify(data.Title);
+
+            titleGO.SetActive(true);
         }
 
         /// <summary>Пробелы, переводы строк и табуляции — всё, чем ДМ отделяет слово от слова.</summary>
@@ -227,16 +325,45 @@ namespace WorldGen.Notes.Rendering
             bodyField.ActivateInputField();
         }
 
+        /// <summary>Красит рамку, подбирает цвет заголовка, ставит кегль текста и высоту шапки.
+        ///
+        /// ВЫЗЫВАЕТСЯ И ИЗ Refresh, а не только при сборке. Иначе отмена вернёт данные, а карточка
+        /// останется перекрашенной — ровно та же ловушка, из-за которой прошлый арк чинил
+        /// «отмена не доходит до вкладки доски».</summary>
+        void ApplyStyle()
+        {
+            var frame = NotesPalette.At(data.FrameColorIndex);
+            frameImage.color = new Color32(frame.R, frame.G, frame.B, 255);
+
+            bool hasTitle = CardChrome.HasTitle(data.Title);
+            float header = CardChrome.HeaderHeight(hasTitle, editable);
+            titleRoot.gameObject.SetActive(header > 0f);
+            titleRoot.sizeDelta = new Vector2(titleRoot.sizeDelta.x, header);
+
+            // Цвет заголовка НЕ из темы: он лежит на рамке, а её цвет темы не знает.
+            var ink = NotesPalette.PrefersDarkText(frame)
+                ? new Color(0.12f, 0.12f, 0.14f)
+                : new Color(0.96f, 0.96f, 0.98f);
+            if (titleText != null) titleText.color = ink;
+            if (titlePlaceholder != null) titlePlaceholder.color = new Color(ink.r, ink.g, ink.b, 0.4f);
+
+            bodyText.fontSize = CardChrome.BodyPointSize(data.FontSize);
+            bodyRect.offsetMin = new Vector2(CardChrome.BorderPx, CardChrome.BorderPx);
+            bodyRect.offsetMax = new Vector2(-CardChrome.BorderPx, -(CardChrome.BorderPx + header));
+        }
+
         public void Refresh()
         {
             if (data == null) return;
-            titleText.text = data.Title;
+            if (titleField != null) titleField.SetTextWithoutNotify(data.Title);
+            else titleText.text = data.Title;
             // Тоже без уведомления: перерисовка — это не правка ДМ, а слушатель onValueChanged взял бы за
             // неё шаг отмены и записал бы в данные то, что и так там лежит.
             if (bodyField != null) bodyField.SetTextWithoutNotify(data.Body);
             else if (bodyLabel != null) bodyLabel.text = data.Body;
             rect.anchoredPosition = new Vector2(data.Position.X, data.Position.Y);
             rect.sizeDelta = new Vector2(data.Size.X, data.Size.Y);
+            ApplyStyle();
         }
 
         public void OnPointerDown(PointerEventData eventData)
