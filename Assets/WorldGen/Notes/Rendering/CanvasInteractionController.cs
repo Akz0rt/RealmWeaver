@@ -482,6 +482,31 @@ namespace WorldGen.Notes.Rendering
             }
         }
 
+        /// <summary>ПЕРВОЕ нажатие клавиши в тексте карточки за этот заход. Снимок берётся здесь по той же
+        /// причине, по какой он берётся до перетаскивания: к концу набора данные уже переписаны, и снимок,
+        /// сделанный тогда, вернул бы ровно то, что и так на экране.
+        ///
+        /// Без этого вызова набор текста не создавал шага отмены ВООБЩЕ, и верхним шагом оставалось
+        /// «состояние до создания карточки» — Ctrl+Z сразу после набора удалял карточку целиком вместо того,
+        /// чтобы отменить написанное. Один шаг на заход, а не на букву: то же правило, что у строк
+        /// страницы (DocumentPageView.PushHistoryBeforeFirstEdit).</summary>
+        public void HandleTextEditStarted(string objectId)
+        {
+            canvasController.BeforeMutation?.Invoke();
+        }
+
+        /// <summary>Набор закончился — карточка потеряла фокус. Помечает проект изменённым и перерисовывает
+        /// страницу, как это делает конец любой другой правки на доске.</summary>
+        public void HandleTextEditEnded(string objectId)
+        {
+            // Карточку могли снести прямо во время набора — отменой или пересборкой доски, и TMP шлёт
+            // onEndEdit, когда его поле выключают. Тогда набор ничем не кончился: писать некуда и
+            // перерисовывать незачем, а вызов отсюда посреди перестройки означал бы перестройку внутри
+            // перестройки.
+            if (FindObjectData(objectId) == null) return;
+            canvasController.AfterMutation?.Invoke();
+        }
+
         /// <summary>The object is about to move. This — not HandleObjectDragEnded — is where the undo step is
         /// taken: by the time the drag ends the view has already written the new position into the data, and a
         /// snapshot of that would restore the object to where it already is.</summary>

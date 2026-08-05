@@ -22,6 +22,10 @@ namespace WorldGen.Notes.Rendering
         /// <summary>The body when it is NOT editable. Exactly one of this and bodyField is ever non-null —
         /// which is what Refresh reads to know which half was built.</summary>
         TMP_Text bodyLabel;
+        /// <summary>Шаг отмены за этот заход в текст уже взят. Сбрасывается по окончании набора, поэтому
+        /// один заход = один шаг, сколько бы букв ни набрали.</summary>
+        bool textEditPushed;
+
         Vector2 dragStartLocalPos;
         Vector2 pressScreenPos;
         bool dragging;
@@ -149,8 +153,31 @@ namespace WorldGen.Notes.Rendering
                 // Off, for the same reason DocBlockView turns it off: on a writing surface it loses a
                 // paragraph to one keystroke with no undo behind it.
                 bodyField.restoreOriginalTextOnEscape = false;
-                bodyField.onEndEdit.AddListener(v => data.Body = v);
-                bodyField.text = data.Body;
+
+                // ТЕКСТ ПИШЕТСЯ В ДАННЫЕ НА КАЖДОЙ БУКВЕ, А ШАГ ОТМЕНЫ БЕРЁТСЯ ОДИН РАЗ ЗА ЗАХОД.
+                // Раньше набор не создавал шага отмены вовсе, поэтому верхним шагом оставалось «состояние
+                // до создания карточки», и Ctrl+Z сразу после набора удалял карточку целиком.
+                // Снимок берётся ДО присваивания data.Body — иначе он запомнит уже новый текст.
+                bodyField.onValueChanged.AddListener(v =>
+                {
+                    if (!textEditPushed)
+                    {
+                        textEditPushed = true;
+                        if (interactionController != null) interactionController.HandleTextEditStarted(ObjectId);
+                    }
+                    data.Body = v;
+                });
+                bodyField.onEndEdit.AddListener(v =>
+                {
+                    data.Body = v;
+                    if (!textEditPushed) return;
+                    textEditPushed = false;
+                    if (interactionController != null) interactionController.HandleTextEditEnded(ObjectId);
+                });
+
+                // БЕЗ УВЕДОМЛЕНИЯ: обычное присваивание text дёрнуло бы слушателя выше и записало бы в
+                // историю шаг «карточку построили», которого ДМ не делал.
+                bodyField.SetTextWithoutNotify(data.Body);
 
                 // Теперь OnEnable отработает по полностью собранному полю — и создаст каретку.
                 bodyGO.SetActive(true);
@@ -185,7 +212,9 @@ namespace WorldGen.Notes.Rendering
         {
             if (data == null) return;
             titleText.text = data.Title;
-            if (bodyField != null) bodyField.text = data.Body;
+            // Тоже без уведомления: перерисовка — это не правка ДМ, а слушатель onValueChanged взял бы за
+            // неё шаг отмены и записал бы в данные то, что и так там лежит.
+            if (bodyField != null) bodyField.SetTextWithoutNotify(data.Body);
             else if (bodyLabel != null) bodyLabel.text = data.Body;
             rect.anchoredPosition = new Vector2(data.Position.X, data.Position.Y);
             rect.sizeDelta = new Vector2(data.Size.X, data.Size.Y);
