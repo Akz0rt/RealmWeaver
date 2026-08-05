@@ -195,6 +195,12 @@ namespace WorldGen.Notes.Rendering
         {
             foreach (var kvp in resizeControllers)
                 kvp.Value?.SetSelected(kvp.Key == objectId);
+
+            // ЗДЕСЬ ЖЕ КАРТОЧКА ВЫХОДИТ ИЗ ПРАВКИ. Правку открывает двойной клик, а закрывает уход
+            // выделения — клик по пустому месту доски или по другому объекту. Отдельного «клика мимо»
+            // для этого заводить не нужно: снятие выделения и есть тот самый клик.
+            foreach (var kvp in objectViews)
+                if (kvp.Key != objectId && kvp.Value is NoteCardView card) card.ExitEditMode();
         }
 
         /// <summary>True if screenPos lands on any currently-visible link-creation anchor dot —

@@ -35,6 +35,10 @@ namespace WorldGen.Notes.Rendering
         const float IndentPerLevel = 18f;
         const float VerticalPadding = 4f;
 
+        /// <summary>Воздух НАД строкой раздела — столько добавляется к её высоте сверх обычного отступа
+        /// между строками. Новый раздел должен читаться как начало новой мысли, а не как ещё один абзац.</summary>
+        const float SectionLeadGap = 14f;
+
         /// <summary>How tall a board is when the DM has not resized it. Big enough that a relationship web is
         /// legible without being opened, small enough that it does not push the prose off the screen.</summary>
         public const float DefaultCanvasHeight = 320f;
@@ -205,7 +209,11 @@ namespace WorldGen.Notes.Rendering
             // it would go on to move the text inside the row instead. Giving the box the row's few spare
             // pixels makes that guard strictly true, so the wheel over an editing row belongs to the page.
             textArea.offsetMin = new Vector2(indent, 0f);
-            textArea.offsetMax = new Vector2(-IndentBase, 0f);
+            // ПЕРЕД РАЗДЕЛОМ ВОЗДУХА БОЛЬШЕ, ЧЕМ МЕЖДУ АБЗАЦАМИ. Интервал у VerticalLayoutGroup один на
+            // все строки, поэтому добавка живёт в самой строке раздела: текст сдвигается вниз, а высота
+            // строки растёт ровно на столько же (см. ApplyHeightNow) — иначе заголовок съехал бы за
+            // нижний край собственной строки.
+            textArea.offsetMax = new Vector2(-IndentBase, data.Kind == BlockKind.Section ? -SectionLeadGap : 0f);
 
             // Invisible, but the raycast target that makes a click anywhere in the row start editing —
             // including on an EMPTY row, which has no glyphs to hit. The click is handled by this component
@@ -307,7 +315,9 @@ namespace WorldGen.Notes.Rendering
                 collapseRect.anchorMin = new Vector2(0f, 1f);
                 collapseRect.anchorMax = new Vector2(0f, 1f);
                 collapseRect.pivot = new Vector2(0f, 1f);
-                collapseRect.anchoredPosition = new Vector2(0f, -2f);
+                // Уезжает вниз вместе с текстом заголовка: воздух перед разделом добавляется НАД строкой,
+                // и значок сворачивания обязан остаться на одной линии с буквами.
+                collapseRect.anchoredPosition = new Vector2(0f, -2f - SectionLeadGap);
                 collapseRect.sizeDelta = new Vector2(16f, 18f);
 
                 collapseGlyph = collapseGO.AddComponent<Text>();
@@ -1147,7 +1157,8 @@ namespace WorldGen.Notes.Rendering
 
             var measured = editing && fieldText != null ? fieldText : Display;
             if (measured == null) return;
-            float desired = Mathf.Max(MinRowHeight, measured.preferredHeight + VerticalPadding);
+            float lead = data.Kind == BlockKind.Section ? SectionLeadGap : 0f;
+            float desired = Mathf.Max(MinRowHeight + lead, measured.preferredHeight + VerticalPadding + lead);
             if (Mathf.Abs(desired - appliedHeight) > 0.5f)
             {
                 appliedHeight = desired;

@@ -30,6 +30,14 @@ namespace WorldGen.Notes.Rendering
         TMP_Text bodyText;
         bool editable;
 
+        /// <summary>Прозрачный щит поверх карточки. ДЕРЖИТ ОДИНОЧНЫЙ КЛИК НА САМОЙ КАРТОЧКЕ: пока он
+        /// на месте, клик и протаскивание выделяют и двигают её, а не попадают в поле ввода. Раньше
+        /// ручкой служила шапка, но заголовок стал редактируемым, и хвататься осталось не за что.
+        ///
+        /// Щит не обрабатывает нажатие и протаскивание вовсе — только двойной клик. Остальное
+        /// всплывает к самой карточке, поэтому выделение, перенос и рамка размера работают как были.</summary>
+        GameObject shield;
+
         /// <summary>Шаг отмены за этот заход в ЗАГОЛОВОК уже взят. Отдельный от textEditPushed:
         /// заголовок и текст — два разных поля, и заход в одно не закрывает заход в другое.</summary>
         bool titleEditPushed;
@@ -231,6 +239,8 @@ namespace WorldGen.Notes.Rendering
 
                 // Теперь OnEnable отработает по полностью собранному полю — и создаст каретку.
                 bodyGO.SetActive(true);
+
+                BuildShield();
             }
             else
             {
@@ -312,6 +322,63 @@ namespace WorldGen.Notes.Rendering
             return n;
         }
 
+        /// <summary>Собирается ПОСЛЕДНИМ и потому лежит поверх обоих полей: uGUI отдаёт клик тому, кто
+        /// выше, а выше — тот, кто позже в списке детей.</summary>
+        void BuildShield()
+        {
+            var shieldGO = new GameObject("Shield", typeof(RectTransform));
+            shieldGO.transform.SetParent(transform, false);
+            var shieldRect = shieldGO.GetComponent<RectTransform>();
+            shieldRect.anchorMin = Vector2.zero;
+            shieldRect.anchorMax = Vector2.one;
+            shieldRect.sizeDelta = Vector2.zero;
+
+            // Полностью прозрачный, но клики ловит: uGUI проверяет попадание в прямоугольник, а не в
+            // пиксель картинки, пока не задан alphaHitTestMinimumThreshold.
+            var img = shieldGO.AddComponent<Image>();
+            img.color = Color.clear;
+
+            var dbl = shieldGO.AddComponent<DoubleClickHandler>();
+            dbl.OnDoubleClickAt = EnterEditMode;
+
+            shield = shieldGO;
+        }
+
+        /// <summary>Двойной клик — вход в правку. Каретка ставится в то поле, по которому попали:
+        /// в шапку — правится заголовок, ниже — текст.</summary>
+        void EnterEditMode(UnityEngine.EventSystems.PointerEventData eventData)
+        {
+            if (shield == null) return;
+            shield.SetActive(false);
+
+            var cam = interactionController != null ? interactionController.uiCamera : null;
+            bool onHeader = titleField != null && titleRoot != null && titleRoot.gameObject.activeInHierarchy
+                && RectTransformUtility.RectangleContainsScreenPoint(titleRoot, eventData.position, cam);
+
+            if (onHeader)
+            {
+                titleField.Select();
+                titleField.ActivateInputField();
+            }
+            else
+            {
+                FocusBody();
+            }
+        }
+
+        /// <summary>Выход из правки: щит возвращается, каретка гаснет. Зовётся, когда с карточки сняли
+        /// выделение — то есть кликнули по пустому месту доски или по другому объекту.
+        ///
+        /// Каретку снимаем ЯВНО. Поле ввода TMP не отпускает фокус само от того, что поверх него снова
+        /// положили картинку: набор с клавиатуры продолжал бы идти в невидимую карточку.</summary>
+        public void ExitEditMode()
+        {
+            if (shield == null || shield.activeSelf) return;
+            if (titleField != null) titleField.DeactivateInputField();
+            if (bodyField != null) bodyField.DeactivateInputField();
+            shield.SetActive(true);
+        }
+
         /// <summary>Ставит каретку в текст карточки — вызывается сразу после того, как карточку вставили,
         /// чтобы ДМ печатал без лишнего клика.
         ///
@@ -321,6 +388,9 @@ namespace WorldGen.Notes.Rendering
         public void FocusBody()
         {
             if (bodyField == null) return;
+            // Только что вставленная карточка сразу в правке — правило прошлого арка «вставил —
+            // редактируешь». Без этой строки каретка встала бы под щит и первая буква пропала бы.
+            if (shield != null) shield.SetActive(false);
             bodyField.Select();
             bodyField.ActivateInputField();
         }

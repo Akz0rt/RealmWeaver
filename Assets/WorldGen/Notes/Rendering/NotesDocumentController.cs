@@ -70,14 +70,34 @@ namespace WorldGen.Notes.Rendering
             var group = FindGroup(groupId);
             if (group == null) return null;
             var page = new NotesPage { Name = name };
+            SeedFirstSection(page);
             group.Pages.Add(page);
             OnDocumentChanged?.Invoke();
             return page;
         }
 
-        /// <summary>Creates a blank session sheet (NotesDocOps.CreateSessionSheet — no seeded sections since
-        /// Task 10f), auto-named «Сессия N» where N is one past the number of document pages already in that
-        /// group. Every page in a group counts since Р4 — there is no second kind left to filter out.</summary>
+        /// <summary>Новая страница открывается с уже готовым первым разделом.
+        ///
+        /// ПОСЕВ ЖИВЁТ ЗДЕСЬ, А НЕ В NotesDocOps.CreateSessionSheet, и это не мелочь. Там это примитив
+        /// «пустая страница», на который опирается полтора десятка тестовых фикстур: они добавляют себе
+        /// раздел сами, и посев внутри примитива дал бы каждой по два. Решение «страница рождается с
+        /// разделом» — продуктовое, поэтому оно у того, кого зовёт кнопка.
+        ///
+        /// Заголовок берётся тот же, что у страницы, созданной из объекта мира
+        /// (PromotedPageSectionTitle), чтобы в приложении не завелось двух разных слов для одного и того
+        /// же. Пустая строка была бы честнее, но раздел без букв не виден на экране вовсе — страница
+        /// снова выглядела бы пустой.</summary>
+        static void SeedFirstSection(NotesPage page)
+        {
+            if (page == null || page.Blocks == null || page.Blocks.Count > 0) return;
+            page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Section, 0, NotesDocOps.PromotedPageSectionTitle));
+        }
+
+        /// <summary>Creates a session sheet auto-named «Сессия N», where N is one past the number of document
+        /// pages already in that group. Every page in a group counts since Р4 — there is no second kind left
+        /// to filter out. The page opens with one section already in it (SeedFirstSection) — the DM asked for
+        /// that on 2026-08-05, reversing Task 10f's «пустая страница» for the CREATED page while leaving the
+        /// pure-layer primitive itself unseeded.</summary>
         public NotesPage CreateSessionSheet(string groupId)
         {
             var group = FindGroup(groupId);
@@ -86,6 +106,7 @@ namespace WorldGen.Notes.Rendering
             int existing = group.Pages.Count;
 
             var page = NotesDocOps.CreateSessionSheet($"Сессия {existing + 1}");
+            SeedFirstSection(page);
             group.Pages.Add(page);
             OnDocumentChanged?.Invoke();
             return page;
