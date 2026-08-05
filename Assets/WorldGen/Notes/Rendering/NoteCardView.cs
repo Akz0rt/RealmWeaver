@@ -106,6 +106,18 @@ namespace WorldGen.Notes.Rendering
             {
                 var bodyBg = bodyGO.AddComponent<Image>();
                 bodyBg.color = new Color(1f, 1f, 1f, 0.01f);
+
+                // ВЫКЛЮЧАЕМ ОБЪЕКТ ДО AddComponent И ВКЛЮЧАЕМ ПОСЛЕ — это не осторожность, это единственный
+                // способ вообще получить каретку. TMP_InputField создаёт объект каретки в OnEnable и только
+                // при условии `m_TextComponent != null` (TMP_InputField.cs:1171). У живого объекта OnEnable
+                // срабатывает прямо на AddComponent, когда textComponent ещё не присвоен, — условие ложно,
+                // каретка не создаётся, а второго OnEnable уже не будет. Итог: печатать можно, выделять
+                // можно, а НАРИСОВАТЬ каретку и подсветку выделения нечем. Там же читается и textViewport.
+                //
+                // DocBlockView.BuildField делает ровно это с самого начала и объясняет причину (строка 514);
+                // карточка доски была написана мимо этого правила.
+                bodyGO.SetActive(false);
+
                 bodyField = bodyGO.AddComponent<TMP_InputField>();
                 bodyField.targetGraphic = bodyBg;
                 // ОБЯЗАТЕЛЬНО, ХОТЯ ВЫГЛЯДИТ НЕОБЯЗАТЕЛЬНЫМ. TMP_InputField разыменовывает m_TextViewport
@@ -139,6 +151,9 @@ namespace WorldGen.Notes.Rendering
                 bodyField.restoreOriginalTextOnEscape = false;
                 bodyField.onEndEdit.AddListener(v => data.Body = v);
                 bodyField.text = data.Body;
+
+                // Теперь OnEnable отработает по полностью собранному полю — и создаст каретку.
+                bodyGO.SetActive(true);
             }
             else
             {
