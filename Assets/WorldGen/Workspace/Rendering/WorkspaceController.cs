@@ -679,6 +679,15 @@ namespace WorldGen.Workspace.Rendering
 
         // ── Surfaces (Task 9) ──────────────────────────────────────────────────
 
+        /// <summary>Показать активные поверхности заново, ничего не меняя в раскладке — для случая, когда
+        /// поменялось не расположение вкладок, а ДАННЫЕ, на которые они смотрят.
+        ///
+        /// Сегодня зовущий один: отмена на странице (DocumentPageView.OnHistoryApplied) кладёт на страницу
+        /// новые блоки, а развёрнутая доска берёт свой блок по id только в Show — без этого вызова её
+        /// вкладка продолжала бы рисовать выброшенный объект и писать в него правки. Не RaiseChanged:
+        /// раскладка не менялась, писать её в PlayerPrefs и дёргать OnLayoutChanged незачем.</summary>
+        public void RefreshSurfaces() => SyncSurfaces();
+
         /// <summary>Shows each pane's active surface through its registered host, and Hides every registered
         /// host that no pane wants any more. Re-reads PaneContent(pane) fresh on every call rather than
         /// caching it, which is what makes a Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work

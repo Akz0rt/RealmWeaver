@@ -142,6 +142,18 @@ namespace WorldGen.Notes.Rendering
         /// enabled or disabled without polling.</summary>
         public event System.Action OnHistoryChanged;
 
+        /// <summary>Страницу целиком ЗАМЕНИЛИ снимком истории — Ctrl+Z или Ctrl+Y. Отдельно от
+        /// OnDocumentMutated, и это принципиально: та срабатывает по несколько раз в секунду при обычном
+        /// наборе текста, а на это событие подписан пересбор поверхностей, который слишком дорог для
+        /// каждого нажатия клавиши.
+        ///
+        /// ЗАЧЕМ ОНО ВООБЩЕ. Apply не правит блоки на месте, а кладёт на страницу НОВЫЕ объекты. Всё, что
+        /// держит ссылку на блок и живёт вне этой страницы — прежде всего развёрнутая доска в своей
+        /// вкладке, — после отмены указывает на выброшенный объект: рисует старое и пишет правки туда,
+        /// откуда их никто не сохранит. Свои строки страница перестроит сама, чужим держателям нужен
+        /// сигнал.</summary>
+        public event System.Action OnHistoryApplied;
+
         /// <summary>NOT a field initializer and not readonly: a domain reload restores a MonoBehaviour by
         /// deserializing it, and neither runs again — the same trap PaneFocusOnClick.raycastScratch documents.
         /// A history lost to a reload is correct, since the rows it described are lost too.</summary>
@@ -222,6 +234,11 @@ namespace WorldGen.Notes.Rendering
 
             if (focusExists) RebuildAndFocus(snapshot.FocusId, snapshot.Caret);
             else Rebuild();
+
+            // ПОСЛЕДНИМ, после перестроения строк: подписчик пересобирает поверхности, которые держат
+            // блоки этой страницы, и делать это до того, как страница привела себя в порядок, значило бы
+            // показать им промежуточное состояние.
+            OnHistoryApplied?.Invoke();
         }
 
         /// <summary>The row the caret was last in, and where in it — TOLD to this class by

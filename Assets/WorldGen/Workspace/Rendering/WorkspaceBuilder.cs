@@ -936,7 +936,26 @@ namespace WorldGen.Workspace.Rendering
 
             if (documentController != null) documentController.OnDocumentChanged += pruner.Prune;
             if (pageView != null) pageView.OnDocumentMutated += pruner.Prune;
+            if (pageView != null) pageView.OnHistoryApplied += pruner.ReshowSurfaces;
             return pruner;
+        }
+
+        /// <summary>Отмена заменила блоки страницы новыми объектами — развёрнутой доске надо взять свой
+        /// блок заново. Она делает это только в ISurfaceHost.Show, а Show случается лишь на клике по
+        /// вкладке, поэтому без этого вызова вкладка доски после Ctrl+Z рисовала старое и писала правки в
+        /// блок, которого уже нет в документе: при сохранении они пропадали.
+        ///
+        /// Здесь, а не отдельным компонентом, по той же причине, по которой здесь живёт Prune: Attach уже
+        /// умеет переживать пересборку оболочки и отписываться, а заводить рядом второй компонент с той же
+        /// механикой значило бы иметь два места, где можно забыть отписку.
+        ///
+        /// Тот же дешёвый guard: пока ни одной вкладки-доски открыто нет, пересобирать нечего.</summary>
+        void ReshowSurfaces()
+        {
+            if (pruning) return;
+            if (controller == null) return;
+            if (!WorkspaceOps.HasSurfaceOfKind(controller.Layout, SurfaceKind.Canvas)) return;
+            controller.RefreshSurfaces();
         }
 
         void Prune()
@@ -972,6 +991,7 @@ namespace WorldGen.Workspace.Rendering
         {
             if (documentController != null) documentController.OnDocumentChanged -= Prune;
             if (pageView != null) pageView.OnDocumentMutated -= Prune;
+            if (pageView != null) pageView.OnHistoryApplied -= ReshowSurfaces;
             documentController = null;
             pageView = null;
         }
