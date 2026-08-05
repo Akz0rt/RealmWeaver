@@ -19,8 +19,17 @@ namespace WorldGen.Notes.Rendering
         [Header("Dependencies")]
         public NotesCanvasController canvasController;
         public RectTransform viewportRect;
-        public RectTransform toolbarRect;
         public Camera uiCamera; // null for ScreenSpaceOverlay canvases
+
+        readonly System.Collections.Generic.List<RectTransform> chromeRects = new System.Collections.Generic.List<RectTransform>();
+
+        /// <summary>Прямоугольник панели, клик по которой НЕ должен доходить до доски — иначе выбор
+        /// цвета кисти заодно ставил бы кляксу. Панелей теперь три: инструменты, настройки кисти и
+        /// свойства карточки.</summary>
+        public void RegisterChrome(RectTransform rect)
+        {
+            if (rect != null && !chromeRects.Contains(rect)) chromeRects.Add(rect);
+        }
 
         /// <summary>The reduced mode — a board in the flow of a page — permits exactly two gestures: dragging
         /// a card (which the card's own IDragHandler performs) and resizing the block (which the row's grip
@@ -34,8 +43,15 @@ namespace WorldGen.Notes.Rendering
         public Font builtinFont;
 
         [Header("Drawing settings")]
-        public float brushRadius = 6f;
-        public Color32 brushColor = new Color32(20, 20, 20, 255);
+        public int brushColorIndex = NotesPalette.InkIndex;
+        public BrushWidth brushWidth = BrushWidth.Medium;
+
+        /// <summary>Ластик — СОСТОЯНИЕ, а не цвет с особым индексом. Отдельным «индексом ластика» он
+        /// был бы неотличим от битого индекса: NotesPalette.At молча возвращает нейтральный на всё,
+        /// что вне списка, и один случайный At(brushColorIndex) сделал бы ластик серым без единой
+        /// ошибки в Консоли.</summary>
+        public bool brushIsEraser;
+
         public int defaultDrawingWidth = 256;
         public int defaultDrawingHeight = 256;
 
@@ -85,10 +101,50 @@ namespace WorldGen.Notes.Rendering
             OnToolChanged?.Invoke(tool);
         }
 
+        /// <summary>Выделение сменилось — полоска свойств узнаёт об этом отсюда и ниоткуда больше.
+        /// Поднимается и на снятии выделения (objectId == null), иначе полоска осталась бы висеть
+        /// над карточкой, которую уже не выделяют.</summary>
+        public event System.Action<string> OnSelectedObjectChanged;
+
         void SetSelectedObjectId(string objectId)
         {
             selectedObjectId = objectId;
             canvasController.SetSelectedObject(objectId);
+            OnSelectedObjectChanged?.Invoke(objectId);
+        }
+
+        /// <summary>Правка стиля — такая же правка, как перемещение: снимок ДО изменения, перерисовка
+        /// карточки после. Refresh обязателен: данные меняются мимо перестройки доски, и без него
+        /// карточка осталась бы прежней до следующего повода перерисоваться.</summary>
+        public void SetCardFrameColor(string objectId, int index)
+        {
+            if (!(FindObjectData(objectId) is NoteCardData card)) return;
+            canvasController.BeforeMutation?.Invoke();
+            card.FrameColorIndex = index;
+            NotesUserPrefs.CardFrameColorIndex = index;
+            (canvasController.GetView(objectId) as NoteCardView)?.Refresh();
+            canvasController.AfterMutation?.Invoke();
+        }
+
+        public void SetCardFontSize(string objectId, CardFontSize size)
+        {
+            if (!(FindObjectData(objectId) is NoteCardData card)) return;
+            canvasController.BeforeMutation?.Invoke();
+            card.FontSize = size;
+            NotesUserPrefs.CardFont = size;
+            (canvasController.GetView(objectId) as NoteCardView)?.Refresh();
+            canvasController.AfterMutation?.Invoke();
+        }
+
+        /// <summary>Выбор кисти: цвет и толщина запоминаются на следующий раз. Ластик снимается любым
+        /// выбором цвета — иначе ДМ выбрал бы красный и продолжил стирать.</summary>
+        public void SetBrush(int colorIndex, BrushWidth width)
+        {
+            brushColorIndex = colorIndex;
+            brushWidth = width;
+            brushIsEraser = false;
+            NotesUserPrefs.BrushColorIndex = colorIndex;
+            NotesUserPrefs.BrushStroke = width;
         }
 
         void Update()
@@ -111,7 +167,7 @@ namespace WorldGen.Notes.Rendering
             // out at the moment panning becomes necessary. Every canvas tool the DM has used works this way.
             var mouseScreenPos = Mouse.current.position.ReadValue();
             if (Mouse.current.middleButton.wasPressedThisFrame
-                && IsOverViewport(mouseScreenPos) && !IsOverToolbar(mouseScreenPos))
+                && IsOverViewport(mouseScreenPos) && !IsOverChrome(mouseScreenPos))
             {
                 middlePanning = true;
                 lastPanScreenPos = mouseScreenPos;
@@ -143,7 +199,7 @@ namespace WorldGen.Notes.Rendering
 
             var scrollScreenPos = Mouse.current.position.ReadValue();
             float scroll = Mouse.current.scroll.ReadValue().y;
-            if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(scrollScreenPos) && !IsOverToolbar(scrollScreenPos))
+            if (Mathf.Abs(scroll) > 0.01f && IsOverViewport(scrollScreenPos) && !IsOverChrome(scrollScreenPos))
                 CanvasWheelZoom.Apply(canvasController, scroll, scrollScreenPos, uiCamera,
                                       CanvasWheelZoom.ExpandedStepPerTick);
         }
@@ -158,7 +214,7 @@ namespace WorldGen.Notes.Rendering
             // toolbar button is also geometrically "inside" viewportRect — without this check
             // the active tool's own click action (e.g. Note) would ALSO fire underneath the
             // button being clicked to switch tools.
-            if (IsOverToolbar(screenPos)) return;
+            if (IsOverChrome(screenPos)) return;
 
             // A press starting on a link-creation anchor dot is exclusively handled by that
             // dot's own IPointerDownHandler (AnchorDotHandler) via Unity's event system — without
@@ -357,10 +413,27 @@ namespace WorldGen.Notes.Rendering
             return null;
         }
 
+        /// <summary>Толщина считается ПО САМОМУ РИСУНКУ, а не берётся готовым числом пикселей: растр
+        /// внутри остаётся 256×256, сколько бы рисунок ни растянули за угол, и «тонко» на растянутом
+        /// вдвое рисунке рисовало бы вдвое толще, чем показывает кружок в полоске кисти.</summary>
         void PaintAtScreenPos(DrawingObjectView view, Vector2 screenPos)
         {
             RectTransformUtility.ScreenPointToLocalPointInRectangle(view.RectTransform, screenPos, uiCamera, out var local);
-            view.PaintAt(local, brushRadius, brushColor);
+            var drawing = view.Data as DrawingObjectData;
+            float radius = drawing == null
+                ? 3f
+                : BrushOps.RadiusInPixels(BrushOps.DiameterInCanvasUnits(brushWidth), drawing.Size.X, drawing.PixelWidth);
+            view.PaintAt(local, radius, CurrentBrushColor());
+        }
+
+        /// <summary>Ластик пишет ПРОЗРАЧНЫЙ пиксель, а не белый: PaintAt кладёт цвет через SetPixel,
+        /// без смешивания, а растр рисунка прозрачен там, где его не трогали. Белая клякса выглядела
+        /// бы стёртой ровно до того мгновения, когда рисунок увезут на другой фон.</summary>
+        Color32 CurrentBrushColor()
+        {
+            if (brushIsEraser) return new Color32(255, 255, 255, 0);
+            var c = NotesPalette.At(brushColorIndex);
+            return new Color32(c.R, c.G, c.B, 255);
         }
 
         bool IsOverViewport(Vector2 screenPos)
@@ -369,10 +442,22 @@ namespace WorldGen.Notes.Rendering
             return RectTransformUtility.RectangleContainsScreenPoint(viewportRect, screenPos, uiCamera);
         }
 
-        bool IsOverToolbar(Vector2 screenPos)
+        /// <summary>Та же проверка, что и внутри, но для полосок: им нужно знать, видно ли ещё
+        /// объект, за которым они едут.</summary>
+        public bool IsScreenPointOverViewport(Vector2 screenPos) => IsOverViewport(screenPos);
+
+        bool IsOverChrome(Vector2 screenPos)
         {
-            if (toolbarRect == null) return false;
-            return RectTransformUtility.RectangleContainsScreenPoint(toolbarRect, screenPos, uiCamera);
+            foreach (var rect in chromeRects)
+            {
+                // ВЫКЛЮЧЕННЫЕ ПРОПУСКАЮТСЯ. RectangleContainsScreenPoint отвечает чисто геометрически
+                // и знать не знает про activeInHierarchy — спрятанная полоска свойств иначе продолжала
+                // бы съедать клики на своём последнем месте, и это читалось бы как «доска перестала
+                // отвечать вот в этом углу».
+                if (rect == null || !rect.gameObject.activeInHierarchy) continue;
+                if (RectTransformUtility.RectangleContainsScreenPoint(rect, screenPos, uiCamera)) return true;
+            }
+            return false;
         }
 
         System.Numerics.Vector2 ScreenToCanvasPoint(Vector2 screenPos)

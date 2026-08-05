@@ -324,7 +324,16 @@ namespace WorldGen.Workspace.Rendering
             var toolbar = rootGO.AddComponent<NotesToolbar>();
             toolbar.Initialize(interaction, root);
             // What tells the interaction controller that a click landed on a TOOL, not on the board under it.
-            interaction.toolbarRect = toolbar.RowRect;
+            // Панелей теперь три, поэтому не одно поле, а список: см. RegisterChrome.
+            interaction.RegisterChrome(toolbar.RowRect);
+
+            var brushBar = rootGO.AddComponent<NotesBrushBar>();
+            brushBar.Initialize(interaction, root, toolbar.RowRect);
+            interaction.RegisterChrome(brushBar.RowRect);
+
+            var propertyBar = rootGO.AddComponent<CardPropertyBar>();
+            propertyBar.Initialize(interaction, canvasController, root);
+            interaction.RegisterChrome(propertyBar.RowRect);
         }
     }
 

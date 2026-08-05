@@ -302,7 +302,15 @@ namespace WorldGen.Notes.Rendering
         {
             if (block == null) return null;
             BeforeMutation?.Invoke();
-            var data = new NoteCardData { Position = position, Title = "Заметка" };
+            // Новая карточка рождается в том же стиле, что выбрали для прошлой: ДМ красит доску по
+            // смыслу («красные — засады»), и заново выбирать цвет на каждой карточке — работа впустую.
+            var data = new NoteCardData
+            {
+                Position = position,
+                Title = "Заметка",
+                FrameColorIndex = NotesUserPrefs.CardFrameColorIndex,
+                FontSize = NotesUserPrefs.CardFont,
+            };
             Objects.Add(data);
             SpawnView(data);
             AfterMutation?.Invoke();
