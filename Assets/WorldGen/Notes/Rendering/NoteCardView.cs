@@ -108,6 +108,14 @@ namespace WorldGen.Notes.Rendering
                 bodyBg.color = new Color(1f, 1f, 1f, 0.01f);
                 bodyField = bodyGO.AddComponent<TMP_InputField>();
                 bodyField.targetGraphic = bodyBg;
+                // ОБЯЗАТЕЛЬНО, ХОТЯ ВЫГЛЯДИТ НЕОБЯЗАТЕЛЬНЫМ. TMP_InputField разыменовывает m_TextViewport
+                // без единой проверки, как только курсор выделения уезжает за границу поля
+                // (MouseDragOutsideRect, TMP_InputField.cs:1936) — а туда попадает всякий, кто тянет мышью
+                // по тексту карточки и промахивается мимо её края. Без этой строки — NullReferenceException
+                // каждый кадр протаскивания. DocBlockView задаёт viewport с самого начала (строка 540),
+                // карточка доски — нет; здесь это собственный прямоугольник поля, отдельного viewport-узла
+                // у неё нет.
+                bodyField.textViewport = bodyRect;
                 bodyField.textComponent = bodyText;
                 bodyField.lineType = TMP_InputField.LineType.MultiLineNewline;
                 // Kept from the legacy card, where it was supportRichText=false: a body the DM typed is
