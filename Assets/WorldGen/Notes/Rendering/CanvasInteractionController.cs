@@ -136,6 +136,26 @@ namespace WorldGen.Notes.Rendering
             canvasController.AfterMutation?.Invoke();
         }
 
+        /// <summary>Двойной клик по рисунку — вход в его правку, то же правило, что у карточки: одиночный
+        /// клик выделяет и двигает, двойной пускает внутрь. «Внутрь» для рисунка означает «можно красить»,
+        /// то есть активный инструмент «Рисунок», привязанный именно к этому объекту.
+        ///
+        /// ПРИВЯЗКА СТАВИТСЯ ПОСЛЕ SetTool, А НЕ ДО: SetTool сам обнуляет её (смена инструмента снимает
+        /// привязку — одна точка, а не две), и порядок наоборот молча оставил бы рисунок непривязанным.
+        ///
+        /// Выхода отсюда нет и не нужно: клик мимо уже кладёт инструмент в «Курсор» и снимает привязку —
+        /// тем же общим хвостом HandlePress, каким это работает для только что созданного рисунка.</summary>
+        public void EnterDrawingEditMode(string objectId)
+        {
+            // В странице доска живёт в урезанном режиме: там нет ни рисования, ни панели инструментов.
+            if (Mode == CanvasMode.Inline) return;
+            if (!(FindObjectData(objectId) is DrawingObjectData)) return;
+
+            SetSelectedObjectId(objectId);
+            SetTool(NotesTool.Drawing);
+            boundObjectId = objectId;
+        }
+
         /// <summary>Выбор кисти: цвет и толщина запоминаются на следующий раз. Ластик снимается любым
         /// выбором цвета — иначе ДМ выбрал бы красный и продолжил стирать.</summary>
         public void SetBrush(int colorIndex, BrushWidth width)

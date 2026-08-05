@@ -11,7 +11,7 @@ namespace WorldGen.Notes.Rendering
     /// CommitToData() persists the current pixels back into DrawingObjectData for saving.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
-    public class DrawingObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
+    public class DrawingObjectView : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler, IPointerClickHandler
     {
         DrawingObjectData data;
         RectTransform rect;
@@ -105,6 +105,17 @@ namespace WorldGen.Notes.Rendering
             dragStartLocalPos = rect.anchoredPosition;
             pressScreenPos = eventData.position;
             dragging = false;
+        }
+
+        /// <summary>Двойной клик открывает правку рисунка — ровно так же, как у карточки открывает текст.
+        /// Одиночный клик и протаскивание при этом остаются за выделением и переносом.
+        ///
+        /// Само переключение делает контроллер: «правка рисунка» — это активный инструмент «Рисунок»,
+        /// привязанный к этому объекту, а инструментом здесь не распоряжаются.</summary>
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            if (eventData.clickCount != 2 || interactionController == null) return;
+            interactionController.EnterDrawingEditMode(ObjectId);
         }
 
         public void OnDrag(PointerEventData eventData)
