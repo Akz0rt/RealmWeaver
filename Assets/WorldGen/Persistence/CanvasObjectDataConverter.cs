@@ -40,6 +40,8 @@ namespace WorldGen.Persistence
                 case NoteCardData card:
                     obj["Title"] = card.Title;
                     obj["Body"] = card.Body;
+                    obj["FrameColorIndex"] = card.FrameColorIndex;
+                    obj["FontSize"] = (int)card.FontSize;
                     break;
                 case ImageObjectData image:
                     obj["ImageBytes"] = image.ImageBytes != null ? JToken.FromObject(image.ImageBytes) : JValue.CreateNull();
@@ -66,7 +68,11 @@ namespace WorldGen.Persistence
                     result = new NoteCardData
                     {
                         Title = obj["Title"]?.Value<string>() ?? "",
-                        Body = obj["Body"]?.Value<string>() ?? ""
+                        Body = obj["Body"]?.Value<string>() ?? "",
+                        // Отсутствующий ключ — это файл версии 14, и он обязан читаться как прежняя
+                        // карточка: нейтральная рамка, средний кегль. Оба значения — ноль.
+                        FrameColorIndex = obj["FrameColorIndex"]?.Value<int>() ?? NotesPalette.NeutralIndex,
+                        FontSize = (CardFontSize)(obj["FontSize"]?.Value<int>() ?? 0)
                     };
                     break;
                 case "Image":

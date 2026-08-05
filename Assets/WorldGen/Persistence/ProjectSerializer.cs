@@ -30,7 +30,13 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 14;  // 14: boards move INSIDE pages. NotesPage.Kind (PageKind)
+        public const int CurrentFormatVersion = 15;  // 15: у карточки доски появились цвет рамки и
+                                                     // кегль текста. Подъём ДОКУМЕНТИРУЮЩИЙ — оба
+                                                     // поля необязательны при чтении, миграции нет,
+                                                     // файл версии 14 читается как карточка прежнего
+                                                     // вида (нейтральная рамка, средний кегль).
+                                                     //
+                                                     // 14: boards move INSIDE pages. NotesPage.Kind (PageKind)
                                                      // is gone, and NotesPage.Objects/Links/CameraPan/
                                                      // CameraZoom are read-on-load only — a page's board is
                                                      // now a DocBlock of Kind Canvas carrying its own objects,

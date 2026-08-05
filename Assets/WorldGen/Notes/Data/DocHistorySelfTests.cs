@@ -209,5 +209,23 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Canvas Block Deep Copy: PASS" : "Self-Test Canvas Block Deep Copy: FAIL");
         }
+
+        /// <summary>Стиль карточки — цвет рамки и кегль — обязан ехать в копию наравне с текстом.
+        /// Забытое поле в CopyObjects не роняет ничего: карточка просто вернётся из отмены
+        /// обесцвеченной, и заметит это только ДМ.</summary>
+        [ContextMenu("Self-Test: История — отмена несёт цвет рамки и кегль карточки")]
+        public void SelfTestCardStyleSurvivesCopy()
+        {
+            var card = new NoteCardData { Title = "Засада", Body = "текст", FrameColorIndex = 5, FontSize = CardFontSize.Large };
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 0, "Доска");
+            canvas.CanvasObjects = new List<CanvasObjectData> { card };
+
+            var copy = DocHistory.Copy(new List<DocBlock> { canvas });
+            var copied = copy[0].CanvasObjects[0] as NoteCardData;
+
+            bool ok = copied != null && copied.FrameColorIndex == 5 && copied.FontSize == CardFontSize.Large;
+            if (!ok) Debug.LogError($"FAIL стиль в копии: индекс {copied?.FrameColorIndex}, кегль {copied?.FontSize}, ожидались 5 и Large — иначе отмена вернёт карточку обесцвеченной");
+            Debug.Log(ok ? "Self-Test Card Style Survives Copy: PASS" : "Self-Test Card Style Survives Copy: FAIL");
+        }
     }
 }

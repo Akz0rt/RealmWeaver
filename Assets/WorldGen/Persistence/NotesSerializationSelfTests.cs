@@ -163,5 +163,100 @@ namespace WorldGen.Persistence
 
             Debug.Log(ok ? "Self-Test Old Format Board Migrates On Load: PASS" : "Self-Test Old Format Board Migrates On Load: FAIL");
         }
+
+        /// <summary>Файл версии 14 не содержит ключей стиля вовсе, и это НЕ повод карточке
+        /// измениться: отсутствующий ключ обязан читаться как нейтральная рамка и средний кегль.
+        /// Проверяется здесь, а не в офлайн-харнессе, потому что харнесс не видит Persistence.</summary>
+        [ContextMenu("Self-Test: Version 14 Card Gets Default Style")]
+        public void SelfTestVersion14CardGetsDefaultStyle()
+        {
+            bool ok = true;
+
+            string json =
+                "{ \"FormatVersion\": 14, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [], \"RegionLabels\": [], " +
+                "\"Notes\": { \"Groups\": [ { \"Title\": \"Заметки\", \"Pages\": [ " +
+                "{ \"Name\": \"Страница 1\", \"Blocks\": [ { \"Kind\": \"Canvas\", \"CanvasObjects\": [ " +
+                "{ \"Kind\": \"NoteCard\", \"Title\": \"Старая\", \"Body\": \"текст\" } ] } ] } ] } ] } }";
+
+            string path = Path.Combine(Application.temporaryCachePath, "notes-v14-style.dndproj");
+            File.WriteAllText(path, json);
+
+            var loaded = ProjectSerializer.Load(path);
+            if (!loaded.Success)
+            { Debug.LogError($"FAIL version 14: the file must still load — {loaded.ErrorMessage}"); ok = false; }
+
+            // Блок ищется ПО ВИДУ, а не по индексу: Normalize вставляет Section перед доской.
+            var page = loaded.Notes != null && loaded.Notes.Groups.Count > 0 && loaded.Notes.Groups[0].Pages.Count > 0
+                ? loaded.Notes.Groups[0].Pages[0] : null;
+            var canvas = page?.Blocks?.Find(b => b.Kind == BlockKind.Canvas);
+            var card = canvas != null && canvas.CanvasObjects != null && canvas.CanvasObjects.Count > 0
+                ? canvas.CanvasObjects[0] as NoteCardData : null;
+
+            if (card == null)
+            { Debug.LogError("FAIL version 14: the card did not come back"); ok = false; }
+            else
+            {
+                if (card.FrameColorIndex != NotesPalette.NeutralIndex)
+                { Debug.LogError($"FAIL version 14: frame index {card.FrameColorIndex}, want {NotesPalette.NeutralIndex} — an old card must look exactly as it did"); ok = false; }
+                if (card.FontSize != CardFontSize.Medium)
+                { Debug.LogError($"FAIL version 14: font size {card.FontSize}, want Medium"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Version 14 Card Gets Default Style: PASS" : "Self-Test Version 14 Card Gets Default Style: FAIL");
+        }
+
+        /// <summary>Обратная половина: выбранный ДМ стиль обязан пережить сохранение и загрузку.
+        /// Значения нарочно НЕ нулевые — забытая строка в конвертере вернула бы ноль и осталась бы
+        /// незамеченной на фикстуре со значениями по умолчанию.</summary>
+        [ContextMenu("Self-Test: Card Style Round-Trip")]
+        public void SelfTestCardStyleRoundTrip()
+        {
+            bool ok = true;
+
+            var card = new NoteCardData
+            {
+                Title = "Засада",
+                Body = "три гоблина",
+                FrameColorIndex = 7,
+                FontSize = CardFontSize.Large,
+            };
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 1);
+            canvas.CanvasObjects = new List<CanvasObjectData> { card };
+
+            var page = NotesDocOps.CreateSessionSheet("Сессия 1");
+            page.Blocks.Add(canvas);
+
+            var doc = new NotesDocument();
+            var group = new PageGroup { Title = "Сессии" };
+            group.Pages.Add(page);
+            doc.Groups.Add(group);
+
+            string path = Path.Combine(Application.temporaryCachePath, "notes-card-style.dndproj");
+            SaveNotesOnly(path, doc);
+            var loaded = ProjectSerializer.Load(path);
+
+            if (!loaded.Success)
+            { Debug.LogError($"FAIL card style: load failed — {loaded.ErrorMessage}"); ok = false; }
+
+            var backPage = loaded.Notes != null && loaded.Notes.Groups.Count > 0 && loaded.Notes.Groups[0].Pages.Count > 0
+                ? loaded.Notes.Groups[0].Pages[0] : null;
+            var backCanvas = backPage?.Blocks?.Find(b => b.Kind == BlockKind.Canvas && b.CanvasObjects != null && b.CanvasObjects.Count > 0);
+            var backCard = backCanvas != null ? backCanvas.CanvasObjects[0] as NoteCardData : null;
+
+            if (backCard == null)
+            { Debug.LogError("FAIL card style: the card did not come back"); ok = false; }
+            else
+            {
+                if (backCard.FrameColorIndex != 7)
+                { Debug.LogError($"FAIL card style: frame index {backCard.FrameColorIndex}, want 7 — the DM's colour was dropped by the converter"); ok = false; }
+                if (backCard.FontSize != CardFontSize.Large)
+                { Debug.LogError($"FAIL card style: font size {backCard.FontSize}, want Large"); ok = false; }
+                if (backCard.Title != "Засада" || backCard.Body != "три гоблина")
+                { Debug.LogError("FAIL card style: the card's own text did not survive alongside the style"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Card Style Round-Trip: PASS" : "Self-Test Card Style Round-Trip: FAIL");
+        }
     }
 }

@@ -217,6 +217,14 @@ namespace WorldGen.Notes.Data
         public string Title = "";
         public string Body = "";
 
+        /// <summary>Индекс цвета РАМКИ в NotesPalette. Ноль — нейтральный, поэтому файл, где поля
+        /// нет вовсе, читается как карточка прежнего вида.</summary>
+        public int FrameColorIndex;
+
+        /// <summary>Размер ТЕКСТА карточки; заголовок не меняется. Medium объявлен нулём именно
+        /// ради отсутствующего поля — см. CardFontSize.</summary>
+        public CardFontSize FontSize;
+
         public NoteCardData()
         {
             Size = new Vector2(220f, 140f);

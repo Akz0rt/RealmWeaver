@@ -172,7 +172,9 @@ namespace WorldGen.Notes.Data
                 CanvasObjectData c;
                 switch (o)
                 {
-                    case NoteCardData n:    c = new NoteCardData { Title = n.Title, Body = n.Body }; break;
+                    case NoteCardData n:
+                        c = new NoteCardData { Title = n.Title, Body = n.Body, FrameColorIndex = n.FrameColorIndex, FontSize = n.FontSize };
+                        break;
                     case ImageObjectData i: c = new ImageObjectData { ImageBytes = i.ImageBytes }; break;
                     case DrawingObjectData d:
                         c = new DrawingObjectData(d.PixelWidth, d.PixelHeight) { PixelDataPng = d.PixelDataPng };
