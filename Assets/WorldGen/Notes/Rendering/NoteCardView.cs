@@ -160,7 +160,16 @@ namespace WorldGen.Notes.Rendering
                 // Снимок берётся ДО присваивания data.Body — иначе он запомнит уже новый текст.
                 bodyField.onValueChanged.AddListener(v =>
                 {
-                    if (!textEditPushed)
+                    // ТОЧКА ОТКАТА — НА ПЕРВОЙ БУКВЕ ЗАХОДА И НА КАЖДОМ ПРОБЕЛЕ, поэтому Ctrl+Z снимает
+                    // написанное по слову, а не весь заход разом. Снимок берётся ДО присваивания
+                    // data.Body: на пробеле после «привет» он держит «привет», и отмена возвращает
+                    // законченное слово.
+                    //
+                    // Считаем ПРОБЕЛЫ, а не смотрим на последний символ: каретка бывает в середине текста,
+                    // и вставка слова внутрь фразы — такая же законченная мысль, как дописывание в конец.
+                    // Условие «стало больше» заодно молчит на удалении: стирание пробела точку не ставит.
+                    bool wordFinished = CountWhitespace(v) > CountWhitespace(data.Body);
+                    if (!textEditPushed || wordFinished)
                     {
                         textEditPushed = true;
                         if (interactionController != null) interactionController.HandleTextEditStarted(ObjectId);
@@ -193,6 +202,16 @@ namespace WorldGen.Notes.Rendering
 
             titleText.text = data.Title;
             Refresh();
+        }
+
+        /// <summary>Пробелы, переводы строк и табуляции — всё, чем ДМ отделяет слово от слова.</summary>
+        static int CountWhitespace(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            int n = 0;
+            foreach (var c in s)
+                if (char.IsWhiteSpace(c)) n++;
+            return n;
         }
 
         /// <summary>Ставит каретку в текст карточки — вызывается сразу после того, как карточку вставили,
