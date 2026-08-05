@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="width:1180px;height:760px;background:var(--bg);color:var(--txt);font-family:Helvetica,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);position:relative;user-select:none">
+
+  <!-- faint app behind (dimmed) -->
+  <div style="position:absolute;inset:0;background:var(--panel-2)"></div>
+  <div style="position:absolute;top:20px;left:20px;width:250px;height:180px;background:var(--panel);border:1px solid var(--border);border-radius:10px;opacity:.5"></div>
+  <div style="position:absolute;top:20px;right:20px;width:300px;height:120px;background:var(--panel);border:1px solid var(--border);border-radius:10px;opacity:.5"></div>
+  <div style="position:absolute;bottom:20px;left:20px;right:20px;height:200px;background:var(--panel);border:1px solid var(--border);border-radius:10px;opacity:.5"></div>
+  <!-- scrim -->
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,.55)"></div>
+
+  <!-- dialogs -->
+  <div style="position:relative;flex:1;display:flex;align-items:center;justify-content:center;gap:44px">
+
+    <!-- CONFIRM / DANGER -->
+    <div style="width:388px;background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden">
+      <div style="padding:26px 28px 20px">
+        <div style="display:flex;align-items:center;gap:13px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:rgba(201,96,90,.16);display:flex;align-items:center;justify-content:center;flex:none">
+            <svg width="20" height="20" viewBox="0 0 20 20" style="color:#C9605A"><path d="M10 2 L19 18 L1 18 Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><line x1="10" y1="8" x2="10" y2="12.5" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="15" r="1" fill="currentColor"/></svg>
+          </div>
+          <div style="font-size:17px;font-weight:700;color:var(--txt)">Удалить точку?</div>
+        </div>
+        <div style="font-size:13px;line-height:1.6;color:var(--mut)">Точка «Валлор» и её привязка к группе заметок будут удалены без возможности восстановления.</div>
+      </div>
+      <div style="padding:16px 28px 22px;display:flex;gap:10px;justify-content:flex-end">
+        <div style="font-size:13px;font-weight:600;color:var(--txt);background:var(--elev);border:1px solid var(--border);padding:10px 20px;border-radius:9px">Отмена</div>
+        <div style="font-size:13px;font-weight:700;color:#fff;background:#C9605A;padding:10px 22px;border-radius:9px">Удалить</div>
+      </div>
+    </div>
+
+    <!-- ERROR -->
+    <div style="width:388px;background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden">
+      <div style="padding:26px 28px 20px">
+        <div style="display:flex;align-items:center;gap:13px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;flex:none">
+            <svg width="20" height="20" viewBox="0 0 20 20" style="color:var(--accent)"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><line x1="10" y1="6" x2="10" y2="11" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="14" r="1" fill="currentColor"/></svg>
+          </div>
+          <div style="font-size:17px;font-weight:700;color:var(--txt)">Не удалось сохранить</div>
+        </div>
+        <div style="font-size:13px;line-height:1.6;color:var(--mut)">Файл проекта <span style="font-family:monospace;color:var(--txt)">Серебряные_Пределы.dndproj</span> занят другим процессом. Закройте его и повторите попытку.</div>
+      </div>
+      <div style="padding:16px 28px 22px;display:flex;gap:10px;justify-content:flex-end">
+        <div style="font-size:13px;font-weight:600;color:var(--txt);background:var(--elev);border:1px solid var(--border);padding:10px 20px;border-radius:9px">Подробнее</div>
+        <div style="font-size:13px;font-weight:700;color:var(--accent-ink);background:var(--accent);padding:10px 24px;border-radius:9px">Ок</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1180,&quot;height&quot;:760}}"></script>
+</body>
+</html>

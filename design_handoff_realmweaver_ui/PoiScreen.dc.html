@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="width:1180px;height:760px;background:var(--bg);color:var(--txt);font-family:Helvetica,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);position:relative;user-select:none">
+
+  <!-- toolbar strip: tabs -->
+  <div style="height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--border)">
+    <div style="display:flex;padding:3px;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:13px;font-weight:500;color:var(--mut);padding:6px 16px;border-radius:6px">Карта</div>
+      <div style="font-size:13px;font-weight:500;color:var(--mut);padding:6px 16px;border-radius:6px">Редактор</div>
+      <div style="font-size:13px;font-weight:600;color:var(--accent-ink);background:var(--accent);padding:6px 16px;border-radius:6px">Точки</div>
+    </div>
+    <div style="font-size:12px;color:var(--mut)">4 точки · кликните по карте, чтобы добавить</div>
+  </div>
+
+  <div style="flex:1;position:relative;overflow:hidden;background:var(--map-ocean)">
+    <!-- landmass -->
+    <div style="position:absolute;top:10%;left:18%;width:66%;height:80%;background:var(--map-land);border-radius:46% 54% 58% 42% / 48% 44% 56% 52%;box-shadow:0 0 0 3px var(--map-coast) inset, var(--shadow)"></div>
+
+    <!-- POI markers on map -->
+    <div style="position:absolute;top:34%;left:40%;display:flex;align-items:center;gap:7px">
+      <div style="width:30px;height:30px;border-radius:50%;background:var(--accent);border:3px solid var(--panel);display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow)">
+        <svg width="14" height="14" viewBox="0 0 14 14" style="color:var(--accent-ink)"><path d="M2 12 L2 6 L7 3 L12 6 L12 12 Z M5 12 L5 8 L9 8 L9 12" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      </div>
+      <span style="font-size:12px;font-weight:700;color:var(--txt);background:var(--panel);padding:3px 8px;border-radius:5px;border:1px solid var(--accent)">Валлор</span>
+    </div>
+    <div style="position:absolute;top:56%;left:56%;display:flex;align-items:center;gap:6px;opacity:.9">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--panel);border:2px solid var(--mut);display:flex;align-items:center;justify-content:center"><div style="width:2px;height:11px;background:var(--mut);box-shadow:4px 0 var(--mut),-4px 0 var(--mut)"></div></div>
+      <span style="font-size:11px;color:var(--txt);background:var(--panel);padding:2px 7px;border-radius:4px;border:1px solid var(--border)">Руины Кель</span>
+    </div>
+    <div style="position:absolute;top:70%;left:34%;display:flex;align-items:center;gap:6px;opacity:.9">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--panel);border:2px solid var(--mut);display:flex;align-items:center;justify-content:center"><div style="width:12px;height:9px;background:var(--mut);clip-path:polygon(0 100%,0 40%,20% 40%,20% 10%,40% 10%,40% 40%,60% 40%,60% 10%,80% 10%,80% 40%,100% 40%,100% 100%)"></div></div>
+      <span style="font-size:11px;color:var(--txt);background:var(--panel);padding:2px 7px;border-radius:4px;border:1px solid var(--border)">Крепость Дрейн</span>
+    </div>
+
+    <!-- ===== POI LIST PANEL ===== -->
+    <div style="position:absolute;top:16px;left:16px;width:262px;bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:700;color:var(--txt)">Точки интереса</span>
+        <span style="font-size:11px;color:var(--mut);background:var(--elev);padding:2px 8px;border-radius:10px">4</span>
+      </div>
+      <!-- search -->
+      <div style="padding:10px 12px 8px">
+        <div style="display:flex;align-items:center;gap:8px;background:var(--elev);border:1px solid var(--border);border-radius:7px;padding:7px 10px">
+          <svg width="12" height="12" viewBox="0 0 13 13" style="color:var(--mut)"><circle cx="5.5" cy="5.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="8" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.4"/></svg>
+          <span style="font-size:12px;color:var(--mut)">Поиск…</span>
+        </div>
+      </div>
+      <!-- filter chips -->
+      <div style="padding:2px 12px 10px;display:flex;flex-wrap:wrap;gap:6px">
+        <span style="font-size:11px;color:var(--accent-ink);background:var(--accent);padding:4px 10px;border-radius:12px;font-weight:600">Все</span>
+        <span style="font-size:11px;color:var(--mut);background:var(--elev);border:1px solid var(--border);padding:4px 10px;border-radius:12px">Города</span>
+        <span style="font-size:11px;color:var(--mut);background:var(--elev);border:1px solid var(--border);padding:4px 10px;border-radius:12px">Руины</span>
+        <span style="font-size:11px;color:var(--mut);background:var(--elev);border:1px solid var(--border);padding:4px 10px;border-radius:12px">Крепости</span>
+      </div>
+      <!-- list -->
+      <div style="flex:1;overflow:hidden;padding:0 8px;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;background:var(--accent-soft);border:1px solid var(--accent)">
+          <div style="width:26px;height:26px;border-radius:6px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex:none"><svg width="13" height="13" viewBox="0 0 14 14" style="color:var(--accent-ink)"><path d="M2 12 L2 6 L7 3 L12 6 L12 12 Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></div>
+          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--txt)">Валлор</div><div style="font-size:11px;color:var(--mut)">Город · Центральный регион</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px">
+          <div style="width:26px;height:26px;border-radius:6px;background:var(--elev);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none"><div style="width:2px;height:11px;background:var(--mut);box-shadow:4px 0 var(--mut),-4px 0 var(--mut)"></div></div>
+          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;color:var(--txt)">Руины Кель</div><div style="font-size:11px;color:var(--mut)">Руины · Восточный регион</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px">
+          <div style="width:26px;height:26px;border-radius:6px;background:var(--elev);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none"><div style="width:12px;height:9px;background:var(--mut);clip-path:polygon(0 100%,0 40%,20% 40%,20% 10%,40% 10%,40% 40%,60% 40%,60% 10%,80% 10%,80% 40%,100% 40%,100% 100%)"></div></div>
+          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;color:var(--txt)">Крепость Дрейн</div><div style="font-size:11px;color:var(--mut)">Крепость · Южный регион</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px">
+          <div style="width:26px;height:26px;border-radius:6px;background:var(--elev);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none"><div style="width:11px;height:11px;border:2px solid var(--mut);border-radius:0 0 10px 10px"></div></div>
+          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;color:var(--txt)">Подземелье Мор</div><div style="font-size:11px;color:var(--mut)">Подземелье · Восточный регион</div></div>
+        </div>
+      </div>
+      <div style="padding:10px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:center;gap:7px;padding:9px;border:1px dashed var(--border);border-radius:8px;color:var(--accent)"><span style="font-size:15px">+</span><span style="font-size:12px;font-weight:600">Добавить точку</span></div>
+      </div>
+    </div>
+
+    <!-- ===== POI EDIT PANEL ===== -->
+    <div style="position:absolute;top:16px;right:16px;width:308px;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:700;color:var(--txt)">Редактирование точки</span>
+        <span style="font-size:16px;color:var(--mut)">×</span>
+      </div>
+      <div style="padding:14px;display:flex;flex-direction:column;gap:15px">
+        <!-- name -->
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Имя</div>
+          <div style="height:38px;display:flex;align-items:center;padding:0 12px;background:var(--elev);border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--txt)">Валлор</div>
+        </div>
+        <!-- type -->
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Тип</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;border-radius:8px;background:var(--accent);color:var(--accent-ink)"><svg width="15" height="15" viewBox="0 0 14 14"><path d="M2 12 L2 6 L7 3 L12 6 L12 12 Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span style="font-size:10px;font-weight:600">Город</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;border-radius:8px;background:var(--elev);border:1px solid var(--border);color:var(--mut)"><div style="width:2px;height:12px;background:currentColor;box-shadow:4px 0 currentColor,-4px 0 currentColor"></div><span style="font-size:10px">Руины</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;border-radius:8px;background:var(--elev);border:1px solid var(--border);color:var(--mut)"><div style="width:11px;height:11px;border:2px solid currentColor;border-radius:0 0 10px 10px"></div><span style="font-size:10px">Подзем.</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;border-radius:8px;background:var(--elev);border:1px solid var(--border);color:var(--mut)"><div style="width:13px;height:9px;background:currentColor;clip-path:polygon(0 100%,0 40%,20% 40%,20% 10%,40% 10%,40% 40%,60% 40%,60% 10%,80% 10%,80% 40%,100% 40%,100% 100%)"></div><span style="font-size:10px">Креп.</span></div>
+          </div>
+        </div>
+        <!-- description -->
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Описание</div>
+          <div style="min-height:56px;padding:10px 12px;background:var(--elev);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--txt);line-height:1.5">Столица людского королевства. Резиденция короля Алдрика…</div>
+        </div>
+        <!-- custom icon -->
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Иконка на карте</div>
+          <div style="display:flex;gap:7px">
+            <div style="width:34px;height:34px;border-radius:8px;background:var(--accent);box-shadow:0 0 0 2px var(--accent) ,0 0 0 4px var(--panel)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;background:var(--elev);border:1px solid var(--border)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;background:var(--elev);border:1px solid var(--border)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;background:var(--elev);border:1px solid var(--border)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:16px">+</div>
+          </div>
+        </div>
+        <!-- linked notes -->
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Привязанные заметки</div>
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 11px;background:var(--accent-soft);border:1px solid var(--border);border-radius:8px">
+            <div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div>
+            <span style="font-size:12px;color:var(--txt);flex:1">Группа «Город Валлор»</span>
+            <span style="font-size:11px;color:var(--accent);font-weight:600">Открыть →</span>
+          </div>
+        </div>
+      </div>
+      <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;color:#c9605a;font-weight:600">Удалить</span>
+        <div style="font-size:12px;font-weight:700;color:var(--accent-ink);background:var(--accent);padding:8px 20px;border-radius:8px">Готово</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1180,&quot;height&quot;:760}}"></script>
+</body>
+</html>

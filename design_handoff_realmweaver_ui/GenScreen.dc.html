@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="width:1920px;height:1080px;background:var(--bg);color:var(--txt);font-family:Helvetica,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);position:relative;user-select:none">
+
+  <!-- ===== TOP MENU BAR ===== -->
+  <div style="height:40px;flex:none;display:flex;align-items:center;gap:2px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:8px;padding-right:14px;margin-right:6px;border-right:1px solid var(--border)">
+      <div style="width:16px;height:16px;border-radius:3px;background:var(--accent)"></div>
+      <span style="font-size:13px;font-weight:700;letter-spacing:.14em">REALMWEAVER</span>
+    </div>
+    <div style="font-size:13px;color:var(--txt);padding:6px 10px;border-radius:5px;background:var(--elev)">Файл</div>
+    <div style="font-size:13px;color:var(--mut);padding:6px 10px;border-radius:5px">Правка</div>
+    <div style="font-size:13px;color:var(--mut);padding:6px 10px;border-radius:5px">Вид</div>
+    <div style="flex:1"></div>
+    <span style="font-size:12px;color:var(--mut)">Проект не сохранён</span>
+  </div>
+
+  <!-- ===== EMPTY-STATE STAGE ===== -->
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative;overflow:hidden;background:var(--bg)">
+    <!-- faint hex/dot texture -->
+    <div style="position:absolute;inset:0;background-image:radial-gradient(var(--dot) 1px, transparent 1px);background-size:26px 26px;opacity:.7"></div>
+
+    <!-- generation card -->
+    <div style="position:relative;width:560px;background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);overflow:hidden">
+      <!-- header -->
+      <div style="padding:30px 36px 22px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--border);display:flex;align-items:center;justify-content:center">
+            <div style="width:18px;height:18px;border:2px solid var(--accent);border-radius:50%;position:relative">
+              <div style="position:absolute;top:2px;left:2px;width:8px;height:8px;background:var(--accent);border-radius:2px 6px 4px 6px"></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:20px;font-weight:700;color:var(--txt)">Создать карту мира</div>
+            <div style="font-size:13px;color:var(--mut);margin-top:2px">Карта ещё не сгенерирована</div>
+          </div>
+        </div>
+        <div style="font-size:13px;color:var(--mut);line-height:1.55">Процедурная полигональная генерация: высоты, биомы, климат, океаны и регионы. Настройте параметры или начните со случайного сида.</div>
+      </div>
+
+      <!-- form -->
+      <div style="padding:24px 36px 8px;display:flex;flex-direction:column;gap:20px">
+
+        <!-- seed -->
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Сид</div>
+          <div style="display:flex;gap:8px">
+            <div style="flex:1;display:flex;align-items:center;padding:0 12px;height:40px;background:var(--elev);border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--txt);font-family:monospace">azuremoor-4471</div>
+            <div style="display:flex;align-items:center;gap:7px;padding:0 14px;height:40px;background:var(--elev);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--txt)">
+              <svg width="14" height="14" viewBox="0 0 14 14" style="color:var(--accent)"><path d="M11 3 A5 5 0 1 0 12 7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 1 L11.5 3.5 L9 3.2 Z" fill="currentColor"/></svg>
+              Случайно
+            </div>
+          </div>
+        </div>
+
+        <!-- size -->
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Размер карты</div>
+          <div style="display:flex;padding:4px;gap:3px;background:var(--bg);border:1px solid var(--border);border-radius:9px">
+            <div style="flex:1;text-align:center;font-size:13px;color:var(--mut);padding:8px;border-radius:6px">Малый</div>
+            <div style="flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--accent-ink);background:var(--accent);padding:8px;border-radius:6px">Средний</div>
+            <div style="flex:1;text-align:center;font-size:13px;color:var(--mut);padding:8px;border-radius:6px">Большой</div>
+          </div>
+        </div>
+
+        <!-- shape -->
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Форма суши</div>
+          <div style="display:flex;gap:8px">
+            <div style="flex:1;text-align:center;font-size:13px;color:var(--txt);padding:9px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:8px">Материк</div>
+            <div style="flex:1;text-align:center;font-size:13px;color:var(--mut);padding:9px;border:1px solid var(--border);background:var(--elev);border-radius:8px">Архипелаг</div>
+            <div style="flex:1;text-align:center;font-size:13px;color:var(--mut);padding:9px;border:1px solid var(--border);background:var(--elev);border-radius:8px">Острова</div>
+          </div>
+        </div>
+
+        <!-- detail slider -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <span style="font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em">Детализация · регионов</span>
+            <span style="font-size:13px;font-weight:700;color:var(--accent)">24</span>
+          </div>
+          <div style="position:relative;height:6px;background:var(--elev);border-radius:3px">
+            <div style="position:absolute;left:0;top:0;height:6px;width:52%;background:var(--accent);border-radius:3px"></div>
+            <div style="position:absolute;left:52%;top:50%;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:50%;background:var(--panel);border:2px solid var(--accent);box-shadow:var(--shadow)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- actions -->
+      <div style="padding:22px 36px 30px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:center;gap:9px;height:48px;background:var(--accent);border-radius:10px;color:var(--accent-ink);font-size:15px;font-weight:700">
+          <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1 L10 6 L15 8 L10 10 L8 15 L6 10 L1 8 L6 6 Z" fill="currentColor"/></svg>
+          Сгенерировать карту
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+          <span style="font-size:11px;color:var(--mut)">или</span>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border:1px solid var(--border);background:var(--elev);border-radius:10px;color:var(--txt);font-size:14px;font-weight:600">
+          <svg width="15" height="15" viewBox="0 0 15 15" style="color:var(--mut)"><path d="M1.5 4 L1.5 12 L13.5 12 L13.5 5 L7 5 L5.5 3 L1.5 3 Z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+          Открыть проект…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1920,&quot;height&quot;:1080}}"></script>
+</body>
+</html>

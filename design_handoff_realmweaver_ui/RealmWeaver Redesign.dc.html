@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body{margin:0;background:#0d0d10;font-family:Helvetica,Arial,sans-serif}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;gap:44px;padding:56px;background:#0d0d10;min-width:max-content">
+
+  <!-- ================= AUDIT HEADER ================= -->
+  <div style="display:flex;gap:28px;align-items:stretch;color:#e9e9ee;max-width:1400px">
+    <div style="flex:1.1">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.22em;color:#C9A24B;text-transform:uppercase">RealmWeaver · UI-редизайн</div>
+      <div style="font-size:34px;font-weight:800;margin:10px 0 14px;letter-spacing:-.01em">Аудит темы и единая система</div>
+      <div style="font-size:15px;line-height:1.65;color:#a3a3ae">Кликабельный макет под runtime <b style="color:#e9e9ee">UnityEngine.UI</b> — всё из прямоугольников, текста и кнопок. Тёмная и светлая тема переключаются тумблером ниже: один набор токенов (поверхности, бордеры, акцент) перекрашивает все экраны сразу.</div>
+    </div>
+    <div style="flex:1.4;background:#16161b;border:1px solid #2a2a33;border-radius:14px;padding:22px 26px">
+      <div style="font-size:12px;font-weight:700;letter-spacing:.1em;color:#8e929e;text-transform:uppercase;margin-bottom:14px">Что чинит редизайн</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 28px">
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">01</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">Два конфликтующих акцента (зелёный+синий) → <b style="color:#e9e9ee">один</b> акцент, семантический цвет только на карте</span></div>
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">02</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">«Слои» и легенда висят в пустоте → <b style="color:#e9e9ee">карточки с заголовками</b>, пристыкованные к краям карты</span></div>
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">03</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">Рваные отступы, чекбоксы оторваны от подписей → <b style="color:#e9e9ee">плотные строки</b> «чекбокс + подпись»</span></div>
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">04</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">Иконки тулбара без контейнера → <b style="color:#e9e9ee">сгруппированный тулбар</b> + поиск</span></div>
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">05</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">Нет состояния «карта не создана» → <b style="color:#e9e9ee">экран генерации</b> (сид, размер, форма)</span></div>
+        <div style="display:flex;gap:10px"><span style="color:#C9A24B;font-weight:700">06</span><span style="font-size:13px;line-height:1.45;color:#c7c7cf">Плоский однотонный фон → <b style="color:#e9e9ee">3 уровня поверхности</b> + бордеры</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= THEME TOGGLE ================= -->
+  <div style="display:flex;align-items:center;gap:18px;color:#e9e9ee">
+    <span style="font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8e929e">Тема интерфейса</span>
+    <div style="display:flex;padding:4px;gap:4px;background:#16161b;border:1px solid #2a2a33;border-radius:10px">
+      <div onClick="{{ setDark }}" style="{{ darkBtnStyle }}">◐ Тёмная</div>
+      <div onClick="{{ setLight }}" style="{{ lightBtnStyle }}">◑ Светлая</div>
+    </div>
+    <span style="font-size:12px;color:#6a6a74">Тумблер перекрашивает все 4 экрана — это и есть настройка в приложении</span>
+  </div>
+
+  <!-- ================= THEMED SCREENS ================= -->
+  <div ref="{{ setRoot }}" style="--bg:#141419;--panel:#1C1C22;--panel-2:#23232B;--elev:#2B2B34;--border:#34343F;--txt:#E9E9EE;--mut:#8E929E;--accent:#C9A24B;--accent-ink:#1A1710;--accent-soft:#2B2617;--map-ocean:#122A40;--map-land:#26352A;--map-coast:#3c5a44;--dot:#2a2a33;--shadow:0 10px 28px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:40px">
+
+    <!-- MAIN + GEN row -->
+    <div style="display:flex;gap:44px;align-items:flex-start;flex-wrap:nowrap">
+      <div id="main" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:11px;color:#e9e9ee"><span style="font-size:12px;font-weight:800;color:#0d0d10;background:#C9A24B;padding:3px 10px;border-radius:16px">A</span><div style="font-size:18px;font-weight:700">Главный экран · карта + заметки</div></div>
+        <div style="width:1152px;height:648px;overflow:hidden;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+          <div style="transform:scale(.6);transform-origin:top left;width:1920px;height:1080px"><dc-import name="MapScreen" hint-size="1920px,1080px"></dc-import></div>
+        </div>
+      </div>
+      <div id="gen" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:11px;color:#e9e9ee"><span style="font-size:12px;font-weight:800;color:#0d0d10;background:#C9A24B;padding:3px 10px;border-radius:16px">B</span><div style="font-size:18px;font-weight:700">Генерация · карта не создана</div></div>
+        <div style="width:1152px;height:648px;overflow:hidden;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+          <div style="transform:scale(.6);transform-origin:top left;width:1920px;height:1080px"><dc-import name="GenScreen" hint-size="1920px,1080px"></dc-import></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EDITOR + POI row -->
+    <div style="display:flex;gap:44px;align-items:flex-start;flex-wrap:nowrap">
+      <div id="editor" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:11px;color:#e9e9ee"><span style="font-size:12px;font-weight:800;color:#0d0d10;background:#C9A24B;padding:3px 10px;border-radius:16px">C</span><div style="font-size:18px;font-weight:700">Редактор · кисти</div></div>
+        <div style="width:849px;height:547px;overflow:hidden;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+          <div style="transform:scale(.72);transform-origin:top left;width:1180px;height:760px"><dc-import name="EditorScreen" hint-size="1180px,760px"></dc-import></div>
+        </div>
+      </div>
+      <div id="poi" style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:11px;color:#e9e9ee"><span style="font-size:12px;font-weight:800;color:#0d0d10;background:#C9A24B;padding:3px 10px;border-radius:16px">D</span><div style="font-size:18px;font-weight:700">Точки интереса · список + редактор</div></div>
+        <div style="width:849px;height:547px;overflow:hidden;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+          <div style="transform:scale(.72);transform-origin:top left;width:1180px;height:760px"><dc-import name="PoiScreen" hint-size="1180px,760px"></dc-import></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'dark' };
+
+  themes = {
+    dark: {
+      '--bg':'#141419','--panel':'#1C1C22','--panel-2':'#23232B','--elev':'#2B2B34',
+      '--border':'#34343F','--txt':'#E9E9EE','--mut':'#8E929E','--accent':'#C9A24B',
+      '--accent-ink':'#1A1710','--accent-soft':'#2B2617','--map-ocean':'#122A40',
+      '--map-land':'#26352A','--map-coast':'#3c5a44','--dot':'#2a2a33',
+      '--shadow':'0 10px 28px rgba(0,0,0,.5)'
+    },
+    light: {
+      '--bg':'#E7E1D3','--panel':'#F4F0E7','--panel-2':'#FBF8F1','--elev':'#FFFFFF',
+      '--border':'#D5CCB8','--txt':'#2B2822','--mut':'#736A59','--accent':'#4E4E93',
+      '--accent-ink':'#FFFFFF','--accent-soft':'#E4E2F1','--map-ocean':'#BFD0D8',
+      '--map-land':'#D6DBC2','--map-coast':'#a9b58c','--dot':'#d3ccbb',
+      '--shadow':'0 8px 22px rgba(70,60,35,.15)'
+    }
+  };
+
+  apply(theme) {
+    const t = this.themes[theme];
+    if (this.rootEl && t) {
+      for (const k in t) this.rootEl.style.setProperty(k, t[k]);
+    }
+  }
+
+  setTheme(theme) {
+    this.setState({ theme });
+    this.apply(theme);
+  }
+
+  renderVals() {
+    const isDark = this.state.theme === 'dark';
+    const base = { padding:'8px 22px', borderRadius:'7px', fontSize:'14px', cursor:'pointer', transition:'all .12s' };
+    const active = { ...base, background:'#C9A24B', color:'#1A1710', fontWeight:700 };
+    const idle   = { ...base, background:'transparent', color:'#8e929e', fontWeight:500 };
+    return {
+      isDark,
+      setRoot: (el) => { this.rootEl = el; if (el) this.apply(this.state.theme); },
+      setDark: () => this.setTheme('dark'),
+      setLight: () => this.setTheme('light'),
+      darkBtnStyle: isDark ? active : idle,
+      lightBtnStyle: isDark ? idle : active,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Spectral:ital,wght@0,300;0,400;0,500;1,400&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05080c;}
+  a{color:#e6b25c;text-decoration:none}
+  a:hover{color:#f2c882}
+</style>
+</helmet>
+<div style="min-height:100vh;background:radial-gradient(130% 90% at 50% 20%, #0c141d 0%, #070b11 55%, #04060a 100%);color:#c4d6de;font-family:'Spectral',Georgia,serif;padding:52px 40px 96px;">
+  <div style="max-width:1220px;margin:0 auto;">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:20px;border-bottom:1px solid rgba(111,183,201,0.16);padding-bottom:22px;margin-bottom:34px;">
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:5px;color:#6f8896;text-transform:uppercase;margin-bottom:14px;">Мокап · концепт карты для D&amp;D</div>
+        <div style="font-family:'Cinzel',serif;font-size:40px;font-weight:700;letter-spacing:2px;color:#e6edf2;line-height:1;">TERRA UMBRARUM</div>
+        <div style="font-family:'IM Fell English',serif;font-style:italic;font-size:17px;color:#8ba4b0;margin-top:10px;">Контрастные биомы, тёплые регионы-контрапункты, детальные иконки и туман войны</div>
+      </div>
+      <div style="text-align:right;font-size:13px;color:#7c94a1;line-height:1.7;font-family:'Cinzel',serif;letter-spacing:1px;">
+        <div>11 БИОМОВ · 4 ПАЛИТРЫ · ДОРОГИ И РУИНЫ</div>
+        <div style="color:#e6b25c;">УРОВЕНЬ ТЕМНОТЫ — 7 / 10</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:40px;">
+
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:baseline;gap:12px;">
+            <span style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px;color:#0a0f14;background:#78c8d6;padding:4px 9px;">ВИД МАСТЕРА</span>
+            <span style="font-family:'Cinzel',serif;font-size:17px;letter-spacing:1px;color:#e6edf2;">Полная карта</span>
+          </div>
+          <div style="font-family:'IM Fell English',serif;font-style:italic;color:#6f8896;font-size:14px;">то, что DM видит сразу после генерации</div>
+        </div>
+        <div style="position:relative;padding:20px;background:linear-gradient(180deg,#0a1017,#070b11);border:1px solid rgba(111,183,201,0.14);box-shadow:0 40px 100px -30px rgba(0,0,0,0.9), inset 0 0 0 1px rgba(0,0,0,0.5);">
+          <div style="position:absolute;inset:8px;border:1px solid rgba(230,178,92,0.18);pointer-events:none;"></div>
+          <canvas ref="{{ mapRef }}" style="display:block;width:100%;height:auto;background:#05080c;"></canvas>
+        </div>
+      </div>
+
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:baseline;gap:12px;">
+            <span style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:2px;color:#e6edf2;background:#2a3a44;padding:4px 9px;">ВИД ИГРОКОВ</span>
+            <span style="font-family:'Cinzel',serif;font-size:17px;letter-spacing:1px;color:#e6edf2;">Туман войны</span>
+          </div>
+          <div style="font-family:'IM Fell English',serif;font-style:italic;color:#6f8896;font-size:14px;">открыты только исследованные земли и маршруты</div>
+        </div>
+        <div style="position:relative;padding:20px;background:linear-gradient(180deg,#0a1017,#070b11);border:1px solid rgba(111,183,201,0.14);box-shadow:0 40px 100px -30px rgba(0,0,0,0.9), inset 0 0 0 1px rgba(0,0,0,0.5);">
+          <div style="position:absolute;inset:8px;border:1px solid rgba(230,178,92,0.18);pointer-events:none;"></div>
+          <canvas ref="{{ fogRef }}" style="display:block;width:100%;height:auto;background:#05080c;"></canvas>
+        </div>
+        <div style="margin-top:14px;font-family:'IM Fell English',serif;font-style:italic;color:#6f8896;font-size:14px;">Туман — облачная дымка холодного тона; зоны раскрываются радиусами вокруг посещённых городов и вдоль дорог, с мягкой перистой кромкой и холодным свечением по краю.</div>
+      </div>
+
+    </div>
+
+    <div style="margin-top:56px;">
+      <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#8ba4b0;text-transform:uppercase;margin-bottom:18px;padding-bottom:10px;border-bottom:1px solid rgba(111,183,201,0.14);">5 · Точки интереса · маркеры POI</div>
+      <div style="position:relative;padding:16px 20px;background:linear-gradient(180deg,#0a1017,#070b11);border:1px solid rgba(111,183,201,0.12);">
+        <canvas ref="{{ poiRef }}" style="display:block;width:100%;height:auto;"></canvas>
+      </div>
+      <div style="margin-top:12px;font-family:'IM Fell English',serif;font-style:italic;color:#6f8896;font-size:14px;">Единый стиль каменной кладки с тёплым акцентом на флагах и огнях. Часть маркеров уже расставлена на карте (города-замки, руины, подземелье, встреча, лагерь, деревня, башня); подземелье и встреча используют игровые символы — арка-вход и скрещённые мечи. Набор расширяемый под нужды сессии.</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:34px;margin-top:56px;align-items:start;">
+
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#8ba4b0;text-transform:uppercase;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid rgba(111,183,201,0.14);">2 · Палитра по слотам · «Хладный сумрак»</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;background:rgba(111,183,201,0.08);border:1px solid rgba(111,183,201,0.1);">
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#060f18;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Море · бездна</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#060f18</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#0b1e2c;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Море</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#0b1e2c</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#1e5464;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Мелководье</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#1e5464</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#5c5640;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Побережье</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#5c5640</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#243a32;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Болото / марш</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#243a32</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#4a563a;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Равнины</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#4a563a</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#40424a;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Верещатник</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#40424a</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#183a2e;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Лес · хвоя</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#183a2e</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#96602c;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Лес · огненный <span style="color:#e6b25c;">◆ тёплый</span></div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#96602c</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#805436;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Пустоши <span style="color:#e6b25c;">◆ тёплый</span></div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#805436</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#78848c;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Тундра</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#78848c</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#4a5058;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Нагорье</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#4a5058</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#8c96a4;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Горы · свет</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#8c96a4</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#282e38;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Горы · тень</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#282e38</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#d6e0e8;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Снег</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#d6e0e8</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#78c8d6;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Реки / свечение</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#78c8d6</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#2e6e7e;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Озёра</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#2e6e7e</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#b09660;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Дороги</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#b09660</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#e6b25c;border:1px solid rgba(255,255,255,0.08);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Акцент · города</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#e6b25c</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:#070b11;"><span style="width:32px;height:32px;flex:none;background:#05080c;border:1px solid rgba(255,255,255,0.14);"></span><div><div style="font-size:13.5px;color:#dbe6ec;">Фон · виньетка</div><div style="font-family:'Cinzel',serif;font-size:11px;color:#6f8896;">#05080c</div></div></div>
+        </div>
+
+        <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#8ba4b0;text-transform:uppercase;margin:30px 0 16px;padding-bottom:10px;border-bottom:1px solid rgba(111,183,201,0.14);">Варианты палитр · переключаются в Tweaks</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="display:flex;flex:none;width:150px;height:26px;border:1px solid rgba(255,255,255,0.08);"><span style="flex:1;background:#0b1e2c;"></span><span style="flex:1;background:#183a2e;"></span><span style="flex:1;background:#4a563a;"></span><span style="flex:1;background:#96602c;"></span><span style="flex:1;background:#d6e0e8;"></span><span style="flex:1;background:#e6b25c;"></span></div>
+            <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:1px;color:#dbe6ec;">Хладный сумрак <span style="color:#6f8896;">· сталь + янтарь</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="display:flex;flex:none;width:150px;height:26px;border:1px solid rgba(255,255,255,0.08);"><span style="flex:1;background:#10203e;"></span><span style="flex:1;background:#1c3848;"></span><span style="flex:1;background:#465462;"></span><span style="flex:1;background:#a86e3c;"></span><span style="flex:1;background:#96a8be;"></span><span style="flex:1;background:#f0b96a;"></span></div>
+            <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:1px;color:#dbe6ec;">Лунная сталь <span style="color:#6f8896;">· синь + медь</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="display:flex;flex:none;width:150px;height:26px;border:1px solid rgba(255,255,255,0.08);"><span style="flex:1;background:#08282c;"></span><span style="flex:1;background:#124030;"></span><span style="flex:1;background:#566636;"></span><span style="flex:1;background:#b0742c;"></span><span style="flex:1;background:#d2e6dc;"></span><span style="flex:1;background:#f0bf5a;"></span></div>
+            <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:1px;color:#dbe6ec;">Изумрудная бездна <span style="color:#6f8896;">· тил + золото</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="display:flex;flex:none;width:150px;height:26px;border:1px solid rgba(255,255,255,0.08);"><span style="flex:1;background:#1a1636;"></span><span style="flex:1;background:#2a3050;"></span><span style="flex:1;background:#605660;"></span><span style="flex:1;background:#a86060;"></span><span style="flex:1;background:#9690b0;"></span><span style="flex:1;background:#f0ad54;"></span></div>
+            <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:1px;color:#dbe6ec;">Аметистовая ночь <span style="color:#6f8896;">· индиго + янтарь</span></div>
+          </div>
+        </div>
+
+        <div style="margin-top:22px;font-size:13.5px;line-height:1.7;color:#8ba4b0;font-family:'IM Fell English',serif;font-style:italic;">
+          Контраст держится на связке «холодная база + тёплый регион»: процедурное поле тепла выделяет участки под <span style="color:#c98a44;">огненный лес</span> и <span style="color:#b0764a;">пустоши</span>, которые горят янтарём на фоне синих хвойных лесов и стального нагорья. Снег на вершинах и свечение рек добавляют светлые контрапункты.
+        </div>
+      </div>
+
+      <div>
+        <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#8ba4b0;text-transform:uppercase;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid rgba(111,183,201,0.14);">3 · Решения по элементам · v1</div>
+
+        <div style="display:flex;flex-direction:column;gap:2px;background:rgba(111,183,201,0.08);border:1px solid rgba(111,183,201,0.1);">
+
+          <div style="padding:16px 18px;background:#070b11;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;"><div style="font-family:'Cinzel',serif;font-size:15px;color:#e6edf2;letter-spacing:1px;">11 биомов + тёплые регионы</div><span style="font-size:10px;letter-spacing:1.5px;color:#0a0f14;background:#e6b25c;padding:3px 8px;font-family:'Cinzel',serif;">КОНТРАСТ</span></div>
+            <div style="font-size:13.5px;color:#93aab6;line-height:1.65;margin-top:8px;">Высота + влажность + поле «тепла» дают марш, равнины, верещатник, хвойный и огненный лес, пустоши, тундру, нагорье, снежные вершины. Тёплые регионы — намеренный контрапункт холоду.</div>
+          </div>
+
+          <div style="padding:16px 18px;background:#070b11;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;"><div style="font-family:'Cinzel',serif;font-size:15px;color:#e6edf2;letter-spacing:1px;">Детальные иконки</div><span style="font-size:10px;letter-spacing:1.5px;color:#0a0f14;background:#78c8d6;padding:3px 8px;font-family:'Cinzel',serif;">V1</span></div>
+            <div style="font-size:13.5px;color:#93aab6;line-height:1.65;margin-top:8px;">Слоистые ели со снежной пылью, лиственные кроны в тёплых лесах, горы с двойными пиками и зубчатым снегом, холмы, камыши в маршах, столовые скалы в пустошах. Всё z-сортировано для глубины.</div>
+          </div>
+
+          <div style="padding:16px 18px;background:#070b11;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;"><div style="font-family:'Cinzel',serif;font-size:15px;color:#e6edf2;letter-spacing:1px;">Дороги · города · руины</div><span style="font-size:10px;letter-spacing:1.5px;color:#0a0f14;background:#78c8d6;padding:3px 8px;font-family:'Cinzel',serif;">V1</span></div>
+            <div style="font-size:13.5px;color:#93aab6;line-height:1.65;margin-top:8px;">Города — иконки-замки с флагом, руина как POI, тёплые дороги между поселениями. Подписи регионов ставятся по центроидам биомов, поэтому «Лес», «Пустоши» и т.п. всегда попадают на свой ландшафт.</div>
+          </div>
+
+          <div style="padding:16px 18px;background:#070b11;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;"><div style="font-family:'Cinzel',serif;font-size:15px;color:#e6edf2;letter-spacing:1px;">Реки, озёра, рельеф</div><span style="font-size:10px;letter-spacing:1.5px;color:#0a0f14;background:#78c8d6;padding:3px 8px;font-family:'Cinzel',serif;">V1</span></div>
+            <div style="font-size:13.5px;color:#93aab6;line-height:1.65;margin-top:8px;">Сглаженные границы (уход от полигонов) + hillshade-рельеф с холодным светом; реки спускаются по градиенту, озёра врезаны, берег со свечением. Зерно текстуры убирает плоскость.</div>
+          </div>
+
+          <div style="padding:16px 18px;background:#070b11;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;"><div style="font-family:'Cinzel',serif;font-size:15px;color:#e6edf2;letter-spacing:1px;">Туман войны · вид игроков</div><span style="font-size:10px;letter-spacing:1.5px;color:#0a0f14;background:#e6b25c;padding:3px 8px;font-family:'Cinzel',serif;">V1</span></div>
+            <div style="font-size:13.5px;color:#93aab6;line-height:1.65;margin-top:8px;">Облачная дымка раскрывается вокруг городов и вдоль дорог с перистой кромкой. Мастер видит всё, игроки — только открытое.</div>
+          </div>
+
+        </div>
+
+        <div style="font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#8ba4b0;text-transform:uppercase;margin:30px 0 16px;padding-bottom:10px;border-bottom:1px solid rgba(111,183,201,0.14);">4 · Уровень темноты — 7 / 10</div>
+        <div style="display:flex;gap:5px;align-items:flex-end;height:44px;">
+          <span style="flex:1;height:40%;background:#243642;"></span>
+          <span style="flex:1;height:48%;background:#213540;"></span>
+          <span style="flex:1;height:56%;background:#1c303c;"></span>
+          <span style="flex:1;height:64%;background:#182b37;"></span>
+          <span style="flex:1;height:72%;background:#142631;"></span>
+          <span style="flex:1;height:80%;background:#10212c;"></span>
+          <span style="flex:1;height:100%;background:#e6b25c;box-shadow:0 0 16px rgba(230,178,92,0.5);"></span>
+          <span style="flex:1;height:90%;background:#0a1720;"></span>
+          <span style="flex:1;height:95%;background:#071119;"></span>
+          <span style="flex:1;height:100%;background:#040a10;"></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;color:#6f8896;margin-top:8px;"><span>сумрак</span><span style="color:#e6b25c;">глубокие сумерки · рекомендую</span><span>тьма</span></div>
+        <div style="font-size:13.5px;color:#8ba4b0;line-height:1.7;font-family:'IM Fell English',serif;font-style:italic;margin-top:14px;">7/10 — биомы и подписи читаются, но света мало: холодный лунный свет, свечение рек, снег на пиках и тёплые огни городов держат контраст. Ползунки «Темнота», «Холодный свет» и «Региональная вариация» в Tweaks двигают настроение.</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;palette&quot;: {&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Хладный сумрак&quot;,&quot;Лунная сталь&quot;,&quot;Изумрудная бездна&quot;,&quot;Аметистовая ночь&quot;],&quot;default&quot;:&quot;Хладный сумрак&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Атмосфера&quot;},
+  &quot;coldLight&quot;: {&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:58,&quot;min&quot;:0,&quot;max&quot;:100,&quot;step&quot;:1,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Атмосфера&quot;},
+  &quot;regionVariation&quot;: {&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:45,&quot;min&quot;:0,&quot;max&quot;:100,&quot;step&quot;:1,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Атмосфера&quot;},
+  &quot;darkness&quot;: {&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:72,&quot;min&quot;:40,&quot;max&quot;:100,&quot;step&quot;:1,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Атмосфера&quot;},
+  &quot;seed&quot;: {&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:7,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:1,&quot;max&quot;:999,&quot;section&quot;:&quot;Генерация&quot;},
+  &quot;smoothBorders&quot;: {&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Биомы&quot;},
+  &quot;mountains&quot;: {&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;icons&quot;,&quot;fills&quot;],&quot;default&quot;:&quot;icons&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Биомы&quot;},
+  &quot;forests&quot;: {&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;icons&quot;,&quot;fills&quot;],&quot;default&quot;:&quot;icons&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Биомы&quot;},
+  &quot;warmAccents&quot;: {&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Атмосфера&quot;}
+}">
+class Component extends DCLogic {
+  constructor(props){ super(props); this.mapRef=React.createRef(); this.fogRef=React.createRef(); this.poiRef=React.createRef(); this._sig=null; this._fogSig=null; this._base=null; this._fog=null; this._cities=[[0.42,0.5],[0.56,0.55],[0.5,0.4]]; }
+  componentDidMount(){ this.draw(); if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>this.draw()); }
+  componentDidUpdate(){ this.draw(); }
+  renderVals(){ return { mapRef:this.mapRef, fogRef:this.fogRef, poiRef:this.poiRef }; }
+
+  draw(){
+    const p=this.props||{};
+    const seed=(p.seed??7)|0, darkness=p.darkness??72, smooth=p.smoothBorders??true;
+    const mtnMode=p.mountains??'icons', forMode=p.forests??'icons', warm=p.warmAccents??true;
+    const palName=p.palette??'Хладный сумрак', coldLight=p.coldLight??58, regionVar=p.regionVariation??45;
+    const W=1160,H=760,DPR=1.4, PW=Math.round(W*DPR), PH=Math.round(H*DPR);
+
+    const sig=[seed,smooth,mtnMode,forMode,warm,palName,coldLight,regionVar].join('|');
+    if(sig!==this._sig||!this._base){ this._base=this.renderBase(PW,PH,DPR,seed,smooth,mtnMode,forMode,warm,palName,coldLight,regionVar); this._sig=sig; this._fog=null; }
+    const fsig=[seed,palName].join('|');
+    if(fsig!==this._fogSig||!this._fog){ this._fog=this.renderFog(PW,PH,DPR,seed,palName); this._fogSig=fsig; }
+
+    const compose=(cv,withFog)=>{ if(!cv)return; cv.width=PW; cv.height=PH; cv.style.aspectRatio=W+'/'+H; const ctx=cv.getContext('2d'); ctx.clearRect(0,0,PW,PH); ctx.drawImage(this._base,0,0); if(withFog)ctx.drawImage(this._fog,0,0);
+      const dk=(darkness-40)/60; const vg=ctx.createRadialGradient(PW*0.5,PH*0.42,PH*0.15,PW*0.5,PH*0.5,PH*0.95); vg.addColorStop(0,'rgba(3,6,11,0)'); vg.addColorStop(0.7,'rgba(3,6,11,'+(0.12+0.45*dk)+')'); vg.addColorStop(1,'rgba(2,4,8,'+(0.5+0.5*dk)+')'); ctx.fillStyle=vg; ctx.fillRect(0,0,PW,PH); ctx.fillStyle='rgba(4,9,16,'+(0.06+0.22*dk)+')'; ctx.fillRect(0,0,PW,PH); };
+    compose(this.mapRef.current,false); compose(this.fogRef.current,true);
+    this.renderPOILegend(this.poiRef.current, DPR, palName, warm);
+  }
+
+  palettes(){ return {
+    'Хладный сумрак':{ abyss:[6,15,24],sea:[11,30,44],shallow:[30,84,100],glow:[120,200,214],coast:[92,86,64],marsh:[36,58,50],plains:[74,86,58],moor:[64,66,74],forest:[24,58,46],forestWarm:[150,96,44],badlands:[128,84,54],tundra:[120,132,140],highland:[74,80,88],peak:[110,116,128],snow:[214,224,232],lakeD:[16,44,58],lakeS:[46,110,126],outline:[6,10,16],mtnL:[140,150,164],mtnS:[40,46,56],light:[100,150,190],accent:'#e6b25c',accentCold:'#8fd8e6',road:[176,150,96],fogA:[16,24,34],fogB:[34,52,66],tintCool:[32,86,116],tintWarm:[150,102,46] },
+    'Лунная сталь':{ abyss:[8,14,30],sea:[16,32,62],shallow:[46,96,150],glow:[140,196,244],coast:[84,88,96],marsh:[38,54,64],plains:[70,84,98],moor:[70,74,90],forest:[28,56,72],forestWarm:[168,110,60],badlands:[140,96,66],tundra:[150,168,190],highland:[70,84,104],peak:[112,126,150],snow:[224,234,248],lakeD:[20,42,74],lakeS:[60,116,164],outline:[8,12,22],mtnL:[152,168,198],mtnS:[42,50,70],light:[140,180,235],accent:'#f0b96a',accentCold:'#a9ccff',road:[168,158,128],fogA:[20,28,48],fogB:[44,60,90],tintCool:[58,96,162],tintWarm:[110,96,78] },
+    'Изумрудная бездна':{ abyss:[4,20,20],sea:[8,40,44],shallow:[30,102,98],glow:[120,224,204],coast:[86,92,58],marsh:[26,62,50],plains:[86,102,54],moor:[60,78,72],forest:[18,64,48],forestWarm:[176,116,44],badlands:[150,102,48],tundra:[126,156,146],highland:[56,86,80],peak:[92,120,116],snow:[210,230,220],lakeD:[12,50,52],lakeS:[40,116,110],outline:[4,14,14],mtnL:[122,158,150],mtnS:[30,48,46],light:[92,190,168],accent:'#f0bf5a',accentCold:'#7fe8cc',road:[172,158,96],fogA:[10,30,30],fogB:[26,60,58],tintCool:[26,116,104],tintWarm:[108,104,54] },
+    'Аметистовая ночь':{ abyss:[14,10,30],sea:[26,22,54],shallow:[74,66,132],glow:[168,150,244],coast:[92,80,86],marsh:[48,44,72],plains:[96,86,96],moor:[78,72,92],forest:[42,48,80],forestWarm:[168,96,96],badlands:[150,90,84],tundra:[150,144,176],highland:[76,70,98],peak:[116,108,142],snow:[228,222,244],lakeD:[30,26,66],lakeS:[80,72,148],outline:[12,10,22],mtnL:[146,138,172],mtnS:[48,44,68],light:[150,132,232],accent:'#f0ad54',accentCold:'#c3acff',road:[178,150,120],fogA:[26,22,46],fogB:[50,44,80],tintCool:[74,70,152],tintWarm:[126,88,96] }
+  }; }
+
+  renderBase(PW,PH,DPR,seed,smooth,mtnMode,forMode,warm,palName,coldLight,regionVar){
+    const off=document.createElement('canvas'); off.width=PW; off.height=PH; const ctx=off.getContext('2d');
+    const S=seed, imul=Math.imul;
+    const P=this.palettes()[palName]||this.palettes()['Хладный сумрак'];
+    const coldAmt=0.10+(coldLight/100)*0.30, varAmt=(regionVar??45)/100;
+    const cl8=v=>v<0?0:v>255?255:v|0;
+    const rgb=a=>'rgb('+cl8(a[0])+','+cl8(a[1])+','+cl8(a[2])+')';
+    const mul=(a,k)=>[a[0]*k,a[1]*k,a[2]*k], add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+    function hash(ix,iy,s){ let h=imul(ix|0,374761393)+imul(iy|0,668265263)+imul(s|0,362437); h=imul(h^(h>>>13),1274126177); h^=h>>>16; return (h>>>0)/4294967296; }
+    function sm(t){return t*t*(3-2*t);}
+    function vn(x,y,s){ const x0=Math.floor(x),y0=Math.floor(y),fx=x-x0,fy=y-y0; const a=hash(x0,y0,s),b=hash(x0+1,y0,s),c=hash(x0,y0+1,s),d=hash(x0+1,y0+1,s); const u=sm(fx),v=sm(fy); return a*(1-u)*(1-v)+b*u*(1-v)+c*(1-u)*v+d*u*v; }
+    function fbm(x,y,s,oct){ let sum=0,amp=0.5,fr=1; for(let i=0;i<oct;i++){ sum+=amp*vn(x*fr,y*fr,s+i*97); fr*=2; amp*=0.5; } return sum; }
+
+    const E=new Float32Array(PW*PH), lake=new Uint8Array(PW*PH), SEA=0.37;
+    for(let y=0;y<PH;y++){ const ny=y/PH; for(let x=0;x<PW;x++){ const nx=x/PW; const wx=fbm(nx*2+11.3,ny*2+5.7,S+31,3)-0.5, wy=fbm(nx*2+7.1,ny*2+13.9,S+53,3)-0.5; let e=fbm((nx+wx*0.30)*3.5,(ny+wy*0.30)*3.5,S,5); const dx=(nx-0.5)*2.05,dy=(ny-0.5)*2.05,d=Math.sqrt(dx*dx+dy*dy); e=e-Math.pow(d,1.9)*1.12+0.15; E[y*PW+x]=e; } }
+    const lakes=[]; for(let i=0;i<2;i++){ lakes.push({cx:(0.32+0.4*hash(i*13+3,7,S+201))*PW,cy:(0.30+0.4*hash(i*17+9,3,S+211))*PH,r:(0.05+0.03*hash(i,1,S+221))*PW}); }
+    for(const lk of lakes){ const r=lk.r,x0=Math.max(0,lk.cx-r*1.6|0),x1=Math.min(PW-1,lk.cx+r*1.6|0),y0=Math.max(0,lk.cy-r*1.6|0),y1=Math.min(PH-1,lk.cy+r*1.6|0); for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){ const dd=Math.hypot(x-lk.cx,y-lk.cy),rr=r*(0.7+0.5*fbm(x/60,y/60,S+301,3)); if(dd<rr){ const idx=y*PW+x; if(E[idx]>SEA){ E[idx]-=(1-dd/rr)*0.22; if(E[idx]<SEA)lake[idx]=1; } } } }
+
+    const clampE=(x,y)=>{ x=x|0;y=y|0; if(x<0)x=0;else if(x>=PW)x=PW-1; if(y<0)y=0;else if(y>=PH)y=PH-1; return E[y*PW+x]; };
+    let Lx=-0.6,Ly=-0.55,Lz=0.72; const Ll=Math.hypot(Lx,Ly,Lz); Lx/=Ll;Ly/=Ll;Lz/=Ll;
+    const CS=40*DPR;
+    function vor(px,py){ const gx=Math.floor(px/CS),gy=Math.floor(py/CS); let f1=1e18,f2=1e18,sx=px,sy=py; for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){ const cx=gx+ox,cy=gy+oy; const jx=(cx+0.15+0.7*hash(cx,cy,S+91))*CS,jy=(cy+0.15+0.7*hash(cx,cy,S+131))*CS; const dd=(px-jx)*(px-jx)+(py-jy)*(py-jy); if(dd<f1){f2=f1;f1=dd;sx=jx;sy=jy;}else if(dd<f2){f2=dd;} } return {sx,sy,edge:Math.sqrt(f2)-Math.sqrt(f1)}; }
+    const moist=(x,y)=>fbm(x/PW*2.6+5.2,y/PH*2.6+9.1,S+123,4);
+    const warmth=(x,y)=>{ const rawB=fbm(x/PW*1.0+40,y/PH*1.0+80,S+2000,2); const dir=fbm(x/PW*0.7+3,y/PH*0.7+9,S+2100,2); return (x/PW)*1.02 + (y/PH)*0.14 + rawB*0.22 + (dir-0.5)*0.12 - 0.24; };
+    function biomeKey(e,m,w){ const le=e-SEA;
+      if(le<0.016) return 'coast';
+      if(le>0.29) return (w<0.52)?'snow':'peak';
+      if(le>0.20) return 'highland';
+      if(le<0.05 && m>0.70) return 'marsh';
+      if(w>0.56) return (m>0.52)?'forestWarm':'badlands';
+      if(w<0.34) return (m>0.585)?'forest':'tundra';
+      if(m>0.585) return 'forest';
+      if(m<0.40) return 'moor';
+      return 'plains'; }
+
+    const img=ctx.createImageData(PW,PH), dat=img.data;
+    for(let y=0;y<PH;y++){ for(let x=0;x<PW;x++){ const idx=y*PW+x; let e,m,w,isLake=lake[idx],edge=0;
+      if(smooth){ e=E[idx]; m=moist(x,y); w=warmth(x,y); } else { const v=vor(x,y); const si=(Math.min(PH-1,Math.max(0,v.sy|0)))*PW+(Math.min(PW-1,Math.max(0,v.sx|0))); e=E[si]; m=moist(v.sx,v.sy); w=warmth(v.sx,v.sy); isLake=lake[si]; edge=v.edge; }
+      let rgA=0.5,rgB=0; if(varAmt>0){ rgA=fbm(x/PW*1.6+20,y/PH*1.6+40,S+1500,2); rgB=fbm(x/PW*2.0+50,y/PH*2.0+70,S+1600,2)-0.5; }
+      let r,g,b;
+      if(e<SEA){ const depth=Math.min(1,(SEA-e)/0.26);
+        if(isLake){ r=P.lakeS[0]+(P.lakeD[0]-P.lakeS[0])*depth; g=P.lakeS[1]+(P.lakeD[1]-P.lakeS[1])*depth; b=P.lakeS[2]+(P.lakeD[2]-P.lakeS[2])*depth; }
+        else { const t=depth; r=P.shallow[0]+(P.abyss[0]-P.shallow[0])*t; g=P.shallow[1]+(P.abyss[1]-P.shallow[1])*t; b=P.shallow[2]+(P.abyss[2]-P.shallow[2])*t; const rip=(fbm(x/40,y/26,S+401,2)-0.5)*10; r+=rip;g+=rip;b+=rip;
+          if(smooth){ const near=clampE(x+3,y)>SEA||clampE(x-3,y)>SEA||clampE(x,y+3)>SEA||clampE(x,y-3)>SEA; if(near){ const gk=0.32+coldAmt*0.5; r+=(P.glow[0]-r)*gk; g+=(P.glow[1]-g)*gk; b+=(P.glow[2]-b)*gk; } } }
+      } else { const col=P[biomeKey(e,m,w)]||P.plains; let c0=col[0],c1=col[1],c2=col[2];
+        { const wn=Math.min(1,Math.max(0,(w-0.28)/0.42)); const tr=P.tintCool[0]+(P.tintWarm[0]-P.tintCool[0])*wn, tg=P.tintCool[1]+(P.tintWarm[1]-P.tintCool[1])*wn, tb=P.tintCool[2]+(P.tintWarm[2]-P.tintCool[2])*wn, bl=0.38; c0+=(tr-c0)*bl; c1+=(tg-c1)*bl; c2+=(tb-c2)*bl; }
+        if(varAmt>0){ const rr=(rgA-0.5)*38*varAmt; c0+=rr; c1+=rr*0.9; c2+=rr*0.7; }
+        if(smooth){ const eL=clampE(x-1,y),eR=clampE(x+1,y),eU=clampE(x,y-1),eD=clampE(x,y+1); let nx3=(eL-eR)*95,ny3=(eD-eU)*95,nz=1; const nl=Math.hypot(nx3,ny3,nz); const ndl=(nx3*Lx+ny3*Ly+nz*Lz)/nl; let sh=0.60+0.70*Math.max(0,ndl); if(sh>1.34)sh=1.34; const cl=Math.max(0,ndl)*coldAmt;
+          r=c0*sh+P.light[0]*cl; g=c1*sh+P.light[1]*cl; b=c2*sh+P.light[2]*cl;
+          const wN=clampE(x-1,y)<SEA||clampE(x+1,y)<SEA||clampE(x,y-1)<SEA||clampE(x,y+1)<SEA; if(wN){ r=P.outline[0];g=P.outline[1];b=P.outline[2]; }
+        } else { r=c0;g=c1;b=c2; if(edge<1.4){ r=P.outline[0];g=P.outline[1];b=P.outline[2]; } }
+        const gr=(vn(x*0.5,y*0.5,S+61)-0.5)*7; r+=gr;g+=gr;b+=gr;
+      }
+      if(varAmt>0){ const lf=1+rgB*(e<SEA?0.12:0.24)*varAmt; r*=lf;g*=lf;b*=lf; }
+      const o=idx*4; dat[o]=cl8(r); dat[o+1]=cl8(g); dat[o+2]=cl8(b); dat[o+3]=255;
+    } }
+    ctx.putImageData(img,0,0);
+
+    // rivers
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    const riverTop='rgba('+P.glow[0]+','+P.glow[1]+','+P.glow[2]+',0.85)';
+    const drawRiver=(sx,sy)=>{ let x=sx,y=sy; const pts=[[x,y]]; for(let s=0;s<600;s++){ let bx=x,by=y,be=clampE(x,y); for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){ if(!ox&&!oy)continue; const nxp=x+ox*2,nyp=y+oy*2,ne=clampE(nxp,nyp); if(ne<be){be=ne;bx=nxp;by=nyp;} } if(bx===x&&by===y)break; x=bx;y=by; pts.push([x,y]); if(be<SEA)break; } if(pts.length<6)return; for(let pass=0;pass<2;pass++){ ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length-1;i++){ const mx=(pts[i][0]+pts[i+1][0])/2,my=(pts[i][1]+pts[i+1][1])/2; ctx.quadraticCurveTo(pts[i][0],pts[i][1],mx,my); } ctx.strokeStyle=pass===0?'rgba(8,20,28,0.6)':riverTop; ctx.lineWidth=(pass===0?4.4:2.3)*DPR; ctx.stroke(); } };
+    let rc=0; for(let i=0;i<40&&rc<6;i++){ const rx=(0.15+0.7*hash(i*29+1,5,S+501))*PW,ry=(0.15+0.7*hash(i*31+7,9,S+511))*PH; if(clampE(rx,ry)>SEA+0.20){ drawRiver(rx,ry); rc++; } }
+    for(const lk of lakes){ drawRiver(lk.cx+lk.r*0.9,lk.cy); }
+
+    // centroids for labels + cities
+    const accP={}, cntP={};
+    for(let y=0;y<PH;y+=22){ for(let x=0;x<PW;x+=22){ const e=E[y*PW+x]; if(e<SEA)continue; const k=biomeKey(e,moist(x,y),warmth(x,y)); if(!accP[k]){accP[k]=[0,0];cntP[k]=0;} accP[k][0]+=x; accP[k][1]+=y; cntP[k]++; } }
+    const cen=k=>cntP[k]?[accP[k][0]/cntP[k]/PW, accP[k][1]/cntP[k]/PH]:null;
+
+    // colors for sprites
+    const pineDark=rgb(mul(P.forest,0.82)), pineMid=rgb(P.forest), pineLit=rgb(add(mul(P.forest,0.95),mul(P.light,coldAmt*0.7)));
+    const decidDark=rgb(mul(P.forestWarm,0.7)), decidBody=rgb(P.forestWarm), decidLit=rgb(mul(P.forestWarm,1.28));
+    const mtnHi=rgb(add(P.mtnL,mul(P.light,coldAmt*0.9))), mtnLit=rgb(mul(P.mtnL,0.8)), mtnMidC=rgb(mul(P.mtnL,0.5)), mtnShDark=rgb(mul(P.mtnS,0.82)), snowC=rgb(P.snow);
+    const hillLit=rgb(mul(P.highland,1.14)), hillSh=rgb(mul(P.highland,0.66));
+    const reedC=rgb(add(P.marsh,[26,34,14])), reedD=rgb(mul(P.marsh,0.8));
+    const mesaLit=rgb(mul(P.badlands,1.16)), mesaSh=rgb(mul(P.badlands,0.62)), mesaTop=rgb(mul(P.badlands,1.3));
+    const acc=warm?P.accent:P.accentCold;
+
+    // sprite fns
+    const shadow=(x,y,w,h,a)=>{ ctx.fillStyle='rgba(3,7,10,'+a+')'; ctx.beginPath(); ctx.ellipse(x,y,w,h,0,0,7); ctx.fill(); };
+    const pine=(x,by,h,snowAmt)=>{ const w=h*0.5; shadow(x+w*0.2,by,w*1.05,w*0.34,0.30); ctx.fillStyle='#241a12'; ctx.fillRect(x-h*0.045,by-h*0.13,h*0.09,h*0.15); const layers=3; for(let i=0;i<layers;i++){ const ly=by-h*0.11-(h*0.80)*(i/layers); const lw=w*(1-i*0.24), lh=h*0.40; ctx.fillStyle=(i===0?pineDark:pineMid); ctx.beginPath(); ctx.moveTo(x,ly-lh); ctx.lineTo(x-lw,ly); ctx.lineTo(x+lw,ly); ctx.closePath(); ctx.fill(); ctx.fillStyle=pineLit; ctx.beginPath(); ctx.moveTo(x,ly-lh); ctx.lineTo(x-lw,ly); ctx.lineTo(x-lw*0.24,ly); ctx.closePath(); ctx.fill(); if(snowAmt>0){ ctx.fillStyle='rgba('+P.snow[0]+','+P.snow[1]+','+P.snow[2]+','+snowAmt+')'; ctx.beginPath(); ctx.moveTo(x,ly-lh); ctx.lineTo(x-lw*0.4,ly-lh*0.42); ctx.lineTo(x+lw*0.4,ly-lh*0.42); ctx.closePath(); ctx.fill(); } } };
+    const decid=(x,by,h)=>{ const r=h*0.44; shadow(x+r*0.2,by,r*1.15,r*0.38,0.30); ctx.fillStyle='#2a1c12'; ctx.fillRect(x-h*0.05,by-h*0.3,h*0.1,h*0.32); ctx.fillStyle=decidDark; ctx.beginPath(); ctx.arc(x,by-h*0.55,r,0,7); ctx.arc(x-r*0.7,by-h*0.4,r*0.78,0,7); ctx.arc(x+r*0.7,by-h*0.42,r*0.8,0,7); ctx.fill(); ctx.fillStyle=decidBody; ctx.beginPath(); ctx.arc(x-r*0.15,by-h*0.6,r*0.7,0,7); ctx.arc(x+r*0.5,by-h*0.5,r*0.55,0,7); ctx.fill(); ctx.fillStyle=decidLit; ctx.beginPath(); ctx.arc(x-r*0.35,by-h*0.72,r*0.42,0,7); ctx.fill(); };
+    const mtn=(x,by,h,snowy,haze)=>{ const jig=hash((x*3)|0,(by*3)|0,S+900)-0.5, v1=hash((x*5)|0,(by*5)|0,S+760), v2=hash((x*7)|0,(by*7)|0,S+770), v3=hash((x*11)|0,(by*11)|0,S+780); const w=h*(0.54+v1*0.26), py=by-h, pkx=x+jig*w*0.2;
+      const pts=[[x-w,by]]; if(v2<0.4) pts.push([x-w*0.52,by-h*(0.28+v3*0.22)]); pts.push([pkx,py]);
+      if(v1<0.3){ pts.push([pkx+w*0.5,by-h*0.26]); } else if(v1<0.7){ pts.push([pkx+w*0.24,by-h*(0.4+v2*0.14)]); pts.push([pkx+w*0.52,by-h*(0.56+v3*0.16)]); } else { pts.push([pkx+w*0.2,by-h*(0.38+v2*0.1)]); pts.push([pkx+w*0.44,by-h*(0.58+v3*0.14)]); pts.push([pkx+w*0.72,by-h*0.32]); }
+      pts.push([x+w,by]);
+      const sil=()=>{ ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); };
+      shadow(x+w*0.3,by,w*0.95,w*0.2,0.4);
+      let g1=ctx.createLinearGradient(0,py,0,by); g1.addColorStop(0,mtnMidC); g1.addColorStop(1,mtnShDark); ctx.fillStyle=g1; sil(); ctx.fill();
+      ctx.save(); sil(); ctx.clip(); ctx.beginPath(); ctx.rect(pkx,py-h,x+w-pkx,h*2.4); ctx.clip(); ctx.strokeStyle='rgba(8,12,18,0.26)'; ctx.lineWidth=0.7*DPR; const st=Math.max(2.3*DPR,h*0.11); for(let yy=py-w;yy<by+w;yy+=st){ ctx.beginPath(); ctx.moveTo(pkx-w,yy+w*0.85); ctx.lineTo(x+w*1.4,yy-w*0.35); ctx.stroke(); } ctx.restore();
+      let g2=ctx.createLinearGradient(0,py,0,by); g2.addColorStop(0,mtnHi); g2.addColorStop(1,mtnLit); ctx.fillStyle=g2;
+      for(let i=0;i<pts.length-1;i++){ const a=pts[i], b=pts[i+1]; if(b[1]<a[1]-0.5){ ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.lineTo(b[0],by); ctx.lineTo(a[0],by); ctx.closePath(); ctx.fill(); } }
+      if(snowy){ for(let i=1;i<pts.length-1;i++){ const p=pts[i]; if(p[1]<pts[i-1][1]&&p[1]<pts[i+1][1]&&(by-p[1])>h*0.48){ const cs=Math.min(h*0.24,(by-p[1])*0.42), ww=w*0.17; ctx.fillStyle=snowC; ctx.beginPath(); ctx.moveTo(p[0],p[1]); ctx.lineTo(p[0]-ww,p[1]+cs); ctx.lineTo(p[0]-ww*0.4,p[1]+cs*0.6); ctx.lineTo(p[0]+ww*0.12,p[1]+cs); ctx.lineTo(p[0]+ww*0.5,p[1]+cs*0.62); ctx.lineTo(p[0]+ww,p[1]+cs); ctx.closePath(); ctx.fill(); } } }
+      ctx.lineJoin='round'; ctx.strokeStyle='rgba(8,12,18,0.82)'; ctx.lineWidth=1.3*DPR; sil(); ctx.stroke();
+      if(haze>0.02){ ctx.fillStyle='rgba(150,178,198,'+(haze*0.5).toFixed(2)+')'; sil(); ctx.fill(); } };
+    const hill=(x,by,w)=>{ shadow(x,by,w*1.1,w*0.3,0.22); ctx.fillStyle=hillSh; ctx.beginPath(); ctx.arc(x,by,w,Math.PI,0); ctx.closePath(); ctx.fill(); ctx.fillStyle=hillLit; ctx.beginPath(); ctx.arc(x-w*0.16,by,w*0.78,Math.PI,0); ctx.closePath(); ctx.fill(); };
+    const reed=(x,by,h)=>{ for(let k=-1;k<=1;k++){ ctx.strokeStyle=reedD; ctx.lineWidth=1.3*DPR; ctx.beginPath(); ctx.moveTo(x+k*2.4*DPR,by); ctx.quadraticCurveTo(x+k*3.2*DPR,by-h*0.6,x+k*3.9*DPR,by-h); ctx.stroke(); ctx.fillStyle=reedC; ctx.beginPath(); ctx.ellipse(x+k*3.9*DPR,by-h,1.3*DPR,3.2*DPR,0,0,7); ctx.fill(); } };
+    const mesa=(x,by,w,h)=>{ shadow(x,by,w*1.15,w*0.3,0.28); ctx.fillStyle=mesaSh; ctx.beginPath(); ctx.moveTo(x-w,by); ctx.lineTo(x-w*0.6,by-h); ctx.lineTo(x+w*0.6,by-h); ctx.lineTo(x+w,by); ctx.closePath(); ctx.fill(); ctx.fillStyle=mesaLit; ctx.beginPath(); ctx.moveTo(x-w,by); ctx.lineTo(x-w*0.6,by-h); ctx.lineTo(x-w*0.2,by-h); ctx.lineTo(x-w*0.5,by); ctx.closePath(); ctx.fill(); ctx.fillStyle=mesaTop; ctx.fillRect(x-w*0.6,by-h-1.5*DPR,w*1.2,2.5*DPR); };
+
+    // roads (under sprites)
+    const cities=[]; const pc=cen('plains')||cen('moor')||cen('coast')||[0.5,0.55]; cities.push(pc); const fc=cen('forest')||cen('forestWarm'); if(fc)cities.push(fc); const tc=cen('badlands')||cen('marsh')||cen('tundra')||cen('highland'); if(tc)cities.push(tc);
+    if(cities.length>=2){ ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round'; const rd='rgb('+P.road[0]+','+P.road[1]+','+P.road[2]+')';
+      for(let pass=0;pass<2;pass++){ ctx.beginPath(); ctx.moveTo(cities[0][0]*PW,cities[0][1]*PH); for(let i=1;i<cities.length;i++) ctx.lineTo(cities[i][0]*PW,cities[i][1]*PH); if(pass===0){ ctx.strokeStyle='rgba(10,8,6,0.5)'; ctx.lineWidth=5*DPR; ctx.setLineDash([]); } else { ctx.strokeStyle=rd; ctx.lineWidth=2*DPR; ctx.setLineDash([7*DPR,5*DPR]); } ctx.stroke(); } ctx.setLineDash([]); ctx.restore(); }
+
+    // collect sprites
+    const sprites=[];
+    if(mtnMode==='icons'){ const ms=22*DPR; for(let y=ms;y<PH-ms;y+=ms){ for(let x=ms;x<PW-ms;x+=ms){ const jx=x+(hash(x,y,S+701)-0.5)*ms*0.7,jy=y+(hash(x,y,S+711)-0.5)*ms*0.7; const e=clampE(jx,jy),le=e-SEA; if(le<0.2)continue; if(hash(x,y,S+721)<0.52)continue; const w=warmth(jx,jy); const h=(12+(le-0.2)/0.14*20+hash(x,y,S+741)*10)*DPR, snowy=(le>0.30||w<0.35), haze=Math.min(0.5,Math.max(0,(PH*0.42-jy)/(PH*0.5))); sprites.push({y:jy,f:()=>mtn(jx,jy,h,snowy,haze)}); } } }
+    else { const ms=22*DPR; for(let y=ms;y<PH-ms;y+=ms){ for(let x=ms;x<PW-ms;x+=ms){ const jx=x+(hash(x,y,S+701)-0.5)*ms*0.6,jy=y+(hash(x,y,S+711)-0.5)*ms*0.6; const e=clampE(jx,jy),le=e-SEA; if(le<0.205)continue; if(hash(x,y,S+721)<0.5)continue; sprites.push({y:jy,f:()=>hill(jx,jy,(6+hash(x,y,S+731)*4)*DPR)}); } } }
+    const fs=11*DPR;
+    for(let y=fs;y<PH-fs;y+=fs){ for(let x=fs;x<PW-fs;x+=fs){ const jx=x+(hash(x,y,S+601)-0.5)*fs,jy=y+(hash(x,y,S+611)-0.5)*fs; const e=clampE(jx,jy); if(e<SEA)continue; const le=e-SEA, m=moist(jx,jy), w=warmth(jx,jy), k=biomeKey(e,m,w), rnd=hash(x,y,S+621);
+      if(forMode==='icons'&&k==='forest'&&rnd<0.66){ const h=(9+hash(x,y,S+631)*5)*DPR, sd=w<0.36?0.55:0; sprites.push({y:jy,f:()=>pine(jx,jy,h,sd)}); }
+      else if(forMode==='icons'&&k==='forestWarm'&&rnd<0.62){ const h=(9+hash(x,y,S+632)*5)*DPR; sprites.push({y:jy,f:()=>decid(jx,jy,h)}); }
+      else if(k==='marsh'&&rnd<0.42){ const h=(6+hash(x,y,S+633)*3)*DPR; sprites.push({y:jy,f:()=>reed(jx,jy,h)}); }
+      else if(k==='badlands'&&rnd<0.16){ const wd=(5+hash(x,y,S+634)*4)*DPR; sprites.push({y:jy,f:()=>mesa(jx,jy,wd,wd*1.1)}); }
+      else if(k==='highland'&&mtnMode==='icons'&&rnd>0.72){ sprites.push({y:jy,f:()=>hill(jx,jy,(5+hash(x,y,S+635)*3)*DPR)}); }
+    } }
+    sprites.sort((a,b)=>a.y-b.y); for(const s of sprites) s.f();
+
+    // (POI placed in labels section below)
+
+    // ---- labels & cities with collision avoidance ----
+    const placed=[];
+    const hit=(a,b)=>!(a.x2<b.x1||a.x1>b.x2||a.y2<b.y1||a.y1>b.y2);
+    const free=r=>{ for(const p of placed){ if(hit(r,p)) return false; } return true; };
+    placed.push({x1:26*DPR,y1:28*DPR,x2:244*DPR,y2:98*DPR}); // cartouche
+    placed.push({x1:PW-118*DPR,y1:28*DPR,x2:PW-16*DPR,y2:124*DPR}); // compass
+    placed.push({x1:38*DPR,y1:PH-66*DPR,x2:216*DPR,y2:PH-24*DPR}); // scale
+
+    const keep=(nx,ny,name)=>{ const x=nx*PW,y=ny*PH,R=15*DPR; this.drawPOIMarker(ctx,'city',x,y,R,acc,DPR); placed.push({x1:x-R*1.25,y1:y-R*1.4,x2:x+R*1.25,y2:y+R*1.25});
+      ctx.save(); ctx.font='600 '+(13*DPR)+'px Cinzel, serif'; try{ctx.letterSpacing=1.4*DPR+'px';}catch(e){} const tw=ctx.measureText(name).width+1.4*DPR*name.length; const right=(x+R*1.35+tw)<PW-24*DPR && nx<0.72; const tx=right?x+R*1.35:x-R*1.35-tw; ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.shadowColor='rgba(0,0,0,0.95)'; ctx.shadowBlur=5*DPR; ctx.fillStyle=acc; ctx.fillText(name,tx,y); ctx.restore(); placed.push({x1:tx-4,y1:y-9*DPR,x2:tx+tw+4,y2:y+9*DPR}); };
+    const cnames=['Vael','Corran','Ysmir']; for(let i=0;i<cities.length;i++) keep(cities[i][0],cities[i][1],cnames[i]||'Keep');
+
+    // extra POI markers placed in situ
+    const placePOI=(type,nx,ny)=>{ const x=nx*PW,y=ny*PH; if(clampE(x,y)<SEA)return; const R=12.5*DPR, r={x1:x-R*1.25,y1:y-R*1.3,x2:x+R*1.25,y2:y+R*1.25}; if(!free(r))return; this.drawPOIMarker(ctx,type,x,y,R,acc,DPR); placed.push(r); };
+    const cl2=(v,lo,hi)=>Math.min(hi,Math.max(lo,v)); const offc=(c,dx,dy)=>c?[cl2(c[0]+dx,0.08,0.92),cl2(c[1]+dy,0.1,0.9)]:null;
+    let q; q=offc(cen('peak')||cen('highland'),0.07,0.06); if(q)placePOI('dungeon',q[0],q[1]); q=offc(cen('highland')||cen('tundra'),-0.08,0.05); if(q)placePOI('ruins',q[0],q[1]); q=offc(cen('forest'),0.05,0.07); if(q)placePOI('encounter',q[0],q[1]); q=offc(cen('plains'),-0.09,0.08); if(q)placePOI('camp',q[0],q[1]); q=offc(cen('forestWarm')||cen('badlands'),-0.03,0.08); if(q)placePOI('village',q[0],q[1]); q=offc(cen('coast'),0.02,0.02); if(q)placePOI('tower',q[0],q[1]);
+
+    const label=(text,nx,ny,size,color,spacing)=>{ ctx.save(); ctx.font='italic '+(size*DPR)+'px "IM Fell English", serif'; try{ctx.letterSpacing=(spacing||0)*DPR+'px';}catch(e){} const tw=ctx.measureText(text).width+(spacing||0)*DPR*Math.max(0,text.length-1), th=size*DPR; const cx=nx*PW; let cy=ny*PH, ok=false; const steps=[0,-1,1,-1.9,1.9,-2.8,2.8]; for(const st of steps){ const r={x1:cx-tw/2-6,y1:cy+st*th-th*0.7,x2:cx+tw/2+6,y2:cy+st*th+th*0.7}; if(free(r)){ cy+=st*th; placed.push(r); ok=true; break; } } if(!ok){ ctx.restore(); return; } ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.shadowColor='rgba(0,0,0,0.92)'; ctx.shadowBlur=7*DPR; ctx.fillStyle=color; ctx.fillText(text,cx,cy); ctx.restore(); };
+
+    label('MARE GELIDUM',0.135,0.43,23,'rgba(150,186,200,0.72)',3);
+    label('OCEANUS UMBRAE',0.835,0.90,20,'rgba(130,166,182,0.56)',3);
+    const lbl=(k,text,size,color)=>{ if(cntP[k]&&cntP[k]>10){ const c=cen(k); label(text,c[0],c[1],size,color,2); } };
+    lbl('forestWarm','SILVA IGNEA',17,'rgba(234,182,122,0.92)');
+    lbl('badlands','VASTA CINERIS',16,'rgba(226,168,112,0.9)');
+    lbl('peak','DORSUM CORVI',16,'rgba(208,218,228,0.86)');
+    lbl('forest','SILVA UMBRARUM',16,'rgba(152,198,170,0.84)');
+    lbl('plains','CAMPI CANI',15,'rgba(184,194,170,0.8)');
+    lbl('tundra','GLACIES',14,'rgba(192,206,216,0.74)');
+    lbl('marsh','PALUS NIGRA',14,'rgba(152,182,168,0.74)');
+
+    // compass
+    (()=>{ const cx=PW-70*DPR,cy=76*DPR,R=34*DPR; ctx.save(); ctx.strokeStyle='rgba(196,214,222,0.45)'; ctx.lineWidth=1*DPR; ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke(); ctx.beginPath(); ctx.arc(cx,cy,R*0.78,0,7); ctx.strokeStyle='rgba(196,214,222,0.2)'; ctx.stroke(); const star=(rl,rs,col)=>{ ctx.beginPath(); for(let i=0;i<8;i++){ const a=i*Math.PI/4-Math.PI/2,rr=(i%2===0)?rl:rs,px=cx+Math.cos(a)*rr,py=cy+Math.sin(a)*rr; i?ctx.lineTo(px,py):ctx.moveTo(px,py); } ctx.closePath(); ctx.fillStyle=col; ctx.fill(); }; star(R*0.7,R*0.22,'rgba(196,214,222,0.32)'); ctx.beginPath(); ctx.moveTo(cx,cy-R*0.7); ctx.lineTo(cx-R*0.12,cy); ctx.lineTo(cx+R*0.12,cy); ctx.closePath(); ctx.fillStyle=acc; ctx.fill(); ctx.fillStyle=acc; ctx.font='600 '+(12*DPR)+'px Cinzel, serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.shadowColor='rgba(0,0,0,0.9)'; ctx.shadowBlur=4*DPR; ctx.fillText('N',cx,cy-R-4*DPR); ctx.restore(); })();
+    // scale
+    (()=>{ const x0=54*DPR,y0=PH-46*DPR,seg=34*DPR,hh=6*DPR; ctx.save(); for(let i=0;i<4;i++){ ctx.fillStyle=i%2?'rgba(230,237,242,0.85)':'rgba(10,15,20,0.9)'; ctx.fillRect(x0+i*seg,y0,seg,hh); ctx.strokeStyle='rgba(196,214,222,0.6)'; ctx.lineWidth=1*DPR; ctx.strokeRect(x0+i*seg,y0,seg,hh); } ctx.fillStyle='rgba(196,214,222,0.75)'; ctx.font=(11*DPR)+'px Cinzel, serif'; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText('0',x0,y0+hh+4*DPR); ctx.fillText('100',x0+seg*4,y0+hh+4*DPR); ctx.fillText('mille passuum',x0+seg*2,y0-14*DPR); ctx.restore(); })();
+    // cartouche
+    (()=>{ const x=44*DPR,y=40*DPR; ctx.save(); ctx.textAlign='left'; ctx.strokeStyle='rgba(230,178,92,0.35)'; ctx.lineWidth=1*DPR; ctx.strokeRect(x-14*DPR,y-8*DPR,210*DPR,52*DPR); ctx.fillStyle='rgba(230,237,242,0.9)'; ctx.font='700 '+(20*DPR)+'px Cinzel, serif'; try{ctx.letterSpacing=2*DPR+'px';}catch(e){} ctx.textBaseline='top'; ctx.shadowColor='rgba(0,0,0,0.9)'; ctx.shadowBlur=5*DPR; ctx.fillText('TERRA UMBRARUM',x,y); ctx.shadowBlur=0; ctx.fillStyle='rgba(150,174,186,0.8)'; ctx.font='italic '+(13*DPR)+'px "IM Fell English", serif'; try{ctx.letterSpacing=1*DPR+'px';}catch(e){} ctx.fillText('chartula regionum ignotarum',x,y+26*DPR); ctx.restore(); })();
+    // frame
+    ctx.strokeStyle='rgba(111,183,201,0.22)'; ctx.lineWidth=1.5*DPR; ctx.strokeRect(6*DPR,6*DPR,PW-12*DPR,PH-12*DPR);
+    ctx.strokeStyle='rgba(230,178,92,0.2)'; ctx.lineWidth=1*DPR; ctx.strokeRect(14*DPR,14*DPR,PW-28*DPR,PH-28*DPR);
+    const corner=(cx,cy,sx,sy)=>{ ctx.beginPath(); ctx.moveTo(cx,cy+sy*22*DPR); ctx.lineTo(cx,cy); ctx.lineTo(cx+sx*22*DPR,cy); ctx.strokeStyle='rgba(230,178,92,0.55)'; ctx.lineWidth=2*DPR; ctx.stroke(); };
+    corner(20*DPR,20*DPR,1,1); corner(PW-20*DPR,20*DPR,-1,1); corner(20*DPR,PH-20*DPR,1,-1); corner(PW-20*DPR,PH-20*DPR,-1,-1);
+
+    this._cities=cities;
+    return off;
+  }
+
+  drawMedallion(ctx,x,y,r,acc,DPR){ const g=ctx.createRadialGradient(x,y,r*0.5,x,y,r*1.7); g.addColorStop(0,'rgba(0,0,0,0.55)'); g.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r*1.7,0,7); ctx.fill(); const d=ctx.createRadialGradient(x-r*0.35,y-r*0.4,r*0.2,x,y,r); d.addColorStop(0,'#141c25'); d.addColorStop(1,'#080d14'); ctx.fillStyle=d; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill(); ctx.strokeStyle='rgba(0,0,0,0.7)'; ctx.lineWidth=2.6*DPR; ctx.beginPath(); ctx.arc(x,y,r+0.8*DPR,0,7); ctx.stroke(); ctx.strokeStyle=acc; ctx.lineWidth=1.6*DPR; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.stroke(); }
+  computePOIBounds(){ const s0=40,cx=200,cy=200,W=400,H=400; const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const c=cv.getContext('2d'); const types=['default','city','fortress','village','tower','temple','ruins','dungeon','encounter','camp','port']; const out={}; for(const t of types){ c.clearRect(0,0,W,H); this.drawPOI(c,t,cx,cy,s0,'#ffffff',1); const d=c.getImageData(0,0,W,H).data; let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9; for(let y=0;y<H;y++){ for(let x=0;x<W;x++){ if(d[(y*W+x)*4+3]>12){ if(x<mnx)mnx=x; if(x>mxx)mxx=x; if(y<mny)mny=y; if(y>mxy)mxy=y; } } } out[t]={minx:(mnx-cx)/s0,maxx:(mxx-cx)/s0,miny:(mny-cy)/s0,maxy:(mxy-cy)/s0}; } return out; }
+  drawPOIMarker(ctx,type,x,y,R,acc,DPR){ this.drawMedallion(ctx,x,y,R,acc,DPR); if(!this._poiB) this._poiB=this.computePOIBounds(); const b=this._poiB[type]||{minx:-0.5,maxx:0.5,miny:-0.8,maxy:0.5}; const wn=b.maxx-b.minx, hn=b.maxy-b.miny, s=(2*R*0.82)/Math.hypot(wn,hn), cxn=(b.minx+b.maxx)/2, cyn=(b.miny+b.maxy)/2; this.drawPOI(ctx,type,x-cxn*s,y-cyn*s,s,acc,DPR); }
+  drawPOI(ctx,type,x,y,s,acc,DPR){
+    const dark='#2b323d', lit='#414c5b', mid='#353f4c', edge='rgba(8,12,18,0.85)', steel='#c9d2dc', black='#0a0d12', wood='#4a3a28';
+    ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round';
+    const flag=(fx,fy,u)=>{ ctx.strokeStyle=acc; ctx.lineWidth=Math.max(1,u*0.14); ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(fx,fy-u*0.75); ctx.stroke(); ctx.fillStyle=acc; ctx.beginPath(); ctx.moveTo(fx,fy-u*0.75); ctx.lineTo(fx+u*0.6,fy-u*0.58); ctx.lineTo(fx,fy-u*0.42); ctx.closePath(); ctx.fill(); };
+    const arch=(ax,ay,aw,ah)=>{ ctx.beginPath(); ctx.moveTo(ax-aw,ay); ctx.lineTo(ax-aw,ay-ah+aw); ctx.arc(ax,ay-ah+aw,aw,Math.PI,0); ctx.lineTo(ax+aw,ay); ctx.closePath(); };
+    if(type==='city'){ const w=s*0.68; ctx.fillStyle=dark; ctx.fillRect(x-w,y-s*1.25,w*2,s*1.25); ctx.fillStyle=lit; ctx.fillRect(x-w,y-s*1.25,w*0.7,s*1.25); ctx.fillStyle=dark; const bw=w*2/5; for(let i=0;i<5;i+=2)ctx.fillRect(x-w+i*bw,y-s*1.5,bw,s*0.28); ctx.fillStyle=black; arch(x,y,w*0.34,s*0.66); ctx.fill(); flag(x,y-s*1.5,s*0.8); }
+    else if(type==='fortress'){ ctx.fillStyle=dark; ctx.fillRect(x-s*1.1,y-s*0.8,s*2.2,s*0.8); ctx.fillStyle=lit; ctx.fillRect(x-s*1.1,y-s*0.8,s*0.5,s*0.8); const tw=(tx,th)=>{ const u=s*0.34; ctx.fillStyle=dark; ctx.fillRect(tx-u,y-th,u*2,th); ctx.fillStyle=lit; ctx.fillRect(tx-u,y-th,u*0.55,th); ctx.fillStyle=dark; ctx.fillRect(tx-u,y-th-s*0.2,u*0.75,s*0.2); ctx.fillRect(tx+u*0.25,y-th-s*0.2,u*0.75,s*0.2); }; tw(x-s*0.82,s*1.05); tw(x+s*0.82,s*1.05); tw(x,s*1.5); ctx.fillStyle=black; arch(x,y,s*0.26,s*0.55); ctx.fill(); flag(x,y-s*1.7,s*0.72); }
+    else if(type==='village'){ const house=(hx,hw,hh)=>{ ctx.fillStyle=dark; ctx.fillRect(hx-hw,y-hh*0.45,hw*2,hh*0.45+s*0.25); ctx.fillStyle=lit; ctx.fillRect(hx-hw,y-hh*0.45,hw*0.6,hh*0.45+s*0.25); ctx.fillStyle=mid; ctx.beginPath(); ctx.moveTo(hx-hw*1.2,y-hh*0.45); ctx.lineTo(hx,y-hh); ctx.lineTo(hx+hw*1.2,y-hh*0.45); ctx.closePath(); ctx.fill(); ctx.strokeStyle=edge; ctx.lineWidth=0.8*DPR; ctx.stroke(); }; house(x+s*0.55,s*0.5,s*1.05); house(x-s*0.5,s*0.4,s*0.85); }
+    else if(type==='tower'){ const u=s*0.42; ctx.fillStyle=dark; ctx.fillRect(x-u,y-s*1.45,u*2,s*1.45+s*0.4); ctx.fillStyle=lit; ctx.fillRect(x-u,y-s*1.45,u*0.66,s*1.45+s*0.4); ctx.fillStyle=dark; ctx.fillRect(x-u,y-s*1.58,u*0.7,s*0.2); ctx.fillRect(x+u*0.3,y-s*1.58,u*0.7,s*0.2); ctx.fillStyle=black; ctx.fillRect(x-u*0.28,y-s*0.85,u*0.56,u*0.7); flag(x,y-s*1.58,s*0.7); }
+    else if(type==='temple'){ ctx.fillStyle=lit; ctx.fillRect(x-s*1.0,y-s*0.16,s*2.0,s*0.16); ctx.fillStyle=dark; ctx.fillRect(x-s*0.86,y-s*0.3,s*1.72,s*0.14); ctx.fillStyle=lit; for(let i=0;i<4;i++){ const cx=x+(i-1.5)*s*0.46; ctx.fillRect(cx-s*0.11,y-s*0.86,s*0.22,s*0.56); } ctx.fillStyle=dark; ctx.fillRect(x-s*0.92,y-s*1.02,s*1.84,s*0.16); ctx.fillStyle=lit; ctx.beginPath(); ctx.moveTo(x-s*0.98,y-s*1.02); ctx.lineTo(x,y-s*1.58); ctx.lineTo(x+s*0.98,y-s*1.02); ctx.closePath(); ctx.fill(); ctx.strokeStyle=edge; ctx.lineWidth=1*DPR; ctx.stroke(); }
+    else if(type==='ruins'){ const col=(cx,ch)=>{ ctx.fillStyle=dark; ctx.fillRect(cx-s*0.17,y-ch,s*0.34,ch); ctx.fillStyle=lit; ctx.fillRect(cx-s*0.17,y-ch,s*0.12,ch); }; col(x-s*0.55,s*1.2); col(x+s*0.42,s*0.82); ctx.save(); ctx.translate(x-s*0.05,y-s*0.2); ctx.rotate(-0.05); ctx.fillStyle=lit; ctx.fillRect(-s*0.6,0,s*1.2,s*0.2); ctx.fillStyle=dark; ctx.fillRect(-s*0.6,s*0.14,s*1.2,s*0.06); ctx.restore(); }
+    else if(type==='dungeon'){ ctx.fillStyle=dark; ctx.fillRect(x-s*0.82,y-s*1.12,s*1.64,s*1.12); ctx.fillStyle=lit; ctx.fillRect(x-s*0.82,y-s*1.12,s*0.4,s*1.12); ctx.fillStyle=black; arch(x,y,s*0.5,s*0.98); ctx.fill(); ctx.save(); arch(x,y,s*0.5,s*0.98); ctx.clip(); ctx.strokeStyle='#7c8794'; ctx.lineWidth=1.3*DPR; for(let i=-2;i<=2;i++){ ctx.beginPath(); ctx.moveTo(x+i*s*0.22,y-s*0.98); ctx.lineTo(x+i*s*0.22,y); ctx.stroke(); } for(let j=1;j<=3;j++){ const yy=y-s*0.92+j*s*0.26; ctx.beginPath(); ctx.moveTo(x-s*0.5,yy); ctx.lineTo(x+s*0.5,yy); ctx.stroke(); } ctx.restore(); }
+    else if(type==='encounter'){ const sword=(ang)=>{ ctx.save(); ctx.translate(x,y); ctx.rotate(ang); ctx.fillStyle=steel; ctx.beginPath(); ctx.moveTo(-s*0.09,s*0.62); ctx.lineTo(-s*0.09,-s*0.5); ctx.lineTo(0,-s*0.74); ctx.lineTo(s*0.09,-s*0.5); ctx.lineTo(s*0.09,s*0.62); ctx.closePath(); ctx.fill(); ctx.strokeStyle=edge; ctx.lineWidth=0.7*DPR; ctx.stroke(); ctx.fillStyle=acc; ctx.fillRect(-s*0.3,s*0.46,s*0.6,s*0.12); ctx.fillStyle=wood; ctx.fillRect(-s*0.055,s*0.58,s*0.11,s*0.2); ctx.fillStyle=acc; ctx.beginPath(); ctx.arc(0,s*0.82,s*0.08,0,7); ctx.fill(); ctx.restore(); }; sword(0.5); sword(-0.5); }
+    else if(type==='camp'){ ctx.fillStyle=dark; ctx.beginPath(); ctx.moveTo(x-s*0.72,y); ctx.lineTo(x,y-s*1.05); ctx.lineTo(x+s*0.72,y); ctx.closePath(); ctx.fill(); ctx.fillStyle=lit; ctx.beginPath(); ctx.moveTo(x-s*0.72,y); ctx.lineTo(x,y-s*1.05); ctx.lineTo(x-s*0.2,y); ctx.closePath(); ctx.fill(); ctx.fillStyle=black; ctx.beginPath(); ctx.moveTo(x,y-s*0.44); ctx.lineTo(x-s*0.17,y); ctx.lineTo(x+s*0.17,y); ctx.closePath(); ctx.fill(); ctx.strokeStyle=edge; ctx.lineWidth=1.3*DPR; ctx.beginPath(); ctx.moveTo(x-s*0.13,y-s*0.92); ctx.lineTo(x+s*0.13,y-s*1.18); ctx.moveTo(x+s*0.13,y-s*0.92); ctx.lineTo(x-s*0.13,y-s*1.18); ctx.stroke(); }
+    else if(type==='port'){ ctx.strokeStyle=steel; ctx.lineWidth=s*0.17; ctx.lineCap='round'; ctx.beginPath(); ctx.arc(x,y-s*0.66,s*0.17,0,7); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x,y-s*0.5); ctx.lineTo(x,y+s*0.5); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x-s*0.34,y-s*0.24); ctx.lineTo(x+s*0.34,y-s*0.24); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x,y+s*0.5); ctx.quadraticCurveTo(x-s*0.52,y+s*0.5,x-s*0.5,y+s*0.02); ctx.moveTo(x,y+s*0.5); ctx.quadraticCurveTo(x+s*0.52,y+s*0.5,x+s*0.5,y+s*0.02); ctx.stroke(); }
+    else if(type==='default'){ ctx.fillStyle=acc; ctx.font='700 '+(s*1.55)+'px Cinzel, serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillText('?',x,y+s*0.55); }
+    ctx.restore();
+  }
+
+  renderPOILegend(cv,DPR,palName,warm){
+    if(!cv) return; const P=this.palettes()[palName]||this.palettes()['Хладный сумрак']; const acc=warm?P.accent:P.accentCold;
+    const W=1160,H=280; cv.width=W*DPR; cv.height=H*DPR; cv.style.aspectRatio=W+'/'+H; const ctx=cv.getContext('2d'); ctx.clearRect(0,0,W*DPR,H*DPR);
+    const items=[['default','Точка'],['city','Город'],['fortress','Крепость'],['village','Деревня'],['tower','Башня'],['temple','Храм'],['ruins','Руины'],['dungeon','Подземелье'],['encounter','Встреча'],['camp','Лагерь'],['port','Порт']];
+    const cols=6, cw=W/cols*DPR, ch=H/2*DPR;
+    for(let i=0;i<items.length;i++){ const c=i%cols, r=(i/cols)|0, cx=c*cw+cw/2, cyI=r*ch+ch*0.44, cyL=r*ch+ch*0.82;
+      if(c>0){ ctx.strokeStyle='rgba(111,183,201,0.08)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(c*cw, r*ch+ch*0.14); ctx.lineTo(c*cw, r*ch+ch*0.86); ctx.stroke(); }
+      this.drawPOIMarker(ctx, items[i][0], cx, cyI-6*DPR, 27*DPR, acc, DPR);
+      ctx.fillStyle='#b7c6cf'; ctx.font='600 '+(13*DPR)+'px Cinzel, serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; try{ctx.letterSpacing=1*DPR+'px';}catch(e){} ctx.fillText(items[i][1], cx, cyL); }
+  }
+
+  renderFog(PW,PH,DPR,seed,palName){
+    const S=seed, imul=Math.imul;
+    const P=this.palettes()[palName]||this.palettes()['Хладный сумрак'];
+    function hash(ix,iy,s){ let h=imul(ix|0,374761393)+imul(iy|0,668265263)+imul(s|0,362437); h=imul(h^(h>>>13),1274126177); h^=h>>>16; return (h>>>0)/4294967296; }
+    function sm(t){return t*t*(3-2*t);}
+    function vn(x,y,s){ const x0=Math.floor(x),y0=Math.floor(y),fx=x-x0,fy=y-y0; const a=hash(x0,y0,s),b=hash(x0+1,y0,s),c=hash(x0,y0+1,s),d=hash(x0+1,y0+1,s); const u=sm(fx),v=sm(fy); return a*(1-u)*(1-v)+b*u*(1-v)+c*(1-u)*v+d*u*v; }
+    function fbm(x,y,s,oct){ let sum=0,amp=0.5,fr=1; for(let i=0;i<oct;i++){ sum+=amp*vn(x*fr,y*fr,s+i*97); fr*=2; amp*=0.5; } return sum; }
+    const fog=document.createElement('canvas'); fog.width=PW; fog.height=PH; const f=fog.getContext('2d');
+    const im=f.createImageData(PW,PH), d=im.data;
+    for(let y=0;y<PH;y++){ for(let x=0;x<PW;x++){ const n=fbm(x/150+3,y/150+7,S+900,4), n2=fbm(x/44,y/44,S+930,3); const t=Math.min(1,Math.max(0,n*0.75+n2*0.35-0.05)); const o=(y*PW+x)*4; d[o]=P.fogA[0]+(P.fogB[0]-P.fogA[0])*t; d[o+1]=P.fogA[1]+(P.fogB[1]-P.fogA[1])*t; d[o+2]=P.fogA[2]+(P.fogB[2]-P.fogA[2])*t; d[o+3]=248; } }
+    f.putImageData(im,0,0);
+    const cities=this._cities&&this._cities.length?this._cities:[[0.42,0.5],[0.56,0.55],[0.5,0.4]];
+    f.globalCompositeOperation='destination-out';
+    const reveal=(nx,ny,R)=>{ const cx=nx*PW,cy=ny*PH,g=f.createRadialGradient(cx,cy,R*0.25,cx,cy,R); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.62,'rgba(255,255,255,0.92)'); g.addColorStop(1,'rgba(255,255,255,0)'); f.fillStyle=g; f.beginPath(); f.arc(cx,cy,R,0,7); f.fill(); };
+    for(const c of cities) reveal(c[0],c[1],175*DPR);
+    f.lineCap='round'; f.lineJoin='round';
+    if(cities.length>=2){ for(let pass=0;pass<3;pass++){ f.beginPath(); f.moveTo(cities[0][0]*PW,cities[0][1]*PH); for(let i=1;i<cities.length;i++) f.lineTo(cities[i][0]*PW,cities[i][1]*PH); f.strokeStyle='rgba(255,255,255,'+(pass===2?0.9:0.4)+')'; f.lineWidth=(pass===2?46:82-pass*18)*DPR; f.stroke(); } }
+    f.globalCompositeOperation='source-over';
+    const rim=(nx,ny,R)=>{ const cx=nx*PW,cy=ny*PH,g=f.createRadialGradient(cx,cy,R*0.78,cx,cy,R*1.02); g.addColorStop(0,'rgba('+P.glow[0]+','+P.glow[1]+','+P.glow[2]+',0)'); g.addColorStop(0.85,'rgba('+P.glow[0]+','+P.glow[1]+','+P.glow[2]+',0.10)'); g.addColorStop(1,'rgba('+P.glow[0]+','+P.glow[1]+','+P.glow[2]+',0)'); f.fillStyle=g; f.beginPath(); f.arc(cx,cy,R*1.02,0,7); f.fill(); };
+    for(const c of cities) rim(c[0],c[1],175*DPR);
+    return fog;
+  }
+}
+</script>
+</body>
+</html>
