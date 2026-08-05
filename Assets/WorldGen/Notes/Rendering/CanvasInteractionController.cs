@@ -40,6 +40,13 @@ namespace WorldGen.Notes.Rendering
         public NotesTool ActiveTool { get; private set; } = NotesTool.Select;
 
         string paintingDrawingObjectId;
+
+        /// <summary>Объект, к которому привязан активный инструмент, — тот, кому адресован его следующий
+        /// клик. ОТДЕЛЬНОЕ ПОЛЕ ОТ paintingDrawingObjectId, и это принципиально: то живёт ровно один мазок
+        /// (обнуляется в HandleRelease), а привязка переживает отпускания кнопки, пока её не снимут явно —
+        /// кликом мимо, сменой инструмента, Esc или удалением самого объекта.</summary>
+        string boundObjectId;
+
         string selectedObjectId;
         string selectedLinkId;
         bool panning;
@@ -70,22 +77,10 @@ namespace WorldGen.Notes.Rendering
         {
             ActiveTool = tool;
             paintingDrawingObjectId = null;
+            // Смена инструмента снимает привязку — одна точка, а не две. Сюда же приходит и «клик мимо»,
+            // который кладёт инструмент в «Курсор», и Esc.
+            boundObjectId = null;
             OnToolChanged?.Invoke(tool);
-        }
-
-        /// <summary>Disarms an inserting tool the moment it has inserted something — a note, an image, or a
-        /// new drawing. Without this, the tool stays armed and every further click on the board makes ANOTHER
-        /// one: the DM places a card, clicks it to start typing, and gets a second card under the cursor.
-        ///
-        /// PAINTING AN EXISTING DRAWING IS NOT AN INSERTION and deliberately does not disarm — a drawing is
-        /// made of many strokes, and dropping the brush after each one would be unusable. The rule is exactly
-        /// "the click that ADDS an object is the tool's last click", nothing wider.
-        ///
-        /// A CANCELLED FILE DIALOG DOES NOT DISARM EITHER: nothing was inserted, so the DM is still trying to
-        /// place an image, and taking the tool away would punish them for changing their mind about which file.</summary>
-        void ReturnToSelect()
-        {
-            if (ActiveTool != NotesTool.Select) SetTool(NotesTool.Select);
         }
 
         void SetSelectedObjectId(string objectId)
@@ -103,6 +98,7 @@ namespace WorldGen.Notes.Rendering
 
             HandleClipboardPaste();
             HandleDeleteKey();
+            HandleEscapeKey();
 
             // MIDDLE-BUTTON DRAG PANS, with any tool and over anything — including over a card, which is
             // exactly where the left button cannot pan and must not: there, a left drag moves the CARD.
@@ -172,68 +168,118 @@ namespace WorldGen.Notes.Rendering
             if (canvasController.IsScreenPointOverResizeHandle(screenPos, uiCamera))
                 return;
 
-            switch (ActiveTool)
+            // ДВА ИНСТРУМЕНТА ЖИВУТ ЗДЕСЬ И НЕ УХОДЯТ В ЧИСТЫЙ СЛОЙ: их логика — это панорамирование,
+            // попадание по объекту и попадание по связи, то есть три хит-теста по RectTransform. Утащить
+            // их в CanvasToolOps значило бы утащить туда всю геометрию вью ради задачи, которая её не
+            // касается.
+            if (ActiveTool == NotesTool.Select)
             {
-                case NotesTool.Select:
-                    // A press that lands on an object is left to that object's own
-                    // IPointerDownHandler/IDragHandler (NoteCardView etc.) — starting a pan here
-                    // too would move the whole canvas underneath it at the same time as the
-                    // object drags itself, fighting each other.
-                    if (canvasController.IsScreenPointOverObject(screenPos, uiCamera))
-                        break;
+                // A press that lands on an object is left to that object's own
+                // IPointerDownHandler/IDragHandler (NoteCardView etc.) — starting a pan here
+                // too would move the whole canvas underneath it at the same time as the
+                // object drags itself, fighting each other.
+                if (canvasController.IsScreenPointOverObject(screenPos, uiCamera))
+                    return;
 
-                    string linkAt = canvasController.FindLinkAt(screenPos, uiCamera);
-                    if (linkAt != null)
-                    {
-                        SetSelectedObjectId(null);
-                        selectedLinkId = linkAt;
-                        canvasController.SetSelectedLink(linkAt);
-                        break;
-                    }
-
+                string linkAt = canvasController.FindLinkAt(screenPos, uiCamera);
+                if (linkAt != null)
+                {
                     SetSelectedObjectId(null);
-                    selectedLinkId = null;
-                    canvasController.SetSelectedLink(null);
-                    panning = true;
-                    lastPanScreenPos = screenPos;
-                    break;
-                case NotesTool.Note:
-                    canvasController.AddNoteCard(ScreenToCanvasPoint(screenPos));
-                    ReturnToSelect();
-                    break;
-                case NotesTool.Drawing:
-                    var existingDrawing = FindDrawingObjectAt(screenPos);
-                    if (existingDrawing != null)
+                    selectedLinkId = linkAt;
+                    canvasController.SetSelectedLink(linkAt);
+                    return;
+                }
+
+                SetSelectedObjectId(null);
+                selectedLinkId = null;
+                canvasController.SetSelectedLink(null);
+                panning = true;
+                lastPanScreenPos = screenPos;
+                return;
+            }
+
+            if (ActiveTool == NotesTool.Zoom)
+            {
+                canvasController.CancelZoomAnimation();
+                zooming = true;
+                zoomStartScreenPos = screenPos;
+                zoomStartScale = canvasController.CanvasContainer.localScale.x;
+                return;
+            }
+
+            var underCursor = FindDrawingObjectAt(screenPos);
+            var decision = CanvasToolOps.Decide(
+                new CanvasClickInput(ToToolKind(ActiveTool), boundObjectId, underCursor?.ObjectId));
+
+            // Ложь только в одном случае: диалог выбора файла отменён. Тогда ничего не вставлено, ДМ всё
+            // ещё выбирает файл, и отнимать у него инструмент нельзя.
+            bool acted = true;
+
+            switch (decision.Action)
+            {
+                case CanvasClickAction.CreateNote:
+                    var card = canvasController.AddNoteCard(ScreenToCanvasPoint(screenPos));
+                    if (card != null)
                     {
-                        // ONE undo step per STROKE, taken here because the pixels start changing on this very
-                        // press. CommitToData replaces the whole PNG at the end of the stroke rather than
-                        // writing into the old array, which is what makes a snapshot taken now still hold the
-                        // pixels as they were — see DocHistory.CopyObjects on why byte arrays are shared.
-                        canvasController.BeforeMutation?.Invoke();
-                        paintingDrawingObjectId = existingDrawing.ObjectId;
-                        PaintAtScreenPos(existingDrawing, screenPos);
-                    }
-                    else
-                    {
-                        canvasController.AddDrawing(ScreenToCanvasPoint(screenPos), defaultDrawingWidth, defaultDrawingHeight);
-                        ReturnToSelect();
+                        SetSelectedObjectId(card.Id);
+                        FocusNoteBodyNextFrame(card.Id);
                     }
                     break;
-                case NotesTool.Image:
+
+                case CanvasClickAction.CreateImage:
                     var bytes = ImagePicker.OpenFileDialog();
-                    if (bytes != null)
-                    {
-                        canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
-                        ReturnToSelect();
-                    }
+                    if (bytes == null) { acted = false; break; }
+                    var image = canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
+                    if (image != null) SetSelectedObjectId(image.Id);
                     break;
-                case NotesTool.Zoom:
-                    canvasController.CancelZoomAnimation();
-                    zooming = true;
-                    zoomStartScreenPos = screenPos;
-                    zoomStartScale = canvasController.CanvasContainer.localScale.x;
+
+                case CanvasClickAction.CreateDrawing:
+                    var drawing = canvasController.AddDrawing(ScreenToCanvasPoint(screenPos),
+                                                              defaultDrawingWidth, defaultDrawingHeight);
+                    if (drawing == null) { acted = false; break; }
+                    SetSelectedObjectId(drawing.Id);
+                    // Привязываемся к тому, что только что создали, — весь смысл правки в этой строке.
+                    if (decision.BindCreatedObject) boundObjectId = drawing.Id;
+                    break;
+
+                case CanvasClickAction.PaintExisting:
+                    if (canvasController.GetView(decision.TargetObjectId) is not DrawingObjectView view)
+                    { acted = false; break; }
+                    // ONE undo step per STROKE, taken here because the pixels start changing on this very
+                    // press. CommitToData replaces the whole PNG at the end of the stroke rather than
+                    // writing into the old array, which is what makes a snapshot taken now still hold the
+                    // pixels as they were — see DocHistory.CopyObjects on why byte arrays are shared.
+                    canvasController.BeforeMutation?.Invoke();
+                    paintingDrawingObjectId = view.ObjectId;
+                    PaintAtScreenPos(view, screenPos);
+                    boundObjectId = decision.BoundObjectId;
+                    break;
+
+                case CanvasClickAction.ReleaseBinding:
+                    // Выделение НАМЕРЕННО не снимается: иначе после первого промаха теряется возможность
+                    // подвинуть или растянуть только что созданный объект — ровно то, ради чего правка и
+                    // делается. Инструмент в «Курсор» кладёт общий хвост ниже.
                     break;
             }
+
+            if (acted && decision.ReturnToSelect && ActiveTool != NotesTool.Select)
+                SetTool(NotesTool.Select);
+        }
+
+        /// <summary>NotesTool живёт здесь, рядом с MonoBehaviour, и в офлайн-харнесс не поедет; его зеркало
+        /// в чистом слое — CanvasToolKind. Отображение одно-в-одно.</summary>
+        static CanvasToolKind ToToolKind(NotesTool tool) => tool switch
+        {
+            NotesTool.Note => CanvasToolKind.Note,
+            NotesTool.Drawing => CanvasToolKind.Drawing,
+            NotesTool.Image => CanvasToolKind.Image,
+            NotesTool.Zoom => CanvasToolKind.Zoom,
+            _ => CanvasToolKind.Select,
+        };
+
+        /// <summary>Ставит каретку в текст только что созданной карточки. Тело — в следующей задаче.</summary>
+        void FocusNoteBodyNextFrame(string objectId)
+        {
         }
 
         void HandlePan()
@@ -353,7 +399,22 @@ namespace WorldGen.Notes.Rendering
                 if (!confirmed) return;
                 canvasController.RemoveObject(idToDelete);
                 if (selectedObjectId == idToDelete) SetSelectedObjectId(null);
+                // Иначе следующий клик внутрь бывшего прямоугольника адресован мёртвому id.
+                if (boundObjectId == idToDelete) boundObjectId = null;
             });
+        }
+
+        /// <summary>Esc кладёт армированный инструмент в «Курсор», а вместе с ним (через SetTool) снимает
+        /// привязку. Тот же жест, что гасит кисть в редакторе поселения (DungeonViewController).
+        ///
+        /// Только когда инструмент НЕ «Курсор»: иначе этот обработчик отбирал бы Esc у TMP_InputField, для
+        /// которого Esc — «выйти из поля», и у диалогов, которые им закрываются.</summary>
+        void HandleEscapeKey()
+        {
+            if (Keyboard.current == null) return;
+            if (!Keyboard.current.escapeKey.wasPressedThisFrame) return;
+            if (ActiveTool == NotesTool.Select) return;
+            SetTool(NotesTool.Select);
         }
 
         static string DescribeObject(CanvasObjectData data) => data switch
