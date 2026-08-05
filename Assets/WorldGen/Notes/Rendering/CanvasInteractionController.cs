@@ -209,6 +209,13 @@ namespace WorldGen.Notes.Rendering
                 return;
             }
 
+            // ПРИВЯЗКА МОГЛА УМЕРЕТЬ МЕЖДУ КЛИКАМИ — Ctrl+Z, удаление. Мёртвый id безопасен, но не безвреден:
+            // клик по пустому месту прочитался бы как «мимо», инструмент лёг бы, и не создалось бы ничего —
+            // ДМ пришлось бы жать «Рисунок» заново. Живость проверяется здесь, а не в CanvasToolOps: чистый
+            // слой не знает и не должен знать, существует ли ещё вид.
+            if (boundObjectId != null && canvasController.GetView(boundObjectId) == null)
+                boundObjectId = null;
+
             var underCursor = FindDrawingObjectAt(screenPos);
             var decision = CanvasToolOps.Decide(
                 new CanvasClickInput(ToToolKind(ActiveTool), boundObjectId, underCursor?.ObjectId));
