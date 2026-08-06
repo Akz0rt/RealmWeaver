@@ -49,13 +49,30 @@ namespace WorldGen.Notes.Data
                 W, H, White);
 
             int radiusPx = (int)(0.15f * 0.5f * W);
-            int edgeRow = H / 2 - radiusPx;   // строка у самого края полосы
-            int gaps = 0;
-            for (int x = (int)(0.2f * W); x < (int)(0.8f * W); x++)
-                if (!Painted(rgba, x, edgeRow)) gaps++;
+            // Полоса, а не одна строка: глубина гребёнки зависит от шага штамповки, и любая
+            // отдельно взятая строка ловит только ту глубину, на которую случайно попала — а
+            // правило «шаг не крупнее половины радиуса» говорит о гребёнке любой глубины, не об
+            // одной конкретной. Пять строк от самого края внутрь перекрывают диапазон глубин.
+            int gapsTotal = 0;
+            var gapsByRow = new int[5];
+            for (int row = 0; row < 5; row++)
+            {
+                int y = H / 2 - radiusPx + row;
+                int gaps = 0;
+                for (int x = (int)(0.2f * W); x < (int)(0.8f * W); x++)
+                    if (!Painted(rgba, x, y)) gaps++;
+                gapsByRow[row] = gaps;
+                gapsTotal += gaps;
+            }
 
-            bool ok = gaps == 0;
-            if (!ok) Debug.LogError($"FAIL гребёнка по краю толстой линии: {gaps} дыр");
+            bool ok = gapsTotal == 0;
+            if (!ok)
+            {
+                var detail = new System.Text.StringBuilder();
+                for (int row = 0; row < 5; row++)
+                    detail.Append($"строка {H / 2 - radiusPx + row}: {gapsByRow[row]} дыр; ");
+                Debug.LogError($"FAIL гребёнка по краю толстой линии: {detail}");
+            }
             Done(ok);
         }
 
