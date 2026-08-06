@@ -55,8 +55,24 @@ namespace WorldGen.Notes.Data
         {
             // Без сглаживания каждый рывок мыши даёт свою кочку, и линия выходит бугристой.
             float once = StrokeWidthOps.Smooth(1.3f, 0.7f, 1f / 60f);
-            bool ok = once > 0.7f && once < 1.3f;
-            if (!ok) Debug.LogError($"FAIL сглаживание множителя: {once} — прыжок сразу в цель или отсутствие движения");
+            bool movedNotJumped = once > 0.7f && once < 1.3f;
+
+            // НА ОПОРНОЙ ЧАСТОТЕ (60 Гц) Smooth ОБЯЗАН СОВПАДАТЬ С ПРОСТЫМ Lerp НА SmoothingPerFrame
+            // — это ровно то, что обещает doc-комментарий класса про смысл константы «доля за кадр».
+            // Без этой проверки требование «на 60 Гц ничего не поменялось» живёт только в
+            // комментарии: подмена опорной частоты (например 60→30) не меняется в «сдвинулось, но
+            // не прыгнуло» (once всё ещё между 0.7 и 1.3) и не видна в проверке независимости от
+            // частоты кадров (та сравнивает результат сам с собой на другой опорной частоте, а не
+            // с эталоном — мутация масштабно-инвариантна и режет любую долю времени одинаково).
+            // Mathf.Approximately тут проверен, а не принят на веру: для dt=1/60 промежуточная
+            // арифметика даёт dt*60=1 и Pow(0.7,1)=0.7 без накопленной погрешности (степень ровно
+            // 1), so once совпадает с прямым Lerp побитово (diff=0) — узкий допуск Approximately не
+            // мешает; на мутанте 30 Гц разница ~0.08 (1.202 против 1.12), Approximately её ловит.
+            float expected = Mathf.Lerp(StrokeWidthOps.SlowMultiplier, StrokeWidthOps.FastMultiplier, StrokeWidthOps.SmoothingPerFrame);
+            bool matchesReferenceRate = Mathf.Approximately(once, expected);
+
+            bool ok = movedNotJumped && matchesReferenceRate;
+            if (!ok) Debug.LogError($"FAIL сглаживание множителя: {once} (ожидание на 60 Гц — {expected}), сдвинулось={movedNotJumped}, совпало с опорной частотой={matchesReferenceRate}");
             Done(ok);
         }
 
