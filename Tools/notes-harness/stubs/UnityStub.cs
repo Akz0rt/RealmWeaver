@@ -44,5 +44,10 @@ namespace UnityEngine
         public static float Pow(float f, float p) => (float)Math.Pow(f, p);
         public static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
         public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
+        // Значения и реализация сверены с UnityCsReference/Runtime/Export/Math/Mathf.cs:
+        // Deg2Rad — та же константа выражением (не переписана десятичным приближением), Cos — прямой
+        // проброс в Math.Cos, как и в настоящем Mathf.
+        public const float Deg2Rad = (float)(Math.PI * 2) / 360f;
+        public static float Cos(float f) => (float)Math.Cos(f);
     }
 }
