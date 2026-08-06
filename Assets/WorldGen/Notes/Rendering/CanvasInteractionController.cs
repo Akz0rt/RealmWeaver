@@ -59,6 +59,20 @@ namespace WorldGen.Notes.Rendering
 
         string paintingDrawingObjectId;
 
+        /// <summary>Мазок, который собирается прямо сейчас. Живёт от нажатия до отпускания и в этот
+        /// момент ЕЩЁ НЕ ЛЕЖИТ в данных: он добавляется в список одним куском в HandleRelease, потому
+        /// что законченный мазок неизменяем (см. Stroke) — снимок отмены, взятый на нажатии, обязан
+        /// остаться без него.</summary>
+        Stroke activeStroke;
+        StrokePoint lastPoint;
+        Vector2 lastLocal;
+        float lastSampleTime;
+        float widthMultiplier;
+
+        /// <summary>Базовая толщина в долях ширины рисунка. Считается один раз на мазок: рисунок за
+        /// время мазка не меняет размера, а делить в каждом кадре значило бы делить одно и то же.</summary>
+        float baseWidthFraction;
+
         /// <summary>Объект, к которому привязан активный инструмент, — тот, кому адресован его следующий
         /// клик. ОТДЕЛЬНОЕ ПОЛЕ ОТ paintingDrawingObjectId, и это принципиально: то живёт ровно один мазок
         /// (обнуляется в HandleRelease), а привязка переживает отпускания кнопки, пока её не снимут явно —
@@ -94,6 +108,16 @@ namespace WorldGen.Notes.Rendering
         public void SetTool(NotesTool tool)
         {
             ActiveTool = tool;
+
+            // НЕДОВЕДЁННЫЙ МАЗОК БРОСАЕТСЯ, А НЕ ЗАВИСАЕТ. Esc посреди протаскивания приходит сюда
+            // (HandleEscapeKey), и отпускания кнопки, которое обычно закрывает мазок, уже не будет:
+            // без этого поле activeStroke осталось бы занятым навсегда, а вместе с ним представление
+            // держало бы рабочие буферы растра — 8 МБ на рисунок при 1024×1024. Перепечатка заодно
+            // убирает с экрана сырую линию, которой в данных нет: Esc отменяет мазок целиком.
+            if (activeStroke != null && paintingDrawingObjectId != null && canvasController != null
+                && canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView unfinished)
+                unfinished.Rebake();
+            activeStroke = null;
             paintingDrawingObjectId = null;
             // Смена инструмента снимает привязку — одна точка, а не две. Сюда же приходит и «клик мимо»,
             // который кладёт инструмент в «Курсор», и Esc.
@@ -330,13 +354,12 @@ namespace WorldGen.Notes.Rendering
                 case CanvasClickAction.PaintExisting:
                     if (canvasController.GetView(decision.TargetObjectId) is not DrawingObjectView view)
                     { acted = false; break; }
-                    // ONE undo step per STROKE, taken here because the pixels start changing on this very
-                    // press. CommitToData replaces the whole PNG at the end of the stroke rather than
-                    // writing into the old array, which is what makes a snapshot taken now still hold the
-                    // pixels as they were — see DocHistory.CopyObjects on why byte arrays are shared.
+                    // ОДИН ШАГ ОТМЕНЫ НА МАЗОК, и берётся он ЗДЕСЬ, на нажатии. Снимок остаётся верным
+                    // потому, что мазок попадает в данные только в HandleRelease и целиком: список в
+                    // снимке — другой объект с теми же ссылками (DocHistory.CopyObjects), а добавление
+                    // в конец живого списка его не касается.
                     canvasController.BeforeMutation?.Invoke();
-                    paintingDrawingObjectId = view.ObjectId;
-                    PaintAtScreenPos(view, screenPos);
+                    StartStroke(view, screenPos);
                     boundObjectId = decision.BoundObjectId;
                     break;
 
@@ -395,14 +418,37 @@ namespace WorldGen.Notes.Rendering
             canvasController.ZoomAroundScreenPoint(newScale, zoomStartScreenPos, uiCamera);
         }
 
+        /// <summary>Очередная точка мазка. Толщина считается от СКОРОСТИ, а не от расстояния за кадр:
+        /// расстояние за кадр на слабом компьютере больше при той же руке, и перо выходило бы тоньше
+        /// (см. StrokeWidthOps).</summary>
         void HandlePaintDrag()
         {
-            if (canvasController.GetView(paintingDrawingObjectId) is not DrawingObjectView view)
-            {
-                paintingDrawingObjectId = null;
-                return;
-            }
-            PaintAtScreenPos(view, Mouse.current.position.ReadValue());
+            if (canvasController.GetView(paintingDrawingObjectId) is not DrawingObjectView view
+                || activeStroke == null)
+            { paintingDrawingObjectId = null; return; }
+
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                view.RectTransform, Mouse.current.position.ReadValue(), uiCamera, out var local);
+
+            // Расстояние в ЕДИНИЦАХ ДОСКИ, а не в долях и не в пикселях экрана: локальные координаты
+            // прямоугольника и есть единицы доски, потому что рисунок живёт под масштабируемым
+            // контейнером.
+            float distance = Vector2.Distance(local, lastLocal);
+            float dt = Time.unscaledTime - lastSampleTime;
+            float target = StrokeWidthOps.MultiplierFor(StrokeWidthOps.SpeedOf(distance, dt));
+            // ТОТ ЖЕ dt, по которому мерилась скорость: сглаживание приводится к прошедшему времени,
+            // иначе множитель догонял бы цель тем быстрее, чем чаще кадры.
+            widthMultiplier = StrokeWidthOps.Smooth(widthMultiplier, target, dt);
+
+            var f = view.LocalToFraction(local);
+            var point = new StrokePoint(f.x, f.y, baseWidthFraction * widthMultiplier);
+            activeStroke.Points.Add(point);
+
+            view.StampLive(lastPoint, point);
+
+            lastPoint = point;
+            lastLocal = local;
+            lastSampleTime = Time.unscaledTime;
         }
 
         void HandleRelease()
@@ -411,8 +457,15 @@ namespace WorldGen.Notes.Rendering
             zooming = false;
             if (paintingDrawingObjectId != null)
             {
-                if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view)
-                    view.CommitToData();
+                if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view
+                    && activeStroke != null && view.Data is DrawingObjectData drawing)
+                {
+                    StrokeWidthOps.FixFirstWidth(activeStroke.Points);
+                    // Чистка цепочки появится в задаче 8 — ровно здесь, одной строкой.
+                    drawing.Strokes.Add(activeStroke);
+                    view.EndStroke();
+                }
+                activeStroke = null;
                 paintingDrawingObjectId = null;
                 canvasController.AfterMutation?.Invoke();
             }
@@ -433,27 +486,39 @@ namespace WorldGen.Notes.Rendering
             return null;
         }
 
-        /// <summary>Толщина считается ПО САМОМУ РИСУНКУ, а не берётся готовым числом пикселей: растр
-        /// внутри остаётся 256×256, сколько бы рисунок ни растянули за угол, и «тонко» на растянутом
-        /// вдвое рисунке рисовало бы вдвое толще, чем показывает кружок в полоске кисти.</summary>
-        void PaintAtScreenPos(DrawingObjectView view, Vector2 screenPos)
+        /// <summary>Начало мазка. Базовый диаметр берётся в ЕДИНИЦАХ ДОСКИ (BrushOps) и переводится в
+        /// доли ширины ОДИН РАЗ, здесь же, где потом переводится и скорость, — чтобы обе величины
+        /// жили в одной системе. Толщина считается по самому рисунку, а не готовым числом пикселей:
+        /// разрешение растра выбирается из размера объекта, и «тонко» на растянутом вдвое рисунке
+        /// иначе рисовало бы вдвое толще, чем показывает кружок в полоске кисти.
+        ///
+        /// Ластик — СОСТОЯНИЕ, поэтому цвет у него не спрашивается вовсе: индекс чернил у стирающего
+        /// мазка не читается, а к цвету листа его возвращает StrokeRaster, один раз и для всех.</summary>
+        void StartStroke(DrawingObjectView view, Vector2 screenPos)
         {
-            RectTransformUtility.ScreenPointToLocalPointInRectangle(view.RectTransform, screenPos, uiCamera, out var local);
             var drawing = view.Data as DrawingObjectData;
-            float radius = drawing == null
-                ? 3f
-                : BrushOps.RadiusInPixels(BrushOps.DiameterInCanvasUnits(brushWidth), drawing.Size.X, drawing.PixelWidth);
-            view.PaintAt(local, radius, CurrentBrushColor());
-        }
+            if (drawing == null) return;
 
-        /// <summary>Ластик пишет ПРОЗРАЧНЫЙ пиксель, а не белый: PaintAt кладёт цвет через SetPixel,
-        /// без смешивания, а растр рисунка прозрачен там, где его не трогали. Белая клякса выглядела
-        /// бы стёртой ровно до того мгновения, когда рисунок увезут на другой фон.</summary>
-        Color32 CurrentBrushColor()
-        {
-            if (brushIsEraser) return new Color32(255, 255, 255, 0);
-            var c = NotesPalette.At(brushColorIndex);
-            return new Color32(c.R, c.G, c.B, 255);
+            paintingDrawingObjectId = view.ObjectId;
+            widthMultiplier = 1f;
+
+            float baseDiameter = BrushOps.DiameterInCanvasUnits(brushWidth);
+            baseWidthFraction = drawing.Size.X > 0.0001f ? baseDiameter / drawing.Size.X : 0.02f;
+
+            activeStroke = new Stroke
+            {
+                IsEraser = brushIsEraser,
+                InkIndex = brushIsEraser ? 0 : brushColorIndex,
+            };
+
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                view.RectTransform, screenPos, uiCamera, out lastLocal);
+            var f = view.LocalToFraction(lastLocal);
+            lastPoint = new StrokePoint(f.x, f.y, baseWidthFraction);
+            activeStroke.Points.Add(lastPoint);
+            lastSampleTime = Time.unscaledTime;
+
+            view.BeginStroke(activeStroke);
         }
 
         bool IsOverViewport(Vector2 screenPos)
