@@ -177,7 +177,19 @@ namespace WorldGen.Notes.Data
                         break;
                     case ImageObjectData i: c = new ImageObjectData { ImageBytes = i.ImageBytes }; break;
                     case DrawingObjectData d:
-                        c = new DrawingObjectData(d.PixelWidth, d.PixelHeight) { PixelDataPng = d.PixelDataPng };
+                        // СПИСОК МАЗКОВ КОПИРУЕТСЯ, САМИ МАЗКИ — НЕТ. Законченный мазок неизменяем
+                        // (см. Stroke), поэтому новый список со старыми ссылками — корректный
+                        // снимок, а глубокое копирование тысяч точек на каждый шаг отмены было бы
+                        // дорогой половиной сделки без второй половины. Ровно та же логика, что у
+                        // ImageBytes выше.
+                        c = new DrawingObjectData(d.PixelWidth, d.PixelHeight)
+                        {
+                            PixelDataPng = d.PixelDataPng,
+                            PaperIndex = d.PaperIndex,
+                            Strokes = d.Strokes != null
+                                ? new System.Collections.Generic.List<Stroke>(d.Strokes)
+                                : new System.Collections.Generic.List<Stroke>(),
+                        };
                         break;
                     default: continue;
                 }

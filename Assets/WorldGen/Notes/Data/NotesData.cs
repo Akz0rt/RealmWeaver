@@ -236,11 +236,59 @@ namespace WorldGen.Notes.Data
         public byte[] ImageBytes;   // raw file bytes (png/jpg/gif), embedded directly
     }
 
+    /// <summary>Одна точка мазка. ВСЁ В ДОЛЯХ ПРЯМОУГОЛЬНИКА РИСУНКА: X и Y — от 0 до 1, W —
+    /// диаметр как доля ШИРИНЫ.
+    ///
+    /// Доли, а не пиксели и не единицы доски, чтобы точно сохранить нынешнее поведение при
+    /// растягивании: сегодня растр тянется вместе с объектом, поэтому мазок на растянутом вдвое
+    /// рисунке выглядит вдвое толще. Доли воспроизводят это при любом разрешении растра и без
+    /// единого пересчёта.
+    ///
+    /// Диаметр по ШИРИНЕ, а не по обеим сторонам — то же решение и по той же причине, что записана
+    /// в BrushOps.RadiusInPixels: при разном растяжении по осям круг всё равно станет овалом.</summary>
+    public struct StrokePoint
+    {
+        public float X, Y, W;
+        public StrokePoint(float x, float y, float w) { X = x; Y = y; W = w; }
+    }
+
+    /// <summary>Один мазок — от нажатия до отпускания.
+    ///
+    /// ЗАКОНЧЕННЫЙ МАЗОК НИКОГДА НЕ МЕНЯЕТСЯ: его можно добавить в конец списка или убрать целиком,
+    /// но не править. Это защита от известной мины — DocHistory.CopyObjects ДЕЛИТ массивы, а не
+    /// копирует вглубь, и при неизменяемом мазке снимок это новый List со ссылками на те же
+    /// объекты: дёшево и безошибочно. Правка мазка на месте начала бы стирать уже нарисованное
+    /// в снимках отмены.
+    ///
+    /// Ластик — такой же мазок, просто стирающий, поэтому порядок в списке важен: перепечатать
+    /// картинку правильно можно только пройдя список сверху вниз.</summary>
+    public class Stroke
+    {
+        public bool IsEraser;
+        /// <summary>Индекс в NotesPalette. У стирающего мазка не читается.</summary>
+        public int InkIndex;
+        public List<StrokePoint> Points = new List<StrokePoint>();
+    }
+
     public class DrawingObjectData : CanvasObjectData
     {
-        public byte[] PixelDataPng;  // PNG-encoded raster content, null until first stroke
-        public int PixelWidth;
-        public int PixelHeight;
+        /// <summary>УНАСЛЕДОВАННЫЙ СЛОЙ, а не рабочий растр. До формата 16 рисунок и был этой
+        /// картинкой; теперь правда — Strokes, а PNG остаётся только у рисунков, сделанных раньше.
+        /// Печатается ПЕРВЫМ, мазки ложатся поверх. У новых рисунков null всегда.
+        ///
+        /// Именно поэтому кода миграции не нужно вовсе: «есть PNG, нет мазков» — это ровно и есть
+        /// состояние «унаследованный слой», и оно получается само из старого файла.</summary>
+        public byte[] PixelDataPng;
+        /// <summary>Размеры унаследованного слоя. У новых рисунков разрешение растра считается из
+        /// размера объекта (StrokeRaster.ChooseSize) и в файле не хранится.</summary>
+        public int PixelWidth, PixelHeight;
+
+        /// <summary>Мазки по порядку рисования. Новое в формате 16.</summary>
+        public List<Stroke> Strokes = new List<Stroke>();
+
+        /// <summary>Тон листа, индекс в PaperPalette. 0 = белый непрозрачный, поэтому старый файл
+        /// без этого ключа читается как сегодняшний вид и миграции не требует.</summary>
+        public int PaperIndex;
 
         public DrawingObjectData(int pixelWidth, int pixelHeight)
         {
