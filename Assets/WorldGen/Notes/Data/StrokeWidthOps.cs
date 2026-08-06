@@ -20,8 +20,13 @@ namespace WorldGen.Notes.Data
         public const float FastMultiplier = 0.7f;
         /// <summary>Единиц доски в секунду, при которых перо считается «быстрым».</summary>
         public const float FastSpeed = 400f;
-        /// <summary>Доля движения к цели за кадр. Множитель сглаживается по времени, иначе каждый
-        /// рывок мыши даёт свою кочку.</summary>
+        /// <summary>Доля движения к цели за кадр — но за кадр при опорной частоте 60 Гц, а не за
+        /// вызов метода. Опорная частота нужна затем, что доля «за вызов» без неё зависела бы от
+        /// того, на сколько шагов нарезано одно и то же время: на 144 Гц кадров вдвое с лишним
+        /// больше, чем на 60 Гц, и та же доля от каждого давала бы множителю догнать цель
+        /// заметно быстрее — та же болезнь, от которой уже защищена скорость в <see cref="SpeedOf"/>,
+        /// осталась бы в сглаживании. 60 Гц — просто точка отсчёта: число 0.3 продолжает означать
+        /// «за кадр», и на самой частоте 60 Гц <see cref="Smooth"/> ведёт себя как раньше.</summary>
         public const float SmoothingPerFrame = 0.3f;
 
         public static float SpeedOf(float distanceCanvasUnits, float deltaSeconds)
@@ -33,8 +38,17 @@ namespace WorldGen.Notes.Data
             return Mathf.Lerp(SlowMultiplier, FastMultiplier, t);
         }
 
-        public static float Smooth(float previous, float target)
-            => Mathf.Lerp(previous, target, SmoothingPerFrame);
+        /// <summary>Сглаживает множитель к цели с долей, приведённой к прошедшему времени, а не к
+        /// числу вызовов: та же доля «за вызов» на слабом компьютере (кадры реже) сходилась бы к
+        /// цели медленнее по времени, чем на быстром — та же рука, другая картинка, только теперь
+        /// в сглаживании, а не в скорости. При неположительном <paramref name="deltaSeconds"/>
+        /// (кадр ещё не начался или время не идёт) значение не двигается и не даёт NaN.</summary>
+        public static float Smooth(float previous, float target, float deltaSeconds)
+        {
+            if (deltaSeconds <= 0f) return previous;
+            float t = 1f - Mathf.Pow(1f - SmoothingPerFrame, deltaSeconds * 60f);
+            return Mathf.Lerp(previous, target, t);
+        }
 
         /// <summary>У первой точки скорости ещё нет — она берёт толщину второй. Иначе каждый мазок
         /// начинается с кляксы в базовую толщину. Мазок из одной точки (тычок кистью) остаётся как

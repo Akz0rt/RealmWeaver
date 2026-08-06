@@ -54,9 +54,36 @@ namespace WorldGen.Notes.Data
         public void SelfTestMultiplierIsSmoothed()
         {
             // Без сглаживания каждый рывок мыши даёт свою кочку, и линия выходит бугристой.
-            float once = StrokeWidthOps.Smooth(1.3f, 0.7f);
+            float once = StrokeWidthOps.Smooth(1.3f, 0.7f, 1f / 60f);
             bool ok = once > 0.7f && once < 1.3f;
             if (!ok) Debug.LogError($"FAIL сглаживание множителя: {once} — прыжок сразу в цель или отсутствие движения");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: Толщина — сглаживание не зависит от частоты кадров")]
+        public void SelfTestSmoothingIsFrameRateIndependent()
+        {
+            // ФИКСТУРА РАЗВОДИТ ПРАВИЛО И ПОДДЕЛКУ: одно и то же время (0.1 с), нарезанное по-разному
+            // — одним крупным шагом и десятью мелкими. «Доля за вызов» без приведения к времени дала
+            // бы множителю на частых кадрах (десять мелких шагов) уйти к цели куда дальше, чем на
+            // редких (один крупный шаг) — тот же дефект, от которого уже защищена скорость в SpeedOf,
+            // только теперь в сглаживании. Допуск 0.001: на три порядка меньше разрыва, который даёт
+            // подделка (~0.4 на этих числах), и на порядки больше шума накопления float32 по десяти
+            // шагам (в double тот же расчёт даёт разницу ~1e-16 — экспонента складывается точно).
+            float oneStep = StrokeWidthOps.Smooth(1.3f, 0.7f, 0.1f);
+            float tenSteps = 1.3f;
+            for (int i = 0; i < 10; i++) tenSteps = StrokeWidthOps.Smooth(tenSteps, 0.7f, 0.01f);
+            bool ok = Mathf.Abs(oneStep - tenSteps) < 0.001f;
+            if (!ok) Debug.LogError($"FAIL частота кадров: один шаг {oneStep}, десять шагов {tenSteps}, разница {Mathf.Abs(oneStep - tenSteps)}");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: Толщина — нулевой шаг времени не двигает сглаживание")]
+        public void SelfTestSmoothZeroDeltaIsSafe()
+        {
+            float s = StrokeWidthOps.Smooth(1.3f, 0.7f, 0f);
+            bool ok = Mathf.Approximately(s, 1.3f) && !float.IsNaN(s);
+            if (!ok) Debug.LogError($"FAIL нулевой шаг времени в сглаживании: {s}, ожидалось 1.3 без изменений");
             Done(ok);
         }
 
