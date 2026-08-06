@@ -29,9 +29,19 @@ namespace UnityEngine
         public static float Abs(float v) => Math.Abs(v);
         public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
+        public static int Min(int a, int b) => Math.Min(a, b);
+        public static int Max(int a, int b) => Math.Max(a, b);
         public static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
         public static float Clamp(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
         public static bool Approximately(float a, float b)
             => Math.Abs(b - a) < Math.Max(1e-6f * Math.Max(Math.Abs(a), Math.Abs(b)), 1.121039E-44f * 8f);
+        // Реализация зеркалит исходники Unity (UnityCsReference/Runtime/Export/Math/Mathf.cs):
+        // RoundToInt/CeilToInt/FloorToInt через System.Math, Lerp через Clamp01, без укорочения.
+        public static int RoundToInt(float f) => (int)Math.Round(f);
+        public static int CeilToInt(float f) => (int)Math.Ceiling(f);
+        public static int FloorToInt(float f) => (int)Math.Floor(f);
+        public static float Sqrt(float f) => (float)Math.Sqrt(f);
+        public static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
+        public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
     }
 }
