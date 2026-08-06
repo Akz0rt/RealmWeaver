@@ -141,10 +141,15 @@ namespace WorldGen.Notes.Rendering
             // настоящего ластика. Рисуется прозрачным по уже закрашенной фигуре — тот же приём, что
             // вырезает хвост флажка в DrawCursor. Работает на любой теме: иконку красят в один цвет
             // (ThemeRole.Txt), и разделительная линия читается через альфу, а не через второй оттенок.
+            //
+            // RGB прозрачного пикселя = RGB заливки (белый), а не Color.clear (0,0,0,0): та же причина,
+            // что записана у PaperPalette для прозрачного тона листа — билинейная фильтрация смешивает
+            // RGB и альфу отдельно (непредумноженное альфа-смешивание), и чёрный RGB под нулевой альфой
+            // дал бы тёмную кайму по границе прорези при масштабировании иконки на экране.
             float cuffT = 0.62f;
             var cuffL = Vector2.Lerp(bl, tl, cuffT);
             var cuffR = Vector2.Lerp(br, tr, cuffT);
-            DrawLine(tex, size, cuffL, cuffR, 2.5f, Color.clear);
+            DrawLine(tex, size, cuffL, cuffR, 2.5f, new Color(1f, 1f, 1f, 0f));
         }
 
         static void FillQuad(Texture2D tex, int size, Vector2 a, Vector2 b, Vector2 c, Vector2 d, Color color)
