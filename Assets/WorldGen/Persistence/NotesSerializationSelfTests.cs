@@ -26,6 +26,12 @@ namespace WorldGen.Persistence
                 new List<VoronoiCell>(), new List<PoiData>(), notes,
                 new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>());
 
+        /// <summary>Допуск для float-полей мазка после круговорота через текстовый JSON. Жёсткий —
+        /// 1e-6f — намеренно: потерянное поле в ReadJson вернуло бы 0 или значение по умолчанию, а
+        /// это отстоит от таких значений, как 0.03, на тридцать тысяч допусков, так что подделка
+        /// по-прежнему убивается.</summary>
+        static bool Close(float a, float b) => Mathf.Abs(a - b) <= 1e-6f;
+
         [ContextMenu("Self-Test: Notes Document Round-Trip")]
         public void SelfTestDocumentRoundTrip()
         {
@@ -326,12 +332,15 @@ namespace WorldGen.Persistence
                     var s1 = backDrawing.Strokes[1];
                     if (s0.IsEraser || s0.InkIndex != 4 || s0.Points.Count != 2)
                     { Debug.LogError("FAIL мазки: первый мазок потерял флаг ластика, индекс чернил или точки"); ok = false; }
-                    else if (s0.Points[0].X != 0.1f || s0.Points[0].Y != 0.2f || s0.Points[0].W != 0.03f
-                          || s0.Points[1].X != 0.4f || s0.Points[1].Y != 0.5f || s0.Points[1].W != 0.06f)
+                    // ДОПУСК, А НЕ РАВЕНСТВО: числа проходят через текстовый JSON, и опираться на точность
+                    // его формата в проверке, которая исполняется только вручную в редакторе, — значит
+                    // узнать о проблеме в самый неудобный момент.
+                    else if (!Close(s0.Points[0].X, 0.1f) || !Close(s0.Points[0].Y, 0.2f) || !Close(s0.Points[0].W, 0.03f)
+                          || !Close(s0.Points[1].X, 0.4f) || !Close(s0.Points[1].Y, 0.5f) || !Close(s0.Points[1].W, 0.06f))
                     { Debug.LogError("FAIL мазки: координаты или толщина точек первого мазка не совпали"); ok = false; }
 
                     if (!s1.IsEraser || s1.Points.Count != 1
-                        || s1.Points[0].X != 0.9f || s1.Points[0].Y != 0.8f || s1.Points[0].W != 0.12f)
+                        || !Close(s1.Points[0].X, 0.9f) || !Close(s1.Points[0].Y, 0.8f) || !Close(s1.Points[0].W, 0.12f))
                     { Debug.LogError("FAIL мазки: второй (ластик) мазок не совпал"); ok = false; }
                 }
             }
