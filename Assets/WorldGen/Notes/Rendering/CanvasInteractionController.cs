@@ -107,19 +107,34 @@ namespace WorldGen.Notes.Rendering
 
         public void SetTool(NotesTool tool)
         {
+            // ПОДТВЕРЖДЕНИЕ УЖЕ АКТИВНОГО ИНСТРУМЕНТА — НЕ СМЕНА. Правило вынесено в чистый слой
+            // (CanvasToolOps.ShouldAbandonStroke), чтобы его видел офлайн-харнесс. Раньше SetTool
+            // безусловно бросал недоведённый мазок при ЛЮБОМ вызове, и двойной клик по рисунку
+            // (EnterDrawingEditMode зовёт SetTool(Drawing), даже когда «Рисунок» уже активен) съедал
+            // второй тычок быстрой пары: клик вниз уже начинал мазок через HandlePress, а клик вверх —
+            // распознанный uGUI как двойной — обнулял activeStroke раньше, чем опрос Mouse.current в
+            // Update успевал дописать в него точку. Мазок терялся целиком: ни точки на экране, ни
+            // записи в данных.
+            bool changingTool = CanvasToolOps.ShouldAbandonStroke(ToToolKind(ActiveTool), ToToolKind(tool));
             ActiveTool = tool;
 
-            // НЕДОВЕДЁННЫЙ МАЗОК БРОСАЕТСЯ, А НЕ ЗАВИСАЕТ. Esc посреди протаскивания приходит сюда
-            // (HandleEscapeKey), и отпускания кнопки, которое обычно закрывает мазок, уже не будет:
-            // без этого поле activeStroke осталось бы занятым навсегда, а вместе с ним представление
-            // держало бы рабочие буферы растра — 8 МБ на рисунок при 1024×1024. Перепечатка заодно
-            // убирает с экрана сырую линию, которой в данных нет: Esc отменяет мазок целиком.
-            if (activeStroke != null && paintingDrawingObjectId != null && canvasController != null
-                && canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView unfinished)
-                unfinished.Rebake();
-            ForgetStroke();
+            if (changingTool)
+            {
+                // НЕДОВЕДЁННЫЙ МАЗОК БРОСАЕТСЯ, А НЕ ЗАВИСАЕТ. Esc посреди протаскивания приходит сюда
+                // (HandleEscapeKey), и отпускания кнопки, которое обычно закрывает мазок, уже не будет:
+                // без этого поле activeStroke осталось бы занятым навсегда, а вместе с ним представление
+                // держало бы рабочие буферы растра — 8 МБ на рисунок при 1024×1024. Перепечатка заодно
+                // убирает с экрана сырую линию, которой в данных нет: Esc отменяет мазок целиком.
+                if (activeStroke != null && paintingDrawingObjectId != null && canvasController != null
+                    && canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView unfinished)
+                    unfinished.Rebake();
+                ForgetStroke();
+            }
             // Смена инструмента снимает привязку — одна точка, а не две. Сюда же приходит и «клик мимо»,
-            // который кладёт инструмент в «Курсор», и Esc.
+            // который кладёт инструмент в «Курсор», и Esc. Срабатывает В ОБОИХ СЛУЧАЯХ (даже когда
+            // инструмент не поменялся): EnterDrawingEditMode выставляет boundObjectId сразу ПОСЛЕ этого
+            // вызова, и то же самое верно для OnToolChanged — подписчики (полоска кисти) ждут его на
+            // каждый SetTool, а не только на смену.
             boundObjectId = null;
             OnToolChanged?.Invoke(tool);
         }

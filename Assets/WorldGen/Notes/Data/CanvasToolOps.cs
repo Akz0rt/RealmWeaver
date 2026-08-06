@@ -101,6 +101,14 @@ namespace WorldGen.Notes.Data
             }
         }
 
+        /// <summary>ПРАВИЛО: недоведённый мазок бросают только при НАСТОЯЩЕЙ смене инструмента.
+        /// Подтверждение уже активного инструмента — не смена: раньше SetTool бросал мазок безусловно,
+        /// и двойной клик по рисунку (EnterDrawingEditMode зовёт SetTool(Drawing), даже когда «Рисунок»
+        /// уже активен) обнулял мазок, начатый первым же кликом второй пары, раньше, чем цикл Update
+        /// успевал дописать в него точку — второй тычок быстрой пары пропадал целиком, без следа ни на
+        /// экране, ни в данных.</summary>
+        public static bool ShouldAbandonStroke(CanvasToolKind current, CanvasToolKind next) => current != next;
+
         static CanvasClickResult DecideDrawing(in CanvasClickInput input)
         {
             if (input.BoundObjectId != null)
