@@ -78,7 +78,11 @@ namespace WorldGen.Notes.Rendering
                     new Color32(c.R, c.G, c.B, 255), () => ChooseColor(index));
             }
 
-            eraserFrame = BuildSwatch(rowGO.transform, "Eraser", new Color(1f, 1f, 1f, 0.9f), ChooseEraser);
+            // Иконка, а не квадрат заливки: квадратик того же размера в ряду девяти цветных квадратов
+            // читался бы десятым цветом палитры, а ластик — это состояние кисти, не цвет. Подсветка
+            // выбора («ластик активен») осталась той же самой рамкой BuildSwatch, что и раньше — только
+            // заливка под ней теперь прозрачная, и поверх сидит нарисованная кодом иконка.
+            eraserFrame = BuildEraserButton(rowGO.transform, ChooseEraser);
 
             widthFrames = new Image[3];
             var widths = new[] { BrushWidth.Thin, BrushWidth.Medium, BrushWidth.Thick };
@@ -182,6 +186,30 @@ namespace WorldGen.Notes.Rendering
             dot.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
             dot.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
             dot.rectTransform.anchoredPosition = Vector2.zero;
+
+            return frame;
+        }
+
+        /// <summary>Кнопка ластика: та же рамка-подсветка, что у цветов и толщин (BuildSwatch), заливка
+        /// внутри прозрачная, а сверху — нарисованная кодом иконка (см. NotesIconFactory), тем же
+        /// способом, каким BuildWidthButton кладёт поверх рамки чёрную точку. ThemeRole.Txt — тот же
+        /// тег, каким иконки инструментов красит NotesToolbar, поэтому ластик читается что на светлой,
+        /// что на тёмной теме.</summary>
+        Image BuildEraserButton(Transform parent, System.Action onClick)
+        {
+            var frame = BuildSwatch(parent, "Eraser", new Color(0f, 0f, 0f, 0f), onClick);
+
+            var iconGO = new GameObject("Icon");
+            iconGO.transform.SetParent(frame.transform, false);
+            var icon = iconGO.AddComponent<Image>();
+            icon.sprite = NotesIconFactory.GetEraserIcon();
+            ThemeService.Tag(icon, ThemeRole.Txt);
+            icon.raycastTarget = false;
+            float d = Swatch - 6f;
+            icon.rectTransform.sizeDelta = new Vector2(d, d);
+            icon.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+            icon.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            icon.rectTransform.anchoredPosition = Vector2.zero;
 
             return frame;
         }

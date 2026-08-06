@@ -101,6 +101,58 @@ namespace WorldGen.Notes.Rendering
             FillTriangle(tex, size, peak, baseL, baseR, Color.white);
         }
 
+        static Sprite cachedEraserIcon;
+
+        /// <summary>Ластик — состояние кисти (CanvasInteractionController.brushIsEraser), а не член
+        /// NotesTool, поэтому у него отдельная точка входа и отдельный кэш, тем же приёмом: рисуется
+        /// в рантайме один раз и кэшируется, никаких файлов-картинок.</summary>
+        public static Sprite GetEraserIcon()
+        {
+            if (cachedEraserIcon != null) return cachedEraserIcon;
+
+            const int size = 32;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.name = "NotesIcon_Eraser";
+
+            var transparent = new Color32(0, 0, 0, 0);
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                    tex.SetPixel(x, y, transparent);
+
+            DrawEraser(tex, size);
+
+            tex.Apply();
+            cachedEraserIcon = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
+            return cachedEraserIcon;
+        }
+
+        static void DrawEraser(Texture2D tex, int size)
+        {
+            // Скошенный параллелограмм — узнаваемый силуэт канцелярского ластика, а не квадрат (в ряду
+            // девяти цветных квадратов десятый читался бы как ещё один цвет) и не буква.
+            var bl = new Vector2(size * 0.22f, size * 0.24f);
+            var br = new Vector2(size * 0.62f, size * 0.24f);
+            var tr = new Vector2(size * 0.80f, size * 0.78f);
+            var tl = new Vector2(size * 0.40f, size * 0.78f);
+            FillQuad(tex, size, bl, br, tr, tl, Color.white);
+
+            // «Манжета» — прорезь ближе к верхнему краю, делит силуэт на резинку и обёртку, как у
+            // настоящего ластика. Рисуется прозрачным по уже закрашенной фигуре — тот же приём, что
+            // вырезает хвост флажка в DrawCursor. Работает на любой теме: иконку красят в один цвет
+            // (ThemeRole.Txt), и разделительная линия читается через альфу, а не через второй оттенок.
+            float cuffT = 0.62f;
+            var cuffL = Vector2.Lerp(bl, tl, cuffT);
+            var cuffR = Vector2.Lerp(br, tr, cuffT);
+            DrawLine(tex, size, cuffL, cuffR, 2.5f, Color.clear);
+        }
+
+        static void FillQuad(Texture2D tex, int size, Vector2 a, Vector2 b, Vector2 c, Vector2 d, Color color)
+        {
+            FillTriangle(tex, size, a, b, c, color);
+            FillTriangle(tex, size, a, c, d, color);
+        }
+
         static void DrawZoom(Texture2D tex, int size)
         {
             // Lens upper-left, handle extending down-right out of the ring — standard
