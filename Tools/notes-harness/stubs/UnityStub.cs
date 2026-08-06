@@ -41,6 +41,7 @@ namespace UnityEngine
         public static int CeilToInt(float f) => (int)Math.Ceiling(f);
         public static int FloorToInt(float f) => (int)Math.Floor(f);
         public static float Sqrt(float f) => (float)Math.Sqrt(f);
+        public static float Pow(float f, float p) => (float)Math.Pow(f, p);
         public static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
         public static float Lerp(float a, float b, float t) => a + (b - a) * Clamp01(t);
     }
