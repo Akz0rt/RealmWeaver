@@ -98,8 +98,20 @@ namespace WorldGen.Notes.Rendering
 
             texture.LoadRawTextureData(bytes);
             texture.Apply();
-            rgba = null;          // рабочие буферы не живут между мазками, см. EndStroke
+            // Перепечатка — это и есть законный конец любого мазка: растр теперь равен данным, и
+            // держать при нём начатый мазок было бы враньём.
+            ReleaseStroke();
+        }
+
+        /// <summary>ЕДИНСТВЕННЫЙ выход из мазка. Раньше буферы и сам мазок отпускались тройками
+        /// присваиваний в трёх местах, и каждое место успело разойтись с остальными: перепечатка
+        /// забывала мазок, защитная ветка забывала буферы. Одна помощница на все выходы — чтобы
+        /// «мазок кончился» означало одно и то же везде.</summary>
+        void ReleaseStroke()
+        {
+            rgba = null;
             beforeStroke = null;
+            liveStroke = null;
         }
 
         /// <summary>Кладёт унаследованный PNG на лист. Через Graphics.CopyTexture его не положить:
@@ -250,23 +262,39 @@ namespace WorldGen.Notes.Rendering
         /// линия видимо «дёргается» в новую форму — это решение ДМ, а не недоделка.
         ///
         /// Буферы отпускаются: снимок плюс рабочий массив это 8 МБ на рисунок при 1024×1024, и доска
-        /// с двумя десятками больших рисунков носила бы сотню мегабайт, которыми не
-        /// пользуется.</summary>
+        /// с двумя десятками больших рисунков носила бы сотню мегабайт, которыми не пользуется.
+        ///
+        /// НЕТ БУФЕРОВ — НЕ ТИХИЙ ВЫХОД, А ЧЕСТНАЯ ПЕРЕПЕЧАТКА, и это защита от рассинхронизации
+        /// данных с экраном. Ctrl+Z посреди зажатой кнопки уничтожает вид и создаёт новый С ТЕМ ЖЕ
+        /// id: контроллер продолжает копить точки в уже мёртвый мазок, доводит его до конца и
+        /// дописывает в данные — а BeginStroke на новом виде никто не звал, буферов нет, и тихий
+        /// выход оставил бы мазок В ФАЙЛЕ, НО НЕ НА ЭКРАНЕ до следующего повода перепечатать.
+        /// Перепечатка из данных делает такой исход невозможным по построению, а не по
+        /// внимательности.</summary>
         public void EndStroke()
         {
-            if (rgba == null || beforeStroke == null || liveStroke == null) { liveStroke = null; return; }
+            if (rgba == null || beforeStroke == null || liveStroke == null) { Rebake(); return; }
             StrokeRaster.StampStroke(beforeStroke, texture.width, texture.height, liveStroke,
                                      PaperPalette.At(data.PaperIndex));
             texture.LoadRawTextureData(beforeStroke);
             texture.Apply();
-            rgba = null;
-            beforeStroke = null;
-            liveStroke = null;
+            ReleaseStroke();
         }
 
         /// <summary>Локальная точка прямоугольника → доли, как их хранит StrokePoint.</summary>
         public Vector2 LocalToFraction(Vector2 local)
             => new Vector2(local.x / rect.rect.width + 0.5f, local.y / rect.rect.height + 0.5f);
+
+        /// <summary>Длина в единицах доски → доля ширины рисунка. Живёт ЗДЕСЬ, рядом с
+        /// LocalToFraction, ради одного: обе величины делятся на ОДНУ И ТУ ЖЕ ширину.
+        ///
+        /// Знаменатель — rect.rect.width, а не data.Size.X, потому что координаты точки приходят из
+        /// ScreenPointToLocalPointInRectangle и меряются именно прямоугольником. Сегодня эти два
+        /// числа равны (Refresh ставит sizeDelta из Size), но связь неявная: поменяй рисунку якоря —
+        /// и толщина разошлась бы с координатами, а выглядело бы это как «линия рисуется не там, где
+        /// толщина», то есть неузнаваемо. Один источник убирает вопрос.</summary>
+        public float LengthToFraction(float lengthCanvasUnits)
+            => rect.rect.width > 0.0001f ? lengthCanvasUnits / rect.rect.width : 0f;
 
         bool CanSelfMove => interactionController == null || interactionController.ActiveTool == NotesTool.Select;
 

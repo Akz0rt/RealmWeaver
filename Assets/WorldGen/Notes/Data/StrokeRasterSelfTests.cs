@@ -123,7 +123,6 @@ namespace WorldGen.Notes.Data
                 Ink(new StrokePoint(0.5f, 0.5f, 0.2f)),
             };
             var rgba = StrokeRaster.Bake(strokes, W, H, White);
-            int i = ((H / 2) * W + W / 2) * 4;
 
             bool ok = Painted(rgba, W / 2, H / 2);
             if (!ok) Debug.LogError("FAIL порядок: мазок после ластика обязан быть виден");

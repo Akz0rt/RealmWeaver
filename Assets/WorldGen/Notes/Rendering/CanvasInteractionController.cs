@@ -117,8 +117,7 @@ namespace WorldGen.Notes.Rendering
             if (activeStroke != null && paintingDrawingObjectId != null && canvasController != null
                 && canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView unfinished)
                 unfinished.Rebake();
-            activeStroke = null;
-            paintingDrawingObjectId = null;
+            ForgetStroke();
             // Смена инструмента снимает привязку — одна точка, а не две. Сюда же приходит и «клик мимо»,
             // который кладёт инструмент в «Курсор», и Esc.
             boundObjectId = null;
@@ -239,6 +238,19 @@ namespace WorldGen.Notes.Rendering
             else if (Mouse.current.leftButton.isPressed && paintingDrawingObjectId != null)
                 HandlePaintDrag();
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
+                HandleRelease();
+
+            // ТЫЧОК КИСТЬЮ КОНЧАЕТСЯ ЗДЕСЬ, А НЕ В ЦЕПОЧКЕ ВЫШЕ. При клике короче кадра система
+            // ввода выставляет wasPressedThisFrame и wasReleasedThisFrame ОДНОВРЕМЕННО: побеждает
+            // первая ветка, следующий кадр оба флага уже сброшены, и HandleRelease не зовётся
+            // никогда. Мазок из одной точки не появлялся бы вовсе, шаг отмены оставался бы пустым,
+            // а буферы растра (8 МБ на рисунок) висели бы до следующего нажатия.
+            //
+            // ХВОСТОМ, А НЕ ПЕРЕСТАНОВКОЙ ВЕТОК: перестановка задела бы панорамирование и зум,
+            // которые кончаются той же кнопкой, а условие «кнопка не нажата, а мазок ещё идёт»
+            // касается только рисования. Повторного вызова не будет — HandleRelease обнуляет
+            // paintingDrawingObjectId, и на обычном отпускании ветка выше уже это сделала.
+            if (!Mouse.current.leftButton.isPressed && paintingDrawingObjectId != null)
                 HandleRelease();
 
             var scrollScreenPos = Mouse.current.position.ReadValue();
@@ -425,7 +437,7 @@ namespace WorldGen.Notes.Rendering
         {
             if (canvasController.GetView(paintingDrawingObjectId) is not DrawingObjectView view
                 || activeStroke == null)
-            { paintingDrawingObjectId = null; return; }
+            { ForgetStroke(); return; }
 
             RectTransformUtility.ScreenPointToLocalPointInRectangle(
                 view.RectTransform, Mouse.current.position.ReadValue(), uiCamera, out var local);
@@ -460,15 +472,44 @@ namespace WorldGen.Notes.Rendering
                 if (canvasController.GetView(paintingDrawingObjectId) is DrawingObjectView view
                     && activeStroke != null && view.Data is DrawingObjectData drawing)
                 {
+                    AddFinalPoint(view);
                     StrokeWidthOps.FixFirstWidth(activeStroke.Points);
                     // Чистка цепочки появится в задаче 8 — ровно здесь, одной строкой.
                     drawing.Strokes.Add(activeStroke);
                     view.EndStroke();
                 }
-                activeStroke = null;
-                paintingDrawingObjectId = null;
+                ForgetStroke();
                 canvasController.AfterMutation?.Invoke();
             }
+        }
+
+        /// <summary>Точка ровно там, где кнопку отпустили. На кадре отпускания HandlePaintDrag уже не
+        /// выполняется (ветка цепочки требует зажатой кнопки), поэтому без этого мазок кончался бы
+        /// там, где курсор был КАДРОМ РАНЬШЕ, — на быстром движении это заметный недомазок.
+        ///
+        /// Не двинулись — точки не будет: тычок кистью иначе получал бы вторую точку поверх первой,
+        /// а мазок из одной точки это законный рисунок (см. StrokeWidthOps.FixFirstWidth), и
+        /// вырожденный отрезок в нём ни к чему.</summary>
+        void AddFinalPoint(DrawingObjectView view)
+        {
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                view.RectTransform, Mouse.current.position.ReadValue(), uiCamera, out var local);
+            if (Vector2.Distance(local, lastLocal) <= 0.0001f) return;
+
+            var f = view.LocalToFraction(local);
+            lastPoint = new StrokePoint(f.x, f.y, baseWidthFraction * widthMultiplier);
+            activeStroke.Points.Add(lastPoint);
+            lastLocal = local;
+        }
+
+        /// <summary>Мазок кончился любым путём. ОДНА ПОМОЩНИЦА НА ВСЕ ВЫХОДЫ: те же два поля
+        /// обнулялись в четырёх местах, и каждое успело разойтись с остальными — ранний выход из
+        /// HandlePaintDrag забывал activeStroke, и HandleRelease после него в свою ветку уже не
+        /// заходил, оставляя мазок и буферы висеть до следующего нажатия.</summary>
+        void ForgetStroke()
+        {
+            activeStroke = null;
+            paintingDrawingObjectId = null;
         }
 
         /// <summary>Finds the topmost existing DrawingObjectView on the active page whose rect contains the given screen point, or null.</summary>
@@ -496,14 +537,18 @@ namespace WorldGen.Notes.Rendering
         /// мазка не читается, а к цвету листа его возвращает StrokeRaster, один раз и для всех.</summary>
         void StartStroke(DrawingObjectView view, Vector2 screenPos)
         {
-            var drawing = view.Data as DrawingObjectData;
-            if (drawing == null) return;
+            if (view.Data is not DrawingObjectData) return;
 
             paintingDrawingObjectId = view.ObjectId;
             widthMultiplier = 1f;
 
+            // ЧЕРЕЗ САМО ПРЕДСТАВЛЕНИЕ, а не делением на drawing.Size.X: толщина и координаты обязаны
+            // мериться одной линейкой, и линейка эта — прямоугольник рисунка (см. LengthToFraction).
             float baseDiameter = BrushOps.DiameterInCanvasUnits(brushWidth);
-            baseWidthFraction = drawing.Size.X > 0.0001f ? baseDiameter / drawing.Size.X : 0.02f;
+            baseWidthFraction = view.LengthToFraction(baseDiameter);
+            // Прямоугольник ещё не прошёл вёрстку и его ширина нулевая — рисовать всё равно чем-то
+            // надо, и два процента ширины это видимая линия, а не ноль.
+            if (baseWidthFraction <= 0.0001f) baseWidthFraction = 0.02f;
 
             activeStroke = new Stroke
             {
