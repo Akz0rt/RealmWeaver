@@ -258,5 +258,127 @@ namespace WorldGen.Persistence
 
             Debug.Log(ok ? "Self-Test Card Style Round-Trip: PASS" : "Self-Test Card Style Round-Trip: FAIL");
         }
+
+        /// <summary>Круговая проверка мазков и тона листа через РЕАЛЬНЫЙ CanvasObjectDataConverter.
+        /// WriteJson/ReadJson строят каждое поле рисунка вручную (см. комментарий класса) — забытая
+        /// строка в них не поймана бы офлайн-харнессом, который лишь подделывает атрибуты Newtonsoft.
+        /// Мутант, которого проверка убивает: убрать запись Strokes из WriteJson — ДМ рисует,
+        /// сохраняет, открывает — и рисунка нет, молча.
+        ///
+        /// Два мазка, один ластик, точки с разными X/Y/W, PaperIndex ненулевой — иначе забытое поле
+        /// вернуло бы значение по умолчанию и подделка прошла бы проверку.</summary>
+        [ContextMenu("Self-Test: Drawing Strokes Round-Trip")]
+        public void SelfTestDrawingStrokesRoundTrip()
+        {
+            bool ok = true;
+
+            var drawing = new DrawingObjectData(256, 128) { PaperIndex = 2 };
+            drawing.Strokes.Add(new Stroke
+            {
+                IsEraser = false,
+                InkIndex = 4,
+                Points =
+                {
+                    new StrokePoint(0.1f, 0.2f, 0.03f),
+                    new StrokePoint(0.4f, 0.5f, 0.06f),
+                },
+            });
+            drawing.Strokes.Add(new Stroke
+            {
+                IsEraser = true,
+                Points = { new StrokePoint(0.9f, 0.8f, 0.12f) },
+            });
+
+            var canvas = NotesDocOps.NewBlock(BlockKind.Canvas, 1);
+            canvas.CanvasObjects = new List<CanvasObjectData> { drawing };
+
+            var page = NotesDocOps.CreateSessionSheet("Сессия 1");
+            page.Blocks.Add(canvas);
+
+            var doc = new NotesDocument();
+            var group = new PageGroup { Title = "Сессии" };
+            group.Pages.Add(page);
+            doc.Groups.Add(group);
+
+            string path = Path.Combine(Application.temporaryCachePath, "notes-drawing-strokes.dndproj");
+            SaveNotesOnly(path, doc);
+            var loaded = ProjectSerializer.Load(path);
+
+            if (!loaded.Success)
+            { Debug.LogError($"FAIL мазки: load failed — {loaded.ErrorMessage}"); ok = false; }
+
+            var backPage = loaded.Notes != null && loaded.Notes.Groups.Count > 0 && loaded.Notes.Groups[0].Pages.Count > 0
+                ? loaded.Notes.Groups[0].Pages[0] : null;
+            var backCanvas = backPage?.Blocks?.Find(b => b.Kind == BlockKind.Canvas && b.CanvasObjects != null && b.CanvasObjects.Count > 0);
+            var backDrawing = backCanvas != null ? backCanvas.CanvasObjects[0] as DrawingObjectData : null;
+
+            if (backDrawing == null)
+            { Debug.LogError("FAIL мазки: рисунок не вернулся"); ok = false; }
+            else
+            {
+                if (backDrawing.PaperIndex != 2)
+                { Debug.LogError($"FAIL мазки: тон листа {backDrawing.PaperIndex}, ожидался 2"); ok = false; }
+                if (backDrawing.Strokes == null || backDrawing.Strokes.Count != 2)
+                { Debug.LogError($"FAIL мазки: {backDrawing.Strokes?.Count} мазков, ожидалось 2"); ok = false; }
+                else
+                {
+                    var s0 = backDrawing.Strokes[0];
+                    var s1 = backDrawing.Strokes[1];
+                    if (s0.IsEraser || s0.InkIndex != 4 || s0.Points.Count != 2)
+                    { Debug.LogError("FAIL мазки: первый мазок потерял флаг ластика, индекс чернил или точки"); ok = false; }
+                    else if (s0.Points[0].X != 0.1f || s0.Points[0].Y != 0.2f || s0.Points[0].W != 0.03f
+                          || s0.Points[1].X != 0.4f || s0.Points[1].Y != 0.5f || s0.Points[1].W != 0.06f)
+                    { Debug.LogError("FAIL мазки: координаты или толщина точек первого мазка не совпали"); ok = false; }
+
+                    if (!s1.IsEraser || s1.Points.Count != 1
+                        || s1.Points[0].X != 0.9f || s1.Points[0].Y != 0.8f || s1.Points[0].W != 0.12f)
+                    { Debug.LogError("FAIL мазки: второй (ластик) мазок не совпал"); ok = false; }
+                }
+            }
+
+            Debug.Log(ok ? "Self-Test Drawing Strokes Round-Trip: PASS" : "Self-Test Drawing Strokes Round-Trip: FAIL");
+        }
+
+        /// <summary>Унаследованный слой: файл БЕЗ ключей Strokes и PaperIndex (рисунок, сохранённый до
+        /// формата 16) обязан читаться как пустой список мазков и белый лист — не null и не падение.
+        /// Ровно это делает миграцию ненужной.</summary>
+        [ContextMenu("Self-Test: Old Drawing Without Strokes Loads As Legacy Layer")]
+        public void SelfTestOldDrawingWithoutStrokesLoadsAsLegacyLayer()
+        {
+            bool ok = true;
+
+            string json =
+                "{ \"FormatVersion\": 15, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [], \"RegionLabels\": [], " +
+                "\"Notes\": { \"Groups\": [ { \"Title\": \"Заметки\", \"Pages\": [ " +
+                "{ \"Name\": \"Страница 1\", \"Blocks\": [ { \"Kind\": \"Canvas\", \"CanvasObjects\": [ " +
+                "{ \"Kind\": \"Drawing\", \"PixelWidth\": 64, \"PixelHeight\": 64, \"PixelDataPng\": null } " +
+                "] } ] } ] } ] } }";
+
+            string path = Path.Combine(Application.temporaryCachePath, "notes-drawing-legacy.dndproj");
+            File.WriteAllText(path, json);
+
+            var loaded = ProjectSerializer.Load(path);
+            if (!loaded.Success)
+            { Debug.LogError($"FAIL унаследованный слой: load failed — {loaded.ErrorMessage}"); ok = false; }
+
+            var page = loaded.Notes != null && loaded.Notes.Groups.Count > 0 && loaded.Notes.Groups[0].Pages.Count > 0
+                ? loaded.Notes.Groups[0].Pages[0] : null;
+            var canvas = page?.Blocks?.Find(b => b.Kind == BlockKind.Canvas);
+            var drawing = canvas != null && canvas.CanvasObjects != null && canvas.CanvasObjects.Count > 0
+                ? canvas.CanvasObjects[0] as DrawingObjectData : null;
+
+            if (drawing == null)
+            { Debug.LogError("FAIL унаследованный слой: рисунок не вернулся"); ok = false; }
+            else
+            {
+                if (drawing.Strokes == null || drawing.Strokes.Count != 0)
+                { Debug.LogError($"FAIL унаследованный слой: Strokes = {(drawing.Strokes == null ? "null" : drawing.Strokes.Count.ToString())}, ожидался пустой список, не null"); ok = false; }
+                if (drawing.PaperIndex != 0)
+                { Debug.LogError($"FAIL унаследованный слой: PaperIndex = {drawing.PaperIndex}, ожидался 0 (белый)"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Old Drawing Without Strokes Loads As Legacy Layer: PASS" : "Self-Test Old Drawing Without Strokes Loads As Legacy Layer: FAIL");
+        }
     }
 }
