@@ -16,6 +16,13 @@ namespace WorldGen.Workspace.Rendering
     /// and 6 give Page and Canvas), while a single-instance host records which pane it landed in and
     /// returns without acting when Hide names the other one.
     ///
+    /// TWO OF THE FOUR IMPLEMENTATIONS DO NEITHER YET, and that is a stated transitional state rather than
+    /// an oversight: PageSurfaceHost and CanvasSurfaceHost accept the index and ignore it entirely — no
+    /// per-pane slot, no memory of which pane they landed in — because Tasks 4 and 6 replace their single
+    /// view with a per-pane one and the intermediate bookkeeping would be deleted again unread. Their own
+    /// Show/Hide docs spell out what ignoring it costs. MapSurfaceHost and ScreenSurfaceHosts, whose single
+    /// instance is permanent, do record the index.
+    ///
     /// "Parent yourself here" (Show's own parameter doc) is load-bearing, not a suggestion:
     /// WorkspaceOps.NormalizeSplit can promote Secondary into Primary's slot, and WorkspaceController.
     /// PaneContent(int) keeps naming the same PHYSICAL container per index regardless — so a host that
@@ -44,7 +51,12 @@ namespace WorldGen.Workspace.Rendering
 
         /// <summary>Called when pane `pane` no longer shows this Kind — which is NOT the same as "nobody
         /// does". SyncSurfaces calls this for every registered host crossed with BOTH pane indices, so a
-        /// host currently shown in the OTHER pane must return without touching anything.
+        /// host currently shown in the OTHER pane must return without touching anything — EXCEPT for the two
+        /// transitional hosts that cannot tell the panes apart at all (PageSurfaceHost, CanvasSurfaceHost:
+        /// see the class doc's TWO OF THE FOUR paragraph). Those hide unconditionally and are re-shown by the
+        /// same SyncSurfaces pass before anything renders; that is safe only because they are the hosts with
+        /// nothing per-pane to lose, and it stops being acceptable the moment Tasks 4 and 6 give them one
+        /// view per pane.
         ///
         /// A host that does NOT know where it is shown must hide anyway, whichever pane asks. That case is
         /// not hypothetical: a Play-mode domain reload wipes every plain field while leaving whatever the

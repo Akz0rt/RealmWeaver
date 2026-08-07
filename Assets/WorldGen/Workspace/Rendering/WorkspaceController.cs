@@ -696,10 +696,14 @@ namespace WorldGen.Workspace.Rendering
         /// without a Unity scene. Everything left here is the part that needs UnityEngine: RectTransforms and
         /// host calls.
         ///
-        /// Re-reads PaneContent(pane) fresh on every claim rather than caching it, which is what makes a
-        /// Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work for free: PaneContent(0) already
-        /// returns the correct NEW physical container after a promotion, and ISurfaceHost.Show is required to
-        /// re-parent unconditionally every call — see SurfaceRegistry.cs's own class doc.
+        /// Re-reads PaneContent(claim.Pane) fresh on every claim rather than caching it, which is what makes a
+        /// Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work for free — though not because
+        /// PaneContent changes its answer. It does not: PaneContent(0) always returns primaryContent and
+        /// PaneContent(1) always returns secondaryContent (see its own doc). What a promotion changes is the
+        /// CLAIM: the surface that was claimed for pane 1 is claimed for pane 0 on the next sync, so the
+        /// lookup yields a DIFFERENT physical container for the same surface, and ISurfaceHost.Show — required
+        /// to re-parent unconditionally on every call, see SurfaceRegistry.cs's own class doc — moves it
+        /// there. A host that cached its container instead would keep drawing into the old one.
         ///
         /// HIDE FIRST, SHOW SECOND, and the order is a requirement rather than a style choice. A host that
         /// moved from pane 1 to pane 0 (a tab dragged across the divider, or NormalizeSplit promoting
@@ -721,7 +725,19 @@ namespace WorldGen.Workspace.Rendering
         /// contract the older ShareGroup mechanism stated, moved to where it can be tested; it is also what
         /// makes MapScreenController.RebindSurface's already-bound early-out reachable in a split at all,
         /// without which every sync re-Bound a settlement's ~40-node canvas twice and discarded the DM's
-        /// selection.</summary>
+        /// selection.
+        ///
+        /// ONE TRANSITIONAL GUARD LIVES HERE, AND TASKS 4 AND 6 MUST DELETE IT. `servedHosts` in the show
+        /// loop serves only the FIRST claim per host. Page and Canvas are already multi-pane by RULE
+        /// (SurfaceKindRules.AllowsMultiplePanes answers true for both) while their hosts are still one
+        /// instance each, so without it Resolve's second claim would re-point that one instance out of the
+        /// focused pane and — for Page — re-open a different page on the one DocumentPageView, clearing the
+        /// DM's undo history on every sync. Task 4 gives PageSurfaceHost a view per pane and Task 6 does the
+        /// same for CanvasSurfaceHost; on the day either lands, this guard is what stands between the new
+        /// per-pane views and «две страницы рядом» actually working, and it will fail SILENTLY — everything
+        /// compiles, the second pane simply stays empty. PageSurfaceHost's own SINGLE INSTANCE paragraph
+        /// points here for exactly this reason. The guard's in-body comment restates the argument at the
+        /// line that has to go.</summary>
         void SyncSurfaces()
         {
             // The real guard: no hosts registered yet (before WorkspaceBuilder's SetSurfaceRegistry call)
@@ -744,25 +760,44 @@ namespace WorldGen.Workspace.Rendering
                 ? new List<SurfaceClaim>()
                 : SurfaceClaims.Resolve(Layout);
 
-            // ── Hide every (host, pane) pair no claim covers ────────────────────────────────────────────
+            // ── Hide every (host, pane) pair no claim can actually cover ────────────────────────────────
             //
-            // Panes 0 and 1 UNCONDITIONALLY, never filtered by PaneContent(pane) != null. PaneContent(1)
-            // returns null the moment Layout.Secondary is gone, which is exactly the sync after a split
-            // collapses — and that is the one sync where a host still parked in the physical secondary
-            // container most needs to be told to let go. Hide takes no container, so there is nothing to
-            // look up.
+            // The ITERATION runs over panes 0 and 1 UNCONDITIONALLY — it is never cut short by a pane that
+            // does not exist. PaneContent(1) returns null the moment Layout.Secondary is gone, which is
+            // exactly the sync after a split collapses, and that is the one sync where a host still parked
+            // in the physical secondary container most needs to be told to let go. Hide takes no container,
+            // so there is nothing to look up in order to call it.
+            //
+            // The CLAIM TEST, on the other hand, DOES consult PaneContent, and has to. A claim naming a pane
+            // with no container is one the show loop below skips (`if (paneContent == null) continue;`), so
+            // letting it count as covering the pair would leave that host neither hidden nor shown: visible
+            // wherever it last was, with nothing left in the session able to retire it. The two halves have
+            // to stay exhaustive between them. The pre-Task-2 code could not degrade this way — it dropped a
+            // null paneContent BEFORE adding the Kind to its `shownKinds` set, so the hide half still caught
+            // it — and losing that property silently is worse than the old failure, which merely left the
+            // workspace blank. Unreachable today, because WorkspaceBuilder rebuilds both containers on every
+            // shell rebuild; kept because primaryContent/secondaryContent are plain non-[SerializeField]
+            // fields and the deleted-EnsurePaneHandles note just below Initialize records "PaneContent
+            // returning null forever, so SyncSurfaces showed nothing and Hid every host: a blank workspace"
+            // as a defect that has already happened once here — and warns that a future change which stops
+            // rebuilding the hierarchy brings it straight back. This test is what keeps that note's
+            // description of the outcome true.
             foreach (var host in surfaceRegistry.All)
                 for (int pane = 0; pane <= 1; pane++)
                 {
+                    // Hoisted out of the claim scan: the answer cannot change between claims.
+                    bool paneExists = PaneContent(pane) != null;
+
                     bool claimed = false;
-                    foreach (var claim in claims)
-                        if (claim.Pane == pane && claim.Kind == host.Kind) { claimed = true; break; }
+                    if (paneExists)
+                        foreach (var claim in claims)
+                            if (claim.Pane == pane && claim.Kind == host.Kind) { claimed = true; break; }
                     if (!claimed) host.Hide(pane);
                 }
 
             // ── Then show each claim, in Resolve's priority order (focused pane first) ──────────────────
             //
-            // TRANSITIONAL, retired by Tasks 4 and 6. Page and Canvas are multi-pane by RULE
+            // TRANSITIONAL — DELETE THIS SET IN TASKS 4 AND 6. Page and Canvas are multi-pane by RULE
             // (SurfaceKindRules.AllowsMultiplePanes) but are still ONE host instance each, so Resolve can
             // hand out two claims for a host that can only serve one. Serving only the FIRST claim per host
             // reproduces today's behaviour exactly — claims arrive focused-pane-first, so the focused pane
@@ -770,7 +805,10 @@ namespace WorldGen.Workspace.Rendering
             // the one DocumentPageView, which clears the DM's undo history (DocumentPageView
             // .OnActivePageChanged clears it whenever the page identity changes). That is the same defect
             // ScreenSurfaceHosts' re-bind produced for interiors before Resolve started de-duplicating them.
-            // Once each host keeps a view per pane, both claims can be served and this set goes away.
+            //
+            // Once a host keeps a view per pane, this line is the ONLY thing left stopping the second pane
+            // from being served, and it fails silently — see this method's own doc (ONE TRANSITIONAL GUARD
+            // LIVES HERE) for the full statement of what a task that adds per-pane views has to remove.
             var servedHosts = new HashSet<ISurfaceHost>();
 
             foreach (var claim in claims)
