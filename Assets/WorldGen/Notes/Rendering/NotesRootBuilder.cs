@@ -103,7 +103,12 @@ namespace WorldGen.Notes.Rendering
                 // a repair, not a second popup.
                 var keyboardAfterReload = GetComponent<DocKeyboardController>();
                 if (keyboardAfterReload != null)
+                {
                     keyboardAfterReload.mentionPopup = MentionPopup.Attach(gameObject, DocumentController, DocumentView);
+                    // Фикс-раунд 3: та же причина, что и ниже во второй ветке — свежий MentionPopup несёт
+                    // пустой OnTokenInserted, пока кто-то не подпишет его заново.
+                    keyboardAfterReload.mentionPopup.OnTokenInserted = keyboardAfterReload.NoteExternalTokenInsertion;
+                }
                 return;
             }
 
@@ -126,6 +131,9 @@ namespace WorldGen.Notes.Rendering
             // builds no visuals until Open() runs (see its own doc), so there is nothing here for the
             // "bare, non-Canvas holding transform" comment above to conflict with.
             keyboard.mentionPopup = MentionPopup.Attach(gameObject, DocumentController, DocumentView);
+            // Фикс-раунд 3, находка №2: даёт MentionPopup.Choose путь сообщить DocKeyboardController, куда
+            // теперь указывает каретка ПОСЛЕ вставки токена — см. NoteExternalTokenInsertion's own doc.
+            keyboard.mentionPopup.OnTokenInserted = keyboard.NoteExternalTokenInsertion;
         }
 
         /// <summary>The one place the builtin font resource is named. `builtinFont` is itself a plain field a

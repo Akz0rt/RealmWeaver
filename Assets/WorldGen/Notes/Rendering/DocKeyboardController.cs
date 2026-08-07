@@ -58,6 +58,18 @@ namespace WorldGen.Notes.Rendering
         /// expected in practice.</summary>
         public MentionPopup mentionPopup;
 
+        /// <summary>Задача 10б, фикс-раунд 3. `Time.frameCount` as of the last LateUpdate where the popup's
+        /// own anchor row was CONFIRMED live-focused — written every such frame in UpdateMentionPopup, and
+        /// read only when it currently is NOT (see that method's own doc for the two cases this discriminates
+        /// between). Stamped fresh at the moment a popup opens too, since at that instant the row is, by
+        /// construction, the one that was just typed in.</summary>
+        int mentionAnchorLastFocusedFrame = -1;
+
+        /// <summary>How many consecutive un-focused frames the popup survives before "the anchor row hasn't
+        /// been focused in a while" is read as "the DM clicked away", not "mid-refocus" — see
+        /// UpdateMentionPopup's own doc for what each of those two readings protects.</summary>
+        const int MentionGraceFrames = 2;
+
         // Refreshed in LateUpdate from whichever row is focused THEN — i.e. after the drain, so the caret
         // already includes this frame's typing and the block text it indexes into is final.
         //
@@ -119,13 +131,22 @@ namespace WorldGen.Notes.Rendering
             // четыре клавиши обязаны задавать; что успело произойти С ПОЛЕМ за то же самое нажатие не
             // должно на него влиять.
             bool popupWasOpen = mentionPopup != null && mentionPopup.IsOpen;
-            if (popupWasOpen)
+
+            // Esc closes REGARDLESS of whether there is anything to choose — it dismisses the POPUP, not a
+            // selection inside it — so it stays unconditional even where Up/Down/Enter below are not (фикс-
+            // раунд 3, находка №3). Рулинг 4 говорит буквально про текст («не трогает набранное») —
+            // восстанавливаем и каретку туда, где она была ДО этого Esc, тем же приёмом, что и стрелки, а не
+            // оставляем её там, куда мог утащить чужой обработчик Escape/Cancel в этот же кадр.
+            if (popupWasOpen && keyboard.escapeKey.wasPressedThisFrame)
+            { mentionPopup.Close(); RestoreCaretAfterPopupKey(live, prevCaret); return; }
+
+            // Up/Down/Enter belong to the popup only while it has something to OFFER — «Начните печатать
+            // имя…» (пустой запрос, ничего не найдено) has no row a highlight could land on and nothing an
+            // Enter could insert. Гейт на «есть выбор», а не на «попап открыт», — иначе все три клавиши
+            // молча проглатывались бы попапом (фикс-раунд 3, находка №3), а ДМ ожидал бы их обычного
+            // поведения (навигация между блоками, разбить строку) ровно как если бы попапа не было вовсе.
+            if (popupWasOpen && mentionPopup.HasChoice)
             {
-                // Esc: рулинг 4 говорит буквально про текст («не трогает набранное») — восстанавливаем и
-                // каретку туда, где она была ДО этого Esc, тем же приёмом, что и стрелки чуть ниже, а не
-                // оставляем её там, куда мог утащить чужой обработчик Escape/Cancel в этот же кадр.
-                if (keyboard.escapeKey.wasPressedThisFrame)
-                { mentionPopup.Close(); RestoreCaretAfterPopupKey(live, prevCaret); return; }
                 if (keyboard.downArrowKey.wasPressedThisFrame)
                 { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
                 if (keyboard.upArrowKey.wasPressedThisFrame)
@@ -361,15 +382,29 @@ namespace WorldGen.Notes.Rendering
             return null;
         }
 
-        /// <summary>Задача 10б, фикс-раунд 2 (ROOT CAUSE FIX). Derives the popup's open/refresh/close state
-        /// from the row's TEXT — never from "is the field focused THIS instant". That was the root cause the
-        /// review round named: Enter (MultiLineSubmit deactivates the field before this method even runs — see
-        /// the class doc's "THE DRAIN"), a click on the popup's own row (pointer-down defocuses the field the
-        /// same Update pass the click happens in) and an arrow key (TMP moves the caret in the drain, before
-        /// this reads it) all made `live` momentarily null or mismatched, and the OLD version closed on any of
-        /// them — which is exactly backwards, since none of the three changed the TEXT. Enter/↑/↓/Esc are now
-        /// intercepted ABOVE, before this method ever runs on the frame they arrive; what is left here is
-        /// "is the anchor still real", answered from the row's own DATA when it is not the live-focused one.</summary>
+        /// <summary>Задача 10б, фикс-раунд 2 (ROOT CAUSE FIX) + фикс-раунд 3 (находка №1). Derives the
+        /// popup's open/refresh/close state from the row's TEXT — never from "is the field focused THIS
+        /// instant". Enter/↑/↓/Esc are intercepted ABOVE, before this method ever runs on the frame they
+        /// arrive, so `live == null` reaching this method is no longer caused by either of them.
+        ///
+        /// THAT LEAVES TWO GENUINELY DIFFERENT THINGS BEHIND ONE SIGNAL (`live == null`), and фикс-раунд 3
+        /// is what tells them apart, by TIME rather than by cause:
+        ///   (а) THE ANCHOR ROW IS MID-REFOCUS — Ctrl+Z/Ctrl+Y (never gated off while the popup is open, see
+        ///       LateUpdate) rebuilds the whole page and can re-request focus on the very row the popup is
+        ///       anchored to; DocBlockView.CaretPending's own well (ActivateInputField takes a frame or two
+        ///       to really land) means `live` can read null for a beat while that happens. The popup must
+        ///       SURVIVE this — closing it here would be the exact "field not focused THIS INSTANT" mistake
+        ///       фикс-раунд 2 already removed for Enter/click, just via a third door.
+        ///   (б) THE DM CLICKED SOMETHING THAT IS NOT THE POPUP AND NOT THE ANCHOR ROW — the toolbar, the
+        ///       navigator, an image block, empty page space. Nothing is going to refocus the anchor row on
+        ///       its own, so `live == null` is the DM's genuine, permanent answer — this is the "backdrop"
+        ///       the review round asked to be restored, and the popup must NOT survive it.
+        /// `mentionAnchorLastFocusedFrame`, stamped every frame the branch below CONFIRMS the anchor row is
+        /// the live one, is the discriminator: fewer than MentionGraceFrames frames since that confirmation
+        /// reads as (а); more reads as (б). The frozen-text check further down still runs on every frame
+        /// within the grace window too — the grace period buys TIME for a legitimate refocus, it does not
+        /// waive the "does the anchor still say what the popup shows" check that closes on an actual edit
+        /// (e.g. an Undo that reverted the very characters the popup's query was built from).</summary>
         void UpdateMentionPopup(DocBlockView live, string prevFocusedId, int prevCaret)
         {
             if (mentionPopup == null) return;
@@ -378,6 +413,8 @@ namespace WorldGen.Notes.Rendering
             {
                 if (live != null && live.BlockId == mentionPopup.BlockId)
                 {
+                    mentionAnchorLastFocusedFrame = Time.frameCount;   // подтверждено: якорь в фокусе сейчас.
+
                     // Строка В ФОКУСЕ — узнаём АКТУАЛЬНЫЙ query по живой каретке, тем же путём, что и
                     // раньше; это единственный путь, которым запрос СУЖАЕТСЯ/РАСШИРЯЕТСЯ при печати.
                     if (live.CaretPending) return;
@@ -398,25 +435,30 @@ namespace WorldGen.Notes.Rendering
                     // на новом месте; если нет (пробел и т.п.) — просто остаёмся закрытыми.
                     mentionPopup.Close();
                     if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int newAt, out string newQuery))
+                    {
                         mentionPopup.Open(live, newAt, newQuery);
+                        mentionAnchorLastFocusedFrame = Time.frameCount;
+                    }
                     return;
                 }
 
                 if (live != null && live.BlockId != mentionPopup.BlockId)
                 {
-                    // Другая строка ЗАБРАЛА фокус — явное «фокус ушёл не в попап» (см. класс-док).
+                    // Другая строка ЗАБРАЛА фокус — однозначно случай (б): раз фокус УЖЕ сидит на конкретной
+                    // другой строке, значит клик состоялся и попал в определённое место — никакой grace не
+                    // нужен, тут нет «может, ещё вернётся».
                     mentionPopup.Close();
                     return;
                 }
 
-                // live == null: поле НЕ в фокусе ИМЕННО СЕЙЧАС. Это Enter/выбор мышью только что это
-                // сделали (оба уже обработаны ВЫШЕ, ДО этого метода, в этом же кадре) — либо ДМ кликнул
-                // мимо чего бы то ни было. Ни то ни другое НЕ МОГЛО отредактировать текст без фокуса —
-                // Backspace/печать нового символа требуют фокуса, — так что якорь проверяется по
-                // DocBlock.Text НАПРЯМУЮ (авторитетный источник: OnFieldChanged пишет его синхронно на
-                // каждое изменение, тот же самый текст, что видело бы live-поле, будь оно в фокусе), а не
-                // закрывается просто оттого, что фокуса нет ПРЯМО СЕЙЧАС — это и была первопричина, а не
-                // порядок вызовов сам по себе.
+                // live == null — случай (а) или (б), см. класс-док. Grace ещё не истёк → держим как есть
+                // (и всё равно сверяем текст ниже — см. класс-док, последний абзац). Grace истёк → закрыть.
+                if (Time.frameCount - mentionAnchorLastFocusedFrame > MentionGraceFrames)
+                {
+                    mentionPopup.Close();
+                    return;
+                }
+
                 var block = FindBlockById(mentionPopup.BlockId);
                 string frozen = block != null ? (block.Text ?? "") : null;
                 int at = mentionPopup.AtIndex;
@@ -429,8 +471,27 @@ namespace WorldGen.Notes.Rendering
 
             // Попап ЗАКРЫТ — открыть его, только если «@» был набран ИМЕННО в этом кадре.
             if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int freshAt, out string freshQuery))
+            {
                 mentionPopup.Open(live, freshAt, freshQuery);
+                mentionAnchorLastFocusedFrame = Time.frameCount;
+            }
         }
+
+        /// <summary>Задача 10б, фикс-раунд 3 (находка №2). Внешняя мутация (MentionPopup.Choose →
+        /// DocumentPageView.ReplaceRangeWithToken) уже переписала блок и переставила каретку — этот метод
+        /// лишь СИНХРОНИЗИРУЕТ кэш этого класса с тем, что уже произошло, тем же путём (AdoptFocus), которым
+        /// Handle() синхронизирует его после СВОИХ собственных правок.
+        ///
+        /// БЕЗ ЭТОГО ВЫЗОВА: `lastCaret` держал бы позицию ДО вставки токена (3 для «@Ол», например) ещё
+        /// один-два кадра — ровно то окно, в которое у СВЕЖЕПЕРЕСОЗДАННОЙ строки (RebuildAndFocus строит
+        /// новые DocBlockView) `CaretWhenEditingEnded` ещё не был установлен ни разу (её собственный field
+        /// initializer — `-1`, DocBlockView.cs), так что запасной путь LateUpdate (`ended.
+        /// CaretWhenEditingEnded >= 0`) не срабатывает и не перезаписывает устаревшее значение. Второй Enter,
+        /// нажатый в этом окне, доходил бы до `Handle(DocKey.Enter)` со СТАРОЙ кареткой — и раскалывал бы
+        /// строку ВНУТРИ только что вставленного `[[page:id|Олег]]`. Один и тот же путь работает и для
+        /// выбора Enter'ом, и для выбора мышью — оба идут через MentionPopup.Choose, который зовёт это ровно
+        /// один раз, сразу после успешной вставки.</summary>
+        public void NoteExternalTokenInsertion(string blockId, int caretAfterToken) => AdoptFocus(blockId, caretAfterToken);
 
         /// <summary>Ищет блок страницы по id — то, что делает якорь попапа проверяемым независимо от того,
         /// в фокусе ли его строка ПРЯМО СЕЙЧАС (см. UpdateMentionPopup, ветка live == null).</summary>
@@ -474,11 +535,16 @@ namespace WorldGen.Notes.Rendering
         /// onValueChanged, so the mention span itself is untouched either way.
         ///
         /// GOES THROUGH AdoptFocus, NOT A BARE FocusAt — every other FocusAt call site in this class is
-        /// paired with it (see Handle()), and for the same reason here: `lastCaret` was already refreshed
-        /// THIS frame from the field's own post-drain position (the block above), which for an arrow key is
-        /// wherever TMP's own Up/Down handling left it (0 or text.Length on a single-line row — see the
-        /// class doc) — NOT wasCaret. Skipping AdoptFocus would leave that wrong value cached, and the
-        /// SECOND arrow press would then restore to it instead of to where the DM actually was.</summary>
+        /// paired with it (see Handle()). CORRECTED (фикс-раунд 3): an earlier version of this comment
+        /// claimed `lastCaret` had "already been refreshed this frame from the field's own post-drain
+        /// position" before this runs — true when interception lived AFTER that refresh block, false now
+        /// that фикс-раунд 2 moved interception ABOVE it. At the point this method is called, `lastCaret`
+        /// still holds LAST frame's value (`wasCaret` IS `prevCaret` IS the cache's current contents — the
+        /// refresh block never runs at all this frame, every branch above returns before reaching it), so
+        /// AdoptFocus here writes back the SAME value it already held. The call stays anyway: it is the same
+        /// call every other FocusAt site in this class makes, so a later change to the ordering above does
+        /// not silently stop restoring the caret just because this line looked redundant against TODAY's
+        /// order — the moment it stops being redundant is exactly the moment removing it would matter.</summary>
         void RestoreCaretAfterPopupKey(DocBlockView live, int wasCaret)
         {
             if (live == null) return;

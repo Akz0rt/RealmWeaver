@@ -97,6 +97,21 @@ namespace WorldGen.Notes.Rendering
         public int AtIndex => atIndex;
         public string Query => query;
 
+        /// <summary>Задача 10б, фикс-раунд 3 (находка №3). Whether Up/Down/Enter have anything to act on —
+        /// a real candidate row, or the «Создать персонажа» row. False exactly when RunSearch fell through to
+        /// `showingHint` (empty query, nothing to suggest): no row is highlighted then, and DocKeyboardController
+        /// reads this to decide whether those three keys belong to the popup at all THIS frame, or should fall
+        /// through to their ordinary meaning (block navigation, split the row) — see its own LateUpdate. Esc is
+        /// NOT gated on this: it dismisses the popup itself, which exists regardless of whether it currently
+        /// offers anything to choose.</summary>
+        public bool HasChoice => creatingRow || candidates.Count > 0;
+
+        /// <summary>Задача 10б, фикс-раунд 3 (находка №2). Fired once, from Choose, right after a token has
+        /// been written into the document — never during Open/Refresh, which change nothing. Wired by
+        /// NotesRootBuilder to DocKeyboardController.NoteExternalTokenInsertion; see that method's own doc for
+        /// why DocKeyboardController needs telling at all (its OWN caret cache, not this popup's).</summary>
+        public System.Action<string, int> OnTokenInserted;
+
         /// <summary>REUSE-OR-ADD, тот же приём, что QuickOpenPopup.Attach — WorkspaceBuilder/NotesRootBuilder
         /// пере-запускают своё построение при каждой Play-mode пересборке, и второй AddComponent завёл бы
         /// вторую копию, полностью не в курсе первой.</summary>
@@ -214,16 +229,33 @@ namespace WorldGen.Notes.Rendering
                 var page = CharacterOps.CreateCharacter(documentController.Document, savedQuery);
                 if (page == null) return;
                 documentController.NotifyDocumentChanged();
-                pageView.ReplaceRangeWithToken(savedBlockId, savedStart, savedEnd, NotesLinkOps.KindPage, page.Id, page.Name);
+                bool insertedNew = pageView.ReplaceRangeWithToken(savedBlockId, savedStart, savedEnd, NotesLinkOps.KindPage, page.Id, page.Name);
                 RememberRecent(NotesLinkOps.KindPage, page.Id);
+                if (insertedNew) NoteCaretAfterInsertion(savedBlockId, savedStart, NotesLinkOps.KindPage, page.Id, page.Name);
                 return;
             }
 
             if (index < 0 || index >= candidates.Count) { Close(); return; }
             var c = candidates[index];
             Close();
-            pageView.ReplaceRangeWithToken(savedBlockId, savedStart, savedEnd, c.Kind, c.Id, c.Name);
+            bool inserted = pageView.ReplaceRangeWithToken(savedBlockId, savedStart, savedEnd, c.Kind, c.Id, c.Name);
             RememberRecent(c.Kind, c.Id);
+            if (inserted) NoteCaretAfterInsertion(savedBlockId, savedStart, c.Kind, c.Id, c.Name);
+        }
+
+        /// <summary>Задача 10б, фикс-раунд 3 (находка №2). Tells DocKeyboardController where its OWN caret
+        /// cache should now point — `start + token.Length`, the position right after what was just written —
+        /// so a second Enter/choice arriving before the field visually regains focus reads a caret that
+        /// describes the text that NOW exists, not the pre-token one. `NotesLinkOps.MakeToken` is called a
+        /// SECOND time here (ReplaceRangeWithToken already built the identical string to write it) rather
+        /// than threading the length back out of that call — it is a pure, deterministic function of the
+        /// same four arguments, so the two calls cannot disagree, and this keeps ReplaceRangeWithToken's
+        /// signature (`bool`, same as InsertTokenInto) untouched.</summary>
+        void NoteCaretAfterInsertion(string insertedBlockId, int start, string kind, string id, string name)
+        {
+            if (OnTokenInserted == null) return;
+            string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
+            OnTokenInserted(insertedBlockId, start + token.Length);
         }
 
         /// <summary>Последние вставленные — первыми, без повторов, ограничены RecentCap. «kind:id» —
