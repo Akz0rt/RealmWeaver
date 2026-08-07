@@ -135,6 +135,14 @@ namespace WorldGen.Notes.Rendering
         /// with the prose it summarises. Rebuilt by EnsureWired, like the toolbar and for the same reason.</summary>
         PageFooterView footer;
 
+        /// <summary>The character card — portrait and four fields — drawn ABOVE the rows when
+        /// CharacterOps.IsCharacter(Page) is true, absent otherwise. Lives in `content`, like the footer,
+        /// but is built ONCE and updated in place rather than rebuilt every refresh — see its own class
+        /// doc for why an editable field needs that and a read-only summary does not. Rebuilt by
+        /// EnsureWired, like the toolbar and the footer and for the same reason (a domain reload does not
+        /// restore its Button/TMP_InputField listeners).</summary>
+        CharacterHeaderView header;
+
         /// <summary>Ctrl+F. Lives on `root` rather than being the hidden box itself — see its own doc.</summary>
         PageSearchBar searchBar;
 
@@ -785,6 +793,10 @@ namespace WorldGen.Notes.Rendering
             // The editing toolbar shares that strip, anchored to its right edge — one band of chrome above
             // the prose rather than two.
             Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
+            // ABOVE the rows, inside the scrolling column — see CharacterHeaderView's own doc for why it
+            // is a child of Content rather than another fixed strip, and why it is attached once here
+            // rather than rebuilt on every Rebuild the way the footer below is.
+            header = CharacterHeaderView.Attach(content, this);
             // Under the rows, inside the scrolling column — see PageFooterView's own doc for why it is a
             // child of Content rather than another fixed strip.
             footer = PageFooterView.Attach(content, this);
@@ -1019,7 +1031,13 @@ namespace WorldGen.Notes.Rendering
             // restore, and Attach replaces any bar it finds rather than trying to repair one.
             if (content != null) footer = PageFooterView.Attach(content, this);
 
-            // And the drop target, for the third time and the third reason: a reload leaves the component
+            // And the character header, third time and third reason: a reload leaves neither its
+            // Button.onClick (the portrait) nor its TMP_InputField.onValueChanged/onEndEdit (the four
+            // fields) subscribed to anything of ours, so it is replaced rather than repaired, exactly
+            // like the footer above.
+            if (content != null) header = CharacterHeaderView.Attach(content, this);
+
+            // And the drop target, for the fourth time and the fourth reason: a reload leaves the component
             // alive on the recovered root with every field it needs nulled, so it is replaced rather than
             // found.
             LinkDropTarget.Attach(this);
@@ -1033,10 +1051,11 @@ namespace WorldGen.Notes.Rendering
             // second one added here.
             //
             // Guarded on the hazard ITSELF (a tracking list that disagrees with the live children) rather than
-            // on `lostToReload`, which is only a proxy for it. `content` holds ONE child that is not a row —
-            // the footer above — which is why the adoption below filters by COMPONENT TYPE rather than
-            // trusting childCount to mean "rows exist": a page with no blocks at all still has a childCount of
-            // 1, and GetComponentsInChildren then correctly finds nothing to adopt. Rebuild remains the sole
+            // on `lostToReload`, which is only a proxy for it. `content` holds up to TWO children that are not
+            // rows — the header and the footer above, the header inactive on an ordinary page rather than
+            // absent — which is why the adoption below filters by COMPONENT TYPE rather than trusting
+            // childCount to mean "rows exist": a page with no blocks at all still has a nonzero childCount,
+            // and GetComponentsInChildren then correctly finds nothing to adopt. Rebuild remains the sole
             // producer of DocBlockView children, so "no rows tracked but a DocBlockView present" is still the
             // desynchronised state and still cannot arise any other way.
             if (rows.Count == 0 && content != null && content.childCount > 0)
@@ -1203,6 +1222,17 @@ namespace WorldGen.Notes.Rendering
                 rows.Add(view);
             }
 
+            // AFTER the rows and BEFORE the heights settle — same placement as the footer just below, and
+            // for the same reason on the other end: Show() puts the header back at the START of the
+            // column (SetAsFirstSibling), which only matters once the rows above have been (re)created as
+            // its later siblings. Absent, not merely empty, exactly like the footer: an ordinary page must
+            // not carry a zero-height ghost of this object.
+            if (header != null)
+            {
+                if (CharacterOps.IsCharacter(Page)) header.Show(Page);
+                else header.Hide();
+            }
+
             // AFTER the rows and BEFORE the heights settle. After, because Refresh puts the footer back at
             // the end of the column — the rows above were just created and are therefore its later siblings.
             // Before, because SettleHeights is what turns every LayoutElement.preferredHeight on this column
@@ -1244,6 +1274,9 @@ namespace WorldGen.Notes.Rendering
             ApplyColumnMeasure();
             Canvas.ForceUpdateCanvases();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+            // The header first, same reason as every row: it cannot say how tall its four fields are
+            // until it knows how wide the column is, which the pass just above is what hands out.
+            if (header != null) header.ApplyHeightNow();
             foreach (var row in rows)
                 if (row != null) row.ApplyHeightNow();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
