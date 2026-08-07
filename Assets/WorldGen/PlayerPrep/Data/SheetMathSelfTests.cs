@@ -104,6 +104,54 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: лист — модификатор округляется ВНИЗ, а не к нулю")]
+        public void SelfTestModifierFloorsDownOnOddLowScores()
+        {
+            // Целочисленное деление в C# усекает К НУЛЮ: (7-10)/2 даёт −1, а верный ответ −2.
+            // Расходятся правило и подделка ТОЛЬКО на нечётных значениях ниже 10, поэтому фикстуре
+            // нужна именно такая характеристика — в основной её нет, и мутант жил незамеченным.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character(); c.Base.Wis = 7;    // мудрость прибавок не получает
+            bool ok = SheetMath.Compute(c, rules).Modifiers.Wis == -2;
+            var c9 = Fixtures.Character(); c9.Base.Wis = 9;  // (9-10)/2 усечением даёт 0, верно −1
+            ok &= SheetMath.Compute(c9, rules).Modifiers.Wis == -1;
+            if (!ok) Debug.LogError($"FAIL округление вниз: МДР 7 дало {SheetMath.Compute(c, rules).Modifiers.Wis} (ждали −2), "
+                                  + $"МДР 9 дало {SheetMath.Compute(c9, rules).Modifiers.Wis} (ждали −1)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — хитов не бывает меньше одного")]
+        public void SelfTestMaxHpNeverDropsBelowOne()
+        {
+            // Кость d4 и телосложение 1 (модификатор −5) на 5 уровне дают −9 без нижней границы.
+            // У основной фикстуры телосложение положительное, поэтому граница не проверялась ничем.
+            var rules = Fixtures.Rules();
+            rules.Classes[0].HitDie = "d4";
+            var c = Fixtures.Character();
+            c.Bumps.RemoveAll(b => b.AbilityId == "con");
+            c.Base.Con = 1;
+            var d = SheetMath.Compute(c, rules);
+            bool ok = d.MaxHp == 1;
+            if (!ok) Debug.LogError($"FAIL нижняя граница хитов: {d.MaxHp}, ждали 1 ({d.MaxHpExplain})");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: уровень вне 1–20 прижимается к границе")]
+        public void SelfTestLevelIsClampedToOneTwenty()
+        {
+            // Мастерство клэмпится у себя внутри и мутанта не ловит — ловят ХИТЫ.
+            // d8, ТЕЛ +2: на 20 уровне 8 + 5×19 + 2×20 = 143; на 1-м 8 + 2 = 10.
+            var rules = Fixtures.Rules();
+            var over = Fixtures.Character(); over.Level = 25;
+            var under = Fixtures.Character(); under.Level = 0;
+            int hi = SheetMath.Compute(over, rules).MaxHp;
+            int lo = SheetMath.Compute(under, rules).MaxHp;
+            bool ok = hi == 143 && lo == 10;
+            if (!ok) Debug.LogError($"FAIL прижатие уровня: 25-й дал {hi} (ждали 143 как у 20-го), "
+                                  + $"0-й дал {lo} (ждали 10 как у 1-го)");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }
