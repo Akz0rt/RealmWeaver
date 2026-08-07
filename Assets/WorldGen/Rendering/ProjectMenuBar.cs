@@ -577,7 +577,7 @@ namespace WorldGen.Rendering
             var screens = MapScreens();
             bool offerNewWorld = screens != null && screens.HasWorld && !screens.NewWorldRequested;
             bool offerReturnToWorld = screens != null && screens.NewWorldRequested;
-            int rowCount = 4 + ((offerNewWorld || offerReturnToWorld) ? 1 : 0)
+            int rowCount = 5 + ((offerNewWorld || offerReturnToWorld) ? 1 : 0)
                              + (recentExpanded ? System.Math.Max(recentPaths.Count, 1) : 0);
             popupRect.sizeDelta = new Vector2(200f, rowCount * 26f);
 
@@ -611,6 +611,18 @@ namespace WorldGen.Rendering
             AddPopupAction(actionsPopupGO.transform, "Сохранить", () => { CloseActionsPopup(); DoSave(); });
             AddPopupAction(actionsPopupGO.transform, "Сохранить как…", () => { CloseActionsPopup(); DoSaveAs(); });
             AddPopupAction(actionsPopupGO.transform, "Открыть…", () => { CloseActionsPopup(); DoOpen(); });
+            // Выгрузка сцены уничтожает несохранённую работу молча, а отслеживания изменений в
+            // проекте нет вовсе — поэтому спрашиваем безусловно, а не «если есть изменения».
+            AddPopupAction(actionsPopupGO.transform, "← Главный экран", () =>
+            {
+                CloseActionsPopup();
+                ConfirmDialog.Show(builtinFont, "Выйти на главный экран?",
+                    "Несохранённые изменения проекта будут потеряны.",
+                    confirmed =>
+                    {
+                        if (confirmed) UnityEngine.SceneManagement.SceneManager.LoadScene("Home");
+                    });
+            });
             AddPopupAction(actionsPopupGO.transform, recentExpanded ? "Открыть последние ▴" : "Открыть последние ▾", () =>
             {
                 recentExpanded = !recentExpanded;
