@@ -108,9 +108,10 @@ namespace WorldGen.Workspace.Rendering
     /// SINGLE INSTANCE, ACCEPTED LIMITATION — STILL TRUE, BUT NO LONGER WHERE IT IS WRITTEN DOWN. If both
     /// panes end up with a Page tab active at once (an ordinary sequence — open a page, then «Открыть рядом»
     /// a DIFFERENT page), only the FOCUSED pane actually renders content; the other pane's content area goes
-    /// empty until its own tab is reactivated. This is not new here — NotesDocumentController.ActivePage is
-    /// itself a single field, so the two tabs could never show DIFFERENT content simultaneously even before
-    /// Task 9.
+    /// empty until its own tab is reactivated. This is not new here — it long predates Task 9, and until
+    /// Task 3 the MODEL enforced it too: NotesDocumentController held one ActivePage field, so two tabs
+    /// could not have named two different pages even if two views had existed. That field is gone, so the
+    /// limitation is now purely this host's: ONE DocumentPageView, and Task 4 is what gives it a second.
     ///
     /// What changed is which mechanism holds the limitation up. It used to be this host's own ShareGroup,
     /// claimed focused-pane-first by WorkspaceController.SyncSurfaces. That property is gone, and the rule
@@ -130,12 +131,12 @@ namespace WorldGen.Workspace.Rendering
     /// Round 3 characterised the consequence as "the VIEW may fail to reparent/redisplay", i.e. a page failing
     /// to APPEAR, and deferred it. That framing missed the damaging half: `root` is an OPAQUE ThemeRole.Bg
     /// Image, so a page that was VISIBLE at the moment of the reload stays visible — Hide() -> SetSurfaceVisible
-    /// (false) -> OnActivePageChanged no-ops against the null `root`, so `root.SetActive(false)` never fires
+    /// (false) -> ApplyVisibility no-ops against the null `root`, so `root.SetActive(false)` never fires
     /// and nothing in the session can hide it again, and it then paints over the map camera in whatever pane
     /// it is parented in (MapSurfaceHost.SetBackgroundsEnabled disables three known Images and has no idea
     /// this one exists). Harmless before round 3 only because SyncSurfaces never ran post-reload at all; round
     /// 3 making it run is what exposed it. DocumentPageView.EnsureWired now recovers those fields (and the
-    /// OnActivePageChanged subscription, which no serialization scheme could have restored) — see its own doc
+    /// OnDocumentChanged subscription, which no serialization scheme could have restored) — see its own doc
     /// and NotesRootBuilder.EnsureBuilt's, which calls it.</summary>
     public class PageSurfaceHost : ISurfaceHost
     {
@@ -167,12 +168,17 @@ namespace WorldGen.Workspace.Rendering
                 root.offsetMax = Vector2.zero;
             }
 
-            // Opens the visibility gate FIRST (see DocumentPageView.SetSurfaceVisible) — it re-evaluates
-            // against whatever ActivePage already is, which is what keeps a re-show of an UNCHANGED page
-            // visible: OpenPage below no-ops (fires no event) whenever `id` is already ActivePage, e.g.
-            // re-showing a page that was Hidden and is now Shown again with nothing else different.
+            // TWO AXES, IN THIS ORDER (see DocumentPageView.surfaceVisible's own doc). The first says "some
+            // pane's active tab points here", the second says WHICH PAGE — and only the second can cost the
+            // DM their undo history, so it is the one that carries the id. Visibility first, because ShowPage
+            // applies both at once: reversed, a Show of a page that is not currently visible would draw it,
+            // then re-assert visibility with no rebuild behind it.
+            //
+            // The page is NAMED here, not looked up from a document-wide "active page" — the whole point of
+            // Task 3. `id` comes from the tab in `pane`, so two panes naming two different pages is now a
+            // statement this layer can make; serving both is Task 4's job (see the class doc).
             pageView.SetSurfaceVisible(true);
-            documentController?.OpenPage(id);
+            pageView.ShowPage(id);
         }
 
         /// <summary>`pane` ignored for the same reason Show ignores it: there is one view, so "pane 1 no
@@ -183,17 +189,20 @@ namespace WorldGen.Workspace.Rendering
         /// with a Page shown in pane 0 and no Page in pane 1, Hide(1) runs and hides it — and the show loop
         /// immediately re-Shows it into pane 0. Both halves run inside one SyncSurfaces pass, before the
         /// frame renders, so nothing flickers and nothing the DM can see differs; the cost is one extra
-        /// DocumentPageView.Rebuild per sync (SetSurfaceVisible re-runs OnActivePageChanged, which rebuilds
-        /// whenever a page is bound). Syncs are discrete events — a tab click, a close, a divider commit —
-        /// not a per-frame loop, so this is a doubled event cost, not a frame cost. A pane-aware guard here
-        /// would be state Task 4 deletes again the moment `views[pane]` exists, and the ONE guard shape that
-        /// would remove the cost outright (skip when already hidden) would also remove SyncSurfaces' role as
-        /// the belt behind DocumentPageView.EnsureWired's stuck-visible recovery — see that method's doc.</summary>
+        /// DocumentPageView.Rebuild per sync, from the Show half. Syncs are discrete events — a tab click, a
+        /// close, a divider commit — not a per-frame loop, so this is a doubled event cost, not a frame cost.
+        /// A pane-aware guard here would be state Task 4 deletes again the moment `views[pane]` exists, and
+        /// the ONE guard shape that would remove the cost outright (skip when already hidden) would also
+        /// remove SyncSurfaces' role as the belt behind DocumentPageView.EnsureWired's stuck-visible recovery
+        /// — see that method's doc.
+        ///
+        /// WHY THIS IS NOT ShowPage(null), which would read as the tidier symmetry with Show. Binding a
+        /// different page — null included — clears the undo history, because a snapshot is one page's whole
+        /// block list. With this method running on every sync per the paragraph above, that would erase the
+        /// DM's undo on every tab click. Hiding therefore touches VISIBILITY only and leaves `Page` where it
+        /// is; DocumentPageView.surfaceVisible's own doc states the two-axis rule.</summary>
         public void Hide(int pane)
         {
-            // Also closes the gate that would otherwise let a Page opened OUTSIDE the workspace (POI editor
-            // «Открыть страницу» calls NotesDocumentController.OpenPage directly) pop `root` back on in
-            // whichever pane it is still parented in — see DocumentPageView.surfaceVisible's own doc.
             pageView?.SetSurfaceVisible(false);
         }
 
@@ -277,8 +286,8 @@ namespace WorldGen.Workspace.Rendering
             if (block == null) return;
 
             // WHOSE HISTORY. A snapshot is a PAGE's whole block list, so pushing one taken against page A onto
-            // page B would replace B's content with A's — the very thing DocumentPageView.OnActivePageChanged
-            // guards with History.Clear(). So the board only writes history when the page it lives on is the
+            // page B would replace B's content with A's — the very thing DocumentPageView.ShowPage
+            // guards with its identity-gated History.Clear(). So the board only writes history when the page it lives on is the
             // page currently open; otherwise the change still happens and still marks the project dirty, it
             // just is not undoable from a page that is not on screen.
             //
@@ -804,7 +813,7 @@ namespace WorldGen.Workspace.Rendering
         /// destroyed while still shown (scene teardown, an out-of-band Destroy) — without this, a static
         /// event holding a delegate onto a destroyed Unity object throws a "MissingReferenceException" the
         /// next time it fires, or at minimum leaks the subscription for the rest of the process lifetime.
-        /// The same class of cleanup DocumentPageView.OnDestroy already does for its own OnActivePageChanged
+        /// The same class of cleanup DocumentPageView.OnDestroy already does for its own OnDocumentChanged
         /// subscription.</summary>
         void OnDestroy() => Canvas.willRenderCanvases -= ApplyViewportForRender;
 
@@ -1149,7 +1158,7 @@ namespace WorldGen.Workspace.Rendering
             // the BUILDING. See MapScreenController.RebindSurface for the full statement of the defect and why
             // every branch of it early-outs when the binding is already correct — this method runs on every
             // layout change, not only on a tab click. PageSurfaceHost.Show has always done the equivalent
-            // (`documentController.OpenPage(id)`); this is the same idea for the five screens that have no
+            // (`pageView.ShowPage(id)`); this is the same idea for the five screens that have no
             // such call of their own.
             screens?.RebindSurface(kind, id);
 

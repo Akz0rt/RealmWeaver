@@ -509,10 +509,10 @@ namespace WorldGen.Workspace.Rendering
         /// rather than an empty one — and it is the name the page simply KEEPS when «+ Группа» declines the
         /// prompt in favour of naming the group.
         ///
-        /// OPENED THROUGH WorkspaceController.Open, the same call BuildNodeRow's left-click makes — not
-        /// through NotesDocumentController.OpenPage, which would change the notes controller's ActivePage
-        /// without any tab pointing at it (the exact drift ActiveSurface's own doc describes). PageSurfaceHost
-        /// .Show is what calls OpenPage, once the tab exists.
+        /// OPENED THROUGH WorkspaceController.Open, the same call BuildNodeRow's left-click makes — and since
+        /// the two-panes arc's Task 3 there is no other call it could make: a page reaches a view only by
+        /// being named in some pane's tab (PageSurfaceHost.Show -> DocumentPageView.ShowPage), so putting it
+        /// in a tab IS opening it.
         ///
         /// THE FILTER IS CLEARED. With a needle in the search box, a page named «Страница N» almost certainly
         /// does not match it, N3 then omits it (and possibly its whole group), and the button silently appears
@@ -728,9 +728,10 @@ namespace WorldGen.Workspace.Rendering
         }
 
         /// <summary>The row highlighted as "active" is the surface shown by the FOCUSED pane's active tab —
-        /// not NotesDocumentController.ActivePage. Those two can differ the moment a page is open in a tab
-        /// without also being the notes controller's own active page (e.g. a background tab), so keying off
-        /// ActivePage the way NotesTreeSidebar does would drift from what the workspace actually shows.</summary>
+        /// which, since the two-panes arc's Task 3, is the ONLY place that fact is recorded. It used to
+        /// compete with NotesDocumentController.ActivePage, a document-wide pointer that could name a page no
+        /// pane was showing; keying off that would have drifted from what the workspace actually shows, and
+        /// with two panes about to show two different pages there is no single answer for it to give.</summary>
         SurfaceRef ActiveSurface()
         {
             PaneState pane = WorkspaceOps.PaneAt(controller.Layout, controller.Layout.FocusedPane);

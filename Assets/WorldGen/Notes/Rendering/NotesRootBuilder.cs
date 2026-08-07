@@ -82,7 +82,7 @@ namespace WorldGen.Notes.Rendering
         ///
         /// ROUND 4: re-acquiring the two COMPONENTS was necessary but not sufficient. DocumentPageView's own
         /// internals (its root GameObject, viewport, content, placeholder, its document reference and its
-        /// OnActivePageChanged subscription) are wiped by the same reload, and every use of them is
+        /// OnDocumentChanged subscription) are wiped by the same reload, and every use of them is
         /// null-guarded — so the surface does not throw, it silently stops responding to Show/Hide, which can
         /// leave a page's opaque viewport stuck visible over whatever the pane shows next. EnsureWired (see
         /// its own doc for the full failure mode) is what repairs that, and it is called from HERE rather than

@@ -348,7 +348,9 @@ namespace WorldGen.Workspace.Rendering
         ///      That is correct — a stored layout none of whose tabs can be shown is worth nothing, and
         ///      keeping it would mean the DM's next session opens onto the same nothing — but the code reads
         ///      as "nothing was stored" when something was, so it is said here rather than inferred;
-        ///   4. writes resume, and one save records the result, so the incoming project immediately owns a
+        ///   4. every surface re-reads what its tab names, unconditionally — see the comment at that line for
+        ///      the case neither branch above covers;
+        ///   5. writes resume, and one save records the result, so the incoming project immediately owns a
         ///      stored layout rather than waiting for the DM's next click.
         ///
         /// `exists` is the real predicate here, unlike RestoreFromPrefs' null: everything a tab can name has
@@ -362,6 +364,22 @@ namespace WorldGen.Workspace.Rendering
 
             if (restored != null) ApplyRestored(restored);
             else PruneSurfaces(exists ?? (_ => true));
+
+            // 4. every surface re-reads what its tab names, whether or not the LAYOUT changed above.
+            //
+            // ADDED BY THE TWO-PANES ARC'S TASK 3, and it closes a real hole rather than adding a belt for
+            // symmetry. A surface binds to its id in ISurfaceHost.Show and nowhere else, and neither branch
+            // above is guaranteed to run one: ApplyRestored does (RaiseChanged -> SyncSurfaces), but
+            // PruneSurfaces returns early when it drops NOTHING — which is exactly what happens when the
+            // incoming project's objects carry the SAME ids as the outgoing one's, i.e. when the DM reopens
+            // the project they already had open. NotesDocumentController.LoadDocument has just replaced the
+            // whole document with freshly deserialized objects, so a page tab that survived that way leaves
+            // DocumentPageView bound to a NotesPage from the OUTGOING document: it draws the old text, and
+            // every edit lands in an object no save will ever see. Until Task 3, LoadDocument's own
+            // OnActivePageChanged happened to re-bind the view (to the new document's FIRST page, whether or
+            // not any tab named it) and hid this; that event is gone, so the re-Show is asked for here — at
+            // the load's last act, when the tabs on screen are already the incoming project's.
+            SyncSurfaces();
 
             PersistNow();
         }
@@ -802,8 +820,8 @@ namespace WorldGen.Workspace.Rendering
             // hand out two claims for a host that can only serve one. Serving only the FIRST claim per host
             // reproduces today's behaviour exactly — claims arrive focused-pane-first, so the focused pane
             // keeps the view — and, more sharply, stops the second Show from re-opening a DIFFERENT page on
-            // the one DocumentPageView, which clears the DM's undo history (DocumentPageView
-            // .OnActivePageChanged clears it whenever the page identity changes). That is the same defect
+            // the one DocumentPageView, which clears the DM's undo history (DocumentPageView.ShowPage
+            // clears it whenever the page identity changes). That is the same defect
             // ScreenSurfaceHosts' re-bind produced for interiors before Resolve started de-duplicating them.
             //
             // Once a host keeps a view per pane, this line is the ONLY thing left stopping the second pane

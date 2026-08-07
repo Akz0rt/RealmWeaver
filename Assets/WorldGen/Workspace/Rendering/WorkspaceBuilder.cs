@@ -882,10 +882,17 @@ namespace WorldGen.Workspace.Rendering
     }
 
     /// <summary>
-    /// A board's tab dies with the thing it names — its block, its page, or the whole group its page was in.
+    /// A tab dies with the thing it names — a board's block, a page, or the whole group a page was in.
     ///
-    /// ONE SINK, NOT THREE CALL SITES. A canvas tab can be orphaned at three seams: the DM deletes the board
-    /// BLOCK from the page, deletes the PAGE, or deletes a GROUP — and a group takes its pages with it, which
+    /// STILL CALLED CanvasTabPruner, but it prunes PAGE tabs too since the two-panes arc's Task 3. Until then
+    /// a deleted page took its own visibility with it: NotesDocumentController.DeletePage blanked the one
+    /// document-wide ActivePage, so the view emptied itself and the orphaned tab merely sat there showing
+    /// nothing. That pointer is gone — a page view now shows whatever its pane's tab last named, and would go
+    /// on showing a deleted page's blocks until some unrelated sync happened — so the tab, which is the thing
+    /// that actually names it, is what has to go.
+    ///
+    /// ONE SINK, NOT THREE CALL SITES. A tab can be orphaned at three seams: the DM deletes the board BLOCK
+    /// from the page, deletes the PAGE, or deletes a GROUP — and a group takes its pages with it, which
     /// is the seam NotesDocOps.ClearLinksTo's own doc warns is the one people forget. Pruning at each of the
     /// three means three chances to forget, and a forgotten one LOOKS fine: the surface simply draws nothing
     /// under a live tab, which is the exact defect Р1 shipped for pages (f635cc1). So instead of remembering,
@@ -898,9 +905,14 @@ namespace WorldGen.Workspace.Rendering
     /// answer for all kinds and the same one a project load uses — "the tab survives" and "the surface can be
     /// shown" must not be able to disagree.
     ///
-    /// WHY THE GUARD. OnDocumentMutated fires on every edit-visit to a page row, several times a second while
-    /// the DM types. With no board open anywhere, HasSurfaceOfKind turns that into a dozen enum comparisons
-    /// instead of a walk that resolves every tab against the document, the POI manager and the interior store.
+    /// WHY THE GUARD, AND WHY IT DIFFERS BETWEEN THE TWO EVENTS. OnDocumentMutated fires on every edit-visit
+    /// to a page row, several times a second while the DM types. With no board open anywhere, HasSurfaceOfKind
+    /// turns that into a dozen enum comparisons instead of a walk that resolves every tab against the
+    /// document, the POI manager and the interior store. That guard therefore stays CANVAS-ONLY: a page tab is
+    /// open almost always, so admitting Page there would delete the guard's whole reason and put a full
+    /// resolve-every-tab walk on the typing path. A page tab cannot be orphaned by a keystroke anyway — only
+    /// by deleting a page or a group, and both of those raise the STRUCTURAL event, which fires on CRUD alone
+    /// and is where Page is admitted.
     ///
     /// A PROJECT LOAD passes through here too — LoadDocument raises OnDocumentChanged — and pruning at that
     /// instant is harmless rather than merely tolerated: the document is loaded LAST, so the answer is the
@@ -934,8 +946,8 @@ namespace WorldGen.Workspace.Rendering
             pruner.controller = controller;
             pruner.map = null;
 
-            if (documentController != null) documentController.OnDocumentChanged += pruner.Prune;
-            if (pageView != null) pageView.OnDocumentMutated += pruner.Prune;
+            if (documentController != null) documentController.OnDocumentChanged += pruner.PruneStructural;
+            if (pageView != null) pageView.OnDocumentMutated += pruner.PruneBlocks;
             if (pageView != null) pageView.OnHistoryApplied += pruner.ReshowSurfaces;
             return pruner;
         }
@@ -958,13 +970,25 @@ namespace WorldGen.Workspace.Rendering
             controller.RefreshSurfaces();
         }
 
-        void Prune()
+        /// <summary>A group, a page or a board was created, renamed or deleted — the CRUD event. Both kinds of
+        /// tab can be orphaned here, so both are admitted to the guard. Structural changes are discrete DM
+        /// actions (a navigator click, a menu item, a project load), not a typing path, so the walk this
+        /// admits costs nothing per keystroke — see the class doc for the split.</summary>
+        void PruneStructural() => Prune(includePages: true);
+
+        /// <summary>A page's BLOCK list changed — which fires several times a second while the DM types, and
+        /// can only orphan a board tab. Canvas-only guard, deliberately; see the class doc.</summary>
+        void PruneBlocks() => Prune(includePages: false);
+
+        void Prune(bool includePages)
         {
             // Closing a tab hides a surface, and a surface being hidden is allowed to write to the document
             // (a board saves its camera). Without this, that write would re-enter mid-prune.
             if (pruning) return;
             if (controller == null) return;
-            if (!WorkspaceOps.HasSurfaceOfKind(controller.Layout, SurfaceKind.Canvas)) return;
+            if (!WorkspaceOps.HasSurfaceOfKind(controller.Layout, SurfaceKind.Canvas)
+                && !(includePages && WorkspaceOps.HasSurfaceOfKind(controller.Layout, SurfaceKind.Page)))
+                return;
 
             var screen = ResolveMap();
             if (screen == null) return;
@@ -989,8 +1013,8 @@ namespace WorldGen.Workspace.Rendering
 
         void Unsubscribe()
         {
-            if (documentController != null) documentController.OnDocumentChanged -= Prune;
-            if (pageView != null) pageView.OnDocumentMutated -= Prune;
+            if (documentController != null) documentController.OnDocumentChanged -= PruneStructural;
+            if (pageView != null) pageView.OnDocumentMutated -= PruneBlocks;
             if (pageView != null) pageView.OnHistoryApplied -= ReshowSurfaces;
             documentController = null;
             pageView = null;

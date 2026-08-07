@@ -81,13 +81,20 @@ namespace WorldGen.Notes.Rendering
         /// ends, and text flush to a border reads as text that has been cut off.</summary>
         const float MinSideMargin = 28f;
 
-        // Gates whether OnActivePageChanged is allowed to make `root` visible at all — set only by
-        // PageSurfaceHost.Show/Hide (via SetSurfaceVisible). Without this gate, ActivePage can change from
-        // OUTSIDE the workspace's own tab machinery — PoiEditorScreen/PoiEditPanel's «Открыть страницу» flow
-        // calls NotesDocumentController.OpenPage directly, bypassing WorkspaceController entirely — and
-        // OnActivePageChanged would then re-activate `root` in whichever pane it happens to still be
-        // parented in, even though no pane's active TAB points at a Page surface at all. ANDing every
-        // visibility decision below with this flag means Hide() is authoritative until the next Show().
+        // Whether any pane's active tab currently points at this surface — set only by PageSurfaceHost
+        // .Show/Hide (via SetSurfaceVisible), and ANDed into every `root` visibility decision below, so
+        // Hide() is authoritative until the next Show().
+        //
+        // WHY THIS IS STILL A SEPARATE AXIS FROM `Page`, now that nothing can bind a page behind the
+        // workspace's back. Task 3 deleted NotesDocumentController.ActivePage and its event, which is the
+        // reason the original version of this flag gives (a page opened from the POI editor could re-activate
+        // `root` in whichever pane it was still parented in, with no pane showing a Page tab at all). That
+        // path is gone. What is NOT gone is the asymmetry between the two things Show/Hide have to say:
+        // showing names a PAGE, hiding names none — and «hidden» must not be expressed as ShowPage(null),
+        // because binding a different page (null included) CLEARS THE UNDO HISTORY, and SyncSurfaces calls
+        // Hide for every host crossed with both panes on every sync (see PageSurfaceHost.Hide's own doc).
+        // Every tab click would then cost the DM their undo. So: this flag carries VISIBILITY, ShowPage
+        // carries WHICH PAGE, and Hide only ever touches the first.
         bool surfaceVisible;
 
         readonly List<DocBlockView> rows = new List<DocBlockView>();
@@ -100,14 +107,63 @@ namespace WorldGen.Notes.Rendering
         /// pane's content area currently shows a Page tab (Task 9). Null before Initialize.</summary>
         public RectTransform Root => root != null ? (RectTransform)root.transform : null;
 
-        /// <summary>PageSurfaceHost's Show/Hide call this — see the surfaceVisible field doc. Re-evaluates
-        /// immediately against whatever NotesDocumentController.ActivePage currently is, so Show(...) makes
-        /// an already-active page visible even in the (common) case where the OpenPage call right after it
-        /// is a no-op because the id was already ActivePage — see PageSurfaceHost.Show's own comment.</summary>
+        /// <summary>PageSurfaceHost's Show/Hide call this — see the surfaceVisible field doc for why this is
+        /// an axis of its own and not just ShowPage(null). Re-asserts visibility against the page ALREADY
+        /// bound, without rebinding anything: a Hide therefore costs neither the undo history nor a rebuild,
+        /// and a Show that is followed by ShowPage(theSameId) leaves the rows exactly as they were.</summary>
         public void SetSurfaceVisible(bool visible)
         {
             surfaceVisible = visible;
-            OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
+            ApplyVisibility();
+        }
+
+        /// <summary>Binds this view to the page named by `pageId` and draws it. `null`, an empty id, or an id
+        /// no group holds all mean "show nothing" — the pane goes empty rather than keeping a page whose tab
+        /// no longer points at it.
+        ///
+        /// THE ONE WAY A PAGE GETS ONTO THIS VIEW, since Task 3: the document no longer remembers an "active
+        /// page" and no longer raises an event when it changes, so the page is NAMED by whoever owns the tab
+        /// (PageSurfaceHost.Show, from WorkspaceController.SyncSurfaces) instead of being pushed here from
+        /// under the workspace.
+        ///
+        /// A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one to
+        /// another page would replace that page's content with this one's — which is why the clear below (and
+        /// the selection and the search box with it) is gated on the page IDENTITY changing, and not merely on
+        /// this method having been called. It is called on every sync, including the many that re-name the
+        /// page already shown; clearing unconditionally would erase the DM's undo on every tab click, divider
+        /// commit and pane focus change.</summary>
+        public void ShowPage(string pageId)
+        {
+            var doc = documentController != null ? documentController.Document : null;
+            var page = doc != null && !string.IsNullOrEmpty(pageId) ? NotesDocOps.FindPage(doc, pageId) : null;
+
+            var previous = Page;
+            Page = page;
+
+            if (!ReferenceEquals(previous, Page))
+            {
+                History.Clear();
+                SetSelectedBlock(null);
+                OnHistoryChanged?.Invoke();
+                // Results belong to the page they were found on: a switch to a DIFFERENT page must not leave
+                // «3 из 12» standing over text that never said it.
+                if (searchBar != null) searchBar.Close();
+            }
+
+            ApplyVisibility();
+            if (Page != null) Rebuild();
+        }
+
+        /// <summary>Turns the two independent facts — is a page bound, and does any pane's active tab point
+        /// here — into the four SetActive calls that express them. Every page is a document since Р4, so the
+        /// board placeholder is unconditionally off; it survives only because the GameObject does.</summary>
+        void ApplyVisibility()
+        {
+            bool showDocument = Page != null;
+            if (root != null) root.SetActive(surfaceVisible && showDocument);
+            if (viewportGO != null) viewportGO.SetActive(showDocument);
+            if (placeholderGO != null) placeholderGO.SetActive(false);
+            if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
         }
 
         /// <summary>Fires whenever the block list changed shape, so the project can be marked dirty and
@@ -880,13 +936,15 @@ namespace WorldGen.Notes.Rendering
             LinkDropTarget.Attach(this);
             searchBar = PageSearchBar.Attach(this, font);
 
-            documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
             // keystroke (NotesDocumentController raises this from its CRUD alone). A [[page:…]] link renders
             // the target page's CURRENT name, so a rename in the navigator has to reach the prose here, and
             // this is the event that carries it.
             documentController.OnDocumentChanged += RefreshLinks;
-            OnActivePageChanged(documentController.ActivePage);
+            // Born unbound and hidden: `root` is created ACTIVE by the construction above, and nothing has
+            // named a page yet (PageSurfaceHost.Show does that, on the first sync). Without this the freshly
+            // built, opaque viewport would paint over whatever the pane really shows until then.
+            ApplyVisibility();
         }
 
         /// <summary>Builds the page's vertical scrollbar, at the DM's first-checkpoint request: the page
@@ -1016,10 +1074,7 @@ namespace WorldGen.Notes.Rendering
         void OnDestroy()
         {
             if (documentController != null)
-            {
-                documentController.OnActivePageChanged -= OnActivePageChanged;
                 documentController.OnDocumentChanged -= RefreshLinks;
-            }
         }
 
         /// <summary>Re-establishes everything a Play-mode script reload wipes on THIS component, so Show/Hide
@@ -1033,7 +1088,7 @@ namespace WorldGen.Notes.Rendering
         /// GameObject they described survives as live native state in whatever pane PageSurfaceHost last
         /// re-parented it into — and if it was ACTIVE at that moment it stays active. Every access below is
         /// null-guarded, so nothing throws; the guards
-        /// instead turn Hide() -> SetSurfaceVisible(false) -> OnActivePageChanged into a SILENT NO-OP against
+        /// instead turn Hide() -> SetSurfaceVisible(false) -> ApplyVisibility into a SILENT NO-OP against
         /// a null `root`, so `root.SetActive(false)` never fires and NOTHING in the rest of that session can
         /// ever hide it again. DocumentViewport carries its own opaque ThemeRole.Bg Image, so a pane that
         /// then shows the WorldMap surface gets painted over by it — MapSurfaceHost.SetBackgroundsEnabled
@@ -1042,7 +1097,7 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The last line is what actually kills that symptom, and it does so INSIDE NotesRootBuilder's own
         /// recovery, without depending on WorkspaceBuilder's path running at all: `surfaceVisible` is a plain
-        /// bool that the same reload already reset to false, so re-running OnActivePageChanged with the
+        /// bool that the same reload already reset to false, so re-asserting visibility against the
         /// recovered `root` deactivates a stuck-visible viewport immediately. WorkspaceController.SyncSurfaces
         /// then re-asserts the correct state a moment later (Show for a pane whose active tab is a Page, Hide
         /// otherwise) — this just makes the stuck case impossible even if it does not.
@@ -1074,14 +1129,11 @@ namespace WorldGen.Notes.Rendering
             if (root == null) return;   // not found: stay inert rather than half-wired.
 
             // C# delegates are never serialized, so this subscription is gone after a reload no matter how
-            // the fields above were recovered. `-=` before `+=` keeps it at exactly one for the non-reload
-            // caller, where the subscription Initialize made is still live.
+            // the fields above were recovered — the page-rename refresh (see Initialize) with it. `-=` before
+            // `+=` keeps it at exactly one for the non-reload caller, where the subscription Initialize made
+            // is still live.
             if (documentController != null)
             {
-                documentController.OnActivePageChanged -= OnActivePageChanged;
-                documentController.OnActivePageChanged += OnActivePageChanged;
-                // Same -=/+= discipline, same reason: a C# event subscription is never serialized, so the
-                // page-rename refresh (see Initialize) is gone after a reload however the fields recovered.
                 documentController.OnDocumentChanged -= RefreshLinks;
                 documentController.OnDocumentChanged += RefreshLinks;
             }
@@ -1138,7 +1190,10 @@ namespace WorldGen.Notes.Rendering
 
             if (!lostToReload) return;
 
-            OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
+            // `Page` is a plain field too, so the reload left this view bound to nothing — and `surfaceVisible`
+            // false with it. Re-asserting both against the recovered `root` is what deactivates a viewport the
+            // reload left stuck visible; see this method's own doc.
+            ApplyVisibility();
         }
 
         /// <summary>Re-finds the six GameObjects/Components Initialize built, after a reload nulled the
@@ -1156,7 +1211,7 @@ namespace WorldGen.Notes.Rendering
         /// Transform.Find for the placeholder, which locates inactive children (it is SetActive(false) for
         /// every Document page). `addSectionBarGO`/`addSectionButton` are found the same Transform.Find way —
         /// the bar is never deactivated for a Document page (see its own bar-visibility line in
-        /// OnActivePageChanged), but the FindObjectsByType search above and every Find here already return
+        /// ApplyVisibility), but the FindObjectsByType search above and every Find here already return
         /// null gracefully on a page that has never called Initialize, and the null-guarded access pattern
         /// this whole method exists to keep working is worth applying uniformly rather than assuming any one
         /// child can never go missing.
@@ -1185,39 +1240,6 @@ namespace WorldGen.Notes.Rendering
             addSectionBarGO = addSectionBar != null ? addSectionBar.gameObject : null;
             var addSectionBtn = addSectionBar != null ? addSectionBar.Find(AddSectionButtonObjectName) : null;
             addSectionButton = addSectionBtn != null ? addSectionBtn.GetComponent<Button>() : null;
-        }
-
-        void OnActivePageChanged(NotesPage page)
-        {
-            var previous = Page;
-            Page = page;
-            bool showDocument = Page != null;
-
-            // A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one
-            // to another page would replace that page's content with this one's. Compared by identity rather
-            // than cleared unconditionally, because this method also runs on every Show of an UNCHANGED page
-            // (PageSurfaceHost.Show → SetSurfaceVisible), and a tab switch must not cost the DM their undo.
-            if (!ReferenceEquals(previous, Page))
-            {
-                History.Clear();
-                SetSelectedBlock(null);
-                OnHistoryChanged?.Invoke();
-                // Results belong to the page they were found on. Same identity test, same reason as the
-                // history above: a tab switch back must not cost the DM their search either, but a switch to
-                // a DIFFERENT page must not leave «3 из 12» standing over text that never said it.
-                if (searchBar != null) searchBar.Close();
-            }
-
-            // Every page is a document since Р4 — the placeholder that used to stand in for a board page, and
-            // the board-viewport hand-off no caller ever supplied, both went with PageKind. surfaceVisible
-            // is what stops this from firing when NO pane's active tab is a Page at all — see the field's own
-            // doc for the concrete PoiEditorScreen/PoiEditPanel path that needs it.
-            if (root != null) root.SetActive(surfaceVisible && showDocument);
-            if (viewportGO != null) viewportGO.SetActive(showDocument);
-            if (placeholderGO != null) placeholderGO.SetActive(false);
-            if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
-
-            if (showDocument) Rebuild();
         }
 
         public DocBlockView ViewOf(string blockId)
