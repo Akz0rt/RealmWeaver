@@ -129,6 +129,15 @@ namespace WorldGen.Notes.Rendering
         public void Show(NotesPage p)
         {
             if (self == null) return;
+
+            // Другая страница пришла на смену прежней — «уже толкнули снимок в этом визите» относится
+            // к СТАРОЙ карточке и здесь не значит ничего. Без сброса первая правка любого поля на НОВОЙ
+            // странице не толкнёт снимок вовсе: OnActivePageChanged уже вызвал History.Clear(), так что
+            // за отсутствующим снимком нет вообще ничего, и Ctrl+Z на первой же правке карточки B станет
+            // пустышкой — то самое правило 4 брифа, потерянное в реальном пути, а не в теории.
+            if (!ReferenceEquals(p, page))
+                for (int i = 0; i < FieldCount; i++) historyPushed[i] = false;
+
             page = p;
             gameObject.SetActive(true);
             self.SetAsFirstSibling();
@@ -419,6 +428,11 @@ namespace WorldGen.Notes.Rendering
                 // раньше, снимок унёс бы уже новое значение, и Ctrl+Z на этом поле стал бы пустышкой —
                 // ровно то предупреждение, которое DocumentPageView.PushHistoryBeforeFirstEdit оставляет
                 // задаче 6 в своём комментарии.
+                //
+                // LastFocusedBlockId называет СТРОКУ, а не это поле — у поля шапки нет своего id в модели
+                // отмены, так что снимок занимает фокус у той строки, где ДМ был раньше; отмена может
+                // увести каретку в эту постороннюю строку вместо самого поля. Известное ограничение,
+                // поведение не меняю.
                 host.PushHistory(host.LastFocusedBlockId, host.LastFocusedCaret);
             }
 
@@ -441,6 +455,20 @@ namespace WorldGen.Notes.Rendering
             if (bytes == null || bytes.Length == 0) return;   // ДМ отменил диалог
             ApplyNewPortrait(bytes);
         }
+
+        /// <summary>Re-measures every frame — the same reason DocBlockView.LateUpdate calls its own
+        /// ApplyHeightNow every frame rather than relying only on the edit/rebuild call sites.
+        /// DocumentPageView.ApplyColumnMeasure runs from ITS OWN LateUpdate and can rewrap every field by
+        /// narrowing or widening `self` on a pane or window resize WITH NO Rebuild in between — and
+        /// SettleHeights, the two-pass call site that measures against a real width, is reached from
+        /// exactly one place, Rebuild(). Without this the header's rect would stay stale after such a
+        /// resize until the next rebuild or keystroke, and the value fields' own RectMask2D would clip
+        /// the overflow meanwhile. The same gap covers the very first Rebuild from Initialize, where
+        /// SettleHeights early-returns at content.rect.width <= 1f — DocBlockView's own comment on that
+        /// early return says its rows are "sized a frame later" by their own LateUpdate; this is the
+        /// header's equivalent rescue. The 0.5px epsilon inside ApplyHeightNow already makes this a
+        /// no-op on every frame nothing actually changed, so it does not cost a layout pass per frame.</summary>
+        void LateUpdate() => ApplyHeightNow();
 
         /// <summary>Ctrl+V while the pointer is over the portrait. Polled rather than event-driven, the
         /// same technique LinkDropTarget.Update uses to track a drag with no hover notification of its
@@ -486,6 +514,7 @@ namespace WorldGen.Notes.Rendering
             if (host == null || page == null || page.Character == null) return;
 
             byte[] fitted = ShrinkPortrait(raw);
+            // Тот же занятый фокус чужой строки, что и в OnValueChanged — см. комментарий там.
             host.PushHistory(host.LastFocusedBlockId, host.LastFocusedCaret);
             page.Character.Portrait = fitted;
             host.MarkDocumentMutated();
@@ -549,6 +578,12 @@ namespace WorldGen.Notes.Rendering
                 {
                     ownedTexture = texture;
                     picture.texture = texture;
+                    // Слот 96×96 — квадрат, а фото ДМ почти наверняка нет. RawImage без uvRect растянул
+                    // бы прямоугольное фото на квадратную рамку и исказил пропорции; AspectRatioFitter
+                    // сюда не годится — он спорил бы с фиксированным размером слота (правило брифа: слот
+                    // остаётся ровно 96×96). Вместо этого вырезаем центральный квадрат самого изображения
+                    // через uvRect — та же идея, что кадрирование по центру у любого превью-аватара.
+                    picture.uvRect = CenterCropUvRect(texture.width, texture.height);
                     picture.gameObject.SetActive(true);
                     if (silhouetteGO != null) silhouetteGO.SetActive(false);
                     return;
@@ -561,13 +596,38 @@ namespace WorldGen.Notes.Rendering
             if (silhouetteGO != null) silhouetteGO.SetActive(true);
         }
 
+        /// <summary>The UV rect that crops a `width`×`height` texture down to its centred square — a
+        /// wide photo loses its left/right margins, a tall one its top/bottom, a square is returned
+        /// whole. `RawImage.uvRect` is the standard way to sample a sub-rect of a texture without
+        /// touching the mesh or the fixed 96×96 slot it fills.</summary>
+        static Rect CenterCropUvRect(int width, int height)
+        {
+            if (width <= 0 || height <= 0) return new Rect(0f, 0f, 1f, 1f);
+            if (width > height)
+            {
+                float frac = (float)height / width;
+                return new Rect((1f - frac) * 0.5f, 0f, frac, 1f);
+            }
+            if (height > width)
+            {
+                float frac = (float)width / height;
+                return new Rect(0f, (1f - frac) * 0.5f, 1f, frac);
+            }
+            return new Rect(0f, 0f, 1f, 1f);
+        }
+
         /// <summary>A generic head-and-shoulders glyph, drawn once and cached — the same runtime-texture
         /// technique NotesIconFactory uses for its toolbar glyphs (distance-to-centre fills, no external
         /// image files), reimplemented locally rather than added to that factory: NotesIconFactory keys
         /// its cache on NotesTool, a canvas-toolbar enum this page has no business extending, and this
-        /// task's own file-change list does not include that file.</summary>
+        /// task's own file-change list does not include that file.
+        ///
+        /// PUBLIC because it has a second consumer: the navigator's character rows (a later task) show
+        /// the same placeholder for a character with no portrait, and must draw the identical glyph
+        /// rather than invent their own. Kept here rather than moved into NotesIconFactory — the reason
+        /// above still holds, and this also keeps this arc off a file a parallel branch is editing.</summary>
         static Sprite silhouetteSprite;
-        static Sprite SilhouetteSprite()
+        public static Sprite SilhouetteSprite()
         {
             if (silhouetteSprite != null) return silhouetteSprite;
 
