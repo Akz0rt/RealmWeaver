@@ -39,6 +39,29 @@ namespace WorldGen.Notes.Data
         public string Id;
     }
 
+    /// <summary>Карточка персонажа — НЕОБЯЗАТЕЛЬНАЯ ГРАНЬ страницы, ровно по образцу WorldRef Bound.
+    /// Страница персонажа — это обычная страница; «видов страниц не бывает» (правило Р1), поэтому
+    /// новый тип объекта устроен как поле, которого может не быть, а не как новый вид.
+    ///
+    /// Ключа нет в файле, записанном раньше — Newtonsoft оставит поле null, а null и означает
+    /// «обычная страница». Поэтому кода миграции нет и не нужно.
+    ///
+    /// Все поля — свободный текст любой длины. Where — ИМЕННО ТЕКСТ, а не ссылка на точку интереса:
+    /// ДМ намеренно не выбрал привязку к карте, а обратное направление (Р3) отложено и помечено
+    /// «под вопросом» 2026-08-06. Не «чинить» это как недоделку.</summary>
+    public class CharacterCard
+    {
+        public string Who;
+        public string Where;
+        public string Wants;
+        public string HowToPlay;
+
+        /// <summary>Портрет, байты png/jpg, как ImageObjectData.ImageBytes. ЗАМЕНЯЕТСЯ ЦЕЛИКОМ,
+        /// никогда не правится на месте — на этом договоре держится то, что DocHistory разделяет
+        /// массив вместо копирования. Уменьшается на входе (PortraitOps.Fit).</summary>
+        public byte[] Portrait;
+    }
+
     public class NotesDocument
     {
         public List<PageGroup> Groups = new List<PageGroup>();
@@ -53,6 +76,10 @@ namespace WorldGen.Notes.Data
         /// deliberately not a title match: the user can rename any group, and can create their own group
         /// called «Справочник», either of which would silently break title-based lookup.</summary>
         public bool IsReference;
+        /// <summary>Помечает единственную группу, куда падают новые персонажи. ФЛАГ РОЛИ, намеренно не
+        /// совпадение названия — ровно по той же причине, что и IsReference: ДМ вправе переименовать
+        /// группу, и лишиться из-за этого своих персонажей он не должен.</summary>
+        public bool IsCharacters;
         public List<NotesPage> Pages = new List<NotesPage>();
     }
 
@@ -93,6 +120,12 @@ namespace WorldGen.Notes.Data
         /// CurrentFormatVersion 13).</summary>
         [JsonProperty("Bound", NullValueHandling = NullValueHandling.Ignore)]
         public WorldRef Bound;
+
+        /// <summary>Карточка персонажа, если страница описывает персонажа — иначе null. Добавочное поле,
+        /// как Bound: отсутствует в файле, записанном раньше, и читается там как null, поэтому миграции
+        /// нет (ProjectSerializer.CurrentFormatVersion 17).</summary>
+        [JsonProperty("Character", NullValueHandling = NullValueHandling.Ignore)]
+        public CharacterCard Character;
     }
 
     /// <summary>One row of a document page. ONE class with a Kind enum rather than a subclass hierarchy:
