@@ -10,6 +10,19 @@ namespace WorldGen.Notes.Data
         /// перечисление видов страниц — см. CharacterCard.</summary>
         public static bool IsCharacter(NotesPage page) => page != null && page.Character != null;
 
+        /// <summary>Персонаж ли то, на что указывает ссылка [[kind:id|Имя]]. Только «page» вообще
+        /// может им быть — у poi/building/room карточки нет и быть не может, так что для них ответ
+        /// всегда false, а не null: «не удалось узнать» и «точно не персонаж» тут неразличимы для
+        /// отрисовки и не должны различаться в сигнатуре.
+        ///
+        /// ИДЁТ В ТОТ ЖЕ ДОКУМЕНТ, ЧТО И ИМЯ. NotesDocOps.FindPage — та же функция, которой
+        /// DocumentPageView.ResolveName уже ищет страницу по id, чтобы узнать её текущее ИМЯ. Новый,
+        /// отдельно написанный обход doc.Groups здесь был бы вторым путём к документу — а значит и
+        /// вторым местом, которое пришлось бы держать в согласии с первым при следующем изменении формы
+        /// NotesDocument.</summary>
+        public static bool IsCharacterLink(NotesDocument doc, string kind, string id)
+            => kind == NotesLinkOps.KindPage && IsCharacter(NotesDocOps.FindPage(doc, id));
+
         /// <summary>Копия карточки для снимка отмены. Байты портрета РАЗДЕЛЯЮТСЯ — портрет
         /// заменяется целиком, никогда не правится на месте (тот же договор, что у
         /// DocBlock.ImageBytes в DocHistory.Copy).

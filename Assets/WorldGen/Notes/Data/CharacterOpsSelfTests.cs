@@ -181,6 +181,37 @@ namespace WorldGen.Notes.Data
             Debug.Log(ok ? "Self-Test Remove Card Keeps Page: PASS" : "Self-Test Remove Card Keeps Page: FAIL");
         }
 
+        [ContextMenu("Self-Test: Is Character Link")]
+        public void SelfTestIsCharacterLink()
+        {
+            bool ok = true;
+
+            var doc = new NotesDocument();
+            var group = new PageGroup();
+            doc.Groups.Add(group);
+            var hero = new NotesPage { Name = "Ольга Медная", Character = new CharacterCard() };
+            var plain = new NotesPage { Name = "Тихая Гавань" };
+            group.Pages.Add(hero);
+            group.Pages.Add(plain);
+
+            // Мутант: IsCharacterLink игнорирует kind и просто ищет id по всем страницам.
+            // Фикстура: id персонажа существует, но ссылка помечена как "poi" — правило «только page
+            // может быть персонажем» и правило «нашли страницу — значит персонаж» здесь расходятся.
+            if (CharacterOps.IsCharacterLink(doc, "poi", hero.Id))
+            { Debug.LogError("FAIL: ссылка вида poi на id персонажа сочтена персонажем"); ok = false; }
+
+            if (!CharacterOps.IsCharacterLink(doc, NotesLinkOps.KindPage, hero.Id))
+            { Debug.LogError("FAIL: ссылка на страницу-персонажа не распознана"); ok = false; }
+            if (CharacterOps.IsCharacterLink(doc, NotesLinkOps.KindPage, plain.Id))
+            { Debug.LogError("FAIL: ссылка на обычную страницу сочтена персонажем"); ok = false; }
+            if (CharacterOps.IsCharacterLink(doc, NotesLinkOps.KindPage, "нет-такого-id"))
+            { Debug.LogError("FAIL: ссылка на несуществующую страницу сочтена персонажем"); ok = false; }
+            if (CharacterOps.IsCharacterLink(null, NotesLinkOps.KindPage, hero.Id))
+            { Debug.LogError("FAIL: null-документ не пережит"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Is Character Link: PASS" : "Self-Test Is Character Link: FAIL");
+        }
+
         [ContextMenu("Self-Test: Null Document Is Survived")]
         public void SelfTestNullDocumentIsSurvived()
         {

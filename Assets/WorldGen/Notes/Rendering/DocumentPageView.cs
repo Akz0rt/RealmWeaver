@@ -583,6 +583,13 @@ namespace WorldGen.Notes.Rendering
         /// offsets the highlight could not use.</summary>
         public NotesLinkOps.NameResolver ResolveNameFor => ResolveName;
 
+        /// <summary>Whether a [[kind:id]] token's target carries a character card, so DocBlockView can draw it
+        /// as a plate instead of a plain link (Task 9). Reads THE SAME documentController.Document ResolveName
+        /// already reaches — CharacterOps.IsCharacterLink walks it via NotesDocOps.FindPage, the one lookup
+        /// ResolveName itself is built on, rather than a second hand-rolled walk over doc.Groups here.</summary>
+        bool IsCharacterLink(string kind, string id)
+            => CharacterOps.IsCharacterLink(documentController != null ? documentController.Document : null, kind, id);
+
         /// <summary>Re-reads the world and re-renders every resting row, so a POI renamed in the other pane
         /// changes the prose here with no edit to the page — D1's whole promise.
         ///
@@ -1193,7 +1200,7 @@ namespace WorldGen.Notes.Rendering
                 var block = Page.Blocks[index];
                 var rowGO = new GameObject($"Row_{block.Kind}", typeof(RectTransform));
                 var view = rowGO.AddComponent<DocBlockView>();
-                view.Initialize(block, content, font, ResolveName);
+                view.Initialize(block, content, font, ResolveName, IsCharacterLink);
                 view.OnToggleCollapse += OnToggleCollapse;
                 view.OnLinkActivated += RouteLink;
                 view.OnSelectRequested += SetSelectedBlock;
