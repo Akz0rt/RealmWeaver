@@ -12,6 +12,20 @@ namespace WorldGen.Notes.Data
             return pts;
         }
 
+        /// <summary>Дрожащая прямая. Разброс НЕ ЗНАКОПЕРЕМЕННЫЙ нарочно: у идеального зигзага
+        /// хорда через чётное число шагов схлопывается ровно в горизонталь, и проверка проходила
+        /// бы из-за симметрии фикстуры, а не потому, что правило работает. Период 7 не делится ни
+        /// на длину плеча, ни на окно сглаживания.</summary>
+        static readonly float[] Jitter = { 1f, -0.7f, 0.9f, -1f, 0.5f, -0.9f, 0.8f };
+
+        static List<StrokePoint> Tremor(int n, float step, float amplitude)
+        {
+            var pts = new List<StrokePoint>(n);
+            for (int i = 0; i < n; i++)
+                pts.Add(new StrokePoint(i * step, 0.5f + amplitude * Jitter[i % Jitter.Length], 0.02f));
+            return pts;
+        }
+
         [ContextMenu("Self-Test: Чистка — двойники выбрасываются")]
         public void SelfTestDuplicatesDropped()
         {
@@ -61,9 +75,10 @@ namespace WorldGen.Notes.Data
         public void SelfTestTremorIsReduced()
         {
             // Правило обязано что-то ДЕЛАТЬ, иначе предыдущие две проверки проходят и на пустышке.
-            var pts = new List<StrokePoint>();
-            for (int i = 0; i < 11; i++)
-                pts.Add(new StrokePoint(i * 0.08f, 0.5f + (i % 2 == 0 ? 0.02f : -0.02f), 0.02f));
+            // УБИВАЕТ МУТАНТА «плечо в одну точку» (CornerArmMinPoints = 1): на редкой цепочке
+            // одного шага хватает по длине, мерка вырождается в соседний отрезок, каждая точка
+            // дрожи объявляется углом, цепочка режется в труху и сглаживание даёт 0.78 вместо 0.18.
+            var pts = Tremor(21, 0.08f, 0.02f);
 
             var s = StrokeOps.Smooth(pts, 1f, 5, StrokeOps.CornerAngleDegrees);
 
@@ -75,6 +90,24 @@ namespace WorldGen.Notes.Data
             }
             bool ok = after < before * 0.6f;
             if (!ok) Debug.LogError($"FAIL дрожь: было {before}, стало {after} — сглаживание почти ничего не сделало");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: Чистка — густая дрожь не считается углами")]
+        public void SelfTestDenseTremorHasNoCorners()
+        {
+            // ЭТО ПРОВЕРКА МАСШТАБА, и без неё правило держится на редкости фикстуры. Точки идут
+            // тем гуще, чем МЕДЛЕННЕЕ ведёт рука, а амплитуда дрожи от скорости не зависит: здесь
+            // шаг 0.0021 (чуть выше порога Dedupe = 0.002) при дрожи ±0.0025, то есть дрожь ШИРЕ
+            // шага. Плечо, отмеренное в точках, оказалось бы короче самой дрожи.
+            //
+            // УБИВАЕТ МУТАНТА «нет пола по длине» (CornerArmMinLength = 0): он даёт 42 угла.
+            // Отношением дрожи его НЕ УБИТЬ — там выходит 0.56 при пороге 0.6, то есть мутант
+            // проползает; ловится только прямым утверждением про углы.
+            var pts = Tremor(101, 0.0021f, 0.0025f);
+            var corners = StrokeOps.CornerIndices(pts, StrokeOps.CornerAngleDegrees);
+            bool ok = corners.Count == 0;
+            if (!ok) Debug.LogError($"FAIL густая дрожь: найдено {corners.Count} «углов» (первый — {corners[0]}), ожидалось 0");
             Done(ok);
         }
 

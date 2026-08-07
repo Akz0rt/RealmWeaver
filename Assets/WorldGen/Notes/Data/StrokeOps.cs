@@ -21,6 +21,19 @@ namespace WorldGen.Notes.Data
         public const float CornerAngleDegrees = 40f;
         public const float SimplifyEpsilon = 0.002f;
 
+        /// <summary>Плечо, на котором меряется направление до и после точки. Минимум точек И
+        /// минимум длины — оба обязательны, см. <see cref="CornerIndices"/>.</summary>
+        public const int CornerArmMinPoints = 2;
+        public const float CornerArmMinLength = 0.02f;
+
+        /// <summary>Только ограничитель работы: без него точка в вырожденной цепочке (все точки
+        /// ближе CornerArmMinLength друг к другу) уходила бы до конца мазка, давая O(n²).
+        /// ПОВЕДЕНИЕ им не задаётся и задаваться не может: после Dedupe соседи расходятся минимум
+        /// на MinPointDistance = 0.002, поэтому 16 шагов дают не меньше 0.032 — вдвое больше
+        /// требуемой длины плеча. Отсюда же следует, что мутанта на это число нет и быть не
+        /// должно.</summary>
+        public const int CornerArmMaxPoints = 16;
+
         public static List<StrokePoint> Cleanup(List<StrokePoint> points)
         {
             var deduped = Dedupe(points, MinPointDistance);
@@ -46,7 +59,24 @@ namespace WorldGen.Notes.Data
         }
 
         /// <summary>Индексы точек, в которых направление поворачивает круче порога. Первая и
-        /// последняя не считаются углами — они и так закреплены.</summary>
+        /// последняя не считаются углами — они и так закреплены.
+        ///
+        /// НАПРАВЛЕНИЕ МЕРЯЕТСЯ ПО ХОРДЕ ПЛЕЧА, А НЕ ПО СОСЕДНЕМУ ОТРЕЗКУ, и это не оптимизация,
+        /// а суть правила. Дрожь руки И ЕСТЬ череда резких разворотов: на паре соседних отрезков
+        /// она даёт те же 50–90°, что настоящий угол, поэтому пороговой величиной их не развести
+        /// НИ ПРИ КАКОМ пороге. Развести их можно только МАСШТАБОМ: угол — устойчивая смена
+        /// направления, дрожь — мелкая и тут же отыгранная назад. Хорда плеча усредняет отыгрыш.
+        ///
+        /// У ПЛЕЧА ДВА ПОЛА, И ОБА ОБЯЗАТЕЛЬНЫ. Полом по числу точек нельзя обойтись, потому что
+        /// точки идут гуще, когда рука ведёт медленно, а амплитуда дрожи от скорости не зависит:
+        /// на медленном рисовании три точки короче самой дрожи, и ошибка возвращается целиком.
+        /// Полом по длине нельзя обойтись, потому что на редкой цепочке одного шага уже хватает
+        /// по длине — и мерка снова становится соседним отрезком.
+        ///
+        /// ЕСЛИ ПЛЕЧО УПЁРЛОСЬ В КОНЕЦ МАЗКА, не набрав длины, точка НЕ КЛАССИФИЦИРУЕТСЯ: короткое
+        /// плечо — это ровно та ненадёжная мерка, от которой мы уходим, и лучше не знать, чем
+        /// знать неверно. Цена — вершина в паре точек от начала мазка не будет закреплена, но она
+        /// и так вплотную к закреплённому концу.</summary>
         public static List<int> CornerIndices(List<StrokePoint> points, float angleDegrees)
         {
             var corners = new List<int>();
@@ -55,14 +85,43 @@ namespace WorldGen.Notes.Data
 
             for (int i = 1; i < points.Count - 1; i++)
             {
-                float ax = points[i].X - points[i - 1].X, ay = points[i].Y - points[i - 1].Y;
-                float bx = points[i + 1].X - points[i].X, by = points[i + 1].Y - points[i].Y;
+                if (!TryArm(points, i, -1, out int back)) continue;
+                if (!TryArm(points, i, +1, out int forward)) continue;
+
+                float ax = points[i].X - points[back].X, ay = points[i].Y - points[back].Y;
+                float bx = points[forward].X - points[i].X, by = points[forward].Y - points[i].Y;
                 float la = Mathf.Sqrt(ax * ax + ay * ay), lb = Mathf.Sqrt(bx * bx + by * by);
                 if (la < 0.00001f || lb < 0.00001f) continue;
                 float cos = (ax * bx + ay * by) / (la * lb);
                 if (cos < cosLimit) corners.Add(i);
             }
             return corners;
+        }
+
+        /// <summary>Уходит от точки i в сторону direction, пока плечо не наберёт и минимум точек,
+        /// и минимальную длину. Возвращает false, если набрать не удалось — упёрлись в конец
+        /// мазка или исчерпали ограничитель, оставшись короче нужного.</summary>
+        static bool TryArm(List<StrokePoint> points, int i, int direction, out int endIndex)
+        {
+            int j = i, steps = 0;
+            endIndex = i;
+            while (steps < CornerArmMaxPoints)
+            {
+                int next = j + direction;
+                if (next < 0 || next >= points.Count) return false;   // упёрлись в конец мазка
+                j = next;
+                steps++;
+                float dx = points[j].X - points[i].X, dy = points[j].Y - points[i].Y;
+                if (steps >= CornerArmMinPoints
+                    && dx * dx + dy * dy >= CornerArmMinLength * CornerArmMinLength)
+                {
+                    endIndex = j;
+                    return true;
+                }
+            }
+            endIndex = j;
+            float ex = points[j].X - points[i].X, ey = points[j].Y - points[i].Y;
+            return ex * ex + ey * ey >= CornerArmMinLength * CornerArmMinLength;
         }
 
         /// <summary>Скользящее среднее по положениям.
