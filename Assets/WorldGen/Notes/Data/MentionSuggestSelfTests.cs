@@ -130,10 +130,24 @@ namespace WorldGen.Notes.Data
             current.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Prose, 0,
                 "Место действия — " + NotesLinkOps.MakeToken(NotesLinkOps.KindPage, current.Id, "Тихая Гавань") + "."));
 
-            // Мутант: guard снят — пустой запрос вернёт саму страницу как «упомянутую на этой странице».
-            var emptyResult = MentionSuggest.Rank(doc, current, null, "", null, 5);
+            // Второй, ГЕНУИННЫЙ элемент recentIds — чтобы «текущая страница исключена» и «recentIds
+            // вообще работают» проверялись раздельно: если бы мутант просто занулил AppendRecent целиком,
+            // отсутствие currentId в выдаче ничего бы не доказало (его там и так не было бы). «Прочий»
+            // должен остаться в выдаче — это позитивная сторона того же теста.
+            var other = MakePage(doc, g, "Прочий");
+            var recentIds = new List<string> { NotesLinkOps.KindPage + ":" + current.Id, NotesLinkOps.KindPage + ":" + other.Id };
+
+            // Мутант: guard в MentionedOnPage/TrackSpans снят — пустой запрос вернёт саму страницу как
+            // «упомянутую на этой странице».
+            var emptyResult = MentionSuggest.Rank(doc, current, null, "", recentIds, 5);
             if (emptyResult.Exists(cand => cand.Kind == NotesLinkOps.KindPage && cand.Id == current.Id))
             { Debug.LogError("FAIL: пустой запрос предложил текущую страницу саму себе"); ok = false; }
+
+            // Мутант (отдельный от предыдущего): guard в AppendRecent снят — recentIds содержит id самой
+            // текущей страницы («page:» + current.Id), и без собственной проверки AppendRecent её бы
+            // резолвнул как обычную страницу (она валидна в doc) и добавил.
+            if (!emptyResult.Exists(cand => cand.Id == other.Id))
+            { Debug.LogError("FAIL: recentIds отбросил не только саму страницу, но и генуинный недавний элемент — guard слишком широк или recentIds сломан целиком"); ok = false; }
 
             // Тот же guard должен держаться и при непустом запросе, который совпал бы по имени.
             var queryResult = MentionSuggest.Rank(doc, current, null, "Тихая", null, 5);
@@ -141,6 +155,68 @@ namespace WorldGen.Notes.Data
             { Debug.LogError("FAIL: запрос по собственному имени предложил текущую страницу саму себе"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Current Page Never Suggests Itself: PASS" : "Self-Test Current Page Never Suggests Itself: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Linked Page Pin Is A Mention")]
+        public void SelfTestLinkedPagePinIsAMention()
+        {
+            bool ok = true;
+
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(g);
+
+            var pinned = MakePage(doc, g, "Ржавый Якорь");
+            var current = MakePage(doc, g, "Текущая страница");
+
+            // 📄-привязка БЕЗ единого инлайн-токена — единственный след этой страницы здесь и есть
+            // LinkedPageId, ровно как NotesDocOps.BlockReferencesPage её и считает.
+            var pinRow = NotesDocOps.NewBlock(BlockKind.Item, 1, "см. заметку");
+            pinRow.LinkedPageId = pinned.Id;
+            current.Blocks.Add(pinRow);
+
+            // Фикстура сначала доказывает себе, что «Упомянута в» вообще считает эту привязку
+            // упоминанием — иначе тест ничего бы не проверял (rule 1: два способа искать не должны
+            // расходиться, и здесь мы опираемся на то, что FindBacklinks — источник истины).
+            var backlinks = NotesDocOps.FindBacklinks(doc, pinned.Id);
+            if (backlinks.Count == 0)
+            { Debug.LogError("FAIL фикстуры: NotesDocOps.FindBacklinks не считает 📄-привязку упоминанием — тест ничего не докажет"); ok = false; }
+
+            // Мутант: обработка LinkedPageId удалена из MentionSuggest — пустой запрос не найдёт
+            // «Ржавый Якорь» вовсе, хотя «Упомянута в» её находит.
+            var result = MentionSuggest.Rank(doc, current, null, "", null, 5);
+            if (!result.Exists(c => c.Id == pinned.Id))
+            { Debug.LogError("FAIL: страница, привязанная через 📄 (LinkedPageId) без инлайн-токена, не попала в подсказки пустого запроса"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Linked Page Pin Is A Mention: PASS" : "Self-Test Linked Page Pin Is A Mention: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Linked Page And Inline Token Dedup To One")]
+        public void SelfTestLinkedPageAndInlineTokenDedupToOne()
+        {
+            bool ok = true;
+
+            var doc = new NotesDocument();
+            var g = new PageGroup { Title = "Сессии" };
+            doc.Groups.Add(g);
+
+            var target = MakePage(doc, g, "Тихая Гавань");
+            var current = MakePage(doc, g, "Текущая страница");
+
+            // ОДНА строка несёт ОБА механизма разом — 📄-привязку И инлайн-токен на ту же страницу.
+            var row = NotesDocOps.NewBlock(BlockKind.Item, 1,
+                "Заходит " + NotesLinkOps.MakeToken(NotesLinkOps.KindPage, target.Id, "Тихая Гавань") + ".");
+            row.LinkedPageId = target.Id;
+            current.Blocks.Add(row);
+
+            // Мутант: два механизма пишут в РАЗНЫЕ order/lastPos (например, TrackLinkedPage со своим
+            // отдельным списком вместо общего) — тогда вхождений станет 2 вместо 1.
+            var result = MentionSuggest.Rank(doc, current, null, "", null, 5);
+            int count = result.FindAll(c => c.Id == target.Id).Count;
+            if (count != 1)
+            { Debug.LogError($"FAIL: одна строка с 📄-привязкой И инлайн-токеном на ту же страницу дала {count.ToString(System.Globalization.CultureInfo.InvariantCulture)} вхождений в подсказках, хотели ровно 1"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Linked Page And Inline Token Dedup To One: PASS" : "Self-Test Linked Page And Inline Token Dedup To One: FAIL");
         }
 
         [ContextMenu("Self-Test: Non-Empty Query Finds World Object")]
