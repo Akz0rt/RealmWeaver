@@ -389,6 +389,11 @@ namespace WorldGen.Workspace.Rendering
                 // EVERY per-view wiring lives in this ONE hook, and it is assigned BEFORE
                 // SetSurfaceRegistry below — the first SyncSurfaces runs inside that call, so a hook attached
                 // afterwards would silently miss both views (see PageSurfaceHost.OnViewCreated's own doc).
+                //
+                // `pane` is currently read by nothing in here: Task 5 removed the last wiring that cared which
+                // pane a view was born in (the keyboard's `pane == 0` branch). It stays in the hook's
+                // signature because it is the hook's identity — which pane this view IS — and the next thing
+                // to need it (Task 6's per-pane board) will need exactly that.
                 pageHost.OnViewCreated = (pane, view) =>
                 {
                     // The «↗» button on an inline board. Opens in the OTHER pane, the same rule a clicked POI
