@@ -518,11 +518,24 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Ctrl+V while the pointer is over the portrait. Polled rather than event-driven, the
         /// same technique LinkDropTarget.Update uses to track a drag with no hover notification of its
         /// own — Mouse/Keyboard.current do not care which UI element has focus, so this has to ask
-        /// geometrically whether the pointer is over the portrait right now.</summary>
+        /// geometrically whether the pointer is over the portrait right now.
+        ///
+        /// ГЕОМЕТРИИ ОКАЗАЛОСЬ МАЛО (задача 6 арки «две страницы рядом»). «Указатель над портретом»
+        /// исключает только ДРУГИЕ шапки персонажей — у каждой свой прямоугольник, и они не
+        /// пересекаются, — но ничего не говорит про РАЗВЁРНУТУЮ ДОСКУ в соседней панели, которая ловит
+        /// тот же Ctrl+V по своему собственному правилу («клавиши принадлежат доске, в которую щёлкнули»).
+        /// Достижимо в две секунды: щёлкнуть в доску справа, навести указатель на портрет слева, нажать
+        /// Ctrl+V — и одно нажатие меняло бы портрет И вставляло картинку в доску. До этой арки состояние
+        /// было недостижимо (вторая панель ничего не рисовала), так что дыру открыла именно она.
+        ///
+        /// Поэтому к геометрии добавлен ФОКУС — тот же единственный источник (PageFocusRouter через
+        /// host.IsKeyboardTarget), которым уже пользуются Ctrl+F строки поиска и три клавиши доски.
+        /// Второй копии факта «чей фокус» не заведено, и непроведённый делегат по-прежнему значит «да».</summary>
         void Update()
         {
             if (!gameObject.activeInHierarchy || portraitRect == null || page == null) return;
-            if (host != null && host.KeyboardSuspended) return;   // Ctrl+K/Ctrl+F own the keys right now
+            // Ctrl+K/Ctrl+F own the keys right now — или их вообще забрала другая панель.
+            if (host != null && (host.KeyboardSuspended || !host.IsKeyboardTarget)) return;
 
             var keyboard = Keyboard.current;
             var mouse = Mouse.current;

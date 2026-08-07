@@ -743,8 +743,10 @@ namespace WorldGen.Notes.Rendering
         };
 
         /// <summary>Ctrl+V вставляет картинку из буфера — в ТУ доску, которой сейчас принадлежат клавиши
-        /// (гейт стоит у вызова, в Update), и в точку под УКАЗАТЕЛЕМ. Два разных вопроса намеренно: чья
-        /// клавиша — вопрос фокуса, куда лечь картинке — вопрос мыши.
+        /// (гейт стоит у вызова, в Update), и в точку под УКАЗАТЕЛЕМ, а если указатель не над этой доской —
+        /// в центр её вьюпорта. Два разных вопроса намеренно: чья клавиша — вопрос фокуса, куда лечь
+        /// картинке — вопрос мыши; запасной ответ нужен ровно потому, что второй вопрос может остаться без
+        /// ответа, когда на первый ответили щелчком.
         ///
         /// ОТДАННЫЙ СЛУЧАЙ, названный, чтобы его не считали дефектом: пока каретка в тексте страницы в одной
         /// панели, Ctrl+V с указателем над доской в другой не вставляет ничего (до задачи 6 доска была одна и
@@ -762,8 +764,26 @@ namespace WorldGen.Notes.Rendering
             var bytes = ClipboardImage.TryGetImageBytes();
             if (bytes == null) return;
 
+            // УКАЗАТЕЛЬ ВНЕ ДОСКИ — КЛАДЁМ В ЦЕНТР, а не туда, куда указывает экстраполяция. Раньше
+            // координата бралась от мыши безусловно, и это было безобидно ровно потому, что доска была
+            // одна и на весь экран. Задача 6 сама узаконила жест «щёлкнул в доску → Ctrl+V»: щёлкнуть
+            // можно и не двигая мышь дальше, а указатель при этом запросто остался над соседней панелью —
+            // ScreenToCanvasPoint честно посчитал бы точку далеко за краем холста, и картинка легла бы
+            // туда, где её не видно, пока ДМ не отпанорамирует. Центр вьюпорта — это «сюда, куда ты
+            // смотришь», и он всегда на экране.
             var screenPos = Mouse.current.position.ReadValue();
+            if (!IsOverViewport(screenPos)) screenPos = ViewportCenterScreenPoint();
             canvasController.AddImage(ScreenToCanvasPoint(screenPos), bytes);
+        }
+
+        /// <summary>Середина видимой части доски в экранных координатах. Через мировые углы, а не через
+        /// `position`: у вьюпорта может быть любой pivot, и `position` — это точка pivot'а, а не центр.</summary>
+        Vector2 ViewportCenterScreenPoint()
+        {
+            if (viewportRect == null) return Vector2.zero;
+            var corners = new Vector3[4];
+            viewportRect.GetWorldCorners(corners);
+            return RectTransformUtility.WorldToScreenPoint(uiCamera, (corners[0] + corners[2]) * 0.5f);
         }
 
         // ── Called by object views on click/drag, wired externally by NotesCanvasController's spawn sites ──
