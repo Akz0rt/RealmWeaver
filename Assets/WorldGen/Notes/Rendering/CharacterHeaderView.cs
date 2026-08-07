@@ -236,7 +236,12 @@ namespace WorldGen.Notes.Rendering
             labelText.font = font;
             labelText.fontSize = 12;
             labelText.text = Captions[i];
-            labelText.alignment = TextAnchor.UpperLeft;
+            // MiddleLeft, not UpperLeft — the DM asked the caption centred against the value's full
+            // height rather than pinned to its first line. Same idiom as PageFooterView.Label
+            // (PageFooterView.cs:201) and PageSearchBar's own labels (PageSearchBar.cs:308,320). The text
+            // component alone is not enough for this to show — see ApplyHeightNow, which now sizes the
+            // label's RECT to the row's full height so there is something to centre within.
+            labelText.alignment = TextAnchor.MiddleLeft;
             labelText.horizontalOverflow = HorizontalWrapMode.Overflow;
             labelText.raycastTarget = false;
             ThemeService.Tag(labelText, ThemeRole.Mut);
@@ -343,7 +348,15 @@ namespace WorldGen.Notes.Rendering
                     valueH = Mathf.Max(MinValueHeight, valueTexts[i].preferredHeight + FieldTextInset * 2f);
                 float rowH = Mathf.Max(LabelHeight, valueH);
 
-                FixedRow(labelRects[i], FieldsLeftX, y, LabelWidth, LabelHeight);
+                // The label's rect now spans the WHOLE row (rowH), not just LabelHeight — MiddleLeft
+                // alignment on the Text component centres within whatever box it is given, and a box
+                // pinned at LabelHeight (one line, top of the row) would leave the caption looking
+                // unchanged no matter what alignment is set. LabelHeight itself still only sets the
+                // row's MINIMUM height a line below (Mathf.Max above) — this does not feed back into
+                // rowH, so the height ApplyHeightNow hands to `element.preferredHeight` is unchanged by
+                // this edit; only where the label's own rect sits within that height changes. The value
+                // field keeps StretchRow untouched — top-aligned text, growing downward, as before.
+                FixedRow(labelRects[i], FieldsLeftX, y, LabelWidth, rowH);
                 StretchRow(valueRects[i], FieldsLeftX + LabelWidth + LabelValueGap, y, rowH);
 
                 y += rowH;
