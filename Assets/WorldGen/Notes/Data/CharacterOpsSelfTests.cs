@@ -71,5 +71,114 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Copy Null Card: PASS" : "Self-Test Copy Null Card: FAIL");
         }
+
+        [ContextMenu("Self-Test: Group Found By Flag Not Title")]
+        public void SelfTestGroupFoundByFlagNotTitle()
+        {
+            bool ok = true;
+
+            // Мутант: EnsureCharactersGroup ищет группу по названию, а не по флагу.
+            var doc = new NotesDocument();
+            var renamed = new PageGroup { Title = "Мои люди", IsCharacters = true };
+            doc.Groups.Add(renamed);
+
+            var found = CharacterOps.EnsureCharactersGroup(doc);
+            if (!ReferenceEquals(found, renamed))
+            { Debug.LogError("FAIL: переименованная группа персонажей не найдена"); ok = false; }
+            if (doc.Groups.Count != 1)
+            { Debug.LogError("FAIL: заведена вторая группа персонажей"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Group Found By Flag Not Title: PASS" : "Self-Test Group Found By Flag Not Title: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Group Created When Missing")]
+        public void SelfTestGroupCreatedWhenMissing()
+        {
+            bool ok = true;
+
+            // Мутант: EnsureCharactersGroup не помечает созданную группу флагом.
+            var doc = new NotesDocument();
+            var g = CharacterOps.EnsureCharactersGroup(doc);
+            if (g == null || !g.IsCharacters)
+            { Debug.LogError("FAIL: созданная группа не помечена флагом"); ok = false; }
+            if (g.Title != CharacterOps.CharactersGroupTitle)
+            { Debug.LogError("FAIL: у созданной группы чужое название"); ok = false; }
+            if (doc.Groups.Count != 1 || !ReferenceEquals(doc.Groups[0], g))
+            { Debug.LogError("FAIL: группа не добавлена в документ"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Group Created When Missing: PASS" : "Self-Test Group Created When Missing: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Create Character Files Into Group With Card")]
+        public void SelfTestCreateCharacterFilesIntoGroupWithCard()
+        {
+            bool ok = true;
+
+            // Мутант: CreateCharacter кладёт страницу без карточки (тогда она не попадёт в раздел).
+            var doc = new NotesDocument();
+            var page = CharacterOps.CreateCharacter(doc, "Ольга Медная");
+            if (page == null)
+            { Debug.LogError("FAIL: страница не создана"); ok = false; }
+            else
+            {
+                if (page.Name != "Ольга Медная")
+                { Debug.LogError($"FAIL: имя не проставлено ({page.Name})"); ok = false; }
+                if (!CharacterOps.IsCharacter(page))
+                { Debug.LogError("FAIL: у созданного персонажа нет карточки"); ok = false; }
+
+                var group = CharacterOps.EnsureCharactersGroup(doc);
+                if (group.Pages.Count != 1 || !ReferenceEquals(group.Pages[0], page))
+                { Debug.LogError("FAIL: страница не легла в группу персонажей"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Create Character Files Into Group With Card: PASS" : "Self-Test Create Character Files Into Group With Card: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Make Character Keeps Existing Card")]
+        public void SelfTestMakeCharacterKeepsExistingCard()
+        {
+            bool ok = true;
+
+            // Мутант: MakeCharacter затирает уже существующую карточку.
+            // Фикстура: у страницы УЖЕ есть заполненная карточка — правило «создать пустую» и правило
+            // «не трогать имеющуюся» здесь расходятся.
+            var page = new NotesPage { Character = new CharacterCard { Who = "кузнец" } };
+            if (CharacterOps.MakeCharacter(page))
+            { Debug.LogError("FAIL: назначение сообщило об изменении, хотя карточка была"); ok = false; }
+            if (page.Character.Who != "кузнец")
+            { Debug.LogError($"FAIL: имеющаяся карточка затёрта ({page.Character.Who})"); ok = false; }
+
+            var plain = new NotesPage();
+            if (!CharacterOps.MakeCharacter(plain))
+            { Debug.LogError("FAIL: назначение не сообщило об изменении"); ok = false; }
+            if (!CharacterOps.IsCharacter(plain))
+            { Debug.LogError("FAIL: карточка не появилась"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Make Character Keeps Existing Card: PASS" : "Self-Test Make Character Keeps Existing Card: FAIL");
+        }
+
+        [ContextMenu("Self-Test: Remove Card Keeps Page")]
+        public void SelfTestRemoveCardKeepsPage()
+        {
+            bool ok = true;
+
+            // Мутант: RemoveCard удаляет страницу целиком, а не только карточку.
+            var doc = new NotesDocument();
+            var page = CharacterOps.CreateCharacter(doc, "Ольга Медная");
+            page.Blocks.Add(NotesDocOps.NewBlock(BlockKind.Prose, 1, "живёт у пристани"));
+
+            if (!CharacterOps.RemoveCard(page))
+            { Debug.LogError("FAIL: снятие не сообщило об изменении"); ok = false; }
+            if (CharacterOps.IsCharacter(page))
+            { Debug.LogError("FAIL: карточка осталась"); ok = false; }
+            if (page.Blocks.Count != 1 || page.Blocks[0].Text != "живёт у пристани")
+            { Debug.LogError("FAIL: снятие карточки потеряло текст страницы"); ok = false; }
+            if (CharacterOps.EnsureCharactersGroup(doc).Pages.Count != 1)
+            { Debug.LogError("FAIL: страница исчезла из группы"); ok = false; }
+            if (CharacterOps.RemoveCard(page))
+            { Debug.LogError("FAIL: повторное снятие сообщило об изменении"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Remove Card Keeps Page: PASS" : "Self-Test Remove Card Keeps Page: FAIL");
+        }
     }
 }
