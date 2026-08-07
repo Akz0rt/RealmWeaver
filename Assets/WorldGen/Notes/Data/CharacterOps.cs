@@ -15,11 +15,14 @@ namespace WorldGen.Notes.Data
         /// всегда false, а не null: «не удалось узнать» и «точно не персонаж» тут неразличимы для
         /// отрисовки и не должны различаться в сигнатуре.
         ///
-        /// ИДЁТ В ТОТ ЖЕ ДОКУМЕНТ, ЧТО И ИМЯ. NotesDocOps.FindPage — та же функция, которой
-        /// DocumentPageView.ResolveName уже ищет страницу по id, чтобы узнать её текущее ИМЯ. Новый,
-        /// отдельно написанный обход doc.Groups здесь был бы вторым путём к документу — а значит и
-        /// вторым местом, которое пришлось бы держать в согласии с первым при следующем изменении формы
-        /// NotesDocument.</summary>
+        /// ИДЁТ В ТОТ ЖЕ ДОКУМЕНТ, НО НЕ ТЕМ ЖЕ ПУТЁМ, ЧТО ИМЯ — ПОПРАВКА К БОЛЕЕ РАННЕЙ ВЕРСИИ ЭТОГО
+        /// КОММЕНТАРИЯ, которая ошибочно утверждала обратное. DocumentPageView.ResolveName ищет имя
+        /// страницы через QuickOpen.ResolverFor (QuickOpen.cs:316-334), а тот для kind=="page" несёт
+        /// СВОЙ СОБСТВЕННЫЙ обход doc.Groups/g.Pages — FindPage он не вызывает и никогда не вызывал.
+        /// NotesDocOps.FindPage взят здесь не потому, что им уже пользуется ResolveName, а потому что
+        /// это уже существующий публичный поиск страницы по id (NotesDocOps.cs:55), которым уже
+        /// пользуется, например, MapScreenController — так что это переиспользование готового поиска,
+        /// а не третий, отдельно написанный обход doc.Groups.</summary>
         public static bool IsCharacterLink(NotesDocument doc, string kind, string id)
             => kind == NotesLinkOps.KindPage && IsCharacter(NotesDocOps.FindPage(doc, id));
 

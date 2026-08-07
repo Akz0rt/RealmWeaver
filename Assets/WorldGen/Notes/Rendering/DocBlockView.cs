@@ -189,7 +189,7 @@ namespace WorldGen.Notes.Rendering
         public static float IndentFor(int depth) => IndentBase + Mathf.Max(0, depth) * IndentPerLevel;
 
         public void Initialize(DocBlock block, RectTransform parent, Font font, NotesLinkOps.NameResolver resolve,
-            System.Func<string, string, bool> isCharacterLink = null)
+            System.Func<string, string, bool> isCharacterLink)
         {
             data = block;
             Resolver = resolve;
@@ -971,7 +971,10 @@ namespace WorldGen.Notes.Rendering
             // end inside it, or contain the whole link. A walk that owned one set and spliced the other into
             // it would have to reason about every one of those cases. Collecting both as boundary markers and
             // sorting them does not: TMP keeps a separate stack per tag type, so `<mark>` opened inside a
-            // `<link>` and closed after it is read exactly as written.
+            // `<link>` and closed after it is read exactly as written — for `<mark>` VERSUS `<link>`/`<color>`,
+            // which are different tag types with their own stacks. `<mark>` versus `<mark>` is a different
+            // story — see IsCharacterPlateSuppressedByHit below, right where the character plate's own `<mark>`
+            // is decided.
             insertions.Clear();
 
             foreach (var span in d.Spans)
@@ -990,7 +993,11 @@ namespace WorldGen.Notes.Rendering
                     // count TMP hit-tests a link's range by (TMP_Text.cs's linkTextLength is a character-count
                     // difference), so nesting <mark> here changes nothing FindIntersectingLink or the index map
                     // (DisplayText.ToSource/ToDisplay, built from DisplayStart/DisplayLength alone) can see.
-                    bool isCharacter = IsCharacterLink != null && IsCharacterLink(span.Kind, span.Id);
+                    //
+                    // SUPPRESSED WHEN A SEARCH HIT TOUCHES THIS SPAN — see IsCharacterPlateSuppressedByHit's
+                    // own doc for why, and for the rule chosen and its cost.
+                    bool isCharacter = IsCharacterLink != null && IsCharacterLink(span.Kind, span.Id)
+                        && !IsCharacterPlateSuppressedByHit(span.DisplayStart, end);
                     string open = "<link=\"" + span.Kind + ":" + span.Id + "\">";
                     string close;
                     if (isCharacter)
@@ -1049,6 +1056,42 @@ namespace WorldGen.Notes.Rendering
             }
             sb.Append(d.Text, copied, d.Text.Length - copied);
             return sb.ToString();
+        }
+
+        /// <summary>Whether a search hit overlaps [start, end) closely enough that drawing the character
+        /// plate there would be unsafe — see the review finding this exists to fix.
+        ///
+        /// THE HAZARD: the plate and a search-hit highlight are both `&lt;mark&gt;`. TMP keeps exactly ONE
+        /// stack for that tag (HighlightStateStack, and its Remove() pops the top with no tag matching) —
+        /// so two PROPERLY NESTED `&lt;mark&gt;` ranges are safe, but two that only PARTIALLY overlap
+        /// ("start before it and end inside it") open-open-close-close instead of open-close-open-close,
+        /// and the second close pops the wrong range. A DM's search term landing partway across a
+        /// character's name is exactly that case, and it is reachable the instant they search.
+        ///
+        /// THE RULE CHOSEN: the search highlight wins outright. Rather than split the plate's own `&lt;mark&gt;`
+        /// into the sub-ranges the hit does not cover — which would need the same interval-splitting logic
+        /// twice, once for each direction a hit can lean into a span — a span with ANY overlapping hit
+        /// simply gets no plate `&lt;mark&gt;` at all this render. The `&lt;link&gt;`/`&lt;color&gt;` wrapping is
+        /// untouched either way (different stack, see the comment above the insertions loop), so the name
+        /// still reads and still opens on click.
+        ///
+        /// THE COST, STATED RATHER THAN DISCOVERED LATER: a character's plate blinks off for exactly the
+        /// rows/frames where the DM's current search overlaps its name, and returns the moment the hit
+        /// moves on or the search is cleared. Narrower and cheaper than getting interval splitting wrong.</summary>
+        bool IsCharacterPlateSuppressedByHit(int start, int end)
+        {
+            if (searchHits == null) return false;
+            foreach (var hit in searchHits)
+            {
+                if (hit == null || hit.Length <= 0) continue;
+                int hitStart = hit.DisplayStart;
+                int hitEnd = hitStart + hit.Length;
+                // Half-open interval overlap: [start, end) meets [hitStart, hitEnd) iff each starts before
+                // the other ends. Touching at a boundary (hitEnd == start or hitStart == end) is NOT an
+                // overlap — adjacent ranges never cross, only ones that share an interior point do.
+                if (hitStart < end && start < hitEnd) return true;
+            }
+            return false;
         }
 
         /// <summary>Scratch for BuildMarkup. NOT a field initializer for the usual reason — a domain reload

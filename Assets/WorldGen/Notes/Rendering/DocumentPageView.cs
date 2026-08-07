@@ -585,8 +585,12 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>Whether a [[kind:id]] token's target carries a character card, so DocBlockView can draw it
         /// as a plate instead of a plain link (Task 9). Reads THE SAME documentController.Document ResolveName
-        /// already reaches — CharacterOps.IsCharacterLink walks it via NotesDocOps.FindPage, the one lookup
-        /// ResolveName itself is built on, rather than a second hand-rolled walk over doc.Groups here.</summary>
+        /// already reaches — but NOT through the same lookup. ResolveName goes through QuickOpen.ResolverFor
+        /// (QuickOpen.cs:316-334), which for "page" hand-rolls its own doc.Groups/g.Pages walk rather than
+        /// calling NotesDocOps.FindPage; CharacterOps.IsCharacterLink calls FindPage directly, because that is
+        /// the existing canonical id→page lookup (already used elsewhere, e.g. MapScreenController), not
+        /// because it is the one ResolveName happens to use. Either way this is the SAME document object, so
+        /// the two answers about the same token can never disagree about which page they mean.</summary>
         bool IsCharacterLink(string kind, string id)
             => CharacterOps.IsCharacterLink(documentController != null ? documentController.Document : null, kind, id);
 
