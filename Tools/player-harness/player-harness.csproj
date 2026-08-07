@@ -1,0 +1,42 @@
+<!--
+  Offline (non-Unity) harness for the player-facing rules data layer (player-prep И1).
+
+  It compiles the REAL Unity sources (copied verbatim into gen/ by sync.ps1) against the ~40-line
+  UnityEngine stub notes-harness/f2-harness use, so every PASS/FAIL it prints comes from the shipped
+  code rather than a paraphrase. WorldGen.PlayerPrep.Data is pure C# with no UnityEngine dependency
+  beyond Debug/MonoBehaviour/ContextMenu, so the whole suite runs here — no Editor, no scene, no
+  Library import.
+
+  UNLIKE notes-harness, this project references the REAL Newtonsoft.Json package instead of the
+  stub: the rules JSON and the character file are parsed for real here, otherwise the parsing
+  self-tests would be theatre. Do NOT copy NewtonsoftStub.cs from notes-harness/stubs — it would
+  fight the real package (two definitions of the same types).
+
+  Deliberately a SEPARATE harness from Tools/notes-harness and Tools/f2-harness: each syncs its own
+  source directories and must not be edited concurrently with another arc's harness.
+
+  Usage (from this directory):
+      powershell -File sync.ps1
+      dotnet run -c Release [SEP] selftests    runs every RulesIntegrity self-test
+  where [SEP] is the two-dash argument separator (XML comments cannot contain it).
+  Run it from bash, not PowerShell — PowerShell 5.1 swallows the separator.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>playerharness</AssemblyName>
+    <RootNamespace>PlayerHarness</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0169;CS0649;CS0162;CS0219</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="gen/*.cs" />
+    <Compile Include="stubs/*.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

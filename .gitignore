@@ -70,3 +70,10 @@ crashlytics-build.properties
 /Tools/notes-harness/bin/
 /Tools/notes-harness/obj/
 /Tools/notes-harness/gen/
+
+# Tools/player-harness — the same arrangement for the player-prep rules data layer (player-prep И1).
+# Separate sync.ps1/gen from the other two harnesses for the same reason: one instrument per arc.
+!/Tools/player-harness/*.csproj
+/Tools/player-harness/bin/
+/Tools/player-harness/obj/
+/Tools/player-harness/gen/
