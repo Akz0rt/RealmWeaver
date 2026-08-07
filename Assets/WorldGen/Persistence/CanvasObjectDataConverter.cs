@@ -50,6 +50,11 @@ namespace WorldGen.Persistence
                     obj["PixelDataPng"] = drawing.PixelDataPng != null ? JToken.FromObject(drawing.PixelDataPng) : JValue.CreateNull();
                     obj["PixelWidth"] = drawing.PixelWidth;
                     obj["PixelHeight"] = drawing.PixelHeight;
+                    // Stroke/StrokePoint — обычные типы без полиморфизма (ни один не совпадает с
+                    // CanvasObjectData), поэтому FromObject безопасен: та же причина, по которой он
+                    // уже используется выше для byte[].
+                    obj["Strokes"] = JToken.FromObject(drawing.Strokes ?? new System.Collections.Generic.List<Stroke>());
+                    obj["PaperIndex"] = drawing.PaperIndex;
                     break;
             }
 
@@ -91,7 +96,15 @@ namespace WorldGen.Persistence
                     {
                         PixelDataPng = obj["PixelDataPng"] != null && obj["PixelDataPng"].Type != JTokenType.Null
                             ? obj["PixelDataPng"].ToObject<byte[]>()
-                            : null
+                            : null,
+                        // Отсутствующий ключ — унаследованный слой (файл до формата 16): пустой
+                        // список, а НЕ null, потому что DrawingObjectData.Strokes рассчитан на
+                        // непустую коллекцию (растеризатор следующей задачи прошёлся бы по null).
+                        Strokes = obj["Strokes"] != null && obj["Strokes"].Type != JTokenType.Null
+                            ? obj["Strokes"].ToObject<System.Collections.Generic.List<Stroke>>()
+                            : new System.Collections.Generic.List<Stroke>(),
+                        // Отсутствующий ключ читается как 0 — белый лист, сегодняшний вид.
+                        PaperIndex = obj["PaperIndex"]?.Value<int>() ?? 0
                     };
                     break;
                 }

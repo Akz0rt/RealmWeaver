@@ -338,7 +338,11 @@ namespace WorldGen.Notes.Rendering
         {
             if (block == null) return null;
             BeforeMutation?.Invoke();
-            var data = new DrawingObjectData(pixelWidth, pixelHeight) { Position = position };
+            var data = new DrawingObjectData(pixelWidth, pixelHeight)
+            {
+                Position = position,
+                PaperIndex = NotesUserPrefs.PaperIndex,
+            };
             Objects.Add(data);
             SpawnView(data);
             AfterMutation?.Invoke();

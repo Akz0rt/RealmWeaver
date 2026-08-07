@@ -148,6 +148,35 @@ namespace WorldGen.Notes.Data
             Done(ok);
         }
 
+        /// <summary>Подтверждение уже активного инструмента НЕ бросает мазок, а настоящая смена —
+        /// бросает. Жалоба ДМ дословно: второй тычок быстрой пары пропадал, потому что
+        /// EnterDrawingEditMode звал SetTool(Drawing), даже когда «Рисунок» уже был активен, и SetTool
+        /// бросал мазок безусловно. Убивает мутанта «ShouldAbandonStroke всегда возвращает true» —
+        /// то самое сегодняшнее поведение, из-за которого дефект и существует.</summary>
+        [ContextMenu("Self-Test: мазок бросают только при настоящей смене инструмента")]
+        public void SelfTestStrokeAbandonedOnlyOnRealToolChange()
+        {
+            bool ok = true;
+
+            bool sameTool = CanvasToolOps.ShouldAbandonStroke(CanvasToolKind.Drawing, CanvasToolKind.Drawing);
+            if (sameTool)
+            {
+                Debug.LogError("FAIL подтверждение того же инструмента («Рисунок» → «Рисунок») бросает мазок — " +
+                               "это и есть баг «пропадает второй тычок быстрой пары»");
+                ok = false;
+            }
+
+            bool realChange = CanvasToolOps.ShouldAbandonStroke(CanvasToolKind.Drawing, CanvasToolKind.Select);
+            if (!realChange)
+            {
+                Debug.LogError("FAIL настоящая смена инструмента («Рисунок» → «Курсор») не бросает мазок — " +
+                               "это сломало бы Esc посреди мазка и «клик мимо» привязанного рисунка");
+                ok = false;
+            }
+
+            Done(ok);
+        }
+
         /// <summary>«Курсор» и «Лупа» не вставляют и не рисуют ничего — их ветки остаются во вью.
         /// Убивает мутанта «пропустить Select в switch» (провал в ветку Drawing по умолчанию), при
         /// котором обычное выделение начало бы создавать рисунки.</summary>

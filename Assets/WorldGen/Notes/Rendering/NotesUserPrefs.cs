@@ -19,6 +19,7 @@ namespace WorldGen.Notes.Rendering
         const string BrushWidthKey = "notes.brush.width";
         const string CardFrameKey  = "notes.card.frame";
         const string CardFontKey   = "notes.card.font";
+        const string PaperKey      = "notes.paper.tone";
 
         /// <summary>Карандаш по умолчанию — чернильный, тот же почти чёрный, каким доска рисовала до
         /// этого арка.</summary>
@@ -45,6 +46,14 @@ namespace WorldGen.Notes.Rendering
         {
             get => (CardFontSize)PlayerPrefs.GetInt(CardFontKey, (int)CardFontSize.Medium);
             set { PlayerPrefs.SetInt(CardFontKey, (int)value); PlayerPrefs.Save(); }
+        }
+
+        /// <summary>Тон листа по умолчанию — белый: первый запуск обязан дать рисунок прежнего вида,
+        /// то же соглашение, что у рамки карточки.</summary>
+        public static int PaperIndex
+        {
+            get => PlayerPrefs.GetInt(PaperKey, PaperPalette.WhiteIndex);
+            set { PlayerPrefs.SetInt(PaperKey, value); PlayerPrefs.Save(); }
         }
     }
 }

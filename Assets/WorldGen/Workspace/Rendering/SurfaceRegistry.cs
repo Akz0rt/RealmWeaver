@@ -334,6 +334,12 @@ namespace WorldGen.Workspace.Rendering
             var propertyBar = rootGO.AddComponent<CardPropertyBar>();
             propertyBar.Initialize(interaction, canvasController, root);
             interaction.RegisterChrome(propertyBar.RowRect);
+
+            // Полоска рисунка. Обе показываются по выделению и никогда одновременно — вид объекта
+            // ровно один, — поэтому они не спорят за место над объектом.
+            var paperBar = rootGO.AddComponent<DrawingPropertyBar>();
+            paperBar.Initialize(interaction, canvasController, root);
+            interaction.RegisterChrome(paperBar.RowRect);
         }
     }
 

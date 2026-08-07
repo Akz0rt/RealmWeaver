@@ -155,6 +155,18 @@ namespace WorldGen.Notes.Rendering
             interactionController.CommitResize(hostObjectId,
                 new System.Numerics.Vector2(dragStartPosition.x, dragStartPosition.y),
                 new System.Numerics.Vector2(dragStartSize.x, dragStartSize.y));
+
+            // ПОКА ТЯНУТ — НИЧЕГО НЕ ПЕРЕПЕЧАТЫВАЕТСЯ: старая текстура рисунка просто растягивается,
+            // как и раньше (мазки хранятся в долях прямоугольника, поэтому содержимое остаётся
+            // правильным, просто мутнеет). Перепечатка в новом разрешении — только здесь, на
+            // отпускании, ПОСЛЕ CommitResize, когда data.Size уже окончательный: ChooseSize внутри
+            // Rebake() иначе выбрал бы прежнее разрешение, и правка выглядела бы сделанной, а рисунок
+            // остался бы мутным. Тот же приём Fast/Clean, что уже проверен на маршрутизации коридоров
+            // подземелья (RoomLinkGeometry) — перепечатывать все мазки и пересоздавать текстуру
+            // шестьдесят раз в секунду прямо во время перетаскивания было бы расточительно.
+            // Безопасное приведение типа: у карточек и картинок Rebake() нет, для них тут просто
+            // ничего не происходит.
+            (interactionController.canvasController.GetView(hostObjectId) as DrawingObjectView)?.Rebake();
         }
 
         /// <summary>Pure geometry: given which corner is being dragged, the opposite (fixed)

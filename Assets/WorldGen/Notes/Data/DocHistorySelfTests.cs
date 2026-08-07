@@ -297,5 +297,30 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Redo Restores Character Card: PASS" : "Self-Test Redo Restores Character Card: FAIL");
         }
+
+        [ContextMenu("Self-Test: Отмена — мазки и лист рисунка переживают снимок")]
+        public void SelfTestDrawingStrokesDeepCopy()
+        {
+            var drawing = new DrawingObjectData(256, 256) { Id = "рис-1", PaperIndex = 3 };
+            drawing.Strokes.Add(new Stroke { InkIndex = 5, Points = { new StrokePoint(0.1f, 0.2f, 0.03f) } });
+            // DocBlock.CanvasObjects начинается пустым, а не готовым списком — коллекцию строим явно,
+            // а не через `CanvasObjects = { drawing }`, которое упало бы NullReferenceException.
+            var block = NotesDocOps.NewBlock(BlockKind.Canvas, 0);
+            block.CanvasObjects = new List<CanvasObjectData> { drawing };
+
+            var copy = DocHistory.Copy(new List<DocBlock> { block });
+            var copied = copy[0].CanvasObjects[0] as DrawingObjectData;
+
+            // ФИКСТУРА РАЗВОДИТ ПРАВИЛО И ПОДДЕЛКУ: список должен быть ДРУГИМ объектом с ТЕМ ЖЕ
+            // содержимым. Общий список прошёл бы проверку на содержимое и провалил бы отмену.
+            bool okStrokes = copied != null
+                   && copied.PaperIndex == 3
+                   && copied.Strokes.Count == 1
+                   && copied.Strokes[0].InkIndex == 5
+                   && copied.Strokes[0].Points[0].W == 0.03f
+                   && !ReferenceEquals(copied.Strokes, drawing.Strokes);
+            if (!okStrokes) Debug.LogError("FAIL копия рисунка: мазки или лист потеряны, либо список общий с оригиналом");
+            Debug.Log(okStrokes ? "Self-Test Drawing Strokes Deep Copy: PASS" : "Self-Test Drawing Strokes Deep Copy: FAIL");
+        }
     }
 }
