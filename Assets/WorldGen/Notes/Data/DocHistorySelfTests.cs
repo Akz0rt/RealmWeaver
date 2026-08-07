@@ -33,10 +33,10 @@ namespace WorldGen.Notes.Data
             { Debug.LogError("FAIL: a fresh history must offer neither undo nor redo"); ok = false; }
 
             // One step: remember, then change.
-            history.Push(blocks, itemId, 3);
+            history.Push(blocks, null, itemId, 3);
             blocks[1].Text = "Ольга ушла";
 
-            var back = history.Undo(blocks, itemId, 10);
+            var back = history.Undo(blocks, null, itemId, 10);
             if (back == null || back.Blocks.Count != 2 || back.Blocks[1].Text != "Ольга ждёт у ворот")
             { Debug.LogError($"FAIL: undo gave \"{(back != null && back.Blocks.Count > 1 ? back.Blocks[1].Text : "—")}\", want the text as it was before the change"); ok = false; }
 
@@ -51,7 +51,7 @@ namespace WorldGen.Notes.Data
             { Debug.LogError($"FAIL: undo restored focus {back.FocusId}/{back.Caret}, want {itemId}/3"); ok = false; }
 
             // Redo returns the state undo was called FROM — including its caret, which was 10 there.
-            var forward = history.Redo(back != null ? back.Blocks : blocks, back != null ? back.FocusId : null, back != null ? back.Caret : -1);
+            var forward = history.Redo(back != null ? back.Blocks : blocks, null, back != null ? back.FocusId : null, back != null ? back.Caret : -1);
             if (forward == null || forward.Blocks.Count != 2 || forward.Blocks[1].Text != "Ольга ушла")
             { Debug.LogError($"FAIL: redo gave \"{(forward != null && forward.Blocks.Count > 1 ? forward.Blocks[1].Text : "—")}\", want the state undo left"); ok = false; }
             if (forward != null && (forward.FocusId != itemId || forward.Caret != 10))
@@ -62,27 +62,27 @@ namespace WorldGen.Notes.Data
             // A NEW CHANGE ENDS THE FUTURE. Undo, then type: the redo described a document that no longer
             // exists, and offering it would restore text the DM has since replaced.
             var h2 = new DocHistory();
-            h2.Push(blocks, itemId, 0);
-            var undone = h2.Undo(blocks, itemId, 0);
+            h2.Push(blocks, null, itemId, 0);
+            var undone = h2.Undo(blocks, null, itemId, 0);
             if (!h2.CanRedo)
             { Debug.LogError("FAIL: after an undo there must be something to redo"); ok = false; }
-            h2.Push(undone != null ? undone.Blocks : blocks, itemId, 0);
+            h2.Push(undone != null ? undone.Blocks : blocks, null, itemId, 0);
             if (h2.CanRedo)
             { Debug.LogError("FAIL: a new change must drop the redo future"); ok = false; }
 
             // Nothing to go back to is null, not an exception and not an empty snapshot that would blank the
             // page — the caller shows a disabled button from CanUndo and never acts on a null.
             var empty = new DocHistory();
-            if (empty.Undo(blocks, itemId, 0) != null || empty.Redo(blocks, itemId, 0) != null)
+            if (empty.Undo(blocks, null, itemId, 0) != null || empty.Redo(blocks, null, itemId, 0) != null)
             { Debug.LogError("FAIL: undo/redo on an empty history must give null"); ok = false; }
 
             // THE COPY IS DEEP. The live list keeps being edited after a Push, and a shallow copy would let
             // those edits reach into the remembered state — an undo that restores what it was asked to undo.
             var h3 = new DocHistory();
-            h3.Push(blocks, itemId, 0);
+            h3.Push(blocks, null, itemId, 0);
             blocks[1].Text = "изменено после снимка";
             blocks.Add(NotesDocOps.NewBlock(BlockKind.Item, 1));
-            var snap = h3.Undo(blocks, itemId, 0);
+            var snap = h3.Undo(blocks, null, itemId, 0);
             if (snap == null || snap.Blocks.Count != 2 || snap.Blocks[1].Text != "Ольга ушла")
             { Debug.LogError($"FAIL: the snapshot followed the live list ({(snap != null ? snap.Blocks.Count : -1)} blocks)"); ok = false; }
 
@@ -112,9 +112,9 @@ namespace WorldGen.Notes.Data
             for (int i = 0; i <= DocHistory.MaxEntries + 5; i++)
             {
                 one[0].Text = $"шаг {i}";
-                h4.Push(one, one[0].Id, 0);
+                h4.Push(one, null, one[0].Id, 0);
             }
-            var oldest = h4.Undo(one, one[0].Id, 0);
+            var oldest = h4.Undo(one, null, one[0].Id, 0);
             if (!h4.CanUndo || oldest == null || oldest.Blocks[0].Text != $"шаг {DocHistory.MaxEntries + 5}")
             { Debug.LogError($"FAIL: past the cap, undo gave \"{(oldest != null ? oldest.Blocks[0].Text : "—")}\" — the NEWEST step must still be the first one back"); ok = false; }
 
@@ -126,7 +126,7 @@ namespace WorldGen.Notes.Data
 
             // Null lists are ordinary inputs, not crashes: the page can be asked to remember before one is set.
             var h5 = new DocHistory();
-            h5.Push(null, null, 0);
+            h5.Push(null, null, null, 0);
             if (h5.CanUndo)
             { Debug.LogError("FAIL: pushing a null list must remember nothing"); ok = false; }
             if (DocHistory.Copy(null).Count != 0)
@@ -226,6 +226,76 @@ namespace WorldGen.Notes.Data
             bool ok = copied != null && copied.FrameColorIndex == 5 && copied.FontSize == CardFontSize.Large;
             if (!ok) Debug.LogError($"FAIL стиль в копии: индекс {copied?.FrameColorIndex}, кегль {copied?.FontSize}, ожидались 5 и Large — иначе отмена вернёт карточку обесцвеченной");
             Debug.Log(ok ? "Self-Test Card Style Survives Copy: PASS" : "Self-Test Card Style Survives Copy: FAIL");
+        }
+
+        /// <summary>Мутант: карточка кладётся в снимок ССЫЛКОЙ — тогда отмена «срабатывает», а текст
+        /// остаётся новым.</summary>
+        [ContextMenu("Self-Test: История — отмена восстанавливает карточку персонажа")]
+        public void SelfTestUndoRestoresCharacterCard()
+        {
+            var history = new DocHistory();
+            var blocks = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Prose, 1, "текст") };
+            var card = new CharacterCard { Who = "кузнец", Wants = "выкупить долг" };
+
+            history.Push(blocks, card, null, -1);
+
+            // ДМ правит шапку ПОСЛЕ снимка, правкой того же экземпляра — как это делает поле ввода.
+            card.Wants = "уплыть из города";
+
+            var snapshot = history.Undo(blocks, card, null, -1);
+            bool ok = true;
+            if (snapshot == null) { Debug.LogError("FAIL: отмена ничего не вернула"); ok = false; }
+            else if (snapshot.Character == null) { Debug.LogError("FAIL: снимок не несёт карточку"); ok = false; }
+            else if (snapshot.Character.Wants != "выкупить долг")
+            { Debug.LogError("FAIL: снимок протёк: в нём «" + snapshot.Character.Wants + "»"); ok = false; }
+            else if (snapshot.Character.Who != "кузнец") { Debug.LogError("FAIL: снимок потерял поле Who"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Undo Restores Character Card: PASS" : "Self-Test Undo Restores Character Card: FAIL");
+        }
+
+        /// <summary>Мутант: отмена у обычной страницы падает или подсовывает пустую карточку.</summary>
+        [ContextMenu("Self-Test: История — отмена обычной страницы не заводит карточку")]
+        public void SelfTestUndoOnPlainPageKeepsNullCard()
+        {
+            var history = new DocHistory();
+            var blocks = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Prose, 1, "было") };
+            history.Push(blocks, null, null, -1);
+
+            var after = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Prose, 1, "стало") };
+            var snapshot = history.Undo(after, null, null, -1);
+            bool ok = true;
+            if (snapshot == null) { Debug.LogError("FAIL: отмена ничего не вернула"); ok = false; }
+            else if (snapshot.Character != null) { Debug.LogError("FAIL: у обычной страницы появилась карточка"); ok = false; }
+            else if (snapshot.Blocks.Count != 1 || snapshot.Blocks[0].Text != "было")
+            { Debug.LogError("FAIL: строки не восстановились"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Undo On Plain Page Keeps Null Card: PASS" : "Self-Test Undo On Plain Page Keeps Null Card: FAIL");
+        }
+
+        /// <summary>Мутант: повтор (Redo) теряет карточку.</summary>
+        [ContextMenu("Self-Test: История — повтор восстанавливает карточку персонажа")]
+        public void SelfTestRedoRestoresCharacterCard()
+        {
+            var history = new DocHistory();
+            var blocks = new List<DocBlock> { NotesDocOps.NewBlock(BlockKind.Prose, 1, "текст") };
+            var before = new CharacterCard { Who = "кузнец" };
+            history.Push(blocks, before, null, -1);
+
+            var after = new CharacterCard { Who = "трактирщик" };
+            var undone = history.Undo(blocks, after, null, -1);
+            bool ok = true;
+            if (undone == null || undone.Character == null || undone.Character.Who != "кузнец")
+            { Debug.LogError("FAIL: отмена вернула не ту карточку"); ok = false; }
+
+            if (ok)
+            {
+                var redone = history.Redo(blocks, undone.Character, null, -1);
+                if (redone == null || redone.Character == null) { Debug.LogError("FAIL: повтор потерял карточку"); ok = false; }
+                else if (redone.Character.Who != "трактирщик")
+                { Debug.LogError("FAIL: повтор вернул «" + redone.Character.Who + "» вместо «трактирщик»"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Redo Restores Character Card: PASS" : "Self-Test Redo Restores Character Card: FAIL");
         }
     }
 }

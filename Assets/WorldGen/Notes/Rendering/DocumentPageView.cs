@@ -180,7 +180,9 @@ namespace WorldGen.Notes.Rendering
         public void PushHistory(string focusId, int caret)
         {
             if (Page == null) return;
-            History.Push(Page.Blocks, focusId, caret);
+            // Page.Character читается ЗДЕСЬ, в том же вызове, что и Page.Blocks — это единственный момент,
+            // когда снимок берётся, и мутация ещё не случилась.
+            History.Push(Page.Blocks, Page.Character, focusId, caret);
             OnHistoryChanged?.Invoke();
         }
 
@@ -188,7 +190,11 @@ namespace WorldGen.Notes.Rendering
         /// before a key it cannot know in advance will change anything, and commits it only if the key did.</summary>
         public void PushHistoryOf(IReadOnlyList<DocBlock> blocks, string focusId, int caret)
         {
-            History.Push(blocks, focusId, caret);
+            // Карточка читается СЕЙЧАС, а не когда-то раньше у вызывающего — все вызывающие правят BLOCKS,
+            // а не карточку, так что Page.Character в этот момент всё ещё несёт значение ДО правки, что и
+            // требуется. Если бы будущий вызывающий сначала поправил карточку и только потом позвал этот
+            // метод, снимок унёс бы уже новое значение, и отмена молча стала бы пустышкой.
+            History.Push(blocks, Page != null ? Page.Character : null, focusId, caret);
             OnHistoryChanged?.Invoke();
         }
 
@@ -203,12 +209,20 @@ namespace WorldGen.Notes.Rendering
             foreach (var b in before)
                 if (b.Id == blockId) { b.Text = textBefore; break; }
 
-            History.Push(before, blockId, (textBefore ?? "").Length);
+            // Этот метод вызывается ПОСЛЕ того, как нажатие уже попало в строку, и восстанавливает
+            // список строк вручную (см. цикл выше) — единственное место в файле, где «сейчас» не значит
+            // «до правки». Карточку восстанавливать так не нужно: правка ТЕКСТА строки её не трогает,
+            // так что Page.Character, прочитанный здесь и сейчас, и есть состояние до правки. Но это
+            // держится только пока верно ИМЕННО ЭТО — если задача 6 когда-нибудь заставит поле карточки
+            // звать этот же метод напрямую (а не завести свой аналог для полей шапки), карточка тоже
+            // окажется уже мутированной к этому моменту, и её придётся восстанавливать вручную, как
+            // строку выше.
+            History.Push(before, Page.Character, blockId, (textBefore ?? "").Length);
             OnHistoryChanged?.Invoke();
         }
 
-        public void Undo() => Apply(History.Undo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
-        public void Redo() => Apply(History.Redo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
+        public void Undo() => Apply(History.Undo(Page != null ? Page.Blocks : null, Page != null ? Page.Character : null, LastFocusedBlockId, LastFocusedCaret));
+        public void Redo() => Apply(History.Redo(Page != null ? Page.Blocks : null, Page != null ? Page.Character : null, LastFocusedBlockId, LastFocusedCaret));
 
         /// <summary>Puts a remembered state back on the page. The block list is replaced IN PLACE rather than
         /// reassigned: NotesPage.Blocks is what the serializer writes and what every op holds, and swapping
@@ -220,6 +234,10 @@ namespace WorldGen.Notes.Rendering
 
             Page.Blocks.Clear();
             Page.Blocks.AddRange(snapshot.Blocks);
+            // Экземпляр из снимка отдаётся живой странице БЕЗ копии — и это правильно ровно потому, что
+            // снимок снят со стека и больше нигде не хранится (так же поступают Blocks). Копия здесь стоила
+            // бы копирования на каждое нажатие и не защищала бы ни от чего.
+            Page.Character = snapshot.Character;
             SetSelectedBlock(null);
             OnHistoryChanged?.Invoke();
             OnDocumentMutated?.Invoke();
