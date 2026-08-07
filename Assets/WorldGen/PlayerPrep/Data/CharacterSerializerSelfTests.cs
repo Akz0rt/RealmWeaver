@@ -109,6 +109,38 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: файл — вписанный максимум хитов переживает запись, а невписанный остаётся пустым")]
+        public void SelfTestMaxHpOverrideRoundTrips()
+        {
+            // Единственное ПОСЧИТАННОЕ число, которое файл хранит вообще. Проверяем обе стороны:
+            // вписанное значение доезжает, а НЕвписанное остаётся null — иначе мутант «писать 0
+            // вместо null» превратил бы «беру среднее» в «у меня ноль хитов» незаметно.
+            var withValue = Fixtures.Character(); withValue.MaxHpOverride = 44;
+            var back = CharacterSerializer.FromJson(CharacterSerializer.ToJson(withValue));
+            var without = Fixtures.Character(); without.MaxHpOverride = null;
+            var backNull = CharacterSerializer.FromJson(CharacterSerializer.ToJson(without));
+            bool ok = back.MaxHpOverride == 44 && !backNull.MaxHpOverride.HasValue;
+            if (!ok) Debug.LogError($"FAIL максимум хитов: вписанный дал {back.MaxHpOverride} (ждали 44), "
+                                  + $"невписанный дал {backNull.MaxHpOverride} (ждали пусто)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: файл СТАРОЙ версии читается, а не отвергается")]
+        public void SelfTestOlderFormatVersionIsAccepted()
+        {
+            // Отвергать надо только версии ИЗ БУДУЩЕГО. Мутант «отвергать всё, что не равно
+            // текущей» ломает совместимость со всеми ранее сохранёнными листами — и без этой
+            // проверки такое изменение проходит незамеченным.
+            string original = CharacterSerializer.ToJson(Fixtures.Character());
+            string old = original.Replace("\"FormatVersion\": 1", "\"FormatVersion\": 0");
+            if (old == original)
+            { Debug.LogError("FAIL старая версия: подмена номера в JSON не сработала"); return; }
+            bool ok;
+            try { ok = CharacterSerializer.FromJson(old) != null; }
+            catch (CharacterFormatException e) { ok = false; Debug.LogError($"FAIL старая версия отвергнута: {e.Message}"); }
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }
