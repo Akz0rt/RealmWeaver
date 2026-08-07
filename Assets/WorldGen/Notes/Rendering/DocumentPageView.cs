@@ -17,10 +17,11 @@ namespace WorldGen.Notes.Rendering
     /// split (its one remaining caller passed null), which left a placeholder row standing in for a board
     /// page; Р4 finished the job by making a board a BLOCK inside a page instead (BlockKind.Canvas), drawn
     /// inline by BuildInlineCanvas and full-pane by CanvasSurfaceHost. The parameter and the field went with
-    /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` is the last
-    /// piece still standing: built, and SetActive(false)d on every path that could show it. Left in place
-    /// rather than removed here because EnsureWired re-finds it by name after a domain reload, and deleting a
-    /// recovery path is a different change from deleting a parameter no caller supplied.
+    /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` outlived
+    /// all of it, spent a while built-but-never-shown, and has since been given a job it is genuinely needed
+    /// for: it is what the pane shows when its tab names a page the document does not hold (see
+    /// ApplyVisibility). Its GameObject is still called "BoardPlaceholder" — the name is only how EnsureWired
+    /// re-finds it after a domain reload, and both the writer and the finder read it from one constant.
     ///
     /// `root` is re-parented by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs)
     /// into whichever pane is currently showing a Page tab — see the public Root accessor below. Because that
@@ -155,14 +156,28 @@ namespace WorldGen.Notes.Rendering
         }
 
         /// <summary>Turns the two independent facts — is a page bound, and does any pane's active tab point
-        /// here — into the four SetActive calls that express them. Every page is a document since Р4, so the
-        /// board placeholder is unconditionally off; it survives only because the GameObject does.</summary>
+        /// here — into the four SetActive calls that express them.
+        ///
+        /// `root` FOLLOWS surfaceVisible ALONE, and the placeholder is what fills it when no page is bound.
+        /// Task 3 needed that: a tab can name a page the document does not hold, and until this change the
+        /// pane simply went BLANK — a live tab over nothing, with no way for the DM to tell a missing page
+        /// from a broken app. The reachable case is a layout restored from PlayerPrefs before any project is
+        /// open (WorkspaceController.RestoreFromPrefs deliberately restores without an existence check, and
+        /// its own doc names "falls through to the placeholder" as what makes that acceptable). Reviving the
+        /// placeholder is what makes that doc true again, and it retires the blank-pane STATE rather than the
+        /// one path that reached it.
+        ///
+        /// THE PLACEHOLDER CANNOT APPEAR WHERE IT SHOULD NOT. It lives under `root`, which stays off entirely
+        /// while `surfaceVisible` is false — so a pane that simply is not showing a page shows nothing at all,
+        /// not an explanation of an absence nobody asked about. Before Initialize every field here is null and
+        /// all four calls are skipped, which is the same "stay inert rather than half-wired" rule EnsureWired
+        /// follows.</summary>
         void ApplyVisibility()
         {
             bool showDocument = Page != null;
-            if (root != null) root.SetActive(surfaceVisible && showDocument);
+            if (root != null) root.SetActive(surfaceVisible);
             if (viewportGO != null) viewportGO.SetActive(showDocument);
-            if (placeholderGO != null) placeholderGO.SetActive(false);
+            if (placeholderGO != null) placeholderGO.SetActive(surfaceVisible && !showDocument);
             if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
         }
 
@@ -895,8 +910,16 @@ namespace WorldGen.Notes.Rendering
             var fitter = contentGO.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            // Board-page placeholder — a sibling of Viewport, not a child of it, so it is never subject to
-            // the ScrollRect/mask/content-fitter machinery above. See the class doc for why this exists now.
+            // What the pane shows when its tab names a page the document does not hold — a sibling of
+            // Viewport, not a child of it, so it is never subject to the ScrollRect/mask/content-fitter
+            // machinery above. See ApplyVisibility for when it comes on, and the class doc for the board
+            // page it was originally built for.
+            //
+            // THE WORDING IS FOR A GAME MASTER, NOT A PROGRAMMER. It states the fact («this tab points at a
+            // page that is not here») and then the overwhelmingly likely cause, because the one way to reach
+            // this in practice is a workspace restored from the previous session before the project holding
+            // those pages has been opened. No id, no kind, no «surface» — none of that would tell the person
+            // reading it what to DO, and «открыть проект» does.
             placeholderGO = new GameObject(PlaceholderObjectName, typeof(RectTransform));
             placeholderGO.transform.SetParent(root.transform, false);
             var placeholderRect = placeholderGO.GetComponent<RectTransform>();
@@ -905,7 +928,8 @@ namespace WorldGen.Notes.Rendering
             placeholderRect.offsetMin = Vector2.zero;
             placeholderRect.offsetMax = Vector2.zero;
             var placeholderText = placeholderGO.AddComponent<Text>();
-            placeholderText.text = "Холст ещё не переехал в новую оболочку.";
+            placeholderText.text = "Страницы, на которую смотрит эта вкладка, здесь нет.\n" +
+                                   "Скорее всего, ещё не открыт проект, в котором она лежит.";
             placeholderText.font = font;
             placeholderText.fontSize = 14;
             ThemeService.Tag(placeholderText, ThemeRole.Mut);
@@ -1208,8 +1232,9 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The next three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
         /// built-in uGUI component, i.e. native state that survives the reload — and from a plain
-        /// Transform.Find for the placeholder, which locates inactive children (it is SetActive(false) for
-        /// every Document page). `addSectionBarGO`/`addSectionButton` are found the same Transform.Find way —
+        /// Transform.Find for the placeholder, which locates inactive children (and it is inactive whenever a
+        /// page IS bound, which is nearly always). `addSectionBarGO`/`addSectionButton` are found the same
+        /// Transform.Find way —
         /// the bar is never deactivated for a Document page (see its own bar-visibility line in
         /// ApplyVisibility), but the FindObjectsByType search above and every Find here already return
         /// null gracefully on a page that has never called Initialize, and the null-guarded access pattern

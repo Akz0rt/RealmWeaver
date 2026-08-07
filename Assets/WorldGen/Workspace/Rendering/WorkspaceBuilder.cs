@@ -919,6 +919,16 @@ namespace WorldGen.Workspace.Rendering
     /// incoming project's, which is the answer EndProjectSwitch is about to apply anyway, and writes are
     /// suspended until it does (WorkspaceController.persistSuspended).
     ///
+    /// WHAT ADMITTING Page CHANGED ABOUT THAT, said plainly because it is a real widening. A prune that
+    /// actually drops a tab ends in RaiseChanged -> a FULL SyncSurfaces, i.e. every host re-Shown, in the
+    /// middle of ProjectMenuBar.LoadFrom. That used to require an open BOARD tab, which is rare; it now also
+    /// happens whenever a page tab is open, which is nearly always. The reasoning above still covers it —
+    /// the notes document is the LAST thing LoadFrom loads, so the world, the POIs, the dungeons and the
+    /// interiors every other host re-reads are already the incoming project's, and no layout write can
+    /// escape while persistSuspended holds. This is argued-safe, not observed-safe: nothing runs Unity in
+    /// this repo's checks, so a future defect at this seam will show up as "a surface bound to the wrong
+    /// thing right after a project load" and this paragraph is where to start.
+    ///
     /// Same Attach shape, and the same rebuild hazard, as PageLinkBridge above: WorkspaceBuilder.Awake re-runs
     /// on every Play-mode shell rebuild while NotesRootBuilder's controller SURVIVES it, so a second
     /// AddComponent — or a re-subscribe without a drop — would leave the old, destroyed pruner in the
