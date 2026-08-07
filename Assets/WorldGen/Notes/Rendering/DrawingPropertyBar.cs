@@ -74,6 +74,12 @@ namespace WorldGen.Notes.Rendering
             if (!ObjectBarAnchor.Follow(RowRect, view.RectTransform, controller))
             { RowRect.gameObject.SetActive(false); return; }
             if (!RowRect.gameObject.activeSelf) RowRect.gameObject.SetActive(true);
+
+            // ПОДСВЕТКА ОБНОВЛЯЕТСЯ КАЖДЫЙ КАДР, а не только при смене выделения. Отмена не меняет
+            // выделения, но заменяет данные новыми объектами: без этого после Ctrl+Z рисунок
+            // возвращался бы к прежнему тону, а подсвеченным оставался бы отменённый — полоска
+            // показывала бы не то, что на листе.
+            RefreshVisuals();
         }
 
         void ChooseTone(int index)
