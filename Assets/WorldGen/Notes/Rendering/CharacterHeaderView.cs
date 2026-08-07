@@ -107,9 +107,12 @@ namespace WorldGen.Notes.Rendering
         /// "rebuilt rather than repaired" reasoning PageFooterView.Attach documents: a domain reload does
         /// not restore a UnityEvent listener list (Button.onClick, TMP_InputField.onValueChanged/onEndEdit),
         /// so re-finding this object after a reload would give back fields that accept typing and do
-        /// nothing with it. Called twice in the object's life — once from Initialize, once from
-        /// EnsureWired after a reload — and NEVER from an ordinary Rebuild, which calls Show()/Hide()
-        /// instead (see the class doc for why that split matters here and not in PageFooterView).</summary>
+        /// nothing with it. Called ONCE in the object's life, from DocumentPageView.Initialize, and NEVER
+        /// from an ordinary Rebuild, which calls Show()/Hide() instead (see the class doc for why that split
+        /// matters here and not in PageFooterView). It used to be called a second time, from a post-reload
+        /// repair (DocumentPageView.EnsureWired) that the two-panes arc's Task 4 deleted along with its
+        /// reason: a page view now lives inside a pane and is destroyed and rebuilt whole on every reload, so
+        /// this is built fresh with it rather than repaired.</summary>
         public static CharacterHeaderView Attach(RectTransform content, DocumentPageView host)
         {
             if (content == null || host == null) return null;

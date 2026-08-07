@@ -108,7 +108,7 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>Задача 10б, фикс-раунд 3 (находка №2). Fired once, from Choose, right after a token has
         /// been written into the document — never during Open/Refresh, which change nothing. Wired by
-        /// NotesRootBuilder to DocKeyboardController.NoteExternalTokenInsertion; see that method's own doc for
+        /// WorkspaceBuilder to DocKeyboardController.NoteExternalTokenInsertion; see that method's own doc for
         /// why DocKeyboardController needs telling at all (its OWN caret cache, not this popup's).</summary>
         public System.Action<string, int> OnTokenInserted;
 

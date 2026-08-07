@@ -342,34 +342,71 @@ namespace WorldGen.Workspace.Rendering
             var registry = new SurfaceRegistry();
             if (notesRoot != null)
             {
-                registry.Register(new PageSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
+                // ONE VIEW PER PANE, built by this host inside the pane's own content area (two-panes arc,
+                // Task 4). The font is threaded through rather than re-fetched, so every page view and the
+                // expanded board are drawn with the one asset NotesRootBuilder names.
+                var pageHost = new PageSurfaceHost(notesRoot.DocumentController, notesRoot.BuiltinFont);
+                registry.Register(pageHost);
 
                 // Р4: a board expanded out of a page's flow, drawn full-pane over the SAME DocBlock the page
                 // keeps drawing inline — see CanvasSurfaceHost. Registered beside the page host because it
-                // needs exactly what the page host needs and nothing else.
-                registry.Register(new CanvasSurfaceHost(notesRoot.DocumentController, notesRoot.DocumentView));
-                if (notesRoot.DocumentView != null)
+                // needs exactly what the page host needs, plus the host itself: undo and redraw have to reach
+                // whichever pane is currently showing the board's own page.
+                registry.Register(new CanvasSurfaceHost(notesRoot.DocumentController, pageHost, notesRoot.BuiltinFont));
+
+                // What the page's inline links resolve against and where they open — see PageLinkBridge.
+                // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
+                // subscription that has to be dropped again on the next rebuild.
+                var linkBridge = PageLinkBridge.Attach(gameObject, pageHost, Controller, QuickOpenPopup);
+
+                // Р4: a board tab must not outlive its block, its page or its page's group — see
+                // CanvasTabPruner for why all three are answered in one place rather than at each seam.
+                var pruner = CanvasTabPruner.Attach(gameObject, notesRoot.DocumentController, pageHost, Controller);
+
+                var keyboard = notesRoot.Keyboard;
+                var notesGO = notesRoot.gameObject;
+
+                // EVERY per-view wiring lives in this ONE hook, and it is assigned BEFORE
+                // SetSurfaceRegistry below — the first SyncSurfaces runs inside that call, so a hook attached
+                // afterwards would silently miss both views (see PageSurfaceHost.OnViewCreated's own doc).
+                pageHost.OnViewCreated = (pane, view) =>
                 {
                     // The «↗» button on an inline board. Opens in the OTHER pane, the same rule a clicked POI
                     // link follows: a board in one pane and the session text in the other is what two panes
                     // are FOR. Wired here rather than in PageLinkBridge because it needs the document to read
                     // the caption from, and because it is not a link.
-                    var view = notesRoot.DocumentView;
                     view.CanvasRouter = blockId =>
                     {
                         var doc = documentController != null ? documentController.Document : null;
                         var block = doc != null ? NotesDocOps.FindBlock(doc, blockId, out _) : null;
                         Controller.Open(NotesSurface.Canvas(blockId), NotesSurface.TitleOf(block), inOtherPane: true);
                     };
-                }
-                // What the page's inline links resolve against and where they open — see PageLinkBridge.
-                // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
-                // subscription that has to be dropped again on the next rebuild.
-                PageLinkBridge.Attach(gameObject, notesRoot.DocumentView, Controller, QuickOpenPopup);
 
-                // Р4: a board tab must not outlive its block, its page or its page's group — see
-                // CanvasTabPruner for why all three are answered in one place rather than at each seam.
-                CanvasTabPruner.Attach(gameObject, notesRoot.DocumentController, notesRoot.DocumentView, Controller);
+                    linkBridge.Configure(view);
+                    pruner.Observe(view);
+
+                    // TEMPORARY, AND TASK 5 IS WHAT MAKES IT RIGHT: one keystroke handler and one «@» popup
+                    // exist for the whole app (both live on NotesRootBuilder's GameObject), so they can only
+                    // point at ONE view, and typing in the other pane falls through to the raw TMP fields —
+                    // the text still edits, but Enter/Tab/Backspace/undo do not act on the block list. Task 5
+                    // builds the router that follows the caret.
+                    //
+                    // PANE 0 WINS, BUT A PANE-1 VIEW IS BETTER THAN NONE. A plain ViewFor(0) would leave the
+                    // handler wired to nothing whenever pane 0 shows something else (the map, a dungeon) and
+                    // the only page in the workspace is in pane 1 — a state that worked before this task,
+                    // because the one view followed the claim. The `pageView == null` clause keeps it working;
+                    // it is not routing, it is the absence of a regression.
+                    if (keyboard != null && (pane == 0 || keyboard.pageView == null))
+                    {
+                        keyboard.pageView = view;
+                        // Attach is REUSE-OR-ADD (see its own doc), so this re-points the one popup rather
+                        // than building a second. OnTokenInserted is a plain field Attach does not touch, and
+                        // MentionPopup.Choose has no other way to tell the keyboard controller where the
+                        // caret ended up — see NoteExternalTokenInsertion's own doc.
+                        keyboard.mentionPopup = MentionPopup.Attach(notesGO, notesRoot.DocumentController, view);
+                        keyboard.mentionPopup.OnTokenInserted = keyboard.NoteExternalTokenInsertion;
+                    }
+                };
             }
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
             // Task 10c: the five ex-screens. Registered unconditionally — ScreenSurfaceHosts registers a host
@@ -784,12 +821,17 @@ namespace WorldGen.Workspace.Rendering
     /// </summary>
     public class PageLinkBridge : MonoBehaviour
     {
-        DocumentPageView pageView;
+        /// <summary>The HOST, not one view: since Task 4 there is a DocumentPageView per pane, each with its
+        /// own WorldSource/LinkRouter/LinkPicker fields to fill, and they are born one at a time as panes
+        /// first show a page. Holding the host is what lets this reach whichever of them exist right now —
+        /// see Configure (called per new view, from WorkspaceBuilder's OnViewCreated hook) and the two loops
+        /// below, which must reach ALL of them.</summary>
+        PageSurfaceHost pageHost;
         WorkspaceController controller;
         QuickOpenPopup palette;
         PoiManager poiManager;
 
-        public static PageLinkBridge Attach(GameObject host, DocumentPageView pageView, WorkspaceController controller,
+        public static PageLinkBridge Attach(GameObject host, PageSurfaceHost pageHost, WorkspaceController controller,
                                             QuickOpenPopup palette)
         {
             var existing = host.GetComponent<PageLinkBridge>();
@@ -798,22 +840,33 @@ namespace WorldGen.Workspace.Rendering
             // Dropped before the fields are re-pointed: on a rebuild these still hold the PREVIOUS shell's
             // subscription, and re-resolving would otherwise add a second one to the same manager.
             bridge.Unsubscribe();
-            bridge.pageView = pageView;
+            bridge.pageHost = pageHost;
             bridge.controller = controller;
             bridge.palette = palette;
             bridge.poiManager = null;
 
-            if (pageView != null)
-            {
-                pageView.WorldSource = bridge.CollectWorld;
-                pageView.LinkRouter = bridge.Open;
-                pageView.LinkPicker = palette != null ? (System.Action)bridge.PickLink : null;
-                // The page may already be showing rows built with no resolver at all (its first Rebuild runs
-                // from Initialize, before this attaches), so their links would be stored names until the next
-                // rebuild. One refresh here settles that.
-                pageView.RefreshLinks();
-            }
+            // Normally none exist yet — a freshly built host has built no views, and OnViewCreated is what
+            // reaches each one. Kept because Attach must not depend on being called before the first sync:
+            // Configure is idempotent, so a host that HAS views simply gets them all wired here instead.
+            if (pageHost != null)
+                foreach (var view in pageHost.Views) bridge.Configure(view);
             return bridge;
+        }
+
+        /// <summary>Fills one view's three link hooks. Called once per view, as it is built.</summary>
+        public void Configure(DocumentPageView view)
+        {
+            if (view == null) return;
+            view.WorldSource = CollectWorld;
+            view.LinkRouter = Open;
+            // The VIEW is captured, not looked up when the button is clicked: «Ссылка» belongs to the toolbar
+            // of the page it sits on, and DocumentPageView.RequestInsertLink carries no argument saying which
+            // one that is. A closure per view answers it exactly, and needs none of Task 5's caret routing.
+            view.LinkPicker = palette != null ? (System.Action)(() => PickLink(view)) : null;
+            // The page may already be showing rows built with no resolver at all (its first Rebuild runs from
+            // Initialize, before this is called), so their links would be stored names until the next
+            // rebuild. One refresh here settles that.
+            view.RefreshLinks();
         }
 
         /// <summary>Rebuilt per call, never cached — the same "no invalidation protocol" rule
@@ -837,11 +890,25 @@ namespace WorldGen.Workspace.Rendering
         {
             // PaletteOpen, not KeyboardSuspended: that one is now the OR of this flag and the search bar's,
             // and writing it here would have this bridge speak for a bar it knows nothing about.
-            if (pageView != null) pageView.PaletteOpen = palette != null && palette.IsOpen;
+            //
+            // EVERY view, not the focused one: the palette covers the whole window, so the keys belong to it
+            // no matter which pane the DM was last typing in, and a view left thinking otherwise would act on
+            // the same Enter a second time.
+            if (pageHost == null) return;
+            bool open = palette != null && palette.IsOpen;
+            // ViewFor per index rather than the `Views` iterator, ONLY because this is a per-frame method and
+            // an iterator block allocates its state machine on every foreach. The two loops elsewhere in this
+            // file run on discrete events and use `Views`. Same 0..1 the workspace uses everywhere else.
+            for (int pane = 0; pane <= 1; pane++)
+            {
+                var view = pageHost.ViewFor(pane);
+                if (view != null) view.PaletteOpen = open;
+            }
         }
 
-        /// <summary>«Ссылка» on the page toolbar: Ctrl+K's own palette, ending in a token instead of a tab.</summary>
-        void PickLink()
+        /// <summary>«Ссылка» on the page toolbar of `pageView`: Ctrl+K's own palette, ending in a token
+        /// instead of a tab. The view is the one whose toolbar was clicked — see Configure.</summary>
+        void PickLink(DocumentPageView pageView)
         {
             if (palette == null || pageView == null) return;
             palette.OpenForLink(hit =>
@@ -865,11 +932,14 @@ namespace WorldGen.Workspace.Rendering
             return poiManager;
         }
 
-        /// <summary>A POI was added, renamed or deleted. The page re-resolves every link, which is what makes
-        /// «переименовал — и в тексте новое имя» true without the page having been edited.</summary>
+        /// <summary>A POI was added, renamed or deleted. EVERY open page re-resolves its links, which is what
+        /// makes «переименовал — и в тексте новое имя» true without the page having been edited — and true in
+        /// both panes, not just the focused one, since the rename is a fact about the world rather than about
+        /// where the DM is looking.</summary>
         void OnPoisChanged()
         {
-            if (pageView != null) pageView.RefreshLinks();
+            if (pageHost == null) return;
+            foreach (var view in pageHost.Views) view.RefreshLinks();
         }
 
         void OnDestroy() => Unsubscribe();
@@ -937,13 +1007,19 @@ namespace WorldGen.Workspace.Rendering
     public class CanvasTabPruner : MonoBehaviour
     {
         NotesDocumentController documentController;
-        DocumentPageView pageView;
         WorkspaceController controller;
         MapScreenController map;
         bool pruning;
 
+        /// <summary>The page views this pruner is subscribed to — one per pane since Task 4, and they arrive
+        /// one at a time (Observe, from WorkspaceBuilder's OnViewCreated hook) rather than all at Attach.
+        /// Tracked only so Unsubscribe has something to walk; NOT `readonly` with an initializer, because a
+        /// domain reload restores a MonoBehaviour by DESERIALIZING it, so the initializer would not re-run and
+        /// this would come back null on a live component. Attach re-assigns it.</summary>
+        List<DocumentPageView> observed = new List<DocumentPageView>();
+
         public static CanvasTabPruner Attach(GameObject host, NotesDocumentController documentController,
-                                             DocumentPageView pageView, WorkspaceController controller)
+                                             PageSurfaceHost pageHost, WorkspaceController controller)
         {
             var existing = host.GetComponent<CanvasTabPruner>();
             var pruner = existing != null ? existing : host.AddComponent<CanvasTabPruner>();
@@ -952,14 +1028,29 @@ namespace WorldGen.Workspace.Rendering
             // still hold the PREVIOUS shell's subscriptions to objects that outlived it.
             pruner.Unsubscribe();
             pruner.documentController = documentController;
-            pruner.pageView = pageView;
             pruner.controller = controller;
             pruner.map = null;
 
             if (documentController != null) documentController.OnDocumentChanged += pruner.PruneStructural;
-            if (pageView != null) pageView.OnDocumentMutated += pruner.PruneBlocks;
-            if (pageView != null) pageView.OnHistoryApplied += pruner.ReshowSurfaces;
+            // Normally empty — the fresh host has built no views yet, and Observe is what catches each as it
+            // appears. Same reason PageLinkBridge.Attach walks Views: this must not depend on running before
+            // the first sync.
+            if (pageHost != null)
+                foreach (var view in pageHost.Views) pruner.Observe(view);
             return pruner;
+        }
+
+        /// <summary>Subscribes to one page view's two events. Idempotent (`-=` before `+=`), so re-observing a
+        /// view already tracked adds no second handler and no second list entry.</summary>
+        public void Observe(DocumentPageView view)
+        {
+            if (view == null) return;
+            view.OnDocumentMutated -= PruneBlocks;
+            view.OnDocumentMutated += PruneBlocks;
+            view.OnHistoryApplied -= ReshowSurfaces;
+            view.OnHistoryApplied += ReshowSurfaces;
+            if (observed == null) observed = new List<DocumentPageView>();
+            if (!observed.Contains(view)) observed.Add(view);
         }
 
         /// <summary>Отмена заменила блоки страницы новыми объектами — развёрнутой доске надо взять свой
@@ -1024,10 +1115,19 @@ namespace WorldGen.Workspace.Rendering
         void Unsubscribe()
         {
             if (documentController != null) documentController.OnDocumentChanged -= PruneStructural;
-            if (pageView != null) pageView.OnDocumentMutated -= PruneBlocks;
-            if (pageView != null) pageView.OnHistoryApplied -= ReshowSurfaces;
+            // The views are usually already DESTROYED by the time a rebuild calls this (they live under the
+            // pane hierarchy DemolishForRebuild wipes), which takes their event fields with them — so the
+            // null test skips them and nothing is leaked either way. Unity's lifetime-aware `==` is what
+            // makes a destroyed component read as null here.
+            if (observed != null)
+                foreach (var view in observed)
+                    if (view != null)
+                    {
+                        view.OnDocumentMutated -= PruneBlocks;
+                        view.OnHistoryApplied -= ReshowSurfaces;
+                    }
+            observed = new List<DocumentPageView>();
             documentController = null;
-            pageView = null;
         }
     }
 }

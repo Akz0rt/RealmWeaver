@@ -16,12 +16,12 @@ namespace WorldGen.Workspace.Rendering
     /// and 6 give Page and Canvas), while a single-instance host records which pane it landed in and
     /// returns without acting when Hide names the other one.
     ///
-    /// TWO OF THE FOUR IMPLEMENTATIONS DO NEITHER YET, and that is a stated transitional state rather than
-    /// an oversight: PageSurfaceHost and CanvasSurfaceHost accept the index and ignore it entirely — no
-    /// per-pane slot, no memory of which pane they landed in — because Tasks 4 and 6 replace their single
-    /// view with a per-pane one and the intermediate bookkeeping would be deleted again unread. Their own
-    /// Show/Hide docs spell out what ignoring it costs. MapSurfaceHost and ScreenSurfaceHosts, whose single
-    /// instance is permanent, do record the index.
+    /// ONE OF THE FOUR IMPLEMENTATIONS STILL DOES NEITHER, and that is a stated transitional state rather
+    /// than an oversight: CanvasSurfaceHost accepts the index and ignores it entirely — no per-pane slot, no
+    /// memory of which pane it landed in — because Task 6 replaces its single board with a per-pane one and
+    /// the intermediate bookkeeping would be deleted again unread. Its own Show/Hide docs spell out what
+    /// ignoring it costs. PageSurfaceHost was the other one until Task 4 gave it one view per pane;
+    /// MapSurfaceHost and ScreenSurfaceHosts, whose single instance is permanent, do record the index.
     ///
     /// "Parent yourself here" (Show's own parameter doc) is load-bearing, not a suggestion:
     /// WorkspaceOps.NormalizeSplit can promote Secondary into Primary's slot, and WorkspaceController.
@@ -51,12 +51,11 @@ namespace WorldGen.Workspace.Rendering
 
         /// <summary>Called when pane `pane` no longer shows this Kind — which is NOT the same as "nobody
         /// does". SyncSurfaces calls this for every registered host crossed with BOTH pane indices, so a
-        /// host currently shown in the OTHER pane must return without touching anything — EXCEPT for the two
-        /// transitional hosts that cannot tell the panes apart at all (PageSurfaceHost, CanvasSurfaceHost:
-        /// see the class doc's TWO OF THE FOUR paragraph). Those hide unconditionally and are re-shown by the
-        /// same SyncSurfaces pass before anything renders; that is safe only because they are the hosts with
-        /// nothing per-pane to lose, and it stops being acceptable the moment Tasks 4 and 6 give them one
-        /// view per pane.
+        /// host currently shown in the OTHER pane must return without touching anything — EXCEPT for the one
+        /// transitional host that cannot tell the panes apart at all (CanvasSurfaceHost: see the class doc's
+        /// ONE OF THE FOUR paragraph). It hides unconditionally and is re-shown by the same SyncSurfaces pass
+        /// before anything renders; that is safe only because it has nothing per-pane to lose, and it stops
+        /// being acceptable the moment Task 6 gives it one board per pane.
         ///
         /// A host that does NOT know where it is shown must hide anyway, whichever pane asks. That case is
         /// not hypothetical: a Play-mode domain reload wipes every plain field while leaving whatever the
@@ -99,111 +98,155 @@ namespace WorldGen.Workspace.Rendering
         public IEnumerable<ISurfaceHost> All => hosts.Values;
     }
 
-    /// <summary>Hosts the Page surface: the ONE DocumentPageView NotesRootBuilder builds, re-parented into
-    /// whichever pane's content area currently shows a Page-kind tab. Not a MonoBehaviour — it has no
-    /// per-frame work, unlike MapSurfaceHost below — just a thin adapter around the view NotesRootBuilder
-    /// already owns and keeps owning (see NotesRootBuilder's own class doc: this is the "re-point at that
-    /// ONE instance" from the task brief, not a second document).
+    /// <summary>Hosts the Page surface: ONE DocumentPageView PER PANE, each built inside that pane's own
+    /// content area and never moved out of it. Not a MonoBehaviour — it has no per-frame work, unlike
+    /// MapSurfaceHost below.
     ///
-    /// SINGLE INSTANCE, ACCEPTED LIMITATION — STILL TRUE, BUT NO LONGER WHERE IT IS WRITTEN DOWN. If both
-    /// panes end up with a Page tab active at once (an ordinary sequence — open a page, then «Открыть рядом»
-    /// a DIFFERENT page), only the FOCUSED pane actually renders content; the other pane's content area goes
-    /// empty until its own tab is reactivated. This is not new here — it long predates Task 9, and until
-    /// Task 3 the MODEL enforced it too: NotesDocumentController held one ActivePage field, so two tabs
-    /// could not have named two different pages even if two views had existed. That field is gone, so the
-    /// limitation is now purely this host's: ONE DocumentPageView, and Task 4 is what gives it a second.
+    /// THE SINGLE-INSTANCE LIMITATION IS GONE, and this class is where it was. Until the two-panes arc's
+    /// Task 4 there was exactly one DocumentPageView in the project (NotesRootBuilder AddComponent-ed it onto
+    /// its own GameObject and parked its root under a bare holding transform), and this host re-parented that
+    /// one root into whichever pane's content area currently showed a Page tab. Two panes both showing a Page
+    /// tab — an ordinary sequence: open a page, «Открыть рядом» a DIFFERENT one — therefore could not both
+    /// render, and the only thing keeping the FOCUSED pane's page on screen was the transitional
+    /// first-claim-wins guard in WorkspaceController.SyncSurfaces. Task 4 built the second view and narrowed
+    /// that guard to Canvas; SurfaceKindRules.AllowsMultiplePanes had already answered TRUE for Page since
+    /// Task 1, in anticipation of exactly this.
     ///
-    /// What changed is which mechanism holds the limitation up. It used to be this host's own ShareGroup,
-    /// claimed focused-pane-first by WorkspaceController.SyncSurfaces. That property is gone, and the rule
-    /// that replaced it — SurfaceKindRules.AllowsMultiplePanes — already answers TRUE for Page, because that
-    /// is the shape Task 4 gives this host (one DocumentPageView per pane, built inside the pane's own
-    /// content area). Until Task 4 lands, this host is a multi-pane KIND served by a single-instance HOST:
-    /// it accepts the `pane` argument on Show/Hide and ignores it, and the only thing keeping the focused
-    /// pane's page on screen is the transitional first-claim-wins guard in SyncSurfaces (see its own doc,
-    /// which names Task 4 as what retires the guard).
+    /// THE KEY IS THE PHYSICAL PANE INDEX, NOT THE TAB AND NOT THE PAGE. `views[0]` is the view living in
+    /// WorkspaceController.PaneContent(0) (always `primaryContent`) and `views[1]` the one in PaneContent(1)
+    /// (always `secondaryContent`) — those two answers never swap, not even when WorkspaceOps.NormalizeSplit
+    /// PROMOTES Secondary into Primary's slot. A promotion changes the CLAIM, not the container: the surface
+    /// claimed for pane 1 is claimed for pane 0 on the next sync, so pane 0's view is simply told to
+    /// ShowPage(the other id) and pane 1's view is Hidden. Nothing is carried across, which is why this class
+    /// has no "move a view between panes" path at all — see the report for the step-by-step.
     ///
-    /// RECOMPILE GAP — CLOSED, and the round-3 description of it below was wrong in a way worth keeping on
-    /// record. WorkspaceBuilder.Awake constructs a FRESH PageSurfaceHost on every rebuild (Task 11 Step 5
-    /// made that the whole shell's behaviour; through Task 10 it was the guard branch's one exception) from
-    /// NotesRootBuilder's correctly recovered DocumentController/DocumentView, so this class and the document
-    /// MODEL it wraps were already sound. DocumentPageView's OWN `root`/`content`/`viewportGO`/
-    /// `placeholderGO` were not — the same class of plain, non-serialized field this whole arc keeps finding.
-    /// Round 3 characterised the consequence as "the VIEW may fail to reparent/redisplay", i.e. a page failing
-    /// to APPEAR, and deferred it. That framing missed the damaging half: `root` is an OPAQUE ThemeRole.Bg
-    /// Image, so a page that was VISIBLE at the moment of the reload stays visible — Hide() -> SetSurfaceVisible
-    /// (false) -> ApplyVisibility no-ops against the null `root`, so `root.SetActive(false)` never fires
-    /// and nothing in the session can hide it again, and it then paints over the map camera in whatever pane
-    /// it is parented in (MapSurfaceHost.SetBackgroundsEnabled disables three known Images and has no idea
-    /// this one exists). Harmless before round 3 only because SyncSurfaces never ran post-reload at all; round
-    /// 3 making it run is what exposed it. DocumentPageView.EnsureWired now recovers those fields (and the
-    /// OnDocumentChanged subscription, which no serialization scheme could have restored) — see its own doc
-    /// and NotesRootBuilder.EnsureBuilt's, which calls it.</summary>
+    /// NO RECOMPILE GAP, AND NOTHING LEFT TO REPAIR. Every view is a child of its pane's ContentArea, i.e. of
+    /// WorkspaceCanvas, which WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s at the top of every
+    /// Play-mode shell rebuild; the fresh host built moments later starts with an empty `views` array and
+    /// builds new ones. This is the same argument CanvasSurfaceHost's own NO RECOMPILE GAP paragraph makes
+    /// for ExpandedCanvas, and it is what let DocumentPageView.EnsureWired/RecoverBuiltObjects — a whole
+    /// post-reload repair mechanism, needed only because the old single view hung off a GameObject that
+    /// SURVIVED the reload — be deleted rather than carried forward. DestroyImmediate runs each view's
+    /// OnDestroy synchronously, so its `documentController.OnDocumentChanged -= RefreshLinks` fires before
+    /// the rebuild re-subscribes: no destroyed view is left in the surviving controller's invocation
+    /// list.</summary>
     public class PageSurfaceHost : ISurfaceHost
     {
         readonly NotesDocumentController documentController;
-        readonly DocumentPageView pageView;
+        readonly Font font;
 
-        public PageSurfaceHost(NotesDocumentController documentController, DocumentPageView pageView)
+        /// <summary>By PHYSICAL pane index — see the class doc. Length 2 because the workspace has exactly
+        /// two panes (WorkspaceController.PaneContent takes the same 0/1), and an entry stays null until that
+        /// pane first actually shows a Page.</summary>
+        readonly DocumentPageView[] views = new DocumentPageView[2];
+
+        /// <summary>Raised ONCE per view, immediately after Initialize, with the pane it was built for.
+        ///
+        /// EVERY per-view wiring the workspace owns has to go through here, and that is not a convenience:
+        /// `CanvasRouter`, `WorldSource`, `LinkRouter` and `LinkPicker` are plain fields ON THE VIEW, and
+        /// until Task 4 they were set once on the one view that existed. A second view built later would
+        /// otherwise render prose and nothing else — no «↗» to expand a board, no «Ссылка» button, and links
+        /// frozen as their stored names because nothing ever called RefreshLinks on it.
+        ///
+        /// ASSIGN IT BEFORE WorkspaceController.SetSurfaceRegistry: the first SyncSurfaces runs inside that
+        /// call, so a hook attached afterwards silently misses every view the first sync creates — which is
+        /// nearly always both of them.</summary>
+        public System.Action<int, DocumentPageView> OnViewCreated;
+
+        public PageSurfaceHost(NotesDocumentController documentController, Font font)
         {
             this.documentController = documentController;
-            this.pageView = pageView;
+            this.font = font;
         }
 
         public SurfaceKind Kind => SurfaceKind.Page;
 
-        /// <summary>`pane` is accepted and DELIBERATELY IGNORED — there is one view to re-parent, so the only
-        /// thing the index could select is which of two views to touch, and the second one arrives in Task 4.
-        /// See the class doc's SINGLE INSTANCE paragraph.</summary>
+        /// <summary>The view living in pane `pane`, or null if that pane has never shown a Page. Task 5 asks
+        /// this which view owns the caret.</summary>
+        public DocumentPageView ViewFor(int pane) =>
+            pane >= 0 && pane < views.Length && views[pane] != null ? views[pane] : null;
+
+        /// <summary>Every view built so far, in pane order — for callers that must reach all of them
+        /// (PageLinkBridge refreshing links after a POI rename) rather than one particular one.</summary>
+        public IEnumerable<DocumentPageView> Views
+        {
+            get
+            {
+                for (int pane = 0; pane < views.Length; pane++)
+                    if (views[pane] != null) yield return views[pane];
+            }
+        }
+
+        /// <summary>Builds pane `pane`'s view on first use, then points it at `id`.
+        ///
+        /// THE VIEW IS BUILT INSIDE `paneContent`, which is the whole point: that makes the pane's own
+        /// hierarchy the owner of its lifetime (see the class doc's NO RECOMPILE GAP paragraph), and it makes
+        /// the wrapper GameObject below — not NotesRootBuilder — the thing a rebuild destroys. The wrapper
+        /// exists because DocumentPageView is a MonoBehaviour that needs a GameObject of its own, and because
+        /// Initialize takes the RectTransform it should build `root` under.
+        ///
+        /// The re-parent + stretch still runs on EVERY call, per ISurfaceHost's own contract, even though a
+        /// per-pane view has nowhere else to be: it costs two assignments, and it is what keeps this class
+        /// honest if a later change ever does re-home a view.</summary>
         public void Show(int pane, RectTransform paneContent, string id)
         {
-            if (pageView == null || paneContent == null) return;
+            if (paneContent == null || pane < 0 || pane >= views.Length) return;
 
-            var root = pageView.Root;
-            if (root != null)
+            var view = views[pane];
+            if (view == null)
             {
-                root.SetParent(paneContent, false);
-                root.anchorMin = Vector2.zero;
-                root.anchorMax = Vector2.one;
-                root.offsetMin = Vector2.zero;
-                root.offsetMax = Vector2.zero;
+                var go = new GameObject("PageSurface", typeof(RectTransform));
+                go.transform.SetParent(paneContent, false);
+                view = go.AddComponent<DocumentPageView>();
+                view.Initialize(documentController, (RectTransform)go.transform, font);
+                views[pane] = view;
+                OnViewCreated?.Invoke(pane, view);
             }
 
-            // TWO AXES, IN THIS ORDER (see DocumentPageView.surfaceVisible's own doc). The first says "some
+            var host = (RectTransform)view.transform;
+            host.SetParent(paneContent, false);
+            Stretch(host);
+            var root = view.Root;
+            if (root != null)
+            {
+                root.SetParent(host, false);
+                Stretch(root);
+            }
+
+            // TWO AXES, IN THIS ORDER (see DocumentPageView.surfaceVisible's own doc). The first says "this
             // pane's active tab points here", the second says WHICH PAGE — and only the second can cost the
             // DM their undo history, so it is the one that carries the id. Visibility first, because ShowPage
             // applies both at once: reversed, a Show of a page that is not currently visible would draw it,
             // then re-assert visibility with no rebuild behind it.
             //
             // The page is NAMED here, not looked up from a document-wide "active page" — the whole point of
-            // Task 3. `id` comes from the tab in `pane`, so two panes naming two different pages is now a
-            // statement this layer can make; serving both is Task 4's job (see the class doc).
-            pageView.SetSurfaceVisible(true);
-            pageView.ShowPage(id);
+            // Task 3. `id` comes from the tab in `pane`, and each pane now has its own view to name it on,
+            // which is «две страницы рядом» in one line.
+            view.SetSurfaceVisible(true);
+            view.ShowPage(id);
         }
 
-        /// <summary>`pane` ignored for the same reason Show ignores it: there is one view, so "pane 1 no
-        /// longer shows a Page" and "pane 0 no longer shows a Page" name the same single thing to hide.
-        ///
-        /// THE ONE COST OF IGNORING IT, stated plainly because it is a real change from Task 2 and Tasks 4/6
-        /// are what remove it. SyncSurfaces now calls Hide for every host crossed with BOTH pane indices, so
-        /// with a Page shown in pane 0 and no Page in pane 1, Hide(1) runs and hides it — and the show loop
-        /// immediately re-Shows it into pane 0. Both halves run inside one SyncSurfaces pass, before the
-        /// frame renders, so nothing flickers and nothing the DM can see differs; the cost is one extra
-        /// DocumentPageView.Rebuild per sync, from the Show half. Syncs are discrete events — a tab click, a
-        /// close, a divider commit — not a per-frame loop, so this is a doubled event cost, not a frame cost.
-        /// A pane-aware guard here would be state Task 4 deletes again the moment `views[pane]` exists, and
-        /// the ONE guard shape that would remove the cost outright (skip when already hidden) would also
-        /// remove SyncSurfaces' role as the belt behind DocumentPageView.EnsureWired's stuck-visible recovery
-        /// — see that method's doc.
+        static void Stretch(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+        }
+
+        /// <summary>Hides pane `pane`'s view and NO other — the pane-aware Hide ISurfaceHost's own doc asks
+        /// for, which this host could not provide while it had one view to hide. A pane with no view yet is
+        /// nothing to hide, so the null case is a no-op rather than a miss.
         ///
         /// WHY THIS IS NOT ShowPage(null), which would read as the tidier symmetry with Show. Binding a
         /// different page — null included — clears the undo history, because a snapshot is one page's whole
-        /// block list. With this method running on every sync per the paragraph above, that would erase the
-        /// DM's undo on every tab click. Hiding therefore touches VISIBILITY only and leaves `Page` where it
-        /// is; DocumentPageView.surfaceVisible's own doc states the two-axis rule.</summary>
+        /// block list. SyncSurfaces calls Hide for every host crossed with BOTH pane indices on every sync, so
+        /// expressing it that way would erase the DM's undo on every tab click, divider commit and pane focus
+        /// change. Hiding therefore touches VISIBILITY only and leaves `Page` where it is;
+        /// DocumentPageView.surfaceVisible's own doc states the two-axis rule.</summary>
         public void Hide(int pane)
         {
-            pageView?.SetSurfaceVisible(false);
+            ViewFor(pane)?.SetSurfaceVisible(false);
         }
 
         public string TitleFor(string id)
@@ -237,36 +280,65 @@ namespace WorldGen.Workspace.Rendering
     /// first one no longer exists by then. ExpandedCanvas lives under a pane's ContentArea, i.e. under
     /// WorkspaceCanvas, and WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s that whole subtree before
     /// Awake rebuilds it. The fresh host therefore starts with root == null and is correct by construction.
-    /// This is exactly what distinguishes it from PageSurfaceHost, whose DocumentPageView hangs off
-    /// NotesRootBuilder — a different GameObject entirely, untouched by the demolition, which is why THAT one
-    /// needs EnsureWired and this one needs nothing.</summary>
+    /// PageSurfaceHost used to be the counter-example — its single DocumentPageView hung off NotesRootBuilder,
+    /// a GameObject the demolition does not touch, so it needed a post-reload repair (EnsureWired) this one
+    /// never did. Task 4 moved the page views into the panes as well, so both hosts now rest on the same
+    /// argument and that repair mechanism is deleted.
+    ///
+    /// WHICH PAGE VIEW THIS BOARD TALKS TO, now that there is more than one. Two of the three couplings are
+    /// gone: the font comes straight from the constructor (one namer of the asset, NotesRootBuilder
+    /// .BuiltinFont) instead of through `pageView.BodyFont`, and undo/redraw are aimed at the view that is
+    /// actually SHOWING the board's owner page — found through PageSurfaceHost.Views, which is more precise
+    /// than the old ReferenceEquals-against-the-one-view test, not merely a translation of it. See
+    /// ViewShowing for the one behaviour that genuinely narrowed.</summary>
     public class CanvasSurfaceHost : ISurfaceHost
     {
         readonly NotesDocumentController documentController;
-        readonly DocumentPageView pageView;
+        readonly PageSurfaceHost pageHost;
+        readonly Font font;
 
         RectTransform root;
         NotesCanvasController canvasController;
         CanvasInteractionController interaction;
 
-        public CanvasSurfaceHost(NotesDocumentController documentController, DocumentPageView pageView)
+        public CanvasSurfaceHost(NotesDocumentController documentController, PageSurfaceHost pageHost, Font font)
         {
             this.documentController = documentController;
-            this.pageView = pageView;
+            this.pageHost = pageHost;
+            this.font = font;
         }
 
         public SurfaceKind Kind => SurfaceKind.Canvas;
 
         public string TitleFor(string id) => NotesSurface.TitleOf(FindCanvas(id, out _));
 
+        /// <summary>The page view currently showing `page`, or null if no pane is. Replaces the old
+        /// `ReferenceEquals(ownerPage, pageView.Page)` test against the single view, and answers the same
+        /// question the same way — «is the board's own page on screen?» — for however many views exist.
+        ///
+        /// ONE THING GENUINELY NARROWED, recorded rather than buried. AfterMutation used to call
+        /// MarkDocumentMutated on the always-live single view REGARDLESS of which page it showed; now, if no
+        /// pane shows the owner page, nothing is notified. That event's only subscriber is
+        /// CanvasTabPruner.PruneBlocks — the check for a board tab whose block died — and moving cards on a
+        /// board cannot orphan a tab (the block is still there), so nothing observable is lost. The «marks the
+        /// project dirty» the old comment claimed was never real: this project has no dirty flag and no
+        /// close-without-saving prompt, and grep finds no other subscriber.</summary>
+        DocumentPageView ViewShowing(NotesPage page)
+        {
+            if (page == null || pageHost == null) return null;
+            foreach (var view in pageHost.Views)
+                if (view != null && ReferenceEquals(view.Page, page)) return view;
+            return null;
+        }
+
         /// <summary>`pane` accepted and IGNORED — one expanded board exists, so the index has nothing to
-        /// select yet. The same transitional state PageSurfaceHost's SINGLE INSTANCE paragraph describes, and
-        /// the same resolution: SurfaceKindRules.AllowsMultiplePanes already answers TRUE for Canvas, Task 6
-        /// gives this host one board per pane, and until then SyncSurfaces' first-claim-wins guard is what
-        /// keeps the focused pane's board on screen.</summary>
+        /// select yet. The transitional state PageSurfaceHost carried until Task 4, with the same resolution
+        /// pending: SurfaceKindRules.AllowsMultiplePanes already answers TRUE for Canvas, Task 6 gives this
+        /// host one board per pane, and until then SyncSurfaces' first-claim-wins guard — narrowed by Task 4
+        /// to Canvas alone — is what keeps the focused pane's board on screen.</summary>
         public void Show(int pane, RectTransform paneContent, string id)
         {
-            if (paneContent == null || pageView == null) return;
+            if (paneContent == null) return;
             var block = FindCanvas(id, out NotesPage owner);
             EnsureBuilt(paneContent);
             if (root == null) return;
@@ -299,16 +371,20 @@ namespace WorldGen.Workspace.Rendering
             string canvasId = block.Id;
             canvasController.BeforeMutation = () =>
             {
-                if (ownerPage != null && ReferenceEquals(ownerPage, pageView.Page))
-                    pageView.PushHistory(canvasId, -1);
+                // Resolved at MUTATION time, not captured at Show time: the DM can click a different tab in
+                // either pane between the two, so which view (if any) shows this board's page is not a fact
+                // this closure may cache.
+                ViewShowing(ownerPage)?.PushHistory(canvasId, -1);
             };
             canvasController.AfterMutation = () =>
             {
-                // Dirty ALWAYS (a card added here must survive the DM closing the project), redraw only the
-                // page that actually contains this board — rebuilding some other open page would be a wasted
-                // full rebuild that redraws nothing this change touched.
-                pageView.MarkDocumentMutated();
-                if (ownerPage != null && ReferenceEquals(ownerPage, pageView.Page)) pageView.Rebuild();
+                // Only the page that actually contains this board is redrawn — rebuilding some OTHER open
+                // page would be a wasted full rebuild that redraws nothing this change touched. See
+                // ViewShowing's doc for what the "no pane shows it" case now skips, and why that is nothing.
+                var view = ViewShowing(ownerPage);
+                if (view == null) return;
+                view.MarkDocumentMutated();
+                view.Rebuild();
             };
 
             // RE-INITIALIZED ON EVERY Show, deliberately, and this is the ONLY path by which an inline edit
@@ -347,9 +423,11 @@ namespace WorldGen.Workspace.Rendering
             return block != null && block.Kind == BlockKind.Canvas ? block : null;
         }
 
-        /// <summary>Builds the expanded board's own chrome, once. The font comes from the page view rather
-        /// than a second Resources.GetBuiltinResource call, so the two cannot drift apart; a null one is
-        /// tolerated because CanvasInteractionController.Awake falls back to the same builtin asset.</summary>
+        /// <summary>Builds the expanded board's own chrome, once. The font is the one this host was
+        /// constructed with (NotesRootBuilder.BuiltinFont, the same asset every page view is drawn with)
+        /// rather than a second Resources.GetBuiltinResource call, so the two cannot drift apart; a null one
+        /// is tolerated because CanvasInteractionController.Awake falls back to the same builtin
+        /// asset.</summary>
         void EnsureBuilt(RectTransform paneContent)
         {
             if (root != null) return;
@@ -365,7 +443,7 @@ namespace WorldGen.Workspace.Rendering
             interactionGO.transform.SetParent(root, false);
             interaction = interactionGO.AddComponent<CanvasInteractionController>();
             interaction.viewportRect = root;
-            interaction.builtinFont = pageView != null ? pageView.BodyFont : null;
+            interaction.builtinFont = font;
 
             var canvasGO = new GameObject("Canvas", typeof(RectTransform));
             canvasGO.transform.SetParent(root, false);

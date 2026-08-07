@@ -399,20 +399,23 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// THE DOMAIN-RELOAD QUESTION this arc has had to answer at every button it added, answered
         /// explicitly rather than left open. A runtime onClick listener is not [SerializeField]-persisted, so
-        /// a Play-mode script reload wipes it while this GameObject survives — the shape
-        /// DocumentPageView.EnsureWired exists to repair for its own «+ Раздел». It needs no repair HERE, and
-        /// the difference is not luck, but the reason CHANGED in Task 11 and the old one is worth keeping.
+        /// a Play-mode script reload wipes it while this GameObject survives — the shape a since-deleted
+        /// repair method (DocumentPageView.EnsureWired) existed for, back when the one page view hung off a
+        /// GameObject outside the shell. It needs no repair HERE, and the difference is not luck, but the
+        /// reason CHANGED in Task 11 and the old one is worth keeping.
         ///
         /// It used to be that this view had no recovery path at all: after a reload `controller`/
         /// `documentController` were null, every row's NavRowClickRouter delegate was gone, and all three
         /// subscriptions that could set rebuildPending died with them, so LateUpdate never rebuilt again
         /// either — this button was dead exactly like the collapse toggle, the search box and every row, and
-        /// an EnsureWired here would have had nothing to be called from.
+        /// a re-wiring method here would have had nothing to be called from.
         ///
         /// Task 11 revived it WHOLESALE instead: WorkspaceBuilder.Awake now demolishes the shell's child
         /// hierarchy and re-runs its own build, so this view is DESTROYED and Create()d again, listener
         /// included. That is why the "built once, never rebuilt" arrangement above is safe for chrome —
-        /// "once" means once per shell, and a reload produces a new shell. The one thing that must stay true
+        /// "once" means once per shell, and a reload produces a new shell. The two-panes arc's Task 4 moved
+        /// the page views under that same demolition and deleted their repair method outright, so the whole
+        /// shell now rests on this one argument rather than two. The one thing that must stay true
         /// for this to keep holding is that every listener here is added during Create; a listener added
         /// later, from somewhere a rebuild does not re-run, would be back to being unrecoverable.</summary>
         void BuildCreateGroupBar(Transform parent)

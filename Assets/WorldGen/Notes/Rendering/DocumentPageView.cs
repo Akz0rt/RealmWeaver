@@ -20,25 +20,29 @@ namespace WorldGen.Notes.Rendering
     /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` outlived
     /// all of it, spent a while built-but-never-shown, and has since been given a job it is genuinely needed
     /// for: it is what the pane shows when its tab names a page the document does not hold (see
-    /// ApplyVisibility). Its GameObject is still called "BoardPlaceholder" — the name is only how EnsureWired
-    /// re-finds it after a domain reload, and both the writer and the finder read it from one constant.
+    /// ApplyVisibility). Its GameObject is still called "BoardPlaceholder" — the name is history now that
+    /// nothing re-finds it by name, and renaming it would only make the git trail harder to follow.
     ///
-    /// `root` is re-parented by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs)
-    /// into whichever pane is currently showing a Page tab — see the public Root accessor below. Because that
-    /// makes this view's own visibility something the workspace drives, none of the fields below may quietly
-    /// forget what they point at: EnsureWired re-establishes all of them after a Play-mode script reload, and
-    /// its doc explains what a page stuck visible over the map camera costs when they do.
+    /// LIFETIME — ONE VIEW PER PANE, BORN AND BURIED WITH THE SHELL, and this is the whole of the two-panes
+    /// arc's Task 4. There used to be exactly ONE of these in the project: NotesRootBuilder AddComponent-ed
+    /// it onto its own GameObject, parked `root` under a bare holding transform, and PageSurfaceHost
+    /// re-parented that root into whichever pane showed a Page tab. One view cannot show two pages, so
+    /// PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs) now BUILDS one of these
+    /// inside each pane's own content area, keyed by physical pane index, and never moves it between panes.
+    ///
+    /// That change deleted a whole mechanism from this class rather than working around it. Every field below
+    /// is plain and non-[SerializeField], so a Play-mode domain reload wipes all of them — and `EnsureWired`
+    /// + `RecoverBuiltObjects` existed to re-find the built objects and re-establish the subscriptions
+    /// afterwards, because the view hung off NotesRootBuilder's GameObject, which SURVIVES that reload. It no
+    /// longer does: a view lives under a pane's ContentArea, i.e. under WorkspaceCanvas, which
+    /// WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s and rebuilds on every reload. There is no
+    /// half-wiped survivor left to repair — the wiped instance is destroyed and a fully-Initialize()d one
+    /// takes its place. RecoverBuiltObjects could not have survived the change in any case: it found `root`
+    /// as "the only object in the project named DocumentViewport carrying a ScrollRect", which two panes
+    /// makes false.
     /// </summary>
     public class DocumentPageView : MonoBehaviour
     {
-        /// <summary>The names Initialize builds `root`/`placeholderGO`/`addSectionBarGO`/its button under,
-        /// hoisted to constants because EnsureWired re-finds them by name after a domain reload — see
-        /// RecoverBuiltObjects.</summary>
-        const string RootObjectName = "DocumentViewport";
-        const string PlaceholderObjectName = "BoardPlaceholder";
-        const string AddSectionBarObjectName = "AddSectionBar";
-        const string AddSectionButtonObjectName = "Button";
-
         /// <summary>Height of the «+ Раздел» strip, in the SAME reserved region `viewportRect.offsetMax`
         /// carves out in Initialize below. One constant read by both, per review round 2's Minor — two
         /// unlinked literals that happened to agree were an assertion ("the two never disagree about its
@@ -55,12 +59,6 @@ namespace WorldGen.Notes.Rendering
         GameObject viewportGO;
         GameObject placeholderGO;
         GameObject addSectionBarGO;
-        // The «+ Раздел» Button component itself, not just its GameObject — needed because
-        // Button.onClick is a runtime UnityEvent listener list, NOT [SerializeField]-persisted the way the
-        // GameObject hierarchy is, so RecoverBuiltObjects re-finding addSectionBarGO after a reload does NOT
-        // restore this listener; EnsureWired has to re-add it explicitly. See EnsureWired's own doc for the
-        // review round 2 Important this field exists to fix.
-        Button addSectionButton;
         RectTransform content;
         Font font;
 
@@ -170,8 +168,8 @@ namespace WorldGen.Notes.Rendering
         /// THE PLACEHOLDER CANNOT APPEAR WHERE IT SHOULD NOT. It lives under `root`, which stays off entirely
         /// while `surfaceVisible` is false — so a pane that simply is not showing a page shows nothing at all,
         /// not an explanation of an absence nobody asked about. Before Initialize every field here is null and
-        /// all four calls are skipped, which is the same "stay inert rather than half-wired" rule EnsureWired
-        /// follows.</summary>
+        /// all four calls are skipped, so a view that PageSurfaceHost has built but not yet Initialize()d
+        /// stays inert rather than half-wired.</summary>
         void ApplyVisibility()
         {
             bool showDocument = Page != null;
@@ -214,20 +212,19 @@ namespace WorldGen.Notes.Rendering
 
         // ── undo/redo and selection (Р2 Task 8) ─────────────────────────────────
 
-        /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Rebuilt by EnsureWired
-        /// after a domain reload, which is why nothing should cache it across frames.</summary>
+        /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Built once by
+        /// Initialize and destroyed with this whole view, so nothing has to re-find it — see the class doc's
+        /// LIFETIME paragraph.</summary>
         public PageToolbar Toolbar { get; private set; }
 
         /// <summary>«Итоги» and «Упомянута в», drawn under the last row. Lives in `content` so it scrolls
-        /// with the prose it summarises. Rebuilt by EnsureWired, like the toolbar and for the same reason.</summary>
+        /// with the prose it summarises.</summary>
         PageFooterView footer;
 
         /// <summary>The character card — portrait and four fields — drawn ABOVE the rows when
         /// CharacterOps.IsCharacter(Page) is true, absent otherwise. Lives in `content`, like the footer,
         /// but is built ONCE and updated in place rather than rebuilt every refresh — see its own class
-        /// doc for why an editable field needs that and a read-only summary does not. Rebuilt by
-        /// EnsureWired, like the toolbar and the footer and for the same reason (a domain reload does not
-        /// restore its Button/TMP_InputField listeners).</summary>
+        /// doc for why an editable field needs that and a read-only summary does not.</summary>
         CharacterHeaderView header;
 
         /// <summary>Ctrl+F. Lives on `root` rather than being the hidden box itself — see its own doc.</summary>
@@ -826,9 +823,10 @@ namespace WorldGen.Notes.Rendering
             return "";
         }
 
-        /// <summary>The font the page was built with, read live rather than copied into the footer: a domain
-        /// reload nulls a MonoBehaviour's plain fields, and a footer holding its own copy would draw a
-        /// refresh's worth of fontless — i.e. invisible — rows before EnsureWired got to it.</summary>
+        /// <summary>The font the page was built with, read live rather than copied into the footer: one
+        /// namer of the asset (NotesRootBuilder.BuiltinFont, threaded through PageSurfaceHost into
+        /// Initialize), so a footer cannot end up drawing with a different one — or, holding a stale copy
+        /// of its own, with none at all.</summary>
         public Font BodyFont => font;
 
         string PageNameOf(string pageId)
@@ -846,7 +844,7 @@ namespace WorldGen.Notes.Rendering
             documentController = docController;
             font = builtinFont;
 
-            root = new GameObject(RootObjectName, typeof(RectTransform));
+            root = new GameObject("DocumentViewport", typeof(RectTransform));
             root.transform.SetParent(parent, false);
             var rootRect = root.GetComponent<RectTransform>();
             rootRect.anchorMin = Vector2.zero;
@@ -920,7 +918,7 @@ namespace WorldGen.Notes.Rendering
             // this in practice is a workspace restored from the previous session before the project holding
             // those pages has been opened. No id, no kind, no «surface» — none of that would tell the person
             // reading it what to DO, and «открыть проект» does.
-            placeholderGO = new GameObject(PlaceholderObjectName, typeof(RectTransform));
+            placeholderGO = new GameObject("BoardPlaceholder", typeof(RectTransform));
             placeholderGO.transform.SetParent(root.transform, false);
             var placeholderRect = placeholderGO.GetComponent<RectTransform>();
             placeholderRect.anchorMin = Vector2.zero;
@@ -1030,11 +1028,10 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Builds the «+ Раздел» bar — see its call site in Initialize for why it exists. Sits in
         /// the strip `viewportGO`'s own offsetMax already carves out (AddSectionBarHeight), as a SIBLING of
         /// viewportGO under `root`, not a child of Content — it must stay fixed at the top of the page, not
-        /// scroll away with the rows underneath it. Assigns `addSectionButton` as a side effect — see that
-        /// field's own doc for why the GameObject alone is not enough to recover after a reload.</summary>
+        /// scroll away with the rows underneath it.</summary>
         GameObject BuildAddSectionBar(Transform parent)
         {
-            var barGO = new GameObject(AddSectionBarObjectName, typeof(RectTransform));
+            var barGO = new GameObject("AddSectionBar", typeof(RectTransform));
             barGO.transform.SetParent(parent, false);
             var barRect = (RectTransform)barGO.transform;
             barRect.anchorMin = new Vector2(0f, 1f);
@@ -1044,7 +1041,7 @@ namespace WorldGen.Notes.Rendering
             barRect.sizeDelta = new Vector2(0f, AddSectionBarHeight);
             ThemeService.Tag(barGO.AddComponent<Image>(), ThemeRole.Panel2);
 
-            var btnGO = new GameObject(AddSectionButtonObjectName, typeof(RectTransform));
+            var btnGO = new GameObject("Button", typeof(RectTransform));
             btnGO.transform.SetParent(barGO.transform, false);
             var btnRect = (RectTransform)btnGO.transform;
             btnRect.anchorMin = new Vector2(0f, 0.5f);
@@ -1055,7 +1052,7 @@ namespace WorldGen.Notes.Rendering
 
             var btnImg = btnGO.AddComponent<Image>();
             ThemeService.Tag(btnImg, ThemeRole.AccentSoft);
-            addSectionButton = btnGO.AddComponent<Button>();
+            var addSectionButton = btnGO.AddComponent<Button>();
             addSectionButton.targetGraphic = btnImg;
             addSectionButton.onClick.AddListener(AddSection);
 
@@ -1099,172 +1096,6 @@ namespace WorldGen.Notes.Rendering
         {
             if (documentController != null)
                 documentController.OnDocumentChanged -= RefreshLinks;
-        }
-
-        /// <summary>Re-establishes everything a Play-mode script reload wipes on THIS component, so Show/Hide
-        /// work again afterwards. Called only from NotesRootBuilder.EnsureBuilt's already-built (early-return)
-        /// branch — the one place that knows the difference between "never built" (Initialize's job) and
-        /// "built, then reloaded".
-        ///
-        /// WHAT GOES WRONG WITHOUT IT — and it is NOT merely "the page fails to reappear". `root`/`content`/
-        /// `viewportGO`/`placeholderGO`/`addSectionBarGO`/`addSectionButton`/`documentController`/`font` are
-        /// plain, non-[SerializeField] fields, so a domain reload nulls all eight, while the DocumentViewport
-        /// GameObject they described survives as live native state in whatever pane PageSurfaceHost last
-        /// re-parented it into — and if it was ACTIVE at that moment it stays active. Every access below is
-        /// null-guarded, so nothing throws; the guards
-        /// instead turn Hide() -> SetSurfaceVisible(false) -> ApplyVisibility into a SILENT NO-OP against
-        /// a null `root`, so `root.SetActive(false)` never fires and NOTHING in the rest of that session can
-        /// ever hide it again. DocumentViewport carries its own opaque ThemeRole.Bg Image, so a pane that
-        /// then shows the WorldMap surface gets painted over by it — MapSurfaceHost.SetBackgroundsEnabled
-        /// knows about exactly three Images and this stray one is not among them, which is Task 9 review
-        /// round 1's Critical (map hidden behind an opaque UI rect) arriving again through a different door.
-        ///
-        /// The last line is what actually kills that symptom, and it does so INSIDE NotesRootBuilder's own
-        /// recovery, without depending on WorkspaceBuilder's path running at all: `surfaceVisible` is a plain
-        /// bool that the same reload already reset to false, so re-asserting visibility against the
-        /// recovered `root` deactivates a stuck-visible viewport immediately. WorkspaceController.SyncSurfaces
-        /// then re-asserts the correct state a moment later (Show for a pane whose active tab is a Page, Hide
-        /// otherwise) — this just makes the stuck case impossible even if it does not.
-        ///
-        /// RECOVERING A REFERENCE IS NOT RECOVERING A WIRING (Task 10f review round 2's Important). Every
-        /// GameObject/Component field above only needs its REFERENCE restored, because everything they do —
-        /// SetActive, ScrollRect.content, being a Transform.Find anchor — is read fresh off the live object
-        /// each time. `addSectionButton.onClick` is different: it is a runtime `UnityEvent` listener LIST,
-        /// not [SerializeField]-persisted the way the Button's own visible state is, so
-        /// `RecoverBuiltObjects` finding the Button again does not mean the click still calls `AddSection` —
-        /// it means a Button that highlights on hover and does nothing, indistinguishable from the original
-        /// Critical, on the one page (freshly empty) where nothing else can create a first block either. This
-        /// was missed once already, in the same paragraph, in the same review's previous round: the field was
-        /// added to the "seven" (now eight) above and to RecoverBuiltObjects without re-establishing what
-        /// makes the button DO something. Fixed a few lines down with the identical -=/+= discipline the
-        /// documentController subscription already uses, for the identical reason: idempotent under repeat
-        /// calls, whether or not this particular call is actually recovering from a reload.</summary>
-        public void EnsureWired(NotesDocumentController docController, Font builtinFont)
-        {
-            if (docController != null) documentController = docController;
-            if (builtinFont != null) font = builtinFont;
-
-            // `root == null` while this component exists at all is the reliable "wiped by a reload" signal —
-            // Initialize always assigns it, and it is exactly the kind of field a reload always forgets. On an
-            // ordinary (non-reload) call — WorkspaceBuilder.Awake asking NotesRootBuilder for a document that
-            // its own Awake already built — this is false and the re-assert below is correctly skipped.
-            bool lostToReload = root == null;
-            if (lostToReload) RecoverBuiltObjects();
-            if (root == null) return;   // not found: stay inert rather than half-wired.
-
-            // C# delegates are never serialized, so this subscription is gone after a reload no matter how
-            // the fields above were recovered — the page-rename refresh (see Initialize) with it. `-=` before
-            // `+=` keeps it at exactly one for the non-reload caller, where the subscription Initialize made
-            // is still live.
-            if (documentController != null)
-            {
-                documentController.OnDocumentChanged -= RefreshLinks;
-                documentController.OnDocumentChanged += RefreshLinks;
-            }
-
-            // Same discipline, same reason, for the «+ Раздел» button's onClick — a UnityEvent listener list
-            // is exactly as unserialized as the C# event above, and RecoverBuiltObjects only restored WHICH
-            // Button this field points at, not what clicking it does. See EnsureWired's own doc for the
-            // review finding this fixes.
-            if (addSectionButton != null)
-            {
-                addSectionButton.onClick.RemoveListener(AddSection);
-                addSectionButton.onClick.AddListener(AddSection);
-            }
-
-            // The toolbar is rebuilt rather than repaired, for the same reason and one more: its buttons'
-            // listeners are as unserialized as the one above, AND it holds a reference to this view which the
-            // reload nulled. Attach throws the old bar away, so this is idempotent for the ordinary call too.
-            if (addSectionBarGO != null)
-                Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
-
-            // Same treatment, same reasons — its rows are buttons whose onClick lists a reload does not
-            // restore, and Attach replaces any bar it finds rather than trying to repair one.
-            if (content != null) footer = PageFooterView.Attach(content, this);
-
-            // And the character header, third time and third reason: a reload leaves neither its
-            // Button.onClick (the portrait) nor its TMP_InputField.onValueChanged/onEndEdit (the four
-            // fields) subscribed to anything of ours, so it is replaced rather than repaired, exactly
-            // like the footer above.
-            if (content != null) header = CharacterHeaderView.Attach(content, this);
-
-            // And the drop target, for the fourth time and the fourth reason: a reload leaves the component
-            // alive on the recovered root with every field it needs nulled, so it is replaced rather than
-            // found.
-            LinkDropTarget.Attach(this);
-            searchBar = PageSearchBar.Attach(this, font);
-
-            // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
-            // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
-            // the next Rebuild() would find nothing to destroy and stack a SECOND full set of rows on top of
-            // the first. Their own fields are wiped too, so they are good for nothing except being destroyed —
-            // which is precisely what Rebuild does with them, through its existing disposal path rather than a
-            // second one added here.
-            //
-            // Guarded on the hazard ITSELF (a tracking list that disagrees with the live children) rather than
-            // on `lostToReload`, which is only a proxy for it. `content` holds up to TWO children that are not
-            // rows — the header and the footer above, the header inactive on an ordinary page rather than
-            // absent — which is why the adoption below filters by COMPONENT TYPE rather than trusting
-            // childCount to mean "rows exist": a page with no blocks at all still has a nonzero childCount,
-            // and GetComponentsInChildren then correctly finds nothing to adopt. Rebuild remains the sole
-            // producer of DocBlockView children, so "no rows tracked but a DocBlockView present" is still the
-            // desynchronised state and still cannot arise any other way.
-            if (rows.Count == 0 && content != null && content.childCount > 0)
-                rows.AddRange(content.GetComponentsInChildren<DocBlockView>(true));
-
-            if (!lostToReload) return;
-
-            // `Page` is a plain field too, so the reload left this view bound to nothing — and `surfaceVisible`
-            // false with it. Re-asserting both against the recovered `root` is what deactivates a viewport the
-            // reload left stuck visible; see this method's own doc.
-            ApplyVisibility();
-        }
-
-        /// <summary>Re-finds the six GameObjects/Components Initialize built, after a reload nulled the
-        /// fields pointing at them. They cannot be found by hierarchy path the way
-        /// MapSurfaceHost.ResolveRootRowBackground finds RootRow: PageSurfaceHost.Show re-parents `root` out
-        /// of NotesRootBuilder's PageViewHolder and into whichever pane's ContentArea is showing a Page tab,
-        /// so its parent is not fixed. What IS fixed is that it is the only object in the project named
-        /// "DocumentViewport" carrying a ScrollRect (that name is constructed in exactly one place —
-        /// Initialize, above, from the same constant). Inactive objects must be included: a reload that
-        /// happens while no Page tab is showing leaves `root` deactivated, and that case needs recovering
-        /// just as much as the visible one.
-        ///
-        /// The next three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
-        /// built-in uGUI component, i.e. native state that survives the reload — and from a plain
-        /// Transform.Find for the placeholder, which locates inactive children (and it is inactive whenever a
-        /// page IS bound, which is nearly always). `addSectionBarGO`/`addSectionButton` are found the same
-        /// Transform.Find way —
-        /// the bar is never deactivated for a Document page (see its own bar-visibility line in
-        /// ApplyVisibility), but the FindObjectsByType search above and every Find here already return
-        /// null gracefully on a page that has never called Initialize, and the null-guarded access pattern
-        /// this whole method exists to keep working is worth applying uniformly rather than assuming any one
-        /// child can never go missing.
-        ///
-        /// THIS METHOD ONLY RESTORES REFERENCES. `addSectionButton`'s onClick LISTENER is a separate thing
-        /// this method does NOT and cannot restore — see EnsureWired's own doc for why, and where that
-        /// actually happens.</summary>
-        void RecoverBuiltObjects()
-        {
-            ScrollRect found = null;
-            foreach (var scroll in FindObjectsByType<ScrollRect>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-            {
-                if (scroll == null || scroll.name != RootObjectName) continue;
-                // On the (unexpected) tie of two same-named ScrollRects, prefer one that still has its
-                // content wired — a half-built stray is never the live page surface.
-                if (found == null || (found.content == null && scroll.content != null)) found = scroll;
-            }
-            if (found == null) return;
-
-            root = found.gameObject;
-            viewportGO = found.viewport != null ? found.viewport.gameObject : null;
-            content = found.content;
-            var placeholder = found.transform.Find(PlaceholderObjectName);
-            placeholderGO = placeholder != null ? placeholder.gameObject : null;
-            var addSectionBar = found.transform.Find(AddSectionBarObjectName);
-            addSectionBarGO = addSectionBar != null ? addSectionBar.gameObject : null;
-            var addSectionBtn = addSectionBar != null ? addSectionBar.Find(AddSectionButtonObjectName) : null;
-            addSectionButton = addSectionBtn != null ? addSectionBtn.GetComponent<Button>() : null;
         }
 
         public DocBlockView ViewOf(string blockId)

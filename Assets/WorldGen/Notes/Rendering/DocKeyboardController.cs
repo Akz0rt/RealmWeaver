@@ -51,11 +51,11 @@ namespace WorldGen.Notes.Rendering
     {
         public DocumentPageView pageView;
 
-        /// <summary>Задача 10б. Wired by NotesRootBuilder, same shape as `pageView` — a plain public field
-        /// AddComponent-assigns, not a constructor argument, because this class is itself AddComponent-ed.
-        /// Null in the (currently nonexistent) case of a scene that builds this controller without also
-        /// building the popup; every use below is null-guarded for exactly that reason, not because it is
-        /// expected in practice.</summary>
+        /// <summary>Задача 10б. Wired by WorkspaceBuilder, same shape as `pageView` above and at the same
+        /// moment — a plain public field an outside builder assigns, not a constructor argument, because this
+        /// class is itself AddComponent-ed. Null until some pane actually has a page view to act on (the two
+        /// panes arc's Task 4 moved the views into the panes, so neither exists at the time NotesRootBuilder
+        /// creates this controller); every use below is null-guarded for exactly that reason.</summary>
         public MentionPopup mentionPopup;
 
         /// <summary>Задача 10б, фикс-раунд 3. `Time.frameCount` as of the last LateUpdate where the popup's

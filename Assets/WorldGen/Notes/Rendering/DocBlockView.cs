@@ -896,9 +896,10 @@ namespace WorldGen.Notes.Rendering
         /// every click into a row containing a link would miss by exactly the machinery's length — the
         /// brackets, the kind, the id and the pipe the DM never sees.</summary>
         // The null case is a row that survived a domain reload: field initializers do not re-run on
-        // deserialization, so this comes back null on a component that is otherwise alive. Such a row is
-        // destroyed by the next Rebuild (DocumentPageView.EnsureWired's own note), but a click can reach it
-        // first, and the identity is the right answer for a row that has rendered nothing since.
+        // deserialization, so this comes back null on a component that is otherwise alive. Since the
+        // two-panes arc's Task 4 such a row is destroyed outright — a page view lives under a pane, and
+        // WorkspaceBuilder.DemolishForRebuild wipes that whole hierarchy on every reload — but a click can
+        // reach it first, and the identity is the right answer for a row that has rendered nothing since.
         int DisplayToSource(int displayCaret) => displayText != null ? displayText.ToSource(displayCaret) : displayCaret;
 
         // ── refresh ───────────────────────────────────────────────────────────

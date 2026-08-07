@@ -745,17 +745,16 @@ namespace WorldGen.Workspace.Rendering
         /// without which every sync re-Bound a settlement's ~40-node canvas twice and discarded the DM's
         /// selection.
         ///
-        /// ONE TRANSITIONAL GUARD LIVES HERE, AND TASKS 4 AND 6 MUST DELETE IT. `servedHosts` in the show
-        /// loop serves only the FIRST claim per host. Page and Canvas are already multi-pane by RULE
-        /// (SurfaceKindRules.AllowsMultiplePanes answers true for both) while their hosts are still one
-        /// instance each, so without it Resolve's second claim would re-point that one instance out of the
-        /// focused pane and — for Page — re-open a different page on the one DocumentPageView, clearing the
-        /// DM's undo history on every sync. Task 4 gives PageSurfaceHost a view per pane and Task 6 does the
-        /// same for CanvasSurfaceHost; on the day either lands, this guard is what stands between the new
-        /// per-pane views and «две страницы рядом» actually working, and it will fail SILENTLY — everything
-        /// compiles, the second pane simply stays empty. PageSurfaceHost's own SINGLE INSTANCE paragraph
-        /// points here for exactly this reason. The guard's in-body comment restates the argument at the
-        /// line that has to go.</summary>
+        /// ONE TRANSITIONAL GUARD LIVES HERE, NOW NARROWED TO CANVAS, AND TASK 6 MUST DELETE THE REST.
+        /// `servedHosts` in the show loop serves only the FIRST claim per host. Page and Canvas are both
+        /// multi-pane by RULE (SurfaceKindRules.AllowsMultiplePanes answers true for both) while their hosts
+        /// were one instance each, so without it Resolve's second claim would re-point that one instance out
+        /// of the focused pane and — for Page — re-open a different page on the one DocumentPageView,
+        /// clearing the DM's undo history on every sync. Task 4 gave PageSurfaceHost a view per pane, so the
+        /// guard is now gated on `claim.Kind == SurfaceKind.Canvas`: Page's second claim is served, which is
+        /// «две страницы рядом» working at all. Task 6 does the same for CanvasSurfaceHost and removes the
+        /// last condition. Note the failure mode if that gating is ever widened back: everything compiles and
+        /// the second pane simply stays empty, silently.</summary>
         void SyncSurfaces()
         {
             // The real guard: no hosts registered yet (before WorkspaceBuilder's SetSurfaceRegistry call)
@@ -815,18 +814,23 @@ namespace WorldGen.Workspace.Rendering
 
             // ── Then show each claim, in Resolve's priority order (focused pane first) ──────────────────
             //
-            // TRANSITIONAL — DELETE THIS SET IN TASKS 4 AND 6. Page and Canvas are multi-pane by RULE
-            // (SurfaceKindRules.AllowsMultiplePanes) but are still ONE host instance each, so Resolve can
-            // hand out two claims for a host that can only serve one. Serving only the FIRST claim per host
-            // reproduces today's behaviour exactly — claims arrive focused-pane-first, so the focused pane
-            // keeps the view — and, more sharply, stops the second Show from re-opening a DIFFERENT page on
-            // the one DocumentPageView, which clears the DM's undo history (DocumentPageView.ShowPage
-            // clears it whenever the page identity changes). That is the same defect
-            // ScreenSurfaceHosts' re-bind produced for interiors before Resolve started de-duplicating them.
+            // TRANSITIONAL — TASK 6 DELETES WHAT IS LEFT OF THIS. Page and Canvas are both multi-pane by RULE
+            // (SurfaceKindRules.AllowsMultiplePanes), so Resolve can hand out two claims for either; a host
+            // that is still ONE instance can only serve one of them, and serving the FIRST reproduces the
+            // pre-multi-pane behaviour exactly (claims arrive focused-pane-first, so the focused pane keeps
+            // the surface).
             //
-            // Once a host keeps a view per pane, this line is the ONLY thing left stopping the second pane
-            // from being served, and it fails silently — see this method's own doc (ONE TRANSITIONAL GUARD
-            // LIVES HERE) for the full statement of what a task that adds per-pane views has to remove.
+            // PAGE NO LONGER NEEDS IT, and removing it there is the point of Task 4 rather than a side
+            // effect. PageSurfaceHost now keeps one DocumentPageView PER PANE, so the second claim builds and
+            // fills the second pane's own view instead of re-pointing the one view out of the focused pane —
+            // which is what made the guard necessary in the first place, since ShowPage clears the DM's undo
+            // history whenever the page identity changes. Left in place, the guard would silently eat that
+            // second claim: everything would compile, and the second pane would simply stay empty.
+            //
+            // CANVAS STILL NEEDS IT until Task 6 gives CanvasSurfaceHost one board per pane. Named by Kind
+            // rather than by deleting the set, so the day that lands there is one condition to remove and no
+            // mechanism to reconstruct. No other Kind is affected either way: single-pane kinds get exactly
+            // one claim out of Resolve, and the interior trio is already de-duplicated by ScreenKeyOf.
             var servedHosts = new HashSet<ISurfaceHost>();
 
             foreach (var claim in claims)
@@ -840,7 +844,8 @@ namespace WorldGen.Workspace.Rendering
                 // Claimed LAST, after both lookups: a claim that cannot actually be shown (no host, or a
                 // pane container that does not exist yet) must not consume the host's one turn and leave the
                 // lower-priority claim skipped as well.
-                if (!servedHosts.Add(host)) continue;
+                bool singleInstanceHost = claim.Kind == SurfaceKind.Canvas;
+                if (singleInstanceHost && !servedHosts.Add(host)) continue;
 
                 host.Show(claim.Pane, paneContent, claim.Id);
             }
