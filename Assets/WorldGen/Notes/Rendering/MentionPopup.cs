@@ -122,11 +122,19 @@ namespace WorldGen.Notes.Rendering
         }
 
         /// <summary>Каждый следующий набранный (или стёртый) символ запроса — список пересчитывается
-        /// целиком, без дебаунса, тем же приёмом, что QuickOpenPopup.RunSearch на каждое нажатие.</summary>
+        /// целиком, без дебаунса, тем же приёмом, что QuickOpenPopup.RunSearch на каждое нажатие.
+        ///
+        /// РАННИЙ ВЫХОД, КОГДА ЗАПРОС НЕ ИЗМЕНИЛСЯ — И ЭТО НЕ КОСМЕТИКА. DocKeyboardController зовёт этот
+        /// метод КАЖДЫЙ LateUpdate, пока попап открыт, — не только когда что-то набрано. Без сравнения
+        /// строк RunSearch (а с ней highlighted = 0 и полная пересборка строк) запускалась бы каждый кадр
+        /// и стирала бы любое движение ↑/↓ мгновением позже — та же ловушка, которую бриф называет прямо
+        /// про TMP_InputField («сравнивать строки, а не полагаться на факт события»), только уровнем выше.</summary>
         public void Refresh(string newQuery)
         {
             if (popupGO == null) return;
-            query = newQuery ?? "";
+            newQuery = newQuery ?? "";
+            if (newQuery == query) return;
+            query = newQuery;
             RunSearch();
         }
 

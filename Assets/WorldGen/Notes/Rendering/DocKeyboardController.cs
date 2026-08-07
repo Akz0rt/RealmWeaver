@@ -162,11 +162,15 @@ namespace WorldGen.Notes.Rendering
             UpdateMentionPopup(live, prevFocusedId, prevCaret);
             if (mentionPopup != null && mentionPopup.IsOpen)
             {
-                if (keyboard.escapeKey.wasPressedThisFrame) { mentionPopup.Close(); return; }   // рулинг 4: текст не трогаем.
+                // Esc: рулинг 4 говорит буквально про текст («не трогает набранное») — восстанавливаем и
+                // каретку туда, где она была ДО этого Esc, тем же приёмом, что и стрелки чуть ниже, а не
+                // оставляем её там, куда мог утащить чужой обработчик Escape/Cancel в этот же кадр.
+                if (keyboard.escapeKey.wasPressedThisFrame)
+                { mentionPopup.Close(); RestoreCaretAfterPopupKey(live, prevCaret); return; }
                 if (keyboard.downArrowKey.wasPressedThisFrame)
-                { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupArrow(live, prevCaret); return; }
+                { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
                 if (keyboard.upArrowKey.wasPressedThisFrame)
-                { mentionPopup.MoveHighlight(-1); RestoreCaretAfterPopupArrow(live, prevCaret); return; }
+                { mentionPopup.MoveHighlight(-1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
                 if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
                 { mentionPopup.ChooseHighlighted(); return; }
             }
@@ -361,6 +365,14 @@ namespace WorldGen.Notes.Rendering
                 if (live == null || live.Field == null || live.BlockId != mentionPopup.BlockId)
                 { mentionPopup.Close(); return; }
 
+                // Каретка ЕЩЁ не долетела туда, куда её только что попросили (FocusAt/BeginEdit — включая
+                // наш же RestoreCaretAfterPopupKey чуть ниже) — DocBlockView.CaretPending, тот же guard,
+                // что VerticalIsOurs держит по той же причине (см. её класс-док, второй пункт): в этом
+                // окне Field.caretPosition отвечает тем, что было ДО FocusAt, а не тем, что попросили, и
+                // MentionQuery промахнётся мимо AtIndex по чужой каретке. Попап просто держится как есть
+                // один-два кадра, вместо того чтобы закрыться по ложному расхождению.
+                if (live.CaretPending) return;
+
                 string text = live.Field.text ?? "";
                 int caret = live.Field.caretPosition;
                 if (!MentionQuery.TryFind(text, caret, out int atIndex, out string query) || atIndex != mentionPopup.AtIndex)
@@ -394,16 +406,25 @@ namespace WorldGen.Notes.Rendering
                 mentionPopup.Open(live, newAt, newQuery);
         }
 
-        /// <summary>Rule 5 — arrows navigate the popup's list, never the caret. By the time this class's own
-        /// LateUpdate runs, TMP's own Update-phase drain has ALREADY moved the field's caret for this exact
-        /// arrow key (see the class doc's "THE DRAIN" reasoning) — there is no way to have stopped that from
-        /// here, only to put it back. `wasCaret` is the caret as of the END OF LAST FRAME (this class's own
-        /// cache, captured before anything this frame could touch it), which is the right position to
-        /// restore to precisely because nothing else this frame moved it: an arrow key raises no
-        /// onValueChanged, so the mention span itself is untouched either way.</summary>
-        static void RestoreCaretAfterPopupArrow(DocBlockView live, int wasCaret)
+        /// <summary>Rule 5 — arrows navigate the popup's list, never the caret (and Esc leaves it exactly
+        /// where it was, per rule 4). By the time this class's own LateUpdate runs, TMP's own Update-phase
+        /// drain has already acted on this exact key for this frame (see the class doc's "THE DRAIN"
+        /// reasoning) — there is no way to have stopped that from here, only to put the caret back.
+        /// `wasCaret` is the caret as of the END OF LAST FRAME (`prevCaret`, captured at the very top of
+        /// LateUpdate before anything this frame could touch it), which is the right position to restore to
+        /// precisely because nothing else this frame moved it: neither an arrow key nor Esc raises
+        /// onValueChanged, so the mention span itself is untouched either way.
+        ///
+        /// GOES THROUGH AdoptFocus, NOT A BARE FocusAt — every other FocusAt call site in this class is
+        /// paired with it (see Handle()), and for the same reason here: `lastCaret` was already refreshed
+        /// THIS frame from the field's own post-drain position (the block above), which for an arrow key is
+        /// wherever TMP's own Up/Down handling left it (0 or text.Length on a single-line row — see the
+        /// class doc) — NOT wasCaret. Skipping AdoptFocus would leave that wrong value cached, and the
+        /// SECOND arrow press would then restore to it instead of to where the DM actually was.</summary>
+        void RestoreCaretAfterPopupKey(DocBlockView live, int wasCaret)
         {
             if (live == null) return;
+            AdoptFocus(live.BlockId, wasCaret);
             live.FocusAt(wasCaret);
         }
     }
