@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using WorldGen.Notes.Data;
 
@@ -12,12 +13,21 @@ namespace WorldGen.Workspace.Data
     /// above a «Мир» whose membership was "pages bound to a place", a rule the world map could not satisfy
     /// because no page stands behind it. «Мир» is now the world's CONTENTS (see Build), so the world map is
     /// simply its first member and the separate kind, along with NavigatorView's render-without-header
-    /// branch, had nothing left to do.</summary>
-    public enum NavGroupKind { World = 0, Authored = 1 }
+    /// branch, had nothing left to do.
+    ///
+    /// Characters — ВТОРОЙ вычисляемый вид (после World): его состав собирается, а не хранится.
+    /// Значение 2 берётся свободно: NavGroupKind не попадает ни в JSON, ни в PlayerPrefs
+    /// (проверено — тип встречается в трёх файлах, все три рисуют).</summary>
+    public enum NavGroupKind { World = 0, Authored = 1, Characters = 2 }
 
     public class NavNode
     {
         public string Title;
+
+        /// <summary>Подпись под именем — поле «кто» карточки персонажа. Пустая у всех прочих строк.
+        /// Нужна не для красоты: без неё раздел персонажей — голый столбик имён, а фильтр не может
+        /// найти «кузнеца».</summary>
+        public string Subtitle = "";
 
         /// <summary>What this row opens. An Authored row always names a PAGE by its id (N4). A «Мир» row
         /// never does: the world map targets the world-map surface, and a world object targets its EDITOR
@@ -148,20 +158,78 @@ namespace WorldGen.Workspace.Data
             // ways, and the double-listing this comment used to describe is gone with the old N1.
             foreach (var g in doc.Groups)
             {
+                // Группа персонажей не рисуется среди обычных — она И ЕСТЬ раздел персонажей ниже.
+                // Иначе ДМ увидел бы «Персонажи» дважды подряд.
+                if (g.IsCharacters) continue;
+
                 var authored = new NavGroup { Kind = NavGroupKind.Authored, Title = g.Title, Id = g.Id };
                 foreach (var p in g.Pages)
-                    if (Matches(p.Name, needle))
+                    if (MatchesPage(p, needle))
                         authored.Nodes.Add(MakeNode(p));
                 if (authored.Nodes.Count > 0) groups.Add(authored);
             }
 
+            // «Персонажи» — N4: ВНИЗУ, ниже обычных групп (ruling ДМ 2026-08-07).
+            //
+            // Две половины, и обе обязательны. Свои страницы — потому что персонажу, как всякой странице,
+            // надо где-то физически лежать, и хранимый порядок здесь принадлежит ДМ. Подтянутые — потому что
+            // персонаж, унесённый в группу места, обязан остаться в общем списке; по алфавиту, так как своего
+            // порядка у них нет.
+            //
+            // ПОДТЯНУТАЯ СТРАНИЦА ОСТАЁТСЯ И В СВОЕЙ ГРУППЕ. Двойной показ здесь — решение ДМ, а не
+            // недосмотр: «можно держать Ольгу внутри группы Тихая Гавань и одновременно видеть в общем
+            // списке». Не добавлять сюда подавление строк по образцу Ctrl+K.
+            var home = FindCharactersGroup(doc);
+            var section = new NavGroup
+            {
+                Kind = NavGroupKind.Characters,
+                Title = home != null ? home.Title : CharacterOps.CharactersGroupTitle,
+                Id = home != null ? home.Id : "",
+            };
+            if (home != null)
+                foreach (var p in home.Pages)
+                    if (MatchesPage(p, needle))
+                        section.Nodes.Add(MakeNode(p));
+
+            var pulled = new List<NotesPage>();
+            foreach (var g in doc.Groups)
+            {
+                if (g.IsCharacters) continue;
+                foreach (var p in g.Pages)
+                    if (CharacterOps.IsCharacter(p) && MatchesPage(p, needle))
+                        pulled.Add(p);
+            }
+            pulled.Sort((a, b) => string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.CurrentCultureIgnoreCase));
+            foreach (var p in pulled) section.Nodes.Add(MakeNode(p));
+
+            if (section.Nodes.Count > 0) groups.Add(section);
             return groups;
+        }
+
+        /// <summary>Группа-владелец раздела персонажей, если такая уже есть. НЕ EnsureCharactersGroup:
+        /// сборка дерева ничего не должна создавать в документе — Build вызывается на каждый рендер,
+        /// в том числе при подсчёте фильтра, и не имеет права быть источником побочных эффектов.</summary>
+        static PageGroup FindCharactersGroup(NotesDocument doc)
+        {
+            foreach (var g in doc.Groups)
+                if (g.IsCharacters) return g;
+            return null;
         }
 
         static bool Matches(string title, string needle)
             => needle.Length == 0 || (title ?? "").Trim().ToLowerInvariant().Contains(needle);
 
+        /// <summary>N3 для страницы: имя ИЛИ подпись «кто» — без второй половины фильтр не может найти
+        /// персонажа по роду занятий, только по имени.</summary>
+        static bool MatchesPage(NotesPage p, string needle)
+            => Matches(p.Name, needle) || (CharacterOps.IsCharacter(p) && Matches(p.Character.Who, needle));
+
         static NavNode MakeNode(NotesPage p)
-            => new NavNode { Title = p.Name, Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = p.Id } };
+            => new NavNode
+            {
+                Title = p.Name,
+                Subtitle = CharacterOps.IsCharacter(p) ? (p.Character.Who ?? "") : "",
+                Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = p.Id },
+            };
     }
 }

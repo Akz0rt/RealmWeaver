@@ -317,5 +317,141 @@ namespace WorldGen.Workspace.Data
 
             Debug.Log(ok ? "Self-Test Navigator Tree: PASS" : "Self-Test Navigator Tree: FAIL");
         }
+
+        // Мутант: раздел персонажей встаёт над обычными группами.
+        // Мутант: группа с флагом рисуется ДВАЖДЫ — и как обычная, и как раздел.
+        [ContextMenu("Self-Test: Characters Section Is Last And Not Duplicated")]
+        public void SelfTestCharactersSectionIsLastAndNotDuplicated()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard() });
+            var sessions = new PageGroup { Title = "Сессии" };
+            sessions.Pages.Add(new NotesPage { Name = "Сессия 1" });
+            doc.Groups.Add(chars);      // хранится ПЕРВОЙ — правило «внизу» и порядок хранения расходятся
+            doc.Groups.Add(sessions);
+
+            var raw = NavigatorTree.Build(doc, null, "");
+            // «Мир» строится ВСЕГДА при пустом фильтре (Matches пропускает всё, «Карта мира» — константа) —
+            // проверяем, что она остаётся первой и здесь, а затем отбрасываем её: она к разделу персонажей
+            // отношения не имеет, и без этого индексы ниже считали бы лишнюю голову.
+            if (raw.Count == 0 || raw[0].Kind != NavGroupKind.World)
+            { Debug.LogError("FAIL: «Мир» перестал быть первым, когда появился раздел персонажей"); ok = false; }
+            var groups = raw.FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 2)
+            { Debug.LogError("FAIL: разделов не два, а " + groups.Count); ok = false; }
+            else
+            {
+                if (groups[0].Kind != NavGroupKind.Authored || groups[0].Title != "Сессии")
+                { Debug.LogError("FAIL: обычная группа не первая"); ok = false; }
+                if (groups[1].Kind != NavGroupKind.Characters)
+                { Debug.LogError("FAIL: раздел персонажей не последний"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Characters Section Is Last And Not Duplicated: PASS" : "Self-Test Characters Section Is Last And Not Duplicated: FAIL");
+        }
+
+        // Мутант: подтягивания нет — раздел показывает только свою группу.
+        // Фикстура: персонаж лежит в ЧУЖОЙ группе, иначе «подтягивание» неотличимо от «показать группу».
+        [ContextMenu("Self-Test: Character In Foreign Group Is Pulled In And Stays")]
+        public void SelfTestCharacterInForeignGroupIsPulledInAndStays()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var town = new PageGroup { Title = "Тихая Гавань" };
+            town.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard { Who = "кузнец" } });
+            town.Pages.Add(new NotesPage { Name = "Порт" });
+            doc.Groups.Add(town);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var groups = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 2)
+            { Debug.LogError("FAIL: нет раздела персонажей при персонаже в чужой группе"); ok = false; }
+            else
+            {
+                var authored = groups[0];
+                if (authored.Nodes.Count != 2)
+                { Debug.LogError("FAIL: персонаж пропал из своей группы (подавление строк запрещено)"); ok = false; }
+
+                var section = groups[1];
+                if (section.Kind != NavGroupKind.Characters)
+                { Debug.LogError("FAIL: второй раздел не персонажи"); ok = false; }
+                if (section.Nodes.Count != 1 || section.Nodes[0].Title != "Ольга Медная")
+                { Debug.LogError("FAIL: персонаж не подтянут в раздел"); ok = false; }
+                else if (section.Nodes[0].Subtitle != "кузнец")
+                { Debug.LogError("FAIL: подпись «кто» не проставлена"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Character In Foreign Group Is Pulled In And Stays: PASS" : "Self-Test Character In Foreign Group Is Pulled In And Stays: FAIL");
+        }
+
+        // Мутант: подтянутые не сортируются / свои сортируются вместе с подтянутыми.
+        [ContextMenu("Self-Test: Own Pages Keep Order Pulled Are Sorted")]
+        public void SelfTestOwnPagesKeepOrderPulledAreSorted()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Яков", Character = new CharacterCard() });
+            chars.Pages.Add(new NotesPage { Name = "Анна", Character = new CharacterCard() });
+            doc.Groups.Add(chars);
+
+            var town = new PageGroup { Title = "Тихая Гавань" };
+            town.Pages.Add(new NotesPage { Name = "Пётр", Character = new CharacterCard() });
+            town.Pages.Add(new NotesPage { Name = "Борис", Character = new CharacterCard() });
+            doc.Groups.Add(town);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var section = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World)[1];
+            var names = new List<string>();
+            foreach (var n in section.Nodes) names.Add(n.Title);
+            var got = string.Join(",", names);
+            if (got != "Яков,Анна,Борис,Пётр")
+            { Debug.LogError("FAIL: ожидалось «Яков,Анна,Борис,Пётр» (свои — как разложены, подтянутые — по алфавиту), получено «" + got + "»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Own Pages Keep Order Pulled Are Sorted: PASS" : "Self-Test Own Pages Keep Order Pulled Are Sorted: FAIL");
+        }
+
+        // Мутант: фильтр не смотрит на подпись.
+        [ContextMenu("Self-Test: Filter Matches Subtitle")]
+        public void SelfTestFilterMatchesSubtitle()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard { Who = "кузнец" } });
+            chars.Pages.Add(new NotesPage { Name = "Яков", Character = new CharacterCard { Who = "трактирщик" } });
+            doc.Groups.Add(chars);
+
+            var groups = NavigatorTree.Build(doc, null, "кузн");
+            if (groups.Count != 1)
+            { Debug.LogError("FAIL: раздел не найден по подписи"); ok = false; }
+            else if (groups[0].Nodes.Count != 1 || groups[0].Nodes[0].Title != "Ольга Медная")
+            { Debug.LogError("FAIL: фильтр по подписи отобрал не то"); ok = false; }
+
+            if (NavigatorTree.Build(doc, null, "нетакого").Count != 0)
+            { Debug.LogError("FAIL: пустой раздел показан вместо того, чтобы исчезнуть"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Filter Matches Subtitle: PASS" : "Self-Test Filter Matches Subtitle: FAIL");
+        }
+
+        // Мутант: страница без карточки, лежащая в группе персонажей, выбрасывается из раздела.
+        [ContextMenu("Self-Test: Own Page Without Card Still Shows")]
+        public void SelfTestOwnPageWithoutCardStillShows()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Черновик списка имён" });
+            doc.Groups.Add(chars);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var groups = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 1 || groups[0].Nodes.Count != 1)
+            { Debug.LogError("FAIL: страница без карточки исчезла из своей же группы персонажей"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Own Page Without Card Still Shows: PASS" : "Self-Test Own Page Without Card Still Shows: FAIL");
+        }
     }
 }
