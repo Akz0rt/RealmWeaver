@@ -125,6 +125,22 @@ namespace WorldGen.Notes.Rendering
         /// dirty, and must NOT redraw the page it is not on).</summary>
         public void MarkDocumentMutated() => OnDocumentMutated?.Invoke();
 
+        /// <summary>Raises NotesDocumentController.OnDocumentChanged — the event NavigatorView rebuilds
+        /// on (NavigatorView.cs:203), which OnDocumentMutated above is NOT: that one only reaches the
+        /// workspace's surface pruner. CharacterHeaderView writes straight into Page.Character without
+        /// going through any wrapper of this class, so it has no other way to tell the navigator its
+        /// «Персонажи» row (role text, portrait thumbnail) is stale. Thin forwarder for the same reason
+        /// MarkDocumentMutated is one — CharacterHeaderView holds `this`, not `documentController`, which
+        /// stays private — and mirrors the explicit-null-check idiom every other read of
+        /// `documentController` in this file uses (lines 611, 627, 697, 733, 986, 1047), not `?.`, because
+        /// that operator tests reference identity and would miss a destroyed-but-not-null Unity object.
+        /// Cheap to over-call, same reasoning as NotifyDocumentChanged's own doc
+        /// (NotesDocumentController.cs:157-158): every listener just coalesces into a LateUpdate flag.</summary>
+        public void NotifyDocumentChanged()
+        {
+            if (documentController != null) documentController.NotifyDocumentChanged();
+        }
+
         // ── undo/redo and selection (Р2 Task 8) ─────────────────────────────────
 
         /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Rebuilt by EnsureWired
@@ -261,6 +277,14 @@ namespace WorldGen.Notes.Rendering
             if (focusExists) RebuildAndFocus(snapshot.FocusId, snapshot.Caret);
             else Rebuild();
 
+            // Снимок мог вернуть карточку персонажа (Page.Character выше) к прежнему виду — навигатор
+            // рисует её роль и портрет только по OnDocumentChanged (см. NotifyDocumentChanged), а Undo/
+            // Redo сюда не заходят вовсе: без этой строки Ctrl+Z по полю шапки или по портрету оставлял
+            // бы «Персонажи» в панели навигации устаревшими до случайного пересбора. Дёшево звать и на
+            // обычной прозе — см. NotesDocumentController.cs:157-158 — а отмена сама по себе разовое
+            // действие ДМ, не нажатие клавиши на каждый символ.
+            NotifyDocumentChanged();
+
             // ПОСЛЕДНИМ, после перестроения строк: подписчик пересобирает поверхности, которые держат
             // блоки этой страницы, и делать это до того, как страница привела себя в порядок, значило бы
             // показать им промежуточное состояние.
@@ -307,6 +331,14 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>The Ctrl+F field has the caret. Set by PageSearchBar.</summary>
         public bool SearchOwnsKeys { get; set; }
+
+        /// <summary>Правда ли, что каретка сейчас в одном из четырёх полей шапки-карточки персонажа
+        /// («Кто»/«Где искать»/«Чего хочет»/«Как играть»). НЕ входит в KeyboardSuspended ниже — см.
+        /// DocKeyboardController.LateUpdate, узкий гейт на Enter/Tab, для чего это вообще заведено:
+        /// KeyboardSuspended отсекает кадр целиком ВЫШЕ проверки Ctrl+Z (той же LateUpdate) и выше
+        /// CharacterHeaderView.Update, где живёт Ctrl+V-вставка портрета — оба уже проверены ДМ и не
+        /// должны перестать работать, пока поле шапки в фокусе.</summary>
+        public bool CharacterHeaderOwnsKeys => header != null && header.AnyFieldFocused;
 
         /// <summary>True while something else owns the keyboard. Read by DocKeyboardController, which stands
         /// down entirely: the page's keys are only the page's while nothing is over it.

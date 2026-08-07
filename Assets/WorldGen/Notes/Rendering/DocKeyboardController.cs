@@ -206,6 +206,35 @@ namespace WorldGen.Notes.Rendering
             // ↑/↓/Esc уже перехвачены ВЫШЕ, до этого места — сюда они не доходят, пока попап открыт.
             UpdateMentionPopup(live, prevFocusedId, prevCaret);
 
+            // Задача «персонажи», финальный ревью: узкий гейт на Enter/Tab, ничего больше. Четыре поля
+            // карточки персонажа («Кто»/«Где искать»/«Чего хочет»/«Как играть») — TMP_InputField с
+            // MultiLineNewline, а НЕ строка страницы: FindFocusedRow() выше (см. её же тело в конце
+            // файла) сканирует только pageView.Rows и на них не смотрит, так что `live` уже null, пока каретка сидит
+            // в поле шапки, а `lastFocusedId` тем временем всё ещё называет строку прозы, в которой ДМ
+            // был ДО клика в шапку (кэш обновляет только последний if/else above, и ни один из них не
+            // видит поле шапки как «строку»). Без этой проверки Enter/Tab в поле шапки доходили бы до
+            // Handle() ниже и правили бы ЧУЖУЮ строку позади шапки — ровно та MultiLineNewline-вставка
+            // новой строки внутри поля, которую CharacterHeaderView.BuildFieldRow объявляет «свободным
+            // текстом» (field.lineType = TMP_InputField.LineType.MultiLineNewline), молча ловила бы
+            // побочным эффектом ещё и разбиение строки прозы.
+            //
+            // СОЗНАТЕЛЬНО НЕ ЧЕРЕЗ pageView.KeyboardSuspended (см. её же класс-док чуть выше, :120): тот
+            // флаг обрывает LateUpdate ЦЕЛИКОМ, ДО блока Ctrl+Z (:174) и до CharacterHeaderView.Update,
+            // где живёт Ctrl+V-вставка портрета, — оба ДМ уже проверил и подтвердил рабочими. Добавление
+            // сюда своего собственного условия, а не переиспользование/расширение KeyboardSuspended —
+            // единственный способ выключить именно Enter/Tab, не выключив по пути их тоже. НЕ
+            // «упрощайте» это обратно в KeyboardSuspended — это и есть тот самый баг.
+            //
+            // Backspace/↑/↓ ниже это не задевает: все трое уже гейтуются на `live != null` (Backspace —
+            // напрямую, ↑/↓ — через VerticalIsOurs), а `live` для поля шапки и так null — им это
+            // условие не нужно.
+            //
+            // Известное смежное ограничение, СОЗНАТЕЛЬНО не трогается здесь: Ctrl+Z с кареткой в поле
+            // шапки всё равно уводит фокус в строку прозы (см. CharacterHeaderView.OnValueChanged,
+            // комментарий про LastFocusedBlockId) — сама отмена карточки работает, ДМ это проверил;
+            // ломать этот путь сужением ниже нельзя.
+            if (pageView.CharacterHeaderOwnsKeys) return;
+
             if (string.IsNullOrEmpty(lastFocusedId)) return;
 
             bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;

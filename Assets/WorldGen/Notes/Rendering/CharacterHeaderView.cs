@@ -73,6 +73,22 @@ namespace WorldGen.Notes.Rendering
         LayoutElement element;
         float appliedHeight = -1f;
 
+        /// <summary>Правда ли, что каретка ПРЯМО СЕЙЧАС сидит в одном из четырёх полей шапки — «Кто»,
+        /// «Где искать», «Чего хочет», «Как играть». Единственный публичный ответ на этот вопрос;
+        /// DocKeyboardController.FindFocusedRow (DocKeyboardController.cs:380-382) задаёт тот же вопрос
+        /// про `pageView.Rows`, но поля шапки в этот список не входят — DocumentPageView спрашивает
+        /// здесь, а не пытается угадать сама. Тот же приём опроса `TMP_InputField.isFocused`, что и в
+        /// FindFocusedRow.</summary>
+        public bool AnyFieldFocused
+        {
+            get
+            {
+                for (int i = 0; i < FieldCount; i++)
+                    if (valueFields[i] != null && valueFields[i].isFocused) return true;
+                return false;
+            }
+        }
+
         NotesPage page;
 
         RectTransform portraitRect;
@@ -457,8 +473,21 @@ namespace WorldGen.Notes.Rendering
         /// <summary>One undo step per VISIT to a field, the same rule DocBlockView.OnFieldChanged applies
         /// to a row: reset here, on end-edit, rather than on focus-gained, so the very first character of
         /// the NEXT visit is what triggers the next push — merely clicking into an empty-looking field
-        /// and clicking back out is not a step.</summary>
-        void OnEndEdit(int i) => historyPushed[i] = false;
+        /// and clicking back out is not a step.
+        ///
+        /// ТАКЖЕ конец редактирования — единственно верное место известить навигатор (host.
+        /// NotifyDocumentChanged), а не OnValueChanged выше: тот стреляет по нескольку раз в секунду
+        /// при обычном наборе и пересобирал бы всю панель навигации на каждый символ (то самое
+        /// предупреждение из NotesDocumentController.NotifyDocumentChanged про «request-a-rebuild
+        /// flag... coalesced in LateUpdate», написанное как раз для НЕ per-keystroke вызовов). Строка
+        /// «Персонажи» в навигаторе (роль на второй строке) читает card именно здесь, по завершении
+        /// визита в поле — CharacterHeaderView.cs:453 (MarkDocumentMutated) её не будит вовсе, у той
+        /// событие свой единственный подписчик — прунер поверхностей воркспейса, не NavigatorView.</summary>
+        void OnEndEdit(int i)
+        {
+            historyPushed[i] = false;
+            if (host != null) host.NotifyDocumentChanged();
+        }
 
         // ── portrait ──────────────────────────────────────────────────────────
 
@@ -531,6 +560,11 @@ namespace WorldGen.Notes.Rendering
             host.PushHistory(host.LastFocusedBlockId, host.LastFocusedCaret);
             page.Character.Portrait = fitted;
             host.MarkDocumentMutated();
+            // Разовое, дискретное действие (клик или Ctrl+V), а не серия нажатий — тот же повод звать
+            // здесь безусловно, что и у PushHistory чуть выше; навигатор рисует 24px-превью портрета
+            // (NavigatorView.FindCharacterPortrait) и без этого не узнал бы о новом файле — см. её же
+            // класс-док у OnEndEdit выше.
+            host.NotifyDocumentChanged();
             RefreshPortraitTexture(page.Character);
         }
 
