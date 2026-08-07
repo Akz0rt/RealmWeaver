@@ -51,6 +51,13 @@ namespace WorldGen.Notes.Rendering
     {
         public DocumentPageView pageView;
 
+        /// <summary>Задача 10б. Wired by NotesRootBuilder, same shape as `pageView` — a plain public field
+        /// AddComponent-assigns, not a constructor argument, because this class is itself AddComponent-ed.
+        /// Null in the (currently nonexistent) case of a scene that builds this controller without also
+        /// building the popup; every use below is null-guarded for exactly that reason, not because it is
+        /// expected in practice.</summary>
+        public MentionPopup mentionPopup;
+
         // Refreshed in LateUpdate from whichever row is focused THEN — i.e. after the drain, so the caret
         // already includes this frame's typing and the block text it indexes into is final.
         //
@@ -81,6 +88,17 @@ namespace WorldGen.Notes.Rendering
             if (pageView == null || pageView.Page == null) return;
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
+
+            // Задача 10б: снимок ДО того, как что-либо ниже перезаписывает кэш — нужен, чтобы
+            // UpdateMentionPopup умел отличить «"@" набран ИМЕННО в этом кадре» от каретки, просто
+            // оказавшейся рядом со старым «@» уже в тексте (клик мышью, повторный визит в строку).
+            string prevFocusedId = lastFocusedId;
+            int prevCaret = lastCaret;
+
+            // Что-то ДРУГОЕ вот-вот заберёт клавиатуру (Ctrl+K, Ctrl+F) — попап «@» обязан закрыться
+            // СЕЙЧАС, а не повиснуть на экране: ранний return чуть ниже не даёт этому классу больше ничего
+            // сделать в этом кадре, в т.ч. закрыть попап каким-либо путём из обычного потока ниже.
+            if (mentionPopup != null && mentionPopup.IsOpen && pageView.KeyboardSuspended) mentionPopup.Close();
 
             // Something is over the page and owns the keys — today the Ctrl+K palette, in either of its two
             // roles. This class polls the hardware directly (see the class doc for why), and so does the
@@ -136,6 +154,22 @@ namespace WorldGen.Notes.Rendering
             // out again is what keeps "where is the caret" a question with one owner. See
             // DocumentPageView.NoteFocus for why the page needs the LAST focus rather than the live one.
             pageView.NoteFocus(lastFocusedId, lastCaret);
+
+            // ── Задача 10б: попап «@» — открыть/сузить/закрыть по live-тексту строки, и, пока он открыт,
+            // забрать себе Enter/↑↓/Esc, ДО того как они дойдут до обычной обработки ниже (Enter, что
+            // разбивает строку; ↑/↓, что двигают каретку или блок; ни один из них тут не годится — рулинги
+            // 2 и 5 брифа). См. UpdateMentionPopup — она же решает, когда попап закрывается сам.
+            UpdateMentionPopup(live, prevFocusedId, prevCaret);
+            if (mentionPopup != null && mentionPopup.IsOpen)
+            {
+                if (keyboard.escapeKey.wasPressedThisFrame) { mentionPopup.Close(); return; }   // рулинг 4: текст не трогаем.
+                if (keyboard.downArrowKey.wasPressedThisFrame)
+                { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupArrow(live, prevCaret); return; }
+                if (keyboard.upArrowKey.wasPressedThisFrame)
+                { mentionPopup.MoveHighlight(-1); RestoreCaretAfterPopupArrow(live, prevCaret); return; }
+                if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
+                { mentionPopup.ChooseHighlighted(); return; }
+            }
 
             if (string.IsNullOrEmpty(lastFocusedId)) return;
 
@@ -311,6 +345,66 @@ namespace WorldGen.Notes.Rendering
             foreach (var row in pageView.Rows)
                 if (row != null && row.Field != null && row.Field.isFocused) return row;
             return null;
+        }
+
+        /// <summary>Задача 10б. Derives the popup's open/refresh/close state FRESH every LateUpdate from the
+        /// live row's own post-drain text and caret — the same "read after the drain" rule this whole class
+        /// follows (see the class doc). No state of its own beyond what MentionPopup itself already
+        /// remembers (BlockId/AtIndex); this method only decides whether that still matches reality.</summary>
+        void UpdateMentionPopup(DocBlockView live, string prevFocusedId, int prevCaret)
+        {
+            if (mentionPopup == null) return;
+
+            if (mentionPopup.IsOpen)
+            {
+                // Фокус ушёл со строки, где стоял попап — закрыть, а не таскать его за собой на другую.
+                if (live == null || live.Field == null || live.BlockId != mentionPopup.BlockId)
+                { mentionPopup.Close(); return; }
+
+                string text = live.Field.text ?? "";
+                int caret = live.Field.caretPosition;
+                if (!MentionQuery.TryFind(text, caret, out int atIndex, out string query) || atIndex != mentionPopup.AtIndex)
+                {
+                    // Пробел (рулинг 4), стёртый «@», каретка, ушедшая из диапазона запроса — во всех трёх
+                    // случаях MentionQuery просто перестаёт находить ЭТОТ «@», и закрытие сводится к этой
+                    // одной проверке вместо отдельного «почему закрылось» на каждый случай.
+                    mentionPopup.Close();
+                    return;
+                }
+
+                mentionPopup.Refresh(query);
+                return;
+            }
+
+            // Попап ЗАКРЫТ — открыть его, только если «@» был набран ИМЕННО в этом кадре, а не просто
+            // оказался перед кареткой (клик мышью в СТАРЫЙ текст с «@» внутри не должен ничего открывать).
+            // TextChangedThisFrame — тот же флаг, которым уже пользуется Backspace-ветка ниже, и по той же
+            // причине (сравнение СТРОК, а не факт события — см. класс-док). caretPosition == prevCaret + 1
+            // значит «ровно один символ добавился там, где раньше стояла каретка», и именно этот символ —
+            // проверяемая ниже «@».
+            if (live == null || live.Field == null || !live.TextChangedThisFrame) return;
+            if (live.BlockId != prevFocusedId) return;
+
+            string liveText = live.Field.text ?? "";
+            int liveCaret = live.Field.caretPosition;
+            if (liveCaret != prevCaret + 1) return;
+            if (prevCaret < 0 || prevCaret >= liveText.Length || liveText[prevCaret] != '@') return;
+
+            if (MentionQuery.TryFind(liveText, liveCaret, out int newAt, out string newQuery))
+                mentionPopup.Open(live, newAt, newQuery);
+        }
+
+        /// <summary>Rule 5 — arrows navigate the popup's list, never the caret. By the time this class's own
+        /// LateUpdate runs, TMP's own Update-phase drain has ALREADY moved the field's caret for this exact
+        /// arrow key (see the class doc's "THE DRAIN" reasoning) — there is no way to have stopped that from
+        /// here, only to put it back. `wasCaret` is the caret as of the END OF LAST FRAME (this class's own
+        /// cache, captured before anything this frame could touch it), which is the right position to
+        /// restore to precisely because nothing else this frame moved it: an arrow key raises no
+        /// onValueChanged, so the mention span itself is untouched either way.</summary>
+        static void RestoreCaretAfterPopupArrow(DocBlockView live, int wasCaret)
+        {
+            if (live == null) return;
+            live.FocusAt(wasCaret);
         }
     }
 }

@@ -365,6 +365,38 @@ namespace WorldGen.Notes.Rendering
             return true;
         }
 
+        /// <summary>Задача 10б: заменяет ДИАПАЗОН [start, end) в названной строке токеном ссылки — «@» и
+        /// набранный после него запрос заменяются токеном одним действием, а не вставляются рядом с ними.
+        /// Тот же PushHistory/RebuildAndFocus, что и InsertTokenInto прямо выше (один Ctrl+Z откатывает
+        /// всю замену целиком), только читает диапазон вместо одной точки.
+        ///
+        /// КАРЕТКА ПОСЛЕ ЗАМЕНЫ ВСТАЁТ СРАЗУ ЗА ТОКЕНОМ — ровно там же, где она стояла бы, продолжи ДМ
+        /// печатать «вручную»: start плюс длина нового токена, а не end плюс что-то — end может лежать
+        /// дальше start на длину query, которая при замене исчезает.</summary>
+        public bool ReplaceRangeWithToken(string blockId, int start, int end, string kind, string id, string name)
+        {
+            if (Page == null || string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(id)) return false;
+            if (string.IsNullOrEmpty(blockId)) return false;
+
+            DocBlock target = null;
+            foreach (var b in Page.Blocks)
+                if (b.Id == blockId) { target = b; break; }
+            if (target == null) return false;
+
+            string text = target.Text ?? "";
+            int s = Mathf.Clamp(start, 0, text.Length);
+            int e = Mathf.Clamp(end, s, text.Length);
+
+            PushHistory(blockId, s);
+
+            string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
+            target.Text = text.Substring(0, s) + token + text.Substring(e);
+
+            OnDocumentMutated?.Invoke();
+            RebuildAndFocus(target.Id, s + token.Length);
+            return true;
+        }
+
         /// <summary>A link dropped BETWEEN rows becomes a row of its own, holding nothing else.
         ///
         /// I2 IS THIS METHOD'S TO KEEP: NotesDocOps.Insert is a bare list insert that clamps no depths, so a

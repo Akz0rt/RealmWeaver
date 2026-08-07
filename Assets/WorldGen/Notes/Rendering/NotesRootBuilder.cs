@@ -96,6 +96,14 @@ namespace WorldGen.Notes.Rendering
                 DocumentController = GetComponent<NotesDocumentController>();
                 DocumentView = GetComponent<DocumentPageView>();
                 if (DocumentView != null) DocumentView.EnsureWired(DocumentController, EnsureFont());
+
+                // Задача 10б: re-acquire and re-wire on the same reload-recovery branch as everything else
+                // above — DocKeyboardController.mentionPopup is a plain field a reload wipes, and
+                // MentionPopup.Attach is itself REUSE-OR-ADD (see its own doc), so calling it again here is
+                // a repair, not a second popup.
+                var keyboardAfterReload = GetComponent<DocKeyboardController>();
+                if (keyboardAfterReload != null)
+                    keyboardAfterReload.mentionPopup = MentionPopup.Attach(gameObject, DocumentController, DocumentView);
                 return;
             }
 
@@ -114,6 +122,10 @@ namespace WorldGen.Notes.Rendering
 
             var keyboard = gameObject.AddComponent<DocKeyboardController>();
             keyboard.pageView = DocumentView;
+            // Задача 10б: same host GameObject as the keyboard controller it is wired into — Attach itself
+            // builds no visuals until Open() runs (see its own doc), so there is nothing here for the
+            // "bare, non-Canvas holding transform" comment above to conflict with.
+            keyboard.mentionPopup = MentionPopup.Attach(gameObject, DocumentController, DocumentView);
         }
 
         /// <summary>The one place the builtin font resource is named. `builtinFont` is itself a plain field a
