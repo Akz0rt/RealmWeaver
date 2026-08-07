@@ -180,5 +180,22 @@ namespace WorldGen.Notes.Data
 
             Debug.Log(ok ? "Self-Test Remove Card Keeps Page: PASS" : "Self-Test Remove Card Keeps Page: FAIL");
         }
+
+        [ContextMenu("Self-Test: Null Document Is Survived")]
+        public void SelfTestNullDocumentIsSurvived()
+        {
+            bool ok = true;
+
+            // Мутант: EnsureCharactersGroup лишился проверки null-документа — бросает NullReferenceException
+            // вместо возврата null, как это делает NotesDocOps.EnsureReferenceGroup.
+            if (CharacterOps.EnsureCharactersGroup(null) != null)
+            { Debug.LogError("FAIL: EnsureCharactersGroup(null) вернул не null"); ok = false; }
+
+            // Мутант: CreateCharacter не проверяет null-группу и падает на следующей строке.
+            if (CharacterOps.CreateCharacter(null, "Ольга Медная") != null)
+            { Debug.LogError("FAIL: CreateCharacter(null, ...) вернул не null"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Null Document Is Survived: PASS" : "Self-Test Null Document Is Survived: FAIL");
+        }
     }
 }

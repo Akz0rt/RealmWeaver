@@ -34,6 +34,7 @@ namespace WorldGen.Notes.Data
         /// переименовать её. Нет — заводится. Ровно тот же приём, что NotesDocOps.EnsureReferenceGroup.</summary>
         public static PageGroup EnsureCharactersGroup(NotesDocument doc)
         {
+            if (doc == null) return null;
             foreach (var g in doc.Groups)
                 if (g.IsCharacters) return g;
 
@@ -42,12 +43,16 @@ namespace WorldGen.Notes.Data
             return group;
         }
 
-        /// <summary>Новый персонаж: страница с пустой карточкой в группе персонажей.</summary>
+        /// <summary>Новый персонаж: страница с пустой карточкой в группе персонажей. Без документа положить
+        /// страницу некуда — возвращает null, а не выдумывает документ на ходу.</summary>
         public static NotesPage CreateCharacter(NotesDocument doc, string name)
         {
+            var group = EnsureCharactersGroup(doc);
+            if (group == null) return null;
+
             var page = new NotesPage { Name = string.IsNullOrWhiteSpace(name) ? "Новый персонаж" : name.Trim() };
             page.Character = new CharacterCard();
-            EnsureCharactersGroup(doc).Pages.Add(page);
+            group.Pages.Add(page);
             return page;
         }
 
