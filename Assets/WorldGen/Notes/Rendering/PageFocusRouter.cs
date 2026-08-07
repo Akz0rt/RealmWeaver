@@ -93,20 +93,29 @@ namespace WorldGen.Notes.Rendering
         /// первого попавшегося DocumentPageView; писать цикл вручную значило бы повторить его же, только с
         /// собственной опечаткой.
         ///
-        /// НЕВИДИМЫЙ ВИД СЮДА ПОПАСТЬ НЕ МОЖЕТ, поэтому проверки SurfaceVisible здесь нет:
-        /// DocumentPageView.ApplyVisibility гасит весь `root` целиком (`root.SetActive(surfaceVisible)`), а
-        /// выключенный объект не бывает `currentSelectedGameObject`. Проверка здесь была бы кодом, который
-        /// читается как защита и не может сработать ни при каких условиях — ровно то, чего этот проект
-        /// избегает по имени (см. TabDragHandler, про порог перетаскивания).
+        /// SurfaceVisible ТРЕБУЕТСЯ И ЗДЕСЬ, хотя выглядит недостижимым. Первая редакция этого метода
+        /// обходилась без проверки и объясняла это тем, что «выключенный объект не бывает
+        /// currentSelectedGameObject». Ревью проверило по исходникам пакетов, а не по памяти, и это
+        /// НЕПРАВДА: `EventSystem` нигде не сверяет своё выделение с `activeInHierarchy`,
+        /// `TMP_InputField.OnDisable → DeactivateInputField` выделения EventSystem не трогает, а
+        /// единственное место, которое его снимает (`InputSystemUIInputModule`), делает это на нажатии
+        /// указателя. То есть гашение `root` само по себе выделение НЕ снимает — сегодня ступень 1
+        /// защищена лишь тем, что каждый путь, скрывающий вид, проходит через клик или уничтожает
+        /// выделенный объект. Это свойство ЧУЖИХ компонентов, а не инвариант этого класса.
         ///
-        /// САМ ВИД сидит на объекте-обёртке «PageSurface», который остаётся ВКЛЮЧЁННЫМ всегда (гасится
-        /// только его ребёнок `root`), так что вариант с пропуском выключенных предков ничего не теряет.</summary>
+        /// Цена ошибки при этом несимметрична: вид сидит на обёртке «PageSurface», которая остаётся
+        /// ВКЛЮЧЁННОЙ всегда (гасится только её ребёнок `root`), так что `GetComponentInParent` спокойно
+        /// вернул бы СКРЫТЫЙ вид — и Ctrl+Z уехал бы в невидимую страницу, то есть ровно в тот дефект,
+        /// ради которого написан весь класс. Одна строка проверки не зависит ни от какого чужого кода и
+        /// честный путь сломать не может: у видимого вида она всегда истинна.</summary>
         DocumentPageView ViewUnderCaret()
         {
             var events = EventSystem.current;
             var selected = events != null ? events.currentSelectedGameObject : null;
             if (selected == null) return null;
-            return selected.GetComponentInParent<DocumentPageView>();
+
+            var view = selected.GetComponentInParent<DocumentPageView>();
+            return view != null && view.SurfaceVisible ? view : null;
         }
     }
 }

@@ -65,12 +65,17 @@ namespace WorldGen.Notes.Rendering
 
         NotesDocumentController documentController;
 
-        /// <summary>Задача 5 арки «две страницы рядом»: откуда берётся вид. Раньше здесь лежала прямая
-        /// ссылка на единственный DocumentPageView; видов теперь два, по одному на панель.</summary>
-        PageFocusRouter router;
-
-        /// <summary>Вид, которому принадлежит СТРОКА-ЯКОРЬ этого попапа, снятый один раз — в Open — и
-        /// живущий ровно столько же, сколько сам попап (Close его стирает вместе с blockId/atIndex/query).
+        /// <summary>Задача 5 арки «две страницы рядом»: вид, которому принадлежит СТРОКА-ЯКОРЬ этого
+        /// попапа. Раньше здесь лежала ссылка на единственный на всё приложение DocumentPageView, которую
+        /// ставил Attach; видов теперь два, по одному на панель, и вид ПЕРЕДАЁТСЯ В Open — вместе со
+        /// строкой, ради которой попап и открывается. Живёт ровно столько же, сколько сам попап (Close
+        /// стирает его вместе с blockId/atIndex/query).
+        ///
+        /// ПАРАМЕТРОМ, А НЕ СОБСТВЕННЫМ ВОПРОСОМ К PageFocusRouter. Вид на кадр уже разрешён ровно один раз
+        /// — в DocKeyboardController.LateUpdate, и `row` найдена в списке строк ИМЕННО ЭТОГО вида. Спроси
+        /// попап маршрутизатор сам, ответов стало бы два, и сходились бы они лишь по сегодняшнему стечению
+        /// обстоятельств: любой будущий FocusAt выше по потоку успел бы переставить выделение между двумя
+        /// вопросами. Нелокальный инвариант там, где хватает аргумента.
         ///
         /// СНИМОК, А НЕ ОПРОС НА КАЖДЫЙ ВЫЗОВ, и это не оптимизация. Двое из трёх читателей спрашивают
         /// про ЯКОРЬ, а не про «где каретка сейчас»:
@@ -78,7 +83,7 @@ namespace WorldGen.Notes.Rendering
         ///     быть страница якоря, иначе список подсказок посчитан для соседней панели;
         ///   • Choose пишет токен в `pageView.ReplaceRangeWithToken(savedBlockId, …)` — и делает это на
         ///     POINTER-DOWN (см. PointerDownRelay), то есть в тот самый момент, когда клик по строке списка
-        ///     уже снял выделение с поля ввода: спроси мы маршрутизатор ТОГДА, ответ зависел бы от того,
+        ///     уже снял выделение с поля ввода: спроси мы «где каретка» ТОГДА, ответ зависел бы от того,
         ///     какая панель считается активной в этот кадр, а не от того, где стоит «@».
         /// Вид якоря — факт, зафиксированный в момент открытия, и никакой более поздний вопрос его не
         /// уточняет. Механика попапа при этом не тронута ни в одном месте: меняется только источник вида.</summary>
@@ -134,14 +139,13 @@ namespace WorldGen.Notes.Rendering
         /// <summary>REUSE-OR-ADD, тот же приём, что QuickOpenPopup.Attach — WorkspaceBuilder/NotesRootBuilder
         /// пере-запускают своё построение при каждой Play-mode пересборке, и второй AddComponent завёл бы
         /// вторую копию, полностью не в курсе первой.</summary>
-        public static MentionPopup Attach(GameObject host, NotesDocumentController documentController, PageFocusRouter router)
+        public static MentionPopup Attach(GameObject host, NotesDocumentController documentController)
         {
             var existing = host.GetComponent<MentionPopup>();
             var popup = existing != null ? existing : host.AddComponent<MentionPopup>();
             popup.Close();
             DestroyStrandedCanvas();
             popup.documentController = documentController;
-            popup.router = router;
             popup.builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             return popup;
         }
@@ -152,9 +156,9 @@ namespace WorldGen.Notes.Rendering
         /// Зачем отдельно от Attach. До арки «две панели» уборка ехала прицепом к Attach, а Attach звался
         /// БЕЗУСЛОВНО из NotesRootBuilder.EnsureBuilt на каждой перезагрузке домена. Задача 4 перенесла
         /// Attach в крючок PageSurfaceHost.OnViewCreated — то есть под условие «какая-то панель строит вид
-        /// страницы»; задача 5 вернула его на уровень выше (попап больше не привязан к виду, а спрашивает
-        /// PageFocusRouter), но условие осталось, только другое: Attach зовётся, лишь если в сцене нашёлся
-        /// NotesRootBuilder. Зависший же канвас переживает перезагрузку независимо от всего этого (окном
+        /// страницы»; задача 5 вернула его на уровень выше (Attach больше не привязывает попап ни к какому
+        /// виду — вид приходит в Open), но условие осталось, только другое: Attach зовётся, лишь если в
+        /// сцене нашёлся NotesRootBuilder. Зависший же канвас переживает перезагрузку независимо от всего этого (окном
         /// может владеть экран генерации, и заявок у оболочки нет вовсе). WorkspaceBuilder
         /// .DemolishForRebuild зовёт это рядом с NavContextMenu.DismissStranded, то есть ровно один раз на
         /// пересборку оболочки и без всяких условий.</summary>
@@ -177,17 +181,15 @@ namespace WorldGen.Notes.Rendering
         // ── открытие / обновление / закрытие — команды, вызываемые ИЗ DocKeyboardController ──────────
 
         /// <summary>Открывает список над строкой `row`, чей текст только что получил «@» на позиции
-        /// `atIndex`. `query` — то, что уже набрано после «@» (обычно "" в момент открытия).</summary>
-        public void Open(DocBlockView row, int atIndex, string query)
+        /// `atIndex`. `query` — то, что уже набрано после «@» (обычно "" в момент открытия). `owner` — вид,
+        /// в котором эта строка живёт; см. поле `pageView` про то, почему он приходит аргументом.</summary>
+        public void Open(DocumentPageView owner, DocBlockView row, int atIndex, string query)
         {
             if (row == null || string.IsNullOrEmpty(row.BlockId)) return;
             Close();   // защитно — вызывающая сторона и так не должна звать Open поверх открытого попапа.
 
             // ПОСЛЕ Close(), а не до: Close() стирает `pageView` вместе с остальным состоянием попапа.
-            // Здесь маршрутизатор гарантированно называет вид, которому принадлежит `row`: единственный
-            // вызывающий (DocKeyboardController) нашёл эту строку в списке строк того же самого вида,
-            // потому что каретка стоит в ней — а каретка и есть первая ступень ActiveView().
-            pageView = router != null ? router.ActiveView() : null;
+            pageView = owner;
 
             blockId = row.BlockId;
             this.atIndex = atIndex;

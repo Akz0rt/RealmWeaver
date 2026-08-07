@@ -104,20 +104,34 @@ namespace WorldGen.Notes.Rendering
             var keyboard = Keyboard.current;
             if (keyboard == null || page == null) return;
 
-            // ONLY THE PANE THE CARET IS IN (two panes arc, Task 5). This chord is polled per VIEW, and
-            // since that arc's Task 4 there is one view per pane — so an ungated Ctrl+F opened BOTH search
-            // bars, each calling ActivateInputField, with Unity's undefined Update order deciding which one
-            // ended up holding the caret. IsKeyboardTarget asks the one router that also answers for
-            // undo/«@» (see DocumentPageView.KeyboardTargetProbe), so all three land in the same pane.
+            // ONLY THE PANE THE CARET IS IN (two panes arc, Task 5), AND THAT GOES FOR EVERY KEY BELOW, not
+            // only the opening chord. This whole method polls the hardware per VIEW, and since that arc's
+            // Task 4 there is one view per pane — so an ungated Ctrl+F opened BOTH search bars, each calling
+            // ActivateInputField, with Unity's undefined Update order deciding which one ended up holding
+            // the caret. IsKeyboardTarget asks the one router that also answers for undo and «@» (see
+            // DocumentPageView.KeyboardTargetProbe), so all three land in the same pane.
             //
-            // ONLY THE OPENING CHORD IS GATED. Esc/Enter/F3 below stay unconditional: an already-open bar in
-            // the other pane still belongs to whoever is clicking in it, exactly as a split editor behaves.
+            // THE FIRST ROUND OF THIS FIX GATED ONLY Ctrl+F, on the argument that "an already-open bar
+            // belongs to whoever CLICKS in it". That argument does not cover a KEY, where there is no click
+            // to belong to — and two bars open at once is still reachable without one: Ctrl+F in pane 0
+            // (its field takes the caret), click into pane 1's text, Ctrl+F there. From then on one F3 or
+            // Enter stepped BOTH bars and one Esc closed both, so the other pane silently jumped to its own
+            // next match and repainted its highlights. That is exactly the "two owners" this task exists to
+            // remove, so the same gate is on all four keys.
+            //
+            // THE BAR IN THE OTHER PANE IS NOT STRANDED BY THIS: its own box is built under `page.Root`, so
+            // clicking into its field makes that view the caret's view and hands every key back at once.
+            bool ours = page.IsKeyboardTarget;
+
             if ((keyboard.ctrlKey.isPressed || keyboard.rightCtrlKey.isPressed)
-                && keyboard.fKey.wasPressedThisFrame && page.IsKeyboardTarget)
+                && keyboard.fKey.wasPressedThisFrame && ours)
             { Open(); return; }
 
             if (!IsOpen) { page.SearchOwnsKeys = false; return; }
 
+            // NOT gated: it is a report about THIS bar's own field, not a key. DocKeyboardController reads it
+            // through KeyboardSuspended to stand down while a search field holds the caret, and that has to
+            // stay true of whichever bar actually holds it.
             page.SearchOwnsKeys = field != null && field.isFocused;
 
             if (clearSelectionWhenFocused && field != null && field.isFocused)
@@ -125,6 +139,8 @@ namespace WorldGen.Notes.Rendering
                 field.MoveTextEnd(false);
                 clearSelectionWhenFocused = false;
             }
+
+            if (!ours) return;
 
             if (keyboard.escapeKey.wasPressedThisFrame) { Close(); return; }
 

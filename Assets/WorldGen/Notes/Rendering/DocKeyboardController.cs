@@ -412,25 +412,22 @@ namespace WorldGen.Notes.Rendering
             if (current != null) current.FocusAt(lastCaret);
         }
 
-        /// <summary>Moves the cache onto the row focus is being handed to, in the same statement that hands it
-        /// over. Without this the caret would go on describing the row the DM has just LEFT until the next
-        /// LateUpdate managed to refresh it — and that refresh needs the new field to be focused, which costs
-        /// a frame or two (FocusAt only queues ActivateInputField; the field takes focus on a later frame of
-        /// its own). A key pressed inside that window would be answered with the
-        /// previous row's caret. Nothing about line wrapping is cached alongside it: the vertical keys measure
-        /// that at the moment they are pressed, off the live row, so there is no second value here to keep
-        /// honest.</summary>
         /// <summary>Задача 5. Клавиши перешли к ДРУГОМУ виду — переносим на него всё, что переживает кадр.
+        ///
+        /// НЕ ПУТАТЬ С AdoptFocus ЧУТЬ НИЖЕ: та передаёт кэш между СТРОКАМИ одного вида, эта — между
+        /// ВИДАМИ (то есть между панелями), и вызывается только из LateUpdate, когда маршрутизатор назвал
+        /// не тот вид, что в прошлый раз.
         ///
         /// ПОЧЕМУ ЭТО ОБЯЗАТЕЛЬНО. `lastFocusedId`/`lastCaret` описывают строку КОНКРЕТНОГО вида. Оставить
         /// их при смене вида — значит получить самый вероятный дефект этой задачи: отмена в правой панели
         /// восстанавливает фокус на строке из левой (DocumentPageView.Undo читает LastFocusedBlockId, а
         /// хвост LateUpdate пишет туда этот самый кэш КАЖДЫЙ кадр).
         ///
-        /// НО И ОБНУЛЯТЬ ИХ НЕЛЬЗЯ — это ломает ровно то же самое с другого конца. Тот же безусловный
-        /// `pageView.NoteFocus(lastFocusedId, lastCaret)` в конце LateUpdate записал бы (null, 0) в НОВЫЙ
-        /// вид в первый же кадр после переключения — и стёр бы его собственную память о том, где стояла
-        /// каретка, которой пользуются и Undo/Redo, и панель инструментов (ConvertFocused,
+        /// НО И ОБНУЛЯТЬ ИХ НЕЛЬЗЯ — это ломает ровно то же самое с другого конца. Тот же
+        /// `pageView.NoteFocus(lastFocusedId, lastCaret)` в конце LateUpdate (он стоит ниже трёх ранних
+        /// return'ов, но в обычном кадре — где ничего не перехватило клавиши — доходит) записал бы (null, 0)
+        /// в НОВЫЙ вид в первый же такой кадр после переключения — и стёр бы его собственную память о том,
+        /// где стояла каретка, которой пользуются и Undo/Redo, и панель инструментов (ConvertFocused,
         /// InsertTokenAtCaret). ДМ увидел бы это как «щёлкнул по вкладке — и кнопки заголовка перестали
         /// что-либо делать».
         ///
@@ -455,6 +452,18 @@ namespace WorldGen.Notes.Rendering
             if (mentionPopup != null && mentionPopup.IsOpen) mentionPopup.Close();
         }
 
+        /// <summary>Moves the cache onto the row focus is being handed to, in the same statement that hands it
+        /// over. Without this the caret would go on describing the row the DM has just LEFT until the next
+        /// LateUpdate managed to refresh it — and that refresh needs the new field to be focused, which costs
+        /// a frame or two (FocusAt only queues ActivateInputField; the field takes focus on a later frame of
+        /// its own). A key pressed inside that window would be answered with the
+        /// previous row's caret. Nothing about line wrapping is cached alongside it: the vertical keys measure
+        /// that at the moment they are pressed, off the live row, so there is no second value here to keep
+        /// honest.
+        ///
+        /// ONE VIEW'S ROWS, ALWAYS — every caller is inside the frame the router already resolved (or, for
+        /// NoteExternalTokenInsertion, inside the popup anchored in that same view), so this never crosses
+        /// panes. Crossing panes is AdoptView's job, just above, and the two must not be confused.</summary>
         void AdoptFocus(string blockId, int caretOffset)
         {
             lastFocusedId = blockId;
@@ -535,7 +544,7 @@ namespace WorldGen.Notes.Rendering
                     mentionPopup.Close();
                     if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int newAt, out string newQuery))
                     {
-                        mentionPopup.Open(live, newAt, newQuery);
+                        mentionPopup.Open(pageView, live, newAt, newQuery);
                         mentionAnchorLastFocusedFrame = Time.frameCount;
                     }
                     return;
@@ -571,7 +580,7 @@ namespace WorldGen.Notes.Rendering
             // Попап ЗАКРЫТ — открыть его, только если «@» был набран ИМЕННО в этом кадре.
             if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int freshAt, out string freshQuery))
             {
-                mentionPopup.Open(live, freshAt, freshQuery);
+                mentionPopup.Open(pageView, live, freshAt, freshQuery);
                 mentionAnchorLastFocusedFrame = Time.frameCount;
             }
         }

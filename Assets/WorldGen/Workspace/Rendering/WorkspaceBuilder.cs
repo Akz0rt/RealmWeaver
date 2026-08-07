@@ -379,10 +379,12 @@ namespace WorldGen.Workspace.Rendering
                 {
                     keyboard.router = focusRouter;
                     // Attach is REUSE-OR-ADD (see its own doc), so this re-points the one popup rather than
-                    // building a second. OnTokenInserted is a plain field Attach does not touch, and
-                    // MentionPopup.Choose has no other way to tell the keyboard controller where the caret
-                    // ended up — see NoteExternalTokenInsertion's own doc.
-                    keyboard.mentionPopup = MentionPopup.Attach(notesRoot.gameObject, notesRoot.DocumentController, focusRouter);
+                    // building a second. It takes no view and no router: the popup is told which view a
+                    // «@» was typed in when it is OPENED, by the controller that already resolved it for
+                    // that frame (see MentionPopup's `pageView` field). OnTokenInserted is a plain field
+                    // Attach does not touch, and MentionPopup.Choose has no other way to tell the keyboard
+                    // controller where the caret ended up — see NoteExternalTokenInsertion's own doc.
+                    keyboard.mentionPopup = MentionPopup.Attach(notesRoot.gameObject, notesRoot.DocumentController);
                     keyboard.mentionPopup.OnTokenInserted = keyboard.NoteExternalTokenInsertion;
                 }
 
