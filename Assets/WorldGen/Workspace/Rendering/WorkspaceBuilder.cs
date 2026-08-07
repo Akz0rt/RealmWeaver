@@ -363,8 +363,28 @@ namespace WorldGen.Workspace.Rendering
                 // CanvasTabPruner for why all three are answered in one place rather than at each seam.
                 var pruner = CanvasTabPruner.Attach(gameObject, notesRoot.DocumentController, pageHost, Controller);
 
+                // WHERE THE KEYS GO (two panes arc, Task 5). One keystroke handler and one «@» popup exist
+                // for the whole app — both live on NotesRootBuilder's GameObject — and until this task they
+                // were wired to ONE view, chosen by a `pane == 0 || keyboard.pageView == null` branch that
+                // this comment used to apologise for. Typing in the other pane then fell through to the raw
+                // TMP fields: the text edited, but Enter/Tab/Backspace/undo never reached the block list.
+                //
+                // NEITHER OF THEM IS PER-VIEW ANY MORE, which is why this wiring sits OUTSIDE the hook
+                // below: the router is asked, every frame, which view holds the caret, so there is nothing
+                // for a per-view assignment to say. It is built here, beside `pageHost`, and dies with it on
+                // the next shell rebuild — see PageFocusRouter's own class doc.
                 var keyboard = notesRoot.Keyboard;
-                var notesGO = notesRoot.gameObject;
+                var focusRouter = new PageFocusRouter(pageHost, Controller);
+                if (keyboard != null)
+                {
+                    keyboard.router = focusRouter;
+                    // Attach is REUSE-OR-ADD (see its own doc), so this re-points the one popup rather than
+                    // building a second. OnTokenInserted is a plain field Attach does not touch, and
+                    // MentionPopup.Choose has no other way to tell the keyboard controller where the caret
+                    // ended up — see NoteExternalTokenInsertion's own doc.
+                    keyboard.mentionPopup = MentionPopup.Attach(notesRoot.gameObject, notesRoot.DocumentController, focusRouter);
+                    keyboard.mentionPopup.OnTokenInserted = keyboard.NoteExternalTokenInsertion;
+                }
 
                 // EVERY per-view wiring lives in this ONE hook, and it is assigned BEFORE
                 // SetSurfaceRegistry below — the first SyncSurfaces runs inside that call, so a hook attached
@@ -385,27 +405,13 @@ namespace WorldGen.Workspace.Rendering
                     linkBridge.Configure(view);
                     pruner.Observe(view);
 
-                    // TEMPORARY, AND TASK 5 IS WHAT MAKES IT RIGHT: one keystroke handler and one «@» popup
-                    // exist for the whole app (both live on NotesRootBuilder's GameObject), so they can only
-                    // point at ONE view, and typing in the other pane falls through to the raw TMP fields —
-                    // the text still edits, but Enter/Tab/Backspace/undo do not act on the block list. Task 5
-                    // builds the router that follows the caret.
-                    //
-                    // PANE 0 WINS, BUT A PANE-1 VIEW IS BETTER THAN NONE. A plain ViewFor(0) would leave the
-                    // handler wired to nothing whenever pane 0 shows something else (the map, a dungeon) and
-                    // the only page in the workspace is in pane 1 — a state that worked before this task,
-                    // because the one view followed the claim. The `pageView == null` clause keeps it working;
-                    // it is not routing, it is the absence of a regression.
-                    if (keyboard != null && (pane == 0 || keyboard.pageView == null))
-                    {
-                        keyboard.pageView = view;
-                        // Attach is REUSE-OR-ADD (see its own doc), so this re-points the one popup rather
-                        // than building a second. OnTokenInserted is a plain field Attach does not touch, and
-                        // MentionPopup.Choose has no other way to tell the keyboard controller where the
-                        // caret ended up — see NoteExternalTokenInsertion's own doc.
-                        keyboard.mentionPopup = MentionPopup.Attach(notesGO, notesRoot.DocumentController, view);
-                        keyboard.mentionPopup.OnTokenInserted = keyboard.NoteExternalTokenInsertion;
-                    }
+                    // THE ONE CHORD THIS VIEW POLLS FOR ITSELF: Ctrl+F. Everything else the keyboard decides
+                    // goes through DocKeyboardController, of which there is exactly one — but PageSearchBar
+                    // lives INSIDE each view and reads the hardware from its own Update, so with two views an
+                    // ungated Ctrl+F opened two search boxes at once. The probe answers from the same router,
+                    // so undo, «@» and search cannot disagree about which pane the DM is in. See
+                    // DocumentPageView.KeyboardTargetProbe.
+                    view.KeyboardTargetProbe = () => focusRouter.ActiveView() == view;
                 };
             }
             registry.Register(MapSurfaceHost.Create(gameObject, mapCamera, mapChrome, rootRowBg));
@@ -453,10 +459,11 @@ namespace WorldGen.Workspace.Rendering
             // A FOURTH stranded root canvas, added here by the two-panes arc's Task 4 rather than left to
             // ride along with something else. The «@» popup's canvas is a root canvas too, and its cleanup
             // used to be a side effect of MentionPopup.Attach, which NotesRootBuilder.EnsureBuilt called
-            // unconditionally on every reload. Attach now happens inside PageSurfaceHost's OnViewCreated
-            // hook, i.e. only when some pane actually builds a page view — so the cleanup is stated here
-            // instead, where it runs once per shell rebuild and asks nothing about what else exists. See
-            // MentionPopup.DismissStranded's own doc.
+            // unconditionally on every reload. Task 4 moved Attach inside PageSurfaceHost's OnViewCreated
+            // hook (i.e. only when some pane actually built a page view) and Task 5 lifted it back out — the
+            // popup asks a router now, not a view — but it is STILL conditional: Awake only reaches it when
+            // a NotesRootBuilder was found in the scene. So the cleanup stays stated here, where it runs once
+            // per shell rebuild and asks nothing about what else exists. See MentionPopup.DismissStranded.
             MentionPopup.DismissStranded();
         }
 

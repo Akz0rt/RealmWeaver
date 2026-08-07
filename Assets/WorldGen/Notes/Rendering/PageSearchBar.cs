@@ -104,8 +104,16 @@ namespace WorldGen.Notes.Rendering
             var keyboard = Keyboard.current;
             if (keyboard == null || page == null) return;
 
+            // ONLY THE PANE THE CARET IS IN (two panes arc, Task 5). This chord is polled per VIEW, and
+            // since that arc's Task 4 there is one view per pane — so an ungated Ctrl+F opened BOTH search
+            // bars, each calling ActivateInputField, with Unity's undefined Update order deciding which one
+            // ended up holding the caret. IsKeyboardTarget asks the one router that also answers for
+            // undo/«@» (see DocumentPageView.KeyboardTargetProbe), so all three land in the same pane.
+            //
+            // ONLY THE OPENING CHORD IS GATED. Esc/Enter/F3 below stay unconditional: an already-open bar in
+            // the other pane still belongs to whoever is clicking in it, exactly as a split editor behaves.
             if ((keyboard.ctrlKey.isPressed || keyboard.rightCtrlKey.isPressed)
-                && keyboard.fKey.wasPressedThisFrame)
+                && keyboard.fKey.wasPressedThisFrame && page.IsKeyboardTarget)
             { Open(); return; }
 
             if (!IsOpen) { page.SearchOwnsKeys = false; return; }

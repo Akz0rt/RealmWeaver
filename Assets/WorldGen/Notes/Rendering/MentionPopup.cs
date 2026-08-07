@@ -64,7 +64,26 @@ namespace WorldGen.Notes.Rendering
         const string CanvasName = "MentionPopupCanvas";
 
         NotesDocumentController documentController;
+
+        /// <summary>Задача 5 арки «две страницы рядом»: откуда берётся вид. Раньше здесь лежала прямая
+        /// ссылка на единственный DocumentPageView; видов теперь два, по одному на панель.</summary>
+        PageFocusRouter router;
+
+        /// <summary>Вид, которому принадлежит СТРОКА-ЯКОРЬ этого попапа, снятый один раз — в Open — и
+        /// живущий ровно столько же, сколько сам попап (Close его стирает вместе с blockId/atIndex/query).
+        ///
+        /// СНИМОК, А НЕ ОПРОС НА КАЖДЫЙ ВЫЗОВ, и это не оптимизация. Двое из трёх читателей спрашивают
+        /// про ЯКОРЬ, а не про «где каретка сейчас»:
+        ///   • RunSearch передаёт `pageView.Page` в MentionSuggest.Rank как «текущую страницу» — это должна
+        ///     быть страница якоря, иначе список подсказок посчитан для соседней панели;
+        ///   • Choose пишет токен в `pageView.ReplaceRangeWithToken(savedBlockId, …)` — и делает это на
+        ///     POINTER-DOWN (см. PointerDownRelay), то есть в тот самый момент, когда клик по строке списка
+        ///     уже снял выделение с поля ввода: спроси мы маршрутизатор ТОГДА, ответ зависел бы от того,
+        ///     какая панель считается активной в этот кадр, а не от того, где стоит «@».
+        /// Вид якоря — факт, зафиксированный в момент открытия, и никакой более поздний вопрос его не
+        /// уточняет. Механика попапа при этом не тронута ни в одном месте: меняется только источник вида.</summary>
         DocumentPageView pageView;
+
         Font builtinFont;
 
         GameObject popupGO;
@@ -115,14 +134,14 @@ namespace WorldGen.Notes.Rendering
         /// <summary>REUSE-OR-ADD, тот же приём, что QuickOpenPopup.Attach — WorkspaceBuilder/NotesRootBuilder
         /// пере-запускают своё построение при каждой Play-mode пересборке, и второй AddComponent завёл бы
         /// вторую копию, полностью не в курсе первой.</summary>
-        public static MentionPopup Attach(GameObject host, NotesDocumentController documentController, DocumentPageView pageView)
+        public static MentionPopup Attach(GameObject host, NotesDocumentController documentController, PageFocusRouter router)
         {
             var existing = host.GetComponent<MentionPopup>();
             var popup = existing != null ? existing : host.AddComponent<MentionPopup>();
             popup.Close();
             DestroyStrandedCanvas();
             popup.documentController = documentController;
-            popup.pageView = pageView;
+            popup.router = router;
             popup.builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             return popup;
         }
@@ -132,11 +151,13 @@ namespace WorldGen.Notes.Rendering
         ///
         /// Зачем отдельно от Attach. До арки «две панели» уборка ехала прицепом к Attach, а Attach звался
         /// БЕЗУСЛОВНО из NotesRootBuilder.EnsureBuilt на каждой перезагрузке домена. Задача 4 перенесла
-        /// Attach в крючок PageSurfaceHost.OnViewCreated: теперь он случается, только если какая-то панель
-        /// действительно строит вид страницы, — а зависший канвас переживает перезагрузку независимо от
-        /// того, строится ли вид (например, окном владеет экран генерации, и заявок у оболочки нет вовсе).
-        /// WorkspaceBuilder.DemolishForRebuild зовёт это рядом с NavContextMenu.DismissStranded, то есть
-        /// ровно один раз на пересборку оболочки и без всяких условий.</summary>
+        /// Attach в крючок PageSurfaceHost.OnViewCreated — то есть под условие «какая-то панель строит вид
+        /// страницы»; задача 5 вернула его на уровень выше (попап больше не привязан к виду, а спрашивает
+        /// PageFocusRouter), но условие осталось, только другое: Attach зовётся, лишь если в сцене нашёлся
+        /// NotesRootBuilder. Зависший же канвас переживает перезагрузку независимо от всего этого (окном
+        /// может владеть экран генерации, и заявок у оболочки нет вовсе). WorkspaceBuilder
+        /// .DemolishForRebuild зовёт это рядом с NavContextMenu.DismissStranded, то есть ровно один раз на
+        /// пересборку оболочки и без всяких условий.</summary>
         public static void DismissStranded() => DestroyStrandedCanvas();
 
         /// <summary>Тот же приём, что QuickOpenPopup.DestroyStrandedCanvas — канвас попапа корневой (не
@@ -161,6 +182,12 @@ namespace WorldGen.Notes.Rendering
         {
             if (row == null || string.IsNullOrEmpty(row.BlockId)) return;
             Close();   // защитно — вызывающая сторона и так не должна звать Open поверх открытого попапа.
+
+            // ПОСЛЕ Close(), а не до: Close() стирает `pageView` вместе с остальным состоянием попапа.
+            // Здесь маршрутизатор гарантированно называет вид, которому принадлежит `row`: единственный
+            // вызывающий (DocKeyboardController) нашёл эту строку в списке строк того же самого вида,
+            // потому что каретка стоит в ней — а каретка и есть первая ступень ActiveView().
+            pageView = router != null ? router.ActiveView() : null;
 
             blockId = row.BlockId;
             this.atIndex = atIndex;
@@ -209,6 +236,9 @@ namespace WorldGen.Notes.Rendering
             blockId = null;
             atIndex = -1;
             query = "";
+            // Вид якоря живёт ровно столько же, сколько сам якорь, — иначе закрытый попап продолжал бы
+            // держать ссылку на вид чужой панели (и, после пересборки оболочки, на снесённый вид).
+            pageView = null;
         }
 
         public void MoveHighlight(int delta)

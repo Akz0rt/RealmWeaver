@@ -45,8 +45,10 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>The keystroke handler, which needs a DocumentPageView to act on and no longer has one to
         /// be handed at build time: the views are born inside the panes, later, and are destroyed and rebuilt
-        /// with the shell. WorkspaceBuilder points this at a view as each one is created (PageSurfaceHost
-        /// .OnViewCreated) — see the hook's call site for which pane's view wins, and why that is temporary.
+        /// with the shell. It is handed a PageFocusRouter instead (WorkspaceBuilder.Awake, once per shell
+        /// rebuild) and asks IT, every frame, which pane's view holds the caret — the two-panes arc's Task 5.
+        /// Through Task 4 it was pointed at one view per creation and pane 0 won, which is why some comments
+        /// nearby still explain the shape of that gap in the past tense.
         ///
         /// Re-acquired by GetComponent on BOTH branches of EnsureBuilt rather than trusted to survive: this is
         /// a plain auto-property with no [SerializeField], so a Play-mode domain reload nulls it while the
@@ -106,7 +108,7 @@ namespace WorldGen.Notes.Rendering
         /// this GameObject, and with it the reason: a page view now lives under a pane's ContentArea, i.e.
         /// under WorkspaceCanvas, which WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s and rebuilds on
         /// every reload — there is no half-wiped survivor left to repair. MentionPopup is re-Attached from the
-        /// same rebuild, beside the view it must point at (see WorkspaceBuilder's OnViewCreated hook).</summary>
+        /// same rebuild, beside the router it now asks for a view (WorkspaceBuilder.Awake, Task 5).</summary>
         public void EnsureBuilt()
         {
             var existingDocument = GetComponent<NotesDocumentController>();
@@ -120,10 +122,10 @@ namespace WorldGen.Notes.Rendering
             EnsureEventSystemExists();
 
             DocumentController = gameObject.AddComponent<NotesDocumentController>();
-            // Built here, wired elsewhere: `pageView`/`mentionPopup` stay null until a pane actually has a
-            // page view to act on. Every use of both is null-guarded in DocKeyboardController itself (its
-            // LateUpdate returns immediately on a null pageView), so an unwired controller is inert rather
-            // than broken — which is the state a workspace showing no page at all should be in anyway.
+            // Built here, wired elsewhere: `router`/`mentionPopup` stay null until a workspace shell exists
+            // to point them somewhere. Every use of both is null-guarded in DocKeyboardController itself
+            // (its LateUpdate returns immediately when the router is null OR names no view), so an unwired
+            // controller is inert rather than broken — the state a workspace showing no page should be in.
             Keyboard = gameObject.AddComponent<DocKeyboardController>();
         }
 

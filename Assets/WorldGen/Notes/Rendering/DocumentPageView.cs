@@ -452,6 +452,26 @@ namespace WorldGen.Notes.Rendering
         /// them.</summary>
         public bool KeyboardSuspended => PaletteOpen || SearchOwnsKeys;
 
+        /// <summary>Задача 5 арки «две страницы рядом». Является ли ЭТОТ вид тем, кому сейчас адресованы
+        /// клавиши. Подставляется WorkspaceBuilder'ом в том же крючке OnViewCreated, что и CanvasRouter/
+        /// WorldSource/LinkRouter/LinkPicker, и спрашивает ровно один источник истины — PageFocusRouter.
+        ///
+        /// ЗАЧЕМ ВООБЩЕ. Аккорды, которые ловит DocKeyboardController, приходят в одно место на всё
+        /// приложение, а вот Ctrl+F опрашивает клавиатуру САМ, из PageSearchBar, — а этих панелей теперь
+        /// две, и каждая со своим видом и своей строкой поиска. Без этой проверки один Ctrl+F открывал бы
+        /// ОБЕ строки поиска, и каждая звала бы ActivateInputField: кому достанется каретка, решал бы
+        /// порядок вызова Update у двух компонентов, который Unity не определяет.
+        ///
+        /// ДЕЛЕГАТ, А НЕ ФЛАЖОК, который кто-то обязан вовремя переставить: вторая копия факта «чей сейчас
+        /// фокус» — это ровно та ошибка, которой посвящён класс-док PageFocusRouter (и добрая половина
+        /// дефектов этой оболочки). Здесь не хранится ничего, вопрос каждый раз задаётся заново.
+        ///
+        /// НЕПРОВЕДЁННЫЙ ДЕЛЕГАТ ЗНАЧИТ «ДА»: в сцене без оболочки (голый стенд, notes без workspace) вид
+        /// в проекте один и Ctrl+F обязан работать ровно как работал.</summary>
+        public System.Func<bool> KeyboardTargetProbe;
+
+        public bool IsKeyboardTarget => KeyboardTargetProbe == null || KeyboardTargetProbe();
+
         /// <summary>Opens the link picker, injected by PageLinkBridge because the picker is Ctrl+K's own
         /// palette and lives on the workspace side of the layer boundary. Null in a scene without a
         /// workspace, which is why the toolbar's «Ссылка» reads CanInsertLink rather than assuming.</summary>

@@ -49,13 +49,32 @@ namespace WorldGen.Notes.Rendering
     /// </summary>
     public class DocKeyboardController : MonoBehaviour
     {
-        public DocumentPageView pageView;
+        /// <summary>Задача 5 арки «две страницы рядом». ОТКУДА БЕРЁТСЯ ВИД, на который этот класс
+        /// действует. Раньше здесь лежала прямая ссылка на единственный DocumentPageView, которую
+        /// WorkspaceBuilder проводил к панели 0; с задачи 4 видов два, по одному на панель, и «тот самый»
+        /// вид перестал существовать. Маршрутизатор отвечает на это покадрово — см. его собственный
+        /// класс-док про то, почему опрос каретки, а не поле «текущий вид».
+        ///
+        /// Проводится WorkspaceBuilder'ом ОДИН раз на пересборку оболочки, а не по разу на каждый
+        /// созданный вид: маршрутизатор не привязан ни к какой панели, поэтому крючок OnViewCreated ему не
+        /// нужен. Null в сцене без оболочки — LateUpdate тогда просто ничего не делает.</summary>
+        public PageFocusRouter router;
 
-        /// <summary>Задача 10б. Wired by WorkspaceBuilder, same shape as `pageView` above and at the same
+        /// <summary>Вид, которому принадлежат клавиши В ЭТОМ КАДРЕ, — снимок `router.ActiveView()`,
+        /// сделанный в начале LateUpdate, чтобы все нижние методы одного кадра работали с ОДНИМ и тем же
+        /// видом (иначе клик, случившийся между двумя вызовами, развёл бы их по разным панелям).
+        ///
+        /// ОН ЖЕ — ХОЗЯИН КЭША `lastFocusedId`/`lastCaret` ниже. Отдельного поля «для какого вида сняты
+        /// эти значения» нет намеренно: это была бы вторая копия одного факта, свободная разойтись с
+        /// первой (любимая ошибка этого проекта, см. WorkspaceController.shellSuppressed). Смена вида
+        /// обнаруживается сравнением НОВОГО ответа маршрутизатора с тем, что лежит здесь, ДО перезаписи —
+        /// см. AdoptView.</summary>
+        DocumentPageView pageView;
+
+        /// <summary>Задача 10б. Wired by WorkspaceBuilder, same shape as `router` above and at the same
         /// moment — a plain public field an outside builder assigns, not a constructor argument, because this
-        /// class is itself AddComponent-ed. Null until some pane actually has a page view to act on (the two
-        /// panes arc's Task 4 moved the views into the panes, so neither exists at the time NotesRootBuilder
-        /// creates this controller); every use below is null-guarded for exactly that reason.</summary>
+        /// class is itself AddComponent-ed. Null in a scene with no workspace shell to attach it; every use
+        /// below is null-guarded for exactly that reason.</summary>
         public MentionPopup mentionPopup;
 
         /// <summary>Задача 10б, фикс-раунд 3. `Time.frameCount` as of the last LateUpdate where the popup's
@@ -97,7 +116,17 @@ namespace WorldGen.Notes.Rendering
 
         void LateUpdate()
         {
-            if (pageView == null || pageView.Page == null) return;
+            // Задача 5: сначала — КОМУ принадлежат клавиши этого кадра, и только потом всё остальное.
+            var active = router != null ? router.ActiveView() : null;
+            if (active == null) return;
+
+            // Смена вида проверяется ДО проверки на пустую страницу: панель может показывать вид, к
+            // которому ещё не привязана страница (заглушка «страницы нет»), и кэш всё равно обязан
+            // переехать на неё — иначе он остался бы висеть на прошлой панели и следующий же Ctrl+Z ушёл
+            // бы не туда.
+            if (pageView != active) AdoptView(active);
+            if (pageView.Page == null) return;
+
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -218,8 +247,8 @@ namespace WorldGen.Notes.Rendering
             // текстом» (field.lineType = TMP_InputField.LineType.MultiLineNewline), молча ловила бы
             // побочным эффектом ещё и разбиение строки прозы.
             //
-            // СОЗНАТЕЛЬНО НЕ ЧЕРЕЗ pageView.KeyboardSuspended (см. её же класс-док чуть выше, :120): тот
-            // флаг обрывает LateUpdate ЦЕЛИКОМ, ДО блока Ctrl+Z (:174) и до CharacterHeaderView.Update,
+            // СОЗНАТЕЛЬНО НЕ ЧЕРЕЗ pageView.KeyboardSuspended (см. её же класс-док чуть выше, :149): тот
+            // флаг обрывает LateUpdate ЦЕЛИКОМ, ДО блока Ctrl+Z (:203) и до CharacterHeaderView.Update,
             // где живёт Ctrl+V-вставка портрета, — оба ДМ уже проверил и подтвердил рабочими. Добавление
             // сюда своего собственного условия, а не переиспользование/расширение KeyboardSuspended —
             // единственный способ выключить именно Enter/Tab, не выключив по пути их тоже. НЕ
@@ -391,6 +420,41 @@ namespace WorldGen.Notes.Rendering
         /// previous row's caret. Nothing about line wrapping is cached alongside it: the vertical keys measure
         /// that at the moment they are pressed, off the live row, so there is no second value here to keep
         /// honest.</summary>
+        /// <summary>Задача 5. Клавиши перешли к ДРУГОМУ виду — переносим на него всё, что переживает кадр.
+        ///
+        /// ПОЧЕМУ ЭТО ОБЯЗАТЕЛЬНО. `lastFocusedId`/`lastCaret` описывают строку КОНКРЕТНОГО вида. Оставить
+        /// их при смене вида — значит получить самый вероятный дефект этой задачи: отмена в правой панели
+        /// восстанавливает фокус на строке из левой (DocumentPageView.Undo читает LastFocusedBlockId, а
+        /// хвост LateUpdate пишет туда этот самый кэш КАЖДЫЙ кадр).
+        ///
+        /// НО И ОБНУЛЯТЬ ИХ НЕЛЬЗЯ — это ломает ровно то же самое с другого конца. Тот же безусловный
+        /// `pageView.NoteFocus(lastFocusedId, lastCaret)` в конце LateUpdate записал бы (null, 0) в НОВЫЙ
+        /// вид в первый же кадр после переключения — и стёр бы его собственную память о том, где стояла
+        /// каретка, которой пользуются и Undo/Redo, и панель инструментов (ConvertFocused,
+        /// InsertTokenAtCaret). ДМ увидел бы это как «щёлкнул по вкладке — и кнопки заголовка перестали
+        /// что-либо делать».
+        ///
+        /// Поэтому кэш ПЕРЕНИМАЕТСЯ у самого вида: DocumentPageView.LastFocusedBlockId и есть та самая
+        /// «где была каретка в ЭТОЙ странице», которую этот класс туда и записал, когда вид был активен.
+        /// Так поведение каждой панели по отдельности остаётся ровно тем же, что было у единственного вида
+        /// до арки. `LastFocusedCaret` инициализируется как -1 («не знаем»), а отрицательная каретка ниже
+        /// по коду читается как «конец строки»/0 в разных местах — поэтому здесь она зажимается в 0 сразу,
+        /// а не оставляется двусмысленной.
+        ///
+        /// ПОПАП «@» ЗАКРЫВАЕТСЯ, потому что его якорь — строка ПРОШЛОГО вида: показывать список над чужой
+        /// панелью нечестно, а вставлять выбранное было бы уже прямой порчей. Он закрылся бы и сам одним
+        /// шагом позже (UpdateMentionPopup не нашёл бы блок якоря в новой странице), но полагаться на
+        /// побочный эффект там, где речь о записи в документ, не стоит. Окно отсрочки в 2 кадра тоже
+        /// принадлежало прошлому виду — его отметка сбрасывается вместе с попапом.</summary>
+        void AdoptView(DocumentPageView view)
+        {
+            pageView = view;
+            lastFocusedId = view.LastFocusedBlockId;
+            lastCaret = Mathf.Max(0, view.LastFocusedCaret);
+            mentionAnchorLastFocusedFrame = -1;
+            if (mentionPopup != null && mentionPopup.IsOpen) mentionPopup.Close();
+        }
+
         void AdoptFocus(string blockId, int caretOffset)
         {
             lastFocusedId = blockId;
@@ -398,8 +462,14 @@ namespace WorldGen.Notes.Rendering
 
             // caretOffset < 0 is DocKeyResult's "put it at the end" — resolve it against the text now rather
             // than leaving a negative in the cache, which OnEnter would read as offset 0 and split on.
-            // pageView.Page needs no guard: LateUpdate returns early without one, and it is Handle's only
-            // caller, which is AdoptFocus's only caller.
+            //
+            // pageView.Page needs no guard, and the reason is narrower than it used to be stated. This
+            // method has TWO callers: Handle (which only runs from inside LateUpdate, past its `pageView
+            // .Page == null` return) and NoteExternalTokenInsertion, called from MentionPopup.Choose during
+            // the Update phase, i.e. outside that protection. The second one is safe not because of where it
+            // runs but because of WHAT IT PASSES: `start + token.Length`, which is never negative, so it
+            // returns one line above and never reaches this branch. Keep that true — a caller passing a
+            // negative offset from outside LateUpdate is the one way to make this line throw.
             var block = pageView.Page.Blocks.Find(b => b.Id == blockId);
             lastCaret = block != null ? (block.Text ?? "").Length : 0;
         }
