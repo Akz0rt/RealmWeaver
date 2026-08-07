@@ -647,8 +647,16 @@ namespace WorldGen.Notes.Rendering
         /// shows lives in the DocBlock. That is what lets Undo simply rebuild the page.
         ///
         /// THE PAGE'S HISTORY IS THE BOARD'S HISTORY. The canvas knows nothing about undo and asks whoever
-        /// built it to remember the state before each change — one stack, one Ctrl+Z, whatever the mouse
-        /// happens to be over. See the spec's «Отмена — один стек».</summary>
+        /// built it to remember the state before each change — one stack, one Ctrl+Z. See the spec's
+        /// «Отмена — один стек».
+        ///
+        /// WHICH PAGE THAT Ctrl+Z REACHES IS NOT DECIDED BY THE MOUSE, and this paragraph used to say it was
+        /// («whatever the mouse happens to be over») — true under Р4, when one pane rendered and the pointer
+        /// was therefore always over the only live page. The two-panes arc replaced it: both Ctrl+Z handlers
+        /// in this layer (DocKeyboardController's ordinary path and its HandleUndoOverBoard) address through
+        /// PageFocusRouter, which reads EventSystem.currentSelectedGameObject and, failing that, the focused
+        /// pane. Pointer position is read nowhere. So with the caret in pane 0's prose and the pointer over an
+        /// inline board in pane 1, Ctrl+Z undoes pane 0.</summary>
         void BuildInlineCanvas(DocBlock block, DocBlockView view)
         {
             var interactionGO = new GameObject($"CanvasInput_{block.Id}", typeof(RectTransform));

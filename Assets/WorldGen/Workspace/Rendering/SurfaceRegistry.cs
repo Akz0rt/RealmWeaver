@@ -110,7 +110,10 @@ namespace WorldGen.Workspace.Rendering
     /// tab — an ordinary sequence: open a page, «Открыть рядом» a DIFFERENT one — therefore could not both
     /// render, and the only thing keeping the FOCUSED pane's page on screen was the transitional
     /// first-claim-wins guard in WorkspaceController.SyncSurfaces. Task 4 built the second view and narrowed
-    /// that guard to Canvas; SurfaceKindRules.AllowsMultiplePanes had already answered TRUE for Page since
+    /// that guard to Canvas, and Task 6 REMOVED IT OUTRIGHT once the board became per-pane too — there is no
+    /// guard left anywhere, and SyncSurfaces now serves every claim (see its own doc's «EVERY CLAIM IS SERVED»
+    /// paragraph, which names the symptom of anyone reintroducing one: everything compiles and the second pane
+    /// silently stays empty). SurfaceKindRules.AllowsMultiplePanes had already answered TRUE for Page since
     /// Task 1, in anticipation of exactly this.
     ///
     /// THE KEY IS THE PHYSICAL PANE INDEX, NOT THE TAB AND NOT THE PAGE. `views[0]` is the view living in
