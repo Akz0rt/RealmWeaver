@@ -45,10 +45,16 @@ namespace WorldGen.PlayerPrep.Data
         {
             // Мутант, который эта фикстура убивает: «проверять Levels.Count == 20». Уровней ровно
             // 20, но два тринадцатых и ни одного четырнадцатого — счёт верен, набор нет.
+            //
+            // ПРОВЕРЯЕМ ИМЕННО СООБЩЕНИЕ ПРО ПОВТОР, а не просто «в ошибках есть 14»: та же фикстура
+            // порождает и ошибку «нет уровня 14» из соседней проверки, и утверждение по числу 14
+            // проходило бы даже с полностью выключенной проверкой повторов. Ветка осталась бы без
+            // покрытия внутри самопроверки, написанной ради неё.
             var r = Minimal();
             r.Classes[0].Levels.First(l => l.Level == 14).Level = 13;
             var errors = RulesIntegrity.Check(r);
-            bool ok = errors.Any(e => e.Contains("rogue") && e.Contains("14"));
+            bool ok = errors.Any(e => e.Contains("rogue") && e.Contains("13") && e.Contains("встречается"))
+                   && errors.Any(e => e.Contains("rogue") && e.Contains("нет уровня 14"));
             if (!ok) Debug.LogError("FAIL сдвоенный уровень: " + string.Join("; ", errors));
             Done(ok);
         }
