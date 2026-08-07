@@ -10,9 +10,11 @@ using WorldGen.Workspace.Data;
 namespace WorldGen.Workspace.Rendering
 {
     /// <summary>What a tab's content actually is, once WorkspaceController decides which SurfaceRef is
-    /// active in a pane. One host instance serves EVERY tab of its Kind — there is no per-tab or per-pane
-    /// copy — which is why Show/Hide carry no pane index: WorkspaceController passes the physical
-    /// RectTransform to show INTO, and the host re-parents itself there.
+    /// active in a pane. One host instance serves EVERY tab of its Kind — there is no per-tab copy — but
+    /// Show/Hide now carry the PANE INDEX that is asking, which is what lets a host serve BOTH panes at
+    /// once behind the same interface: a multi-pane host keeps one slot per pane index (the shape Tasks 4
+    /// and 6 give Page and Canvas), while a single-instance host records which pane it landed in and
+    /// returns without acting when Hide names the other one.
     ///
     /// "Parent yourself here" (Show's own parameter doc) is load-bearing, not a suggestion:
     /// WorkspaceOps.NormalizeSplit can promote Secondary into Primary's slot, and WorkspaceController.
@@ -21,38 +23,44 @@ namespace WorldGen.Workspace.Rendering
     /// Show() call re-parents unconditionally, every time, so recomputing PaneContent(pane) fresh on each
     /// call (which WorkspaceController.SyncSurfaces does) makes promotion handled automatically.
     ///
-    /// Only one pane can show a given Kind's real content at a time (see PageSurfaceHost's own doc for why
-    /// that is an accepted limitation, not a bug, for the Page surface specifically). WorkspaceController
-    /// .SyncSurfaces resolves the contest by iterating the FOCUSED pane FIRST and skipping any later pane
-    /// whose host reports an already-claimed ShareGroup — so the focused pane gets the host and the other
-    /// pane's Show never runs, rather than running and being overwritten.</summary>
+    /// HOW MANY PANES A KIND ALLOWS IS NOT DECIDED HERE ANY MORE. It used to be, through a `ShareGroup`
+    /// property every host returned and WorkspaceController.SyncSurfaces claimed focused-pane-first. That
+    /// property is gone: SurfaceKindRules (Workspace/Data/SurfaceClaims.cs) is now the single place that
+    /// answers both questions ShareGroup had fused into one object identity — "does this Kind allow more
+    /// than one pane" (AllowsMultiplePanes) and "which PHYSICAL screen does it drive" (ScreenKeyOf, the
+    /// reason Settlement/BuildingInterior/Dungeon cannot both be shown). SurfaceClaims.Resolve applies
+    /// those rules away from UnityEngine, where the offline harness can test them, and hands SyncSurfaces
+    /// a list of claims in priority order with the focused pane first; SyncSurfaces only APPLIES it. So a
+    /// host is never asked to arbitrate a contest it cannot see, and never receives a Show for a pane the
+    /// rules already ruled out.</summary>
     public interface ISurfaceHost
     {
         SurfaceKind Kind { get; }
 
-        /// <summary>Show the surface identified by `id` inside `paneContent`. Must re-parent every call —
-        /// see the class doc above.</summary>
-        void Show(RectTransform paneContent, string id);
+        /// <summary>Show the surface identified by `id` inside `paneContent`, on behalf of pane `pane`. Must
+        /// re-parent every call — see the class doc above. `pane` is the PHYSICAL pane index, the same index
+        /// WorkspaceController.PaneContent(int) takes, and is what a later Hide(pane) is matched against.</summary>
+        void Show(int pane, RectTransform paneContent, string id);
 
-        /// <summary>Called when NO pane's active tab is this Kind any more. Must leave nothing visible
-        /// behind — a host that only reparents on Show and never hides would linger in whatever pane it was
-        /// last shown in, drawing over/behind whatever that pane shows next.</summary>
-        void Hide();
+        /// <summary>Called when pane `pane` no longer shows this Kind — which is NOT the same as "nobody
+        /// does". SyncSurfaces calls this for every registered host crossed with BOTH pane indices, so a
+        /// host currently shown in the OTHER pane must return without touching anything.
+        ///
+        /// A host that does NOT know where it is shown must hide anyway, whichever pane asks. That case is
+        /// not hypothetical: a Play-mode domain reload wipes every plain field while leaving whatever the
+        /// host had made visible on screen (this arc's recurring defect family — see
+        /// WorkspaceController.shellSuppressed's doc), and a host that declined to hide because it no longer
+        /// remembered owning anything could never be retired again for the rest of the session.
+        ///
+        /// Must leave nothing visible behind — a host that only reparents on Show and never hides would
+        /// linger in whatever pane it was last shown in, drawing over/behind whatever that pane shows
+        /// next.</summary>
+        void Hide(int pane);
 
         /// <summary>The display title for `id`, looked up fresh (not cached) — e.g. a page's current Name.
         /// Not yet wired to any call site as of Task 9; kept correct now so a future title-refresh path
         /// (a tab's title going stale after a rename) has something real to call.</summary>
         string TitleFor(string id);
-
-        /// <summary>Identity of the PHYSICAL surface behind this host, for hosts that share one. Two hosts
-        /// returning the same reference are two Kinds driving the same object, and WorkspaceController
-        /// .SyncSurfaces will let only the higher-priority pane show it — see that method's own doc.
-        ///
-        /// Most hosts are their own group and return `this`; the exception is ScreenSurfaceHost, where
-        /// Settlement, BuildingInterior and Dungeon are three Kinds over one DungeonEditorScreen. Compared by
-        /// REFERENCE (a HashSet&lt;object&gt; with default equality), so returning a fresh object per call
-        /// would silently disable the sharing rule — return a stable instance.</summary>
-        object ShareGroup { get; }
     }
 
     /// <summary>Surface kind -> the one host object that shows/hides it. Task 9 registered Page and WorldMap;
@@ -74,8 +82,8 @@ namespace WorldGen.Workspace.Rendering
         public ISurfaceHost For(SurfaceKind k) => hosts.TryGetValue(k, out var host) ? host : null;
 
         /// <summary>Every registered host, regardless of Kind — WorkspaceController.SyncSurfaces walks this
-        /// to Hide() whichever hosts no pane wants any more, without needing to track "what was shown last
-        /// frame" itself.</summary>
+        /// CROSSED WITH both pane indices, and Hide(pane)s every pair no claim covers, without needing to
+        /// track "what was shown last frame" itself.</summary>
         public IEnumerable<ISurfaceHost> All => hosts.Values;
     }
 
@@ -85,15 +93,21 @@ namespace WorldGen.Workspace.Rendering
     /// already owns and keeps owning (see NotesRootBuilder's own class doc: this is the "re-point at that
     /// ONE instance" from the task brief, not a second document).
     ///
-    /// SINGLE INSTANCE, ACCEPTED LIMITATION: if both panes end up with a Page tab active at once (an
-    /// ordinary sequence — open a page, then «Открыть рядом» a DIFFERENT page), only the FOCUSED pane
-    /// actually renders content; the other pane's content area goes empty until its own tab is reactivated.
-    /// This is not new here — NotesDocumentController.ActivePage is itself a single field, so the two tabs
-    /// could never show DIFFERENT content simultaneously even before Task 9 — and it is exactly what the
-    /// brief's ISurfaceHost signature allows (one host, no pane parameter). WorkspaceController.SyncSurfaces's
-    /// claim-the-ShareGroup-focused-pane-first rule makes the outcome predictable rather than
-    /// order-of-iteration arbitrary, and (since Task 10c's fix round) means the losing pane costs nothing
-    /// rather than doing a full show that is immediately overwritten.
+    /// SINGLE INSTANCE, ACCEPTED LIMITATION — STILL TRUE, BUT NO LONGER WHERE IT IS WRITTEN DOWN. If both
+    /// panes end up with a Page tab active at once (an ordinary sequence — open a page, then «Открыть рядом»
+    /// a DIFFERENT page), only the FOCUSED pane actually renders content; the other pane's content area goes
+    /// empty until its own tab is reactivated. This is not new here — NotesDocumentController.ActivePage is
+    /// itself a single field, so the two tabs could never show DIFFERENT content simultaneously even before
+    /// Task 9.
+    ///
+    /// What changed is which mechanism holds the limitation up. It used to be this host's own ShareGroup,
+    /// claimed focused-pane-first by WorkspaceController.SyncSurfaces. That property is gone, and the rule
+    /// that replaced it — SurfaceKindRules.AllowsMultiplePanes — already answers TRUE for Page, because that
+    /// is the shape Task 4 gives this host (one DocumentPageView per pane, built inside the pane's own
+    /// content area). Until Task 4 lands, this host is a multi-pane KIND served by a single-instance HOST:
+    /// it accepts the `pane` argument on Show/Hide and ignores it, and the only thing keeping the focused
+    /// pane's page on screen is the transitional first-claim-wins guard in SyncSurfaces (see its own doc,
+    /// which names Task 4 as what retires the guard).
     ///
     /// RECOMPILE GAP — CLOSED, and the round-3 description of it below was wrong in a way worth keeping on
     /// record. WorkspaceBuilder.Awake constructs a FRESH PageSurfaceHost on every rebuild (Task 11 Step 5
@@ -124,7 +138,10 @@ namespace WorldGen.Workspace.Rendering
 
         public SurfaceKind Kind => SurfaceKind.Page;
 
-        public void Show(RectTransform paneContent, string id)
+        /// <summary>`pane` is accepted and DELIBERATELY IGNORED — there is one view to re-parent, so the only
+        /// thing the index could select is which of two views to touch, and the second one arrives in Task 4.
+        /// See the class doc's SINGLE INSTANCE paragraph.</summary>
+        public void Show(int pane, RectTransform paneContent, string id)
         {
             if (pageView == null || paneContent == null) return;
 
@@ -146,18 +163,27 @@ namespace WorldGen.Workspace.Rendering
             documentController?.OpenPage(id);
         }
 
-        public void Hide()
+        /// <summary>`pane` ignored for the same reason Show ignores it: there is one view, so "pane 1 no
+        /// longer shows a Page" and "pane 0 no longer shows a Page" name the same single thing to hide.
+        ///
+        /// THE ONE COST OF IGNORING IT, stated plainly because it is a real change from Task 2 and Tasks 4/6
+        /// are what remove it. SyncSurfaces now calls Hide for every host crossed with BOTH pane indices, so
+        /// with a Page shown in pane 0 and no Page in pane 1, Hide(1) runs and hides it — and the show loop
+        /// immediately re-Shows it into pane 0. Both halves run inside one SyncSurfaces pass, before the
+        /// frame renders, so nothing flickers and nothing the DM can see differs; the cost is one extra
+        /// DocumentPageView.Rebuild per sync (SetSurfaceVisible re-runs OnActivePageChanged, which rebuilds
+        /// whenever a page is bound). Syncs are discrete events — a tab click, a close, a divider commit —
+        /// not a per-frame loop, so this is a doubled event cost, not a frame cost. A pane-aware guard here
+        /// would be state Task 4 deletes again the moment `views[pane]` exists, and the ONE guard shape that
+        /// would remove the cost outright (skip when already hidden) would also remove SyncSurfaces' role as
+        /// the belt behind DocumentPageView.EnsureWired's stuck-visible recovery — see that method's doc.</summary>
+        public void Hide(int pane)
         {
             // Also closes the gate that would otherwise let a Page opened OUTSIDE the workspace (POI editor
             // «Открыть страницу» calls NotesDocumentController.OpenPage directly) pop `root` back on in
             // whichever pane it is still parented in — see DocumentPageView.surfaceVisible's own doc.
             pageView?.SetSurfaceVisible(false);
         }
-
-        /// <summary>Its own group: there is one Page host, so nothing else can be sharing its object. (Two
-        /// Page TABS still contend for it — that is the single-instance limitation above — but they contend
-        /// through the same host, which the ShareGroup rule handles by identity.)</summary>
-        public object ShareGroup => this;
 
         public string TitleFor(string id)
         {
@@ -210,13 +236,14 @@ namespace WorldGen.Workspace.Rendering
 
         public SurfaceKind Kind => SurfaceKind.Canvas;
 
-        /// <summary>Its own group — one expanded board at a time, the same single-instance limitation
-        /// PageSurfaceHost's doc records and for the same reason: one host, no pane parameter.</summary>
-        public object ShareGroup => this;
-
         public string TitleFor(string id) => NotesSurface.TitleOf(FindCanvas(id, out _));
 
-        public void Show(RectTransform paneContent, string id)
+        /// <summary>`pane` accepted and IGNORED — one expanded board exists, so the index has nothing to
+        /// select yet. The same transitional state PageSurfaceHost's SINGLE INSTANCE paragraph describes, and
+        /// the same resolution: SurfaceKindRules.AllowsMultiplePanes already answers TRUE for Canvas, Task 6
+        /// gives this host one board per pane, and until then SyncSurfaces' first-claim-wins guard is what
+        /// keeps the focused pane's board on screen.</summary>
+        public void Show(int pane, RectTransform paneContent, string id)
         {
             if (paneContent == null || pageView == null) return;
             var block = FindCanvas(id, out NotesPage owner);
@@ -279,7 +306,10 @@ namespace WorldGen.Workspace.Rendering
                 canvasController.CanvasContainer.SetAsFirstSibling();
         }
 
-        public void Hide()
+        /// <summary>`pane` ignored, exactly as in Show — one board, one thing to hide. Cheaper to be called
+        /// for the other pane than PageSurfaceHost.Hide is (a SetActive(false) the show loop undoes a moment
+        /// later, with no rebuild behind it), so the cost that method's doc records does not arise here.</summary>
+        public void Hide(int pane)
         {
             if (root != null) root.gameObject.SetActive(false);
         }
@@ -440,6 +470,19 @@ namespace WorldGen.Workspace.Rendering
         Image rootRowBackground;
 
         RectTransform shownIn;
+
+        /// <summary>Which PANE INDEX last called Show — the counterpart to `shownIn`'s physical container, and
+        /// what Hide(pane) is matched against so a Hide meant for the OTHER pane leaves this host alone.
+        ///
+        /// READ ONLY TOGETHER WITH `shownIn`, never on its own, and the reason is this arc's recurring
+        /// defect family in a form an initializer cannot fix: a Play-mode domain reload restores a
+        /// MonoBehaviour by DESERIALIZING it, so field initializers do not run a second time and an int comes
+        /// back as 0 — a perfectly valid pane index — rather than as the −1 written here. `shownIn` is a Unity
+        /// reference and does come back null, so "shownIn == null" is the trustworthy statement of "nobody is
+        /// showing me", which is exactly the case Hide must act on rather than skip (see ISurfaceHost.Hide's
+        /// own doc for why declining there is unrecoverable).</summary>
+        int shownInPane = -1;
+
         bool visible;
 
         /// <summary>REUSE-OR-ADD, not plain AddComponent: WorkspaceBuilder.Awake re-runs this whole method on
@@ -644,14 +687,22 @@ namespace WorldGen.Workspace.Rendering
         /// this host was PREVIOUSLY shown in (a pane promotion, or the other pane winning the single-host
         /// tie-break), the OLD container's backgrounds are restored FIRST — otherwise a container that stops
         /// hosting the camera would be left with a permanently punched hole the next time something else
-        /// (a Page tab, a future Task-10 surface) tries to render there.</summary>
-        public void Show(RectTransform paneContent, string id)
+        /// (a Page tab, a future Task-10 surface) tries to render there.
+        ///
+        /// THAT RESTORE IS NOW BELT RATHER THAN THE MECHANISM, and is kept for the case it still covers.
+        /// Since Task 2 WorkspaceController.SyncSurfaces hides EVERY (host, pane) pair no claim covers BEFORE
+        /// it shows anything, so a move from pane 1 to pane 0 already arrives here with Hide(1) done and the
+        /// old container's backgrounds restored. What the line below still catches is the same physical
+        /// container arriving under a DIFFERENT identity with no Hide in between — the first Show of a
+        /// session, and any future caller that shows without going through SyncSurfaces.</summary>
+        public void Show(int pane, RectTransform paneContent, string id)
         {
             if (paneContent == null) return;
 
             if (shownIn != null && shownIn != paneContent) SetBackgroundsEnabled(shownIn, true);
 
             shownIn = paneContent;
+            shownInPane = pane;
             visible = true;
             SetChromeActive(true);
             SetBackgroundsEnabled(shownIn, false);
@@ -676,9 +727,18 @@ namespace WorldGen.Workspace.Rendering
             ApplyViewport();
         }
 
-        public void Hide()
+        /// <summary>Retires the map from pane `pane` — or does nothing, if the OTHER pane is the one showing
+        /// it. `shownIn != null` is what distinguishes "another pane holds me" from "nobody does": the second
+        /// case must still hide, because after a domain reload this host remembers nothing while the chrome
+        /// it switched on and the backgrounds it disabled are still exactly as it left them, and a Hide that
+        /// declined there would leave a punched hole no later call could restore. See shownInPane's own doc
+        /// for why the int alone cannot be trusted to say which case this is.</summary>
+        public void Hide(int pane)
         {
+            if (shownIn != null && shownInPane != pane) return;
+
             visible = false;
+            shownInPane = -1;
             Canvas.willRenderCanvases -= ApplyViewportForRender;
             // Restore BEFORE clearing shownIn — SetBackgroundsEnabled needs the container reference to know
             // which pane's/content's Images to re-enable. Runs even when shownIn is already null (nothing to
@@ -865,9 +925,6 @@ namespace WorldGen.Workspace.Rendering
         }
 
         public string TitleFor(string id) => WorkspaceOps.DefaultWorldMapTitle;
-
-        /// <summary>Its own group — one camera, one host, nothing shares it.</summary>
-        public object ShareGroup => this;
     }
 
     /// <summary>Hosts the five surfaces that used to be full-screen SCREENS: PoiEditor, Settlement,
@@ -878,13 +935,13 @@ namespace WorldGen.Workspace.Rendering
     /// ONE MonoBehaviour FOR ALL THREE SCREENS, not one per screen, and this is the load-bearing shape:
     /// Settlement, BuildingInterior and Dungeon are three SurfaceKinds served by the SAME GameObject
     /// (DungeonEditorScreen binds an InteriorData whose Kind decides what it draws — see
-    /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). WorkspaceController.SyncSurfaces shows
-    /// every wanted host FIRST and then hides every unwanted one (WorkspaceController.cs:712-761), so three
-    /// independent hosts each SetActive-ing that one GameObject would break as follows: with a Settlement tab
-    /// active, the settlement host's Show() turns the screen on, and then the Dungeon and BuildingInterior
-    /// hosts' Hide() — which no pane wants — turn it straight back off. The settlement would go blank on
-    /// EVERY sync. A shared SLOT with an explicit owner (see Slot.Owner) is what makes Hide(kind) a no-op for
-    /// a kind that does not currently own the screen, so the three cannot fight over it.
+    /// MapScreenController.OpenDungeonEditor/OpenBuildingInterior). Three independent hosts each SetActive-ing
+    /// that one GameObject would break as follows: with a Settlement tab active, the settlement host's Show()
+    /// turns the screen on, and the Dungeon and BuildingInterior hosts' Hide() — which no pane wants — turn it
+    /// straight back off. The settlement would go blank on EVERY sync, whichever order SyncSurfaces used: it
+    /// showed-then-hid before Task 2 and hides-then-shows since, and a hide aimed at the wrong kind is
+    /// destructive in both. A shared SLOT with an explicit owner (see Slot.Owner) is what makes Hide(kind,
+    /// pane) a no-op for a kind that does not currently own the screen, so the three cannot fight over it.
     ///
     /// A MonoBehaviour for the same reason MapSurfaceHost is one: these are window-anchored root canvases at
     /// sortingOrder 100-102, so confining them to a pane means driving PaneChromeFrame from the pane's LIVE
@@ -910,12 +967,18 @@ namespace WorldGen.Workspace.Rendering
     /// never framed and their own sorting is all there is. That was the app's actual state between Tasks 10c
     /// and 11 and is now only a bare rig, but the path is still live code.
     ///
-    /// SINGLE INSTANCE PER SCREEN, accepted, same limitation PageSurfaceHost's own doc records: if both panes
-    /// show interior tabs at once, only the FOCUSED pane's gets the screen. SyncSurfaces enforces that by
-    /// claiming ShareGroup (see GroupFor below, which returns the SAME Slot for all three interior kinds) with
-    /// the focused pane first, so the losing pane's Show is skipped outright. That skip is what makes
-    /// MapScreenController.RebindSurface's already-bound early-out reachable at all in a split — without it
-    /// the two kinds alternate and every sync re-Binds the whole node canvas twice.
+    /// SINGLE INSTANCE PER SCREEN, and unlike Page and Canvas this one is PERMANENT, not transitional: there
+    /// is one DungeonEditorScreen GameObject and no plan to build a second, so if both panes show interior
+    /// tabs at once only the FOCUSED pane's gets the screen. That is no longer decided here. SurfaceKindRules
+    /// .AllowsMultiplePanes answers FALSE for all five of these kinds and ScreenKeyOf maps Settlement,
+    /// BuildingInterior and Dungeon onto ONE key ("interior"), so SurfaceClaims.Resolve — walking the focused
+    /// pane first — never emits a second claim for a screen an earlier pane already took, and the losing
+    /// pane's Show is never reached. The old mechanism was a ShareGroup returning this component's Slot; the
+    /// property and the GroupFor accessor behind it are both gone.
+    ///
+    /// That de-duplication is what makes MapScreenController.RebindSurface's already-bound early-out reachable
+    /// at all in a split — without it the two kinds alternate and every sync re-Binds the whole node canvas
+    /// twice.
     ///
     /// THAT SINGLE INSTANCE IS ALSO WHY Show() RE-BINDS. Each of these screens holds ONE binding (the
     /// InteriorData / room / POI it was last given), and the Open* methods that set it are NOT on the
@@ -951,10 +1014,17 @@ namespace WorldGen.Workspace.Rendering
             public RectTransform ShownIn;
             public bool Visible;
 
+            /// <summary>Which PANE INDEX last showed this screen, paired with Owner below: a Hide naming the
+            /// other pane must leave the screen alone. Unlike MapSurfaceHost.shownInPane this initializer IS
+            /// reliable across a Play-mode domain reload — Slot is a plain class that Rewire rebuilds from
+            /// scratch, so it is CONSTRUCTED rather than deserialized, and −1 really means −1. It is still
+            /// only read behind HasOwner, which is the statement that anyone is showing this at all.</summary>
+            public int ShownInPane = -1;
+
             /// <summary>Which SurfaceKind currently has this screen bound to it, and whether anyone does at
-            /// all. The three interior kinds share one Slot, so Hide(kind) must only retire the screen when
-            /// the RETIRING kind is the one that owns it — see the class doc's SyncSurfaces show-then-hide
-            /// argument for what breaks otherwise.</summary>
+            /// all. The three interior kinds share one Slot, so Hide(kind, pane) must only retire the screen
+            /// when the RETIRING kind is the one that owns it — see the class doc's SyncSurfaces argument for
+            /// what breaks otherwise.</summary>
             public SurfaceKind Owner;
             public bool HasOwner;
         }
@@ -1055,14 +1125,7 @@ namespace WorldGen.Workspace.Rendering
             }
         }
 
-        /// <summary>The Slot behind `kind` — ISurfaceHost.ShareGroup's answer for these five. Returns the
-        /// SAME instance for Settlement, BuildingInterior and Dungeon, which is exactly what tells
-        /// WorkspaceController.SyncSurfaces that a second pane asking for a different one of those three is
-        /// asking for a screen the focused pane already took. Null for an unregistered kind; the caller falls
-        /// back to the host itself, so an unshared host still gets a unique group.</summary>
-        public object GroupFor(SurfaceKind kind) => byKind.TryGetValue(kind, out Slot slot) ? slot : null;
-
-        public void Show(SurfaceKind kind, RectTransform paneContent, string id)
+        public void Show(SurfaceKind kind, int pane, RectTransform paneContent, string id)
         {
             if (paneContent == null) return;
             if (!byKind.TryGetValue(kind, out Slot slot)) return;
@@ -1080,6 +1143,7 @@ namespace WorldGen.Workspace.Rendering
 
             slot.Owner = kind;
             slot.HasOwner = true;
+            slot.ShownInPane = pane;
             slot.ShownIn = paneContent;
             slot.Visible = true;
             if (slot.Screen != null) slot.Screen.SetActive(true);
@@ -1097,15 +1161,22 @@ namespace WorldGen.Workspace.Rendering
             ApplyFrames();
         }
 
-        public void Hide(SurfaceKind kind)
+        public void Hide(SurfaceKind kind, int pane)
         {
             if (!byKind.TryGetValue(kind, out Slot slot)) return;
-            // Another kind is currently driving this screen — leave it alone. The whole reason this class is
-            // one component with owned slots; see the class doc.
-            if (slot.HasOwner && slot.Owner != kind) return;
+            // Somebody else is currently driving this screen — another KIND (the whole reason this class is
+            // one component with owned slots; see the class doc), or the same kind in the OTHER pane. Either
+            // way, leave it alone.
+            //
+            // Both tests hang off HasOwner deliberately: HasOwner == false means NOBODY is showing this, and
+            // that case must fall through and deactivate. A domain reload leaves the screen switched on with
+            // this component's memory of it wiped (the class doc's RECOMPILE GAP paragraph), and a Hide that
+            // declined there would leave a full-pane canvas nothing in the session could ever retire.
+            if (slot.HasOwner && (slot.Owner != kind || slot.ShownInPane != pane)) return;
 
             slot.HasOwner = false;
             slot.Visible = false;
+            slot.ShownInPane = -1;
             slot.ShownIn = null;
             if (slot.Screen != null) slot.Screen.SetActive(false);
             // Hand the whole canvas back (minus the menu-bar strip) so a screen re-shown OUTSIDE the workspace
@@ -1197,14 +1268,10 @@ namespace WorldGen.Workspace.Rendering
 
         public SurfaceKind Kind => kind;
 
-        public void Show(RectTransform paneContent, string id) => owner?.Show(kind, paneContent, id);
+        public void Show(int pane, RectTransform paneContent, string id) =>
+            owner?.Show(kind, pane, paneContent, id);
 
-        /// <summary>The shared Slot, so the three interior kinds report ONE group — see
-        /// ScreenSurfaceHosts.GroupFor. Falls back to `this` when the owner is gone or the kind unregistered,
-        /// which keeps the group unique rather than accidentally merging every such host into null.</summary>
-        public object ShareGroup => owner != null ? (owner.GroupFor(kind) ?? this) : this;
-
-        public void Hide() => owner?.Hide(kind);
+        public void Hide(int pane) => owner?.Hide(kind, pane);
 
         /// <summary>Empty by design, not by omission. A tab of one of these kinds gets its title from the
         /// opener, which is the only place that has it: MapScreenController.Open* passes the POI's/room's own

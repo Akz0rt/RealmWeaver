@@ -579,9 +579,10 @@ namespace WorldGen.Workspace.Rendering
         /// Task 11 would then write to PlayerPrefs dozens of times. The DRAG itself raises nothing; only this.
         ///
         /// FOCUS FOLLOWS THE DROP, and not merely because a tab you just dragged is the one you are looking
-        /// at: SyncSurfaces iterates the FOCUSED pane first and lets it claim a shared ShareGroup, skipping
-        /// any other pane backed by the same physical surface (see SyncSurfaces' own doc). A cross-pane drop
-        /// that left focus behind could therefore land the tab in the other pane and never show it. Routed
+        /// at: SurfaceClaims.Resolve walks the FOCUSED pane first and emits no claim for a later pane asking
+        /// for a physical screen the first one already took (see SurfaceKindRules, and SyncSurfaces' own doc
+        /// for how the claims are applied). A cross-pane drop that left focus behind could therefore land the
+        /// tab in the other pane and never show it. Routed
         /// through WorkspaceOps.Focus, which ignores a pane that no longer exists — after a move that emptied
         /// the source, NormalizeSplit may have collapsed `toPane` away and already set FocusedPane
         /// itself.</summary>
@@ -688,36 +689,39 @@ namespace WorldGen.Workspace.Rendering
         /// раскладка не менялась, писать её в PlayerPrefs и дёргать OnLayoutChanged незачем.</summary>
         public void RefreshSurfaces() => SyncSurfaces();
 
-        /// <summary>Shows each pane's active surface through its registered host, and Hides every registered
-        /// host that no pane wants any more. Re-reads PaneContent(pane) fresh on every call rather than
-        /// caching it, which is what makes a Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work
-        /// for free: PaneContent(0) already returns the correct NEW physical container after a promotion, and
-        /// ISurfaceHost.Show is required to re-parent unconditionally every call — see SurfaceRegistry.cs's
-        /// own class doc.
+        /// <summary>Applies SurfaceClaims.Resolve's answer: Hides every (host, pane) pair no claim covers,
+        /// then Shows each claim through its registered host. This method DECIDES NOTHING any more — which
+        /// pane may show which Kind, and which Kinds contend for one physical screen, are SurfaceKindRules'
+        /// and SurfaceClaims.Resolve's business, in Workspace/Data where the offline harness can test them
+        /// without a Unity scene. Everything left here is the part that needs UnityEngine: RectTransforms and
+        /// host calls.
         ///
-        /// ONE PHYSICAL SURFACE IS SHOWN ONCE, INTO THE FOCUSED PANE. Several hosts can be backed by the same
-        /// object — the three interior kinds all drive the one DungeonEditorScreen (ScreenSurfaceHosts), and
-        /// two Page tabs share the one DocumentPageView — so when both panes want the same physical surface,
-        /// only one of them can actually have it. This iterates the FOCUSED pane first and skips any later
-        /// pane whose host reports an already-claimed ISurfaceHost.ShareGroup, so the focused pane wins and
-        /// the other pane's Show never runs at all.
+        /// Re-reads PaneContent(pane) fresh on every claim rather than caching it, which is what makes a
+        /// Secondary->Primary promotion (WorkspaceOps.NormalizeSplit) work for free: PaneContent(0) already
+        /// returns the correct NEW physical container after a promotion, and ISurfaceHost.Show is required to
+        /// re-parent unconditionally every call — see SurfaceRegistry.cs's own class doc.
         ///
-        /// EARLIER THIS WAS "focused pane shown LAST", relying on the last Show to overwrite the first. That
-        /// produced the same visible result and did redundant work to get there — but once Task 10c gave
-        /// ScreenSurfaceHosts.Show a re-bind (a tab click has to re-point the screen at its own subject), the
-        /// redundant work stopped being free: with an interior tab active in EACH pane, the two kinds
-        /// alternate, so every single sync performed two full DungeonEditorScreen.Bind calls, each rebuilding
-        /// a settlement's ~40-node canvas and discarding the DM's selection and level tab — and a single tab
-        /// click produces several syncs (SetActive -> RaiseChanged, FocusPane -> RaiseChanged, plus
-        /// RefreshScreenState's SetShellActive). MapScreenController.RebindSurface's own doc calls its
-        /// already-bound early-out "a requirement, not an optimisation", and under focused-last that early-out
-        /// could never fire. Claiming first and skipping is what makes the stated contract true.
+        /// HIDE FIRST, SHOW SECOND, and the order is a requirement rather than a style choice. A host that
+        /// moved from pane 1 to pane 0 (a tab dragged across the divider, or NormalizeSplit promoting
+        /// Secondary) has ONE claim, for pane 0, so the pair (host, pane 1) is unclaimed. Showing first would
+        /// run Show(0, ...) and then Hide(1) — and Hide(1) matches the pane the host had just been re-pointed
+        /// away from only by accident: MapSurfaceHost would have already overwritten shownInPane with 0, so
+        /// the Hide would be skipped and pane 1's backgrounds would stay disabled forever, a punched hole in
+        /// a pane showing something else entirely. Hiding first means the host is still recorded in pane 1
+        /// when the Hide arrives, so it restores that container and only then takes the new one.
         ///
-        /// The skipped pane is NOT then Hidden: its Kind is deliberately left out of `shownKinds`, but for a
-        /// shared-object host the Hide that follows is a no-op anyway (ScreenSurfaceHosts.Hide returns early
-        /// when another kind owns the screen), and for Page both panes share one Kind so no Hide is reached.
-        /// The skipped pane's content area is simply left empty, which is the accepted single-instance
-        /// limitation PageSurfaceHost's own doc records — unchanged by this, only made cheaper.</summary>
+        /// The reverse concern — that hiding first makes a surface blink — does not arise: both loops run
+        /// inside this one call, i.e. inside a single frame's script execution, and nothing renders in
+        /// between.
+        ///
+        /// ONE PHYSICAL SURFACE IS SHOWN ONCE, INTO THE HIGHEST-PRIORITY PANE. Resolve already guarantees
+        /// this for every Kind that drives one physical screen (the map camera, and the three interior kinds
+        /// over one DungeonEditorScreen — SurfaceKindRules.ScreenKeyOf is what fuses those three): it walks
+        /// the focused pane first and emits no second claim for a screen key already taken. This is the same
+        /// contract the older ShareGroup mechanism stated, moved to where it can be tested; it is also what
+        /// makes MapScreenController.RebindSurface's already-bound early-out reachable in a split at all,
+        /// without which every sync re-Bound a settlement's ~40-node canvas twice and discarded the DM's
+        /// selection.</summary>
         void SyncSurfaces()
         {
             // The real guard: no hosts registered yet (before WorkspaceBuilder's SetSurfaceRegistry call)
@@ -728,57 +732,62 @@ namespace WorldGen.Workspace.Rendering
             // reaches here — Awake, plus WorkspaceBuilder.Awake's own explicit call, which covers both a
             // first build and a post-reload rebuild (see EnsureLayout's own doc). This stays because SetSurfaceRegistry is public and calls straight
             // through to here, so a future caller that skips EnsureLayout gets an inert no-op instead of an
-            // NRE on Layout.FocusedPane / PaneContent / ActiveSurfaceOf below.
+            // NRE on Layout.FocusedPane / PaneContent below.
             if (Layout == null) return;
 
-            var shownKinds = new HashSet<SurfaceKind>();
-            var claimedGroups = new HashSet<object>();
+            // shellSuppressed means Generation or Progress owns the window, so the workspace claims NOTHING
+            // (Task 10c Step 1) — Resolve is not even asked. Expressed as an empty claim list rather than an
+            // early return so the Hide half still runs over every host and both panes: an early return would
+            // leave whatever was last shown (the map camera's punched hole and its active chrome, or a
+            // full-screen ex-screen canvas) painting over the screen that took over.
+            List<SurfaceClaim> claims = shellSuppressed
+                ? new List<SurfaceClaim>()
+                : SurfaceClaims.Resolve(Layout);
 
-            // shellSuppressed leaves shownKinds EMPTY, so the Hide loop below retires every registered host —
-            // the workspace's surfaces stop drawing while Generation/Progress owns the window (Task 10c
-            // Step 1). Expressed as "show nothing" rather than an early return so the Hide half still runs:
-            // an early return would leave whatever was last shown (the map camera's punched hole and its
-            // active chrome, or a full-screen ex-screen canvas) painting over the screen that took over.
+            // ── Hide every (host, pane) pair no claim covers ────────────────────────────────────────────
             //
-            // FOCUSED PANE FIRST — see this method's own doc for why that flipped, and why it is now paired
-            // with claimedGroups rather than relying on a later Show to overwrite an earlier one.
-            int[] order = shellSuppressed
-                ? new int[0]
-                : Layout.FocusedPane == 1 ? new[] { 1, 0 } : new[] { 0, 1 };
-
-            foreach (int pane in order)
-            {
-                SurfaceRef active = ActiveSurfaceOf(pane);
-                RectTransform paneContent = PaneContent(pane);
-                if (active == null || paneContent == null) continue;
-
-                ISurfaceHost host = surfaceRegistry.For(active.Kind);
-                if (host == null) continue;   // not registered yet — Task 10 registers the rest.
-
-                // A host whose ShareGroup is already claimed is backed by a physical surface an earlier
-                // (higher-priority) pane already took. Skipping is not merely an optimisation: showing it
-                // would re-bind that one object away from the pane the user is looking at, and then be
-                // undone by nothing, since nothing shows it a third time.
-                if (!claimedGroups.Add(host.ShareGroup ?? host)) continue;
-
-                host.Show(paneContent, active.Id);
-                shownKinds.Add(active.Kind);
-            }
-
+            // Panes 0 and 1 UNCONDITIONALLY, never filtered by PaneContent(pane) != null. PaneContent(1)
+            // returns null the moment Layout.Secondary is gone, which is exactly the sync after a split
+            // collapses — and that is the one sync where a host still parked in the physical secondary
+            // container most needs to be told to let go. Hide takes no container, so there is nothing to
+            // look up.
             foreach (var host in surfaceRegistry.All)
-                if (!shownKinds.Contains(host.Kind))
-                    host.Hide();
-        }
+                for (int pane = 0; pane <= 1; pane++)
+                {
+                    bool claimed = false;
+                    foreach (var claim in claims)
+                        if (claim.Pane == pane && claim.Kind == host.Kind) { claimed = true; break; }
+                    if (!claimed) host.Hide(pane);
+                }
 
-        /// <summary>The surface the pane's active tab points at, or null for an absent pane / an empty pane.
-        /// Same shape as NavigatorView.ActiveSurface, kept separate rather than shared — this one takes an
-        /// explicit pane index (both panes, one at a time) where NavigatorView only ever asks about the
-        /// FOCUSED pane.</summary>
-        SurfaceRef ActiveSurfaceOf(int pane)
-        {
-            PaneState p = WorkspaceOps.PaneAt(Layout, pane);
-            if (p?.Tabs == null || p.ActiveIndex < 0 || p.ActiveIndex >= p.Tabs.Count) return null;
-            return p.Tabs[p.ActiveIndex].Surface;
+            // ── Then show each claim, in Resolve's priority order (focused pane first) ──────────────────
+            //
+            // TRANSITIONAL, retired by Tasks 4 and 6. Page and Canvas are multi-pane by RULE
+            // (SurfaceKindRules.AllowsMultiplePanes) but are still ONE host instance each, so Resolve can
+            // hand out two claims for a host that can only serve one. Serving only the FIRST claim per host
+            // reproduces today's behaviour exactly — claims arrive focused-pane-first, so the focused pane
+            // keeps the view — and, more sharply, stops the second Show from re-opening a DIFFERENT page on
+            // the one DocumentPageView, which clears the DM's undo history (DocumentPageView
+            // .OnActivePageChanged clears it whenever the page identity changes). That is the same defect
+            // ScreenSurfaceHosts' re-bind produced for interiors before Resolve started de-duplicating them.
+            // Once each host keeps a view per pane, both claims can be served and this set goes away.
+            var servedHosts = new HashSet<ISurfaceHost>();
+
+            foreach (var claim in claims)
+            {
+                ISurfaceHost host = surfaceRegistry.For(claim.Kind);
+                if (host == null) continue;   // no host for this Kind — a bare/partial scene, not an error.
+
+                RectTransform paneContent = PaneContent(claim.Pane);
+                if (paneContent == null) continue;
+
+                // Claimed LAST, after both lookups: a claim that cannot actually be shown (no host, or a
+                // pane container that does not exist yet) must not consume the host's one turn and leave the
+                // lower-priority claim skipped as well.
+                if (!servedHosts.Add(host)) continue;
+
+                host.Show(claim.Pane, paneContent, claim.Id);
+            }
         }
     }
 }

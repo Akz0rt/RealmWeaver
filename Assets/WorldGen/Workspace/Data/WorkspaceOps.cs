@@ -92,16 +92,22 @@ namespace WorldGen.Workspace.Data
         ///   • R1b — already open in the OTHER pane       -> MOVE that tab into the target pane.
         /// Only a surface open NOWHERE creates a tab.
         ///
-        /// WHY MOVING AND NOT DUPLICATING, which is what R1b changed. Every surface host in this project is
-        /// SINGLE-INSTANCE — verified across all three families, not assumed: MapSurfaceHost owns the one map
-        /// camera, PageSurfaceHost wraps the one DocumentPageView, and ScreenSurfaceHosts owns one physical
-        /// screen GameObject per Slot (with the three interior kinds sharing one). None can render into two
-        /// panes, which is why every one of them returns a stable ShareGroup and why
-        /// WorkspaceController.SyncSurfaces lets the focused pane CLAIM that group and skips the other pane
-        /// outright. So a duplicate tab is not a second view — it is a tab that is permanently blank, still
-        /// labelled as though it showed something. Duplicating would have delivered the letter of "open it
-        /// here" while failing its intent; moving gives the DM the one instance in the pane they asked for and
-        /// leaves nothing blank behind.
+        /// WHY MOVING AND NOT DUPLICATING, which is what R1b changed. When R1b was written every surface host
+        /// in this project was SINGLE-INSTANCE — verified across all three families, not assumed:
+        /// MapSurfaceHost owns the one map camera, PageSurfaceHost wrapped the one DocumentPageView, and
+        /// ScreenSurfaceHosts owns one physical screen GameObject per Slot (with the three interior kinds
+        /// sharing one). None could render into two panes, so a duplicate tab was not a second view — it was
+        /// a tab that is permanently blank, still labelled as though it showed something. Duplicating would
+        /// have delivered the letter of "open it here" while failing its intent; moving gives the DM the one
+        /// instance in the pane they asked for and leaves nothing blank behind.
+        ///
+        /// The «две страницы рядом» arc is dissolving the premise, not the rule. SurfaceKindRules
+        /// .AllowsMultiplePanes now says Page and Canvas MAY live in both panes at once, and Tasks 4 and 6
+        /// give their hosts a view per pane; the map and the five ex-screens stay single-instance forever,
+        /// which SurfaceKindRules.ScreenKeyOf is what states. R1b survives that on its own merits — the DM
+        /// asking to open a page that is already open in the other pane means "bring it here", not "give me
+        /// two scrolling views of one page" — but the blank-tab argument above no longer holds for Page and
+        /// Canvas, so it is not the reason to keep it.
         ///
         /// «ОТКРЫТЬ РЯДОМ» IS COVERED BY THE SAME RULE, deliberately, and this is the one generalisation worth
         /// stating: the halves are written against the TARGET pane, not against the focused one, so an
