@@ -118,7 +118,7 @@ namespace WorldGen.Notes.Rendering
         {
             // Задача 5: сначала — КОМУ принадлежат клавиши этого кадра, и только потом всё остальное.
             var active = router != null ? router.ActiveView() : null;
-            if (active == null) return;
+            if (active == null) { HandleUndoOverBoard(); return; }
 
             // Смена вида проверяется ДО проверки на пустую страницу: панель может показывать вид, к
             // которому ещё не привязана страница (заглушка «страницы нет»), и кэш всё равно обязан
@@ -323,6 +323,45 @@ namespace WorldGen.Notes.Rendering
 
             if (keyboard.downArrowKey.wasPressedThisFrame)
             { if (VerticalIsOurs(live)) Handle(DocKey.Down); return; }
+        }
+
+        /// <summary>Задача 6 арки «две страницы рядом». ЕДИНСТВЕННОЕ, что этот класс делает, когда клавиши не
+        /// принадлежат ни одному виду страницы: отмена и повтор над РАЗВЁРНУТОЙ ДОСКОЙ.
+        ///
+        /// Доска (Р4) — блок страницы, своей истории у неё нет: снимок кладёт CanvasSurfaceHost в тот вид,
+        /// который ПОКАЗЫВАЕТ страницу-владелицу доски. Пока ДМ щёлкает в саму доску, вид страницы в её
+        /// панели скрыт, и ActiveView() честно отвечает «никому» — иначе Enter и Tab, набранные в карточке,
+        /// правили бы строку чужой страницы (см. ActiveView). Но отмена в этом состоянии адресат ИМЕЕТ, и
+        /// UndoTargetView знает какой: тот самый вид, в чей стек доска и писала. До задачи 6 здесь ничего не
+        /// происходило вовсе, а до задачи 5 — отмена уходила в невидимую страницу панели 0.
+        ///
+        /// ВИД НЕ ПЕРЕНИМАЕТСЯ (AdoptView не зовётся) — и это не экономия. Кэш `lastFocusedId`/`lastCaret`
+        /// описывает строку, В КОТОРОЙ СТОИТ КАРЕТКА, а каретка сейчас в карточке доски, а не в строке
+        /// страницы. Перенять его значило бы объявить владельцем набора вид, который им намеренно не
+        /// является. Отмене кэш и не нужен: DocumentPageView.Undo восстанавливает фокус по СВОЕЙ собственной
+        /// памяти (LastFocusedBlockId), а снимок доски и вовсе указывает на строку самой доски
+        /// (CanvasSurfaceHost.Show, PushHistory(canvasId, -1)).
+        ///
+        /// KeyboardSuspended проверяется по той же причине, что и в обычном потоке (:149): пока над
+        /// страницей открыта палитра Ctrl+K, Ctrl+Z принадлежит ей.</summary>
+        void HandleUndoOverBoard()
+        {
+            // АККОРД СПРАШИВАЕТСЯ ПЕРВЫМ, адресат — вторым, и порядок здесь не косметика: UndoTargetView для
+            // доски ищет блок по id заново, то есть обходит документ (CanvasSurfaceHost.HistoryViewFor →
+            // FindCanvas). Спрошенный до аккорда, он обходил бы его КАЖДЫЙ кадр, пока ДМ смотрит на доску.
+            var keyboard = Keyboard.current;
+            if (keyboard == null || router == null) return;
+            if (!keyboard.ctrlKey.isPressed && !keyboard.rightCtrlKey.isPressed) return;
+
+            bool undo = keyboard.zKey.wasPressedThisFrame;
+            bool redo = keyboard.yKey.wasPressedThisFrame;
+            if (!undo && !redo) return;
+
+            var target = router.UndoTargetView();
+            if (target == null || target.Page == null || target.KeyboardSuspended) return;
+
+            bool shifted = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+            if (undo && !shifted) target.Undo(); else target.Redo();
         }
 
         /// <summary>Whether a vertical arrow belongs to this class rather than to the field. THREE conditions,

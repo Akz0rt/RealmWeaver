@@ -351,8 +351,11 @@ namespace WorldGen.Workspace.Rendering
                 // Р4: a board expanded out of a page's flow, drawn full-pane over the SAME DocBlock the page
                 // keeps drawing inline — see CanvasSurfaceHost. Registered beside the page host because it
                 // needs exactly what the page host needs, plus the host itself: undo and redraw have to reach
-                // whichever pane is currently showing the board's own page.
-                registry.Register(new CanvasSurfaceHost(notesRoot.DocumentController, pageHost, notesRoot.BuiltinFont));
+                // whichever pane is currently showing the board's own page. ONE BOARD PER PANE since Task 6,
+                // so it is held in a local as well: the focus router below has to be able to ask it which
+                // pane's board the DM is working in.
+                var canvasHost = new CanvasSurfaceHost(notesRoot.DocumentController, pageHost, notesRoot.BuiltinFont);
+                registry.Register(canvasHost);
 
                 // What the page's inline links resolve against and where they open — see PageLinkBridge.
                 // Here rather than inside PageSurfaceHost because it needs `Controller`, and because it owns a
@@ -374,7 +377,15 @@ namespace WorldGen.Workspace.Rendering
                 // for a per-view assignment to say. It is built here, beside `pageHost`, and dies with it on
                 // the next shell rebuild — see PageFocusRouter's own class doc.
                 var keyboard = notesRoot.Keyboard;
-                var focusRouter = new PageFocusRouter(pageHost, Controller);
+                var focusRouter = new PageFocusRouter(pageHost, canvasHost, Controller);
+
+                // THE OTHER HALF OF THE SAME BRIDGE (Task 6), and it can only be tied here: the router needs
+                // the board host to answer «is the DM working in a board», and each board needs the router to
+                // answer «are the keys mine». One of the two links has to be assigned after construction, and
+                // this is the cheaper one — the boards are built later still, on the first Show, and read this
+                // delegate afresh on every press.
+                canvasHost.PaneOwnsKeys = pane => focusRouter.ActiveBoardPane() == pane;
+
                 if (keyboard != null)
                 {
                     keyboard.router = focusRouter;
@@ -392,10 +403,12 @@ namespace WorldGen.Workspace.Rendering
                 // SetSurfaceRegistry below — the first SyncSurfaces runs inside that call, so a hook attached
                 // afterwards would silently miss both views (see PageSurfaceHost.OnViewCreated's own doc).
                 //
-                // `pane` is currently read by nothing in here: Task 5 removed the last wiring that cared which
-                // pane a view was born in (the keyboard's `pane == 0` branch). It stays in the hook's
-                // signature because it is the hook's identity — which pane this view IS — and the next thing
-                // to need it (Task 6's per-pane board) will need exactly that.
+                // `pane` is read by nothing in here, and after Task 6 that is settled rather than pending.
+                // Task 5 removed the last wiring that cared which pane a view was born in (the keyboard's
+                // `pane == 0` branch), and Task 6's per-pane board turned out not to need it either: a board
+                // is keyed by its OWN pane inside CanvasSurfaceHost, and everything that has to cross from a
+                // board to a page view crosses by PAGE (CanvasSurfaceHost.ViewShowing), never by pane index.
+                // The parameter stays because it is the hook's identity — which pane this view IS.
                 pageHost.OnViewCreated = (pane, view) =>
                 {
                     // The «↗» button on an inline board. Opens in the OTHER pane, the same rule a clicked POI

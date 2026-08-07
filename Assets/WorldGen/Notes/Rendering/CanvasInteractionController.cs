@@ -38,6 +38,25 @@ namespace WorldGen.Notes.Rendering
         /// expanded view, so the conflict is removed by construction rather than settled by arbitration.</summary>
         public CanvasMode Mode = CanvasMode.Expanded;
 
+        /// <summary>Задача 6 арки «две страницы рядом». Этой ли доске сейчас адресованы клавиши, которые она
+        /// опрашивает САМА (Ctrl+V, Delete, Esc).
+        ///
+        /// ЗАЧЕМ. С задачи 6 развёрнутых досок на экране может быть две — по одной в панели, — и каждая
+        /// опрашивает `Keyboard.current` из собственного Update. Без этого вопроса одно нажатие Ctrl+V
+        /// вставляло бы ДВЕ картинки (вторую — в доску, на которую ДМ даже не смотрит, и в точку, посчитанную
+        /// от указателя, который над ней не стоял), один Delete предлагал бы удалить объект, выделенный в
+        /// соседней доске, а один Esc разоружал бы инструмент сразу в обеих.
+        ///
+        /// ДЕЛЕГАТ, А НЕ ФЛАЖОК, и спрашивает он PageFocusRouter — тот же единственный источник, что
+        /// отвечает про каретку страницы и про Ctrl+F (DocumentPageView.KeyboardTargetProbe). Вторая копия
+        /// факта «чей фокус» — любимая ошибка этой оболочки; здесь не хранится ничего.
+        ///
+        /// НЕПРОВЕДЁННЫЙ ДЕЛЕГАТ ЗНАЧИТ «ДА»: во встроенной доске и в сцене без оболочки владелец
+        /// единственный, и клавиши обязаны работать ровно как работали.</summary>
+        public System.Func<bool> KeyboardTargetProbe;
+
+        public bool IsKeyboardTarget => KeyboardTargetProbe == null || KeyboardTargetProbe();
+
         /// <summary>Used only by the confirm dialog this controller raises. Legacy chrome, deliberately.</summary>
         [Header("Confirm dialog")]
         public Font builtinFont;
@@ -228,9 +247,21 @@ namespace WorldGen.Notes.Rendering
             if (Mode == CanvasMode.Inline) return;
             if (canvasController == null || Mouse.current == null) return;
 
-            HandleClipboardPaste();
-            HandleDeleteKey();
-            HandleEscapeKey();
+            // ТРИ КЛАВИШИ — ОДИН ВОПРОС, заданный один раз за кадр (задача 6). Досок на экране может быть
+            // две, и каждая из них — вот этот самый Update; см. KeyboardTargetProbe про то, что делало
+            // каждое из трёх нажатий без гейта. Гейт стоит на ВСЕХ трёх, а не на одной Ctrl+V: урок строки
+            // поиска из задачи 5 — «загейтовали открывающий аккорд, забыли остальные» — стоил отдельного
+            // круга ревью.
+            //
+            // МЫШЬ НИЖЕ НЕ ГЕЙТУЕТСЯ И НЕ ДОЛЖНА: у неё гейт геометрический и по построению исключающий —
+            // IsOverViewport меряет прямоугольник ИМЕННО ЭТОЙ доски, а прямоугольники двух панелей не
+            // пересекаются. Клик в соседнюю доску — это ровно то, чем ДМ и передаёт ей клавиши.
+            if (IsKeyboardTarget)
+            {
+                HandleClipboardPaste();
+                HandleDeleteKey();
+                HandleEscapeKey();
+            }
 
             // MIDDLE-BUTTON DRAG PANS, with any tool and over anything — including over a card, which is
             // exactly where the left button cannot pan and must not: there, a left drag moves the CARD.
@@ -711,6 +742,16 @@ namespace WorldGen.Notes.Rendering
             _ => "объект"
         };
 
+        /// <summary>Ctrl+V вставляет картинку из буфера — в ТУ доску, которой сейчас принадлежат клавиши
+        /// (гейт стоит у вызова, в Update), и в точку под УКАЗАТЕЛЕМ. Два разных вопроса намеренно: чья
+        /// клавиша — вопрос фокуса, куда лечь картинке — вопрос мыши.
+        ///
+        /// ОТДАННЫЙ СЛУЧАЙ, названный, чтобы его не считали дефектом: пока каретка в тексте страницы в одной
+        /// панели, Ctrl+V с указателем над доской в другой не вставляет ничего (до задачи 6 доска была одна и
+        /// забирала эту клавишу всегда). Чтобы вставить — щёлкнуть в доску; ровно то же действие, каким ДМ и
+        /// так выбирает, куда смотреть. Обратный вариант — «вставляет та доска, над которой указатель» —
+        /// рассмотрен и отвергнут: он даёт ДВУХ владельцев, как только фокус в одной доске, а указатель над
+        /// другой.</summary>
         void HandleClipboardPaste()
         {
             if (Keyboard.current == null) return;
