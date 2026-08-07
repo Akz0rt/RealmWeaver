@@ -164,6 +164,22 @@ namespace WorldGen.Notes.Rendering
             canvasController.AfterMutation?.Invoke();
         }
 
+        /// <summary>Тон листа — свойство того же рода, что цвет рамки и кегль карточки, и проходит
+        /// через отмену так же.
+        ///
+        /// Приятное следствие того, что мазки стали данными: перепечатка подхватывает новый цвет и в
+        /// СТЁРТЫХ местах тоже, потому что ластик кладёт не «пусто», а цвет листа. До этого арка
+        /// стёртое место было бы дырой прежнего цвета.</summary>
+        public void SetPaperIndex(string objectId, int index)
+        {
+            if (!(FindObjectData(objectId) is DrawingObjectData drawing)) return;
+            canvasController.BeforeMutation?.Invoke();
+            drawing.PaperIndex = index;
+            NotesUserPrefs.PaperIndex = index;
+            (canvasController.GetView(objectId) as DrawingObjectView)?.Rebake();
+            canvasController.AfterMutation?.Invoke();
+        }
+
         public void SetCardFontSize(string objectId, CardFontSize size)
         {
             if (!(FindObjectData(objectId) is NoteCardData card)) return;

@@ -13,7 +13,9 @@ namespace WorldGen.Notes.Rendering
     /// и пустая полоска над ними читалась бы как поломка.</summary>
     public class CardPropertyBar : MonoBehaviour
     {
-        const float Swatch = 20f;
+        /// <summary>Высота ряда задаётся квадратиком — кнопка с подписью обязана быть с ним вровень,
+        /// поэтому число берётся оттуда же, а не повторяется здесь.</summary>
+        const float Swatch = ObjectBarAnchor.Swatch;
 
         public RectTransform RowRect { get; private set; }
 
@@ -45,48 +47,22 @@ namespace WorldGen.Notes.Rendering
             idleColor = ThemeService.Get(ThemeRole.Border);
             var builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-            var rowGO = new GameObject("CardPropertyBar");
-            rowGO.transform.SetParent(parent, false);
-            var rowBg = rowGO.AddComponent<Image>();
-            ThemeService.Tag(rowBg, ThemeRole.Bg, 0.9f);
-            var rowOutline = rowGO.AddComponent<Outline>();
-            rowOutline.effectColor = ThemeService.Get(ThemeRole.Border);
-            rowOutline.effectDistance = new Vector2(1f, -1f);
-            var hLayout = rowGO.AddComponent<HorizontalLayoutGroup>();
-            hLayout.spacing = 5f;
-            hLayout.padding = new RectOffset(6, 6, 4, 4);
-            hLayout.childControlWidth = false;
-            hLayout.childControlHeight = false;
-            hLayout.childForceExpandWidth = false;
-            hLayout.childForceExpandHeight = false;
-            hLayout.childAlignment = TextAnchor.MiddleLeft;
-            var fitter = rowGO.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            RowRect = (RectTransform)rowGO.transform;
-            // ЯКОРЬ В ЦЕНТРЕ РОДИТЕЛЯ, А НЕ В УГЛУ, и это не вкусовщина: положение считается через
-            // ScreenPointToLocalPointInRectangle, а он отдаёт координаты от ЦЕНТРА прямоугольника.
-            // При угловом якоре полоска уехала бы ровно на половину доски. Так же устроена подсказка
-            // в NotesToolbar.
-            RowRect.anchorMin = new Vector2(0.5f, 0.5f);
-            RowRect.anchorMax = new Vector2(0.5f, 0.5f);
-            RowRect.pivot = new Vector2(0.5f, 0f);
+            RowRect = ObjectBarAnchor.BuildRow(parent, "CardPropertyBar");
 
             colorFrames = new Image[FrameColorCount];
             for (int i = 0; i < FrameColorCount; i++)
             {
                 int index = i;
                 var c = NotesPalette.At(i);
-                colorFrames[i] = BuildSwatch(rowGO.transform, $"Frame_{i}",
-                    new Color32(c.R, c.G, c.B, 255), () => ChooseColor(index));
+                colorFrames[i] = ObjectBarAnchor.BuildSwatch(RowRect, $"Frame_{i}",
+                    new Color32(c.R, c.G, c.B, 255), idleColor, () => ChooseColor(index));
             }
 
             fontFrames = new Image[FontDefs.Length];
             for (int i = 0; i < FontDefs.Length; i++)
             {
                 var def = FontDefs[i];
-                fontFrames[i] = BuildLabelButton(rowGO.transform, def.label, builtinFont, () => ChooseFont(def.size));
+                fontFrames[i] = BuildLabelButton(RowRect, def.label, builtinFont, () => ChooseFont(def.size));
             }
 
             controller.OnSelectedObjectChanged += ShowFor;
@@ -120,29 +96,9 @@ namespace WorldGen.Notes.Rendering
             var view = canvasController.GetView(cardId) as NoteCardView;
             if (view == null || view.RectTransform == null) { RowRect.gameObject.SetActive(false); return; }
 
-            var corners = new Vector3[4];
-            view.RectTransform.GetWorldCorners(corners);
-            // 1 — левый верхний, 2 — правый верхний: середина верхнего края.
-            var worldTop = (corners[1] + corners[2]) * 0.5f;
-
-            // ДВЕ КАМЕРЫ, И ПУТАТЬ ИХ НЕЛЬЗЯ. Мир → экран считается камерой доски (карточка живёт под
-            // масштабируемым CanvasContainer), а экран → локальные координаты — камерой холста САМОЙ
-            // полоски: у ScreenSpaceOverlay это null, и передать туда uiCamera значит промахнуться
-            // тем сильнее, чем дальше карточка от центра.
-            var screen = RectTransformUtility.WorldToScreenPoint(controller.uiCamera, worldTop);
-
-            // Карточку могли увезти за край доски — тогда полоска повисла бы поверх вкладок и панели
-            // инструментов, показывая свойства того, чего не видно.
-            if (!controller.IsScreenPointOverViewport(screen)) { RowRect.gameObject.SetActive(false); return; }
+            if (!ObjectBarAnchor.Follow(RowRect, view.RectTransform, controller))
+            { RowRect.gameObject.SetActive(false); return; }
             if (!RowRect.gameObject.activeSelf) RowRect.gameObject.SetActive(true);
-
-            var parentRect = (RectTransform)RowRect.parent;
-            var parentCanvas = parentRect.GetComponentInParent<Canvas>();
-            var cam = parentCanvas != null && parentCanvas.renderMode != RenderMode.ScreenSpaceOverlay
-                ? parentCanvas.worldCamera
-                : null;
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parentRect, screen, cam, out var local))
-                RowRect.anchoredPosition = local + new Vector2(0f, 6f);
         }
 
         void ChooseColor(int index)
@@ -157,42 +113,6 @@ namespace WorldGen.Notes.Rendering
             if (cardId == null) return;
             controller.SetCardFontSize(cardId, size);
             RefreshVisuals();
-        }
-
-        Image BuildSwatch(Transform parent, string name, Color fill, System.Action onClick)
-        {
-            var go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-            var rect = go.AddComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(Swatch, Swatch);
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredWidth = Swatch;
-            le.preferredHeight = Swatch;
-
-            var frame = go.AddComponent<Image>();
-            frame.sprite = RoundedRectSprite.Get();
-            frame.type = Image.Type.Sliced;
-            frame.color = idleColor;
-
-            var btn = go.AddComponent<Button>();
-            btn.targetGraphic = frame;
-            btn.transition = Selectable.Transition.None;
-            btn.onClick.AddListener(() => onClick());
-
-            var fillGO = new GameObject("Fill");
-            fillGO.transform.SetParent(go.transform, false);
-            var fillImg = fillGO.AddComponent<Image>();
-            fillImg.sprite = RoundedRectSprite.Get();
-            fillImg.type = Image.Type.Sliced;
-            fillImg.color = fill;
-            fillImg.raycastTarget = false;
-            var fillRect = fillImg.rectTransform;
-            fillRect.anchorMin = Vector2.zero;
-            fillRect.anchorMax = Vector2.one;
-            fillRect.offsetMin = new Vector2(2f, 2f);
-            fillRect.offsetMax = new Vector2(-2f, -2f);
-
-            return frame;
         }
 
         /// <summary>Кнопка с подписью — «Малый / Средний / Крупный». Шрифт легаси, как у всей
