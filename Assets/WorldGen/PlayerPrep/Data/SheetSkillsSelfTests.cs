@@ -228,6 +228,84 @@ namespace WorldGen.PlayerPrep.Data
             var d = SheetMath.Compute(c, Fixtures.Rules());
             bool ok = d.UnknownIds.Any(u => u.Contains("aarakocra")) && c.RaceId == "aarakocra";
             if (!ok) Debug.LogError("FAIL неизвестный Id: " + string.Join("; ", d.UnknownIds));
+
+            // Тот же NoteUnknown отвечает и за класс, и за предысторию — обе ветки были без стража.
+            var cCls = Fixtures.Character(); cCls.ClassId = "warlock";
+            var dCls = SheetMath.Compute(cCls, Fixtures.Rules());
+            bool okCls = dCls.UnknownIds.Any(u => u.Contains("warlock")) && cCls.ClassId == "warlock";
+            if (!okCls) Debug.LogError("FAIL неизвестный класс: " + string.Join("; ", dCls.UnknownIds));
+
+            var cBg = Fixtures.Character(); cBg.BackgroundId = "sage";
+            var dBg = SheetMath.Compute(cBg, Fixtures.Rules());
+            bool okBg = dBg.UnknownIds.Any(u => u.Contains("sage")) && cBg.BackgroundId == "sage";
+            if (!okBg) Debug.LogError("FAIL неизвестная предыстория: " + string.Join("; ", dBg.UnknownIds));
+
+            Done(ok && okCls && okBg);
+        }
+
+        [ContextMenu("Self-Test: неизвестные навык, предмет и черты показываются")]
+        public void SelfTestUnknownSkillItemAndFeatsSurface()
+        {
+            // Четыре ветки UnknownIds, которых не задевала ни одна самопроверка. «Ничего не
+            // удаляется молча» — обещание листа, и оно должно быть под охраной, а не на слове.
+            var rules = Fixtures.Rules();
+            rules.Backgrounds[0].OriginFeatId = "ghost-origin";     // черты с таким Id нет
+            var c = Fixtures.Character();
+            c.SkillIds.Add("juggling");                             // навыка нет
+            c.Equipment.Add("mithril");                             // предмета нет
+            c.Plan.Add(new LevelChoice { Level = 4, Kind = "feat", ValueId = "ghost-feat" });
+            var d = SheetMath.Compute(c, rules);
+            bool ok = d.UnknownIds.Any(u => u.Contains("juggling"))
+                   && d.UnknownIds.Any(u => u.Contains("mithril"))
+                   && d.UnknownIds.Any(u => u.Contains("ghost-origin"))
+                   && d.UnknownIds.Any(u => u.Contains("ghost-feat"));
+            if (!ok) Debug.LogError("FAIL неизвестные навык/предмет/черты: " + string.Join("; ", d.UnknownIds));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: у целого персонажа неизвестных Id нет вовсе")]
+        public void SelfTestCompleteCharacterHasNoUnknownIds()
+        {
+            // Страж от ЛОЖНЫХ срабатываний: без него инвертированный предикат («считать
+            // неизвестными известные») проходит весь набор зелёным. У Missing такой страж есть,
+            // у UnknownIds не было.
+            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            bool ok = d.UnknownIds.Count == 0;
+            if (!ok) Debug.LogError("FAIL ложные неизвестные Id: " + string.Join("; ", d.UnknownIds));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: прибавка в характеристику вне списка предыстории — недоделка")]
+        public void SelfTestBumpOutsideBackgroundChoicesIsFlagged()
+        {
+            // Сумма остаётся ровно 3, поэтому сообщение «разложены на N из 3» НЕ должно сработать:
+            // так тест ловит именно проверку разрешённых характеристик, а не общую недоделку.
+            // Солдат даёт выбор из сил/лов/тел — мудрость не его.
+            var c = Fixtures.Character();
+            c.Bumps.RemoveAll(b => b.AbilityId == "con");
+            c.Bumps.Add(new AbilityBump { Source = "background", AbilityId = "wis", Amount = 1 });
+            var d = SheetMath.Compute(c, Fixtures.Rules());
+            bool ok = d.Missing.Any(m => m.Contains("wis") && m.Contains("Солдат"))
+                   && !d.Missing.Any(m => m.Contains("из 3"));
+            if (!ok) Debug.LogError("FAIL прибавка вне списка: " + string.Join("; ", d.Missing));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: недобранные навыки, компетентность и подкласс перечисляются")]
+        public void SelfTestUnfinishedPicksAreListed()
+        {
+            // Три сообщения Missing, которые не выдавала ни одна самопроверка. Персонаж во всём
+            // остальном целый — значит каждое сообщение приходит именно от своей ветки.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character();
+            c.SkillIds.Remove("arcana");     // выбран 1 навык из 2
+            c.ExpertiseIds.Clear();          // компетентность не выбрана
+            c.SubclassId = null;             // подкласс не выбран, а 3 уровень уже пройден
+            var d = SheetMath.Compute(c, rules);
+            bool ok = d.Missing.Any(m => m.Contains("Навыков выбрано 1 из 2"))
+                   && d.Missing.Any(m => m.Contains("омпетентность"))
+                   && d.Missing.Any(m => m.Contains("Подкласс не выбран"));
+            if (!ok) Debug.LogError("FAIL недобранные выборы: " + string.Join("; ", d.Missing));
             Done(ok);
         }
 
