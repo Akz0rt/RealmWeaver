@@ -109,6 +109,31 @@ namespace WorldGen.Notes.Rendering
 
             var live = FindFocusedRow();
 
+            // ── Задача 10б, фикс-раунд 2 (ROOT CAUSE) ── Перехват Enter/↑/↓/Esc идёт САМЫМ ПЕРВЫМ, до
+            // ЧЕГО БЫ ТО НИ БЫЛО, что могло бы закрыть попап как побочный эффект. Раньше этот блок стоял
+            // ПОСЛЕ UpdateMentionPopup — и UpdateMentionPopup закрывал попап просто потому, что ПОЛЕ УЖЕ
+            // НЕ В ФОКУСЕ этим кадром (Enter — MultiLineSubmit деактивирует поле ДО того, как этот
+            // LateUpdate вообще стартует, см. класс-док про «THE DRAIN» — FindFocusedRow() вернул null
+            // ЕЩЁ СТРОКОЙ ВЫШЕ) или потому, что КАРЕТКА УЖЕ ПЕРЕСТАВЛЕНА TMP-дрейном (↑/↓ на однострочной
+            // строке). «Был ли попап открыт К НАЧАЛУ этого кадра» — единственный вопрос, который эти
+            // четыре клавиши обязаны задавать; что успело произойти С ПОЛЕМ за то же самое нажатие не
+            // должно на него влиять.
+            bool popupWasOpen = mentionPopup != null && mentionPopup.IsOpen;
+            if (popupWasOpen)
+            {
+                // Esc: рулинг 4 говорит буквально про текст («не трогает набранное») — восстанавливаем и
+                // каретку туда, где она была ДО этого Esc, тем же приёмом, что и стрелки чуть ниже, а не
+                // оставляем её там, куда мог утащить чужой обработчик Escape/Cancel в этот же кадр.
+                if (keyboard.escapeKey.wasPressedThisFrame)
+                { mentionPopup.Close(); RestoreCaretAfterPopupKey(live, prevCaret); return; }
+                if (keyboard.downArrowKey.wasPressedThisFrame)
+                { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
+                if (keyboard.upArrowKey.wasPressedThisFrame)
+                { mentionPopup.MoveHighlight(-1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
+                if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
+                { mentionPopup.ChooseHighlighted(); return; }
+            }
+
             // A PICTURE IS "FOCUSED" BY BEING SELECTED. It has no field to focus, so the page holds that
             // state (DocumentPageView.SelectedBlockId) and this class reads it — which is how a Backspace
             // aimed at an image the DM merely CLICKED reaches DocKeyboardOps' delete branch, and not only one
@@ -155,25 +180,10 @@ namespace WorldGen.Notes.Rendering
             // DocumentPageView.NoteFocus for why the page needs the LAST focus rather than the live one.
             pageView.NoteFocus(lastFocusedId, lastCaret);
 
-            // ── Задача 10б: попап «@» — открыть/сузить/закрыть по live-тексту строки, и, пока он открыт,
-            // забрать себе Enter/↑↓/Esc, ДО того как они дойдут до обычной обработки ниже (Enter, что
-            // разбивает строку; ↑/↓, что двигают каретку или блок; ни один из них тут не годится — рулинги
-            // 2 и 5 брифа). См. UpdateMentionPopup — она же решает, когда попап закрывается сам.
+            // Задача 10б: открыть/сузить/закрыть попап «@» по live-тексту строки (или, если поле этим
+            // кадром не в фокусе, по авторитетному DocBlock.Text — см. её собственный класс-док). Enter/
+            // ↑/↓/Esc уже перехвачены ВЫШЕ, до этого места — сюда они не доходят, пока попап открыт.
             UpdateMentionPopup(live, prevFocusedId, prevCaret);
-            if (mentionPopup != null && mentionPopup.IsOpen)
-            {
-                // Esc: рулинг 4 говорит буквально про текст («не трогает набранное») — восстанавливаем и
-                // каретку туда, где она была ДО этого Esc, тем же приёмом, что и стрелки чуть ниже, а не
-                // оставляем её там, куда мог утащить чужой обработчик Escape/Cancel в этот же кадр.
-                if (keyboard.escapeKey.wasPressedThisFrame)
-                { mentionPopup.Close(); RestoreCaretAfterPopupKey(live, prevCaret); return; }
-                if (keyboard.downArrowKey.wasPressedThisFrame)
-                { mentionPopup.MoveHighlight(1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
-                if (keyboard.upArrowKey.wasPressedThisFrame)
-                { mentionPopup.MoveHighlight(-1); RestoreCaretAfterPopupKey(live, prevCaret); return; }
-                if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
-                { mentionPopup.ChooseHighlighted(); return; }
-            }
 
             if (string.IsNullOrEmpty(lastFocusedId)) return;
 
@@ -351,59 +361,107 @@ namespace WorldGen.Notes.Rendering
             return null;
         }
 
-        /// <summary>Задача 10б. Derives the popup's open/refresh/close state FRESH every LateUpdate from the
-        /// live row's own post-drain text and caret — the same "read after the drain" rule this whole class
-        /// follows (see the class doc). No state of its own beyond what MentionPopup itself already
-        /// remembers (BlockId/AtIndex); this method only decides whether that still matches reality.</summary>
+        /// <summary>Задача 10б, фикс-раунд 2 (ROOT CAUSE FIX). Derives the popup's open/refresh/close state
+        /// from the row's TEXT — never from "is the field focused THIS instant". That was the root cause the
+        /// review round named: Enter (MultiLineSubmit deactivates the field before this method even runs — see
+        /// the class doc's "THE DRAIN"), a click on the popup's own row (pointer-down defocuses the field the
+        /// same Update pass the click happens in) and an arrow key (TMP moves the caret in the drain, before
+        /// this reads it) all made `live` momentarily null or mismatched, and the OLD version closed on any of
+        /// them — which is exactly backwards, since none of the three changed the TEXT. Enter/↑/↓/Esc are now
+        /// intercepted ABOVE, before this method ever runs on the frame they arrive; what is left here is
+        /// "is the anchor still real", answered from the row's own DATA when it is not the live-focused one.</summary>
         void UpdateMentionPopup(DocBlockView live, string prevFocusedId, int prevCaret)
         {
             if (mentionPopup == null) return;
 
             if (mentionPopup.IsOpen)
             {
-                // Фокус ушёл со строки, где стоял попап — закрыть, а не таскать его за собой на другую.
-                if (live == null || live.Field == null || live.BlockId != mentionPopup.BlockId)
-                { mentionPopup.Close(); return; }
-
-                // Каретка ЕЩЁ не долетела туда, куда её только что попросили (FocusAt/BeginEdit — включая
-                // наш же RestoreCaretAfterPopupKey чуть ниже) — DocBlockView.CaretPending, тот же guard,
-                // что VerticalIsOurs держит по той же причине (см. её класс-док, второй пункт): в этом
-                // окне Field.caretPosition отвечает тем, что было ДО FocusAt, а не тем, что попросили, и
-                // MentionQuery промахнётся мимо AtIndex по чужой каретке. Попап просто держится как есть
-                // один-два кадра, вместо того чтобы закрыться по ложному расхождению.
-                if (live.CaretPending) return;
-
-                string text = live.Field.text ?? "";
-                int caret = live.Field.caretPosition;
-                if (!MentionQuery.TryFind(text, caret, out int atIndex, out string query) || atIndex != mentionPopup.AtIndex)
+                if (live != null && live.BlockId == mentionPopup.BlockId)
                 {
-                    // Пробел (рулинг 4), стёртый «@», каретка, ушедшая из диапазона запроса — во всех трёх
-                    // случаях MentionQuery просто перестаёт находить ЭТОТ «@», и закрытие сводится к этой
-                    // одной проверке вместо отдельного «почему закрылось» на каждый случай.
+                    // Строка В ФОКУСЕ — узнаём АКТУАЛЬНЫЙ query по живой каретке, тем же путём, что и
+                    // раньше; это единственный путь, которым запрос СУЖАЕТСЯ/РАСШИРЯЕТСЯ при печати.
+                    if (live.CaretPending) return;
+
+                    string text = live.Field.text ?? "";
+                    int caret = live.Field.caretPosition;
+                    if (MentionQuery.TryFind(text, caret, out int atIndex, out string q) && atIndex == mentionPopup.AtIndex)
+                    {
+                        mentionPopup.Refresh(q, live);
+                        return;
+                    }
+
+                    // Не тот же якорь — либо явное закрытие (пробел, стёртый «@», каретка ушла в сторону),
+                    // либо ВТОРОЙ «@», набранный ПРЯМО внутри уже открытого запроса. Второй случай обязан
+                    // НАЧАТЬ НОВЫЙ запрос, а не просто захлопнуть попап — рулинг 1 не делает исключения
+                    // «пока другой попап уже открыт» (находка №7 ревью фикс-раунда 2). Один и тот же гейт
+                    // TryDetectFreshAt решает оба: если последний символ — свежий «@», открываемся заново
+                    // на новом месте; если нет (пробел и т.п.) — просто остаёмся закрытыми.
+                    mentionPopup.Close();
+                    if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int newAt, out string newQuery))
+                        mentionPopup.Open(live, newAt, newQuery);
+                    return;
+                }
+
+                if (live != null && live.BlockId != mentionPopup.BlockId)
+                {
+                    // Другая строка ЗАБРАЛА фокус — явное «фокус ушёл не в попап» (см. класс-док).
                     mentionPopup.Close();
                     return;
                 }
 
-                mentionPopup.Refresh(query);
+                // live == null: поле НЕ в фокусе ИМЕННО СЕЙЧАС. Это Enter/выбор мышью только что это
+                // сделали (оба уже обработаны ВЫШЕ, ДО этого метода, в этом же кадре) — либо ДМ кликнул
+                // мимо чего бы то ни было. Ни то ни другое НЕ МОГЛО отредактировать текст без фокуса —
+                // Backspace/печать нового символа требуют фокуса, — так что якорь проверяется по
+                // DocBlock.Text НАПРЯМУЮ (авторитетный источник: OnFieldChanged пишет его синхронно на
+                // каждое изменение, тот же самый текст, что видело бы live-поле, будь оно в фокусе), а не
+                // закрывается просто оттого, что фокуса нет ПРЯМО СЕЙЧАС — это и была первопричина, а не
+                // порядок вызовов сам по себе.
+                var block = FindBlockById(mentionPopup.BlockId);
+                string frozen = block != null ? (block.Text ?? "") : null;
+                int at = mentionPopup.AtIndex;
+                string expected = mentionPopup.Query ?? "";
+                bool stillThere = frozen != null && at >= 0 && at + 1 + expected.Length <= frozen.Length
+                                   && frozen[at] == '@' && frozen.Substring(at + 1, expected.Length) == expected;
+                if (!stillThere) mentionPopup.Close();
                 return;
             }
 
-            // Попап ЗАКРЫТ — открыть его, только если «@» был набран ИМЕННО в этом кадре, а не просто
-            // оказался перед кареткой (клик мышью в СТАРЫЙ текст с «@» внутри не должен ничего открывать).
-            // TextChangedThisFrame — тот же флаг, которым уже пользуется Backspace-ветка ниже, и по той же
-            // причине (сравнение СТРОК, а не факт события — см. класс-док). caretPosition == prevCaret + 1
-            // значит «ровно один символ добавился там, где раньше стояла каретка», и именно этот символ —
-            // проверяемая ниже «@».
-            if (live == null || live.Field == null || !live.TextChangedThisFrame) return;
-            if (live.BlockId != prevFocusedId) return;
+            // Попап ЗАКРЫТ — открыть его, только если «@» был набран ИМЕННО в этом кадре.
+            if (TryDetectFreshAt(live, prevFocusedId, prevCaret, out int freshAt, out string freshQuery))
+                mentionPopup.Open(live, freshAt, freshQuery);
+        }
 
-            string liveText = live.Field.text ?? "";
-            int liveCaret = live.Field.caretPosition;
-            if (liveCaret != prevCaret + 1) return;
-            if (prevCaret < 0 || prevCaret >= liveText.Length || liveText[prevCaret] != '@') return;
+        /// <summary>Ищет блок страницы по id — то, что делает якорь попапа проверяемым независимо от того,
+        /// в фокусе ли его строка ПРЯМО СЕЙЧАС (см. UpdateMentionPopup, ветка live == null).</summary>
+        DocBlock FindBlockById(string id)
+        {
+            if (pageView == null || pageView.Page == null || string.IsNullOrEmpty(id)) return null;
+            foreach (var b in pageView.Page.Blocks)
+                if (b != null && b.Id == id) return b;
+            return null;
+        }
 
-            if (MentionQuery.TryFind(liveText, liveCaret, out int newAt, out string newQuery))
-                mentionPopup.Open(live, newAt, newQuery);
+        /// <summary>«@» набран ИМЕННО в этом кадре на строке `live`, а не просто оказался перед кареткой
+        /// (клик мышью в старый текст с «@» внутри не должен ничего открывать/переоткрывать).
+        /// TextChangedThisFrame — тот же флаг, которым уже пользуется Backspace-ветка ниже, и по той же
+        /// причине (сравнение СТРОК, а не факт события — см. класс-док). caretPosition == prevCaret + 1
+        /// значит «ровно один символ добавился там, где раньше стояла каретка», и именно этот символ
+        /// проверяется на «@» ниже. Используется и для «попап закрыт → открыть» (UpdateMentionPopup, хвост),
+        /// и для «второй „@“ внутри уже открытого запроса → начать новый» (та же функция, тот же гейт).</summary>
+        static bool TryDetectFreshAt(DocBlockView live, string prevFocusedId, int prevCaret, out int atIndex, out string query)
+        {
+            atIndex = -1;
+            query = null;
+            if (live == null || live.Field == null || !live.TextChangedThisFrame) return false;
+            if (live.BlockId != prevFocusedId) return false;
+
+            string text = live.Field.text ?? "";
+            int caret = live.Field.caretPosition;
+            if (caret != prevCaret + 1) return false;
+            if (prevCaret < 0 || prevCaret >= text.Length || text[prevCaret] != '@') return false;
+
+            return MentionQuery.TryFind(text, caret, out atIndex, out query);
         }
 
         /// <summary>Rule 5 — arrows navigate the popup's list, never the caret (and Esc leaves it exactly

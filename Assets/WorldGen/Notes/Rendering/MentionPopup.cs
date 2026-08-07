@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using WorldGen.Notes.Data;
 using WorldGen.Rendering.Theme;
@@ -11,24 +13,38 @@ namespace WorldGen.Notes.Rendering
     /// MentionSuggest.Rank — ранжирование НЕ переигрывается здесь, ровно как QuickOpenPopup не переигрывает
     /// QuickOpen.Search (см. класс-док того файла, тот же принцип, тот же повод).
     ///
-    /// ПОЧЕМУ НЕ ГЛОБАЛЬНЫЙ ОВЕРЛЕЙ, КАК QuickOpenPopup. Тот палет открывается ГЛОБАЛЬНЫМ Ctrl+K и опрашивает
-    /// клавиатуру САМ (его собственный Update, до LateUpdate чего бы то ни было ещё). Этот попап привязан к
-    /// ОДНОЙ конкретной строке в момент, когда её поле уже в фокусе, и триггер («@», набранный посимвольно) —
-    /// вопрос о ТЕКСТЕ строки, а не о хардварной клавише. DocKeyboardController уже читает live-строку, её
-    /// текст и её каретку КАЖДЫЙ LateUpdate ПОСЛЕ TMP-дрейна (см. его класс-док) — это единственное место, где
-    /// «текст только что стал таким-то» и «каретка теперь здесь» согласованы друг с другом, поэтому открытие/
-    /// закрытие/сужение попапа управляется ОТТУДА (Update/Refresh/Close ниже — чистые команды без своего
-    /// опроса клавиатуры), а не изнутри этого класса.
+    /// ФИКС-РАУНД 2 (ревью нашло: «один первопричинный баг, три симптома»). Раньше ЖИВОСТЬ попапа была
+    /// завязана на «поле в фокусе ПРЯМО СЕЙЧАС» — а Enter деактивирует поле ДО того, как обработчик вообще
+    /// успевает среагировать (MultiLineSubmit — см. DocKeyboardController.cs, класс-док про «THE DRAIN»),
+    /// клик по строке попапа снимает фокус с поля НА ТОМ ЖЕ pointer-down, которым сам клик и происходит, а
+    /// стрелки уже двигают каретку TMP-дрейном раньше, чем этот класс успевает её прочитать. Итог был один:
+    /// три способа «выбрать» ломали ровно то, что должны были выбирать.
     ///
-    /// ПОЗИЦИОНИРОВАНИЕ — ТОТ ЖЕ ПЕРЕВОД МИР→ЭКРАН→ЛОКАЛЬ, ЧТО У NavContextMenu.Show (NavigatorView.cs), с
-    /// той же причиной для camera=null на ОБОИХ концах: страница живёт под ScreenSpaceOverlay-канвасом
-    /// воркспейса (WorkspaceBuilder.cs, `canvas.renderMode = RenderMode.ScreenSpaceOverlay`), и попап строит
-    /// СВОЙ собственный такой же канвас — см. CardPropertyBar.cs:128-132 про то, почему обе половины должны
-    /// быть согласованы, а не взяты с потолка. «Под кареткой» реализовано как «под самой СТРОКОЙ» (левый-нижний
-    /// угол её RectTransform), а не под точным пикселем символа: DocBlockView не отдаёт наружу x-координату
-    /// каретки построчно (TryGetCaretLineWorldY отдаёт только верх/низ строки, без x — см. её класс-док), а
-    /// заводить для этого новый публичный метод в DocBlockView ради одного вызова — расширение поверхности,
-    /// которого бриф не просил. Разница на короткой строке (а запрос «@…» почти всегда короткий) незаметна.
+    /// ИСПРАВЛЕНО ПО СВОЙСТВУ, А НЕ ПОРЯДКОМ ВЫЗОВОВ. Открытый попап теперь не закрывается просто оттого,
+    /// что поле не в фокусе ЭТИМ КОНКРЕТНЫМ кадром — DocKeyboardController.UpdateMentionPopup при
+    /// live==null сверяется с DocBlock.Text НАПРЯМУЮ (авторитетный источник, пишется синхронно из
+    /// OnFieldChanged), а не с живой кареткой поля. Явные события — Esc, пробел, текст перестал совпадать,
+    /// выбор, фокус ушёл на ДРУГУЮ строку — закрывают его сами по себе, каждое своим путём. Плюс порядок:
+    /// DocKeyboardController перехватывает Enter/↑/↓/Esc САМЫМ ПЕРВЫМ действием кадра, до всего, что могло
+    /// бы закрыть попап как побочный эффект. Строка списка выбирается по POINTER-DOWN (см. PointerDownRelay
+    /// ниже), а не по Button.onClick (который стреляет на pointer-up кадром позже, когда попап уже мёртв).
+    ///
+    /// ПОЗИЦИОНИРОВАНИЕ — ПОД КАРЕТКОЙ, А НЕ ПОД СТРОКОЙ. TMP_InputField.textComponent ПУБЛИЧНЫЙ (это
+    /// обычное свойство UnityEngine, не что-то, что нужно было бы открывать в DocBlockView заново), так что
+    /// точная геометрия символа (`textInfo.characterInfo[i]`) достижима отсюда напрямую через
+    /// `DocBlockView.Field.textComponent` — см. TryGetCaretWorldPos, повторяющий ту же арифметику, что уже
+    /// есть в DocBlockView.TryGetCaretLineWorldY/TryGetDropMarker (ci.origin/xAdvance, line.descender), но
+    /// на ПУБЛИЧНОМ объекте вместо приватного поля того класса. Измеряется ПОСЛЕ того, как строки списка
+    /// уже построены (RepositionUnder зовётся из Open/Refresh ПОСЛЕ RunSearch), а не во время BuildPopup,
+    /// когда список ещё пуст, — иначе клэмп к низу экрана считался бы по высоте одного футера и никогда не
+    /// пересчитывался бы заново при сужении списка.
+    ///
+    /// БЕЗ BACKDROP'А. Это инлайн-автодополнение внутри живой строки, а не модальная палитра: полноэкранный
+    /// невидимый перехватчик кликов означал бы, что клик В ДРУГУЮ строку, пока ДМ просто печатает где-то ещё,
+    /// стоит двух кликов и не ставит каретку с первого раза. QuickOpenPopup может себе это позволить (это
+    /// модальная палитра, поле ввода которой — единственное, что вообще есть на экране в этот момент); этот
+    /// попап — нет. Закрытие без клика-мимо остаётся: Esc, пробел, несовпадение текста, выбор, уход фокуса
+    /// на другую строку — см. DocKeyboardController.UpdateMentionPopup.
     /// </summary>
     public class MentionPopup : MonoBehaviour
     {
@@ -52,14 +68,18 @@ namespace WorldGen.Notes.Rendering
         Font builtinFont;
 
         GameObject popupGO;
+        RectTransform panelRect;
         Transform listContent;
 
         readonly List<MentionCandidate> candidates = new List<MentionCandidate>();
         readonly List<Image> rowBackgrounds = new List<Image>();
         int highlighted = -1;
         /// <summary>Единственная строка «Создать персонажа "…"» вместо обычного списка — рулинг 3: «нет
-        /// совпадений».</summary>
+        /// совпадений». Только когда `query` НЕ пуст — см. RunSearch.</summary>
         bool creatingRow;
+        /// <summary>Пустой запрос и нечего предложить (свежая страница, пустая сессия) — тихая подсказка
+        /// вместо «Создать персонажа ""», которая иначе была бы первым впечатлением ДМ от фичи.</summary>
+        bool showingHint;
 
         string blockId;
         int atIndex = -1;
@@ -75,6 +95,7 @@ namespace WorldGen.Notes.Rendering
         public bool IsOpen => popupGO != null;
         public string BlockId => blockId;
         public int AtIndex => atIndex;
+        public string Query => query;
 
         /// <summary>REUSE-OR-ADD, тот же приём, что QuickOpenPopup.Attach — WorkspaceBuilder/NotesRootBuilder
         /// пере-запускают своё построение при каждой Play-mode пересборке, и второй AddComponent завёл бы
@@ -93,7 +114,8 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>Тот же приём, что QuickOpenPopup.DestroyStrandedCanvas — канвас попапа корневой (не
         /// дитя ничего, см. BuildPopup), домен-перезагрузка стирает `popupGO` на живом компоненте, но не
-        /// сам GameObject канваса, а его невидимый full-screen backdrop продолжает глотать клики.</summary>
+        /// сам GameObject канваса. Без backdrop'а он больше не глотает клики сам по себе, но всё ещё стоит
+        /// над всем остальным (CanvasSortingOrder) и продолжал бы показывать мёртвый список.</summary>
         static void DestroyStrandedCanvas()
         {
             var stranded = GameObject.Find(CanvasName);
@@ -117,38 +139,46 @@ namespace WorldGen.Notes.Rendering
             this.atIndex = atIndex;
             this.query = query ?? "";
 
-            BuildPopup(row);
+            BuildPopup();
             RunSearch();
+            RepositionUnder(row);
         }
 
         /// <summary>Каждый следующий набранный (или стёртый) символ запроса — список пересчитывается
-        /// целиком, без дебаунса, тем же приёмом, что QuickOpenPopup.RunSearch на каждое нажатие.
+        /// целиком, без дебаунса, тем же приёмом, что QuickOpenPopup.RunSearch на каждое нажатие. `row` —
+        /// нужен только для перепозиционирования (каретка могла сдвинуться по x/y), НИКОГДА не сохраняется
+        /// полем: между вызовами этот класс не держит ни одной ссылки на DocBlockView, только строковый
+        /// BlockId — та же причина, по которой Open тоже не сохраняет `row`.
         ///
         /// РАННИЙ ВЫХОД, КОГДА ЗАПРОС НЕ ИЗМЕНИЛСЯ — И ЭТО НЕ КОСМЕТИКА. DocKeyboardController зовёт этот
-        /// метод КАЖДЫЙ LateUpdate, пока попап открыт, — не только когда что-то набрано. Без сравнения
-        /// строк RunSearch (а с ней highlighted = 0 и полная пересборка строк) запускалась бы каждый кадр
-        /// и стирала бы любое движение ↑/↓ мгновением позже — та же ловушка, которую бриф называет прямо
-        /// про TMP_InputField («сравнивать строки, а не полагаться на факт события»), только уровнем выше.</summary>
-        public void Refresh(string newQuery)
+        /// метод КАЖДЫЙ LateUpdate, пока попап открыт и строка в фокусе, — не только когда что-то набрано.
+        /// Без сравнения строк RunSearch (а с ней highlighted = 0 и полная пересборка строк) запускалась бы
+        /// каждый кадр и стирала бы любое движение ↑/↓ мгновением позже — та же ловушка, которую бриф
+        /// называет прямо про TMP_InputField («сравнивать строки, а не полагаться на факт события»), только
+        /// уровнем выше.</summary>
+        public void Refresh(string newQuery, DocBlockView row)
         {
             if (popupGO == null) return;
             newQuery = newQuery ?? "";
             if (newQuery == query) return;
             query = newQuery;
             RunSearch();
+            if (row != null) RepositionUnder(row);
         }
 
         public void Close()
         {
             if (popupGO == null) return;
-            popupGO.SetActive(false);   // клики не проходят сквозь backdrop этот же кадр, Destroy — в конце.
+            popupGO.SetActive(false);   // на случай будущего Destroy-в-конце-кадра — дешёвая страховка.
             Destroy(popupGO);
             popupGO = null;
+            panelRect = null;
             listContent = null;
             rowBackgrounds.Clear();
             candidates.Clear();
             highlighted = -1;
             creatingRow = false;
+            showingHint = false;
             blockId = null;
             atIndex = -1;
             query = "";
@@ -215,6 +245,7 @@ namespace WorldGen.Notes.Rendering
         {
             candidates.Clear();
             creatingRow = false;
+            showingHint = false;
 
             if (documentController != null && pageView != null)
             {
@@ -224,18 +255,23 @@ namespace WorldGen.Notes.Rendering
                 candidates.AddRange(MentionSuggest.Rank(doc, current, world, query, recentIds, Limit));
             }
 
-            // Рулинг 3: нет совпадений — единственный пункт «Создать персонажа "…"». «Нет совпадений»
-            // читается буквально: пустой список от Rank, каким бы ни был запрос (в т.ч. пустым — «Создать
-            // персонажа ""» тогда просто получит имя по умолчанию, см. CharacterOps.CreateCharacter).
-            if (candidates.Count == 0) creatingRow = true;
+            if (candidates.Count == 0)
+            {
+                // Рулинг 3 — «нет совпадений» читается как «нет совпадений НА ЗАПРОС»: пустой запрос — это
+                // ПОКА-НИЧЕГО-НЕ-НАБРАНО, а не запрос, которому ничего не совпало. «Создать персонажа ""»
+                // от одного «@» на свежей странице была бы первым впечатлением ДМ от фичи — вместо этого
+                // тихая подсказка (или ничего интерактивного вовсе).
+                if (!string.IsNullOrWhiteSpace(query)) creatingRow = true;
+                else showingHint = true;
+            }
 
-            highlighted = (creatingRow || candidates.Count > 0) ? 0 : -1;
+            highlighted = creatingRow || candidates.Count > 0 ? 0 : -1;
             RebuildRows();
         }
 
         // ── построение ──────────────────────────────────────────────────────────────────────────────
 
-        void BuildPopup(DocBlockView row)
+        void BuildPopup()
         {
             var canvasGO = new GameObject(CanvasName, typeof(RectTransform));
             var canvas = canvasGO.AddComponent<Canvas>();
@@ -245,26 +281,12 @@ namespace WorldGen.Notes.Rendering
             canvasGO.AddComponent<GraphicRaycaster>();
             popupGO = canvasGO;
 
-            // Клик мимо попапа закрывает его — тот же выбор и та же причина, что у QuickOpenPopup/
-            // NavContextMenu: обычное десктопное поведение всплывающего списка, а рискa «случайно стереть
-            // что-то важное» тут нет (закрытие ничего не удаляет — набранный текст остаётся, рулинг 4).
-            var backdropGO = new GameObject("Backdrop", typeof(RectTransform));
-            backdropGO.transform.SetParent(canvasGO.transform, false);
-            var backdropImg = backdropGO.AddComponent<Image>();
-            backdropImg.color = Color.clear;
-            var backdropBtn = backdropGO.AddComponent<Button>();
-            backdropBtn.onClick.AddListener(Close);
-            var backdropRect = backdropGO.GetComponent<RectTransform>();
-            backdropRect.anchorMin = Vector2.zero;
-            backdropRect.anchorMax = Vector2.one;
-            backdropRect.offsetMin = Vector2.zero;
-            backdropRect.offsetMax = Vector2.zero;
-
+            // НЕТ backdrop'а — см. класс-док, «БЕЗ BACKDROP'А». Панель — единственный ребёнок канваса.
             var panelGO = new GameObject("Panel", typeof(RectTransform));
-            panelGO.transform.SetParent(canvasGO.transform, false);   // после backdrop → выигрывает рейкаст.
+            panelGO.transform.SetParent(canvasGO.transform, false);
             var panelImg = panelGO.AddComponent<Image>();
             ThemeService.Tag(panelImg, ThemeRole.Panel2);
-            var panelRect = panelGO.GetComponent<RectTransform>();
+            panelRect = panelGO.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0.5f, 0.5f);
             panelRect.anchorMax = new Vector2(0.5f, 0.5f);
             panelRect.pivot = new Vector2(0f, 1f);   // левый верхний — список свисает ВНИЗ-вправо от точки.
@@ -292,10 +314,8 @@ namespace WorldGen.Notes.Rendering
 
             BuildFooter(panelGO.transform);
 
-            Canvas.ForceUpdateCanvases();   // тот же приём, что NavContextMenu.Show — размеры должны
-                                             // осесть ДО того, как ниже читается позиция строки на экране.
-
-            PositionUnder(row, canvasGO.GetComponent<RectTransform>(), panelRect);
+            // ПОЗИЦИОНИРОВАНИЕ ЗДЕСЬ НЕ СЧИТАЕТСЯ — список ещё пуст (RunSearch не запускался), см. Open/
+            // Refresh и RepositionUnder про то, почему это переехало на «после того, как строки построены».
         }
 
         void BuildFooter(Transform parent)
@@ -318,20 +338,77 @@ namespace WorldGen.Notes.Rendering
             rect.offsetMax = new Vector2(-10f, 0f);
         }
 
-        /// <summary>Мир→экран→локаль по строке `row`, тот же перевод, что у NavContextMenu.Show — см.
-        /// класс-док этого файла про camera=null на обоих концах. Свисает вниз от левого-нижнего угла
-        /// строки, зажато в границы экрана тем же приёмом (PoiInfoPopup.Reposition), что уже используется
-        /// в этом проекте для точечно позиционируемых попапов.</summary>
-        void PositionUnder(DocBlockView row, RectTransform canvasRect, RectTransform panelRect)
+        /// <summary>Измеряет и позиционирует ПОСЛЕ того, как строки списка уже существуют (RunSearch уже
+        /// отработал) — иначе клэмп к низу экрана считается по высоте одного футера и не пересчитывается
+        /// при сужении списка (это и была одна из четырёх меньших находок ревью фикс-раунда 2).</summary>
+        void RepositionUnder(DocBlockView row)
         {
-            var rowRect = row.transform as RectTransform;
-            if (rowRect == null) { panelRect.anchoredPosition = Vector2.zero; return; }
+            if (popupGO == null || panelRect == null || row == null) return;
 
-            var corners = new Vector3[4];
-            rowRect.GetWorldCorners(corners);
-            Vector3 bottomLeft = corners[0];   // 0 — левый нижний, тот же порядок, что и везде в проекте.
+            Canvas.ForceUpdateCanvases();   // тот же приём, что NavContextMenu.Show — размеры должны осесть
+                                             // ДО того, как ниже читается позиция на экране и высота панели.
 
-            Vector2 screen = RectTransformUtility.WorldToScreenPoint(null, bottomLeft);
+            Vector3 anchorWorld;
+            if (!TryGetCaretWorldPos(row.Field, out anchorWorld))
+            {
+                // Резервный путь — левый-нижний угол СТРОКИ, как было в первой сдаче: срабатывает, только
+                // если у поля почему-то нет измеримого textComponent/textInfo (не должно происходить на
+                // живой отредактируемой строке, но дешевле выстоять, чем упасть).
+                var rowRect = row.transform as RectTransform;
+                if (rowRect == null) { panelRect.anchoredPosition = Vector2.zero; return; }
+                var corners = new Vector3[4];
+                rowRect.GetWorldCorners(corners);
+                anchorWorld = corners[0];
+            }
+
+            PositionAt(anchorWorld, popupGO.GetComponent<RectTransform>());
+        }
+
+        /// <summary>Мировая позиция низа каретки в живом поле ввода строки — та же арифметика, что уже есть
+        /// в DocBlockView.TryGetCaretLineWorldY/TryGetDropMarker (idx = clamp(caretPosition, 0, count-1),
+        /// x = afterLast ? ci.origin+ci.xAdvance : ci.origin, y = line.descender), но здесь читается через
+        /// ПУБЛИЧНЫЙ `TMP_InputField.textComponent` — обычное свойство UnityEngine, а не что-то, что
+        /// потребовало бы нового публичного метода в DocBlockView. Дублирует, а не переиспользует ту
+        /// арифметику: DocBlockView-шная версия — приватный instance-метод над приватным полем `fieldText`,
+        /// делить с ним код значило бы либо открывать этот метод наружу ради одного вызова, либо копировать
+        /// формулу сюда — выбрано второе, дешевле и без расширения поверхности DocBlockView.</summary>
+        static bool TryGetCaretWorldPos(TMP_InputField field, out Vector3 pos)
+        {
+            pos = Vector3.zero;
+            var textComp = field != null ? field.textComponent : null;
+            if (textComp == null) return false;
+
+            var rt = textComp.rectTransform;
+            if (rt == null) return false;
+
+            var info = textComp.textInfo;
+            if (info == null || info.characterCount == 0 || info.lineCount == 0)
+            {
+                // Пустая строка/ещё не размечено — её собственный рект, левый-нижний угол.
+                var corners = new Vector3[4];
+                rt.GetWorldCorners(corners);
+                pos = corners[0];
+                return true;
+            }
+
+            bool afterLast = field.caretPosition >= info.characterCount;
+            int idx = Mathf.Clamp(afterLast ? info.characterCount - 1 : field.caretPosition, 0, info.characterCount - 1);
+            var ci = info.characterInfo[idx];
+            float x = afterLast ? ci.origin + ci.xAdvance : ci.origin;
+            int lineNumber = Mathf.Clamp(ci.lineNumber, 0, info.lineCount - 1);
+            var line = info.lineInfo[lineNumber];
+            pos = rt.TransformPoint(new Vector3(x, line.descender, 0f));
+            return true;
+        }
+
+        /// <summary>Мир→экран→локаль, тот же перевод, что у NavContextMenu.Show (NavigatorView.cs), с той
+        /// же причиной для camera=null на ОБОИХ концах: страница живёт под ScreenSpaceOverlay-канвасом
+        /// воркспейса (WorkspaceBuilder.cs, `canvas.renderMode = RenderMode.ScreenSpaceOverlay`), и этот
+        /// попап строит СВОЙ собственный такой же канвас — см. CardPropertyBar.cs:128-132 про то, почему обе
+        /// половины должны быть согласованы.</summary>
+        void PositionAt(Vector3 anchorWorld, RectTransform canvasRect)
+        {
+            Vector2 screen = RectTransformUtility.WorldToScreenPoint(null, anchorWorld);
             RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRect, screen, null, out var local);
 
             float menuHeight = LayoutUtility.GetPreferredHeight(panelRect);
@@ -357,6 +434,10 @@ namespace WorldGen.Notes.Rendering
             {
                 rowBackgrounds.Add(BuildRow(0, "Создать персонажа «" + query + "»", "", isHighlighted: true, isCreate: true));
             }
+            else if (showingHint)
+            {
+                BuildHintRow();
+            }
             else
             {
                 for (int i = 0; i < candidates.Count; i++)
@@ -365,6 +446,29 @@ namespace WorldGen.Notes.Rendering
                     rowBackgrounds.Add(BuildRow(i, c.Name, c.Subtitle, i == highlighted, isCreate: false));
                 }
             }
+        }
+
+        /// <summary>Рулинг 5 — пустой запрос, нечего предложить: тихая, некликабельная строка вместо
+        /// «Создать персонажа ""». Не входит в `rowBackgrounds` — не участвует в подсветке/выборе.</summary>
+        void BuildHintRow()
+        {
+            var go = new GameObject("Hint", typeof(RectTransform));
+            go.transform.SetParent(listContent, false);
+            go.AddComponent<LayoutElement>().preferredHeight = RowHeight;
+
+            var text = go.AddComponent<Text>();
+            text.text = "Начните печатать имя…";
+            text.font = builtinFont;
+            text.fontSize = 12;
+            ThemeService.Tag(text, ThemeRole.Mut);
+            text.alignment = TextAnchor.MiddleLeft;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.raycastTarget = false;
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(10f, 0f);
+            rect.offsetMax = new Vector2(-10f, 0f);
         }
 
         Image BuildRow(int index, string name, string subtitle, bool isHighlighted, bool isCreate)
@@ -377,10 +481,10 @@ namespace WorldGen.Notes.Rendering
             var bg = rowGO.AddComponent<Image>();
             TagRowBackground(bg, isHighlighted);
 
-            var btn = rowGO.AddComponent<Button>();
-            btn.targetGraphic = bg;
+            // POINTER-DOWN, НЕ Button.onClick — см. PointerDownRelay и класс-док «ИСПРАВЛЕНО ПО СВОЙСТВУ».
+            var relay = rowGO.AddComponent<PointerDownRelay>();
             int capturedIndex = index;
-            btn.onClick.AddListener(() => Choose(isCreate ? 0 : capturedIndex));
+            relay.OnDown = () => Choose(isCreate ? 0 : capturedIndex);
 
             var nameGO = new GameObject("Name", typeof(RectTransform));
             nameGO.transform.SetParent(rowGO.transform, false);
@@ -400,9 +504,6 @@ namespace WorldGen.Notes.Rendering
             nameRect.offsetMin = new Vector2(10f, -20f);
             nameRect.offsetMax = new Vector2(-10f, -4f);
 
-            // Подпись — рулинг 6: различает два объекта с одинаковым именем. Пустая строка у обычной
-            // страницы (MentionCandidate.Subtitle = "") просто рисует ничего, без пустой полки под именем —
-            // тот же компромисс, на который уже пошёл QuickOpenPopup (Snippet ?? Kind, «может быть пустым»).
             if (!string.IsNullOrEmpty(subtitle))
             {
                 var subGO = new GameObject("Subtitle", typeof(RectTransform));
@@ -440,6 +541,19 @@ namespace WorldGen.Notes.Rendering
         {
             if (isHighlighted) ThemeService.Tag(bg, ThemeRole.AccentSoft, 0.9f);
             else ThemeService.Tag(bg, ThemeRole.Panel, 0f);
+        }
+
+        /// <summary>Реагирует на POINTER-DOWN, а не на Button.onClick. Button.onClick стреляет на pointer-UP
+        /// — а pointer-DOWN где угодно ВНЕ поля уже снимает с него фокус в ТОМ ЖЕ Update-проходе
+        /// EventSystem'а, которым сам этот down случился; DocKeyboardController.LateUpdate этого же кадра
+        /// (после Update) увидел бы «поле не в фокусе» и — до фикс-раунда 2 — закрывал бы попап ДО того,
+        /// как pointer-UP вообще случался. Реагируя на pointer-DOWN, выбор строки происходит В ТОМ ЖЕ
+        /// Update-проходе, что и сам клик, — раньше любого LateUpdate этого кадра, так что попап физически
+        /// не может быть закрыт побочным эффектом расфокусировки раньше, чем успевает выбрать.</summary>
+        class PointerDownRelay : MonoBehaviour, IPointerDownHandler
+        {
+            public System.Action OnDown;
+            public void OnPointerDown(PointerEventData eventData) => OnDown?.Invoke();
         }
     }
 }
