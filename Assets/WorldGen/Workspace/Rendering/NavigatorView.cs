@@ -781,6 +781,59 @@ namespace WorldGen.Workspace.Rendering
                 byte[] portraitBytes = isCharacterGroup ? FindCharacterPortrait(node.Target.Id) : null;
                 BuildNodeRow(groupGO.transform, node, isActive, autoRename, isCharacterGroup, portraitBytes);
             }
+
+            // NavigatorTree.Build's own deliberate N3 exception (see its comment on `groups.Add(section)`)
+            // keeps the Characters section on screen with ZERO nodes whenever the filter is empty — "no
+            // characters exist yet" must render differently from "the filter found nothing" (ruling ДМ
+            // 2026-08-07). group.Nodes.Count == 0 here can therefore ONLY mean the empty-filter case: a
+            // non-empty filter that matched nothing is never handed a section at all (Build omits it, so
+            // this method never runs for it). This placeholder is what fills the header-with-nothing-under-
+            // it gap that review caught in Task 7 — without it, «+ Персонаж» would sit above a blank space
+            // that could pass for a rendering bug rather than an honest "you haven't made anyone yet".
+            if (isCharacterGroup && group.Nodes.Count == 0) BuildEmptyCharactersRow(groupGO.transform);
+        }
+
+        /// <summary>The one row a Characters section shows when it has nobody in it. Deliberately built
+        /// from scratch rather than through BuildNodeRow: that method exists to render a NavNode with a
+        /// real Target to open, and this row opens nothing — reusing it would mean threading a fake NavNode
+        /// through it, or adding an "is this a placeholder" branch to a method that already branches on
+        /// isCharacterRow, either of which is more state to keep straight than a five-line sibling.
+        ///
+        /// NOT clickable, NOT selectable, and not mistakable for a character with an empty name — by
+        /// omission, not by a disabled flag: no Image (so no raycast surface at all, unlike every real
+        /// row's invisible-but-still-raycasting background — see BuildNodeRow's own `bg`), no
+        /// NavRowClickRouter, no active-row edge marker. A click here has nothing on this GameObject to
+        /// land on and falls through to whatever is behind the navigator column.
+        ///
+        /// STYLE PRECEDENT: this file's one existing "muted text that names an absence" is
+        /// BuildSearch's placeholder ("Поиск...", ThemeRole.Mut + FontStyle.Italic) — mirrored here rather
+        /// than invented, since nothing in NavigatorView renders an EMPTY-LIST row anywhere else (a group
+        /// with zero nodes is simply omitted everywhere else in this file — N3's ordinary rule — which is
+        /// exactly the rule the Characters section is the one deliberate exception to).</summary>
+        void BuildEmptyCharactersRow(Transform parent)
+        {
+            var rowGO = new GameObject("EmptyPlaceholder", typeof(RectTransform));
+            rowGO.transform.SetParent(parent, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = RowHeight;
+
+            var textGO = new GameObject("Text", typeof(RectTransform));
+            textGO.transform.SetParent(rowGO.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = "пока никого";
+            text.font = builtinFont;
+            text.fontSize = 13;
+            text.fontStyle = FontStyle.Italic;
+            ThemeService.Tag(text, ThemeRole.Mut);
+            text.alignment = TextAnchor.MiddleLeft;
+            text.raycastTarget = false;
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            // Same insets as an ordinary row's Label (BuildNodeRow) — left-aligned under the same margin
+            // real names sit at, so the placeholder reads as part of the same list rather than a stray
+            // banner.
+            textRect.offsetMin = new Vector2(14f, 0f);
+            textRect.offsetMax = new Vector2(-8f, 0f);
         }
 
         /// <summary>The live CharacterCard.Portrait for a page id, or null when the page isn't found or

@@ -205,14 +205,20 @@ namespace WorldGen.Workspace.Data
                 ok = false;
             }
 
-            // N3 — filtering folds case, and empties whole groups away.
+            // N3 — filtering folds case, and empties whole groups away. THIS "no zero-node group survives"
+            // check holds ONLY because the filter here is non-empty («  ТИХИЙ  »): the Characters section
+            // is the one deliberate exception to it, and only when the filter is EMPTY (see the
+            // `groups.Add(section)` comment in NavigatorTree.Build, and
+            // SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty below, which pins that empty-filter
+            // case directly). Do not widen this call to `""` expecting the same assertion to still hold —
+            // it would then fire against a section that is CORRECTLY present.
             groups = NavigatorTree.Build(doc, world, "  ТИХИЙ  ");
             if (groups.Exists(g => g.Nodes.Exists(n => n.Title == "Сессия 1")))
             { Debug.LogError("FAIL tree: filter «  ТИХИЙ  » left «Сессия 1» present, want it excluded (N3)"); ok = false; }
             if (groups.Exists(g => g.Nodes.Count == 0))
             {
                 string emptyTitle = groups.Find(g => g.Nodes.Count == 0)?.Title ?? "?";
-                Debug.LogError($"FAIL tree: group «{emptyTitle}» survived with 0 nodes, want it omitted entirely (N3)");
+                Debug.LogError($"FAIL tree: group «{emptyTitle}» survived with 0 nodes under a NON-EMPTY filter, want it omitted entirely (N3)");
                 ok = false;
             }
 
@@ -430,8 +436,13 @@ namespace WorldGen.Workspace.Data
             else if (groups[0].Nodes.Count != 1 || groups[0].Nodes[0].Title != "Ольга Медная")
             { Debug.LogError("FAIL: фильтр по подписи отобрал не то"); ok = false; }
 
+            // Non-empty фильтр («нетакого»), совпадений ноль — раздел должен пропасть. Это НЕ общее
+            // правило «пустой раздел всегда исчезает»: при ПУСТОМ фильтре раздел персонажей остаётся
+            // видимым нарочно, даже с нулём узлов (см. исключение в NavigatorTree.Build у
+            // `groups.Add(section)` и SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty ниже) —
+            // здесь проверяется только половина «фильтр реально ничего не нашёл».
             if (NavigatorTree.Build(doc, null, "нетакого").Count != 0)
-            { Debug.LogError("FAIL: пустой раздел показан вместо того, чтобы исчезнуть"); ok = false; }
+            { Debug.LogError("FAIL: при непустом фильтре, который ничего не находит, раздел показан вместо того, чтобы исчезнуть"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Filter Matches Subtitle: PASS" : "Self-Test Filter Matches Subtitle: FAIL");
         }
@@ -452,6 +463,59 @@ namespace WorldGen.Workspace.Data
             { Debug.LogError("FAIL: страница без карточки исчезла из своей же группы персонажей"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Own Page Without Card Still Shows: PASS" : "Self-Test Own Page Without Card Still Shows: FAIL");
+        }
+
+        // Мутант (a): раздел персонажей возвращается к старому правилу N3 «Nodes.Count > 0» без
+        // исключения — тогда пустой раздел при пустом фильтре не появляется вовсе, и «+ Персонаж»
+        // (единственная кнопка, которая умеет создать первого персонажа — она живёт в заголовке ЭТОГО
+        // раздела, см. NavigatorView.BuildGroupHeader) негде разместить: на свежем проекте, где
+        // персонажей ещё нет, ДМ не может создать первого. Это и есть критическая находка ревью
+        // задачи 7 (отчёт task-7-report.md), которую этот тест закрывает.
+        // Мутант (b): раздел показывается БЕЗУСЛОВНО, вне зависимости от фильтра — тогда «фильтр
+        // ничего не нашёл» и «персонажей ещё не завели» становятся неотличимы на экране, что рулинг
+        // ДМ 2026-08-07 прямо запретил.
+        //
+        // ФИКСТУРА НАРОЧНО БЕЗ ЕДИНОГО ПЕРСОНАЖА: ни одной страницы с CharacterCard, ни одной группы
+        // с IsCharacters. Была бы в документе хотя бы одна карточка — «раздел появился» перестало бы
+        // отличать «показывается всегда» от «показывается, когда непусто», и оба мутанта прошли бы
+        // тест незамеченными: старое правило Nodes.Count>0 тоже показало бы раздел (в нём была бы
+        // хотя бы одна строка), а безусловный мутант — тем более.
+        [ContextMenu("Self-Test: Characters Section Always Visible Unless Filtered Empty")]
+        public void SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var notes = new PageGroup { Title = "Заметки" };
+            notes.Pages.Add(new NotesPage { Name = "Черновик" });
+            doc.Groups.Add(notes);
+
+            // Пустой фильтр, ноль персонажей во всём документе — «ещё ничего не создано»: раздел
+            // ОБЯЗАН появиться, пусть и с нулём строк, иначе кнопке «+ Персонаж» негде стоять.
+            var empty = NavigatorTree.Build(doc, null, "");
+            var emptySection = empty.Find(g => g.Kind == NavGroupKind.Characters);
+            if (emptySection == null)
+            {
+                Debug.LogError("FAIL: раздел персонажей не появился при пустом фильтре и нуле персонажей в документе — «+ Персонаж» негде разместить, первого персонажа не создать");
+                ok = false;
+            }
+            else if (emptySection.Nodes.Count != 0)
+            {
+                Debug.LogError($"FAIL: раздел персонажей в документе без единого персонажа держит {emptySection.Nodes.Count} узел(-ов), хотели 0");
+                ok = false;
+            }
+
+            // Непустой фильтр, ничего не находящий — «ничего не найдено»: раздел ОБЯЗАН пропасть,
+            // как и любая другая группа под N3.
+            var filtered = NavigatorTree.Build(doc, null, "нетакого");
+            if (filtered.Exists(g => g.Kind == NavGroupKind.Characters))
+            {
+                Debug.LogError("FAIL: раздел персонажей показан при фильтре, который ничего не находит — «ничего не найдено» не должно выглядеть как «раздел существует»");
+                ok = false;
+            }
+
+            Debug.Log(ok
+                ? "Self-Test Characters Section Always Visible Unless Filtered Empty: PASS"
+                : "Self-Test Characters Section Always Visible Unless Filtered Empty: FAIL");
         }
     }
 }

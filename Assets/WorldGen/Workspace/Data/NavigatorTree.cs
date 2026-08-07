@@ -202,7 +202,25 @@ namespace WorldGen.Workspace.Data
             pulled.Sort((a, b) => string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.CurrentCultureIgnoreCase));
             foreach (var p in pulled) section.Nodes.Add(MakeNode(p));
 
-            if (section.Nodes.Count > 0) groups.Add(section);
+            // DELIBERATE EXCEPTION TO N3 — ruling ДМ 2026-08-07, closing a hole review found in Task 7:
+            // every OTHER group under N3 is omitted the instant it has zero nodes, no matter why it is
+            // empty. The Characters section cannot follow that rule unconditionally, because its header is
+            // the ONLY place «+ Персонаж» lives (NavigatorView.BuildGroupHeader) — on a fresh project
+            // there are zero characters, N3's plain "0 nodes → omit" would omit the section together with
+            // its button, and the DM would have no UI path to create a first character at all.
+            //
+            // «Ничего не создано» and «ничего не найдено» are different states and must render
+            // differently, so the exception is narrower than "always show": with the FILTER EMPTY
+            // (needle.Length == 0), zero nodes means "no characters exist yet" — the section renders, with
+            // its header, its button, and NavigatorView's own pale «пока никого» placeholder row for a
+            // truly empty section. With a NON-EMPTY filter that matched nothing, zero nodes means "nothing
+            // here answers the search" — the section is omitted exactly like every other group under N3,
+            // or a needle that excludes every character would look identical to "the DM has none".
+            //
+            // DO NOT "restore consistency" with N3 by deleting this — see NavigatorTreeSelfTests'
+            // SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty, which pins both halves and goes
+            // red the moment either is reverted.
+            if (section.Nodes.Count > 0 || needle.Length == 0) groups.Add(section);
             return groups;
         }
 
