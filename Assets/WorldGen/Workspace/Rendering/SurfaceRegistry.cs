@@ -288,9 +288,10 @@ namespace WorldGen.Workspace.Rendering
     /// WHICH PAGE VIEW THIS BOARD TALKS TO, now that there is more than one. Two of the three couplings are
     /// gone: the font comes straight from the constructor (one namer of the asset, NotesRootBuilder
     /// .BuiltinFont) instead of through `pageView.BodyFont`, and undo/redraw are aimed at the view that is
-    /// actually SHOWING the board's owner page — found through PageSurfaceHost.Views, which is more precise
-    /// than the old ReferenceEquals-against-the-one-view test, not merely a translation of it. See
-    /// ViewShowing for the one behaviour that genuinely narrowed.</summary>
+    /// actually SHOWING the board's owner page — found through PageSurfaceHost.Views, filtered by
+    /// DocumentPageView.SurfaceVisible as well as by the page binding, because a hidden view stays BOUND to
+    /// the page it last showed. Read ViewShowing's own doc before touching that filter: dropping it compiles,
+    /// passes everything, and quietly sends the DM's undo to a pane they cannot see.</summary>
     public class CanvasSurfaceHost : ISurfaceHost
     {
         readonly NotesDocumentController documentController;
@@ -312,22 +313,41 @@ namespace WorldGen.Workspace.Rendering
 
         public string TitleFor(string id) => NotesSurface.TitleOf(FindCanvas(id, out _));
 
-        /// <summary>The page view currently showing `page`, or null if no pane is. Replaces the old
+        /// <summary>The page view currently SHOWING `page`, or null if no pane is. Replaces the old
         /// `ReferenceEquals(ownerPage, pageView.Page)` test against the single view, and answers the same
-        /// question the same way — «is the board's own page on screen?» — for however many views exist.
+        /// question — «is the board's own page on screen?» — for however many views exist.
+        ///
+        /// BOTH HALVES OF THE TEST ARE LOAD-BEARING, and the first round of this task shipped only the
+        /// second. `Page` says which page a view is BOUND to, and a Hide deliberately does not clear it: the
+        /// binding is what the undo history belongs to, so PageSurfaceHost.Hide touches visibility alone (see
+        /// its own doc). A view therefore stays bound to a page long after it stopped showing it, and a
+        /// binding-only test hands back a HIDDEN view — with `Views` yielding pane 0 first, it loses every
+        /// tie to pane 0. The reachable sequence: pane 0 shows page A; pane 0's active tab becomes a
+        /// NON-page (map, dungeon, board), so A stays bound there; the A tab moves to pane 1 (rule R1b, or a
+        /// tab drag) and is visible there; the DM presses «↗» on A's inline board, which opens in the OTHER
+        /// pane — pane 0. Every mutation would then push undo onto the invisible view's stack and rebuild the
+        /// page nobody is looking at, leaving the VISIBLE copy in pane 1 stale. Nothing is lost from the
+        /// document (both views hold the same NotesPage object), but Ctrl+Z in the pane the DM is working in
+        /// does not undo what they just did — precisely the silent mis-routing this whole arc is about.
         ///
         /// ONE THING GENUINELY NARROWED, recorded rather than buried. AfterMutation used to call
         /// MarkDocumentMutated on the always-live single view REGARDLESS of which page it showed; now, if no
         /// pane shows the owner page, nothing is notified. That event's only subscriber is
         /// CanvasTabPruner.PruneBlocks — the check for a board tab whose block died — and moving cards on a
         /// board cannot orphan a tab (the block is still there), so nothing observable is lost. The «marks the
-        /// project dirty» the old comment claimed was never real: this project has no dirty flag and no
-        /// close-without-saving prompt, and grep finds no other subscriber.</summary>
+        /// project dirty» the old comment claimed was never real; DocumentPageView.OnDocumentMutated's own doc
+        /// now records that, so nobody widens this back on the strength of it.
+        ///
+        /// Returning the FIRST match is safe because a surface is open in at most one pane at a time —
+        /// WorkspaceOps.Open activates (R1) or MOVES (R1b) an already-open SurfaceRef and never opens a
+        /// second, and a tab drag moves rather than copies. Two VISIBLE views of one page is therefore not a
+        /// reachable state; if one is ever created, this becomes a loop for the rebuild (history would still
+        /// go to exactly one view — it is per-view, and pushing twice would be wrong).</summary>
         DocumentPageView ViewShowing(NotesPage page)
         {
             if (page == null || pageHost == null) return null;
             foreach (var view in pageHost.Views)
-                if (view != null && ReferenceEquals(view.Page, page)) return view;
+                if (view != null && view.SurfaceVisible && ReferenceEquals(view.Page, page)) return view;
             return null;
         }
 

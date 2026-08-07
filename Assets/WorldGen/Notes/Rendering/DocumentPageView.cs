@@ -64,8 +64,9 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>The row group whose left/right padding the column measure is expressed through. Fetched
         /// lazily rather than cached at Initialize, because a destroyed component compares equal to null in
-        /// Unity and the lookup then repeats itself after a script reload — the same reload RecoverBuiltObjects
-        /// exists for, without a second recovery site to keep in step.</summary>
+        /// Unity, so the lookup simply repeats itself rather than needing a recovery site of its own. (It once
+        /// had a named counterpart — a post-reload repair method this class no longer has; see the class doc's
+        /// LIFETIME paragraph for why nothing here needs repairing any more.)</summary>
         VerticalLayoutGroup rowLayout;
 
         /// <summary>Last side padding written, so the measure does not dirty the layout every frame.</summary>
@@ -102,9 +103,30 @@ namespace WorldGen.Notes.Rendering
         public IReadOnlyList<DocBlockView> Rows => rows;
         public RectTransform Content => content;
 
-        /// <summary>The whole page surface's own root, re-parented by PageSurfaceHost.Show into whichever
-        /// pane's content area currently shows a Page tab (Task 9). Null before Initialize.</summary>
+        /// <summary>The whole page surface's own root — everything this view draws hangs off it, and
+        /// `ApplyVisibility` switches it on and off wholesale. Null before Initialize.
+        ///
+        /// IT DOES NOT MOVE BETWEEN PANES, and the doc here said the opposite until Task 4 of the two-panes
+        /// arc: PageSurfaceHost used to re-parent the ONE root into whichever pane's content area showed a
+        /// Page tab. There is now a view per pane, each built inside its own pane's content area under a
+        /// "PageSurface" wrapper, and nothing ever re-homes one — see the class doc's LIFETIME paragraph.
+        /// PageSurfaceHost.Show still re-asserts the parent and the stretch on every call, per
+        /// ISurfaceHost's contract, but that is a no-op restatement rather than a move.</summary>
         public RectTransform Root => root != null ? (RectTransform)root.transform : null;
+
+        /// <summary>Whether a pane's active tab currently points at this view — the `surfaceVisible` axis,
+        /// read-only to the outside. Exposed because «which view is SHOWING page X» is a question the
+        /// workspace side has to be able to ask and could not: `Page` alone cannot answer it, since a Hide
+        /// deliberately leaves the binding in place (see the field's own doc), so a view stays bound to a page
+        /// long after it stopped showing it. CanvasSurfaceHost.ViewShowing is the caller, and got the wrong
+        /// view without this.
+        ///
+        /// A GETTER RATHER THAN A SECOND COPY OF THE FACT, deliberately. The alternative was to have
+        /// PageSurfaceHost remember which pane it last Showed — which is this same bool written down twice,
+        /// in two objects with different lifetimes, free to disagree with the SetActive calls
+        /// ApplyVisibility actually makes. This project has been bitten by exactly that shape often enough
+        /// (see WorkspaceController.shellSuppressed's doc for the running count) to prefer one owner.</summary>
+        public bool SurfaceVisible => surfaceVisible;
 
         /// <summary>PageSurfaceHost's Show/Hide call this — see the surfaceVisible field doc for why this is
         /// an axis of its own and not just ShowPage(null). Re-asserts visibility against the page ALREADY
@@ -179,8 +201,19 @@ namespace WorldGen.Notes.Rendering
             if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
         }
 
-        /// <summary>Fires whenever the block list changed shape, so the project can be marked dirty and
-        /// dependent panels (backlinks) can refresh.</summary>
+        /// <summary>Fires whenever THIS view's block list changed shape.
+        ///
+        /// WHAT IT IS ACTUALLY FOR, corrected in Task 4 of the two-panes arc after the old wording was
+        /// checked against the code and found false. It said "so the project can be marked dirty and
+        /// dependent panels (backlinks) can refresh". There is no dirty flag in this project and no
+        /// save-on-close prompt, and grep finds exactly ONE subscriber: CanvasTabPruner.PruneBlocks, which
+        /// asks whether an open board tab's block still exists. The backlinks half is done by the view itself
+        /// (PageFooterView.Refresh from RefreshLinks), not by anyone listening here.
+        ///
+        /// That mattered enough to fix rather than tidy: believing this event carries "the project must be
+        /// saved" makes any narrowing of who raises it look like data loss, and would invite someone to widen
+        /// CanvasSurfaceHost.AfterMutation back to notifying a view that is not showing the changed page. See
+        /// CanvasSurfaceHost.ViewShowing for what that would actually cost.</summary>
         public event System.Action OnDocumentMutated;
 
         /// <summary>Raises OnDocumentMutated for a change made OUTSIDE this view — today only by a board
@@ -188,10 +221,12 @@ namespace WorldGen.Notes.Rendering
         /// through any of this class's own mutators.
         ///
         /// A C# event can only be raised from the class that declares it, so an outside editor of this
-        /// document has no way to say "the project is dirty now" without a method like this one. Rebuild() is
-        /// deliberately NOT folded in: the caller decides whether a rebuild is even meaningful (see
-        /// CanvasSurfaceHost.Show — a board on a page that is not the open one must still mark the project
-        /// dirty, and must NOT redraw the page it is not on).</summary>
+        /// document has no way to announce the change without a method like this one. Rebuild() is
+        /// deliberately NOT folded in: the two are separate decisions, and CanvasSurfaceHost happens to make
+        /// them together only because it aims BOTH at the same thing — the view that is currently SHOWING the
+        /// board's owner page. It used to make them differently (notify always, redraw only the open page) on
+        /// the strength of a "must still mark the project dirty" rule that the event's own doc above now
+        /// records as never having been true.</summary>
         public void MarkDocumentMutated() => OnDocumentMutated?.Invoke();
 
         /// <summary>Raises NotesDocumentController.OnDocumentChanged — the event NavigatorView rebuilds

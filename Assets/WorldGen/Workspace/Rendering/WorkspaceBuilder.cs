@@ -449,6 +449,15 @@ namespace WorldGen.Workspace.Rendering
             // does to a session if this is skipped. A no-op on every rebuild that did not follow a reload
             // with a menu open, which is nearly all of them.
             NavContextMenu.DismissStranded();
+
+            // A FOURTH stranded root canvas, added here by the two-panes arc's Task 4 rather than left to
+            // ride along with something else. The «@» popup's canvas is a root canvas too, and its cleanup
+            // used to be a side effect of MentionPopup.Attach, which NotesRootBuilder.EnsureBuilt called
+            // unconditionally on every reload. Attach now happens inside PageSurfaceHost's OnViewCreated
+            // hook, i.e. only when some pane actually builds a page view — so the cleanup is stated here
+            // instead, where it runs once per shell rebuild and asks nothing about what else exists. See
+            // MentionPopup.DismissStranded's own doc.
+            MentionPopup.DismissStranded();
         }
 
         /// <summary>Reuse-or-add for the components Awake puts on its OWN GameObject. Written out rather than

@@ -127,6 +127,18 @@ namespace WorldGen.Notes.Rendering
             return popup;
         }
 
+        /// <summary>Убрать зависший канвас попапа, не трогая ничего больше — публичная дверь к
+        /// DestroyStrandedCanvas ниже, по образцу NavContextMenu.DismissStranded.
+        ///
+        /// Зачем отдельно от Attach. До арки «две панели» уборка ехала прицепом к Attach, а Attach звался
+        /// БЕЗУСЛОВНО из NotesRootBuilder.EnsureBuilt на каждой перезагрузке домена. Задача 4 перенесла
+        /// Attach в крючок PageSurfaceHost.OnViewCreated: теперь он случается, только если какая-то панель
+        /// действительно строит вид страницы, — а зависший канвас переживает перезагрузку независимо от
+        /// того, строится ли вид (например, окном владеет экран генерации, и заявок у оболочки нет вовсе).
+        /// WorkspaceBuilder.DemolishForRebuild зовёт это рядом с NavContextMenu.DismissStranded, то есть
+        /// ровно один раз на пересборку оболочки и без всяких условий.</summary>
+        public static void DismissStranded() => DestroyStrandedCanvas();
+
         /// <summary>Тот же приём, что QuickOpenPopup.DestroyStrandedCanvas — канвас попапа корневой (не
         /// дитя ничего, см. BuildPopup), домен-перезагрузка стирает `popupGO` на живом компоненте, но не
         /// сам GameObject канваса. Без backdrop'а он больше не глотает клики сам по себе, но всё ещё стоит
