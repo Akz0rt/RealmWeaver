@@ -924,8 +924,12 @@ namespace WorldGen.PlayerPrep.Rendering
                     marked: false);
             }
 
-            AddCaption(right, "Бой и защита");
+            // Уровень стоит ПЕРЕД «Боем и защитой», под своей подписью: попади он первой строкой под
+            // «Бой и защита», он читался бы как боевое число вроде КД и инициативы, каким не является.
+            AddCaption(right, "Уровень и рост");
             BuildLevelRow(right);
+
+            AddCaption(right, "Бой и защита");
             AddNumberRow(right, "ac", "Класс доспеха", sheet.ArmorClass.ToString(), null,
                 sheet.ArmorClassExplain, marked: false);
             AddNumberRow(right, "init", "Инициатива", Signed(sheet.Initiative), null,
@@ -994,7 +998,7 @@ namespace WorldGen.PlayerPrep.Rendering
             var downText = down.GetComponentInChildren<Text>();
             if (downText != null) downText.fontSize = 18;
 
-            var hint = AddLabel(row, "поднимает «Повысить уровень» внизу листа", 14, Faint);
+            var hint = AddLabel(row, "повышается кнопкой «Повысить уровень» внизу листа", 14, Faint);
             var hintLe = hint.gameObject.AddComponent<LayoutElement>();
             hintLe.preferredWidth = 0f;                 // остаток ширины, а не ширина текста
             hintLe.flexibleWidth = 1f;
