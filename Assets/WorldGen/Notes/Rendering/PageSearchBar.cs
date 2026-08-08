@@ -159,8 +159,11 @@ namespace WorldGen.Notes.Rendering
             hits.Clear();
             current = -1;
 
+            // КАРТОЧКА ПЕРЕДАЁТСЯ ЗДЕСЬ, и без этого аргумента правило её не увидит: трёхаргументная форма
+            // Find подставляет card = null. Первый заход починил чистое правило и забыл вызывающую
+            // сторону — поиск по «Кто» так и не находил ничего.
             if (page != null && page.Page != null)
-                hits.AddRange(PageSearch.Find(page.Page.Blocks, query, page.ResolveNameFor));
+                hits.AddRange(PageSearch.Find(page.Page.Blocks, page.Page.Character, query, page.ResolveNameFor));
 
             // Straight to the first match, so typing a name and looking up is enough — the DM should not have
             // to press anything to see where the first one is.
@@ -200,6 +203,20 @@ namespace WorldGen.Notes.Rendering
         void Reveal(PageSearch.PageHit hit)
         {
             if (hit == null || page == null || page.Page == null) return;
+
+            // ПОПАДАНИЕ В КАРТОЧКЕ ЛЕЖИТ НЕ В СТРОКЕ, а в шапке персонажа, и строки у него нет вовсе
+            // (BlockId пуст). Разворачивать нечего, прокручивать к строке нечего — шапка стоит первой в
+            // той же колонке, поэтому «показать её» значит промотать колонку в начало.
+            //
+            // ЧЕСТНО ПРО НЕДОДЕЛКУ: подсветки внутри поля карточки НЕТ — CharacterHeaderView не умеет
+            // SetSearchHighlights, как умеет строка. Совпадение считается, «3 из 12» его учитывает, Enter
+            // на него встаёт и шапку показывает, но самого слова в поле не подсвечивает. Дорисовать —
+            // отдельная задача по шапке, а не ещё одна ветка здесь.
+            if (hit.Field != PageSearch.CardField.None)
+            {
+                page.RevealTop();
+                return;
+            }
 
             if (NotesDocOps.ExpandTo(page.Page.Blocks, hit.BlockId))
             {
@@ -246,12 +263,17 @@ namespace WorldGen.Notes.Rendering
 
             hits.Clear();
             if (page != null && page.Page != null)
-                hits.AddRange(PageSearch.Find(page.Page.Blocks, field != null ? field.text : "", page.ResolveNameFor));
+                hits.AddRange(PageSearch.Find(page.Page.Blocks, page.Page.Character,
+                                              field != null ? field.text : "", page.ResolveNameFor));
 
             current = hits.Count > 0 ? 0 : -1;
             if (was != null)
                 for (int i = 0; i < hits.Count; i++)
-                    if (hits[i].BlockId == was.BlockId && hits[i].DisplayStart == was.DisplayStart)
+                    // ПОЛЕ ВХОДИТ В ОПОЗНАНИЕ МЕСТА наравне с блоком и смещением: у попаданий в карточке
+                    // BlockId пуст у ВСЕХ, поэтому без него «Кто, смещение 0» и «Чего хочет, смещение 0»
+                    // считались бы одним и тем же местом, и перестройка перебрасывала бы ДМ между полями.
+                    if (hits[i].BlockId == was.BlockId && hits[i].DisplayStart == was.DisplayStart
+                        && hits[i].Field == was.Field)
                     { current = i; break; }
 
             ApplyHighlights();

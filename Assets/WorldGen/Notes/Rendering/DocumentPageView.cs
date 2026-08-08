@@ -1469,6 +1469,16 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The row must EXIST as a view — a hit inside a collapsed section has no rect to scroll to, which is
         /// why PageSearchBar.Reveal opens the section and rebuilds before calling this.</summary>
+        /// <summary>Промотать колонку в начало. Нужна поиску: попадание в карточке персонажа лежит в ШАПКЕ,
+        /// а шапка — первая в этой же колонке (см. Rebuild, `SetAsFirstSibling`), поэтому «показать её»
+        /// выражается прокруткой в ноль, а не поиском строки по идентификатору, которого у такого
+        /// попадания нет.</summary>
+        public void RevealTop()
+        {
+            if (content == null) return;
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x, 0f);
+        }
+
         public void RevealRow(string blockId)
         {
             var view = ViewOf(blockId);
