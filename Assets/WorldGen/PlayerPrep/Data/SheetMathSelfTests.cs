@@ -152,6 +152,47 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: лист — название характеристики берётся по идентификатору")]
+        public void SelfTestAbilityNameMapsAllSix()
+        {
+            // Сверяются ВСЕ ШЕСТЬ пар и по порядку. Мутант «сдвиг на единицу» назвал бы «лов»
+            // Телосложением, а проверка одной пары его бы пропустила; мутант «вернуть сам
+            // идентификатор» дал бы «dex» в мастере, где по-русски написано всё остальное.
+            var got = SheetMath.AbilityOrder().Select(SheetMath.AbilityName).ToList();
+            bool ok = got.SequenceEqual(new[]
+                { "Сила", "Ловкость", "Телосложение", "Интеллект", "Мудрость", "Харизма" });
+            if (!ok) Debug.LogError("FAIL названия характеристик: " + string.Join(",", got));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — неизвестная характеристика называется своим идентификатором")]
+        public void SelfTestAbilityNameEchoesUnknownId()
+        {
+            // Мутант: `AbilityNames[i]` без проверки i < 0 — падение вместо честной строки. Мастер
+            // зовёт это на идентификаторах ИЗ СПРАВОЧНИКА (прибавки предыстории), где опечатка
+            // возможна, и уронить показ она не должна.
+            bool ok = SheetMath.AbilityName("bogus") == "bogus" && SheetMath.AbilityName(null) == null;
+            if (!ok) Debug.LogError($"FAIL неизвестная характеристика: «{SheetMath.AbilityName("bogus")}»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — порядок характеристик отдаётся копией")]
+        public void SelfTestAbilityOrderIsAFreshCopy()
+        {
+            // Мутант: отдавать сам массив (или один общий список). Раскладка мастера полученный
+            // список ПЕРЕСТАВЛЯЕТ (SuggestedAssignment), и один общий она перемешала бы всем сразу —
+            // лист начал бы показывать характеристики в порядке чужого класса.
+            var first = SheetMath.AbilityOrder();
+            bool order = first.SequenceEqual(new[] { "str", "dex", "con", "int", "wis", "cha" });
+            first.Reverse();
+            first.Add("bogus");
+            var second = SheetMath.AbilityOrder();
+            bool ok = order && second.SequenceEqual(new[] { "str", "dex", "con", "int", "wis", "cha" });
+            if (!ok) Debug.LogError("FAIL порядок характеристик: первый вызов "
+                                  + (order ? "верен" : "неверен") + ", второй = " + string.Join(",", second));
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

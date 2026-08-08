@@ -10,6 +10,23 @@ namespace WorldGen.PlayerPrep.Data
         static readonly string[] AbilityIds = { "str", "dex", "con", "int", "wis", "cha" };
         static readonly string[] AbilityNames = { "Сила", "Ловкость", "Телосложение", "Интеллект", "Мудрость", "Харизма" };
 
+        /// <summary>Русское название характеристики по идентификатору. ЕДИНСТВЕННАЯ таблица названий
+        /// в проекте: у мастера была своя копия, и ничто не мешало им разойтись — «Телосложение» на
+        /// листе и «Выносливость» в мастере читались бы как две разные характеристики.
+        ///
+        /// Неизвестный идентификатор возвращается как есть. Это честнее пустой строки: показ не падает,
+        /// а опечатка в справочнике видна на экране, а не проглочена.</summary>
+        public static string AbilityName(string abilityId)
+        {
+            int i = System.Array.IndexOf(AbilityIds, abilityId);
+            return i < 0 ? abilityId : AbilityNames[i];
+        }
+
+        /// <summary>Шесть характеристик в каноническом порядке — том самом, в котором их показывают
+        /// лист и мастер. Отдаётся КОПИЯ, а не сам массив: раскладка мастера полученный список
+        /// переставляет, и общий на всех массив она перемешала бы всем сразу.</summary>
+        public static List<string> AbilityOrder() => new List<string>(AbilityIds);
+
         public static int Modifier(int score) => (int)System.Math.Floor((score - 10) / 2.0);
 
         /// <summary>2 на 1–4, 3 на 5–8, 4 на 9–12, 5 на 13–16, 6 на 17–20.</summary>

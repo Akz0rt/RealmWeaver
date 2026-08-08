@@ -56,9 +56,9 @@ namespace WorldGen.PlayerPrep.Rendering
 
         const int StepCount = 8;
 
-        static readonly string[] AbilityIds = { "str", "dex", "con", "int", "wis", "cha" };
-        static readonly string[] AbilityNames =
-            { "Сила", "Ловкость", "Телосложение", "Интеллект", "Мудрость", "Харизма" };
+        // Своей таблицы характеристик здесь НЕТ. Идентификаторы и русские названия приходят из
+        // SheetMath.AbilityOrder и SheetMath.AbilityName: копия в слое рисования уже была, и ничто не
+        // мешало ей разойтись с листом.
 
         const float TopBarHeight = 96f;
         const float PhraseHeight = 46f;
@@ -79,17 +79,21 @@ namespace WorldGen.PlayerPrep.Rendering
 
         int step;
 
-        /// <summary>0 — стандартный набор (по умолчанию), 1 — покупка очков, 2 — броски.</summary>
+        /// <summary>0 — стандартный набор, 1 — покупка очков, 2 — броски. Умолчания у поля НЕТ:
+        /// его ставит DetectAbilityMode при входе, потому что мастер открывают и на уже собранном
+        /// листе (задача 12), а показать «стандартный набор» над чужими числами значило бы соврать —
+        /// и первым же нажатием стрелки эти числа стереть.</summary>
         int abilityMode;
 
         /// <summary>0 — +2/+1, 1 — +1/+1/+1. Прибавки предыстории, шаг 5.</summary>
         int bumpLayout;
         string bumpPlus2, bumpPlus1;
 
-        /// <summary>Класс и предыстория, под которые уже разложено снаряжение, — «класс|предыстория».
-        /// null = на шаге снаряжения ещё не были. Не bool: простого «уже раскладывали» не хватает, см.
-        /// SyncEquipment.</summary>
-        string equipmentSeededFor;
+        /// <summary>Были ли уже на шаге снаряжения. Простого «уже были» ХВАТАЕТ, потому что
+        /// пересборкой набора при смене класса или предыстории занят WizardOps.ResetEquipment в момент
+        /// самой смены; здесь остаётся только первый показ. Пока пересборка жила в показе, поля-флага
+        /// было мало и приходилось помнить пару «класс|предыстория».</summary>
+        bool equipmentSeeded;
 
         /// <summary>Единственная точка входа. Корень сцены зовёт её из ShowWizard.</summary>
         public static WizardView Build(Transform parent, CharacterFile file, Action onFinished)
@@ -113,8 +117,26 @@ namespace WorldGen.PlayerPrep.Rendering
             catch (Exception ex) { view.rules = null; view.rulesError = ex.Message; }
 
             view.SyncBumpStateFromFile();
+            view.abilityMode = view.DetectAbilityMode();
             view.Rebuild();
             return view;
+        }
+
+        /// <summary>Каким способом собраны числа, которые УЖЕ лежат в файле.
+        ///
+        /// Без этого поле оставалось нулём — «стандартный набор» — на любом листе, а первое же
+        /// нажатие стрелки уходило в CycleStandard, не находило числа в наборе и раскладывало набор
+        /// заново поверх выброшенных 17 и 16. Отмены на листе нет: любопытство стоило персонажа.
+        ///
+        /// Покупку очков от бросков отличить НЕЛЬЗЯ — оба способа дают просто шесть чисел, и
+        /// стандартный набор, кстати, стоит ровно 27 очков, то есть законен и для покупки. Поэтому
+        /// всё, что не стандартный набор, объявляется бросками: это единственный из трёх режимов,
+        /// который ничего не заменяет при входе.</summary>
+        int DetectAbilityMode()
+        {
+            if (file == null) return 0;
+            if (AbilitiesAreBlank()) return 0;          // нетронутый лист — обычное начало
+            return LooksLikeStandardArray() ? 0 : 2;
         }
 
         /// <summary>Восстанавливает состояние переключателя прибавок по уже лежащим в файле. Мастер
@@ -473,7 +495,7 @@ namespace WorldGen.PlayerPrep.Rendering
             var losses = WizardOps.DescribeClassChange(file, rules, newClassId);
             if (losses.Count == 0)
             {
-                WizardOps.ApplyClassChange(file, rules, newClassId);
+                ApplyClassAndKit(newClassId);
                 Rebuild();
                 return;
             }
@@ -492,9 +514,27 @@ namespace WorldGen.PlayerPrep.Rendering
                     // а сам мастер мог не пережить перекомпиляцию. Трогаем только file, rules и this.
                     if (this == null) return;
                     if (!confirmed) return;
-                    WizardOps.ApplyClassChange(file, rules, newClassId);
+                    ApplyClassAndKit(newClassId);
                     Rebuild();
                 });
+        }
+
+        /// <summary>Смена класса целиком: сам класс и стартовый набор под него.
+        ///
+        /// ДВА ВЫЗОВА, А НЕ ОДИН, И ОБА ОБЯЗАТЕЛЬНЫ. ApplyClassChange снаряжения не трогает намеренно
+        /// («класс — это не персонаж целиком»), поэтому без ResetEquipment в файле остались бы вещи
+        /// прежнего класса: строк для них на седьмом шаге больше нет — невидимые, неснимаемые, — а
+        /// лист считает по ним класс доспеха, и «Чего не хватает» о снаряжении молчит. Раньше набор
+        /// пересобирался только при показе седьмого шага, и достаточно было уйти со смены класса
+        /// сразу на «Готово», чтобы кожаный доспех Плута молча уехал в файл Воина.
+        ///
+        /// Про эту самую потерю предупреждает WizardOps.DescribeClassChange — потому оба вызова и
+        /// стоят в одном месте, чтобы обещание и дело не разъехались.</summary>
+        void ApplyClassAndKit(string newClassId)
+        {
+            WizardOps.ApplyClassChange(file, rules, newClassId);
+            WizardOps.ResetEquipment(file, rules);
+            equipmentSeeded = true;   // набор только что собран — первому показу нечего добавить
         }
 
         // ── Шаг 4: предыстория ───────────────────────────────────────────────────
@@ -543,15 +583,23 @@ namespace WorldGen.PlayerPrep.Rendering
         ///
         /// Раскладка сбрасывается на «+2 и +1» ВМЕСТЕ с ними, и это не мелочь: останься выбранным
         /// «+1/+1/+1», прибавки новой предыстории разложились бы сами собой, не спросив, — а шаг 5 после
-        /// этого показал бы готовые «3 из 3», которых игрок не выбирал.</summary>
+        /// этого показал бы готовые «3 из 3», которых игрок не выбирал.
+        ///
+        /// Сам идентификатор ставит WizardOps.ApplyBackgroundChange, а не эта строка кода: вместе с
+        /// ним оттуда уходят из РУЧНОГО выбора навыки, которые новая предыстория даёт даром (иначе
+        /// они занимали бы ячейки класса, оставаясь при этом серыми надписями без кнопки), и
+        /// осиротевшая на них компетентность. Снаряжение пересобирается тут же и по той же причине,
+        /// что при смене класса, — см. ApplyClassAndKit.</summary>
         void ChooseBackground(string newBackgroundId)
         {
             if (file.BackgroundId == newBackgroundId) return;
-            file.BackgroundId = newBackgroundId;
+            WizardOps.ApplyBackgroundChange(file, rules, newBackgroundId);
             bumpLayout = 0;
             bumpPlus2 = null;
             bumpPlus1 = null;
             WriteBackgroundBumps();
+            WizardOps.ResetEquipment(file, rules);
+            equipmentSeeded = true;
             Rebuild();
         }
 
@@ -574,22 +622,64 @@ namespace WorldGen.PlayerPrep.Rendering
 
         void AddModeButton(Transform parent, string label, int mode)
         {
-            var btn = AddButton(parent, label, 260f, () =>
-            {
-                abilityMode = mode;
-                // Переключение на стандартный набор раскладывает его сразу, если сейчас в
-                // характеристиках лежит не он: иначе «стандартный набор» показывал бы броски.
-                if (mode == 0 && !LooksLikeStandardArray()) ApplyStandardArray();
-                Rebuild();
-            });
+            var btn = AddButton(parent, label, 260f, () => SwitchAbilityMode(mode));
             if (abilityMode == mode) MarkSelected(btn, true);
         }
+
+        /// <summary>Переключает способ ввода чисел, СПРОСИВ, если переключение эти числа заменит.
+        ///
+        /// Два режима из трёх разрушительны: стандартный набор кладёт свои шесть значений, покупка
+        /// очков начинает с восьмёрок. Отмены на листе нет вовсе, а игрок нажимает такие кнопки из
+        /// любопытства — значит вопрос обязателен ровно тогда, когда терять есть что.</summary>
+        void SwitchAbilityMode(int mode)
+        {
+            string warning = ModeReplacementWarning(mode);
+            if (warning == null) { ApplyAbilityMode(mode); return; }
+
+            // Кнопка подтверждения в ConfirmDialog подписана словом «Удалить» — общий код части ДМ,
+            // трогать его в этой арке нельзя. Поэтому что именно случится, сказано в самом тексте.
+            ConfirmDialog.Show(UiKit.Font, "Заменить числа характеристик?", warning,
+                confirmed =>
+                {
+                    // Ответ приходит через кадр — мастера к этому времени может не быть вовсе.
+                    if (this == null) return;
+                    if (confirmed) ApplyAbilityMode(mode);
+                });
+        }
+
+        /// <summary>Текст предупреждения или null, если переключение ничего не затрёт: числа уже
+        /// подходят режиму либо их нет вовсе (нетронутый лист терять нечего).</summary>
+        string ModeReplacementWarning(int mode)
+        {
+            if (AbilitiesAreBlank()) return null;
+            if (mode == 0 && !LooksLikeStandardArray())
+                return "Нынешние шесть чисел заменятся стандартным набором 15, 14, 13, 12, 10, 8. "
+                     + "Вернуть их будет нечем.";
+            if (mode == 1 && !WizardOps.IsPointBuyLegal(file.Base))
+                return "Покупка очков начинается с восьмёрок, а нынешние числа за 27 очков не купить. "
+                     + "Все шесть станут восьмёрками. Вернуть прежние будет нечем.";
+            return null;
+        }
+
+        void ApplyAbilityMode(int mode)
+        {
+            abilityMode = mode;
+            // Стандартный набор раскладывается сразу, если сейчас лежит не он: иначе «стандартный
+            // набор» показывал бы броски. Покупка очков — только если нынешние числа ей незаконны:
+            // законные (в том числе её же собственные, если из режима выходили и вернулись) трогать
+            // не за что, а вот 18 из бросков оставлять нельзя, за них нечем заплатить.
+            if (mode == 0 && !LooksLikeStandardArray()) ApplyStandardArray();
+            if (mode == 1 && !WizardOps.IsPointBuyLegal(file.Base)) WizardOps.ApplyPointBuyStart(file.Base);
+            Rebuild();
+        }
+
+        bool AbilitiesAreBlank() => SheetMath.AbilityOrder().All(id => file.Base.Get(id) == 0);
 
         void BuildStandardArray(Transform content)
         {
             // Нетронутые характеристики (все шесть нулевые) раскладываются сразу: шесть нулей под
             // заголовком «стандартный набор» читаются как поломка, а затирать здесь нечего.
-            if (AbilityIds.All(id => file.Base.Get(id) == 0)) ApplyStandardArray();
+            if (AbilitiesAreBlank()) ApplyStandardArray();
 
             AddLabel(content, "Шесть заранее известных чисел — 15, 14, 13, 12, 10, 8 — раскладываются по "
                               + "характеристикам. Стрелки меняют числа местами: набор всегда остаётся целым.",
@@ -600,11 +690,11 @@ namespace WorldGen.PlayerPrep.Rendering
                 Rebuild();
             });
 
-            for (int i = 0; i < AbilityIds.Length; i++)
+            foreach (var abilityId in SheetMath.AbilityOrder())
             {
-                string id = AbilityIds[i];
+                string id = abilityId;
                 var row = AddRow(content, RowHeight);
-                AddFixedLabel(row, AbilityNames[i], 220f, 17, null);
+                AddFixedLabel(row, SheetMath.AbilityName(id), 220f, 17, null);
                 AddFixedLabel(row, file.Base.Get(id).ToString(), 60f, 20, Accent);
                 // Стрелки и «×» ниже — из тех знаков, что в проекте уже нарисованы этим шрифтом
                 // («← Главный экран» в шапке сцены). Геометрические фигуры (◀, ●) в LegacyRuntime.ttf
@@ -616,16 +706,25 @@ namespace WorldGen.PlayerPrep.Rendering
             }
         }
 
+        /// <summary>Покупка очков. Таблицу стоимости и бюджет считает WizardOps — правила лежат в
+        /// чистом слое под самопроверками, как и всё остальное (см. шапку файла); здесь только
+        /// счётчик и погашенные кнопки.
+        ///
+        /// Решение ДМ дословно: приложение существует ровно затем, чтобы не требовать от игрока
+        /// хороших знаний правил, — режим, молча пускающий невозможного персонажа, замыслу арки
+        /// противоречит. Поэтому «осталось N» видно всегда, а «+», на который не хватает, погашен
+        /// заранее, а не ругается задним числом.</summary>
         void BuildPointBuy(Transform content)
         {
-            // ЧЕСТНАЯ ОГОВОРКА, А НЕ ЗАГЛУШКА: таблица стоимости очков (8 — 0, …, 15 — 9) и бюджет в 27
-            // — это ПРАВИЛА, а их место в WizardOps, который покрыт самопроверками; слой рисования
-            // правил не считает (см. шапку файла). Пока их там нет, счётчик бюджета показывать нельзя:
-            // неправильное число хуже отсутствующего. Числа вводятся вручную.
-            AddLabel(content, "Бюджет в 27 очков программа пока НЕ считает — распределите его сами. "
-                              + "Стоимость по правилам: 8 — 0 очков, 9 — 1, 10 — 2, 11 — 3, 12 — 4, "
-                              + "13 — 5, 14 — 7, 15 — 9.", 15, Accent, 44f);
-            BuildSteppers(content);
+            int spent = WizardOps.PointBuySpent(file.Base);
+            AddCaption(content, spent < 0
+                ? "Нынешние числа покупкой не собираются"
+                : $"Осталось {WizardOps.PointBuyBudget - spent} очков из {WizardOps.PointBuyBudget}");
+            AddLabel(content, $"Каждая характеристика начинается с {WizardOps.PointBuyFloor} и поднимается "
+                              + $"не выше {WizardOps.PointBuyCeiling}. Стоимость по правилам: 8 — 0 очков, "
+                              + "9 — 1, 10 — 2, 11 — 3, 12 — 4, 13 — 5, 14 — 7, 15 — 9. Прибавки от "
+                              + "предыстории покупаются не очками и приходят сверху.", 15, Muted, 44f);
+            BuildSteppers(content, pointBuy: true);
         }
 
         void BuildRolls(Transform content)
@@ -638,21 +737,26 @@ namespace WorldGen.PlayerPrep.Rendering
                 RollAbilities();
                 Rebuild();
             });
-            BuildSteppers(content);
+            BuildSteppers(content, pointBuy: false);
         }
 
         /// <summary>Ряды с «−» и «+». Общие для покупки очков и бросков: и там и там числа
-        /// произвольные, в отличие от стандартного набора, где они переставляются.</summary>
-        void BuildSteppers(Transform content)
+        /// произвольные, в отличие от стандартного набора, где они переставляются.
+        ///
+        /// pointBuy меняет ровно две вещи — границы шага и то, какие кнопки погашены. Кто из них
+        /// доступен, решает WizardOps: «хватает ли очков» — это правило, а не оформление.</summary>
+        void BuildSteppers(Transform content, bool pointBuy)
         {
-            for (int i = 0; i < AbilityIds.Length; i++)
+            foreach (var abilityId in SheetMath.AbilityOrder())
             {
-                string id = AbilityIds[i];
+                string id = abilityId;
                 var row = AddRow(content, RowHeight);
-                AddFixedLabel(row, AbilityNames[i], 220f, 17, null);
+                AddFixedLabel(row, SheetMath.AbilityName(id), 220f, 17, null);
                 AddFixedLabel(row, file.Base.Get(id).ToString(), 60f, 20, Accent);
-                AddButton(row, "-", 54f, () => { StepAbility(id, -1); Rebuild(); });
-                AddButton(row, "+", 54f, () => { StepAbility(id, +1); Rebuild(); });
+                bool canLower = !pointBuy || WizardOps.CanLowerByPointBuy(file.Base, id);
+                bool canRaise = !pointBuy || WizardOps.CanRaiseByPointBuy(file.Base, id);
+                AddButton(row, "-", 54f, () => { StepAbility(id, -1, pointBuy); Rebuild(); }, canLower);
+                AddButton(row, "+", 54f, () => { StepAbility(id, +1, pointBuy); Rebuild(); }, canRaise);
                 AddLabel(row, ExplainAbility(id), 15, Muted, null)
                     .gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             }
@@ -682,7 +786,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 foreach (var abilityId in bg.AbilityChoices)
                 {
                     string id = abilityId;
-                    var btn = AddButton(plus2, AbilityName(id), 230f, () =>
+                    var btn = AddButton(plus2, SheetMath.AbilityName(id), 230f, () =>
                     {
                         bumpPlus2 = id;
                         // Одна характеристика не может получить обе прибавки: +1 уступает место.
@@ -698,7 +802,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 foreach (var abilityId in bg.AbilityChoices)
                 {
                     string id = abilityId;
-                    var btn = AddButton(plus1, AbilityName(id), 230f, () =>
+                    var btn = AddButton(plus1, SheetMath.AbilityName(id), 230f, () =>
                     {
                         bumpPlus1 = id;
                         if (bumpPlus2 == id) bumpPlus2 = null;
@@ -754,7 +858,7 @@ namespace WorldGen.PlayerPrep.Rendering
         {
             int fromBase = file.Base.Get(abilityId);
             int bump = file.Bumps.Where(b => b.AbilityId == abilityId).Sum(b => b.Amount);
-            string head = $"{AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
+            string head = $"{SheetMath.AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
             return bump == 0 ? head : $"{head} ({(bump > 0 ? "+" : "")}{bump})";
         }
 
@@ -767,25 +871,32 @@ namespace WorldGen.PlayerPrep.Rendering
 
         bool LooksLikeStandardArray()
         {
-            var mine = AbilityIds.Select(id => file.Base.Get(id)).OrderBy(v => v).ToList();
+            var mine = SheetMath.AbilityOrder().Select(id => file.Base.Get(id)).OrderBy(v => v).ToList();
             var array = WizardOps.StandardArray.OrderBy(v => v).ToList();
             return mine.SequenceEqual(array);
         }
 
         /// <summary>Сдвигает характеристику на соседнее число набора, меняясь с тем, у кого оно сейчас.
         /// Обмен, а не присваивание: стандартный набор — это ровно шесть чисел, и потерять одно из них
-        /// значило бы собрать персонажа не по правилам, ничего об этом не сказав.</summary>
+        /// значило бы собрать персонажа не по правилам, ничего об этом не сказав.
+        ///
+        /// Число НЕ ИЗ НАБОРА — повод не делать ничего. Раньше здесь стояло «раскладываем заново», и
+        /// это было тихое разрушение: мастер, открытый на уже собранном листе, показывал стрелки над
+        /// выброшенными 17 и 16, и первое же нажатие из любопытства заменяло все шесть на
+        /// 15/14/13/12/10/8 без единого вопроса и без отмены. В сам режим на чужих числах теперь не
+        /// попасть (DetectAbilityMode и SwitchAbilityMode), а этот возврат — вторая застёжка: она
+        /// стоит дешевле, чем ещё раз доказывать, что первая нигде не расстёгивается.</summary>
         void CycleStandard(string abilityId, int direction)
         {
             int current = file.Base.Get(abilityId);
             int index = Array.IndexOf(WizardOps.StandardArray, current);
-            if (index < 0) { ApplyStandardArray(); return; }   // числа не из набора — раскладываем заново
+            if (index < 0) return;
 
             int next = index + direction;
             if (next < 0 || next >= WizardOps.StandardArray.Length) return;
             int wanted = WizardOps.StandardArray[next];
 
-            foreach (var other in AbilityIds)
+            foreach (var other in SheetMath.AbilityOrder())
             {
                 if (other == abilityId || file.Base.Get(other) != wanted) continue;
                 SetBase(other, current);
@@ -794,11 +905,15 @@ namespace WorldGen.PlayerPrep.Rendering
             SetBase(abilityId, wanted);
         }
 
-        void StepAbility(string abilityId, int delta)
+        /// <summary>В покупке очков границы — её собственные, 8…15: значения вне их покупкой
+        /// НЕДОСТИЖИМЫ, и пускать туда шаг значило бы разрешить персонажа, за которого не заплатить.
+        /// В бросках границы — крайние значения листа: там числа приходят с костей, и переставить
+        /// выпавшую восьмёрку в семёрку игрок вправе.</summary>
+        void StepAbility(string abilityId, int delta, bool pointBuy)
         {
-            // Границы — крайние значения листа персонажа, а не бюджета: сколько это стоит очков, здесь
-            // не считается (см. BuildPointBuy).
-            int value = Mathf.Clamp(file.Base.Get(abilityId) + delta, 3, 20);
+            int lo = pointBuy ? WizardOps.PointBuyFloor : 3;
+            int hi = pointBuy ? WizardOps.PointBuyCeiling : 20;
+            int value = Mathf.Clamp(file.Base.Get(abilityId) + delta, lo, hi);
             SetBase(abilityId, value);
         }
 
@@ -924,7 +1039,7 @@ namespace WorldGen.PlayerPrep.Rendering
         string SkillAbilityHint(string skillId)
         {
             var def = rules.Skills.FirstOrDefault(s => s.Id == skillId);
-            return def == null ? "" : AbilityName(def.AbilityId).ToLowerInvariant();
+            return def == null ? "" : SheetMath.AbilityName(def.AbilityId).ToLowerInvariant();
         }
 
         // ── Шаг 7: снаряжение ────────────────────────────────────────────────────
@@ -940,77 +1055,51 @@ namespace WorldGen.PlayerPrep.Rendering
                 return;
             }
 
-            // Порядок и источники. Один и тот же предмет бывает и там и там (Плут-Солдат приходит с
-            // коротким луком дважды) — в файле он должен лежать один раз, поэтому список складывается
-            // с проверкой на повтор, а не конкатенацией.
-            var offered = new List<string>();
-            var sources = new Dictionary<string, string>();
-            if (cls != null) foreach (var id in cls.StartingEquipment) Offer(offered, sources, id, "класс");
-            if (bg != null) foreach (var id in bg.Equipment) Offer(offered, sources, id, "предыстория");
-
-            SyncEquipment(offered);
+            // Что предлагать и откуда оно пришло, считает WizardOps: по этому же правилу теперь
+            // ПРАВЯТ файл при смене класса и предыстории, а показ и правка обязаны считать одним
+            // куском кода — разойдись они, в файле оказались бы вещи, которых на экране нет.
+            var offered = WizardOps.StartingEquipment(cls, bg, rules);
+            SeedEquipmentOnFirstVisit();
 
             AddCaption(content, "С чем ты выходишь в первый поход");
             AddLabel(content, "Галочки сняты — предмета у персонажа нет. Доспех влияет на класс "
                               + "доспеха на листе.", 15, Muted, null);
 
-            foreach (var itemId in offered)
+            foreach (var option in offered)
             {
-                string id = itemId;
-                string name = rules.Items.FirstOrDefault(i => i.Id == id)?.Name ?? id;
-                bool chosen = file.Equipment.Contains(id);
+                var o = option;
+                bool chosen = file.Equipment.Contains(o.Id);
                 var row = AddRow(content, RowHeight);
-                var btn = AddButton(row, $"{(chosen ? "[×]" : "[ ]")} {name}", 380f, () =>
+                var btn = AddButton(row, $"{(chosen ? "[×]" : "[ ]")} {o.Name}", 380f, () =>
                 {
-                    if (chosen) file.Equipment.Remove(id);
-                    else file.Equipment.Add(id);
+                    if (chosen) file.Equipment.Remove(o.Id);
+                    else file.Equipment.Add(o.Id);
                     Rebuild();
                 });
                 if (chosen) MarkSelected(btn, true);
-                AddLabel(row, sources[id], 15, Faint, null)
+                AddLabel(row, o.Source, 15, Faint, null)
                     .gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             }
-        }
-
-        static void Offer(List<string> offered, Dictionary<string, string> sources, string id, string source)
-        {
-            if (string.IsNullOrEmpty(id)) return;
-            if (sources.ContainsKey(id))
-            {
-                if (sources[id] != source) sources[id] = sources[id] + " и " + source;
-                return;
-            }
-            offered.Add(id);
-            sources[id] = source;
         }
 
         /// <summary>Первый приход на шаг ставит все галочки: стартовый набор игрок обычно берёт целиком,
         /// а пустой список снаряжения дал бы на листе класс доспеха 10 без объяснения. Просто прийти на
         /// шаг второй раз ничего не меняет — снятые галочки должны оставаться снятыми.
         ///
-        /// НО СМЕНА КЛАССА ИЛИ ПРЕДЫСТОРИИ ПЕРЕСОБИРАЕТ НАБОР ЦЕЛИКОМ, и без этого был бы тихо испорчен
-        /// файл. ApplyClassChange снаряжения не трогает намеренно («класс — это не персонаж целиком»),
-        /// поэтому после Плут→Воин в file.Equipment остаются вещи Плута, а строк для них на шаге больше
-        /// нет: невидимые, неснимаемые — и лист считает по ним класс доспеха из кожаной брони, которой у
-        /// персонажа как бы нет. Поэтому запомнена пара «класс|предыстория», а не факт «раскладывали».
+        /// Персонаж, пришедший в мастер со своим снаряжением (открыли сохранённый лист), не трогается
+        /// вовсе: это уже чей-то осознанный выбор.
         ///
-        /// Правило простое и оттого предсказуемое: сменил класс — получил его набор, потерял прежний.
-        /// Цена — снятая вручную галочка возвращается, если после неё сменить класс; это видно и
-        /// поправимо, в отличие от невидимой вещи в файле.</summary>
-        void SyncEquipment(List<string> offered)
+        /// ПЕРЕСБОРКОЙ НАБОРА ПРИ СМЕНЕ КЛАССА ИЛИ ПРЕДЫСТОРИИ ЭТОТ МЕТОД БОЛЬШЕ НЕ ЗАНИМАЕТСЯ — ею
+        /// занят WizardOps.ResetEquipment в момент самой смены (ApplyClassAndKit, ChooseBackground).
+        /// Пока пересборка жила здесь, до неё можно было не дойти: сменил класс и ушёл сразу на
+        /// «Готово» — и вещи прежнего класса молча уехали в файл. Поэтому здесь теперь простое «уже
+        /// были», а не пара «класс|предыстория».</summary>
+        void SeedEquipmentOnFirstVisit()
         {
-            string signature = (file.ClassId ?? "") + "|" + (file.BackgroundId ?? "");
-            if (equipmentSeededFor == signature) return;
-
-            bool firstVisit = equipmentSeededFor == null;
-            equipmentSeededFor = signature;
-            // Персонаж пришёл в мастер со своим снаряжением (открыли сохранённый лист) — раскладывать
-            // заново нечего, это уже чей-то осознанный выбор.
-            if (firstVisit && file.Equipment.Count > 0) return;
-
-            if (!firstVisit) file.Equipment.RemoveAll(id => !offered.Contains(id));
-            foreach (var id in offered)
-                if (!file.Equipment.Contains(id)) file.Equipment.Add(id);
+            if (equipmentSeeded) return;
+            equipmentSeeded = true;
+            if (file.Equipment.Count > 0) return;
+            WizardOps.ResetEquipment(file, rules);
         }
 
         // ── Шаг 8: готово ────────────────────────────────────────────────────────
@@ -1045,12 +1134,23 @@ namespace WorldGen.PlayerPrep.Rendering
                 AddLabel(content, "Файл: " + root.CurrentPath, 14, Faint, null);
         }
 
+        /// <summary>«Сохранить…» ОТВЕЧАЕТ ВСЛУХ. Первое в жизни сохранение спрашивает имя файла, и
+        /// диалог сам по себе служит ответом; второе и все следующие писали молча в уже известный
+        /// путь и перерисовывали ту же строку — человек нажимал и не понимал, случилось ли хоть
+        /// что-нибудь, а проверить ему нечем.
+        ///
+        /// Сообщение показывается ТОЛЬКО при удавшейся записи. Отменённый диалог имени — не событие,
+        /// а про упавшую запись уже рассказал сам SaveCurrent, и наше сообщение сменило бы его собой:
+        /// ConfirmDialog держит на экране ровно один диалог.</summary>
         void SaveThroughRoot()
         {
             var root = PlayerPrepScreenController.Instance;
             if (root == null) return;
-            root.SaveCurrent();
+            bool saved = root.SaveCurrent();
             Rebuild();   // показать путь, если он только что появился
+            if (saved)
+                ConfirmDialog.ShowInfo(UiKit.Font, "Лист сохранён",
+                    string.IsNullOrEmpty(root.CurrentPath) ? "" : "Файл: " + root.CurrentPath);
         }
 
         // ── Мелкие построители ───────────────────────────────────────────────────
@@ -1061,16 +1161,10 @@ namespace WorldGen.PlayerPrep.Rendering
         BackgroundDef CurrentBackground() =>
             rules == null ? null : rules.Backgrounds.FirstOrDefault(b => b.Id == file.BackgroundId);
 
-        static string AbilityName(string abilityId)
-        {
-            int i = Array.IndexOf(AbilityIds, abilityId);
-            return i < 0 ? abilityId : AbilityNames[i];
-        }
-
         static string JoinAbilityNames(List<string> ids)
         {
             if (ids == null || ids.Count == 0) return "—";
-            return string.Join(", ", ids.Select(AbilityName).ToArray());
+            return string.Join(", ", ids.Select(SheetMath.AbilityName).ToArray());
         }
 
         string JoinSkillNames(List<string> ids)
@@ -1088,7 +1182,31 @@ namespace WorldGen.PlayerPrep.Rendering
         }
 
         /// <summary>Две колонки: слева выбор, справа объяснение выбранного. Высота строки диктуется
-        /// текстом справа, поэтому обе колонки — обычные вертикальные раскладки без заданной высоты.</summary>
+        /// текстом справа, поэтому обе колонки — обычные вертикальные раскладки без заданной высоты.
+        ///
+        /// ШИРИНЫ ЗАДАНЫ ОБЕИМ КОЛОНКАМ И ВСЕ ТРИ — И ЭТО НЕ ПЕРЕСТРАХОВКА. Раньше у левой стоял один
+        /// preferredWidth, а у правой — один flexibleWidth, и левая колонка на шагах «Вид» и
+        /// «Предыстория» схлопывалась примерно до 90 точек: список видов превращался в столбик обрезков.
+        ///
+        /// Причина в том, как uGUI считает предпочтительную ширину ТЕКСТА: Text.preferredWidth меряет
+        /// строку БЕЗ ПЕРЕНОСА, в одну линию. Текст особенности Голиафа — 954 знака, у Гнома 877, у
+        /// Эльфа 850, у черты «Посвящённый в магию» 782; кеглем 15 это тысячи точек. Своего
+        /// LayoutElement.preferredWidth у правой колонки не было, поэтому за неё отвечала её же
+        /// VerticalLayoutGroup, а та берёт максимум по детям — и просила около шести тысяч. Сумма
+        /// предпочтительных ширин выходила много больше доступных 1860, а в этом случае
+        /// HorizontalLayoutGroup раздаёт не предпочтительное, а Lerp(min, preferred, t) с общим
+        /// t = (доступно − сумма min) / (сумма preferred − сумма min) ≈ 0.3. У левой колонки min не был
+        /// задан вовсе (−1 → 0), вот она и получала 0.3 × 300 ≈ 90.
+        ///
+        /// Теперь суммы конечны и от длины текста не зависят вовсе: min и preferred левой — 300,
+        /// preferred правой — 0. Сумма предпочтительных 300 + 0 + 24 (промежуток) = 324 при доступных
+        /// 1860, значит излишек 1536 положителен, t = 1, и левая получает ровно свои 300, а весь
+        /// излишек уходит правой по гибкой ширине — 1536 точек, в которые её текст ПЕРЕНОСИТСЯ.
+        ///
+        /// flexibleWidth = 0 левой колонке обязателен. Незаданную гибкость LayoutElement не сообщает
+        /// вовсе (−1 «не задано» пропускается), и вместо неё уGUI спросил бы VerticalLayoutGroup, а та
+        /// при childForceExpandWidth = true отвечает 1 — излишек разделился бы пополам, и список
+        /// разъехался бы на 1068 точек.</summary>
         (Transform list, Transform details) AddTwoColumns(Transform content)
         {
             var row = NewRect(content, "Columns", typeof(HorizontalLayoutGroup));
@@ -1101,9 +1219,18 @@ namespace WorldGen.PlayerPrep.Rendering
             hlg.childForceExpandHeight = false;
 
             var list = Column(row, "List");
-            list.gameObject.AddComponent<LayoutElement>().preferredWidth = ListColumnWidth;
+            var listLe = list.gameObject.AddComponent<LayoutElement>();
+            listLe.minWidth = ListColumnWidth;        // ниже не сжимается ни при какой длине текста
+            listLe.preferredWidth = ListColumnWidth;
+            listLe.flexibleWidth = 0f;                // излишек — весь правой, см. шапку метода
+
             var details = Column(row, "Details");
-            details.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var detailsLe = details.gameObject.AddComponent<LayoutElement>();
+            // Ноль, а не «оставшаяся ширина» числом: оставшуюся не из чего посчитать в тот момент,
+            // когда строится раскладка, а «0 + вся гибкость» и есть оставшаяся, посчитанная самим
+            // uGUI. Важно только, что число КОНЕЧНО и не приходит из длины текста.
+            detailsLe.preferredWidth = 0f;
+            detailsLe.flexibleWidth = 1f;
             return (list, details);
         }
 

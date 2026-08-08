@@ -448,23 +448,31 @@ namespace WorldGen.PlayerPrep.Rendering
         }
 
         /// <summary>Сохранить туда, откуда открыли; если файла ещё нет — спросить имя. Отмена диалога
-        /// имени ничего не меняет.</summary>
-        public void SaveCurrent()
+        /// имени ничего не меняет.
+        ///
+        /// ОТВЕЧАЕТ, СОСТОЯЛАСЬ ЛИ ЗАПИСЬ, и зовущему это нужно: мастер показывает после сохранения
+        /// «лист сохранён», а сказать так про отменённый диалог имени или про упавшую запись значило
+        /// бы соврать в единственном месте, где человеку нечем проверить. Хуже того, ConfirmDialog
+        /// держит на экране ровно один диалог: радостное сообщение просто СМЕНИЛО БЫ СОБОЙ рассказ об
+        /// ошибке, который поставила эта же строчка catch.</summary>
+        public bool SaveCurrent()
         {
-            if (Current == null) return;
+            if (Current == null) return false;
             try
             {
                 if (string.IsNullOrEmpty(CurrentPath))
                 {
                     string path = SheetFileService.SaveAs(Current);
-                    if (string.IsNullOrEmpty(path)) return;   // отменили
+                    if (string.IsNullOrEmpty(path)) return false;   // отменили
                     CurrentPath = path;
                 }
                 else SheetFileService.Save(Current, CurrentPath);
+                return true;
             }
             catch (System.Exception ex)
             {
                 ConfirmDialog.ShowInfo(UiKit.Font, "Не удалось сохранить лист", ex.Message);
+                return false;
             }
         }
 

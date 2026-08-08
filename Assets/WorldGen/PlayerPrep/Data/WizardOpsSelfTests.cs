@@ -297,8 +297,11 @@ namespace WorldGen.PlayerPrep.Data
             // входят в список Стража, но Страж даёт на выбор один. Мутант «фильтровать только по
             // членству в списке» оставит оба и промолчит.
             var rules = Fixtures.Rules();
+            // Стартовый набор — тот же, что у персонажа: иначе в потерях появилась бы вторая строка,
+            // про снаряжение, и счёт строк перестал бы говорить о навыках.
             var warden = new ClassDef { Id = "warden", Name = "Страж", HitDie = "d10",
-                SkillChoices = { "stealth", "athletics", "arcana" }, SkillPickCount = 1 };
+                SkillChoices = { "stealth", "athletics", "arcana" }, SkillPickCount = 1,
+                StartingEquipment = { "leather" } };
             for (int lv = 1; lv <= 20; lv++) warden.Levels.Add(new ClassLevel { Level = lv });
             rules.Classes.Add(warden);
 
@@ -425,23 +428,389 @@ namespace WorldGen.PlayerPrep.Data
                    && WizardOps.DescribeClassChange(null, rules, "rogue").Count == 0
                    && WizardOps.DescribeClassChange(c, null, "rogue").Count == 0;
 
+            ok = ok
+                   && WizardOps.StartingEquipment(null, rules).Count == 0
+                   && WizardOps.StartingEquipment(c, null).Count == 0
+                   && WizardOps.PointBuySpent(null) < 0
+                   && !WizardOps.IsPointBuyLegal(null)
+                   && !WizardOps.CanLowerByPointBuy(null, "str");
+
             WizardOps.ApplyClassChange(null, rules, "rogue");
             WizardOps.ApplyClassChange(c, null, "rogue");
-            ok = ok && c.ClassId == "rogue" && c.SkillIds.Count == 2;
-            if (!ok) Debug.LogError($"FAIL стражи мастера: класс={c.ClassId}, навыков={c.SkillIds.Count}");
+            WizardOps.ApplyBackgroundChange(null, rules, "soldier");
+            WizardOps.ApplyBackgroundChange(c, null, "soldier");
+            WizardOps.ResetEquipment(null, rules);
+            WizardOps.ResetEquipment(c, null);
+            WizardOps.ApplyPointBuyStart(null);
+            ok = ok && c.ClassId == "rogue" && c.SkillIds.Count == 2
+                    && c.BackgroundId == "soldier" && c.Equipment.Count == 2;
+            if (!ok) Debug.LogError($"FAIL стражи мастера: класс={c.ClassId}, навыков={c.SkillIds.Count}, "
+                                  + $"предыстория={c.BackgroundId}, снаряжения={c.Equipment.Count}");
+            Done(ok);
+        }
+
+        // ── Покупка очков ────────────────────────────────────────────────────────
+
+        [ContextMenu("Self-Test: мастер — таблица стоимости очков нелинейна на 14 и 15")]
+        public void SelfTestPointBuyCostTable()
+        {
+            // Сверяется ВСЯ таблица разом. Главный мутант — «цена = значение минус восемь»: он
+            // совпадает с правилами на 8…13 и расходится ровно там, где таблица ломается, — 14
+            // стоит 7, а не 6, и 15 стоит 9, а не 7.
+            var got = new[] { 8, 9, 10, 11, 12, 13, 14, 15 }.Select(WizardOps.PointBuyCost).ToList();
+            bool ok = got.SequenceEqual(new[] { 0, 1, 2, 3, 4, 5, 7, 9 });
+            if (!ok) Debug.LogError("FAIL таблица стоимости: " + string.Join(",", got));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — значения вне 8…15 покупкой недостижимы")]
+        public void SelfTestPointBuyCostRefusesUnreachableScores()
+        {
+            // Мутант: «чего нет в таблице — стоит 0». Тогда 18 из бросков въезжает в покупку очков
+            // бесплатно, и режим, существующий ради законности персонажа, пропускает незаконного.
+            var got = new[] { 0, 3, 7, 16, 18, 20 }.Select(WizardOps.PointBuyCost).ToList();
+            bool ok = got.All(v => v < 0);
+            if (!ok) Debug.LogError("FAIL недостижимые значения: " + string.Join(",", got));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — потрачено считается по всем шести характеристикам")]
+        public void SelfTestPointBuySpentSumsAllSix()
+        {
+            // 15,14,13,12,11,10 = 9+7+5+4+3+2 = 30. Ни одна из шести не стоит 0 и все стоимости
+            // разные — значит мутант, пропустивший ЛЮБУЮ характеристику, даст другое число (а на
+            // наборе с восьмёркой пропуск именно её остался бы незаметен).
+            var scores = new AbilityScores { Str = 15, Dex = 14, Con = 13, Int = 12, Wis = 11, Cha = 10 };
+            int spent = WizardOps.PointBuySpent(scores);
+            // 30 больше бюджета — заодно падает мутант «законно всё, что лежит в 8…15».
+            bool ok = spent == 30 && !WizardOps.IsPointBuyLegal(scores);
+            if (!ok) Debug.LogError($"FAIL потрачено: {spent} (ждали 30), "
+                                  + $"законность={WizardOps.IsPointBuyLegal(scores)} (ждали ложь)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — стандартный набор стоит ровно весь бюджет")]
+        public void SelfTestStandardArrayCostsTheWholeBudget()
+        {
+            // Правило вслух: 15,14,13,12,10,8 — это и есть 27 очков, поэтому оба способа дают
+            // персонажей одной силы. Опечатка в ЛЮБОЙ из шести использованных строк таблицы сдвигает
+            // эту сумму, а значит проверка стережёт таблицу целиком, а не одну её клетку.
+            var scores = new AbilityScores { Str = 15, Dex = 14, Con = 13, Int = 12, Wis = 10, Cha = 8 };
+            int spent = WizardOps.PointBuySpent(scores);
+            bool ok = spent == WizardOps.PointBuyBudget && spent == 27 && WizardOps.IsPointBuyLegal(scores);
+            if (!ok) Debug.LogError($"FAIL стоимость стандартного набора: {spent} (ждали 27), "
+                                  + $"бюджет={WizardOps.PointBuyBudget}");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — набор с недостижимым значением не считается вовсе")]
+        public void SelfTestPointBuySpentRefusesUnreachableSet()
+        {
+            // Мутант: пропускать недостижимые молча (или считать их нулём) — тогда персонаж с 18
+            // показал бы «потрачено 18 из 27», и покупка очков подтвердила бы невозможное.
+            var rolled = new AbilityScores { Str = 18, Dex = 14, Con = 13, Int = 12, Wis = 10, Cha = 8 };
+            bool ok = WizardOps.PointBuySpent(rolled) < 0 && !WizardOps.IsPointBuyLegal(rolled);
+            if (!ok) Debug.LogError($"FAIL набор с 18: потрачено={WizardOps.PointBuySpent(rolled)}, "
+                                  + $"законность={WizardOps.IsPointBuyLegal(rolled)}");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — покупка начинается с восьмёрок во всех шести")]
+        public void SelfTestPointBuyStartLaysDownEights()
+        {
+            // Мутант «трогать только то, что вне 8…15» оставил бы 15, 14 и 13 на месте, и игрок
+            // начал бы покупку, уже потратив 21 очко из 27, ничего об этом не зная.
+            var scores = new AbilityScores { Str = 18, Dex = 15, Con = 14, Int = 13, Wis = 10, Cha = 3 };
+            WizardOps.ApplyPointBuyStart(scores);
+            var got = SheetMath.AbilityOrder().Select(scores.Get).ToList();
+            bool ok = got.All(v => v == 8) && WizardOps.PointBuySpent(scores) == 0;
+            if (!ok) Debug.LogError("FAIL начало покупки: " + string.Join(",", got)
+                                  + $", потрачено={WizardOps.PointBuySpent(scores)}");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «+» упирается и в потолок, и в бюджет")]
+        public void SelfTestCanRaiseStopsAtCeilingAndBudget()
+        {
+            // ДВА РАЗНЫХ ЗАПРЕТА в одной фикстуре, потому что мутант, забывший один из них, второй
+            // сохраняет и «в среднем» выглядит рабочим.
+            //   • 15 не поднимается НИКОГДА — даже когда очков вагон (здесь потрачено 9 из 27);
+            //   • 8 поднимается, пока бюджет позволяет.
+            var roomy = new AbilityScores { Str = 15, Dex = 8, Con = 8, Int = 8, Wis = 8, Cha = 8 };
+            bool ceiling = !WizardOps.CanRaiseByPointBuy(roomy, "str")
+                        && WizardOps.CanRaiseByPointBuy(roomy, "dex");
+
+            // 15,15,15,8,8,8 = 9+9+9 = 27, бюджет исчерпан ровно. Мутант «бюджет не проверять»
+            // разрешит поднять восьмёрку за последнее несуществующее очко.
+            var spent = new AbilityScores { Str = 15, Dex = 15, Con = 15, Int = 8, Wis = 8, Cha = 8 };
+            bool budget = !WizardOps.CanRaiseByPointBuy(spent, "int")
+                       && WizardOps.PointBuySpent(spent) == 27;
+
+            bool ok = ceiling && budget;
+            if (!ok) Debug.LogError($"FAIL «+»: потолок={ceiling}, бюджет={budget} "
+                                  + $"(потрачено {WizardOps.PointBuySpent(spent)})");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «+» считает подорожание, а не одно очко")]
+        public void SelfTestCanRaisePaysTheStepPrice()
+        {
+            // 15,15,14,9,8,8 = 9+9+7+1 = 26. В запасе РОВНО ОДНО очко, и оно всё решает:
+            //   • 14 → 15 стоит ДВА (7→9) — нельзя;
+            //   • 9 → 10 стоит одно (1→2) — можно, впритык, ровно в 27.
+            // Мутант «шаг стоит одно очко» разрешил бы первое; мутант «строго меньше бюджета»
+            // запретил бы второе. Проверка убивает обоих сразу.
+            var scores = new AbilityScores { Str = 15, Dex = 15, Con = 14, Int = 9, Wis = 8, Cha = 8 };
+            int spent = WizardOps.PointBuySpent(scores);
+            bool ok = spent == 26
+                   && !WizardOps.CanRaiseByPointBuy(scores, "con")
+                   && WizardOps.CanRaiseByPointBuy(scores, "int");
+            if (!ok) Debug.LogError($"FAIL цена шага: потрачено={spent} (ждали 26), "
+                                  + $"тел(14→15)={WizardOps.CanRaiseByPointBuy(scores, "con")} (ждали ложь), "
+                                  + $"инт(9→10)={WizardOps.CanRaiseByPointBuy(scores, "int")} (ждали истину)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «−» упирается в восьмёрку, но выпускает из незаконного")]
+        public void SelfTestCanLowerStopsAtTheFloor()
+        {
+            // Мутант «смотреть на стоимость, а не на значение»: у 18 стоимости нет вовсе (−1),
+            // и такой мутант запер бы игрока в режиме, где «+» погашен бюджетом, а «−» — законом.
+            var scores = new AbilityScores { Str = 18, Dex = 9, Con = 8, Int = 8, Wis = 8, Cha = 8 };
+            bool ok = WizardOps.CanLowerByPointBuy(scores, "str")     // из незаконного есть дорога вниз
+                   && WizardOps.CanLowerByPointBuy(scores, "dex")
+                   && !WizardOps.CanLowerByPointBuy(scores, "con");   // 8 — пол
+            if (!ok) Debug.LogError($"FAIL «−»: сил18={WizardOps.CanLowerByPointBuy(scores, "str")}, "
+                                  + $"лов9={WizardOps.CanLowerByPointBuy(scores, "dex")}, "
+                                  + $"тел8={WizardOps.CanLowerByPointBuy(scores, "con")}");
+            Done(ok);
+        }
+
+        // ── Стартовый набор ──────────────────────────────────────────────────────
+
+        [ContextMenu("Self-Test: мастер — набор складывается из класса и предыстории без повторов")]
+        public void SelfTestStartingEquipmentJoinsClassAndBackground()
+        {
+            // У Плута «leather» и «rope», у Солдата — «rope». Мутант «просто сложить списки» даст
+            // три строки и положит верёвку в файл дважды; мутант «источник у повтора переписать»
+            // покажет верёвку как вещь одной лишь предыстории.
+            var rules = Fixtures.Rules();
+            var offered = WizardOps.StartingEquipment(Fixtures.Character(), rules);
+            bool ok = offered.Select(o => o.Id).SequenceEqual(new[] { "leather", "rope" })
+                   && offered[0].Name == "Кожаный доспех"
+                   && offered[0].Source == "класс"
+                   && offered[1].Source == "класс и предыстория";
+            if (!ok) Debug.LogError("FAIL стартовый набор: ["
+                                  + string.Join("; ", offered.Select(o => $"{o.Id}/{o.Name}/{o.Source}")) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — без класса набор всё равно даёт вещи предыстории")]
+        public void SelfTestStartingEquipmentWithoutClassStillOffersBackground()
+        {
+            // Мутант: «класса нет → набора нет». Тогда игрок, выбравший предысторию раньше класса,
+            // видит на седьмом шаге пустоту, а верёвка Солдата не попадает в файл вовсе.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character(); c.ClassId = null;
+            var offered = WizardOps.StartingEquipment(c, rules);
+            bool ok = offered.Count == 1 && offered[0].Id == "rope" && offered[0].Source == "предыстория";
+            if (!ok) Debug.LogError("FAIL набор без класса: ["
+                                  + string.Join("; ", offered.Select(o => $"{o.Id}/{o.Source}")) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — неизвестный предмет назван своим идентификатором")]
+        public void SelfTestStartingEquipmentNamesUnknownItemById()
+        {
+            // Мутант: `def.Name` вместо `?.Name ?? id` — падение мастера на опечатке в справочнике;
+            // мутант «пропустить неизвестное» — тихо пропавшая строка и вещь, которой нет ни на
+            // экране, ни в файле, хотя класс её даёт.
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "scout", Name = "Разведчик", HitDie = "d8",
+                StartingEquipment = { "bogus-item" } });
+            var c = Fixtures.Character(); c.ClassId = "scout";
+            var offered = WizardOps.StartingEquipment(c, rules);
+            bool ok = offered.Count == 2 && offered[0].Id == "bogus-item" && offered[0].Name == "bogus-item";
+            if (!ok) Debug.LogError("FAIL неизвестный предмет: ["
+                                  + string.Join("; ", offered.Select(o => $"{o.Id}/{o.Name}")) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — смена класса пересобирает снаряжение целиком")]
+        public void SelfTestResetEquipmentSwapsTheKitOnClassChange()
+        {
+            // Тот самый тихо испорченный файл: Плут → Воин. Кольчуга обязана появиться, кожаный
+            // доспех — исчезнуть (иначе лист посчитает по нему класс доспеха), а верёвка остаться:
+            // её даёт предыстория, и класс к ней отношения не имеет.
+            //   • мутант «только дописывать» оставит «leather» — доспех, которого у персонажа нет;
+            //   • мутант «стереть всё и положить набор класса» унесёт верёвку Солдата;
+            //   • мутант «добавлять не глядя» после второго вызова даст «chain» дважды.
+            var rules = Fixtures.Rules();
+            var fighter = new ClassDef { Id = "fighter", Name = "Воин", HitDie = "d10",
+                SkillChoices = { "athletics" }, SkillPickCount = 2, StartingEquipment = { "chain" } };
+            for (int lv = 1; lv <= 20; lv++) fighter.Levels.Add(new ClassLevel { Level = lv });
+            rules.Classes.Add(fighter);
+
+            var c = Fixtures.Character();
+            WizardOps.ApplyClassChange(c, rules, "fighter");
+            WizardOps.ResetEquipment(c, rules);
+            WizardOps.ResetEquipment(c, rules);           // второй раз ничего не удваивает
+
+            bool ok = c.Equipment.Count == 2
+                   && c.Equipment.Contains("chain")
+                   && c.Equipment.Contains("rope")
+                   && !c.Equipment.Contains("leather");
+            if (!ok) Debug.LogError("FAIL пересборка набора: [" + string.Join(",", c.Equipment) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — смена класса называет теряемое снаряжение поимённо")]
+        public void SelfTestClassChangeNamesTheEquipmentItLoses()
+        {
+            // В4: диалог обещал меньше, чем делает. Названы должны быть ровно те вещи, которых
+            // ПОСЛЕ пересборки не станет.
+            //   • мутант «перечислить всё снаряжение персонажа» назовёт верёвку, которая останется;
+            //   • мутант «строки нет» промолчит про доспех, который уйдёт.
+            var rules = Fixtures.Rules();
+            var fighter = new ClassDef { Id = "fighter", Name = "Воин", HitDie = "d10",
+                SkillChoices = { "stealth", "arcana" }, SkillPickCount = 2,
+                ExpertiseLevel = 1, ExpertisePickCount = 1, StartingEquipment = { "chain" } };
+            for (int lv = 1; lv <= 20; lv++)
+                fighter.Levels.Add(new ClassLevel { Level = lv, Choice = lv == 4 || lv == 8 ? "asi" : null });
+            rules.Classes.Add(fighter);
+
+            var c = Fixtures.Character();
+            c.SubclassId = null; c.Plan.Clear();          // чтобы в потерях осталось одно снаряжение
+            var losses = WizardOps.DescribeClassChange(c, rules, "fighter");
+            bool ok = losses.Count == 1
+                   && losses[0].Contains("Кожаный доспех")
+                   && !losses[0].Contains("Верёвка");
+            if (!ok) Debug.LogError("FAIL потери снаряжения: [" + string.Join("; ", losses) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — про снаряжение молчат, когда набор тот же")]
+        public void SelfTestClassChangeSaysNothingWhenTheKitSurvives()
+        {
+            // Страж от ложного срабатывания, и он же — страж молчаливого ПЕРВОГО выбора класса:
+            // непустой список потерь заставляет мастера показать диалог, а первый в жизни выбор
+            // класса вопросов задавать не должен.
+            var rules = KeeperRules(out var c);           // у Хранителя тот же кожаный доспех
+            var losses = WizardOps.DescribeClassChange(c, rules, "keeper");
+
+            var fresh = new CharacterFile { BackgroundId = "soldier" };   // класса нет вовсе
+            var firstPick = WizardOps.DescribeClassChange(fresh, rules, "keeper");
+
+            bool ok = losses.Count == 0 && firstPick.Count == 0;
+            if (!ok) Debug.LogError($"FAIL ложные потери снаряжения: [{string.Join("; ", losses)}] / "
+                                  + $"первый выбор: [{string.Join("; ", firstPick)}]");
+            Done(ok);
+        }
+
+        // ── Смена предыстории ────────────────────────────────────────────────────
+
+        [ContextMenu("Self-Test: мастер — предыстория освобождает ячейки навыков, которые даёт даром")]
+        public void SelfTestBackgroundChangeFreesSkillSlotsItGrants()
+        {
+            // В1 целиком: Плут взял «атлетику» и «магию» руками, потом выбрал предысторию, которая
+            // «атлетику» даёт даром. Верно — «атлетика» уходит из ручного выбора, ячейка
+            // освобождается, и остаётся выбрать ещё один навык. Мутант «просто поменять
+            // идентификатор предыстории» оставит остаток 0: заголовок скажет «выбрано 2 из 2»,
+            // галочек будет видно одна, и взять второй навык будет нельзя.
+            var rules = Fixtures.Rules();
+            rules.Backgrounds.Add(new BackgroundDef { Id = "thug", Name = "Громила", Text = "…",
+                AbilityChoices = { "str", "dex", "con" }, OriginFeatId = "alert",
+                SkillIds = { "athletics" } });
+
+            var c = Fixtures.Character();
+            c.BackgroundId = "soldier";
+            c.SkillIds.Clear(); c.SkillIds.Add("athletics"); c.SkillIds.Add("arcana");
+            c.ExpertiseIds.Clear();
+
+            WizardOps.ApplyBackgroundChange(c, rules, "thug");
+            int left = WizardOps.RemainingSkillPicks(c, rules);
+            bool ok = c.BackgroundId == "thug"
+                   && c.SkillIds.SequenceEqual(new[] { "arcana" })     // «магию» не тронули
+                   && left == 1;
+            if (!ok) Debug.LogError($"FAIL смена предыстории: предыстория={c.BackgroundId}, "
+                                  + $"навыки=[{string.Join(",", c.SkillIds)}], осталось={left} (ждали 1)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — владение навыком предыстории не теряется")]
+        public void SelfTestBackgroundChangeKeepsProficiencyItself()
+        {
+            // Снятый из ручного выбора навык обязан остаться У ПЕРСОНАЖА — его теперь даёт
+            // предыстория. Мутант «снять и не дать взамен» лишил бы игрока владения молча, и
+            // это была бы починка хуже поломки. Спрашиваем лист, а не мастер.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character();
+            c.BackgroundId = null;
+            c.SkillIds.Clear(); c.SkillIds.Add("athletics");
+            c.ExpertiseIds.Clear();
+
+            WizardOps.ApplyBackgroundChange(c, rules, "soldier");   // Солдат даёт «атлетику»
+            var line = SheetMath.Compute(c, rules).Skills.First(s => s.SkillId == "athletics");
+            bool ok = !c.SkillIds.Contains("athletics") && line.Proficient;
+            if (!ok) Debug.LogError($"FAIL владение после смены предыстории: в ручном выборе="
+                                  + $"{c.SkillIds.Contains("athletics")}, владение на листе={line.Proficient}");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — компетентность уходит вместе со снятым навыком")]
+        public void SelfTestBackgroundChangeDropsOrphanedExpertise()
+        {
+            // Инвариант «ExpertiseIds ⊆ SkillIds» — тот же, что соблюдает ApplyClassChange. Мутант,
+            // оставивший компетентность на снятом навыке, спрятал бы её навсегда: список
+            // компетентности мастер строит из file.SkillIds, так что ни увидеть, ни снять.
+            // Компетентность на «магии» при этом обязана уцелеть — она ни при чём.
+            var rules = Fixtures.Rules();
+            rules.Backgrounds.Add(new BackgroundDef { Id = "thug", Name = "Громила", Text = "…",
+                AbilityChoices = { "str", "dex", "con" }, OriginFeatId = "alert",
+                SkillIds = { "stealth" } });
+
+            var c = Fixtures.Character();
+            c.SkillIds.Clear(); c.SkillIds.Add("stealth"); c.SkillIds.Add("arcana");
+            c.ExpertiseIds.Clear(); c.ExpertiseIds.Add("stealth"); c.ExpertiseIds.Add("arcana");
+
+            WizardOps.ApplyBackgroundChange(c, rules, "thug");
+            bool ok = c.ExpertiseIds.SequenceEqual(new[] { "arcana" });
+            if (!ok) Debug.LogError("FAIL осиротевшая компетентность: ["
+                                  + string.Join(",", c.ExpertiseIds) + "] при навыках ["
+                                  + string.Join(",", c.SkillIds) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — смена на неизвестную предысторию не трогает файл вовсе")]
+        public void SelfTestUnknownBackgroundChangesNothing()
+        {
+            // То же правило, что у ApplyClassChange с неизвестным классом: неизвестный
+            // идентификатор не записывается даже сам по себе, иначе лист получил бы предысторию,
+            // которой в справочнике нет, и потерял бы вместе с ней прибавки.
+            var c = Fixtures.Character();
+            WizardOps.ApplyBackgroundChange(c, Fixtures.Rules(), "bogus");
+            bool ok = c.BackgroundId == "soldier" && c.SkillIds.Count == 2 && c.ExpertiseIds.Count == 1;
+            if (!ok) Debug.LogError($"FAIL неизвестная предыстория: {c.BackgroundId}, "
+                                  + $"навыков={c.SkillIds.Count}, компетентность={c.ExpertiseIds.Count}");
             Done(ok);
         }
 
         /// <summary>Справочник с классом «keeper», при переходе в который НИЧЕГО не теряется: он
         /// разрешает оба навыка персонажа, даёт ровно столько же навыков на выбор, имеет
-        /// компетентность и ячейки повышения там же, где Плут. Персонаж — без подкласса и без
-        /// пометок плана. Всё, что после этого попадёт в список потерь, — ложное срабатывание.</summary>
+        /// компетентность, ячейки повышения там же, где Плут, И ТОТ ЖЕ СТАРТОВЫЙ НАБОР. Персонаж —
+        /// без подкласса и без пометок плана. Всё, что после этого попадёт в список потерь, —
+        /// ложное срабатывание.
+        ///
+        /// Кожаный доспех у Хранителя стоит нарочно: у персонажа в снаряжении «leather» и «rope»,
+        /// верёвку даёт предыстория, и без доспеха в этом списке «ничего не теряется» перестало бы
+        /// быть правдой — а тесты, считающие строки потерь, начали бы падать по делу.</summary>
         static RulesData KeeperRules(out CharacterFile c)
         {
             var rules = Fixtures.Rules();
             var keeper = new ClassDef { Id = "keeper", Name = "Хранитель", HitDie = "d8",
                 SkillChoices = { "stealth", "arcana", "athletics" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1 };
+                ExpertiseLevel = 1, ExpertisePickCount = 1,
+                StartingEquipment = { "leather" } };
             for (int lv = 1; lv <= 20; lv++)
                 keeper.Levels.Add(new ClassLevel
                 {

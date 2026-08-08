@@ -9,6 +9,14 @@ namespace WorldGen.PlayerPrep.Data
         public bool AlreadyOwned;
     }
 
+    /// <summary>Строка стартового набора: что предлагается, как это называется и откуда пришло.
+    /// Source — готовая подпись для игрока («класс», «предыстория», «класс и предыстория»), потому
+    /// что предмет бывает и там и там сразу.</summary>
+    public class EquipmentOption
+    {
+        public string Id, Name, Source;
+    }
+
     /// <summary>Чистая часть мастера: что доступно на шаге, что предложить и что потеряется.
     /// Мастер — ВИД над теми же данными, что и лист, а не отдельная модель: иначе «выбор расы»
     /// оказался бы в двух местах и они разошлись бы.
@@ -65,13 +73,101 @@ namespace WorldGen.PlayerPrep.Data
         /// порядке. Предложение, а не запрет — игрок волен переставить.</summary>
         public static List<string> SuggestedAssignment(ClassDef cls)
         {
-            var all = new List<string> { "str", "dex", "con", "int", "wis", "cha" };
+            var all = SheetMath.AbilityOrder();
             if (cls == null) return all;
             // Distinct обязателен: RulesIntegrity уникальность спасбросков не проверяет, а
             // сдвоенный идентификатор дал бы семь позиций против шести значений набора —
             // и раскладка поехала бы вся.
             var key = cls.SaveProficiencies.Where(all.Contains).Distinct().ToList();
             return key.Concat(all.Where(a => !key.Contains(a))).ToList();
+        }
+
+        // ── Покупка очков ────────────────────────────────────────────────────────
+        //
+        // Таблица стоимости и бюджет живут ЗДЕСЬ, а не в мастере, и это решение ДМ дословно:
+        // приложение существует ровно затем, чтобы не требовать от игрока хороших знаний правил, —
+        // режим, молча пускающий невозможного персонажа, замыслу арки противоречит. Значит правило
+        // обязано лежать в чистом слое, под самопроверками и мутационной проверкой, а мастеру
+        // остаётся показать счётчик и погасить «+».
+
+        public const int PointBuyBudget = 27;
+        public const int PointBuyFloor = 8;
+        public const int PointBuyCeiling = 15;
+
+        /// <summary>Во сколько очков обходится значение характеристики. −1 значит «покупкой
+        /// НЕДОСТИЖИМО»: ниже 8 и выше 15 таблицы стоимости не существует, за 18 из бросков
+        /// заплатить нечем. Это не «бесплатно» и не «дорого» — это другое состояние, и путать его
+        /// с нулём нельзя, иначе восемнадцать выглядели бы как восьмёрка.</summary>
+        public static int PointBuyCost(int score)
+        {
+            switch (score)
+            {
+                case 8:  return 0;
+                case 9:  return 1;
+                case 10: return 2;
+                case 11: return 3;
+                case 12: return 4;
+                case 13: return 5;
+                case 14: return 7;
+                case 15: return 9;
+                default: return -1;
+            }
+        }
+
+        /// <summary>Сколько очков стоят шесть характеристик разом. −1, если хотя бы одна из них
+        /// покупкой недостижима: такой набор не «дорогой», его нельзя собрать покупкой вовсе, и
+        /// счётчик «потрачено столько-то» о нём соврал бы.</summary>
+        public static int PointBuySpent(AbilityScores scores)
+        {
+            if (scores == null) return -1;
+            int total = 0;
+            foreach (var id in SheetMath.AbilityOrder())
+            {
+                int cost = PointBuyCost(scores.Get(id));
+                if (cost < 0) return -1;
+                total += cost;
+            }
+            return total;
+        }
+
+        /// <summary>Законен ли набор для покупки очков: все шесть достижимы И бюджет не перебран.
+        /// По этому вопросу мастер решает, входить ли в режим на нынешних числах или заменить их
+        /// восьмёрками.</summary>
+        public static bool IsPointBuyLegal(AbilityScores scores)
+        {
+            int spent = PointBuySpent(scores);
+            return spent >= 0 && spent <= PointBuyBudget;
+        }
+
+        /// <summary>Начало покупки: во все шесть по 8. Потрачено 0, в запасе все 27 — единственное
+        /// состояние, из которого покупка честно начинается. Наследовать чужие числа нельзя: с 18
+        /// из бросков игрок оказался бы в режиме, где за его персонажа не заплатить.</summary>
+        public static void ApplyPointBuyStart(AbilityScores scores)
+        {
+            if (scores == null) return;
+            // Set у AbilityScores нет — присваиваем через разницу, как это делает и мастер.
+            foreach (var id in SheetMath.AbilityOrder()) scores.Add(id, PointBuyFloor - scores.Get(id));
+        }
+
+        /// <summary>Можно ли поднять характеристику на единицу: и потолок не пробит, и очков хватает
+        /// на ПОДОРОЖАНИЕ (14→15 стоит два очка, а не одно — таблица нелинейна нарочно).
+        /// Мастер этим гасит «+» заранее, а не сообщает о перерасходе задним числом.</summary>
+        public static bool CanRaiseByPointBuy(AbilityScores scores, string abilityId)
+        {
+            int spent = PointBuySpent(scores);
+            if (spent < 0) return false;
+            int now = scores.Get(abilityId);
+            int next = PointBuyCost(now + 1);
+            if (next < 0) return false;                     // выше потолка покупка не поднимается
+            return spent - PointBuyCost(now) + next <= PointBuyBudget;
+        }
+
+        /// <summary>Можно ли опустить характеристику: 8 — пол покупки. Сравнение со ЗНАЧЕНИЕМ, а не
+        /// со стоимостью: набор, попавший сюда незаконным (скажем, 18 из бросков), обязан иметь
+        /// дорогу вниз, иначе игрок заперт в режиме, где «+» погашен бюджетом, а «−» — законом.</summary>
+        public static bool CanLowerByPointBuy(AbilityScores scores, string abilityId)
+        {
+            return scores != null && scores.Get(abilityId) > PointBuyFloor;
         }
 
         /// <summary>Что потеряется при смене класса. Спрашиваем ДО, а не откатываем ПОСЛЕ:
@@ -93,6 +189,13 @@ namespace WorldGen.PlayerPrep.Data
                     ? $"Навык «{name}» — класс «{next.Name}» даёт на выбор только {next.SkillPickCount}"
                     : $"Навык «{name}» — у класса «{next.Name}» его в списке нет");
             }
+            // Снаряжение названо здесь, потому что ЧИНИТСЯ оно тоже при смене класса: ResetEquipment
+            // пересобирает набор, и вещи прежнего класса из файла уходят. Диалог, умолчавший об этом,
+            // обещал бы меньше, чем делает.
+            var gear = EquipmentLostTo(file, rules, next);
+            if (gear.Count > 0)
+                losses.Add($"Снаряжение: {string.Join(", ", gear.ToArray())} — набор соберётся заново "
+                           + $"под класс «{next.Name}»");
             if (file.ExpertiseIds.Count > 0 && next.ExpertiseLevel == 0)
                 losses.Add("Компетентность — у нового класса её нет");
             if (!string.IsNullOrEmpty(file.SubclassId))
@@ -109,7 +212,13 @@ namespace WorldGen.PlayerPrep.Data
         /// <summary>Правит файл на месте. Не трогает ни вид, ни предысторию, ни характеристики,
         /// ни прибавки: класс — это не персонаж целиком. Снимает РОВНО то, что перечислил
         /// DescribeClassChange — обе стороны считают по одним и тем же двум функциям ниже,
-        /// иначе диалог обещал бы одно, а делал другое.</summary>
+        /// иначе диалог обещал бы одно, а делал другое.
+        ///
+        /// СНАРЯЖЕНИЕ — ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ, и оно парное: его пересобирает ResetEquipment,
+        /// которую мастер зовёт следом. Обещание про снаряжение стоит в DescribeClassChange
+        /// (EquipmentLostTo), и обе стороны опять считают по одному коду — StartingEquipment. Зовущий
+        /// обязан звать обе: ApplyClassChange без ResetEquipment оставит в файле вещи прежнего
+        /// класса, про потерю которых диалог уже сказал вслух.</summary>
         public static void ApplyClassChange(CharacterFile file, RulesData rules, string newClassId)
         {
             if (file == null || rules == null) return;
@@ -125,6 +234,122 @@ namespace WorldGen.PlayerPrep.Data
 
             file.SubclassId = null;
             file.Plan.RemoveAll(p => IsSubclassMark(p) || PlanMarkHasNoCell(p, next));
+        }
+
+        /// <summary>Смена предыстории. Ставит новую И СНИМАЕТ ИЗ РУЧНОГО ВЫБОРА навыки, которые она
+        /// даёт даром: останься они в file.SkillIds — ячейка класса считалась бы потраченной на то,
+        /// что у персонажа и так есть.
+        ///
+        /// Живой пример на поставляемых данных: Плут (четыре навыка) берёт на шестом шаге
+        /// «Скрытность» и «Ловкость рук», а потом выбирает «Преступника», который даёт ровно эти
+        /// два. Строки навыков становятся серыми надписями «уже есть», но из файла они не делись —
+        /// RemainingSkillPicks считает их потраченными ячейками, заголовок говорит «выбрано 4 из 4»,
+        /// галочек видно две, взять ещё два нельзя, а SheetMath.Missing молчит (в файле их ровно
+        /// столько, сколько класс даёт). Персонаж молча недосчитывается двух навыков, и выбраться
+        /// человеку неоткуда.
+        ///
+        /// ВЛАДЕНИЕ ПРИ ЭТОМ НЕ ТЕРЯЕТСЯ: снятый навык теперь приходит от предыстории, и лист
+        /// показывает его ровно так же. Уходит только пометка «выбран вручную».
+        ///
+        /// Компетентность на снятом навыке уходит вместе с ним — тот же инвариант «ExpertiseIds ⊆
+        /// SkillIds», что соблюдает ApplyClassChange. Оставить её нельзя: список компетентности
+        /// мастер строит из file.SkillIds, так что осиротевшую не было бы ни видно, ни как снять.
+        ///
+        /// Неизвестная предыстория не меняет НИЧЕГО, включая сам идентификатор, — как и
+        /// ApplyClassChange с неизвестным классом.</summary>
+        public static void ApplyBackgroundChange(CharacterFile file, RulesData rules, string newBackgroundId)
+        {
+            if (file == null || rules == null) return;
+            var next = rules.Backgrounds.FirstOrDefault(b => b.Id == newBackgroundId);
+            if (next == null) return;
+            file.BackgroundId = newBackgroundId;
+
+            file.SkillIds.RemoveAll(next.SkillIds.Contains);
+            file.ExpertiseIds.RemoveAll(id => !file.SkillIds.Contains(id));
+        }
+
+        // ── Стартовый набор ──────────────────────────────────────────────────────
+
+        /// <summary>Стартовый набор: снаряжение класса, затем предыстории, БЕЗ ПОВТОРОВ.
+        ///
+        /// Правило живёт здесь, а не в слое рисования, потому что по нему теперь ПРАВЯТ ФАЙЛ
+        /// (ResetEquipment), а не только рисуют список. «Что должно лежать в снаряжении» обязано
+        /// считаться одним куском кода: разойдись показ с правкой — в файле оказались бы вещи,
+        /// которых на экране нет.
+        ///
+        /// Один предмет бывает и у класса, и у предыстории (Плут-Солдат приходит с коротким луком
+        /// дважды); в файле он должен лежать один раз, поэтому источник у такой строки составной, а
+        /// список складывается с проверкой на повтор, а не конкатенацией.</summary>
+        public static List<EquipmentOption> StartingEquipment(ClassDef cls, BackgroundDef bg, RulesData rules)
+        {
+            var result = new List<EquipmentOption>();
+            if (cls != null) foreach (var id in cls.StartingEquipment) Offer(result, rules, id, "класс");
+            if (bg != null) foreach (var id in bg.Equipment) Offer(result, rules, id, "предыстория");
+            return result;
+        }
+
+        /// <summary>Тот же набор, но по идентификаторам из файла. Отдельная перегрузка нужна потому,
+        /// что DescribeClassChange считает набор для класса, которого в файле ЕЩЁ НЕТ.</summary>
+        public static List<EquipmentOption> StartingEquipment(CharacterFile file, RulesData rules)
+        {
+            if (file == null || rules == null) return new List<EquipmentOption>();
+            return StartingEquipment(
+                rules.Classes.FirstOrDefault(c => c.Id == file.ClassId),
+                rules.Backgrounds.FirstOrDefault(b => b.Id == file.BackgroundId), rules);
+        }
+
+        static void Offer(List<EquipmentOption> into, RulesData rules, string id, string source)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            var already = into.FirstOrDefault(o => o.Id == id);
+            if (already != null)
+            {
+                if (already.Source != source) already.Source = already.Source + " и " + source;
+                return;
+            }
+            into.Add(new EquipmentOption
+            {
+                Id = id,
+                // Неизвестный предмет называется своим идентификатором, а не пропадает: строка
+                // «bogus-item» на экране — это видимая опечатка в справочнике, а пустая — загадка.
+                Name = rules?.Items.FirstOrDefault(i => i.Id == id)?.Name ?? id,
+                Source = source
+            });
+        }
+
+        /// <summary>Пересобирает снаряжение персонажа под нынешние класс и предысторию: чего в наборе
+        /// больше нет — убирает, чего не хватает — кладёт.
+        ///
+        /// ЗОВЁТСЯ В МОМЕНТ СМЕНЫ класса или предыстории, а не при показе седьмого шага, и в этом всё
+        /// дело. Пока пересборкой ведал показ, до него можно было не дойти: сменил класс на третьем
+        /// шаге, ушёл сразу на восьмой — и в файле остались вещи прежнего класса. Строк для них на
+        /// шаге снаряжения больше нет, значит они невидимы и неснимаемы; при этом лист считает по ним
+        /// класс доспеха (SheetMath берёт первый предмет с Kind == "armor"), а «Чего не хватает» о
+        /// снаряжении не говорит ни слова. Тихо испорченный файл — худшее, что мастер может сделать.
+        ///
+        /// Правило простое и оттого предсказуемое: сменил класс — получил его набор, потерял прежний.
+        /// Цена — снятая вручную галочка возвращается, если после неё сменить класс; это видно и
+        /// поправимо, в отличие от невидимой вещи в файле.</summary>
+        public static void ResetEquipment(CharacterFile file, RulesData rules)
+        {
+            if (file == null || rules == null) return;
+            var offered = StartingEquipment(file, rules);
+            var ids = new HashSet<string>(offered.Select(o => o.Id));
+            file.Equipment.RemoveAll(id => !ids.Contains(id));
+            foreach (var o in offered)
+                if (!file.Equipment.Contains(o.Id)) file.Equipment.Add(o.Id);
+        }
+
+        /// <summary>Названия вещей, которых после перехода в класс next в наборе не окажется.
+        /// Предысторию смотрит ТОЖЕ: верёвка Солдата остаётся при любом классе, и обещать её потерю
+        /// значило бы соврать ровно так же, как молчать про кожаный доспех Плута.</summary>
+        static List<string> EquipmentLostTo(CharacterFile file, RulesData rules, ClassDef next)
+        {
+            var bg = rules.Backgrounds.FirstOrDefault(b => b.Id == file.BackgroundId);
+            var keeps = new HashSet<string>(StartingEquipment(next, bg, rules).Select(o => o.Id));
+            return file.Equipment.Where(id => !keeps.Contains(id))
+                .Select(id => rules.Items.FirstOrDefault(i => i.Id == id)?.Name ?? id)
+                .ToList();
         }
 
         /// <summary>Навыки, которые не переживут переход в класс next, в порядке показа: сперва
