@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -97,6 +98,44 @@ namespace WorldGen.Notes.Rendering
         byte[] lastPortraitBytes;
         Texture2D ownedTexture;
 
+        /// <summary>Подсветка совпадений поиска в карточке — ПОЛЕМ, а не словом, и это осознанное сужение,
+        /// а не недоделка. Строка прозы красит само слово разметкой `mark` в СВОЁМ ОТДЕЛЬНОМ слое показа
+        /// (DocBlockView.Display); у поля карточки такого слоя нет — текст рисует сам TMP_InputField, и
+        /// `richText` у него выключен намеренно (иначе набранные ДМ угловые скобки исчезали бы из виду).
+        /// Чтобы покрасить слово, пришлось бы либо включить richText и потерять это свойство, либо завести
+        /// над полем второй слой показа со всей его механикой каретки, прокрутки и выделения. Поле целиком
+        /// отвечает на тот же вопрос «где оно», а полей всего четыре и они короткие.
+        ///
+        /// Текущее совпадение красится сильнее прочих — ровно как в строке и по той же причине: «эта, из
+        /// двенадцати» должна читаться с одного взгляда. Прозрачность взята та же (0x44 и 0x99).</summary>
+        public void SetSearchHighlights(List<PageSearch.PageHit> hits, PageSearch.PageHit current)
+        {
+            var accent = ThemeService.Get(ThemeRole.Accent);
+            for (int i = 0; i < FieldCount; i++)
+            {
+                if (valueMarks[i] == null) continue;
+
+                bool any = false, isCurrent = false;
+                if (hits != null)
+                    foreach (var hit in hits)
+                    {
+                        if (hit == null || FieldIndexOf(hit.Field) != i) continue;
+                        any = true;
+                        if (ReferenceEquals(hit, current)) { isCurrent = true; break; }
+                    }
+
+                valueMarks[i].color = any
+                    ? new Color(accent.r, accent.g, accent.b, isCurrent ? 0x99 / 255f : 0x44 / 255f)
+                    : new Color(0f, 0f, 0f, 0f);
+            }
+        }
+
+        /// <summary>`PageSearch.CardField` → индекс поля здесь. Порядок значений перечисления задан ЭКРАННЫМ
+        /// порядком полей — тем же, которым живут GetField/SetField, — поэтому перевод арифметический.
+        /// `None` даёт −1 и не совпадает ни с одним полем, что и нужно: это попадание в строке прозы.</summary>
+        static int FieldIndexOf(PageSearch.CardField f) => (int)f - 1;
+
+        readonly Image[] valueMarks = new Image[FieldCount];
         readonly TMP_InputField[] valueFields = new TMP_InputField[FieldCount];
         readonly TMP_Text[] valueTexts = new TMP_Text[FieldCount];
         readonly RectTransform[] labelRects = new RectTransform[FieldCount];
@@ -273,6 +312,28 @@ namespace WorldGen.Notes.Rendering
             fieldBg.sprite = RoundedRectSprite.Get();
             fieldBg.type = Image.Type.Sliced;
             ThemeService.Tag(fieldBg, ThemeRole.Panel2, 0.9f);
+
+            // ПОДЛОЖКА ПОДСВЕТКИ ПОИСКА — отдельная картинка, а не перекраска fieldBg. Перекрасить фон
+            // значило бы драться с ThemeService: он держит этот Image под своим тегом и вернёт свой цвет
+            // при первой же смене темы. Прозрачная подложка ничей цвет не занимает, гасится обратно в
+            // alpha 0 и потому не может «залипнуть» после закрытия строки поиска.
+            //
+            // ПЕРВЫМ РЕБЁНКОМ: uGUI рисует детей по порядку, значит она ложится ПОВЕРХ фона поля (это
+            // компонент самого fieldGO) и ПОД вьюпортом с текстом — иначе накрыла бы буквы.
+            var markGO = new GameObject("SearchMark", typeof(RectTransform));
+            markGO.transform.SetParent(fieldGO.transform, false);
+            var markRect = (RectTransform)markGO.transform;
+            markRect.anchorMin = Vector2.zero;
+            markRect.anchorMax = Vector2.one;
+            markRect.offsetMin = Vector2.zero;
+            markRect.offsetMax = Vector2.zero;
+            var mark = markGO.AddComponent<Image>();
+            mark.sprite = RoundedRectSprite.Get();
+            mark.type = Image.Type.Sliced;
+            mark.raycastTarget = false;
+            mark.color = new Color(0f, 0f, 0f, 0f);
+            markGO.transform.SetAsFirstSibling();
+            valueMarks[i] = mark;
 
             var viewportGO = new GameObject("TextViewport", typeof(RectTransform));
             viewportGO.transform.SetParent(fieldGO.transform, false);

@@ -77,6 +77,15 @@ namespace WorldGen.Notes.Data
             if (PageSearch.Find(blocks, sparse, "сумрак", resolve).Count != 2)
             { Debug.LogError("FAIL: пустые поля карточки посчитаны как совпадения"); ok = false; }
 
+            // МУТАНТ: значения CardField переставлены или пронумерованы иначе. Подсветка в шапке переводит
+            // поле в свой индекс арифметикой `(int)поле − 1` (CharacterHeaderView.FieldIndexOf), потому что
+            // порядок здесь и порядок полей на экране — один и тот же. Перестановка значений не сломала бы
+            // ни компиляцию, ни поиск: она молча подсветила бы ЧУЖОЕ поле.
+            if ((int)PageSearch.CardField.None != 0 || (int)PageSearch.CardField.Who != 1
+                || (int)PageSearch.CardField.Where != 2 || (int)PageSearch.CardField.Wants != 3
+                || (int)PageSearch.CardField.HowToPlay != 4)
+            { Debug.LogError("FAIL: нумерация CardField разошлась с порядком полей шапки"); ok = false; }
+
             if (ok) Debug.Log("Self-Test: Page Search Character Card — OK");
         }
 

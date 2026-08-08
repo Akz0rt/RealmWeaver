@@ -1469,6 +1469,13 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The row must EXIST as a view — a hit inside a collapsed section has no rect to scroll to, which is
         /// why PageSearchBar.Reveal opens the section and rebuilds before calling this.</summary>
+        /// <summary>Передать шапке персонажа совпадения поиска. Через вид, а не напрямую из строки поиска:
+        /// шапка — внутренность вида (поле `header` приватно и пересоздаётся при пересборке), и знать про
+        /// неё строке поиска незачем — ровно как про строки она знает только через `Rows`. Отсеивать
+        /// попадания в прозе не нужно: шапка сама берёт из списка те, у которых названо её поле.</summary>
+        public void SetCardSearchHighlights(List<PageSearch.PageHit> hits, PageSearch.PageHit current)
+            => header?.SetSearchHighlights(hits, current);
+
         /// <summary>Промотать колонку в начало. Нужна поиску: попадание в карточке персонажа лежит в ШАПКЕ,
         /// а шапка — первая в этой же колонке (см. Rebuild, `SetAsFirstSibling`), поэтому «показать её»
         /// выражается прокруткой в ноль, а не поиском строки по идентификатору, которого у такого

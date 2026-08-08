@@ -208,10 +208,9 @@ namespace WorldGen.Notes.Rendering
             // (BlockId пуст). Разворачивать нечего, прокручивать к строке нечего — шапка стоит первой в
             // той же колонке, поэтому «показать её» значит промотать колонку в начало.
             //
-            // ЧЕСТНО ПРО НЕДОДЕЛКУ: подсветки внутри поля карточки НЕТ — CharacterHeaderView не умеет
-            // SetSearchHighlights, как умеет строка. Совпадение считается, «3 из 12» его учитывает, Enter
-            // на него встаёт и шапку показывает, но самого слова в поле не подсвечивает. Дорисовать —
-            // отдельная задача по шапке, а не ещё одна ветка здесь.
+            // Подсвечивается при этом ПОЛЕ ЦЕЛИКОМ, а не слово в нём: у поля карточки нет отдельного слоя
+            // показа, в котором строка прозы красит буквы разметкой. Почему так и что стоило бы иначе —
+            // в доке CharacterHeaderView.SetSearchHighlights, там же и цена решения.
             if (hit.Field != PageSearch.CardField.None)
             {
                 page.RevealTop();
@@ -234,6 +233,11 @@ namespace WorldGen.Notes.Rendering
             if (page == null) return;
 
             var currentHit = current >= 0 && current < hits.Count ? hits[current] : null;
+
+            // Шапка персонажа — такой же получатель подсветки, как строка, и получает ВЕСЬ список: она
+            // сама отбирает из него те попадания, у которых названо её поле (см. её SetSearchHighlights).
+            page.SetCardSearchHighlights(hits, currentHit);
+
             foreach (var row in page.Rows)
             {
                 if (row == null) continue;
@@ -247,6 +251,9 @@ namespace WorldGen.Notes.Rendering
         void ClearHighlights()
         {
             if (page == null) return;
+            // Шапка гасится вместе со строками. Пропустить её значило бы оставить поле подсвеченным после
+            // закрытия строки поиска — подложка сама не гаснет, у неё нет своего повода.
+            page.SetCardSearchHighlights(null, null);
             foreach (var row in page.Rows)
                 if (row != null) row.SetSearchHighlights(null, null);
         }
