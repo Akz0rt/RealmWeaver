@@ -29,7 +29,16 @@ namespace WorldGen.PlayerPrep.Rendering
     /// пересобирает экран с нуля. Заводить Awake ради постройки нельзя: правило станет применимым.
     ///
     /// Обратное правило соблюдается тоже: числа нажимаются, то есть пересборка идёт из обработчика
-    /// нажатия, поэтому Rebuild сносит прошлое отложенным Destroy, а не DestroyImmediate.</summary>
+    /// нажатия, поэтому Rebuild сносит прошлое отложенным Destroy, а не DestroyImmediate.
+    ///
+    /// ДВЕ ДОРОГИ ВМЕСТО ОДНОЙ, И ПУТАТЬ ИХ НЕЛЬЗЯ. Refresh — «файл изменился»: пересчитать чистым
+    /// слоем и перерисовать. Rebuild — «изменился только показ» (раскрылось объяснение, появился путь
+    /// к файлу): перерисовать по уже посчитанному. Всякая правка НА ЛИСТЕ меняет файл, поэтому ей
+    /// нужен Refresh — кроме тех, от которых ни одно посчитанное число не зависит; какая правка что
+    /// зовёт и почему, расписано у каждой поимённо (BuildHeader, SetPortrait, BuildHpOverrideRow,
+    /// BuildBackstory).
+    ///
+    /// А ЗОВЁТСЯ ЭТО ОТЛОЖЕННО, если правка пришла из поля ввода, — см. RequestRefresh.</summary>
     public class SheetView : MonoBehaviour
     {
         const float BottomBarHeight = 66f;
@@ -90,10 +99,23 @@ namespace WorldGen.PlayerPrep.Rendering
         Sprite portrait;
 
         Text backstoryText;
+        InputField backstoryInput;
         LayoutElement backstoryElement;
         ScrollRect backstoryScroll;
 
+        /// <summary>Каретка и длина предыстории, при которых прокрутка блока в последний раз
+        /// подводилась к каретке. Нужны, чтобы ВЕСТИ прокрутку за кареткой, но не ДЕРЖАТЬ её там:
+        /// подводи мы каждый кадр — игрок, крутящий колесо внутри длинной предыстории, не смог бы
+        /// отвести взгляд от каретки, прокрутка отскакивала бы назад мгновенно. −1 значит «ещё ни
+        /// разу», и первое же попадание в поле подводит.</summary>
+        int caretShown = -1;
+        int lengthShown = -1;
+
         ScrollRect bodyScroll;
+
+        /// <summary>Заказанный, но ещё не выполненный Refresh. Ставится RequestRefresh, снимается в
+        /// начале Refresh, выполняется в LateUpdate — и только когда указатель отпущен.</summary>
+        bool refreshRequested;
 
         /// <summary>Куда была прокручена середина листа до пересборки, и сколько кадров ещё пытаться
         /// туда вернуться. Без этого нажатие на навык в самом низу (а навыков восемнадцать)
@@ -128,6 +150,10 @@ namespace WorldGen.PlayerPrep.Rendering
         /// меняется файл, поэтому мало перерисовать — надо сначала посчитать заново.</summary>
         public void Refresh()
         {
+            // Заказ выполнен — снимаем его ЗДЕСЬ, а не только в LateUpdate: Refresh зовут и напрямую
+            // (кнопка «Среднее»), и заказ, доживший до конца кадра, пересобрал бы лист второй раз.
+            refreshRequested = false;
+
             // Справочник читается через try: SheetRulesSource.Rules не возвращает null, а бросает.
             // Пустой экран вместо объяснения — худшее, чем можно ответить на непрочитанный справочник.
             try { rules = SheetRulesSource.Rules; rulesError = null; }
@@ -135,6 +161,38 @@ namespace WorldGen.PlayerPrep.Rendering
 
             sheet = rules == null || file == null ? null : SheetMath.Compute(file, rules);
             Rebuild();
+        }
+
+        /// <summary>«Пересчитать лист, но НЕ СЕЙЧАС». Единственное, чем поле ввода имеет право отвечать
+        /// на окончание правки.
+        ///
+        /// ПОЧЕМУ НЕЛЬЗЯ СРАЗУ. Модуль ввода при нажатии сперва снимает выделение
+        /// (InputSystemUIInputModule.cs:661 — `SetSelectedGameObject(null)`), и только следующей
+        /// строкой рассылает pointerDown. Снятие выделения — это InputField.OnDeselect →
+        /// DeactivateInputField → onEndEdit, то есть НАШ обработчик выполняется ВНУТРИ разбора чужого
+        /// нажатия. Пересобери он лист прямо там — на отпускании кнопки модуль заново ищет, кому слать
+        /// щелчок (`pointerClickHandler` на строке 706), находит уже НОВУЮ кнопку, сравнивает её с
+        /// запомненной при нажатии (строка 707) и, не совпав, не шлёт щелчок вовсе. Ровно это и
+        /// наблюдалось: набрал в «Свои хиты», нажал «Сохранить» — ничего, сработало только второе
+        /// нажатие.
+        ///
+        /// ПОЧЕМУ КОНЦА КАДРА МАЛО. Между нажатием и отпусканием проходят кадры (человеческий щелчок —
+        /// это десятые доли секунды), так что пересборка, отложенная до ближайшего LateUpdate, всё
+        /// равно успела бы встать между ними и съела бы щелчок точно так же. Поэтому ждём НЕ конца
+        /// кадра, а отпускания указателя: к этому мигу щелчок уже разослан.
+        ///
+        /// ЗАКОЛЬЦЕВАТЬСЯ ЭТО НЕ МОЖЕТ. Пересборка уничтожает поля, а уничтожение зовёт
+        /// DeactivateInputField ещё раз (InputField.OnDisable) — но тот выходит первой же строкой,
+        /// `if (!m_AllowInput) return` (InputField.cs:3239): поле деактивировано ещё при нажатии,
+        /// второго onEndEdit не будет, и заказ сам себя не переставит.</summary>
+        void RequestRefresh() => refreshRequested = true;
+
+        /// <summary>Держат ли сейчас кнопку указателя. Pointer, а не Mouse: у пера и у сенсорного
+        /// экрана `press` тот же самый, а модуль ввода не различает, чем именно нажали.</summary>
+        static bool PointerHeld()
+        {
+            var pointer = UnityEngine.InputSystem.Pointer.current;
+            return pointer != null && pointer.press.isPressed;
         }
 
         void OnDestroy() => ReleasePortrait();
@@ -152,6 +210,15 @@ namespace WorldGen.PlayerPrep.Rendering
         /// раскладку грязной, и безусловное присваивание каждый кадр пересчитывало бы весь лист.</summary>
         void LateUpdate()
         {
+            // Заказанная пересборка — ПЕРВЫМ делом и только на отпущенном указателе (см. RequestRefresh).
+            if (refreshRequested && !PointerHeld())
+            {
+                Refresh();
+                // Мерить в этом же кадре нечего: у только что построенного прямоугольников ещё нет,
+                // раскладка отработает в Canvas.willRenderCanvases, уже ПОСЛЕ нас.
+                return;
+            }
+
             if (pendingScrollFrames > 0 && bodyScroll != null)
             {
                 pendingScrollFrames--;
@@ -160,10 +227,19 @@ namespace WorldGen.PlayerPrep.Rendering
 
             if (backstoryText == null || backstoryElement == null || backstoryScroll == null) return;
 
+            // НА НЕПОЛОЖИТЕЛЬНОЙ ШИРИНЕ НЕ МЕРЯЕМ ВОВСЕ. В кадре постройки прямоугольник ещё нулевой
+            // (раскладка считается в Canvas.willRenderCanvases, ПОСЛЕ LateUpdate), а перенос по словам
+            // на ширине 0 даёт по строке на знак — высота выходит огромной, клампится к пределу, и
+            // блок предыстории на один кадр раздувался до 260 точек при КАЖДОЙ пересборке. Заодно это
+            // портило возврат прокрутки: pendingScrollFrames считает долю от высоты содержимого, а та
+            // в этом кадре была раздутой.
+            float width = backstoryText.GetPixelAdjustedRect().size.x;
+            if (width <= 0f) return;
+
             // Меряется ТЕКСТ ИЗ ФАЙЛА, а не backstoryText.text: второе — то, что InputField решил
             // показать, то есть обрезок по высоте прямоугольника, и мерить по нему значило бы
             // спрашивать у окна, какого размера должно быть окно.
-            float textHeight = MeasureHeight(backstoryText, file == null ? "" : file.Backstory);
+            float textHeight = MeasureHeight(backstoryText, file == null ? "" : file.Backstory, width);
 
             float height = Mathf.Clamp(textHeight + 16f, MinBackstoryHeight, MaxBackstoryHeight);
             if (Mathf.Abs(backstoryElement.preferredHeight - height) > 0.5f)
@@ -190,18 +266,107 @@ namespace WorldGen.PlayerPrep.Rendering
                 backstoryScroll.enabled = needsScroll;
                 backstoryScroll.vertical = needsScroll;
             }
+
+            RevealCaret(width, textHeight, height - 12f);
+        }
+
+        /// <summary>Подвести прокрутку предыстории к каретке, если та ушла за край видимого.
+        ///
+        /// БЕЗ ЭТОГО ИГРОК ПЕЧАТАЕТ ВСЛЕПУЮ, начиная примерно с тринадцатой строки. Собственное
+        /// слежение за кареткой у InputField отключено ЗДЕСЬ ЖЕ, и не по недосмотру: оно живёт в
+        /// SetDrawRangeToContainCaretPosition, которое берёт пределы из прямоугольника textComponent,
+        /// а мы этому прямоугольнику назначаем ПОЛНУЮ высоту текста (иначе прокручивать было бы
+        /// нечего — см. выше). Влезает всё, m_DrawStart навсегда 0, показывается весь текст, и поле
+        /// считает, что каретка и так видна. Видна она при этом внутри прямоугольника, а не внутри
+        /// вьюпорта, который её и обрезает. Отобрав у поля слежение, обязаны дать своё.
+        ///
+        /// НЕ ВЕРНУЛИ ПРОКРУТКУ САМОМУ InputField (второй возможный ответ) намеренно: тогда высоту
+        /// прямоугольника пришлось бы держать по вьюпорту, содержимого у ScrollRect не осталось бы, и
+        /// вместе со слежением за кареткой вернулась бы невозможность пролистать длинную предысторию
+        /// КОЛЕСОМ — читать её, не трогая, стало бы нельзя. Правило задачи 11 при этом цело: блок
+        /// растёт до 260 точек, дальше прокручивается, ContentSizeFitter не появился, а короткая
+        /// предыстория колесо по-прежнему не перехватывает (ScrollRect выключен).
+        ///
+        /// ПОДВОДИТ, А НЕ ДЕРЖИТ: только когда каретка или сам текст изменились с прошлого раза.
+        /// Иначе колесо внутри поля не работало бы вовсе — прокрутка отскакивала бы к каретке в тот же
+        /// кадр.</summary>
+        void RevealCaret(float width, float textHeight, float viewportHeight)
+        {
+            if (backstoryInput == null || !backstoryInput.isFocused) return;
+
+            string s = file == null || file.Backstory == null ? "" : file.Backstory;
+            int caret = Mathf.Clamp(backstoryInput.caretPosition, 0, s.Length);
+            if (caret == caretShown && s.Length == lengthShown) return;
+            caretShown = caret;
+            lengthShown = s.Length;
+
+            if (!backstoryScroll.enabled) return;              // влезло целиком — подводить не к чему
+            float scrollable = textHeight - viewportHeight;
+            if (scrollable <= 0f) return;
+
+            if (!CaretBand(backstoryText, s, caret, width, out float top, out float lineHeight)) return;
+
+            // Сколько точек текста сейчас скрыто ВЫШЕ верхнего края вьюпорта. verticalNormalizedPosition
+            // единица — самый верх, ноль — самый низ.
+            float offset = (1f - backstoryScroll.verticalNormalizedPosition) * scrollable;
+            // Запас в одну строку снизу: строка каретки должна оказаться видимой целиком даже если
+            // генератор текста разошёлся с нашим счётом строк на единицу (пустая строка в самом конце).
+            float lowest = top + lineHeight * 2f - viewportHeight;
+            float highest = top;
+            if (lowest > highest) lowest = highest;
+            float wanted = Mathf.Clamp(offset, lowest, highest);
+            if (Mathf.Abs(wanted - offset) <= 0.5f) return;
+
+            backstoryScroll.verticalNormalizedPosition = Mathf.Clamp01(1f - wanted / scrollable);
+        }
+
+        /// <summary>Где внутри текста стоит строка с кареткой: `top` — сколько точек текста над её
+        /// верхом, `lineHeight` — её высота. false, если посчитать не по чему.
+        ///
+        /// СТРОКА ИЩЕТСЯ ТЕМ ЖЕ СПОСОБОМ, КАКИМ ЕЁ ИЩЕТ САМ InputField (DetermineCharacterLine: первая
+        /// строка, следующая за которой начинается ПОЗЖЕ каретки), и на том же полном тексте — так что
+        /// это ровно та строка, в которой каретка и нарисована. Свой счёт строк («поделить длину на
+        /// знаки в строке», как в полосе предупреждений) здесь не годится вовсе: перенос идёт по
+        /// словам, и на первом же длинном слове счёт разошёлся бы с показанным.</summary>
+        static bool CaretBand(Text t, string s, int caret, float width, out float top, out float lineHeight)
+        {
+            top = 0f;
+            lineHeight = 0f;
+            if (t == null || t.font == null || width <= 0f) return false;
+
+            var settings = t.GetGenerationSettings(new Vector2(width, 0f));
+            settings.verticalOverflow = VerticalWrapMode.Overflow;
+            var generator = t.cachedTextGeneratorForLayout;
+            if (!generator.Populate(s ?? "", settings)) return false;
+
+            var lines = generator.lines;
+            if (lines.Count == 0) return false;
+
+            int index = lines.Count - 1;
+            for (int i = 0; i < lines.Count - 1; i++)
+                if (lines[i + 1].startCharIdx > caret) { index = i; break; }
+
+            // topY убывает вниз, поэтому разность берётся от первой строки к нужной. Делится на
+            // pixelsPerUnit по той же причине, что и в MeasureHeight: генератор считает в точках
+            // текстуры, а раскладка — в точках холста.
+            top = (lines[0].topY - lines[index].topY) / t.pixelsPerUnit;
+            lineHeight = lines[index].height / t.pixelsPerUnit;
+            return true;
         }
 
         /// <summary>Сколько точек занял бы ЦЕЛИКОМ текст `s`, набранный шрифтом и кеглем подписи `t`
-        /// на её нынешней ширине.
+        /// на ширине `width`.
         ///
         /// Ровно то же, что делает у себя внутри Text.preferredHeight, — с одной разницей, ради
         /// которой всё и написано: меряется ПЕРЕДАННАЯ строка, а не та, что лежит в подписи. Для
-        /// подписи это одно и то же; для содержимого InputField — нет, там в подписи живёт обрезок.</summary>
-        static float MeasureHeight(Text t, string s)
+        /// подписи это одно и то же; для содержимого InputField — нет, там в подписи живёт обрезок.
+        ///
+        /// Ширина ПЕРЕДАЁТСЯ, а не спрашивается у подписи: звать это на нулевой ширине нельзя (см.
+        /// LateUpdate), и проверка обязана стоять там, где есть чем ответить на «ещё рано».</summary>
+        static float MeasureHeight(Text t, string s, float width)
         {
             if (t == null || t.font == null) return 0f;
-            var settings = t.GetGenerationSettings(new Vector2(t.GetPixelAdjustedRect().size.x, 0f));
+            var settings = t.GetGenerationSettings(new Vector2(width, 0f));
             return t.cachedTextGeneratorForLayout.GetPreferredHeight(s ?? "", settings) / t.pixelsPerUnit;
         }
 
@@ -219,8 +384,12 @@ namespace WorldGen.PlayerPrep.Rendering
             // не построить блок вовсе (пустая предыстория, непрочитанный справочник) — и ссылки
             // остались бы смотреть на уничтоженные объекты.
             backstoryText = null;
+            backstoryInput = null;
             backstoryElement = null;
             backstoryScroll = null;
+            // Каретка нового поля ещё нигде не показана: −1 не совпадёт ни с одной настоящей.
+            caretShown = -1;
+            lengthShown = -1;
 
             // Куда была прокручена середина — запомнить ДО сноса, вернуть после (см. поле pendingScroll).
             if (bodyScroll != null)
@@ -497,8 +666,13 @@ namespace WorldGen.PlayerPrep.Rendering
         ///
         /// Имя набирается БЕЗ ПЕРЕСБОРКИ ЛИСТА: onValueChanged кладёт букву в файл и на этом всё.
         /// Позови он Rebuild — каждая набранная буква уничтожала бы поле вместе с кареткой и фокусом,
-        /// и имя длиннее одного знака набрать было бы физически нельзя. Ничто на листе от имени не
-        /// зависит, так что перерисовывать и нечего.</summary>
+        /// и имя длиннее одного знака набрать было бы физически нельзя.
+        ///
+        /// ПО ОКОНЧАНИИ ПРАВКИ — Refresh, а не Rebuild и не молчание. От имени зависит полоса
+        /// предупреждений: пустое имя даёт «Чего не хватает: Имя не задано»
+        /// (SheetMathSkills.cs:120), а строит эту строку чистый слой в SheetMath.Compute, то есть
+        /// пересчёт. Перерисовка по уже посчитанному оставила бы полосу висеть над листом, у которого
+        /// имя уже вписано.</summary>
         void BuildHeader(Transform content)
         {
             var row = AddRow(content, PortraitSide);
@@ -545,8 +719,9 @@ namespace WorldGen.PlayerPrep.Rendering
             columnLe.preferredWidth = 0f;
             columnLe.flexibleWidth = 1f;
 
-            AddInput(column, file.Name, "Без имени", v => file.Name = v,
+            var nameInput = AddInput(column, file.Name, "Без имени", v => file.Name = v,
                 multiline: false, height: 46f, fontSize: 28, textColor: Accent);
+            nameInput.onEndEdit.AddListener(_ => RequestRefresh());
             var subtitle = AddLabel(column, Subtitle(), 17, Muted);
             subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
         }
@@ -580,7 +755,17 @@ namespace WorldGen.PlayerPrep.Rendering
         ///
         /// СТАРЫЙ СПРАЙТ ОСВОБОЖДАЕТСЯ ЗДЕСЬ, и это не педантизм: спрайт держит текстуру до 512 точек,
         /// сборщик мусора Unity её сам не заберёт, и десяток примерок портрета оставил бы десяток
-        /// текстур в памяти — без единой строчки в журнале.</summary>
+        /// текстур в памяти — без единой строчки в журнале.
+        ///
+        /// ЕДИНСТВЕННАЯ ПРАВКА ЛИСТА, КОТОРОЙ ХВАТАЕТ Rebuild. Портрет меняет файл, но не меняет ни
+        /// одного посчитанного числа: SheetMath.Compute байтов портрета не читает вовсе, и в
+        /// «Чего не хватает» его нет (весь список — SheetMathSkills.cs:120-145: имя, вид, класс,
+        /// предыстория, характеристики, прибавки, навыки, компетентность, подкласс). Пересчитывать
+        /// нечего, перерисовать — есть что.
+        ///
+        /// И зовётся это ПРЯМО СЕЙЧАС, а не через RequestRefresh: сюда попадают из onClick, а он
+        /// выполняется на ОТПУСКАНИИ, когда щелчок уже разослан, — то самое условие, ради которого
+        /// правки из полей ввода откладываются.</summary>
         void SetPortrait(byte[] bytes)
         {
             ReleasePortrait();
@@ -712,9 +897,20 @@ namespace WorldGen.PlayerPrep.Rendering
         /// рисования знала бы только два из них — и врала бы ровно там, где лист недособран.
         ///
         /// Набор НЕ ПЕРЕСОБИРАЕТ лист (иначе не набрать и двузначного числа): onValueChanged кладёт
-        /// разобранное число в файл, а перерисовка идёт по onEndEdit — то есть когда игрок ушёл из
-        /// поля. Оба обработчика нужны: без первого потерялось бы число, набранное перед самым
-        /// нажатием «Сохранить», без второго «Хиты» строкой выше остались бы прежними навсегда.</summary>
+        /// разобранное число в файл, а по onEndEdit — то есть когда игрок ушёл из поля — заказывается
+        /// ПЕРЕСЧЁТ. Оба обработчика нужны: без первого потерялось бы число, набранное перед самым
+        /// нажатием «Сохранить», без второго «Хиты» строкой выше остались бы прежними навсегда.
+        ///
+        /// ПЕРЕСЧЁТ, А НЕ ПЕРЕРИСОВКА, и раньше здесь стояла именно перерисовка — от чего эта строка
+        /// и не работала вовсе. Своё число хитов живёт в file.MaxHpOverride, а читает его SheetMath
+        /// при СЧЁТЕ: и «Хиты», и подпись под ними («вписан вручную (среднее дало бы 38)») приходят
+        /// готовыми из sheet. Rebuild перерисовывал лист по ПРЕЖНЕМУ sheet — вписал 50, «Хиты»
+        /// показывают старое; нажал «Среднее», поле очистилось, а «Хиты» продолжали показывать
+        /// вписанное и подпись врала про число, которого в файле уже нет.
+        ///
+        /// Заказ, а не немедленный Refresh, — потому что onEndEdit выполняется внутри чужого нажатия;
+        /// вся причина расписана в RequestRefresh. У кнопки «Среднее» такой беды нет, она зовёт
+        /// Refresh прямо.</summary>
         void BuildHpOverrideRow(Transform column)
         {
             var row = AddRow(column, RowHeight + 8f);
@@ -729,7 +925,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 "среднее", v => file.MaxHpOverride = SheetEdits.ParseMaxHpOverride(v),
                 multiline: false, height: 0f, fontSize: 17, textColor: Accent);
             input.contentType = InputField.ContentType.IntegerNumber;
-            input.onEndEdit.AddListener(_ => Rebuild());
+            input.onEndEdit.AddListener(_ => RequestRefresh());
             var inputLe = input.GetComponent<LayoutElement>();
             inputLe.minWidth = HpFieldWidth;
             inputLe.preferredWidth = HpFieldWidth;
@@ -741,7 +937,7 @@ namespace WorldGen.PlayerPrep.Rendering
             AddButton(row, "Среднее", 150f, () =>
             {
                 file.MaxHpOverride = null;
-                Rebuild();
+                Refresh();
             });
 
             var hint = AddLabel(row, sheet.MaxHpExplain ?? "", 14, Faint);
@@ -916,6 +1112,7 @@ namespace WorldGen.PlayerPrep.Rendering
             box.GetComponent<Image>().color = PlaceholderFill;
 
             var input = box.GetComponent<InputField>();
+            backstoryInput = input;
             input.targetGraphic = box.GetComponent<Image>();
             input.lineType = InputField.LineType.MultiLineNewline;
 
@@ -964,6 +1161,13 @@ namespace WorldGen.PlayerPrep.Rendering
             input.text = file.Backstory ?? "";
             // Пересборки НЕТ намеренно: она уничтожила бы поле вместе с кареткой на первой же букве.
             // Высота блока при этом успевает за текстом — её каждый кадр пересчитывает LateUpdate.
+            //
+            // И ПЕРЕСЧЁТА ПО ОКОНЧАНИИ ПРАВКИ ТОЖЕ НЕТ — единственная правка листа, которой не нужно
+            // вообще ничего. Предыстория в файле есть, но ни одно посчитанное число её не читает:
+            // SheetMath.Compute к file.Backstory не обращается, а строка «предыстория» в подзаголовке
+            // и в «Чего не хватает» — это BackgroundId, выбор из справочника, а не этот текст. Заказав
+            // здесь Refresh «для единообразия», мы бы уничтожали поле вместе с прокруткой каждый раз,
+            // когда игрок из него выходит, — ради перерисовки, ничего не меняющей.
             input.onValueChanged.AddListener(v => file.Backstory = v);
         }
 

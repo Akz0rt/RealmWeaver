@@ -43,6 +43,21 @@ namespace WorldGen.PlayerPrep.Rendering
 
         const float PanelWidth = 620f;
 
+        // Высота сообщения считается по ЧИСЛУ СТРОК, а не Text.preferredHeight: в момент постройки
+        // раскладки ещё не было, ширины у текста нет, и preferredHeight там врёт — та же ловушка, что
+        // у PlayerPrepScreenController.FooterHeight и полосы предупреждений на листе.
+        const int MessageFontSize = 15;
+        // Ширина текста = ширина панели минус её поля (24 слева, 24 справа).
+        const float MessageWidth = PanelWidth - 48f;
+        const float MessageLineHeight = 21f;
+        // Кегль 15 на полосе листа шириной 1860 точек даёт около 205 знаков в строке — это 9,07 точки
+        // на знак. На 572 точках, стало быть, около 63.
+        const float MessageCharsPerLine = MessageWidth / 9.07f;
+        // Предел на случай сообщения, которого здесь пока не показывают. Двенадцать строк перебрать
+        // нечем: самое длинное здешнее сообщение — фраза про несохранённое плюс путь к файлу, а путь
+        // в Windows не длиннее 260 знаков, то есть пять строк с переносом.
+        const float MaxMessageHeight = 12f * MessageLineHeight;
+
         /// <summary>Убирает диалог, до которого не дотянется ни один живой обработчик. Зовётся из
         /// PlayerPrepScreenController.Awake рядом с ConfirmDialog.DismissStranded — и по той же
         /// причине: перезагрузка домена в режиме Play (обычная перекомпиляция при возврате фокуса
@@ -111,13 +126,14 @@ namespace WorldGen.PlayerPrep.Rendering
             titleLabel.color = Accent;
             titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 30f;
 
-            var body = UiKit.Label(panel, message ?? "", 15, TextAnchor.UpperLeft);
+            var body = UiKit.Label(panel, message ?? "", MessageFontSize, TextAnchor.UpperLeft);
             body.color = Muted;
-            // Высота КОНСТАНТОЙ, а не из Text.preferredHeight: в момент постройки раскладки ещё не
-            // было, ширины у текста нет, и preferredHeight там врёт — та же ловушка, что у
-            // PlayerPrepScreenController.FooterHeight и полосы предупреждений на листе. Две строки на
-            // ширине 572 точки кеглем 15 — с запасом на любое из здешних сообщений.
-            body.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
+            // Высота ПО САМОМУ СООБЩЕНИЮ, а не «две строки с запасом». Запас в 52 точки был взят на
+            // глаз и не покрывал единственное сообщение, которое здесь и показывается: фраза про
+            // несохранённое плюс строка «Файл: <настоящий путь>» — это три-четыре строки. А
+            // verticalOverflow у UiKit.Label — Overflow, подписи проекта не режутся, так что лишние
+            // строки рисовались бы ПОВЕРХ полосы кнопок.
+            body.gameObject.AddComponent<LayoutElement>().preferredHeight = MessageHeight(message);
 
             var footer = NewRect(panel, "Footer", typeof(HorizontalLayoutGroup));
             footer.gameObject.AddComponent<LayoutElement>().preferredHeight = 46f;
@@ -132,6 +148,23 @@ namespace WorldGen.PlayerPrep.Rendering
             AddChoice(font, footer, canvasGO, "Сохранить", 180f, onResult, UnsavedChoice.Save);
             AddChoice(font, footer, canvasGO, "Не сохранять", 180f, onResult, UnsavedChoice.Discard);
             AddChoice(font, footer, canvasGO, "Отмена", 150f, onResult, UnsavedChoice.Cancel);
+        }
+
+        /// <summary>Сколько точек займёт сообщение. Переводы строк считаются ОТДЕЛЬНО от переноса по
+        /// словам: здешнее сообщение всегда состоит из фразы и строки про файл, и делить на строки
+        /// одну только общую длину значило бы слить их в одну, как только обе окажутся короткими.
+        ///
+        /// Знаки в строке — прикидка, и другой здесь быть не может: точную высоту знает
+        /// Text.preferredHeight, а спросить его в момент постройки нельзя (см. выше). ЛИШНЯЯ СТРОКА
+        /// ДОБАВЛЯЕТСЯ НАРОЧНО, чтобы прикидка ошибалась только в одну сторону: пустая полоска внизу
+        /// панели незаметна, а недостающая строка ложится текстом поверх кнопок.</summary>
+        static float MessageHeight(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return 0f;
+            int lines = 1;
+            foreach (var paragraph in message.Split('\n'))
+                lines += Mathf.Max(1, Mathf.CeilToInt(paragraph.Length / MessageCharsPerLine));
+            return Mathf.Min(lines * MessageLineHeight, MaxMessageHeight);
         }
 
         /// <summary>Кнопка ответа. Холст ловится ЗАМЫКАНИЕМ (owner), а не читается из activeGO в
