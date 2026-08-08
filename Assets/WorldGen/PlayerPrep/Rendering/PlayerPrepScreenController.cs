@@ -82,6 +82,8 @@ namespace WorldGen.PlayerPrep.Rendering
             ConfirmDialog.DismissStranded();
             // Ровно та же беда и ровно то же лекарство — см. UnsavedChangesPrompt.DismissStranded.
             UnsavedChangesPrompt.DismissStranded();
+            // И третий такой же слой — панель плана прокачки (LevelPlanView.DismissStranded).
+            LevelPlanView.DismissStranded();
             DemolishForRebuild();
 
             LoadRules();

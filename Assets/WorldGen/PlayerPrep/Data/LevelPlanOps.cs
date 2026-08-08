@@ -87,5 +87,22 @@ namespace WorldGen.PlayerPrep.Data
                     Text = $"Выбери компетентность в {cls.ExpertisePickCount} навыках" });
             return pending;
         }
+
+        /// <summary>Понизить уровень на единицу, не ниже первого. Нужно затем, что «Повысить уровень» —
+        /// кнопка, а по кнопке промахиваются.
+        ///
+        /// ПОМЕТКИ ПЛАНА ОСТАЮТСЯ ВСЕ, включая те, что оказались выше нового уровня, — и это не
+        /// недоделка, а то же правило «план — это план, а не состояние»: чистить их значило бы стирать
+        /// работу игрока за один промах мимо кнопки. Умения и прибавки перестают действовать сами,
+        /// потому что и те и другие отбираются по уровню (SheetMathSkills, SheetMath.AbilityTotal);
+        /// проверено SheetSkillsSelfTests.SelfTestLoweringLevelKeepsPlan.
+        ///
+        /// Справочник не нужен: номер уровня от класса не зависит.</summary>
+        public static void LevelDown(CharacterFile file)
+        {
+            if (file == null) return;
+            if (file.Level <= 1) return;
+            file.Level--;
+        }
     }
 }

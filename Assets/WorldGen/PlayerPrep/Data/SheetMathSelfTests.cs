@@ -374,6 +374,77 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: прибавка с будущего уровня не действует, а со взятого — действует")]
+        public void SelfTestBumpWaitsForItsLevel()
+        {
+            // Мутант, ради которого написано: «прибавки складываются без фильтра» (то, как оно и было
+            // до плана прокачки). Один и тот же файл считается на 4 и на 5 уровне: верное правило даёт
+            // 15 и 17, неверное — 17 и 17.
+            var c = Fixtures.Character();
+            c.Bumps.Add(new AbilityBump { Source = SheetMath.BumpSource(5), AbilityId = "dex", Amount = 2 });
+            c.Level = 4;
+            int before = SheetMath.Compute(c, Fixtures.Rules()).Total.Dex;
+            c.Level = 5;
+            int onTime = SheetMath.Compute(c, Fixtures.Rules()).Total.Dex;
+
+            // Мутант «неразбираемый Source не действует никогда»: прибавка от предыстории и прибавка с
+            // чужой пометкой обязаны действовать на любом уровне — иначе чужой файл молча теряет
+            // выборы игрока.
+            var odd = Fixtures.Character();
+            odd.Level = 1;
+            odd.Bumps.Add(new AbilityBump { Source = "level:вторник", AbilityId = "int", Amount = 1 });
+            odd.Bumps.Add(new AbilityBump { Source = "race", AbilityId = "int", Amount = 1 });
+            int strange = SheetMath.Compute(odd, Fixtures.Rules()).Total.Int;
+
+            bool ok = before == 15 && onTime == 17 && strange == 14;
+            if (!ok) Debug.LogError($"FAIL прибавка по уровню: на 4 ЛОВ {before} (ждали 15), "
+                                  + $"на 5 ЛОВ {onTime} (ждали 17), непонятный Source ИНТ {strange} (ждали 14)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: намеченное на будущий уровень не меняет нынешний лист")]
+        public void SelfTestPlannedChoicesDoNotTouchTodaysSheet()
+        {
+            // ГЛАВНАЯ проверка плана прокачки, и она нарочно берёт все три вида пометок разом: подкласс,
+            // черту и прибавки. Мутанты, которых валит:
+            //   «прибавки складываются без фильтра»          → ЛОВ 15 → 17, а с ней КД и скрытность;
+            //   «пометка подкласса действует сразу»          → в умениях появляются «Быстрые руки»;
+            //   «черта плана применяется без оглядки на уровень» → в умениях появляется «Борец».
+            // Персонаж 4 уровня, а намечено всё на 8 и 12 — то есть верное и неверное правило
+            // РАСХОДЯТСЯ на каждой из трёх пометок.
+            var rules = Fixtures.Rules();
+            rules.Feats.Add(new FeatDef { Id = "grappler", Name = "Борец", Text = "…", Category = "general" });
+
+            var plain = Fixtures.Character();
+            plain.Level = 4;
+            plain.SubclassId = null;      // иначе умения подкласса пришли бы и без всякой пометки
+            var before = SheetMath.Compute(plain, rules);
+
+            var planned = Fixtures.Character();
+            planned.Level = 4;
+            planned.SubclassId = null;
+            planned.Plan.Add(new LevelChoice { Level = 8, Kind = "subclass", ValueId = "thief" });
+            planned.Plan.Add(new LevelChoice { Level = 12, Kind = "feat", ValueId = "grappler" });
+            planned.Bumps.Add(new AbilityBump { Source = SheetMath.BumpSource(12), AbilityId = "dex", Amount = 2 });
+            var after = SheetMath.Compute(planned, rules);
+
+            bool sameTotals = SheetMath.AbilityOrder()
+                .All(id => before.Total.Get(id) == after.Total.Get(id)
+                        && before.Modifiers.Get(id) == after.Modifiers.Get(id));
+            // КД проверяется отдельно: именно оно ловит утёкшую ловкость дальше по расчёту.
+            bool sameAc = before.ArmorClass == after.ArmorClass;
+            string beforeSkills = string.Join(",", before.Skills.Select(s => s.SkillId + s.Bonus).ToArray());
+            string afterSkills = string.Join(",", after.Skills.Select(s => s.SkillId + s.Bonus).ToArray());
+            string beforeFeatures = string.Join(",", before.Features.Select(f => f.Id).ToArray());
+            string afterFeatures = string.Join(",", after.Features.Select(f => f.Id).ToArray());
+            bool ok = sameTotals && sameAc && beforeSkills == afterSkills && beforeFeatures == afterFeatures;
+
+            if (!ok) Debug.LogError($"FAIL план меняет нынешний лист: ЛОВ {before.Total.Dex}→{after.Total.Dex}, "
+                                  + $"КД {before.ArmorClass}→{after.ArmorClass}, навыки «{beforeSkills}» → «{afterSkills}», "
+                                  + $"умения «{beforeFeatures}» → «{afterFeatures}»");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

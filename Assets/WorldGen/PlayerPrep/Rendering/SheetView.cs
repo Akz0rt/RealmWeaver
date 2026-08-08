@@ -41,7 +41,12 @@ namespace WorldGen.PlayerPrep.Rendering
     /// А ЗОВЁТСЯ ЭТО ОТЛОЖЕННО, если правка пришла из поля ввода, — см. RequestRefresh.</summary>
     public class SheetView : MonoBehaviour
     {
-        const float BottomBarHeight = 66f;
+        /// <summary>Высота нижней полосы. Полоса в ДВА ЯРУСА: кнопки внизу (44), путь к файлу вверху
+        /// (26) и воздух между ними — итого 94 плюс 10 точек отступа от низа экрана. Было 66 в один
+        /// ярус; ярусов стало два, когда кнопок стало шесть (см. BuildBottomBar).</summary>
+        const float BottomBarHeight = 104f;
+        const float BarButtonHeight = 44f;
+        const float BarPathHeight = 26f;
         const float RowHeight = 32f;
         const float LeftColumnWidth = 520f;
         const float TitleWidth = 230f;
@@ -555,6 +560,22 @@ namespace WorldGen.PlayerPrep.Rendering
             return content;
         }
 
+        /// <summary>Нижняя полоса. ДВА ЯРУСА, и это не украшение: с приходом плана прокачки кнопок
+        /// стало шесть, а путь к файлу стоял между ними.
+        ///
+        /// АРИФМЕТИКА, которую эта полоса обязана сходиться (ширина полосы 1872 = 1920 минус поля по
+        /// 24):
+        ///   слева  «← К списку листов» 0–240, «Изменить» 252–442,
+        ///          «Повысить уровень» 454–684, «План прокачки ▸» 696–926;
+        ///   справа «Сохранить как…» 1382–1622, «Сохранить» 1632–1872.
+        /// Между 926 и 1382 остаётся 456 точек воздуха — кнопки не наезжают ни при какой подписи,
+        /// потому что ширины заданы числами, а не текстом.
+        ///
+        /// ПУТЬ К ФАЙЛУ ПЕРЕЕХАЛ НА ВЕРХНИЙ ЯРУС и получил всю ширину полосы. Оставь мы его в
+        /// прежней щели, ему досталось бы 456 точек вместо 840 — а он не режется (у подписей проекта
+        /// horizontalOverflow = Wrap, verticalOverflow = Overflow), и длинный путь в Windows, до 260
+        /// знаков, свернулся бы в пять строк ПОВЕРХ листа. Прежние 840 точек не спасали и раньше:
+        /// в них помещается около 118 знаков.</summary>
         void BuildBottomBar()
         {
             var bar = NewRect(transform, "BottomBar");
@@ -564,55 +585,95 @@ namespace WorldGen.PlayerPrep.Rendering
             bar.offsetMin = new Vector2(24f, 10f);
             bar.offsetMax = new Vector2(-24f, BottomBarHeight);
 
-            var back = UiKit.Button(bar, "← К списку листов", AskBackToList);
-            var backRt = (RectTransform)back.transform;
-            backRt.anchorMin = new Vector2(0f, 0.5f);
-            backRt.anchorMax = new Vector2(0f, 0.5f);
-            backRt.pivot = new Vector2(0f, 0.5f);
-            backRt.sizeDelta = new Vector2(240f, 44f);
-
             var root = PlayerPrepScreenController.Instance;
+            bool live = sheet != null && file != null && rules != null;
+
+            AddBarButton(bar, "← К списку листов", 0f, 240f, AskBackToList, true);
 
             // «Изменить» ВСЕГДА, а не только когда чего-то не хватает. До задачи 11б дорога в мастер
             // предлагалась одной кнопкой в полосе предупреждений — то есть ровно тому, у кого лист
             // недособран; у законченного персонажа изменить класс или разложить прибавки было нечем
             // вовсе, кроме как создать его заново.
-            var edit = UiKit.Button(bar, "Изменить", BackToWizard, root != null);
-            var editRt = (RectTransform)edit.transform;
-            editRt.anchorMin = new Vector2(0f, 0.5f);
-            editRt.anchorMax = new Vector2(0f, 0.5f);
-            editRt.pivot = new Vector2(0f, 0.5f);
-            editRt.anchoredPosition = new Vector2(252f, 0f);
-            editRt.sizeDelta = new Vector2(190f, 44f);
+            AddBarButton(bar, "Изменить", 252f, 190f, BackToWizard, root != null);
 
-            var saveAs = UiKit.Button(bar, "Сохранить как…", SaveAsThroughRoot, root != null);
-            var saveAsRt = (RectTransform)saveAs.transform;
-            saveAsRt.anchorMin = new Vector2(1f, 0.5f);
-            saveAsRt.anchorMax = new Vector2(1f, 0.5f);
-            saveAsRt.pivot = new Vector2(1f, 0.5f);
-            saveAsRt.anchoredPosition = new Vector2(-250f, 0f);
-            saveAsRt.sizeDelta = new Vector2(240f, 44f);
+            // На 20 уровне кнопка гаснет: включённая кнопка, которая ничего не делает, читается как
+            // поломка. Предел — правило чистого слоя (LevelPlanOps.LevelUp выходит на двадцатом), здесь
+            // только показ; сравнивается ПОСЧИТАННЫЙ уровень, тот же, которым подписан класс.
+            AddBarButton(bar, "Повысить уровень", 454f, 230f, RaiseLevel, live && sheet.Level < 20);
+            AddBarButton(bar, "План прокачки ▸", 696f, 230f, () => OpenPlan(0), live);
 
-            var save = UiKit.Button(bar, "Сохранить", SaveThroughRoot, root != null);
-            var saveRt = (RectTransform)save.transform;
-            saveRt.anchorMin = new Vector2(1f, 0.5f);
-            saveRt.anchorMax = new Vector2(1f, 0.5f);
-            saveRt.pivot = new Vector2(1f, 0.5f);
-            saveRt.sizeDelta = new Vector2(240f, 44f);
+            AddBarButton(bar, "Сохранить как…", -250f, 240f, SaveAsThroughRoot, root != null);
+            AddBarButton(bar, "Сохранить", 0f, 240f, SaveThroughRoot, root != null, fromRight: true);
 
             if (root != null && !string.IsNullOrEmpty(root.CurrentPath))
             {
                 var path = UiKit.Label(bar, "Файл: " + root.CurrentPath, 13, TextAnchor.MiddleLeft);
                 path.color = Faint;
                 var pathRt = path.rectTransform;
-                pathRt.anchorMin = new Vector2(0f, 0.5f);
-                pathRt.anchorMax = new Vector2(0f, 0.5f);
-                pathRt.pivot = new Vector2(0f, 0.5f);
-                // Начинается ПОСЛЕ «Изменить» и кончается ДО «Сохранить как…»: 452 + 840 = 1292 при
-                // полосе шириной 1872 (1920 минус поля), а правая пара кнопок занимает от 1382.
-                pathRt.anchoredPosition = new Vector2(452f, 0f);
-                pathRt.sizeDelta = new Vector2(840f, 30f);
+                pathRt.anchorMin = new Vector2(0f, 1f);
+                pathRt.anchorMax = new Vector2(1f, 1f);
+                pathRt.pivot = new Vector2(0.5f, 1f);
+                pathRt.offsetMin = new Vector2(0f, -BarPathHeight);
+                pathRt.offsetMax = Vector2.zero;
             }
+        }
+
+        /// <summary>Кнопка нижней полосы. x отсчитывается слева, а при отрицательном значении (или при
+        /// fromRight) — справа; кнопки стоят на НИЖНЕМ ярусе полосы, над ними идёт путь к файлу.</summary>
+        void AddBarButton(Transform bar, string label, float x, float width, Action onClick, bool enabled,
+            bool fromRight = false)
+        {
+            var btn = UiKit.Button(bar, label, onClick, enabled);
+            var rt = (RectTransform)btn.transform;
+            bool right = fromRight || x < 0f;
+            rt.anchorMin = new Vector2(right ? 1f : 0f, 0f);
+            rt.anchorMax = new Vector2(right ? 1f : 0f, 0f);
+            rt.pivot = new Vector2(right ? 1f : 0f, 0f);
+            rt.anchoredPosition = new Vector2(x, 0f);
+            rt.sizeDelta = new Vector2(width, BarButtonHeight);
+            var text = btn.GetComponentInChildren<Text>();
+            // Кегль сбавлен с двадцати: «← К списку листов» и «Повысить уровень» на 240 и 230 точках
+            // двадцатым не помещаются, а UiKit.Label переносит по словам — подпись уехала бы на вторую
+            // строку внутри кнопки высотой в одну.
+            if (text != null) text.fontSize = 17;
+        }
+
+        /// <summary>Повысить уровень: поднять номер, включить намеченное на нём и показать, что
+        /// предстоит выбрать.
+        ///
+        /// ПОРЯДОК ВАЖЕН. LevelUp только двигает номер; подкласс, намеченный заранее, остаётся
+        /// пометкой, пока ApplyPlanFor не перенесёт его в file.SubclassId, — без этого лист на третьем
+        /// уровне сказал бы «Подкласс не выбран» игроку, который выбрал его первым делом.
+        ///
+        /// ПЕРЕСЧЁТ, А НЕ ПЕРЕРИСОВКА, обеими дорогами: изменился уровень, а от него зависит всё —
+        /// мастерство, хиты, умения. Когда открывается панель, пересчёт откладывается до её закрытия
+        /// (лист под ней всё равно не виден), а когда выбирать нечего — делается сразу. Забудь мы
+        /// вторую дорогу, уровень поднимался бы молча.</summary>
+        void RaiseLevel()
+        {
+            if (file == null || rules == null) return;
+            var steps = LevelPlanOps.LevelUp(file, rules);
+            LevelChoiceOps.ApplyPlanFor(file, file.Level);
+            if (steps.Count > 0) OpenPlan(file.Level);
+            else Refresh();
+        }
+
+        /// <summary>Открыть панель плана. Лист пересчитывается ПО ЗАКРЫТИИ — панель правит тот же
+        /// файл, из которого он считается.
+        ///
+        /// Замыкание идёт через корень, а не через this, и проверяет `Sheet != null`, а НЕ
+        /// `Sheet?.Refresh()`: у UnityEngine.Object сравнение с null знает про уничтоженные объекты, а
+        /// оператор `?.` — нет, он проверил бы настоящую ссылку и пропустил вызов дальше, к
+        /// MissingReferenceException (см. PlayerPrepScreenController.Sheet).</summary>
+        void OpenPlan(int highlightLevel)
+        {
+            if (file == null || rules == null) return;
+            LevelPlanView.Open(file, rules, highlightLevel, () =>
+            {
+                var root = PlayerPrepScreenController.Instance;
+                if (root == null) return;
+                if (root.Sheet != null) root.Sheet.Refresh();
+            });
         }
 
         /// <summary>Вопрос про несохранённое задаёт КОРЕНЬ: снимок сохранённого состояния знает
@@ -819,8 +880,13 @@ namespace WorldGen.PlayerPrep.Rendering
         /// <summary>Имя из справочника строчными, «не выбрано» либо «неизвестно «id»» — три разных
         /// ответа на три разных случая. Идентификатор печатается КАК ЕСТЬ, без ToLowerInvariant: он не
         /// текст для чтения, а то, что игрок будет искать глазами в своём .dndchar, и «Aasimar»,
-        /// показанный как «aasimar», он там не найдёт.</summary>
-        static string Part(string name, string id, string what, string absent)
+        /// показанный как «aasimar», он там не найдёт.
+        ///
+        /// ВИДЕН ПАНЕЛИ ПЛАНА (LevelPlanView), и это нарочно: там те же три случая на имя подкласса и
+        /// имя черты. Своя копия этой тройки склеила бы «выбран незнакомый» с «не выбран» — ровно та
+        /// подмена случая, из-за которой лист врал под собственным предупреждением. Правил из слоя
+        /// Data здесь нет: это способ ПОКАЗАТЬ, а не посчитать.</summary>
+        internal static string Part(string name, string id, string what, string absent)
         {
             if (!string.IsNullOrEmpty(name)) return name.ToLowerInvariant();
             return string.IsNullOrEmpty(id) ? absent : $"{what}: неизвестно «{id}»";
@@ -859,6 +925,7 @@ namespace WorldGen.PlayerPrep.Rendering
             }
 
             AddCaption(right, "Бой и защита");
+            BuildLevelRow(right);
             AddNumberRow(right, "ac", "Класс доспеха", sheet.ArmorClass.ToString(), null,
                 sheet.ArmorClassExplain, marked: false);
             AddNumberRow(right, "init", "Инициатива", Signed(sheet.Initiative), null,
@@ -885,6 +952,52 @@ namespace WorldGen.PlayerPrep.Rendering
                 // числом оказались бы два разных её названия.
                 AddNumberRow(right, "skill:" + skill.SkillId, Mark(skill.Proficient) + skill.Name,
                     Signed(skill.Bonus), skill.Hint, skill.Explain, skill.Proficient);
+        }
+
+        /// <summary>Уровень с кнопкой «−». Понижать надо потому, что «Повысить уровень» — кнопка, а по
+        /// кнопке промахиваются; без обратного хода промах чинился бы только правкой файла руками.
+        ///
+        /// ЧИСЛО БЕРЁТСЯ ПОСЧИТАННОЕ (sheet.Level, прижатое к 1–20), а не file.Level: рядом с ним стоит
+        /// подзаголовок «плут 5», собранный из того же числа, и на файле с испорченным уровнем эти два
+        /// места разошлись бы прямо на экране.
+        ///
+        /// Кнопка гаснет на первом уровне — ниже правило не пускает (LevelPlanOps.LevelDown), и
+        /// включённая кнопка, которая ничего не делает, читается как поломка. Сравнение с единицей
+        /// здесь не копия правила, а показ: нажатая по недосмотру, она всё равно ничего не сломает.
+        ///
+        /// ПЕРЕСЧЁТ, А НЕ ПЕРЕРИСОВКА: от уровня зависят мастерство, хиты, умения и половина листа.</summary>
+        void BuildLevelRow(Transform column)
+        {
+            var row = AddRow(column, RowHeight);
+
+            var title = AddLabel(row, "Уровень", 17, null);
+            var titleLe = title.gameObject.AddComponent<LayoutElement>();
+            titleLe.minWidth = TitleWidth;
+            titleLe.preferredWidth = TitleWidth;
+            titleLe.flexibleWidth = 0f;
+
+            var value = AddLabel(row, sheet.Level.ToString(), 18, Accent);
+            var valueLe = value.gameObject.AddComponent<LayoutElement>();
+            valueLe.minWidth = ValueWidth;
+            valueLe.preferredWidth = ValueWidth;
+            valueLe.flexibleWidth = 0f;
+
+            var down = UiKit.Button(row, "−", () =>
+            {
+                LevelPlanOps.LevelDown(file);
+                Refresh();
+            }, sheet.Level > 1);
+            var downLe = down.gameObject.AddComponent<LayoutElement>();
+            downLe.minWidth = 54f;
+            downLe.preferredWidth = 54f;
+            downLe.flexibleWidth = 0f;
+            var downText = down.GetComponentInChildren<Text>();
+            if (downText != null) downText.fontSize = 18;
+
+            var hint = AddLabel(row, "поднимает «Повысить уровень» внизу листа", 14, Faint);
+            var hintLe = hint.gameObject.AddComponent<LayoutElement>();
+            hintLe.preferredWidth = 0f;                 // остаток ширины, а не ширина текста
+            hintLe.flexibleWidth = 1f;
         }
 
         /// <summary>Своё число хитов вместо среднего — за столом их часто бросают костью, и до задачи

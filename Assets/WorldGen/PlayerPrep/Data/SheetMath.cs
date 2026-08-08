@@ -43,21 +43,76 @@ namespace WorldGen.PlayerPrep.Data
         /// «+0 ловкость» в объяснении и «0» в самом числе на одной строке.</summary>
         public static string Signed(int v) => v >= 0 ? "+" + v : v.ToString();
 
+        /// <summary>Как записывается прибавка, полученная НА УРОВНЕ. Формат знают ровно два места —
+        /// эта строка и BumpLevel, которая её разбирает обратно, — и стоят они рядом нарочно: разойдись
+        /// запись с разбором, прибавка, записанная планом прокачки, перестала бы находиться при
+        /// пересчёте и молча стала бы вечной.</summary>
+        public static string BumpSource(int level) => "level:" + level;
+
+        /// <summary>На каком уровне получена прибавка: N из «level:N», либо 0, если Source к уровню
+        /// не привязан вовсе («background», «race») или разобрать его не удалось.
+        ///
+        /// НЕРАЗБИРАЕМЫЙ Source — ЭТО «ДЕЙСТВУЕТ ВСЕГДА», а не «не действует никогда»: чужая или более
+        /// новая редакция файла может пометить прибавку по-своему, и потерять из-за этого выбор игрока
+        /// хуже, чем показать его на уровень раньше срока.</summary>
+        public static int BumpLevel(string source)
+        {
+            const string prefix = "level:";
+            if (string.IsNullOrEmpty(source)) return 0;
+            if (!source.StartsWith(prefix, System.StringComparison.Ordinal)) return 0;
+            return int.TryParse(source.Substring(prefix.Length), out int at) ? at : 0;
+        }
+
+        /// <summary>Сколько у характеристики СЕЙЧАС — база плюс те прибавки, которые на этом уровне уже
+        /// действуют. ЕДИНСТВЕННОЕ место, где прибавки складываются: и лист (Compute), и объяснение
+        /// (ExplainAbility), и потолок 20 в плане прокачки (LevelChoiceOps.ChooseAsi) спрашивают
+        /// здесь.
+        ///
+        /// УРОВЕНЬ УЧИТЫВАЕТСЯ, и это не мелочь. Прибавка вида «level:12» лежит в файле с того мига,
+        /// как игрок наметил её в плане прокачки, — то есть задолго до двенадцатого уровня. Складывай
+        /// мы всё подряд, «+2 Ловкость на 12 уровне» подняли бы Ловкость на листе четвёртого, молча и
+        /// без единой строчки объяснения.
+        ///
+        /// Уровень прижимается к 1–20 здесь же: снаружи его передают и из файла (где он бывает
+        /// испорчен), и из плана.</summary>
+        public static int AbilityTotal(CharacterFile file, string abilityId, int level)
+        {
+            if (file == null) return 0;
+            int lv = Clamp(level, 1, 20);
+            int total = file.Base.Get(abilityId);
+            foreach (var b in file.Bumps)
+            {
+                if (b.AbilityId != abilityId) continue;
+                int at = BumpLevel(b.Source);
+                if (at > lv) continue;             // намечено на будущее — на этом листе ещё не действует
+                total += b.Amount;
+            }
+            return total;
+        }
+
         /// <summary>«Ловкость 15 → 17 (+2)»: база из файла, стрелка, сумма с прибавками. Без прибавок
         /// скобок нет вовсе — «Мудрость 10 → 10», а не «→ 10 (+0)»: ноль в скобках читается как
         /// потерянная прибавка.
         ///
-        /// Складываются ВСЕ прибавки характеристики, независимо от Source: игроку важно, откуда
-        /// взялось итоговое число, а не какая из строк файла его дала. Правило переехало сюда из
-        /// WizardView, где было второй копией; лист и мастер обязаны объяснять одно число одинаково.
+        /// Складываются те же прибавки, что и на листе, — через AbilityTotal, а не своим циклом:
+        /// объяснение обязано объяснять ровно то число, которое стоит рядом с ним.
         ///
         /// Справочник не нужен: и база, и прибавки лежат в файле, поэтому мастер зовёт это на
-        /// полупустом персонаже, у которого ни вида, ни класса ещё нет.</summary>
+        /// полупустом персонаже, у которого ни вида, ни класса ещё нет. Уровень такому персонажу
+        /// берётся из файла — другого взять негде.</summary>
         public static string ExplainAbility(CharacterFile file, string abilityId)
         {
             if (file == null) return AbilityName(abilityId);
+            return ExplainAbility(file, abilityId, file.Level);
+        }
+
+        /// <summary>То же объяснение, но на ЗАДАННОМ уровне. Compute зовёт эту перегрузку со своим уже
+        /// прижатым уровнем: прижми объяснение уровень второй раз само — правило «уровень прижимается
+        /// к 1–20» оказалось бы записано в двух местах, а «одно место» и есть весь смысл AbilityTotal.</summary>
+        static string ExplainAbility(CharacterFile file, string abilityId, int level)
+        {
             int fromBase = file.Base.Get(abilityId);
-            int bump = file.Bumps.Where(b => b.AbilityId == abilityId).Sum(b => b.Amount);
+            int bump = AbilityTotal(file, abilityId, level) - fromBase;
             string head = $"{AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
             return bump == 0 ? head : $"{head} ({(bump > 0 ? "+" : "")}{bump})";
         }
@@ -80,22 +135,19 @@ namespace WorldGen.PlayerPrep.Data
             // над числами, посчитанными для двадцатого.
             d.Level = level;
 
-            // Суммы и модификаторы
-            d.Total = new AbilityScores
-            {
-                Str = file.Base.Str, Dex = file.Base.Dex, Con = file.Base.Con,
-                Int = file.Base.Int, Wis = file.Base.Wis, Cha = file.Base.Cha
-            };
+            // Суммы и модификаторы. Складывает AbilityTotal — здесь не осталось ни одного сложения
+            // своими руками: прибавка, намеченная на будущий уровень, не должна попасть на этот лист,
+            // и решает это ОДНО место (см. SheetMath.AbilityTotal).
+            d.Total = new AbilityScores();
+            foreach (var id in AbilityIds) d.Total.Add(id, AbilityTotal(file, id, level));
+            // Неизвестные характеристики перечисляются по ВСЕМ прибавкам, включая намеченные на
+            // будущее: опечатка в идентификаторе — это опечатка независимо от того, когда прибавка
+            // начнёт действовать, и молчать о ней до двенадцатого уровня незачем.
             foreach (var b in file.Bumps)
-            {
-                // AbilityScores.Add на неизвестной строке молча ничего не делает — прибавка просто
-                // испарилась бы. Говорим вслух, как и про любой другой неизвестный Id.
                 if (System.Array.IndexOf(AbilityIds, b.AbilityId) < 0)
                     d.UnknownIds.Add($"прибавка: неизвестная характеристика «{b.AbilityId}»");
-                d.Total.Add(b.AbilityId, b.Amount);
-            }
             foreach (var id in AbilityIds) d.Modifiers.Add(id, Modifier(d.Total.Get(id)));
-            foreach (var id in AbilityIds) d.AbilityExplain[id] = ExplainAbility(file, id);
+            foreach (var id in AbilityIds) d.AbilityExplain[id] = ExplainAbility(file, id, level);
 
             d.ProficiencyBonus = Proficiency(level);
             // Уровень берётся ПРИЖАТЫЙ, а не file.Level: лист с уровнем 25 показал бы бонус 20-го

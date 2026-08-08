@@ -342,7 +342,14 @@ namespace WorldGen.PlayerPrep.Data
         [ContextMenu("Self-Test: законченный персонаж ни о чём не просит")]
         public void SelfTestCompleteCharacterHasNoGaps()
         {
-            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            var c = Fixtures.Character();
+            // Ячейка повышения на 4 уровне ЗАПОЛНЕНА нарочно. Пятиуровневый плут, ни разу не решивший
+            // «прибавки или черта», законченным больше не считается — с планом прокачки эта пустая
+            // ячейка стала достижимой и получила свою строку в «чего не хватает». В самой фикстуре
+            // пометки нет и быть не должно: на ней держатся проверки таблицы плана, которым нужен
+            // именно пустой 4 уровень.
+            c.Plan.Add(new LevelChoice { Level = 4, Kind = "asi", ValueId = null });
+            var d = SheetMath.Compute(c, Fixtures.Rules());
             bool ok = d.Missing.Count == 0;
             if (!ok) Debug.LogError("FAIL законченный персонаж: " + string.Join("; ", d.Missing));
             Done(ok);
@@ -364,6 +371,33 @@ namespace WorldGen.PlayerPrep.Data
             bool ok = stealth.Hint == "ловкость · компетентность" && athletics.Hint == "сила";
             if (!ok) Debug.LogError($"FAIL уточнение навыка: скрытность «{stealth.Hint}» "
                                   + $"(ждали «ловкость · компетентность»), атлетика «{athletics.Hint}» (ждали «сила»)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: пустая ячейка выбора на взятом уровне названа вслух")]
+        public void SelfTestUnfilledChoiceCellIsListed()
+        {
+            // Стало достижимо вместе с планом прокачки: «поднял уровень, закрыл панель, не выбрав».
+            // Три утверждения разом, и каждое валит своего мутанта:
+            //   4 уровень (asi, взят, пометки нет)              → строка ЕСТЬ  [мутант «строки нет вовсе»];
+            //   8 уровень (asi, не взят)                        → строки НЕТ   [мутант «по всем 20 строкам»];
+            //   3 уровень (подкласс, взят, лежит в SubclassId)  → строки НЕТ   [мутант «пометка — единственный
+            //     признак заполненности»: он ругался бы на КАЖДОГО персонажа, созданного мастером,
+            //     потому что мастер пишет подкласс в поле, а пометки в плане не оставляет].
+            var c = Fixtures.Character();          // 5 уровень, ячейки на 3 (подкласс) и 4, 8 (asi)
+            var d = SheetMath.Compute(c, Fixtures.Rules());
+            bool ok = d.Missing.Any(m => m.Contains("На 4 уровне не выбрано"))
+                   && !d.Missing.Any(m => m.Contains("На 8 уровне"))
+                   && !d.Missing.Any(m => m.Contains("На 3 уровне"));
+
+            // А заполненная ячейка молчит — иначе строка была бы вечной и её перестали бы читать.
+            var filled = Fixtures.Character();
+            filled.Plan.Add(new LevelChoice { Level = 4, Kind = "feat", ValueId = "alert" });
+            var dFilled = SheetMath.Compute(filled, Fixtures.Rules());
+            ok &= !dFilled.Missing.Any(m => m.Contains("На 4 уровне"));
+
+            if (!ok) Debug.LogError("FAIL пустая ячейка выбора: " + string.Join("; ", d.Missing)
+                                  + " || заполненная: " + string.Join("; ", dFilled.Missing));
             Done(ok);
         }
 

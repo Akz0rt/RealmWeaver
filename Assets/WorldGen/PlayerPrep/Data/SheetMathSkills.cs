@@ -143,6 +143,20 @@ namespace WorldGen.PlayerPrep.Data
                 var needsSubclass = cls.Levels.Any(l => l.Level <= level && l.Choice == "subclass");
                 if (needsSubclass && string.IsNullOrEmpty(file.SubclassId))
                     d.Missing.Add("Подкласс не выбран");
+
+                // Пустая ЯЧЕЙКА ВЫБОРА на уже взятом уровне. Стало достижимо вместе с планом
+                // прокачки: «поднял уровень, закрыл панель, не выбрав» — и игрок сидит на четвёртом
+                // уровне с неразложенными прибавками, а лист об этом молчит.
+                //
+                // Подкласс здесь НАРОЧНО пропущен: про него говорит строка выше, и вторая строка о том
+                // же самом была бы шумом. Заодно она умеет то, чего эта не умеет, — видеть подкласс,
+                // выбранный мастером и лежащий в file.SubclassId без пометки в плане
+                // (LevelPlanOps.Rows устроен так же). Считай мы такую ячейку пустой, лист ругался бы
+                // на каждого персонажа, созданного мастером.
+                foreach (var cl in cls.Levels.Where(l => l.Level <= level && l.Choice == "asi")
+                                             .OrderBy(l => l.Level))
+                    if (file.Plan.All(p => p.Level != cl.Level))
+                        d.Missing.Add($"На {cl.Level} уровне не выбрано: повышение характеристик или черта");
             }
         }
     }
