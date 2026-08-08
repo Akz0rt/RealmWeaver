@@ -163,14 +163,20 @@ namespace WorldGen.PlayerPrep.Rendering
 
             if (backstoryText == null || backstoryElement == null || backstoryScroll == null) return;
 
-            float preferred = backstoryText.preferredHeight + 16f;
-            float height = Mathf.Min(preferred, MaxBackstoryHeight);
+            float textHeight = backstoryText.preferredHeight;
+            float height = Mathf.Min(textHeight + 16f, MaxBackstoryHeight);
             if (Mathf.Abs(backstoryElement.preferredHeight - height) > 0.5f)
                 backstoryElement.preferredHeight = height;
 
-            // Прокрутка появляется ТОЛЬКО по достижении предела: короткая предыстория не должна
-            // уезжать под колесом мыши, которое игрок крутит, чтобы пролистать весь лист.
-            bool needsScroll = preferred > MaxBackstoryHeight;
+            // Прокрутка включается, только когда СОДЕРЖИМОМУ не хватает ВЬЮПОРТА: короткая предыстория
+            // не должна уезжать под колесом мыши, которое игрок крутит, чтобы пролистать весь лист.
+            //
+            // Сравниваются сопоставимые величины, и это не придирка. Вьюпорт растянут по блоку, значит
+            // его высота и есть height; содержимое — сам текст, значит его высота и есть textHeight.
+            // Сравнение «блок с полями против предела» (textHeight + 16 > 260) включало прокрутку уже
+            // на тексте выше 244 точек, хотя до 260 он влезал целиком: в этой полосе ScrollRect стоял
+            // включённым впустую и через IScrollHandler съедал колесо, не сдвигая ничего.
+            bool needsScroll = textHeight > height + 0.5f;
             if (backstoryScroll.enabled != needsScroll)
             {
                 backstoryScroll.enabled = needsScroll;
@@ -494,21 +500,48 @@ namespace WorldGen.PlayerPrep.Rendering
             subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
         }
 
-        /// <summary>«полурослик · плут 5 · вор · солдат». Неизвестное справочнику не подменяется чужим
-        /// именем и не пропадает — так игрок видит, что именно потерялось.</summary>
+        /// <summary>«полурослик · плут 5 · вор · солдат». Случаев на каждое место ТРИ, и ни один не
+        /// подменяется соседним: имя нашлось — пишем имя; выбора нет — «вид не выбран»; выбор есть, а
+        /// справочник его не знает — «вид: неизвестно «aasimar»».
+        ///
+        /// Раньше третий случай склеивался со вторым, и лист врал под собственным предупреждением: в
+        /// полосе стояло «неизвестно «aasimar»», а строкой ниже — «вид не выбран». У класса вместе с
+        /// именем пропадал ещё и уровень, хотя уровень известен всегда и от класса не зависит.</summary>
         string Subtitle()
         {
             var parts = new List<string>();
-            parts.Add(Lower(RaceName()) ?? "вид не выбран");
-            string cls = Lower(ClassName());
-            parts.Add(cls == null ? "класс не выбран" : $"{cls} {Mathf.Clamp(file.Level, 1, 20)}");
-            string sub = Lower(SubclassName());
-            if (sub != null) parts.Add(sub);
-            parts.Add(Lower(BackgroundName()) ?? "предыстория не выбрана");
+            parts.Add(Part(RaceName(), file.RaceId, "вид", "вид не выбран"));
+            parts.Add(ClassPart());
+            // Подкласса может не быть вовсе — тогда и места под него в строке нет. А вот выбранный,
+            // но незнакомый справочнику показывается наравне с остальными.
+            if (!string.IsNullOrEmpty(file.SubclassId))
+                parts.Add(Part(SubclassName(), file.SubclassId, "подкласс", ""));
+            parts.Add(Part(BackgroundName(), file.BackgroundId, "предыстория", "предыстория не выбрана"));
             return string.Join(" · ", parts.ToArray());
         }
 
-        static string Lower(string s) => string.IsNullOrEmpty(s) ? null : s.ToLowerInvariant();
+        /// <summary>«плут 5», «класс не выбран, 5 уровень», «класс: неизвестно «bogus», 5 уровень».
+        /// Уровень стоит РЯДОМ с классом, но приходит не от него — поэтому вместе с именем не исчезает.
+        ///
+        /// Берётся ГОТОВЫМ из чистого слоя (sheet.Level, прижатый к 1–20). Прижимай его лист сам —
+        /// на файле с уровнем 25 подпись сказала бы «плут 25» над числами, посчитанными для
+        /// двадцатого, и это была бы вторая копия правила, которую никто не проверяет.</summary>
+        string ClassPart()
+        {
+            string name = ClassName();
+            if (!string.IsNullOrEmpty(name)) return $"{name.ToLowerInvariant()} {sheet.Level}";
+            return $"{Part(null, file.ClassId, "класс", "класс не выбран")}, {sheet.Level} уровень";
+        }
+
+        /// <summary>Имя из справочника строчными, «не выбрано» либо «неизвестно «id»» — три разных
+        /// ответа на три разных случая. Идентификатор печатается КАК ЕСТЬ, без ToLowerInvariant: он не
+        /// текст для чтения, а то, что игрок будет искать глазами в своём .dndchar, и «Aasimar»,
+        /// показанный как «aasimar», он там не найдёт.</summary>
+        static string Part(string name, string id, string what, string absent)
+        {
+            if (!string.IsNullOrEmpty(name)) return name.ToLowerInvariant();
+            return string.IsNullOrEmpty(id) ? absent : $"{what}: неизвестно «{id}»";
+        }
 
         string RaceName() => rules == null ? null
             : rules.Races.FirstOrDefault(r => r.Id == file.RaceId)?.Name;
@@ -563,11 +596,11 @@ namespace WorldGen.PlayerPrep.Rendering
 
             AddCaption(right, "Навыки");
             foreach (var skill in sheet.Skills)
+                // Уточнение справа от числа собрано ТАМ ЖЕ, где объяснение под ним (SkillLine.Hint):
+                // склей его лист сам — переименуй справочник характеристику, и над одним и тем же
+                // числом оказались бы два разных её названия.
                 AddNumberRow(right, "skill:" + skill.SkillId, Mark(skill.Proficient) + skill.Name,
-                    Signed(skill.Bonus),
-                    SheetMath.AbilityName(skill.AbilityId).ToLowerInvariant()
-                        + (skill.Expertise ? " · компетентность" : ""),
-                    skill.Explain, skill.Proficient);
+                    Signed(skill.Bonus), skill.Hint, skill.Explain, skill.Proficient);
         }
 
         static string Mark(bool proficient) => proficient ? "[×] " : "[ ] ";
@@ -608,7 +641,10 @@ namespace WorldGen.PlayerPrep.Rendering
                 btnLe.minWidth = ValueWidth;
                 btnLe.preferredWidth = ValueWidth;
                 btnLe.flexibleWidth = 0f;
-                btnLe.preferredHeight = RowHeight - 4f;
+                // Высота НЕ задаётся, и это не забывчивость: AddRow ставит строке
+                // childForceExpandHeight = true, а uGUI при нём поднимает flexible ребёнка до
+                // единицы — тот получает всю высоту строки, какой бы preferredHeight ему ни написали.
+                // Строчка «btnLe.preferredHeight = RowHeight - 4f» здесь стояла и не делала ничего.
             }
             else
             {
@@ -821,7 +857,9 @@ namespace WorldGen.PlayerPrep.Rendering
             le.minWidth = width;
             le.preferredWidth = width;
             le.flexibleWidth = 0f;
-            le.preferredHeight = RowHeight;
+            // Высоту задаёт СТРОКА, а не кнопка — по той же причине, что расписана в AddNumberRow:
+            // при childForceExpandHeight = true preferredHeight ребёнка не значит ничего. Здесь тоже
+            // стояла такая строчка, тоже без всякого действия.
             var text = btn.GetComponentInChildren<Text>();
             if (text != null) text.fontSize = 17;
             return btn;

@@ -348,6 +348,25 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: навыки — уточнение называет характеристику и компетентность")]
+        public void SelfTestSkillHintNamesAbilityAndExpertise()
+        {
+            // Уточнение — это то, что лист пишет мелким справа от числа. Раньше он собирал его сам,
+            // и строка расходилась бы с объяснением под тем же числом при первом же переименовании
+            // характеристики в справочнике.
+            // Мутант №1: `Hint = abilityName` без хвоста → у скрытности пропадает компетентность.
+            // Мутант №2: `Hint = skill.Name` → «скрытность» вместо «ловкость».
+            // Обе фикстуры нужны разом: у скрытности компетентность ЕСТЬ, у атлетики НЕТ, поэтому
+            // мутант «хвост всегда» падает на второй, а «хвоста нет» — на первой.
+            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            var stealth = d.Skills.First(s => s.SkillId == "stealth");
+            var athletics = d.Skills.First(s => s.SkillId == "athletics");
+            bool ok = stealth.Hint == "ловкость · компетентность" && athletics.Hint == "сила";
+            if (!ok) Debug.LogError($"FAIL уточнение навыка: скрытность «{stealth.Hint}» "
+                                  + $"(ждали «ловкость · компетентность»), атлетика «{athletics.Hint}» (ждали «сила»)");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

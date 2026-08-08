@@ -31,7 +31,8 @@ namespace WorldGen.PlayerPrep.Data
                 d.Skills.Add(new SkillLine
                 {
                     SkillId = skill.Id, Name = skill.Name, AbilityId = skill.AbilityId,
-                    Proficient = prof, Expertise = exp, Bonus = bonus, Explain = explain
+                    Proficient = prof, Expertise = exp, Bonus = bonus, Explain = explain,
+                    Hint = abilityName + (exp ? " · компетентность" : "")
                 });
             }
             foreach (var id in file.SkillIds.Where(id => rules.Skills.All(s => s.Id != id)))

@@ -152,6 +152,62 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: лист — прижатый уровень отдаётся наружу")]
+        public void SelfTestClampedLevelIsHandedOut()
+        {
+            // Мутант — ОДНА СТРОКА: `d.Level = file.Level` вместо прижатого. Отличить его можно
+            // ТОЛЬКО на уровнях вне 1–20, поэтому фикстур три: 25, 0 и обычная пятёрка (чтобы
+            // мутант «всегда 20» тоже падал). Ради этого поля лист и перестал прижимать уровень
+            // у себя: подпись «плут 25» стояла бы над числами двадцатого уровня.
+            var rules = Fixtures.Rules();
+            var over = Fixtures.Character(); over.Level = 25;
+            var under = Fixtures.Character(); under.Level = 0;
+            int hi = SheetMath.Compute(over, rules).Level;
+            int lo = SheetMath.Compute(under, rules).Level;
+            int mid = SheetMath.Compute(Fixtures.Character(), rules).Level;
+            bool ok = hi == 20 && lo == 1 && mid == 5;
+            if (!ok) Debug.LogError($"FAIL уровень наружу: 25-й дал {hi} (ждали 20), 0-й дал {lo} (ждали 1), "
+                                  + $"5-й дал {mid} (ждали 5)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — хиты объясняют себя и без класса")]
+        public void SelfTestMaxHpExplainsItselfWithoutAClass()
+        {
+            // Лист делает число КНОПКОЙ только при непустом объяснении, поэтому пустая строка здесь —
+            // не косметика, а «Хиты 0», у которых нельзя спросить, откуда они.
+            // Мутант №1: убрать присваивание MaxHpExplain из ветки «кости хитов нет» → пустая строка.
+            // Мутант №2: убрать ветку с MaxHpOverride → вписанные рукой 44 молча превращаются в 0.
+            var rules = Fixtures.Rules();
+
+            var noClass = Fixtures.Character(); noClass.ClassId = null;
+            var dNone = SheetMath.Compute(noClass, rules);
+            bool ok = dNone.MaxHp == 0 && dNone.MaxHpExplain == "класс не выбран — кость хитов приходит от него";
+
+            // Класс есть, но кости хитов у него нет — сказать «класс не выбран» тут было бы враньём.
+            var noDie = Fixtures.Rules(); noDie.Classes[0].HitDie = "";
+            var dNoDie = SheetMath.Compute(Fixtures.Character(), noDie);
+            ok &= dNoDie.MaxHpExplain == "класс «Плут» не называет кость хитов";
+
+            var handWritten = Fixtures.Character(); handWritten.ClassId = null; handWritten.MaxHpOverride = 44;
+            var dHand = SheetMath.Compute(handWritten, rules);
+            ok &= dHand.MaxHp == 44 && dHand.MaxHpExplain.Contains("вписан");
+
+            // Мутант №3: причина «кости нет» зашита в ветку вписанного максимума одной строкой
+            // «класс не выбран». Тогда персонаж с классом «Плут» читает про невыбранный класс — та
+            // самая подмена случая, из-за которой врал подзаголовок. Ловится ТОЛЬКО этой фикстурой:
+            // у предыдущей класса и правда нет, и обе строки на ней совпадают.
+            var handNoDie = Fixtures.Character(); handNoDie.MaxHpOverride = 44;
+            var dHandNoDie = SheetMath.Compute(handNoDie, noDie);
+            ok &= dHandNoDie.MaxHp == 44 && dHandNoDie.MaxHpExplain.Contains("вписан")
+               && dHandNoDie.MaxHpExplain.Contains("«Плут»") && !dHandNoDie.MaxHpExplain.Contains("не выбран");
+
+            if (!ok) Debug.LogError($"FAIL хиты без класса: {dNone.MaxHp} «{dNone.MaxHpExplain}», "
+                                  + $"без кости «{dNoDie.MaxHpExplain}», вписанные {dHand.MaxHp} «{dHand.MaxHpExplain}», "
+                                  + $"вписанные без кости {dHandNoDie.MaxHp} «{dHandNoDie.MaxHpExplain}»");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: лист — название характеристики берётся по идентификатору")]
         public void SelfTestAbilityNameMapsAllSix()
         {
@@ -301,8 +357,13 @@ namespace WorldGen.PlayerPrep.Data
         public void SelfTestExplainAbilityWorksOnHalfBuiltCharacter()
         {
             // Мастер зовёт ExplainAbility на шаге характеристик, когда ни вида, ни класса ещё нет —
-            // и до сих пор звал СВОЮ копию правила. Мутант «считать через Compute» уронил бы мастер
-            // на полупустом персонаже либо потребовал справочника, которого на том шаге может не быть.
+            // и до сих пор звал СВОЮ копию правила. Здесь проверяется ДОГОВОР «справочник не нужен, и
+            // пустые места не роняют показ», а не арифметика: её держат проверки выше.
+            // Мутанты, которых валит именно эта тройка:
+            //   убрать `if (file == null) return AbilityName(...)` → падение на третьей строке;
+            //   «печатать скобки всегда»                          → «Харизма 0 → 0 (0)» на второй.
+            // Мутанта «звать Compute вместо чистой функции» одной правкой не внедрить — переписывать
+            // пришлось бы всё тело, — поэтому он здесь и не назван.
             var half = new CharacterFile { Base = new AbilityScores { Dex = 15 } };
             half.Bumps.Add(new AbilityBump { Source = "background", AbilityId = "dex", Amount = 2 });
             bool ok = SheetMath.ExplainAbility(half, "dex") == "Ловкость 15 → 17 (+2)"
