@@ -122,6 +122,18 @@ namespace WorldGen.Notes.Rendering
 
         void LateUpdate()
         {
+            // ВРЕМЕННЫЙ ПРИБОР (8 августа 2026): Ctrl+Alt+D печатает в консоль, кому этот кадр принадлежат
+            // клавиши и, главное, ПУТЬ выделенного объекта. Нажимать в тот самый миг, когда строка поиска
+            // перестала принимать набор. Стоит ПЕРВЫМ, до всех ранних выходов ниже, — иначе в состоянии
+            // «клавиши никому» прибор молчал бы ровно тогда, когда он и нужен. Снимается вместе с
+            // PageFocusRouter.Describe, когда находка ДМ про Ctrl+F будет закрыта.
+            var probeKeys = Keyboard.current;
+            if (probeKeys != null && probeKeys.dKey.wasPressedThisFrame
+                && (probeKeys.ctrlKey.isPressed || probeKeys.rightCtrlKey.isPressed)
+                && (probeKeys.altKey.isPressed || probeKeys.rightAltKey.isPressed)
+                && router != null)
+                Debug.Log(router.Describe());
+
             // Задача 5: сначала — КОМУ принадлежат клавиши этого кадра, и только потом всё остальное.
             var active = router != null ? router.ActiveView() : null;
             if (active == null)

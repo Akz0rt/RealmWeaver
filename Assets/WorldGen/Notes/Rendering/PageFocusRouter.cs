@@ -148,6 +148,50 @@ namespace WorldGen.Notes.Rendering
         ///
         /// НИЧЕГО НЕ ХРАНИТСЯ, вопрос задаётся заново каждый раз — см. класс-док про то, почему опрос, а не
         /// поле «текущий вид».</summary>
+        /// <summary>ВРЕМЕННЫЙ ПРИБОР (8 августа 2026), снимается вместе с аккордом в DocKeyboardController.
+        /// Отвечает на вопрос, который два круга чтения кода закрыть не смогли: почему в строку поиска
+        /// перестаёт идти набор, хотя каретка видна. Печатает то, что разбор ВИДИТ (кто выделен и где он
+        /// лежит) и что ОТВЕЧАЕТ, — и главное, полный путь выделенного объекта: если набор перестал
+        /// доходить, значит выделение уехало, и путь называет вора по имени.</summary>
+        public string Describe()
+        {
+            var events = EventSystem.current;
+            var selected = events != null ? events.currentSelectedGameObject : null;
+
+            var underCaret = selected != null ? selected.GetComponentInParent<DocumentPageView>() : null;
+            int inBoard = selected != null && canvasHost != null
+                ? canvasHost.PaneOfBoardContaining(selected.transform) : -1;
+            var layout = controller != null ? controller.Layout : null;
+
+            ResolveFocus(out var pageView, out int boardPane);
+
+            var sb = new System.Text.StringBuilder("[ФОКУС] ");
+            sb.Append("выделен=").Append(selected != null ? PathOf(selected.transform) : "—");
+            sb.Append(" | вид под кареткой=").Append(underCaret != null
+                ? (underCaret.SurfaceVisible ? "есть, видим" : "есть, СКРЫТ") : "нет");
+            sb.Append(" | в доске панели=").Append(inBoard);
+            sb.Append(" | активная панель=").Append(layout != null ? layout.FocusedPane.ToString() : "—");
+            sb.Append(" || ActiveView=").Append(pageView != null ? "есть" : "НЕТ");
+            sb.Append(" ActiveBoardPane=").Append(boardPane);
+            sb.Append(" UndoTarget=").Append(UndoTargetView() != null ? "есть" : "НЕТ");
+
+            var view = pageView ?? (host != null && layout != null ? host.ViewFor(layout.FocusedPane) : null);
+            if (view != null)
+                sb.Append(" || у вида: SearchOwnsKeys=").Append(view.SearchOwnsKeys)
+                  .Append(" PaletteOpen=").Append(view.PaletteOpen)
+                  .Append(" KeyboardSuspended=").Append(view.KeyboardSuspended)
+                  .Append(" IsKeyboardTarget=").Append(view.IsKeyboardTarget);
+
+            return sb.ToString();
+        }
+
+        static string PathOf(UnityEngine.Transform t)
+        {
+            var sb = new System.Text.StringBuilder(t.name);
+            for (var p = t.parent; p != null; p = p.parent) sb.Insert(0, p.name + "/");
+            return sb.ToString();
+        }
+
         void ResolveFocus(out DocumentPageView pageView, out int boardPane)
         {
             pageView = null;
