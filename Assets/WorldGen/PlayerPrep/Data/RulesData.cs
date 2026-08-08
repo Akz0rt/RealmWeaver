@@ -35,6 +35,17 @@ namespace WorldGen.PlayerPrep.Data
         public string Id, Name, Blurb;                      // Blurb — «чем ты занят в бою», одна строка
         public string HitDie;                               // "d8"
         public List<string> SaveProficiencies = new List<string>();
+        /// <summary>Ключевая характеристика класса — та, что правила 2024 называют ВСЛУХ (у
+        /// некоторых классов их две). Заведена отдельным полем, потому что из спасбросков она НЕ
+        /// выводится: у Чародея спасброски Тел+Хар, а первое место принадлежит Харизме; у Монаха
+        /// спасброски Сил+Лов, а важнее Ловкость и Мудрость. По ней мастер предлагает раскладку
+        /// стандартного набора (WizardOps.SuggestedAssignment).
+        ///
+        /// ПУСТО — ЗАКОННО: чужой справочник (скажем, по правилам 2014, где такого понятия нет)
+        /// не обязан его заполнять, и тогда мастер возвращается к прежнему запасному ходу —
+        /// спасброскам. Номера версии у справочника нет, и добавлять его незачем: старый файл без
+        /// этого поля читается и работает, только советует хуже.</summary>
+        public List<string> PrimaryAbilities = new List<string>();
         public List<string> SkillChoices = new List<string>();
         public int SkillPickCount;
         public List<string> StartingEquipment = new List<string>();

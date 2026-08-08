@@ -488,6 +488,37 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: справочник — чужая ключевая характеристика названа вслух")]
+        public void SelfTestUnknownPrimaryAbilityIsReported()
+        {
+            // Мутант: снятая CheckClassPrimaryAbilities. Опечатка здесь ничего не роняет и оттого
+            // невидима — «charisma» просто отфильтруется в SuggestedAssignment, ключевых окажется
+            // ноль, и мастер предложит обычный порядок, то есть ровно то, ради отмены чего поле и
+            // заведено. Сдвоенная проверяется тем же вызовом: её так же молча съедает Distinct.
+            var r = Minimal();
+            r.Classes[0].PrimaryAbilities = new List<string> { "charisma", "dex", "dex" };
+            var errors = RulesIntegrity.Check(r);
+            bool ok = errors.Any(e => e.Contains("charisma") && e.Contains("не из шести"))
+                   && errors.Any(e => e.Contains("dex") && e.Contains("названа"));
+            if (!ok) Debug.LogError("FAIL ключевая характеристика: " + string.Join("; ", errors));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: справочник — пустая ключевая характеристика законна")]
+        public void SelfTestEmptyPrimaryAbilityIsLegal()
+        {
+            // Страж от ложного срабатывания И вторая половина решения: чужой справочник (правила
+            // 2014 такого понятия не знают) обязан проходить целостность, а мастер — вернуться к
+            // спасброскам. Мутант «ключевая характеристика обязательна» покраснел бы на каждом
+            // классе такого набора и запретил бы его целиком.
+            var r = Minimal();
+            r.Classes[0].PrimaryAbilities = null;      // именно так это приходит из JSON «: null»
+            var errors = RulesIntegrity.Check(r);
+            bool ok = errors.Count == 0;
+            if (!ok) Debug.LogError("FAIL пустая ключевая характеристика: " + string.Join("; ", errors));
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: справочник — ПОСТАВЛЯЕМЫЙ файл целостен")]
         public void SelfTestShippedRulesAreConsistent()
         {
@@ -504,6 +535,30 @@ namespace WorldGen.PlayerPrep.Data
             var errors = RulesIntegrity.Check(rules);
             bool ok = errors.Count == 0;
             if (!ok) Debug.LogError("FAIL поставляемый справочник:\n  " + string.Join("\n  ", errors));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: справочник — КАЖДЫЙ поставляемый класс называет ключевую характеристику")]
+        public void SelfTestShippedClassesNamePrimaryAbility()
+        {
+            // Целостность пустое поле РАЗРЕШАЕТ — чужому справочнику по правилам 2014 иначе нельзя.
+            // А наш поставляемый файл сделан по правилам 2024, где ключевая характеристика названа
+            // у каждого класса вслух, и пустое поле здесь значит «забыли дописать». Мутант —
+            // забытая строка у одного класса: целостность зелена, а мастер тихо возвращается к
+            // спасброскам и советует не то. Ловится только сверкой по самим данным.
+            if (RulesTextSource.Provider == null)
+            {
+                Debug.LogError("FAIL ключевые характеристики: RulesTextSource.Provider не задан — "
+                             + "проверка данных не выполнялась");
+                return;
+            }
+            var rules = RulesLoader.FromJson(RulesTextSource.Provider());
+            var silent = rules.Classes
+                .Where(c => c.PrimaryAbilities == null || c.PrimaryAbilities.Count == 0)
+                .Select(c => c.Id).ToList();
+            bool ok = rules.Classes.Count > 0 && silent.Count == 0;
+            if (!ok) Debug.LogError($"FAIL ключевые характеристики (классов {rules.Classes.Count}): "
+                                  + "молчат [" + string.Join(",", silent) + "]");
             Done(ok);
         }
 

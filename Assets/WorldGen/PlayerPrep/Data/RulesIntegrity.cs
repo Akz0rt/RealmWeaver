@@ -103,6 +103,7 @@ namespace WorldGen.PlayerPrep.Data
             foreach (var c in r.Classes)
             {
                 CheckClassHitDie(c, errors);
+                CheckClassPrimaryAbilities(c, errors);
                 CheckClassUnarmoredDefense(c, errors);
                 CheckClassHasAbilityScoreLevels(c, errors);
                 CheckClassSpellSlotsNonNegative(c, errors);
@@ -179,6 +180,23 @@ namespace WorldGen.PlayerPrep.Data
             bool ok = !string.IsNullOrEmpty(c.HitDie) && c.HitDie[0] == 'd'
                       && int.TryParse(c.HitDie.Substring(1), out int sides) && sides > 0;
             if (!ok) errors.Add($"класс {c.Id}: кость хитов «{c.HitDie}» не вида d6, d8, d10 или d12");
+        }
+
+        /// <summary>Ключевая характеристика класса. Пусто — законно (чужой справочник по правилам
+        /// 2014 такого понятия не знает, и мастер вернётся к спасброскам). Незаконно — чужой
+        /// идентификатор и повтор.
+        ///
+        /// Проверка нужна именно потому, что опечатка здесь НИЧЕГО НЕ РОНЯЕТ и оттого невидима:
+        /// «charisma» вместо «cha» SuggestedAssignment молча отфильтрует, ключевых окажется ноль,
+        /// и игроку предложат раскладку в обычном порядке — ровно то поведение, ради отмены
+        /// которого поле и заведено. Повтор так же молча съедается Distinct.</summary>
+        static void CheckClassPrimaryAbilities(ClassDef c, List<string> errors)
+        {
+            if (c.PrimaryAbilities == null) return;    // «: null» из JSON — это «не заполнено»
+            foreach (var a in c.PrimaryAbilities.Where(a => !Abilities.Contains(a)))
+                errors.Add($"класс {c.Id}: ключевая характеристика «{a}» не из шести известных");
+            foreach (var g in c.PrimaryAbilities.GroupBy(a => a).Where(g => g.Count() > 1))
+                errors.Add($"класс {c.Id}: ключевая характеристика {g.Key} названа {g.Count()} раза");
         }
 
         /// <summary>Пусто — это законно (у одиннадцати классов из двенадцати). Незаконно —

@@ -89,16 +89,83 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
-        [ContextMenu("Self-Test: мастер — раскладка предлагается под спасброски класса")]
+        [ContextMenu("Self-Test: мастер — без ключевой характеристики раскладка идёт по спасброскам")]
         public void SelfTestSuggestedAssignmentFollowsClass()
         {
-            // У тестового Плута владение спасбросками «лов» и «инт» — 15 и 14 должны лечь туда,
-            // а не «первым шести подряд». Мутант «всегда сил, лов, тел…» падает.
+            // ЗАПАСНАЯ ВЕТКА: у тестового Плута PrimaryAbilities не заполнены (так выглядит чужой
+            // справочник по правилам 2014), и тогда решают спасброски — «лов» и «инт». Мутант
+            // «нет ключевых → обычный порядок сил, лов, тел…» падает.
             // Сверяем ВСЮ последовательность, а не первые два: мутант «вернуть только ключевые,
             // без .Concat остальных» дал бы ровно те же два первых значения и выжил бы.
             var suggested = WizardOps.SuggestedAssignment(Fixtures.Rules().Classes[0]);
             bool ok = suggested.SequenceEqual(new[] { "dex", "int", "str", "con", "wis", "cha" });
             if (!ok) Debug.LogError("FAIL раскладка: " + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — ключевая характеристика важнее спасбросков (Чародей)")]
+        public void SelfTestSuggestedAssignmentPrefersPrimaryAbilityOverSaves()
+        {
+            // ФИКСТУРА, ГДЕ СТАРОЕ И НОВОЕ ПРАВИЛО РАСХОДЯТСЯ. Настоящий Чародей: спасброски
+            // Тел+Хар, ключевая — одна Харизма.
+            //   • мутант «порядок по спасбросках» (прежний код) даёт «тел» первым — 15 ляжет в
+            //     Телосложение, и первый в жизни игрок соберёт Чародея, который плохо колдует;
+            //   • мутант «сперва ключевые, потом спасброски, потом остальные» даёт «хар, тел, …» —
+            //     его убивает сверка ВСЕЙ последовательности, а не первой позиции.
+            var cls = new ClassDef { Id = "sorcerer", Name = "Чародей", HitDie = "d6",
+                PrimaryAbilities = { "cha" }, SaveProficiencies = { "con", "cha" } };
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            bool ok = suggested.SequenceEqual(new[] { "cha", "str", "dex", "con", "int", "wis" });
+            if (!ok) Debug.LogError("FAIL раскладка Чародея: " + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — в раскладку идут ОБЕ ключевые характеристики (Монах)")]
+        public void SelfTestSuggestedAssignmentTakesEveryPrimaryAbility()
+        {
+            // Вторая расходящаяся фикстура. Настоящий Монах: спасброски Сил+Лов, ключевые —
+            // Ловкость И Мудрость, причём Мудрости в спасбросках нет вовсе.
+            //   • мутант «порядок по спасброскам» даёт «сил» первым;
+            //   • мутант «взять только первую ключевую» даёт «лов, сил, тел, инт, мдр, хар» —
+            //     Мудрость уезжает на пятое место, к десятке.
+            var cls = new ClassDef { Id = "monk", Name = "Монах", HitDie = "d8",
+                PrimaryAbilities = { "dex", "wis" }, SaveProficiencies = { "str", "dex" } };
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            bool ok = suggested.SequenceEqual(new[] { "dex", "wis", "str", "con", "int", "cha" });
+            if (!ok) Debug.LogError("FAIL раскладка Монаха: " + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — чужая и сдвоенная ключевая характеристика не ломают раскладку")]
+        public void SelfTestSuggestedAssignmentIgnoresUnknownAndDoubledPrimaryAbility()
+        {
+            // Та же пара мутантов, что стережёт спасброски, но на НОВОЙ ветке — они не общие:
+            //   • снят фильтр `.Where(all.Contains)` — в раскладке семь строк, и вторая из них
+            //     не характеристика вовсе;
+            //   • снят `.Distinct()` — «хар» встречается дважды, строк опять семь против шести
+            //     значений стандартного набора.
+            var cls = new ClassDef { Id = "bogus", Name = "Кривой", HitDie = "d8",
+                PrimaryAbilities = { "cha", "luck", "cha" }, SaveProficiencies = { "con" } };
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            bool ok = suggested.SequenceEqual(new[] { "cha", "str", "dex", "con", "int", "wis" });
+            if (!ok) Debug.LogError($"FAIL кривая ключевая характеристика ({suggested.Count} шт.): "
+                                  + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «PrimaryAbilities: null» из JSON не роняет раскладку")]
+        public void SelfTestSuggestedAssignmentSurvivesNullPrimaryAbilities()
+        {
+            // Newtonsoft на «"PrimaryAbilities": null» кладёт в поле null МИМО инициализатора поля,
+            // так что чужой справочник это состояние выдаёт легко. Мутант — снятый `?? new List`:
+            // не FAIL, а падение мастера на шаге характеристик, и это тоже FAIL.
+            var cls = new ClassDef { Id = "old", Name = "Старый", HitDie = "d8",
+                SaveProficiencies = { "wis", "cha" } };
+            cls.PrimaryAbilities = null;
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            // Ключевых нет — работает запасной ход по спасброскам.
+            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "str", "dex", "con", "int" });
+            if (!ok) Debug.LogError("FAIL раскладка при null: " + string.Join(",", suggested));
             Done(ok);
         }
 
