@@ -409,6 +409,64 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: справочник — таблица Магии договора не считается убывающей")]
+        public void SelfTestPactMagicSlotsMayMoveUpARing()
+        {
+            // Настоящая таблица Колдуна: одна ячейка 1 круга, потом две ячейки 1 круга, потом две
+            // ячейки 2 круга — и первый круг обнуляется. Общее правило «круг за кругом не убывает»
+            // на этом краснеет, и краснеет ПО ДЕЛУ для всех прочих: Магия договора устроена иначе.
+            // Мутант — снятый `if (c.PactMagic) return`: поставляемый Колдун становится незаконным,
+            // и единственный способ его вписать — соврать в таблице.
+            var r = PactRules();
+            var errors = RulesIntegrity.Check(r);
+            bool ok = errors.Count == 0;
+            if (!ok) Debug.LogError("FAIL таблица Магии договора: " + string.Join("; ", errors));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: справочник — у Магии договора ячейки только одного круга")]
+        public void SelfTestPactMagicSlotsLiveInOneRing()
+        {
+            // Замена общего правила обязана быть СТРОЖЕ его, иначе флаг просто снимал бы охрану.
+            // Три мутанта, по одному на правило:
+            //   • снята проверка «ненулевой круг один» — Колдун с таблицей полного заклинателя
+            //     проходит молча, хотя ячеек у него столько не бывает;
+            //   • снята проверка числа — две ячейки превращаются в одну и никто не замечает;
+            //   • снята проверка круга — на 5 уровне круг падает со 2 на 1, то есть колдун слабеет.
+            var many = PactRules();
+            many.Classes[0].Levels.First(l => l.Level == 5).SpellSlots = new[] { 2, 2, 0, 0, 0, 0, 0, 0, 0 };
+            var fewer = PactRules();
+            fewer.Classes[0].Levels.First(l => l.Level == 5).SpellSlots = new[] { 0, 1, 0, 0, 0, 0, 0, 0, 0 };
+            var lower = PactRules();
+            lower.Classes[0].Levels.First(l => l.Level == 5).SpellSlots = new[] { 2, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+            bool loudOnTwoRings = RulesIntegrity.Check(many)
+                .Any(e => e.Contains("уровень 5") && e.Contains("2 кругах"));
+            bool loudOnFewer = RulesIntegrity.Check(fewer)
+                .Any(e => e.Contains("уровне 5") && e.Contains("убывает"));
+            bool loudOnLowerRing = RulesIntegrity.Check(lower)
+                .Any(e => e.Contains("уровне 5") && e.Contains("понижается"));
+
+            bool ok = loudOnTwoRings && loudOnFewer && loudOnLowerRing;
+            if (!ok) Debug.LogError($"FAIL охрана Магии договора: два круга = {loudOnTwoRings}, "
+                                  + $"меньше ячеек = {loudOnFewer}, круг ниже = {loudOnLowerRing}");
+            Done(ok);
+        }
+
+        /// <summary>Справочник, где единственный класс колдует Магией договора: одна ячейка 1 круга
+        /// на 1–2 уровнях, две ячейки 2 круга с 3-го. Обнуление первого круга на третьем уровне —
+        /// то самое место, где общее правило и правило Колдуна расходятся.</summary>
+        static RulesData PactRules()
+        {
+            var r = Minimal();
+            foreach (var l in r.Classes[0].Levels)
+                l.SpellSlots = l.Level < 3
+                    ? new[] { l.Level, 0, 0, 0, 0, 0, 0, 0, 0 }
+                    : new[] { 0, 2, 0, 0, 0, 0, 0, 0, 0 };
+            r.Classes[0].PactMagic = true;
+            return r;
+        }
+
         [ContextMenu("Self-Test: справочник — выбрать навыков больше, чем есть в списке, ловится")]
         public void SelfTestSkillPickCountBeyondChoicesCaught()
         {

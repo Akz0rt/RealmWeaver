@@ -108,6 +108,7 @@ namespace WorldGen.PlayerPrep.Data
                 CheckClassHasAbilityScoreLevels(c, errors);
                 CheckClassSpellSlotsNonNegative(c, errors);
                 CheckClassSpellSlotsNeverShrink(c, errors);
+                CheckClassPactMagicSlots(c, errors);
                 CheckClassSkillPickCount(c, errors);
                 CheckClassSubclassLevels(c, errors);
                 CheckClassFeatureIdsUnique(c, errors);
@@ -234,6 +235,9 @@ namespace WorldGen.PlayerPrep.Data
         /// повсюду — это не тонкий случай, а очевидный.</summary>
         static void CheckClassSpellSlotsNeverShrink(ClassDef c, List<string> errors)
         {
+            // Магия договора этому правилу не подчиняется НАРОЧНО: её единственный круг переезжает
+            // выше, и нижний обнуляется. Её стережёт CheckClassPactMagicSlots — строже, а не слабее.
+            if (c.PactMagic) return;
             var rows = Rows(c).OrderBy(l => l.Level).ToList();
             for (int i = 1; i < rows.Count; i++)
                 for (int ring = 0; ring < 9; ring++)
@@ -241,6 +245,39 @@ namespace WorldGen.PlayerPrep.Data
                         errors.Add($"класс {c.Id}: ячеек {ring + 1} круга на уровне {rows[i].Level} "
                                  + $"{rows[i].SpellSlots[ring]}, а на {rows[i - 1].Level} было "
                                  + $"{rows[i - 1].SpellSlots[ring]} — таблица убывает");
+        }
+
+        /// <summary>Ячейки Магии договора. Заменяет общее «круг за кругом не убывает» тремя более
+        /// узкими правилами, потому что общее для Колдуна ложно, а без замены он остался бы вовсе
+        /// без охраны — то есть отключённый флагом гейт был бы хуже, чем никакого флага:
+        ///   • в строке ненулевой РОВНО ОДИН круг — все ячейки Колдуна одного круга;
+        ///   • число ячеек с уровнем не убывает;
+        ///   • круг с уровнем не понижается.
+        /// Строка без ячеек вовсе законна и просто пропускается: у поставляемого Колдуна такой нет,
+        /// но чужой справочник вправе начать колдовать не с первого уровня.</summary>
+        static void CheckClassPactMagicSlots(ClassDef c, List<string> errors)
+        {
+            if (!c.PactMagic) return;
+            int prevRing = 0, prevCount = 0, prevLevel = 0;
+            foreach (var l in Rows(c).OrderBy(l => l.Level))
+            {
+                var filled = Enumerable.Range(0, 9).Where(i => l.SpellSlots[i] != 0).ToList();
+                if (filled.Count > 1)
+                {
+                    errors.Add($"класс {c.Id}, уровень {l.Level}: ячейки Магии договора стоят сразу "
+                             + $"в {filled.Count} кругах, а они все одного круга");
+                    continue;
+                }
+                if (filled.Count == 0) continue;
+                int ring = filled[0] + 1, count = l.SpellSlots[filled[0]];
+                if (ring < prevRing)
+                    errors.Add($"класс {c.Id}: круг ячеек Магии договора на уровне {l.Level} — {ring}, "
+                             + $"а на уровне {prevLevel} был {prevRing}: круг понижается");
+                if (count < prevCount)
+                    errors.Add($"класс {c.Id}: ячеек Магии договора на уровне {l.Level} — {count}, "
+                             + $"а на уровне {prevLevel} было {prevCount}: таблица убывает");
+                prevRing = ring; prevCount = count; prevLevel = l.Level;
+            }
         }
 
         /// <summary>Строки с таблицей ячеек ПРАВИЛЬНОЙ длины. Кривую длину ловит отдельная
