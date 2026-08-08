@@ -60,6 +60,12 @@ namespace WorldGen.Notes.Rendering
         /// нужен. Null в сцене без оболочки — LateUpdate тогда просто ничего не делает.</summary>
         public PageFocusRouter router;
 
+        /// <summary>«Перечитай доску панели N из документа» — проводится оболочкой (WorkspaceBuilder) к
+        /// CanvasSurfaceHost.RefreshBoard. Делегатом, а не прямой ссылкой: этот класс живёт в слое заметок
+        /// и о хостах поверхностей не знает — ровно так же, как о панелях он спрашивает маршрутизатор.
+        /// Непроведённый делегат значит «доски нет» (встроенная доска, сцена без оболочки) и молчит.</summary>
+        public System.Action<int> RepaintBoard;
+
         /// <summary>Вид, которому принадлежат клавиши В ЭТОМ КАДРЕ, — снимок `router.ActiveView()`,
         /// сделанный в начале LateUpdate, чтобы все нижние методы одного кадра работали с ОДНИМ и тем же
         /// видом (иначе клик, случившийся между двумя вызовами, развёл бы их по разным панелям).
@@ -375,6 +381,14 @@ namespace WorldGen.Notes.Rendering
 
             bool shifted = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
             if (undo && !shifted) target.Undo(); else target.Redo();
+
+            // И ПЕРЕЧИТАТЬ ДОСКУ. Отмена восстановила `Page.Blocks` блоками ИЗ СНИМКА, то есть блок доски
+            // теперь другой экземпляр, а развёрнутая доска держит тот, что ей отдали на Show. Без этой
+            // строки данные откатывались бы, а ДМ видел бы прежний рисунок — то есть отмена выглядела бы
+            // сломанной ровно так же, как когда её не было вовсе. Спрошено ПОСЛЕ отмены и только по факту
+            // нажатия: разбор фокуса от отмены не зависит, а лишних обходов документа за кадр не заводим.
+            int boardPane = router.ActiveBoardPane();
+            if (boardPane >= 0) RepaintBoard?.Invoke(boardPane);
         }
 
         /// <summary>Whether a vertical arrow belongs to this class rather than to the field. THREE conditions,

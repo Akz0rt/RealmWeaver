@@ -389,6 +389,10 @@ namespace WorldGen.Workspace.Rendering
                 if (keyboard != null)
                 {
                     keyboard.router = focusRouter;
+                    // Отмена правки В ДОСКЕ обязана перерисовать доску: снимок возвращает в страницу ДРУГИЕ
+                    // экземпляры блоков, а развёрнутая доска держит тот, что ей отдали на Show. Проводится
+                    // здесь, рядом с router, потому что это вторая половина того же моста «клавиши ↔ доска».
+                    keyboard.RepaintBoard = canvasHost.RefreshBoard;
                     // Attach is REUSE-OR-ADD (see its own doc), so this re-points the one popup rather than
                     // building a second. It takes no view and no router: the popup is told which view a
                     // «@» was typed in when it is OPENED, by the controller that already resolved it for

@@ -415,7 +415,9 @@ namespace WorldGen.Workspace.Rendering
             var board = BoardFor(pane);
             if (board == null || !ShowsBoard(pane)) return null;
             FindCanvas(board.BlockId, out NotesPage owner);
-            return ViewShowing(owner);
+            // Тот же вид, в чей стек клал снимок BeforeMutation, — иначе отмена искала бы историю не там,
+            // где её писали. Оба конца обязаны спрашивать ОДНО и то же (см. ViewOwning).
+            return ViewOwning(owner);
         }
 
         public string TitleFor(string id) => NotesSurface.TitleOf(FindCanvas(id, out _));
@@ -456,6 +458,60 @@ namespace WorldGen.Workspace.Rendering
             foreach (var view in pageHost.Views)
                 if (view != null && view.SurfaceVisible && ReferenceEquals(view.Page, page)) return view;
             return null;
+        }
+
+        /// <summary>Вид, которому ПРИНАДЛЕЖИТ история страницы-владелицы: видимый, если он есть, иначе
+        /// скрытый, но привязанный. Отличается от ViewShowing выше РОВНО запасным ответом, и этот ответ —
+        /// починка находки ДМ «Ctrl+Z не работает для доски» (проверка 8 августа).
+        ///
+        /// ЧТО БЫЛО СЛОМАНО. И снимок (BeforeMutation), и адресат отмены (HistoryViewFor) спрашивали
+        /// ViewShowing, то есть требовали `SurfaceVisible`. В ОДНОЙ панели развёрнутая доска занимает
+        /// единственную панель — значит вид страницы-владелицы скрыт ВСЕГДА, пока ДМ в доске работает.
+        /// ViewShowing честно отвечал «никто», снимок не клался вовсе, и Ctrl+Z было нечего отменять.
+        /// Не гонка и не «иногда»: в одной панели отмена доски не работала НИКОГДА. Разбор задачи 6
+        /// рассматривал случай «страницу-владелицу не показывает ни одна панель» как редкий край
+        /// («тогда доска и снимка не делала»), — а он оказался нормой, потому что большую часть времени
+        /// панель одна.
+        ///
+        /// ПОЧЕМУ НЕ ПРОСТО СНЯТЬ ПРОВЕРКУ ВИДИМОСТИ. Она несёт разрешение спора, и оно остаётся: когда
+        /// одна панель ПОКАЗЫВАЕТ страницу, а другой вид всё ещё к ней привязан (Hide намеренно не рвёт
+        /// привязку — привязка и есть то, чему принадлежит история), выиграть обязан видимый. Иначе
+        /// `Views`, отдающий панель 0 первой, уводил бы историю в невидимый вид всякий раз, когда ДМ
+        /// открыл «↗» доски из панели 1. Поэтому здесь ПРЕДПОЧТЕНИЕ, а не отмена правила: видимый
+        /// побеждает, скрытый — только когда видимого нет ни одного.
+        ///
+        /// Перерисовка (AfterMutation) НАРОЧНО осталась на ViewShowing: рисовать нечего, когда страницу
+        /// никто не смотрит, — а история нужна именно в этом случае. Это два разных вопроса, и второй
+        /// раз за арку они разошлись (первый — ActiveView против UndoTargetView).</summary>
+        DocumentPageView ViewOwning(NotesPage page)
+        {
+            if (page == null || pageHost == null) return null;
+            DocumentPageView hidden = null;
+            foreach (var view in pageHost.Views)
+            {
+                if (view == null || !ReferenceEquals(view.Page, page)) continue;
+                if (view.SurfaceVisible) return view;
+                if (hidden == null) hidden = view;
+            }
+            return hidden;
+        }
+
+        /// <summary>Перечитать доску панели `pane` из документа заново. Нужна отмене: DocumentPageView.Apply
+        /// заменяет СОДЕРЖИМОЕ `Page.Blocks` блоками из снимка, то есть после Ctrl+Z блок доски — ДРУГОЙ
+        /// экземпляр, а развёрнутая доска держит тот, что ей отдали на Show. Без этого вызова отмена
+        /// возвращала бы данные, но ДМ продолжал бы видеть на экране прежний рисунок — то есть выглядела
+        /// бы ровно так же, как её отсутствие.</summary>
+        public void RefreshBoard(int pane)
+        {
+            var board = BoardFor(pane);
+            if (board?.Root == null || board.Controller == null || string.IsNullOrEmpty(board.BlockId)) return;
+            var block = FindCanvas(board.BlockId, out _);
+            if (block == null) return;
+            board.Controller.Initialize(block, board.Root, board.Interaction, CanvasMode.Expanded);
+            // Тот же порядок сиблингов, что и в Show, и по той же причине: содержимое, созданное после
+            // полосок инструментов, иначе рисуется поверх них.
+            if (board.Controller.CanvasContainer != null)
+                board.Controller.CanvasContainer.SetAsFirstSibling();
         }
 
         /// <summary>Builds pane `pane`'s board on first use, then points it at `id`. `pane` SELECTS THE BOARD
@@ -504,7 +560,9 @@ namespace WorldGen.Workspace.Rendering
                 // Resolved at MUTATION time, not captured at Show time: the DM can click a different tab in
                 // either pane between the two, so which view (if any) shows this board's page is not a fact
                 // this closure may cache.
-                ViewShowing(ownerPage)?.PushHistory(canvasId, -1);
+                // ViewOwning, А НЕ ViewShowing: в одной панели страница-владелица скрыта развёрнутой
+                // доской, и требование видимости означало «снимка не будет вовсе». См. ViewOwning.
+                ViewOwning(ownerPage)?.PushHistory(canvasId, -1);
             };
             board.Controller.AfterMutation = () =>
             {
