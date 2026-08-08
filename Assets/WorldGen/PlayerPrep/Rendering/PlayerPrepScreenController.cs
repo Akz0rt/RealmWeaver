@@ -53,10 +53,37 @@ namespace WorldGen.PlayerPrep.Rendering
             // ровно по той же причине, но его в сцене игрока нет: здесь всегда присутствующая
             // «обвязка» приложения — этот компонент, значит чинить некому, кроме него.
             ConfirmDialog.DismissStranded();
+            DemolishForRebuild();
 
             LoadRules();
             BuildChrome();
             BackToList();
+        }
+
+        /// <summary>Сносит то, что этот же Awake построил в ПРОШЛЫЙ раз, чтобы BuildChrome строил с чистого
+        /// листа. Пересборка скриптов в режиме Play (Unity пересобирает, когда окну возвращают фокус — тот
+        /// самый alt-tab) заново зовёт Awake на уже существующем компоненте, а BuildChrome — это цепочка
+        /// new GameObject(...). Без сноса в сцене оказываются ДВА холста ScreenSpaceOverlay с одинаковым
+        /// sortingOrder 0, и сверху может лечь СТАРЫЙ, с непрозрачным фоном и стёртыми перезагрузкой
+        /// слушателями: экран выглядит правильно и не отвечает ни на одно нажатие. Дотянуться до старого
+        /// нечем — contentRt к тому времени указывает уже на новый Content.
+        ///
+        /// DestroyImmediate, а не Destroy, и это не вкусовщина: Destroy откладывается до конца кадра, так
+        /// что старый «Canvas» ещё кадр оставался бы ребёнком, отвечал бы на Transform.Find и читался бы как
+        /// не-null через Unity-совместимое ==, пока этот же метод строит второй с тем же именем. В Awake
+        /// DestroyImmediate разрешён. Ровно тот же приём и по той же причине — в
+        /// WorkspaceBuilder.DemolishForRebuild и ProjectMenuBar.DemolishForRebuild.
+        ///
+        /// Довод из ClearContent («уничтожать нельзя, состояние переключают из обработчика нажатия») сюда не
+        /// относится вовсе: Awake никто не зовёт из onClick.
+        ///
+        /// На холодном запуске это пустой цикл: в PlayerPrep.unity у объекта с этим компонентом детей нет.
+        /// EventSystem под снос не попадает — он создаётся в корне сцены, а не ребёнком; уцелев, он ровно
+        /// поэтому и не пересоздаётся проверкой в BuildChrome.</summary>
+        void DemolishForRebuild()
+        {
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                DestroyImmediate(transform.GetChild(i).gameObject);
         }
 
         void OnDestroy()
@@ -200,21 +227,43 @@ namespace WorldGen.PlayerPrep.Rendering
 
         // ── Состояния ────────────────────────────────────────────────────────────
 
-        /// <summary>Показать мастер. Задачи 10 и 12 зовут это, чтобы отправить игрока доделывать лист.</summary>
-        public void OpenWizard(CharacterFile file)
+        /// <summary>Единственное место, где пара «текущий лист + куда его сохранять» меняется вместе.
+        ///
+        /// ИНВАРИАНТ: CurrentPath никогда не указывает на файл, из которого пришёл НЕ тот лист, что лежит в
+        /// Current. Разъехаться этой паре нельзя: SaveCurrent при непустом CurrentPath пишет молча, без
+        /// вопросов, и рассинхронизация означает не ошибку на экране, а тихо переписанного другого
+        /// персонажа. Поэтому Current присваивается здесь и только здесь — вместе с путём.</summary>
+        void SetCurrent(CharacterFile file, string path)
+        {
+            Current = file;
+            CurrentPath = path;
+        }
+
+        /// <summary>Показать мастер. Задачи 10 и 12 зовут это, чтобы отправить игрока доделывать лист.
+        ///
+        /// path — файл, из которого лист пришёл; НЕ передавать для только что созданного персонажа. Раньше
+        /// аргумента не было вовсе, и естественный вызов «создать ещё одного» — OpenWizard(new CharacterFile
+        /// { … }) — оставлял CurrentPath от ранее открытого персонажа, после чего первое же «Сохранить»
+        /// молча переписывало чужой файл. Умолчание именно null, а не CurrentPath, потому что цена ошибки
+        /// несимметрична: забыть путь стоит одного лишнего вопроса «куда сохранить» — это заметно и
+        /// поправимо, а унаследовать чужой путь стоит потерянного персонажа и незаметно. Продолжая работу
+        /// над УЖЕ сохранённым листом, передавайте OpenWizard(file, CurrentPath).</summary>
+        public void OpenWizard(CharacterFile file, string path = null)
         {
             if (file == null) return;
-            Current = file;
+            SetCurrent(file, path);
             ClearContent();
             ShowWizard(file);
         }
 
         /// <summary>Показать лист. CurrentPath не трогается: открыть лист можно и у ещё не сохранённого
-        /// персонажа, только что собранного мастером.</summary>
+        /// персонажа, только что собранного мастером. Инвариант при этом цел, а не нарушен ради удобства: на
+        /// всех вызовах — из OpenFromDisk, из OpenRecent и из возврата мастера (задача 10) — Current уже
+        /// равен file, так что этот вызов лист не МЕНЯЕТ, а подтверждает, и разъезжаться паре не с чем.</summary>
         public void OpenSheet(CharacterFile file)
         {
             if (file == null) return;
-            Current = file;
+            SetCurrent(file, CurrentPath);
             ClearContent();
             ShowSheet(file);
         }
@@ -224,8 +273,7 @@ namespace WorldGen.PlayerPrep.Rendering
         /// листу файл передаётся аргументом, так что ни на что оставшееся это не влияет.</summary>
         public void BackToList()
         {
-            Current = null;
-            CurrentPath = null;
+            SetCurrent(null, null);
             ClearContent();
             ShowList();
         }
@@ -359,9 +407,8 @@ namespace WorldGen.PlayerPrep.Rendering
         {
             // rules — это и есть SheetRulesSource.Rules, прочитанный один раз в Awake; здесь он заведомо
             // не null, потому что при null список кнопок вообще не строится.
-            Current = new CharacterFile { RulesId = rules.Id };
-            CurrentPath = null;
-            OpenWizard(Current);
+            // Путь НЕ передаётся: персонаж ещё нигде не лежит, и первое «Сохранить» обязано спросить имя.
+            OpenWizard(new CharacterFile { RulesId = rules.Id });
         }
 
         void OpenFromDisk()
@@ -370,8 +417,7 @@ namespace WorldGen.PlayerPrep.Rendering
             {
                 var (file, path) = SheetFileService.Open();
                 if (file == null) return;              // отменили — ничего не делаем
-                Current = file;
-                CurrentPath = path;
+                SetCurrent(file, path);
                 // Файл собран другим справочником — открываем, но предупреждаем сверху (задача 11).
                 OpenSheet(file);
             }
@@ -392,8 +438,7 @@ namespace WorldGen.PlayerPrep.Rendering
             try
             {
                 var file = SheetFileService.LoadFrom(path);
-                Current = file;
-                CurrentPath = path;
+                SetCurrent(file, path);
                 OpenSheet(file);
             }
             catch (System.Exception ex)
@@ -448,9 +493,16 @@ namespace WorldGen.PlayerPrep.Rendering
         /// Показ не имеет права ничего менять.</summary>
         string DescribeSheet(string path)
         {
-            string fallback = Path.GetFileNameWithoutExtension(path);
+            // fallback объявлен СНАРУЖИ try (его читает catch), а заполняется ВНУТРИ: сам
+            // Path.GetFileNameWithoutExtension на Mono бросает ArgumentException на недопустимых знаках
+            // пути, а сюда приходит строка из PlayerPrefs, которую мог испортить кто угодно. Стой этот
+            // вызов над try — исключение улетело бы через AddRecentRow и ShowList прямо в Awake и оставило
+            // бы экран недостроенным и немым. Начальное значение — сам путь: он длинный, но строку списка
+            // опознать по нему можно, а бросить он не может.
+            string fallback = path;
             try
             {
+                fallback = Path.GetFileNameWithoutExtension(path);
                 var file = CharacterSerializer.FromJson(File.ReadAllText(path, Encoding.UTF8));
                 string name = string.IsNullOrWhiteSpace(file.Name) ? fallback : file.Name;
                 string className = ClassName(file.ClassId);

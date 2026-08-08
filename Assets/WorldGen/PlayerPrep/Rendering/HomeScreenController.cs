@@ -11,6 +11,8 @@ namespace WorldGen.PlayerPrep.Rendering
     {
         void Awake()
         {
+            DemolishForRebuild();
+
             var canvasGO = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvasGO.transform.SetParent(transform, false);
             var canvas = canvasGO.GetComponent<Canvas>();
@@ -50,6 +52,24 @@ namespace WorldGen.PlayerPrep.Rendering
             UiKit.Label(column.transform, "Подготовка", 18, TextAnchor.MiddleCenter);
             Row(column.transform, "Для игрока", () => SceneManager.LoadScene("PlayerPrep"));
             Row(column.transform, "Для ДМ", () => SceneManager.LoadScene("SampleScene"));
+        }
+
+        /// <summary>Сносит то, что этот же Awake построил в ПРОШЛЫЙ раз. Пересборка скриптов в режиме Play
+        /// (Unity пересобирает, когда окну возвращают фокус — обычный alt-tab) заново зовёт Awake на уже
+        /// существующем компоненте, а весь экран строится здесь цепочкой new GameObject(...). Без сноса
+        /// холстов ScreenSpaceOverlay становится два, оба с sortingOrder 0, и сверху может лечь СТАРЫЙ — с
+        /// непрозрачным фоном и стёртыми перезагрузкой обработчиками кнопок: главный экран выглядит
+        /// правильно и не отвечает ни на одно нажатие.
+        ///
+        /// DestroyImmediate, а не Destroy: Destroy откладывается до конца кадра, и старый «Canvas» ещё кадр
+        /// остаётся ребёнком, отвечает на Transform.Find и читается как не-null, пока строится второй с тем
+        /// же именем. В Awake DestroyImmediate разрешён. Тот же приём — в WorkspaceBuilder.DemolishForRebuild
+        /// и ProjectMenuBar.DemolishForRebuild. На холодном запуске цикл пустой: в Home.unity у объекта с
+        /// этим компонентом детей нет.</summary>
+        void DemolishForRebuild()
+        {
+            for (int i = transform.childCount - 1; i >= 0; i--)
+                DestroyImmediate(transform.GetChild(i).gameObject);
         }
 
         static void Row(Transform parent, string label, System.Action onClick, bool enabled = true)
