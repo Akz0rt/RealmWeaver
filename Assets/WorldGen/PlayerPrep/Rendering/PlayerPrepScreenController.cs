@@ -278,12 +278,12 @@ namespace WorldGen.PlayerPrep.Rendering
             ShowList();
         }
 
-        /// <summary>ЗАГЛУШКА ЗАДАЧИ 9. Задача 10 заменяет тело на
-        /// <c>WizardView.Build(contentRt, file, () =&gt; OpenSheet(file));</c> — в этом файле ей больше
-        /// менять нечего.</summary>
+        /// <summary>Мастер (задача 10). Обратный вызов ведёт на лист того же самого персонажа: OpenSheet
+        /// пути не трогает, а Current к этому времени уже равен file, поэтому пара «лист + путь» остаётся
+        /// целой.</summary>
         void ShowWizard(CharacterFile file)
         {
-            Placeholder("Мастер создания персонажа появится в задаче 10.");
+            WizardView.Build(contentRt, file, () => OpenSheet(file));
         }
 
         /// <summary>ЗАГЛУШКА ЗАДАЧИ 9. Задача 11 заменяет тело на
