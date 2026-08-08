@@ -52,6 +52,31 @@ namespace WorldGen.PlayerPrep.Rendering
             UiKit.Label(column.transform, "Подготовка", 18, TextAnchor.MiddleCenter);
             Row(column.transform, "Для игрока", () => SceneManager.LoadScene("PlayerPrep"));
             Row(column.transform, "Для ДМ", () => SceneManager.LoadScene("SampleScene"));
+
+            EnsureUpdateChecker();
+        }
+
+        /// <summary>Проверка обновлений живёт на СТАРТОВОМ пути, а не в конструкторе ДМ.
+        ///
+        /// UpdateChecker — обычный MonoBehaviour, он работает, только пока загружена сцена, в которой
+        /// лежит. Лежал он в SampleScene, и пока та была сценой номер 0, обновления искались при каждом
+        /// запуске. Эта арка поставила нулевой сценой Home — и путь «Подготовка для игрока» перестал
+        /// проходить мимо проверки ВООБЩЕ: игрок не узнавал бы о новой версии никогда, а ДМ — только
+        /// зайдя в конструктор. Для первой сборки, которую увидят игроки, это дорого вдвойне: этот
+        /// компонент — единственный канал доставки всех следующих версий.
+        ///
+        /// Компонент ставится кодом, а не в сцене: он самодостаточен («add to any GameObject, no
+        /// Inspector wiring needed»), а сцена Home.unity намеренно держится пустой, чтобы не
+        /// конфликтовать при слиянии двух веток. В SampleScene свой экземпляр остаётся — вторым он не
+        /// станет, эта сцена выгружается при переходе.
+        ///
+        /// Проверка на уже существующий нужна из-за пересборки скриптов в режиме Play: Awake зовётся
+        /// заново на том же объекте, а DemolishForRebuild сносит только ДЕТЕЙ, компонент же висит на
+        /// самом объекте и переживает снос.</summary>
+        void EnsureUpdateChecker()
+        {
+            if (Object.FindFirstObjectByType<WorldGen.Update.UpdateChecker>() != null) return;
+            gameObject.AddComponent<WorldGen.Update.UpdateChecker>();
         }
 
         /// <summary>Сносит то, что этот же Awake построил в ПРОШЛЫЙ раз. Пересборка скриптов в режиме Play
