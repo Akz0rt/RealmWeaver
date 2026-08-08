@@ -193,6 +193,126 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: лист — характеристика объясняет себя базой, стрелкой и прибавкой")]
+        public void SelfTestAbilityExplainShowsBaseArrowTotal()
+        {
+            // Строка сверяется ЦЕЛИКОМ, потому что самопроверка и есть её единственная спецификация:
+            // ни харнесс, ни компиляция не видят, что написано у игрока на экране.
+            // Мутанты, которых валит именно пара «с прибавкой + без прибавки»:
+            //   «прибавки потеряны»          → «Сила 8 → 8»;
+            //   «база берётся из суммы»      → «Сила 10 → 12 (+2)»;
+            //   «скобки печатаются всегда»   → «Мудрость 10 → 10 (+0)».
+            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            string str = d.AbilityExplain.TryGetValue("str", out var s) ? s : "(нет)";
+            string wis = d.AbilityExplain.TryGetValue("wis", out var w) ? w : "(нет)";
+            bool ok = str == "Сила 8 → 10 (+2)" && wis == "Мудрость 10 → 10";
+            // Мутант «объяснять только те характеристики, у которых есть прибавка» не виден ни на
+            // одной отдельной строке — виден только на полноте набора.
+            var missing = SheetMath.AbilityOrder().Where(id => !d.AbilityExplain.ContainsKey(id)).ToList();
+            ok &= missing.Count == 0;
+            if (!ok) Debug.LogError($"FAIL объяснение характеристики: СИЛ «{str}» (ждали «Сила 8 → 10 (+2)»), "
+                                  + $"МДР «{wis}» (ждали «Мудрость 10 → 10»), без объяснения: "
+                                  + (missing.Count == 0 ? "нет" : string.Join(",", missing)));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — отрицательная прибавка показывается со знаком минус")]
+        public void SelfTestAbilityExplainKeepsNegativeBump()
+        {
+            // Мутант «печатать плюс всегда» даёт «Мудрость 10 → 8 (+-2)» либо «(+2)» — и то и другое
+            // враньё. В основной фикстуре отрицательных прибавок нет, поэтому мутант в ней невидим.
+            var c = Fixtures.Character();
+            c.Bumps.Add(new AbilityBump { Source = "level:4", AbilityId = "wis", Amount = -2 });
+            var d = SheetMath.Compute(c, Fixtures.Rules());
+            bool ok = d.AbilityExplain["wis"] == "Мудрость 10 → 8 (-2)";
+            if (!ok) Debug.LogError($"FAIL отрицательная прибавка: «{d.AbilityExplain["wis"]}», ждали «Мудрость 10 → 8 (-2)»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — нулевой бонус пишется со знаком плюс")]
+        public void SelfTestSignedKeepsPlusOnZero()
+        {
+            // Мутант «ноль печатается без знака» (v > 0 вместо v >= 0) невидим во всех остальных
+            // проверках: в фикстуре нулевой бонус попадается только у силы, чьё объяснение целиком
+            // никто не сверяет. А на листе «0» рядом с «+2» читается как «здесь ничего не посчитано».
+            bool ok = SheetMath.Signed(0) == "+0" && SheetMath.Signed(3) == "+3" && SheetMath.Signed(-1) == "-1";
+            if (!ok) Debug.LogError($"FAIL знак бонуса: 0 → «{SheetMath.Signed(0)}» (ждали «+0»), "
+                                  + $"3 → «{SheetMath.Signed(3)}», −1 → «{SheetMath.Signed(-1)}»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — мастерство объясняет себя уровнем")]
+        public void SelfTestProficiencyExplainNamesTheLevel()
+        {
+            // ФИКСТУРА 5 УРОВНЯ, а не 1: на первом «+2 на 1 уровне» получается и у верной формулы, и
+            // у мутанта «всегда +2 на 1 уровне», и проверка была бы вакуозной.
+            var rules = Fixtures.Rules();
+            var d = SheetMath.Compute(Fixtures.Character(), rules);
+            const string want = "+3 на 5 уровне (мастерство растёт на 5, 9, 13 и 17)";
+            bool ok = d.ProficiencyExplain == want;
+
+            // Второй мутант: объяснение берёт file.Level, а бонус — прижатый уровень. Тогда число и
+            // подпись расходятся ровно на листах с испорченным уровнем — там, где проверить некому.
+            var over = Fixtures.Character(); over.Level = 25;
+            var d25 = SheetMath.Compute(over, rules);
+            const string want25 = "+6 на 20 уровне (мастерство растёт на 5, 9, 13 и 17)";
+            ok &= d25.ProficiencyExplain == want25;
+
+            if (!ok) Debug.LogError($"FAIL объяснение мастерства: «{d.ProficiencyExplain}» (ждали «{want}»), "
+                                  + $"на 25 уровне «{d25.ProficiencyExplain}» (ждали «{want25}»)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — инициатива объясняет себя ловкостью")]
+        public void SelfTestInitiativeExplainNamesDexterity()
+        {
+            // Слово в строке важно не меньше числа: мутант «инициатива от силы» в этой фикстуре даёт
+            // «+0 сила», а мутант «взять число ловкости, но назвать другую характеристику» — «+2 сила».
+            // Проверка «содержит +2» пропустила бы второго.
+            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            bool ok = d.InitiativeExplain == "+2 ловкость";
+            if (!ok) Debug.LogError($"FAIL объяснение инициативы: «{d.InitiativeExplain}», ждали «+2 ловкость»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — скорость объясняет себя видом")]
+        public void SelfTestSpeedExplainNamesTheRace()
+        {
+            // Три мутанта: «30 зашито числом» (падает на второй фикстуре с 25), «названо не то, откуда
+            // скорость» — класс вместо вида (даёт «вид «Плут»»), «у неизвестного вида молчим»
+            // (пустая строка под нулём читается как «персонаж не ходит»).
+            var d = SheetMath.Compute(Fixtures.Character(), Fixtures.Rules());
+            bool ok = d.SpeedExplain == "30 футов, вид «Полурослик»";
+
+            var slow = Fixtures.Rules(); slow.Races[0].Speed = 25;
+            var dSlow = SheetMath.Compute(Fixtures.Character(), slow);
+            ok &= dSlow.SpeedExplain == "25 футов, вид «Полурослик»";
+
+            var noRace = Fixtures.Character(); noRace.RaceId = null;
+            var dNone = SheetMath.Compute(noRace, Fixtures.Rules());
+            ok &= dNone.Speed == 0 && dNone.SpeedExplain == "вид не выбран — скорость приходит от него";
+
+            if (!ok) Debug.LogError($"FAIL объяснение скорости: «{d.SpeedExplain}» (ждали «30 футов, вид «Полурослик»»), "
+                                  + $"на 25 футах «{dSlow.SpeedExplain}», без вида «{dNone.SpeedExplain}»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: лист — объяснение характеристики не требует справочника")]
+        public void SelfTestExplainAbilityWorksOnHalfBuiltCharacter()
+        {
+            // Мастер зовёт ExplainAbility на шаге характеристик, когда ни вида, ни класса ещё нет —
+            // и до сих пор звал СВОЮ копию правила. Мутант «считать через Compute» уронил бы мастер
+            // на полупустом персонаже либо потребовал справочника, которого на том шаге может не быть.
+            var half = new CharacterFile { Base = new AbilityScores { Dex = 15 } };
+            half.Bumps.Add(new AbilityBump { Source = "background", AbilityId = "dex", Amount = 2 });
+            bool ok = SheetMath.ExplainAbility(half, "dex") == "Ловкость 15 → 17 (+2)"
+                   && SheetMath.ExplainAbility(half, "cha") == "Харизма 0 → 0"
+                   && SheetMath.ExplainAbility(null, "dex") == "Ловкость";
+            if (!ok) Debug.LogError($"FAIL объяснение без справочника: «{SheetMath.ExplainAbility(half, "dex")}», "
+                                  + $"«{SheetMath.ExplainAbility(half, "cha")}», «{SheetMath.ExplainAbility(null, "dex")}»");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

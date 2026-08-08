@@ -34,7 +34,33 @@ namespace WorldGen.PlayerPrep.Data
 
         static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
-        static string Signed(int v) => v >= 0 ? "+" + v : v.ToString();
+        /// <summary>Бонус со знаком: «+3», «+0», «−1» (минус обычный, ASCII). НОЛЬ ПИШЕТСЯ «+0», а не
+        /// «0», потому что на бумажном листе он пишется так же: у строки со знаком читается «бонус,
+        /// равный нулю», у строки без знака — «здесь ничего не посчитано».
+        ///
+        /// Публичный, потому что тем же способом подписывает числа лист (SheetView): своя копия этого
+        /// соглашения в слое рисования разошлась бы со строками Explain, которые оно же и собирает —
+        /// «+0 ловкость» в объяснении и «0» в самом числе на одной строке.</summary>
+        public static string Signed(int v) => v >= 0 ? "+" + v : v.ToString();
+
+        /// <summary>«Ловкость 15 → 17 (+2)»: база из файла, стрелка, сумма с прибавками. Без прибавок
+        /// скобок нет вовсе — «Мудрость 10 → 10», а не «→ 10 (+0)»: ноль в скобках читается как
+        /// потерянная прибавка.
+        ///
+        /// Складываются ВСЕ прибавки характеристики, независимо от Source: игроку важно, откуда
+        /// взялось итоговое число, а не какая из строк файла его дала. Правило переехало сюда из
+        /// WizardView, где было второй копией; лист и мастер обязаны объяснять одно число одинаково.
+        ///
+        /// Справочник не нужен: и база, и прибавки лежат в файле, поэтому мастер зовёт это на
+        /// полупустом персонаже, у которого ни вида, ни класса ещё нет.</summary>
+        public static string ExplainAbility(CharacterFile file, string abilityId)
+        {
+            if (file == null) return AbilityName(abilityId);
+            int fromBase = file.Base.Get(abilityId);
+            int bump = file.Bumps.Where(b => b.AbilityId == abilityId).Sum(b => b.Amount);
+            string head = $"{AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
+            return bump == 0 ? head : $"{head} ({(bump > 0 ? "+" : "")}{bump})";
+        }
 
         public static DerivedSheet Compute(CharacterFile file, RulesData rules)
         {
@@ -65,10 +91,20 @@ namespace WorldGen.PlayerPrep.Data
                 d.Total.Add(b.AbilityId, b.Amount);
             }
             foreach (var id in AbilityIds) d.Modifiers.Add(id, Modifier(d.Total.Get(id)));
+            foreach (var id in AbilityIds) d.AbilityExplain[id] = ExplainAbility(file, id);
 
             d.ProficiencyBonus = Proficiency(level);
+            // Уровень берётся ПРИЖАТЫЙ, а не file.Level: лист с уровнем 25 показал бы бонус 20-го
+            // уровня и подпись «на 25 уровне» — число и его объяснение разошлись бы прямо на экране.
+            d.ProficiencyExplain = $"{Signed(d.ProficiencyBonus)} на {level} уровне "
+                                 + "(мастерство растёт на 5, 9, 13 и 17)";
             d.Initiative = d.Modifiers.Dex;
+            d.InitiativeExplain = $"{Signed(d.Modifiers.Dex)} {AbilityName("dex").ToLowerInvariant()}";
             d.Speed = race?.Speed ?? 0;
+            // Ноль без объяснения выглядел бы как «персонаж не ходит». Говорим, чего не хватает.
+            d.SpeedExplain = race == null
+                ? "вид не выбран — скорость приходит от него"
+                : $"{race.Speed} футов, вид «{race.Name}»";
             d.HitDie = cls?.HitDie ?? "";
 
             // Спасброски

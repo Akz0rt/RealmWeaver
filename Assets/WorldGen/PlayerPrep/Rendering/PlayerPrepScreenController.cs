@@ -30,6 +30,12 @@ namespace WorldGen.PlayerPrep.Rendering
         /// SaveCurrent в этом случае спрашивает имя.</summary>
         public string CurrentPath { get; private set; }
 
+        /// <summary>Показанный сейчас лист, либо null на всех остальных состояниях. Задача 12 зовёт
+        /// через него Refresh после «Повысить уровень». ОБНУЛЯЕТСЯ в ClearContent: тот уничтожает
+        /// объект листа, а ссылка на уничтоженный компонент — это MissingReferenceException у того,
+        /// кто ею потом воспользуется.</summary>
+        public SheetView Sheet { get; private set; }
+
         const float HeaderHeight = 56f;
         // Строка авторства — 480 знаков, кеглем 13 на ширине 1920 это две-три строки. Высота полосы
         // взята с запасом и КОНСТАНТОЙ, а не из Text.preferredHeight: в Awake раскладки ещё не было,
@@ -286,34 +292,11 @@ namespace WorldGen.PlayerPrep.Rendering
             WizardView.Build(contentRt, file, () => OpenSheet(file));
         }
 
-        /// <summary>ЗАГЛУШКА ЗАДАЧИ 9. Задача 11 заменяет тело на
-        /// <c>SheetView.Build(contentRt, file);</c> и заводит СВОЁ поле под возвращённый компонент —
-        /// задача 12 достаёт через него Refresh(). Поля заранее нет намеренно: типа ещё не существует.</summary>
+        /// <summary>Лист (задача 11). Возвращённый компонент запоминается в Sheet — через него задача
+        /// 12 зовёт Refresh после «Повысить уровень».</summary>
         void ShowSheet(CharacterFile file)
         {
-            Placeholder("Лист персонажа появится в задаче 11.");
-        }
-
-        /// <summary>Временное содержимое с выходом. Без кнопки возврата ДМ на контрольной точке
-        /// оказался бы заперт в пустом экране.</summary>
-        void Placeholder(string message)
-        {
-            var column = NewRect(contentRt, "Placeholder", typeof(VerticalLayoutGroup));
-            column.anchorMin = Vector2.zero;
-            column.anchorMax = Vector2.one;
-            column.offsetMin = new Vector2(48f, 24f);
-            column.offsetMax = new Vector2(-48f, -28f);
-            var layout = column.GetComponent<VerticalLayoutGroup>();
-            layout.spacing = 14f;
-            layout.childAlignment = TextAnchor.UpperLeft;
-            layout.childControlWidth = true;
-            layout.childForceExpandWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandHeight = false;
-
-            var label = UiKit.Label(column, message, 20);
-            label.gameObject.AddComponent<LayoutElement>().preferredHeight = 34f;
-            AddButton(column, "← К списку листов", 260f, BackToList);
+            Sheet = SheetView.Build(contentRt, file);
         }
 
         void ShowList()
@@ -393,6 +376,9 @@ namespace WorldGen.PlayerPrep.Rendering
         /// а он уничтожил бы кнопку прямо посреди её собственного клика.</summary>
         void ClearContent()
         {
+            // Ссылка на лист гибнет ВМЕСТЕ с самим листом. Оставь её — и задача 12, позвав Refresh
+            // после возврата к списку, получила бы MissingReferenceException вместо тихого «листа нет».
+            Sheet = null;
             for (int i = contentRt.childCount - 1; i >= 0; i--)
             {
                 var child = contentRt.GetChild(i).gameObject;

@@ -852,15 +852,10 @@ namespace WorldGen.PlayerPrep.Rendering
                 file.Bumps.Add(new AbilityBump { Source = "background", AbilityId = bumpPlus1, Amount = 1 });
         }
 
-        /// <summary>«Ловкость 15 → 17 (+2)». Итог считается сложением прибавок файла, а не отдельной
-        /// памятью мастера, — показанное число и число на листе приходят из одного места.</summary>
-        string ExplainAbility(string abilityId)
-        {
-            int fromBase = file.Base.Get(abilityId);
-            int bump = file.Bumps.Where(b => b.AbilityId == abilityId).Sum(b => b.Amount);
-            string head = $"{SheetMath.AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
-            return bump == 0 ? head : $"{head} ({(bump > 0 ? "+" : "")}{bump})";
-        }
+        /// <summary>«Ловкость 15 → 17 (+2)». ЗОВЁТ ЧИСТЫЙ СЛОЙ, а не считает сам: правило переехало в
+        /// SheetMath.ExplainAbility под самопроверки, потому что здесь оно было второй копией — лист
+        /// объяснял то же самое число своей строкой, и разойтись им ничто не мешало.</summary>
+        string ExplainAbility(string abilityId) => SheetMath.ExplainAbility(file, abilityId);
 
         void ApplyStandardArray()
         {

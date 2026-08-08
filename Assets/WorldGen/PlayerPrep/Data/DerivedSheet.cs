@@ -10,13 +10,31 @@ namespace WorldGen.PlayerPrep.Data
     {
         public AbilityScores Total = new AbilityScores();
         public AbilityScores Modifiers = new AbilityScores();
+
+        /// <summary>«Сила 8 → 10 (+2)» по каждой из шести характеристик, ключ — идентификатор.
+        /// Заполняются ВСЕ ШЕСТЬ, включая те, что прибавок не получили: лист показывает объяснение по
+        /// нажатию на любое число, и «у этой характеристики объяснения нет» читалось бы как поломка.
+        ///
+        /// Живёт здесь, а не в слое рисования, по той же причине, что и все остальные Explain: у
+        /// мастера была своя копия этого правила (WizardView.ExplainAbility), и ничто не мешало ей
+        /// разойтись с листом — одно и то же число объяснялось бы на двух экранах по-разному.</summary>
+        public Dictionary<string, string> AbilityExplain = new Dictionary<string, string>();
+
         public int ProficiencyBonus;
+        /// <summary>«+3 на 5 уровне (мастерство растёт на 5, 9, 13 и 17)». Уровень назван ВНУТРИ
+        /// строки намеренно: без него игрок не видит, почему бонус именно такой, и не знает, когда
+        /// ждать следующего.</summary>
+        public string ProficiencyExplain = "";
         public List<SaveLine> Saves = new List<SaveLine>();
         public List<SkillLine> Skills = new List<SkillLine>();
         public int ArmorClass;
         public string ArmorClassExplain = "";
         public int Initiative;
+        public string InitiativeExplain = "";
         public int Speed;
+        /// <summary>«30 футов, вид «Полурослик»». Вид назван, потому что скорость приходит ровно от
+        /// него: без имени числу неоткуда взяться на глазах у игрока.</summary>
+        public string SpeedExplain = "";
         public int MaxHp;
         public string MaxHpExplain = "";
         public string HitDie = "";
