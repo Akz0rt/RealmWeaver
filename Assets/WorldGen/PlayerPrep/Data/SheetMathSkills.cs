@@ -91,6 +91,14 @@ namespace WorldGen.PlayerPrep.Data
                     foreach (var f in cl.Features)
                         d.Features.Add(new FeatureLine { Id = f.Id, Name = f.Name, Text = f.Text, Source = "class", Level = cl.Level });
 
+            // Дорос ли персонаж до подкласса вообще. Считается ОДИН раз и отвечает сразу на три
+            // вопроса: работает ли подкласс, надо ли о нём спрашивать в «чего не хватает» и печатать
+            // ли его в подзаголовке листа (d.ActiveSubclassId). Три копии этого условия — в расчёте,
+            // в перечне недостающего и в слое рисования — расходились бы по очереди.
+            bool subclassUnlocked = cls != null && cls.Levels.Any(l => l.Level <= level && l.Choice == "subclass");
+            d.ActiveSubclassId = subclassUnlocked && !string.IsNullOrEmpty(file.SubclassId)
+                ? file.SubclassId : null;
+
             // Подкласс — такой же справочный Id, как вид и класс: неизвестный показывается, а не
             // проглатывается. Его умения подчиняются тому же правилу «по текущий уровень».
             if (cls != null && !string.IsNullOrEmpty(file.SubclassId))
@@ -140,8 +148,7 @@ namespace WorldGen.PlayerPrep.Data
                     d.Missing.Add($"Навыков выбрано {picked} из {cls.SkillPickCount}");
                 if (expertiseUnlocked && file.ExpertiseIds.Count < cls.ExpertisePickCount)
                     d.Missing.Add($"Компетентность выбрана в {file.ExpertiseIds.Count} навыках из {cls.ExpertisePickCount}");
-                var needsSubclass = cls.Levels.Any(l => l.Level <= level && l.Choice == "subclass");
-                if (needsSubclass && string.IsNullOrEmpty(file.SubclassId))
+                if (subclassUnlocked && string.IsNullOrEmpty(file.SubclassId))
                     d.Missing.Add("Подкласс не выбран");
 
                 // Пустая ЯЧЕЙКА ВЫБОРА на уже взятом уровне. Стало достижимо вместе с планом

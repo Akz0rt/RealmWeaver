@@ -63,21 +63,45 @@ namespace WorldGen.PlayerPrep.Data
             return int.TryParse(source.Substring(prefix.Length), out int at) ? at : 0;
         }
 
+        /// <summary>Предел характеристики: прибавками выше двадцати не поднимаются.</summary>
+        public const int AbilityCap = 20;
+
         /// <summary>Сколько у характеристики СЕЙЧАС — база плюс те прибавки, которые на этом уровне уже
-        /// действуют. ЕДИНСТВЕННОЕ место, где прибавки складываются: и лист (Compute), и объяснение
-        /// (ExplainAbility), и потолок 20 в плане прокачки (LevelChoiceOps.ChooseAsi) спрашивают
-        /// здесь.
+        /// действуют, но не выше потолка. ЕДИНСТВЕННОЕ место, где прибавки складываются: и лист
+        /// (Compute), и объяснение (ExplainAbility), и план прокачки (LevelChoiceOps.ChooseAsi)
+        /// спрашивают здесь.
         ///
         /// УРОВЕНЬ УЧИТЫВАЕТСЯ, и это не мелочь. Прибавка вида «level:12» лежит в файле с того мига,
         /// как игрок наметил её в плане прокачки, — то есть задолго до двенадцатого уровня. Складывай
         /// мы всё подряд, «+2 Ловкость на 12 уровне» подняли бы Ловкость на листе четвёртого, молча и
         /// без единой строчки объяснения.
         ///
+        /// ПОТОЛОК 20 ДЕРЖИТСЯ ЗДЕСЬ, А НЕ В МИГ ВЫБОРА, и это исправление настоящей находки. Пока
+        /// урезал только ChooseAsi, потолок был верен ровно до следующей правки файла: выбрал +2 на 12
+        /// уровне, потом +2 на 8-м — и на двенадцатом выходило 21, потому что вторая запись про первую
+        /// ничего не знала. То же давали «убрать выбор» на младшем уровне и поднятая задним числом
+        /// БАЗА в мастере. Проверять на записи бессмысленно — запись никогда не последняя.
+        ///
+        /// БАЗА ВЫШЕ ДВАДЦАТИ НЕ СРЕЗАЕТСЯ: потолок останавливает ПРИБАВКИ, а не число, которое игрок
+        /// вписал своей рукой. Срежь мы его — файл с базой 22 показывал бы 20, и лист молча спорил бы
+        /// с мастером, где то же самое число стоит как есть.
+        ///
         /// Уровень прижимается к 1–20 здесь же: снаружи его передают и из файла (где он бывает
         /// испорчен), и из плана.</summary>
         public static int AbilityTotal(CharacterFile file, string abilityId, int level)
         {
             if (file == null) return 0;
+            int fromBase = file.Base.Get(abilityId);
+            int ceiling = fromBase > AbilityCap ? fromBase : AbilityCap;
+            int raw = RawTotal(file, abilityId, level);
+            return raw > ceiling ? ceiling : raw;
+        }
+
+        /// <summary>Сумма БЕЗ потолка — то, что игрок себе записал. Сложение живёт тут и больше нигде:
+        /// потолок отрезает уже посчитанное, а объяснение сравнивает записанное с дошедшим. Три места,
+        /// каждое со своим циклом, разошлись бы на первой же правке правил.</summary>
+        static int RawTotal(CharacterFile file, string abilityId, int level)
+        {
             int lv = Clamp(level, 1, 20);
             int total = file.Base.Get(abilityId);
             foreach (var b in file.Bumps)
@@ -108,12 +132,21 @@ namespace WorldGen.PlayerPrep.Data
 
         /// <summary>То же объяснение, но на ЗАДАННОМ уровне. Compute зовёт эту перегрузку со своим уже
         /// прижатым уровнем: прижми объяснение уровень второй раз само — правило «уровень прижимается
-        /// к 1–20» оказалось бы записано в двух местах, а «одно место» и есть весь смысл AbilityTotal.</summary>
+        /// к 1–20» оказалось бы записано в двух местах, а «одно место» и есть весь смысл AbilityTotal.
+        ///
+        /// ПРО ПОТОЛОК ГОВОРИТСЯ ВСЛУХ. Прибавка, упёршаяся в двадцать, иначе просто не появлялась бы
+        /// в числе — а игрок помнит, что выбирал «+2», и видит «+1» либо вовсе ничего. Молчание тут
+        /// неотличимо от потерянного выбора: «Ловкость 19 → 20 (+1 из +2: выше 20 характеристика не
+        /// растёт)» объясняет ровно то, что случилось.</summary>
         static string ExplainAbility(CharacterFile file, string abilityId, int level)
         {
             int fromBase = file.Base.Get(abilityId);
-            int bump = AbilityTotal(file, abilityId, level) - fromBase;
-            string head = $"{AbilityName(abilityId)} {fromBase} → {fromBase + bump}";
+            int total = AbilityTotal(file, abilityId, level);
+            int bump = total - fromBase;
+            int written = RawTotal(file, abilityId, level) - fromBase;
+            string head = $"{AbilityName(abilityId)} {fromBase} → {total}";
+            if (written != bump)
+                return $"{head} ({Signed(bump)} из {Signed(written)}: выше {AbilityCap} характеристика не растёт)";
             return bump == 0 ? head : $"{head} ({(bump > 0 ? "+" : "")}{bump})";
         }
 

@@ -162,6 +162,49 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: план — потолок берётся на целевом уровне и держится при любом порядке")]
+        public void SelfTestAsiCapUsesTargetLevelAndAnyOrder()
+        {
+            // ДВЕ находки в одной фикстуре, и обе — про то, что прошлые проверки пропускали.
+            //
+            // Мутант №1: `AbilityTotal(file, id, file.Level)` вместо `level` в ChooseAsi. Прежние
+            // фикстуры его не ловили вовсе: между file.Level (5) и целевым уровнем в них не лежало ни
+            // одной прибавки, и оба правила отвечали одинаково. Здесь между ними прибавка ЕСТЬ.
+            var byOrder = Fixtures.Character();                                  // 5 уровень
+            byOrder.Base.Dex = 17;
+            LevelChoiceOps.ChooseAsi(byOrder, 8, new List<string> { "dex" });    // 17 → 19
+            LevelChoiceOps.ChooseAsi(byOrder, 12, new List<string> { "dex" });   // на 12-м уже 19 → влезает +1
+            int atTwelve = byOrder.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 12).Sum(b => b.Amount);
+            // Сверяется ЗАПИСАННОЕ, а не итог: итог теперь режет потолок в SheetMath.AbilityTotal, и
+            // оба правила дали бы 20. Расходятся они ровно в том, что легло в файл, — +1 против +2.
+            bool ok = atTwelve == 1 && SheetMath.AbilityTotal(byOrder, "dex", 12) == 20;
+
+            // Мутант №2: «потолок держит только миг выбора». Тот же выбор в ОБРАТНОМ порядке: записи
+            // друг про друга не знают, в файле честно лежит 17+2+2, и удержать двадцатку может только
+            // счёт. Без потолка в AbilityTotal здесь выходит 21 — ровно то, что нашёл проверяющий.
+            var reversed = Fixtures.Character();
+            reversed.Base.Dex = 17;
+            LevelChoiceOps.ChooseAsi(reversed, 12, new List<string> { "dex" });
+            LevelChoiceOps.ChooseAsi(reversed, 8, new List<string> { "dex" });
+            int written = reversed.Bumps.Where(b => b.AbilityId == "dex" && SheetMath.BumpLevel(b.Source) > 0)
+                                        .Sum(b => b.Amount);
+            ok &= written == 4 && SheetMath.AbilityTotal(reversed, "dex", 12) == 20;
+
+            // И третья дорога к тому же: БАЗУ подняли задним числом в мастере, когда прибавки уже
+            // намечены. Проверять на записи бессмысленно — запись никогда не последняя.
+            var raised = Fixtures.Character();
+            raised.Base.Dex = 17;
+            LevelChoiceOps.ChooseAsi(raised, 8, new List<string> { "dex" });
+            raised.Base.Dex = 19;
+            ok &= SheetMath.AbilityTotal(raised, "dex", 8) == 20;
+
+            if (!ok) Debug.LogError($"FAIL потолок и порядок: записано на 12 «{atTwelve}» (ждали 1), "
+                                  + $"итог по порядку {SheetMath.AbilityTotal(byOrder, "dex", 12)} (ждали 20), "
+                                  + $"итог наоборот {SheetMath.AbilityTotal(reversed, "dex", 12)} (ждали 20, записано {written} из 4), "
+                                  + $"после правки базы {SheetMath.AbilityTotal(raised, "dex", 8)} (ждали 20)");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: план — «убрать выбор» снимает и подкласс, выбранный мастером")]
         public void SelfTestClearRemovesSubclassEvenWithoutAMark()
         {

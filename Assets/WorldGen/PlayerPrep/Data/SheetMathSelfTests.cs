@@ -445,6 +445,34 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: лист — прибавка, упёршаяся в 20, объясняет себя")]
+        public void SelfTestAbilityExplainTellsAboutTheCap()
+        {
+            // Потолок держит СЧЁТ, а не миг выбора, поэтому спрашивается он у листа.
+            // Мутанты, которых валит эта проверка:
+            //   «потолка в счёте нет»   → «Ловкость 19 → 21 (+2)»;
+            //   «потолок молча»         → «Ловкость 19 → 20 (+1)», и игрок, помнящий свой выбор «+2»,
+            //                             читает это как потерянную прибавку;
+            //   «срезать и базу»        → «Сила 22 → 20», то есть лист спорит с числом, которое игрок
+            //                             вписал своей рукой в мастере.
+            var c = Fixtures.Character();
+            c.Base.Dex = 19;
+            c.Bumps.Add(new AbilityBump { Source = SheetMath.BumpSource(4), AbilityId = "dex", Amount = 2 });
+            var d = SheetMath.Compute(c, Fixtures.Rules());
+            const string want = "Ловкость 19 → 20 (+1 из +2: выше 20 характеристика не растёт)";
+            bool ok = d.AbilityExplain["dex"] == want && d.Total.Dex == 20;
+
+            var high = Fixtures.Character();
+            high.Base.Str = 22;                     // плюс +2 от предыстории — потолком служит сама база
+            var dHigh = SheetMath.Compute(high, Fixtures.Rules());
+            const string wantHigh = "Сила 22 → 22 (+0 из +2: выше 20 характеристика не растёт)";
+            ok &= dHigh.Total.Str == 22 && dHigh.AbilityExplain["str"] == wantHigh;
+
+            if (!ok) Debug.LogError($"FAIL потолок в объяснении: ЛОВ «{d.AbilityExplain["dex"]}» (ждали «{want}»), "
+                                  + $"СИЛ «{dHigh.AbilityExplain["str"]}» (ждали «{wantHigh}»)");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

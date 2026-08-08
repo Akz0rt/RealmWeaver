@@ -34,7 +34,9 @@ namespace WorldGen.PlayerPrep.Rendering
         static GameObject activeGO;
 
         const float PanelWidth = 1240f;
-        const float PanelHeight = 900f;
+        /// <summary>Поля сверху и снизу. Высоты у панели своей нет — она берёт «сколько есть минус
+        /// эти поля», см. BuildChrome.</summary>
+        const float PanelMarginY = 46f;
         const float HeadHeight = 58f;
         const float RowHeight = 34f;
         const float LevelWidth = 62f;
@@ -140,11 +142,17 @@ namespace WorldGen.PlayerPrep.Rendering
             backdrop.offsetMax = Vector2.zero;
             backdrop.GetComponent<Image>().color = Backdrop;
 
+            // ВЫСОТА ОТ ЭКРАНА, А НЕ ПОСТОЯННАЯ. У холста matchWidthOrHeight = 0, то есть в опорных
+            // единицах ширина всегда 1920, а высота — 1920 / пропорция экрана: на 16:9 это 1080, а на
+            // 21:9 всего 823. Панель на постоянных 900 точках вылезала бы за экран целиком, вместе с
+            // «Закрыть». Растягивание по вертикали с полями (anchorMin.y = 0, anchorMax.y = 1,
+            // sizeDelta.y = −2×поля) даёт высоту «сколько есть минус поля» при любой пропорции.
+            // Ширина остаётся постоянной: она-то как раз от пропорции не зависит.
             var panel = NewRect(transform, "Plan", typeof(Image));
-            panel.anchorMin = new Vector2(0.5f, 0.5f);
-            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.anchorMin = new Vector2(0.5f, 0f);
+            panel.anchorMax = new Vector2(0.5f, 1f);
             panel.pivot = new Vector2(0.5f, 0.5f);
-            panel.sizeDelta = new Vector2(PanelWidth, PanelHeight);
+            panel.sizeDelta = new Vector2(PanelWidth, -2f * PanelMarginY);
             panel.anchoredPosition = Vector2.zero;
             panel.GetComponent<Image>().color = PanelFill;
 
@@ -220,8 +228,23 @@ namespace WorldGen.PlayerPrep.Rendering
             var callback = onClosed;
             onClosed = null;                       // ответ ровно один раз
             if (activeGO == owner) activeGO = null;
+            // SetActive(false) ДО отложенного Destroy — тот же приём и по той же причине, что в
+            // DismissStranded: Destroy откладывается до конца кадра, и без этого подложка ещё кадр
+            // закрывала бы собой лист, который обработчик как раз пересчитывает.
+            owner.SetActive(false);
             Destroy(owner);
             if (callback != null) callback();
+        }
+
+        /// <summary>Esc закрывает панель. Без него выхода, кроме кнопки, нет вовсе: подложка нажатия
+        /// глотает, а привычка «мимо или Esc» у любого окна одна. Клавиатура читается через новый
+        /// ввод — тот же способ, что у PageSearchBar и NavigatorView; Keyboard.current бывает null
+        /// (устройства нет вовсе), и это не ошибка.</summary>
+        void Update()
+        {
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            if (keyboard == null) return;
+            if (keyboard.escapeKey.wasPressedThisFrame) Close();
         }
 
         // ── Таблица ──────────────────────────────────────────────────────────────
@@ -315,10 +338,17 @@ namespace WorldGen.PlayerPrep.Rendering
             Fixed(cell.gameObject, ChoiceWidth);
         }
 
-        /// <summary>Что написано в ячейке выбора: чем она может быть занята и чем занята сейчас.</summary>
+        /// <summary>Что написано в ячейке выбора: чем она может быть занята и чем занята сейчас.
+        ///
+        /// Незнакомый вид называется СВОИМ именем, а не «повышением характеристик». Раньше сюда
+        /// попадало всё, что не подкласс, — и строка обещала бы «повышение характеристик или черта»
+        /// там, где раскрытый список честно говорит «показывать не умею» (см. BuildOptions). Подпись и
+        /// список обязаны врать или не врать вместе.</summary>
         string ChoiceText(PlanRow row, ClassDef cls)
         {
-            string what = row.ChoiceKind == "subclass" ? "подкласс" : "повышение характеристик или черта";
+            string what = row.ChoiceKind == "subclass" ? "подкласс"
+                        : row.ChoiceKind == "asi" ? "повышение характеристик или черта"
+                        : $"выбор «{row.ChoiceKind}»";
             return what + ": " + ChosenText(row, cls);
         }
 

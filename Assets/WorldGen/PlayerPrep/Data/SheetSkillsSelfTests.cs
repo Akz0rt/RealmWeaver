@@ -401,6 +401,30 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: подкласс записан, но раньше своего уровня не действует")]
+        public void SelfTestActiveSubclassFollowsTheLevel()
+        {
+            // Понижение уровня стало достижимым вместе с кнопкой «−», и подзаголовок листа читался
+            // «полурослик · плут 2 · вор» — подписи, которой на 2 уровне взяться неоткуда.
+            // Мутант «действует, раз записан» падает на первой строке; мутант «раз не действует —
+            // стереть из файла» падает на последней: выбор игрока чистить нельзя, он вернётся вместе
+            // с уровнем.
+            var low = Fixtures.Character(); low.Level = 2;      // подкласс у плута с 3 уровня
+            var high = Fixtures.Character();                    // 5 уровень
+            var none = Fixtures.Character(); none.SubclassId = null;
+            var dLow = SheetMath.Compute(low, Fixtures.Rules());
+            var dHigh = SheetMath.Compute(high, Fixtures.Rules());
+            var dNone = SheetMath.Compute(none, Fixtures.Rules());
+            bool ok = dLow.ActiveSubclassId == null
+                   && dHigh.ActiveSubclassId == "thief"
+                   && dNone.ActiveSubclassId == null
+                   && low.SubclassId == "thief";
+            if (!ok) Debug.LogError($"FAIL действующий подкласс: на 2 «{dLow.ActiveSubclassId ?? "null"}» (ждали null), "
+                                  + $"на 5 «{dHigh.ActiveSubclassId ?? "null"}» (ждали «thief»), "
+                                  + $"без выбора «{dNone.ActiveSubclassId ?? "null"}», в файле «{low.SubclassId ?? "null"}»");
+            Done(ok);
+        }
+
         static void Done(bool ok, [System.Runtime.CompilerServices.CallerMemberName] string name = null)
         { if (ok) Debug.Log($"PASS {name}"); }
     }

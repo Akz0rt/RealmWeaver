@@ -94,8 +94,10 @@ namespace WorldGen.PlayerPrep.Data
         /// ПОМЕТКИ ПЛАНА ОСТАЮТСЯ ВСЕ, включая те, что оказались выше нового уровня, — и это не
         /// недоделка, а то же правило «план — это план, а не состояние»: чистить их значило бы стирать
         /// работу игрока за один промах мимо кнопки. Умения и прибавки перестают действовать сами,
-        /// потому что и те и другие отбираются по уровню (SheetMathSkills, SheetMath.AbilityTotal);
-        /// проверено SheetSkillsSelfTests.SelfTestLoweringLevelKeepsPlan.
+        /// потому что и те и другие отбираются по уровню (SheetMathSkills, SheetMath.AbilityTotal).
+        /// Проверено LevelChoiceOpsSelfTests.SelfTestLevelDownKeepsThePlan — а НЕ
+        /// SheetSkillsSelfTests.SelfTestLoweringLevelKeepsPlan, как стояло здесь сперва: та проверка
+        /// про то же правило, но уровень в ней меняют присваиванием, и эту функцию она не зовёт вовсе.
         ///
         /// Справочник не нужен: номер уровня от класса не зависит.</summary>
         public static void LevelDown(CharacterFile file)
