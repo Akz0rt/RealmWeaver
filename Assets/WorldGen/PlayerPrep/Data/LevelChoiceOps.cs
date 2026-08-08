@@ -96,7 +96,7 @@ namespace WorldGen.PlayerPrep.Data
             foreach (var id in picked)
             {
                 int now = SheetMath.AbilityTotal(file, id, level);
-                int amount = System.Math.Min(each, 20 - now);
+                int amount = System.Math.Min(each, SheetMath.AbilityCap - now);
                 if (amount <= 0) continue;
                 file.Bumps.Add(new AbilityBump
                 {

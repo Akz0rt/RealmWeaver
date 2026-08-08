@@ -441,7 +441,8 @@ namespace WorldGen.PlayerPrep.Rendering
             int level = row.Level;
 
             AddNote(content, "Повысить характеристики", 17, Accent);
-            AddNote(content, "Одна характеристика на +2 либо две по +1. Выше 20 не поднимается.", 14, Faint);
+            AddNote(content, $"Одна характеристика на +2 либо две по +1. Выше {SheetMath.AbilityCap} не поднимается.",
+                14, Faint);
 
             var line = NewRect(content, "Abilities", typeof(HorizontalLayoutGroup));
             var lineLe = line.gameObject.AddComponent<LayoutElement>();
@@ -462,7 +463,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 // к этому мигу действуют все прибавки по него включительно. Потолок 20 тоже его
                 // правило — здесь только показ недоступной кнопки.
                 int now = SheetMath.AbilityTotal(file, abilityId, level);
-                bool capped = now >= 20;
+                bool capped = now >= SheetMath.AbilityCap;
                 bool picked = asiPick.Contains(abilityId);
                 string label = (picked ? "[×] " : "[ ] ") + SheetMath.AbilityName(abilityId) + " " + now;
                 var btn = UiKit.Button(line, label, () =>

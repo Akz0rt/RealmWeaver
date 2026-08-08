@@ -37,6 +37,29 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: снимок — пометка плана прокачки видна")]
+        public void SelfTestPlanMarkDiffers()
+        {
+            // Панель плана — ПЕРВАЯ поверхность, у которой весь итог работы — это file.Plan и прибавки:
+            // ни имени, ни предыстории она не трогает. Не попади план в снимок, игрок расписал бы себе
+            // уровни с 8 по 20, вышел «← К списку листов» и не получил бы даже вопроса — работа
+            // пропала бы молча. Проверяется ОБЕИМИ дорогами панели: пометка и прибавка.
+            var byMark = Fixtures.Character();
+            string markSnapshot = SheetSnapshot.Of(byMark);
+            LevelChoiceOps.ChooseFeat(byMark, 8, "alert");
+            bool ok = SheetSnapshot.Differs(markSnapshot, byMark);
+
+            var byBump = Fixtures.Character();
+            string bumpSnapshot = SheetSnapshot.Of(byBump);
+            LevelChoiceOps.ChooseAsi(byBump, 8, new System.Collections.Generic.List<string> { "dex" });
+            ok &= SheetSnapshot.Differs(bumpSnapshot, byBump);
+
+            if (!ok) Debug.LogError("FAIL снимок: правка плана прокачки не замечена "
+                                  + $"(черта={SheetSnapshot.Differs(markSnapshot, byMark)}, "
+                                  + $"прибавки={SheetSnapshot.Differs(bumpSnapshot, byBump)})");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: снимок — правка СПИСКА видна")]
         public void SelfTestListDiffers()
         {
