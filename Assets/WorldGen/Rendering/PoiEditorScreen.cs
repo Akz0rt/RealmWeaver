@@ -38,6 +38,12 @@ namespace WorldGen.Rendering
         public System.Action OnCloseRequested;
         /// <summary>Invoked by the «КАРТА ЛОКАЦИИ» row. Wired to MapScreenController.OpenDungeonEditor.</summary>
         public System.Action<PoiData> OnOpenDungeonRequested;
+        /// <summary>Invoked by the «Открыть →» notes row, with (pageId, title). Wired to
+        /// MapScreenController.OpenPageTab — see there for why a page is opened through the workspace's tabs
+        /// rather than by moving a document-wide "active page". A hook rather than a serialized reference for
+        /// the same reason OnCloseRequested is one: nothing here may reach into the map screen, and the wiring
+        /// is code (MapScreenController.Start), so no scene edit is needed to make it work.</summary>
+        public System.Action<string, string> OnOpenPageRequested;
 
         /// <summary>Container for the live map-scale preview; EnsurePreviewWidgets fills it.</summary>
         public RectTransform PreviewContainer { get; private set; }
@@ -326,6 +332,14 @@ namespace WorldGen.Rendering
             RefreshPreviewImageSection();
         }
 
+        /// <summary>«Открыть →»: get-or-create the point's own page group, then open its first page IN A TAB
+        /// and close this editor's tab behind it. Опубликован наружу через OnOpenPageRequested, а не звонком
+        /// в модель заметок: страницу теперь показывает та панель, у которой она во вкладке, поэтому
+        /// «открыть» — это действие рабочего пространства, а не документа.
+        ///
+        /// A group created here always has its page, so `Pages[0]` cannot be out of range; a group that
+        /// somehow arrives EMPTY (a project saved by a future version, a group the DM emptied from the
+        /// navigator) is left alone rather than indexed into — the editor simply does not close.</summary>
         void OnOpenPagesClicked()
         {
             if (current == null || notesRoot == null) return;
@@ -336,7 +350,10 @@ namespace WorldGen.Rendering
                 group = doc.CreateGroup(current.Name, current.Id);
                 doc.CreatePage(group.Id, "Страница 1");
             }
-            doc.OpenPage(group.Pages[0].Id);
+            if (group.Pages.Count == 0) return;
+
+            var page = group.Pages[0];
+            OnOpenPageRequested?.Invoke(page.Id, page.Name);
             OnCloseRequested?.Invoke();
         }
 

@@ -17,27 +17,32 @@ namespace WorldGen.Notes.Rendering
     /// split (its one remaining caller passed null), which left a placeholder row standing in for a board
     /// page; Р4 finished the job by making a board a BLOCK inside a page instead (BlockKind.Canvas), drawn
     /// inline by BuildInlineCanvas and full-pane by CanvasSurfaceHost. The parameter and the field went with
-    /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` is the last
-    /// piece still standing: built, and SetActive(false)d on every path that could show it. Left in place
-    /// rather than removed here because EnsureWired re-finds it by name after a domain reload, and deleting a
-    /// recovery path is a different change from deleting a parameter no caller supplied.
+    /// it — nothing in the project ever passed one, so nothing had to be migrated. `placeholderGO` outlived
+    /// all of it, spent a while built-but-never-shown, and has since been given a job it is genuinely needed
+    /// for: it is what the pane shows when its tab names a page the document does not hold (see
+    /// ApplyVisibility). Its GameObject is still called "BoardPlaceholder" — the name is history now that
+    /// nothing re-finds it by name, and renaming it would only make the git trail harder to follow.
     ///
-    /// `root` is re-parented by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs)
-    /// into whichever pane is currently showing a Page tab — see the public Root accessor below. Because that
-    /// makes this view's own visibility something the workspace drives, none of the fields below may quietly
-    /// forget what they point at: EnsureWired re-establishes all of them after a Play-mode script reload, and
-    /// its doc explains what a page stuck visible over the map camera costs when they do.
+    /// LIFETIME — ONE VIEW PER PANE, BORN AND BURIED WITH THE SHELL, and this is the whole of the two-panes
+    /// arc's Task 4. There used to be exactly ONE of these in the project: NotesRootBuilder AddComponent-ed
+    /// it onto its own GameObject, parked `root` under a bare holding transform, and PageSurfaceHost
+    /// re-parented that root into whichever pane showed a Page tab. One view cannot show two pages, so
+    /// PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs) now BUILDS one of these
+    /// inside each pane's own content area, keyed by physical pane index, and never moves it between panes.
+    ///
+    /// That change deleted a whole mechanism from this class rather than working around it. Every field below
+    /// is plain and non-[SerializeField], so a Play-mode domain reload wipes all of them — and `EnsureWired`
+    /// + `RecoverBuiltObjects` existed to re-find the built objects and re-establish the subscriptions
+    /// afterwards, because the view hung off NotesRootBuilder's GameObject, which SURVIVES that reload. It no
+    /// longer does: a view lives under a pane's ContentArea, i.e. under WorkspaceCanvas, which
+    /// WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s and rebuilds on every reload. There is no
+    /// half-wiped survivor left to repair — the wiped instance is destroyed and a fully-Initialize()d one
+    /// takes its place. RecoverBuiltObjects could not have survived the change in any case: it found `root`
+    /// as "the only object in the project named DocumentViewport carrying a ScrollRect", which two panes
+    /// makes false.
     /// </summary>
     public class DocumentPageView : MonoBehaviour
     {
-        /// <summary>The names Initialize builds `root`/`placeholderGO`/`addSectionBarGO`/its button under,
-        /// hoisted to constants because EnsureWired re-finds them by name after a domain reload — see
-        /// RecoverBuiltObjects.</summary>
-        const string RootObjectName = "DocumentViewport";
-        const string PlaceholderObjectName = "BoardPlaceholder";
-        const string AddSectionBarObjectName = "AddSectionBar";
-        const string AddSectionButtonObjectName = "Button";
-
         /// <summary>Height of the «+ Раздел» strip, in the SAME reserved region `viewportRect.offsetMax`
         /// carves out in Initialize below. One constant read by both, per review round 2's Minor — two
         /// unlinked literals that happened to agree were an assertion ("the two never disagree about its
@@ -54,19 +59,14 @@ namespace WorldGen.Notes.Rendering
         GameObject viewportGO;
         GameObject placeholderGO;
         GameObject addSectionBarGO;
-        // The «+ Раздел» Button component itself, not just its GameObject — needed because
-        // Button.onClick is a runtime UnityEvent listener list, NOT [SerializeField]-persisted the way the
-        // GameObject hierarchy is, so RecoverBuiltObjects re-finding addSectionBarGO after a reload does NOT
-        // restore this listener; EnsureWired has to re-add it explicitly. See EnsureWired's own doc for the
-        // review round 2 Important this field exists to fix.
-        Button addSectionButton;
         RectTransform content;
         Font font;
 
         /// <summary>The row group whose left/right padding the column measure is expressed through. Fetched
         /// lazily rather than cached at Initialize, because a destroyed component compares equal to null in
-        /// Unity and the lookup then repeats itself after a script reload — the same reload RecoverBuiltObjects
-        /// exists for, without a second recovery site to keep in step.</summary>
+        /// Unity, so the lookup simply repeats itself rather than needing a recovery site of its own. (It once
+        /// had a named counterpart — a post-reload repair method this class no longer has; see the class doc's
+        /// LIFETIME paragraph for why nothing here needs repairing any more.)</summary>
         VerticalLayoutGroup rowLayout;
 
         /// <summary>Last side padding written, so the measure does not dirty the layout every frame.</summary>
@@ -81,13 +81,20 @@ namespace WorldGen.Notes.Rendering
         /// ends, and text flush to a border reads as text that has been cut off.</summary>
         const float MinSideMargin = 28f;
 
-        // Gates whether OnActivePageChanged is allowed to make `root` visible at all — set only by
-        // PageSurfaceHost.Show/Hide (via SetSurfaceVisible). Without this gate, ActivePage can change from
-        // OUTSIDE the workspace's own tab machinery — PoiEditorScreen/PoiEditPanel's «Открыть страницу» flow
-        // calls NotesDocumentController.OpenPage directly, bypassing WorkspaceController entirely — and
-        // OnActivePageChanged would then re-activate `root` in whichever pane it happens to still be
-        // parented in, even though no pane's active TAB points at a Page surface at all. ANDing every
-        // visibility decision below with this flag means Hide() is authoritative until the next Show().
+        // Whether any pane's active tab currently points at this surface — set only by PageSurfaceHost
+        // .Show/Hide (via SetSurfaceVisible), and ANDed into every `root` visibility decision below, so
+        // Hide() is authoritative until the next Show().
+        //
+        // WHY THIS IS STILL A SEPARATE AXIS FROM `Page`, now that nothing can bind a page behind the
+        // workspace's back. Task 3 deleted NotesDocumentController.ActivePage and its event, which is the
+        // reason the original version of this flag gives (a page opened from the POI editor could re-activate
+        // `root` in whichever pane it was still parented in, with no pane showing a Page tab at all). That
+        // path is gone. What is NOT gone is the asymmetry between the two things Show/Hide have to say:
+        // showing names a PAGE, hiding names none — and «hidden» must not be expressed as ShowPage(null),
+        // because binding a different page (null included) CLEARS THE UNDO HISTORY, and SyncSurfaces calls
+        // Hide for every host crossed with both panes on every sync (see PageSurfaceHost.Hide's own doc).
+        // Every tab click would then cost the DM their undo. So: this flag carries VISIBILITY, ShowPage
+        // carries WHICH PAGE, and Hide only ever touches the first.
         bool surfaceVisible;
 
         readonly List<DocBlockView> rows = new List<DocBlockView>();
@@ -96,22 +103,117 @@ namespace WorldGen.Notes.Rendering
         public IReadOnlyList<DocBlockView> Rows => rows;
         public RectTransform Content => content;
 
-        /// <summary>The whole page surface's own root, re-parented by PageSurfaceHost.Show into whichever
-        /// pane's content area currently shows a Page tab (Task 9). Null before Initialize.</summary>
+        /// <summary>The whole page surface's own root — everything this view draws hangs off it, and
+        /// `ApplyVisibility` switches it on and off wholesale. Null before Initialize.
+        ///
+        /// IT DOES NOT MOVE BETWEEN PANES, and the doc here said the opposite until Task 4 of the two-panes
+        /// arc: PageSurfaceHost used to re-parent the ONE root into whichever pane's content area showed a
+        /// Page tab. There is now a view per pane, each built inside its own pane's content area under a
+        /// "PageSurface" wrapper, and nothing ever re-homes one — see the class doc's LIFETIME paragraph.
+        /// PageSurfaceHost.Show still re-asserts the parent and the stretch on every call, per
+        /// ISurfaceHost's contract, but that is a no-op restatement rather than a move.</summary>
         public RectTransform Root => root != null ? (RectTransform)root.transform : null;
 
-        /// <summary>PageSurfaceHost's Show/Hide call this — see the surfaceVisible field doc. Re-evaluates
-        /// immediately against whatever NotesDocumentController.ActivePage currently is, so Show(...) makes
-        /// an already-active page visible even in the (common) case where the OpenPage call right after it
-        /// is a no-op because the id was already ActivePage — see PageSurfaceHost.Show's own comment.</summary>
+        /// <summary>Whether a pane's active tab currently points at this view — the `surfaceVisible` axis,
+        /// read-only to the outside. Exposed because «which view is SHOWING page X» is a question the
+        /// workspace side has to be able to ask and could not: `Page` alone cannot answer it, since a Hide
+        /// deliberately leaves the binding in place (see the field's own doc), so a view stays bound to a page
+        /// long after it stopped showing it. CanvasSurfaceHost.ViewShowing is the caller, and got the wrong
+        /// view without this.
+        ///
+        /// A GETTER RATHER THAN A SECOND COPY OF THE FACT, deliberately. The alternative was to have
+        /// PageSurfaceHost remember which pane it last Showed — which is this same bool written down twice,
+        /// in two objects with different lifetimes, free to disagree with the SetActive calls
+        /// ApplyVisibility actually makes. This project has been bitten by exactly that shape often enough
+        /// (see WorkspaceController.shellSuppressed's doc for the running count) to prefer one owner.</summary>
+        public bool SurfaceVisible => surfaceVisible;
+
+        /// <summary>PageSurfaceHost's Show/Hide call this — see the surfaceVisible field doc for why this is
+        /// an axis of its own and not just ShowPage(null). Re-asserts visibility against the page ALREADY
+        /// bound, without rebinding anything: a Hide therefore costs neither the undo history nor a rebuild,
+        /// and a Show that is followed by ShowPage(theSameId) leaves the rows exactly as they were.</summary>
         public void SetSurfaceVisible(bool visible)
         {
             surfaceVisible = visible;
-            OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
+            ApplyVisibility();
         }
 
-        /// <summary>Fires whenever the block list changed shape, so the project can be marked dirty and
-        /// dependent panels (backlinks) can refresh.</summary>
+        /// <summary>Binds this view to the page named by `pageId` and draws it. `null`, an empty id, or an id
+        /// no group holds all mean "show nothing" — the pane goes empty rather than keeping a page whose tab
+        /// no longer points at it.
+        ///
+        /// THE ONE WAY A PAGE GETS ONTO THIS VIEW, since Task 3: the document no longer remembers an "active
+        /// page" and no longer raises an event when it changes, so the page is NAMED by whoever owns the tab
+        /// (PageSurfaceHost.Show, from WorkspaceController.SyncSurfaces) instead of being pushed here from
+        /// under the workspace.
+        ///
+        /// A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one to
+        /// another page would replace that page's content with this one's — which is why the clear below (and
+        /// the selection and the search box with it) is gated on the page IDENTITY changing, and not merely on
+        /// this method having been called. It is called on every sync, including the many that re-name the
+        /// page already shown; clearing unconditionally would erase the DM's undo on every tab click, divider
+        /// commit and pane focus change.</summary>
+        public void ShowPage(string pageId)
+        {
+            var doc = documentController != null ? documentController.Document : null;
+            var page = doc != null && !string.IsNullOrEmpty(pageId) ? NotesDocOps.FindPage(doc, pageId) : null;
+
+            var previous = Page;
+            Page = page;
+
+            if (!ReferenceEquals(previous, Page))
+            {
+                History.Clear();
+                SetSelectedBlock(null);
+                OnHistoryChanged?.Invoke();
+                // Results belong to the page they were found on: a switch to a DIFFERENT page must not leave
+                // «3 из 12» standing over text that never said it.
+                if (searchBar != null) searchBar.Close();
+            }
+
+            ApplyVisibility();
+            if (Page != null) Rebuild();
+        }
+
+        /// <summary>Turns the two independent facts — is a page bound, and does any pane's active tab point
+        /// here — into the four SetActive calls that express them.
+        ///
+        /// `root` FOLLOWS surfaceVisible ALONE, and the placeholder is what fills it when no page is bound.
+        /// Task 3 needed that: a tab can name a page the document does not hold, and until this change the
+        /// pane simply went BLANK — a live tab over nothing, with no way for the DM to tell a missing page
+        /// from a broken app. The reachable case is a layout restored from PlayerPrefs before any project is
+        /// open (WorkspaceController.RestoreFromPrefs deliberately restores without an existence check, and
+        /// its own doc names "falls through to the placeholder" as what makes that acceptable). Reviving the
+        /// placeholder is what makes that doc true again, and it retires the blank-pane STATE rather than the
+        /// one path that reached it.
+        ///
+        /// THE PLACEHOLDER CANNOT APPEAR WHERE IT SHOULD NOT. It lives under `root`, which stays off entirely
+        /// while `surfaceVisible` is false — so a pane that simply is not showing a page shows nothing at all,
+        /// not an explanation of an absence nobody asked about. Before Initialize every field here is null and
+        /// all four calls are skipped, so a view that PageSurfaceHost has built but not yet Initialize()d
+        /// stays inert rather than half-wired.</summary>
+        void ApplyVisibility()
+        {
+            bool showDocument = Page != null;
+            if (root != null) root.SetActive(surfaceVisible);
+            if (viewportGO != null) viewportGO.SetActive(showDocument);
+            if (placeholderGO != null) placeholderGO.SetActive(surfaceVisible && !showDocument);
+            if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
+        }
+
+        /// <summary>Fires whenever THIS view's block list changed shape.
+        ///
+        /// WHAT IT IS ACTUALLY FOR, corrected in Task 4 of the two-panes arc after the old wording was
+        /// checked against the code and found false. It said "so the project can be marked dirty and
+        /// dependent panels (backlinks) can refresh". There is no dirty flag in this project and no
+        /// save-on-close prompt, and grep finds exactly ONE subscriber: CanvasTabPruner.PruneBlocks, which
+        /// asks whether an open board tab's block still exists. The backlinks half is done by the view itself
+        /// (PageFooterView.Refresh from RefreshLinks), not by anyone listening here.
+        ///
+        /// That mattered enough to fix rather than tidy: believing this event carries "the project must be
+        /// saved" makes any narrowing of who raises it look like data loss, and would invite someone to widen
+        /// CanvasSurfaceHost.AfterMutation back to notifying a view that is not showing the changed page. See
+        /// CanvasSurfaceHost.ViewShowing for what that would actually cost.</summary>
         public event System.Action OnDocumentMutated;
 
         /// <summary>Raises OnDocumentMutated for a change made OUTSIDE this view — today only by a board
@@ -119,21 +221,46 @@ namespace WorldGen.Notes.Rendering
         /// through any of this class's own mutators.
         ///
         /// A C# event can only be raised from the class that declares it, so an outside editor of this
-        /// document has no way to say "the project is dirty now" without a method like this one. Rebuild() is
-        /// deliberately NOT folded in: the caller decides whether a rebuild is even meaningful (see
-        /// CanvasSurfaceHost.Show — a board on a page that is not the open one must still mark the project
-        /// dirty, and must NOT redraw the page it is not on).</summary>
+        /// document has no way to announce the change without a method like this one. Rebuild() is
+        /// deliberately NOT folded in: the two are separate decisions, and CanvasSurfaceHost happens to make
+        /// them together only because it aims BOTH at the same thing — the view that is currently SHOWING the
+        /// board's owner page. It used to make them differently (notify always, redraw only the open page) on
+        /// the strength of a "must still mark the project dirty" rule that the event's own doc above now
+        /// records as never having been true.</summary>
         public void MarkDocumentMutated() => OnDocumentMutated?.Invoke();
+
+        /// <summary>Raises NotesDocumentController.OnDocumentChanged — the event NavigatorView rebuilds
+        /// on (NavigatorView.cs:203), which OnDocumentMutated above is NOT: that one only reaches the
+        /// workspace's surface pruner. CharacterHeaderView writes straight into Page.Character without
+        /// going through any wrapper of this class, so it has no other way to tell the navigator its
+        /// «Персонажи» row (role text, portrait thumbnail) is stale. Thin forwarder for the same reason
+        /// MarkDocumentMutated is one — CharacterHeaderView holds `this`, not `documentController`, which
+        /// stays private — and mirrors the explicit-null-check idiom every other read of
+        /// `documentController` in this file uses (lines 611, 627, 697, 733, 986, 1047), not `?.`, because
+        /// that operator tests reference identity and would miss a destroyed-but-not-null Unity object.
+        /// Cheap to over-call, same reasoning as NotifyDocumentChanged's own doc
+        /// (NotesDocumentController.cs:157-158): every listener just coalesces into a LateUpdate flag.</summary>
+        public void NotifyDocumentChanged()
+        {
+            if (documentController != null) documentController.NotifyDocumentChanged();
+        }
 
         // ── undo/redo and selection (Р2 Task 8) ─────────────────────────────────
 
-        /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Rebuilt by EnsureWired
-        /// after a domain reload, which is why nothing should cache it across frames.</summary>
+        /// <summary>The page's editing toolbar, so Task 9 can fill its «Ссылка» hook. Built once by
+        /// Initialize and destroyed with this whole view, so nothing has to re-find it — see the class doc's
+        /// LIFETIME paragraph.</summary>
         public PageToolbar Toolbar { get; private set; }
 
         /// <summary>«Итоги» and «Упомянута в», drawn under the last row. Lives in `content` so it scrolls
-        /// with the prose it summarises. Rebuilt by EnsureWired, like the toolbar and for the same reason.</summary>
+        /// with the prose it summarises.</summary>
         PageFooterView footer;
+
+        /// <summary>The character card — portrait and four fields — drawn ABOVE the rows when
+        /// CharacterOps.IsCharacter(Page) is true, absent otherwise. Lives in `content`, like the footer,
+        /// but is built ONCE and updated in place rather than rebuilt every refresh — see its own class
+        /// doc for why an editable field needs that and a read-only summary does not.</summary>
+        CharacterHeaderView header;
 
         /// <summary>Ctrl+F. Lives on `root` rather than being the hidden box itself — see its own doc.</summary>
         PageSearchBar searchBar;
@@ -180,7 +307,9 @@ namespace WorldGen.Notes.Rendering
         public void PushHistory(string focusId, int caret)
         {
             if (Page == null) return;
-            History.Push(Page.Blocks, focusId, caret);
+            // Page.Character читается ЗДЕСЬ, в том же вызове, что и Page.Blocks — это единственный момент,
+            // когда снимок берётся, и мутация ещё не случилась.
+            History.Push(Page.Blocks, Page.Character, focusId, caret);
             OnHistoryChanged?.Invoke();
         }
 
@@ -188,7 +317,11 @@ namespace WorldGen.Notes.Rendering
         /// before a key it cannot know in advance will change anything, and commits it only if the key did.</summary>
         public void PushHistoryOf(IReadOnlyList<DocBlock> blocks, string focusId, int caret)
         {
-            History.Push(blocks, focusId, caret);
+            // Карточка читается СЕЙЧАС, а не когда-то раньше у вызывающего — все вызывающие правят BLOCKS,
+            // а не карточку, так что Page.Character в этот момент всё ещё несёт значение ДО правки, что и
+            // требуется. Если бы будущий вызывающий сначала поправил карточку и только потом позвал этот
+            // метод, снимок унёс бы уже новое значение, и отмена молча стала бы пустышкой.
+            History.Push(blocks, Page != null ? Page.Character : null, focusId, caret);
             OnHistoryChanged?.Invoke();
         }
 
@@ -203,12 +336,20 @@ namespace WorldGen.Notes.Rendering
             foreach (var b in before)
                 if (b.Id == blockId) { b.Text = textBefore; break; }
 
-            History.Push(before, blockId, (textBefore ?? "").Length);
+            // Этот метод вызывается ПОСЛЕ того, как нажатие уже попало в строку, и восстанавливает
+            // список строк вручную (см. цикл выше) — единственное место в файле, где «сейчас» не значит
+            // «до правки». Карточку восстанавливать так не нужно: правка ТЕКСТА строки её не трогает,
+            // так что Page.Character, прочитанный здесь и сейчас, и есть состояние до правки. Но это
+            // держится только пока верно ИМЕННО ЭТО — если задача 6 когда-нибудь заставит поле карточки
+            // звать этот же метод напрямую (а не завести свой аналог для полей шапки), карточка тоже
+            // окажется уже мутированной к этому моменту, и её придётся восстанавливать вручную, как
+            // строку выше.
+            History.Push(before, Page.Character, blockId, (textBefore ?? "").Length);
             OnHistoryChanged?.Invoke();
         }
 
-        public void Undo() => Apply(History.Undo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
-        public void Redo() => Apply(History.Redo(Page != null ? Page.Blocks : null, LastFocusedBlockId, LastFocusedCaret));
+        public void Undo() => Apply(History.Undo(Page != null ? Page.Blocks : null, Page != null ? Page.Character : null, LastFocusedBlockId, LastFocusedCaret));
+        public void Redo() => Apply(History.Redo(Page != null ? Page.Blocks : null, Page != null ? Page.Character : null, LastFocusedBlockId, LastFocusedCaret));
 
         /// <summary>Puts a remembered state back on the page. The block list is replaced IN PLACE rather than
         /// reassigned: NotesPage.Blocks is what the serializer writes and what every op holds, and swapping
@@ -220,6 +361,10 @@ namespace WorldGen.Notes.Rendering
 
             Page.Blocks.Clear();
             Page.Blocks.AddRange(snapshot.Blocks);
+            // Экземпляр из снимка отдаётся живой странице БЕЗ копии — и это правильно ровно потому, что
+            // снимок снят со стека и больше нигде не хранится (так же поступают Blocks). Копия здесь стоила
+            // бы копирования на каждое нажатие и не защищала бы ни от чего.
+            Page.Character = snapshot.Character;
             SetSelectedBlock(null);
             OnHistoryChanged?.Invoke();
             OnDocumentMutated?.Invoke();
@@ -234,6 +379,14 @@ namespace WorldGen.Notes.Rendering
 
             if (focusExists) RebuildAndFocus(snapshot.FocusId, snapshot.Caret);
             else Rebuild();
+
+            // Снимок мог вернуть карточку персонажа (Page.Character выше) к прежнему виду — навигатор
+            // рисует её роль и портрет только по OnDocumentChanged (см. NotifyDocumentChanged), а Undo/
+            // Redo сюда не заходят вовсе: без этой строки Ctrl+Z по полю шапки или по портрету оставлял
+            // бы «Персонажи» в панели навигации устаревшими до случайного пересбора. Дёшево звать и на
+            // обычной прозе — см. NotesDocumentController.cs:157-158 — а отмена сама по себе разовое
+            // действие ДМ, не нажатие клавиши на каждый символ.
+            NotifyDocumentChanged();
 
             // ПОСЛЕДНИМ, после перестроения строк: подписчик пересобирает поверхности, которые держат
             // блоки этой страницы, и делать это до того, как страница привела себя в порядок, значило бы
@@ -282,6 +435,14 @@ namespace WorldGen.Notes.Rendering
         /// <summary>The Ctrl+F field has the caret. Set by PageSearchBar.</summary>
         public bool SearchOwnsKeys { get; set; }
 
+        /// <summary>Правда ли, что каретка сейчас в одном из четырёх полей шапки-карточки персонажа
+        /// («Кто»/«Где искать»/«Чего хочет»/«Как играть»). НЕ входит в KeyboardSuspended ниже — см.
+        /// DocKeyboardController.LateUpdate, узкий гейт на Enter/Tab, для чего это вообще заведено:
+        /// KeyboardSuspended отсекает кадр целиком ВЫШЕ проверки Ctrl+Z (той же LateUpdate) и выше
+        /// CharacterHeaderView.Update, где живёт Ctrl+V-вставка портрета — оба уже проверены ДМ и не
+        /// должны перестать работать, пока поле шапки в фокусе.</summary>
+        public bool CharacterHeaderOwnsKeys => header != null && header.AnyFieldFocused;
+
         /// <summary>True while something else owns the keyboard. Read by DocKeyboardController, which stands
         /// down entirely: the page's keys are only the page's while nothing is over it.
         ///
@@ -290,6 +451,26 @@ namespace WorldGen.Notes.Rendering
         /// them finished last would speak for both, handing the page's keys back while the other still had
         /// them.</summary>
         public bool KeyboardSuspended => PaletteOpen || SearchOwnsKeys;
+
+        /// <summary>Задача 5 арки «две страницы рядом». Является ли ЭТОТ вид тем, кому сейчас адресованы
+        /// клавиши. Подставляется WorkspaceBuilder'ом в том же крючке OnViewCreated, что и CanvasRouter/
+        /// WorldSource/LinkRouter/LinkPicker, и спрашивает ровно один источник истины — PageFocusRouter.
+        ///
+        /// ЗАЧЕМ ВООБЩЕ. Аккорды, которые ловит DocKeyboardController, приходят в одно место на всё
+        /// приложение, а вот Ctrl+F опрашивает клавиатуру САМ, из PageSearchBar, — а этих панелей теперь
+        /// две, и каждая со своим видом и своей строкой поиска. Без этой проверки один Ctrl+F открывал бы
+        /// ОБЕ строки поиска, и каждая звала бы ActivateInputField: кому достанется каретка, решал бы
+        /// порядок вызова Update у двух компонентов, который Unity не определяет.
+        ///
+        /// ДЕЛЕГАТ, А НЕ ФЛАЖОК, который кто-то обязан вовремя переставить: вторая копия факта «чей сейчас
+        /// фокус» — это ровно та ошибка, которой посвящён класс-док PageFocusRouter (и добрая половина
+        /// дефектов этой оболочки). Здесь не хранится ничего, вопрос каждый раз задаётся заново.
+        ///
+        /// НЕПРОВЕДЁННЫЙ ДЕЛЕГАТ ЗНАЧИТ «ДА»: в сцене без оболочки (голый стенд, notes без workspace) вид
+        /// в проекте один и Ctrl+F обязан работать ровно как работал.</summary>
+        public System.Func<bool> KeyboardTargetProbe;
+
+        public bool IsKeyboardTarget => KeyboardTargetProbe == null || KeyboardTargetProbe();
 
         /// <summary>Opens the link picker, injected by PageLinkBridge because the picker is Ctrl+K's own
         /// palette and lives on the workspace side of the layer boundary. Null in a scene without a
@@ -336,6 +517,38 @@ namespace WorldGen.Notes.Rendering
 
             OnDocumentMutated?.Invoke();
             RebuildAndFocus(target.Id, caret + token.Length);
+            return true;
+        }
+
+        /// <summary>Задача 10б: заменяет ДИАПАЗОН [start, end) в названной строке токеном ссылки — «@» и
+        /// набранный после него запрос заменяются токеном одним действием, а не вставляются рядом с ними.
+        /// Тот же PushHistory/RebuildAndFocus, что и InsertTokenInto прямо выше (один Ctrl+Z откатывает
+        /// всю замену целиком), только читает диапазон вместо одной точки.
+        ///
+        /// КАРЕТКА ПОСЛЕ ЗАМЕНЫ ВСТАЁТ СРАЗУ ЗА ТОКЕНОМ — ровно там же, где она стояла бы, продолжи ДМ
+        /// печатать «вручную»: start плюс длина нового токена, а не end плюс что-то — end может лежать
+        /// дальше start на длину query, которая при замене исчезает.</summary>
+        public bool ReplaceRangeWithToken(string blockId, int start, int end, string kind, string id, string name)
+        {
+            if (Page == null || string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(id)) return false;
+            if (string.IsNullOrEmpty(blockId)) return false;
+
+            DocBlock target = null;
+            foreach (var b in Page.Blocks)
+                if (b.Id == blockId) { target = b; break; }
+            if (target == null) return false;
+
+            string text = target.Text ?? "";
+            int s = Mathf.Clamp(start, 0, text.Length);
+            int e = Mathf.Clamp(end, s, text.Length);
+
+            PushHistory(blockId, s);
+
+            string token = NotesLinkOps.MakeToken(kind, id, name ?? "");
+            target.Text = text.Substring(0, s) + token + text.Substring(e);
+
+            OnDocumentMutated?.Invoke();
+            RebuildAndFocus(target.Id, s + token.Length);
             return true;
         }
 
@@ -434,8 +647,16 @@ namespace WorldGen.Notes.Rendering
         /// shows lives in the DocBlock. That is what lets Undo simply rebuild the page.
         ///
         /// THE PAGE'S HISTORY IS THE BOARD'S HISTORY. The canvas knows nothing about undo and asks whoever
-        /// built it to remember the state before each change — one stack, one Ctrl+Z, whatever the mouse
-        /// happens to be over. See the spec's «Отмена — один стек».</summary>
+        /// built it to remember the state before each change — one stack, one Ctrl+Z. See the spec's
+        /// «Отмена — один стек».
+        ///
+        /// WHICH PAGE THAT Ctrl+Z REACHES IS NOT DECIDED BY THE MOUSE, and this paragraph used to say it was
+        /// («whatever the mouse happens to be over») — true under Р4, when one pane rendered and the pointer
+        /// was therefore always over the only live page. The two-panes arc replaced it: both Ctrl+Z handlers
+        /// in this layer (DocKeyboardController's ordinary path and its HandleUndoOverBoard) address through
+        /// PageFocusRouter, which reads EventSystem.currentSelectedGameObject and, failing that, the focused
+        /// pane. Pointer position is read nowhere. So with the caret in pane 0's prose and the pointer over an
+        /// inline board in pane 1, Ctrl+Z undoes pane 0.</summary>
         void BuildInlineCanvas(DocBlock block, DocBlockView view)
         {
             var interactionGO = new GameObject($"CanvasInput_{block.Id}", typeof(RectTransform));
@@ -557,6 +778,17 @@ namespace WorldGen.Notes.Rendering
         /// offsets the highlight could not use.</summary>
         public NotesLinkOps.NameResolver ResolveNameFor => ResolveName;
 
+        /// <summary>Whether a [[kind:id]] token's target carries a character card, so DocBlockView can draw it
+        /// as a plate instead of a plain link (Task 9). Reads THE SAME documentController.Document ResolveName
+        /// already reaches — but NOT through the same lookup. ResolveName goes through QuickOpen.ResolverFor
+        /// (QuickOpen.cs:316-334), which for "page" hand-rolls its own doc.Groups/g.Pages walk rather than
+        /// calling NotesDocOps.FindPage; CharacterOps.IsCharacterLink calls FindPage directly, because that is
+        /// the existing canonical id→page lookup (already used elsewhere, e.g. MapScreenController), not
+        /// because it is the one ResolveName happens to use. Either way this is the SAME document object, so
+        /// the two answers about the same token can never disagree about which page they mean.</summary>
+        bool IsCharacterLink(string kind, string id)
+            => CharacterOps.IsCharacterLink(documentController != null ? documentController.Document : null, kind, id);
+
         /// <summary>Re-reads the world and re-renders every resting row, so a POI renamed in the other pane
         /// changes the prose here with no edit to the page — D1's whole promise.
         ///
@@ -654,9 +886,10 @@ namespace WorldGen.Notes.Rendering
             return "";
         }
 
-        /// <summary>The font the page was built with, read live rather than copied into the footer: a domain
-        /// reload nulls a MonoBehaviour's plain fields, and a footer holding its own copy would draw a
-        /// refresh's worth of fontless — i.e. invisible — rows before EnsureWired got to it.</summary>
+        /// <summary>The font the page was built with, read live rather than copied into the footer: one
+        /// namer of the asset (NotesRootBuilder.BuiltinFont, threaded through PageSurfaceHost into
+        /// Initialize), so a footer cannot end up drawing with a different one — or, holding a stale copy
+        /// of its own, with none at all.</summary>
         public Font BodyFont => font;
 
         string PageNameOf(string pageId)
@@ -674,7 +907,7 @@ namespace WorldGen.Notes.Rendering
             documentController = docController;
             font = builtinFont;
 
-            root = new GameObject(RootObjectName, typeof(RectTransform));
+            root = new GameObject("DocumentViewport", typeof(RectTransform));
             root.transform.SetParent(parent, false);
             var rootRect = root.GetComponent<RectTransform>();
             rootRect.anchorMin = Vector2.zero;
@@ -738,9 +971,17 @@ namespace WorldGen.Notes.Rendering
             var fitter = contentGO.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            // Board-page placeholder — a sibling of Viewport, not a child of it, so it is never subject to
-            // the ScrollRect/mask/content-fitter machinery above. See the class doc for why this exists now.
-            placeholderGO = new GameObject(PlaceholderObjectName, typeof(RectTransform));
+            // What the pane shows when its tab names a page the document does not hold — a sibling of
+            // Viewport, not a child of it, so it is never subject to the ScrollRect/mask/content-fitter
+            // machinery above. See ApplyVisibility for when it comes on, and the class doc for the board
+            // page it was originally built for.
+            //
+            // THE WORDING IS FOR A GAME MASTER, NOT A PROGRAMMER. It states the fact («this tab points at a
+            // page that is not here») and then the overwhelmingly likely cause, because the one way to reach
+            // this in practice is a workspace restored from the previous session before the project holding
+            // those pages has been opened. No id, no kind, no «surface» — none of that would tell the person
+            // reading it what to DO, and «открыть проект» does.
+            placeholderGO = new GameObject("BoardPlaceholder", typeof(RectTransform));
             placeholderGO.transform.SetParent(root.transform, false);
             var placeholderRect = placeholderGO.GetComponent<RectTransform>();
             placeholderRect.anchorMin = Vector2.zero;
@@ -748,7 +989,8 @@ namespace WorldGen.Notes.Rendering
             placeholderRect.offsetMin = Vector2.zero;
             placeholderRect.offsetMax = Vector2.zero;
             var placeholderText = placeholderGO.AddComponent<Text>();
-            placeholderText.text = "Холст ещё не переехал в новую оболочку.";
+            placeholderText.text = "Страницы, на которую смотрит эта вкладка, здесь нет.\n" +
+                                   "Скорее всего, ещё не открыт проект, в котором она лежит.";
             placeholderText.font = font;
             placeholderText.fontSize = 14;
             ThemeService.Tag(placeholderText, ThemeRole.Mut);
@@ -767,6 +1009,10 @@ namespace WorldGen.Notes.Rendering
             // The editing toolbar shares that strip, anchored to its right edge — one band of chrome above
             // the prose rather than two.
             Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
+            // ABOVE the rows, inside the scrolling column — see CharacterHeaderView's own doc for why it
+            // is a child of Content rather than another fixed strip, and why it is attached once here
+            // rather than rebuilt on every Rebuild the way the footer below is.
+            header = CharacterHeaderView.Attach(content, this);
             // Under the rows, inside the scrolling column — see PageFooterView's own doc for why it is a
             // child of Content rather than another fixed strip.
             footer = PageFooterView.Attach(content, this);
@@ -775,13 +1021,15 @@ namespace WorldGen.Notes.Rendering
             LinkDropTarget.Attach(this);
             searchBar = PageSearchBar.Attach(this, font);
 
-            documentController.OnActivePageChanged += OnActivePageChanged;
             // Structural document changes only — creating, renaming or deleting a group or a page, never a
             // keystroke (NotesDocumentController raises this from its CRUD alone). A [[page:…]] link renders
             // the target page's CURRENT name, so a rename in the navigator has to reach the prose here, and
             // this is the event that carries it.
             documentController.OnDocumentChanged += RefreshLinks;
-            OnActivePageChanged(documentController.ActivePage);
+            // Born unbound and hidden: `root` is created ACTIVE by the construction above, and nothing has
+            // named a page yet (PageSurfaceHost.Show does that, on the first sync). Without this the freshly
+            // built, opaque viewport would paint over whatever the pane really shows until then.
+            ApplyVisibility();
         }
 
         /// <summary>Builds the page's vertical scrollbar, at the DM's first-checkpoint request: the page
@@ -843,11 +1091,10 @@ namespace WorldGen.Notes.Rendering
         /// <summary>Builds the «+ Раздел» bar — see its call site in Initialize for why it exists. Sits in
         /// the strip `viewportGO`'s own offsetMax already carves out (AddSectionBarHeight), as a SIBLING of
         /// viewportGO under `root`, not a child of Content — it must stay fixed at the top of the page, not
-        /// scroll away with the rows underneath it. Assigns `addSectionButton` as a side effect — see that
-        /// field's own doc for why the GameObject alone is not enough to recover after a reload.</summary>
+        /// scroll away with the rows underneath it.</summary>
         GameObject BuildAddSectionBar(Transform parent)
         {
-            var barGO = new GameObject(AddSectionBarObjectName, typeof(RectTransform));
+            var barGO = new GameObject("AddSectionBar", typeof(RectTransform));
             barGO.transform.SetParent(parent, false);
             var barRect = (RectTransform)barGO.transform;
             barRect.anchorMin = new Vector2(0f, 1f);
@@ -857,7 +1104,7 @@ namespace WorldGen.Notes.Rendering
             barRect.sizeDelta = new Vector2(0f, AddSectionBarHeight);
             ThemeService.Tag(barGO.AddComponent<Image>(), ThemeRole.Panel2);
 
-            var btnGO = new GameObject(AddSectionButtonObjectName, typeof(RectTransform));
+            var btnGO = new GameObject("Button", typeof(RectTransform));
             btnGO.transform.SetParent(barGO.transform, false);
             var btnRect = (RectTransform)btnGO.transform;
             btnRect.anchorMin = new Vector2(0f, 0.5f);
@@ -868,7 +1115,7 @@ namespace WorldGen.Notes.Rendering
 
             var btnImg = btnGO.AddComponent<Image>();
             ThemeService.Tag(btnImg, ThemeRole.AccentSoft);
-            addSectionButton = btnGO.AddComponent<Button>();
+            var addSectionButton = btnGO.AddComponent<Button>();
             addSectionButton.targetGraphic = btnImg;
             addSectionButton.onClick.AddListener(AddSection);
 
@@ -911,201 +1158,7 @@ namespace WorldGen.Notes.Rendering
         void OnDestroy()
         {
             if (documentController != null)
-            {
-                documentController.OnActivePageChanged -= OnActivePageChanged;
                 documentController.OnDocumentChanged -= RefreshLinks;
-            }
-        }
-
-        /// <summary>Re-establishes everything a Play-mode script reload wipes on THIS component, so Show/Hide
-        /// work again afterwards. Called only from NotesRootBuilder.EnsureBuilt's already-built (early-return)
-        /// branch — the one place that knows the difference between "never built" (Initialize's job) and
-        /// "built, then reloaded".
-        ///
-        /// WHAT GOES WRONG WITHOUT IT — and it is NOT merely "the page fails to reappear". `root`/`content`/
-        /// `viewportGO`/`placeholderGO`/`addSectionBarGO`/`addSectionButton`/`documentController`/`font` are
-        /// plain, non-[SerializeField] fields, so a domain reload nulls all eight, while the DocumentViewport
-        /// GameObject they described survives as live native state in whatever pane PageSurfaceHost last
-        /// re-parented it into — and if it was ACTIVE at that moment it stays active. Every access below is
-        /// null-guarded, so nothing throws; the guards
-        /// instead turn Hide() -> SetSurfaceVisible(false) -> OnActivePageChanged into a SILENT NO-OP against
-        /// a null `root`, so `root.SetActive(false)` never fires and NOTHING in the rest of that session can
-        /// ever hide it again. DocumentViewport carries its own opaque ThemeRole.Bg Image, so a pane that
-        /// then shows the WorldMap surface gets painted over by it — MapSurfaceHost.SetBackgroundsEnabled
-        /// knows about exactly three Images and this stray one is not among them, which is Task 9 review
-        /// round 1's Critical (map hidden behind an opaque UI rect) arriving again through a different door.
-        ///
-        /// The last line is what actually kills that symptom, and it does so INSIDE NotesRootBuilder's own
-        /// recovery, without depending on WorkspaceBuilder's path running at all: `surfaceVisible` is a plain
-        /// bool that the same reload already reset to false, so re-running OnActivePageChanged with the
-        /// recovered `root` deactivates a stuck-visible viewport immediately. WorkspaceController.SyncSurfaces
-        /// then re-asserts the correct state a moment later (Show for a pane whose active tab is a Page, Hide
-        /// otherwise) — this just makes the stuck case impossible even if it does not.
-        ///
-        /// RECOVERING A REFERENCE IS NOT RECOVERING A WIRING (Task 10f review round 2's Important). Every
-        /// GameObject/Component field above only needs its REFERENCE restored, because everything they do —
-        /// SetActive, ScrollRect.content, being a Transform.Find anchor — is read fresh off the live object
-        /// each time. `addSectionButton.onClick` is different: it is a runtime `UnityEvent` listener LIST,
-        /// not [SerializeField]-persisted the way the Button's own visible state is, so
-        /// `RecoverBuiltObjects` finding the Button again does not mean the click still calls `AddSection` —
-        /// it means a Button that highlights on hover and does nothing, indistinguishable from the original
-        /// Critical, on the one page (freshly empty) where nothing else can create a first block either. This
-        /// was missed once already, in the same paragraph, in the same review's previous round: the field was
-        /// added to the "seven" (now eight) above and to RecoverBuiltObjects without re-establishing what
-        /// makes the button DO something. Fixed a few lines down with the identical -=/+= discipline the
-        /// documentController subscription already uses, for the identical reason: idempotent under repeat
-        /// calls, whether or not this particular call is actually recovering from a reload.</summary>
-        public void EnsureWired(NotesDocumentController docController, Font builtinFont)
-        {
-            if (docController != null) documentController = docController;
-            if (builtinFont != null) font = builtinFont;
-
-            // `root == null` while this component exists at all is the reliable "wiped by a reload" signal —
-            // Initialize always assigns it, and it is exactly the kind of field a reload always forgets. On an
-            // ordinary (non-reload) call — WorkspaceBuilder.Awake asking NotesRootBuilder for a document that
-            // its own Awake already built — this is false and the re-assert below is correctly skipped.
-            bool lostToReload = root == null;
-            if (lostToReload) RecoverBuiltObjects();
-            if (root == null) return;   // not found: stay inert rather than half-wired.
-
-            // C# delegates are never serialized, so this subscription is gone after a reload no matter how
-            // the fields above were recovered. `-=` before `+=` keeps it at exactly one for the non-reload
-            // caller, where the subscription Initialize made is still live.
-            if (documentController != null)
-            {
-                documentController.OnActivePageChanged -= OnActivePageChanged;
-                documentController.OnActivePageChanged += OnActivePageChanged;
-                // Same -=/+= discipline, same reason: a C# event subscription is never serialized, so the
-                // page-rename refresh (see Initialize) is gone after a reload however the fields recovered.
-                documentController.OnDocumentChanged -= RefreshLinks;
-                documentController.OnDocumentChanged += RefreshLinks;
-            }
-
-            // Same discipline, same reason, for the «+ Раздел» button's onClick — a UnityEvent listener list
-            // is exactly as unserialized as the C# event above, and RecoverBuiltObjects only restored WHICH
-            // Button this field points at, not what clicking it does. See EnsureWired's own doc for the
-            // review finding this fixes.
-            if (addSectionButton != null)
-            {
-                addSectionButton.onClick.RemoveListener(AddSection);
-                addSectionButton.onClick.AddListener(AddSection);
-            }
-
-            // The toolbar is rebuilt rather than repaired, for the same reason and one more: its buttons'
-            // listeners are as unserialized as the one above, AND it holds a reference to this view which the
-            // reload nulled. Attach throws the old bar away, so this is idempotent for the ordinary call too.
-            if (addSectionBarGO != null)
-                Toolbar = PageToolbar.Attach((RectTransform)addSectionBarGO.transform, this, font);
-
-            // Same treatment, same reasons — its rows are buttons whose onClick lists a reload does not
-            // restore, and Attach replaces any bar it finds rather than trying to repair one.
-            if (content != null) footer = PageFooterView.Attach(content, this);
-
-            // And the drop target, for the third time and the third reason: a reload leaves the component
-            // alive on the recovered root with every field it needs nulled, so it is replaced rather than
-            // found.
-            LinkDropTarget.Attach(this);
-            searchBar = PageSearchBar.Attach(this, font);
-
-            // `rows` is a readonly List<DocBlockView> — Unity serializes neither, so a reload empties it while
-            // the row GameObjects it tracked survive as children of the recovered `content`. Re-adopt them, or
-            // the next Rebuild() would find nothing to destroy and stack a SECOND full set of rows on top of
-            // the first. Their own fields are wiped too, so they are good for nothing except being destroyed —
-            // which is precisely what Rebuild does with them, through its existing disposal path rather than a
-            // second one added here.
-            //
-            // Guarded on the hazard ITSELF (a tracking list that disagrees with the live children) rather than
-            // on `lostToReload`, which is only a proxy for it. `content` holds ONE child that is not a row —
-            // the footer above — which is why the adoption below filters by COMPONENT TYPE rather than
-            // trusting childCount to mean "rows exist": a page with no blocks at all still has a childCount of
-            // 1, and GetComponentsInChildren then correctly finds nothing to adopt. Rebuild remains the sole
-            // producer of DocBlockView children, so "no rows tracked but a DocBlockView present" is still the
-            // desynchronised state and still cannot arise any other way.
-            if (rows.Count == 0 && content != null && content.childCount > 0)
-                rows.AddRange(content.GetComponentsInChildren<DocBlockView>(true));
-
-            if (!lostToReload) return;
-
-            OnActivePageChanged(documentController != null ? documentController.ActivePage : null);
-        }
-
-        /// <summary>Re-finds the six GameObjects/Components Initialize built, after a reload nulled the
-        /// fields pointing at them. They cannot be found by hierarchy path the way
-        /// MapSurfaceHost.ResolveRootRowBackground finds RootRow: PageSurfaceHost.Show re-parents `root` out
-        /// of NotesRootBuilder's PageViewHolder and into whichever pane's ContentArea is showing a Page tab,
-        /// so its parent is not fixed. What IS fixed is that it is the only object in the project named
-        /// "DocumentViewport" carrying a ScrollRect (that name is constructed in exactly one place —
-        /// Initialize, above, from the same constant). Inactive objects must be included: a reload that
-        /// happens while no Page tab is showing leaves `root` deactivated, and that case needs recovering
-        /// just as much as the visible one.
-        ///
-        /// The next three come from the ScrollRect's OWN viewport/content — [SerializeField] fields of a
-        /// built-in uGUI component, i.e. native state that survives the reload — and from a plain
-        /// Transform.Find for the placeholder, which locates inactive children (it is SetActive(false) for
-        /// every Document page). `addSectionBarGO`/`addSectionButton` are found the same Transform.Find way —
-        /// the bar is never deactivated for a Document page (see its own bar-visibility line in
-        /// OnActivePageChanged), but the FindObjectsByType search above and every Find here already return
-        /// null gracefully on a page that has never called Initialize, and the null-guarded access pattern
-        /// this whole method exists to keep working is worth applying uniformly rather than assuming any one
-        /// child can never go missing.
-        ///
-        /// THIS METHOD ONLY RESTORES REFERENCES. `addSectionButton`'s onClick LISTENER is a separate thing
-        /// this method does NOT and cannot restore — see EnsureWired's own doc for why, and where that
-        /// actually happens.</summary>
-        void RecoverBuiltObjects()
-        {
-            ScrollRect found = null;
-            foreach (var scroll in FindObjectsByType<ScrollRect>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-            {
-                if (scroll == null || scroll.name != RootObjectName) continue;
-                // On the (unexpected) tie of two same-named ScrollRects, prefer one that still has its
-                // content wired — a half-built stray is never the live page surface.
-                if (found == null || (found.content == null && scroll.content != null)) found = scroll;
-            }
-            if (found == null) return;
-
-            root = found.gameObject;
-            viewportGO = found.viewport != null ? found.viewport.gameObject : null;
-            content = found.content;
-            var placeholder = found.transform.Find(PlaceholderObjectName);
-            placeholderGO = placeholder != null ? placeholder.gameObject : null;
-            var addSectionBar = found.transform.Find(AddSectionBarObjectName);
-            addSectionBarGO = addSectionBar != null ? addSectionBar.gameObject : null;
-            var addSectionBtn = addSectionBar != null ? addSectionBar.Find(AddSectionButtonObjectName) : null;
-            addSectionButton = addSectionBtn != null ? addSectionBtn.GetComponent<Button>() : null;
-        }
-
-        void OnActivePageChanged(NotesPage page)
-        {
-            var previous = Page;
-            Page = page;
-            bool showDocument = Page != null;
-
-            // A HISTORY BELONGS TO ONE PAGE. Its snapshots are that page's whole block list, so applying one
-            // to another page would replace that page's content with this one's. Compared by identity rather
-            // than cleared unconditionally, because this method also runs on every Show of an UNCHANGED page
-            // (PageSurfaceHost.Show → SetSurfaceVisible), and a tab switch must not cost the DM their undo.
-            if (!ReferenceEquals(previous, Page))
-            {
-                History.Clear();
-                SetSelectedBlock(null);
-                OnHistoryChanged?.Invoke();
-                // Results belong to the page they were found on. Same identity test, same reason as the
-                // history above: a tab switch back must not cost the DM their search either, but a switch to
-                // a DIFFERENT page must not leave «3 из 12» standing over text that never said it.
-                if (searchBar != null) searchBar.Close();
-            }
-
-            // Every page is a document since Р4 — the placeholder that used to stand in for a board page, and
-            // the board-viewport hand-off no caller ever supplied, both went with PageKind. surfaceVisible
-            // is what stops this from firing when NO pane's active tab is a Page at all — see the field's own
-            // doc for the concrete PoiEditorScreen/PoiEditPanel path that needs it.
-            if (root != null) root.SetActive(surfaceVisible && showDocument);
-            if (viewportGO != null) viewportGO.SetActive(showDocument);
-            if (placeholderGO != null) placeholderGO.SetActive(false);
-            if (addSectionBarGO != null) addSectionBarGO.SetActive(showDocument);
-
-            if (showDocument) Rebuild();
         }
 
         public DocBlockView ViewOf(string blockId)
@@ -1156,7 +1209,7 @@ namespace WorldGen.Notes.Rendering
                 var block = Page.Blocks[index];
                 var rowGO = new GameObject($"Row_{block.Kind}", typeof(RectTransform));
                 var view = rowGO.AddComponent<DocBlockView>();
-                view.Initialize(block, content, font, ResolveName);
+                view.Initialize(block, content, font, ResolveName, IsCharacterLink);
                 view.OnToggleCollapse += OnToggleCollapse;
                 view.OnLinkActivated += RouteLink;
                 view.OnSelectRequested += SetSelectedBlock;
@@ -1183,6 +1236,17 @@ namespace WorldGen.Notes.Rendering
                 if (block.Kind == BlockKind.Canvas && view.CanvasFrame != null) BuildInlineCanvas(block, view);
                 view.Refresh();
                 rows.Add(view);
+            }
+
+            // AFTER the rows and BEFORE the heights settle — same placement as the footer just below, and
+            // for the same reason on the other end: Show() puts the header back at the START of the
+            // column (SetAsFirstSibling), which only matters once the rows above have been (re)created as
+            // its later siblings. Absent, not merely empty, exactly like the footer: an ordinary page must
+            // not carry a zero-height ghost of this object.
+            if (header != null)
+            {
+                if (CharacterOps.IsCharacter(Page)) header.Show(Page);
+                else header.Hide();
             }
 
             // AFTER the rows and BEFORE the heights settle. After, because Refresh puts the footer back at
@@ -1226,6 +1290,9 @@ namespace WorldGen.Notes.Rendering
             ApplyColumnMeasure();
             Canvas.ForceUpdateCanvases();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+            // The header first, same reason as every row: it cannot say how tall its four fields are
+            // until it knows how wide the column is, which the pass just above is what hands out.
+            if (header != null) header.ApplyHeightNow();
             foreach (var row in rows)
                 if (row != null) row.ApplyHeightNow();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
@@ -1402,6 +1469,23 @@ namespace WorldGen.Notes.Rendering
         ///
         /// The row must EXIST as a view — a hit inside a collapsed section has no rect to scroll to, which is
         /// why PageSearchBar.Reveal opens the section and rebuilds before calling this.</summary>
+        /// <summary>Передать шапке персонажа совпадения поиска. Через вид, а не напрямую из строки поиска:
+        /// шапка — внутренность вида (поле `header` приватно и пересоздаётся при пересборке), и знать про
+        /// неё строке поиска незачем — ровно как про строки она знает только через `Rows`. Отсеивать
+        /// попадания в прозе не нужно: шапка сама берёт из списка те, у которых названо её поле.</summary>
+        public void SetCardSearchHighlights(List<PageSearch.PageHit> hits, PageSearch.PageHit current)
+            => header?.SetSearchHighlights(hits, current);
+
+        /// <summary>Промотать колонку в начало. Нужна поиску: попадание в карточке персонажа лежит в ШАПКЕ,
+        /// а шапка — первая в этой же колонке (см. Rebuild, `SetAsFirstSibling`), поэтому «показать её»
+        /// выражается прокруткой в ноль, а не поиском строки по идентификатору, которого у такого
+        /// попадания нет.</summary>
+        public void RevealTop()
+        {
+            if (content == null) return;
+            content.anchoredPosition = new Vector2(content.anchoredPosition.x, 0f);
+        }
+
         public void RevealRow(string blockId)
         {
             var view = ViewOf(blockId);

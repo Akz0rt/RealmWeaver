@@ -11,6 +11,11 @@ namespace WorldGen.Notes.Data
         public string FocusId;
         /// <summary>-1 means the end of the focused block's text, the same convention DocKeyResult uses.</summary>
         public int Caret = -1;
+
+        /// <summary>Карточка персонажа на момент снимка, или null у обычной страницы. Лежит здесь, а не
+        /// снаружи, по той же причине, по которой здесь лежит каретка: шапка — часть страницы, и отмена,
+        /// которая её не трогает, откатывает ДМ не то, что он только что правил.</summary>
+        public CharacterCard Character;
     }
 
     /// <summary>
@@ -62,10 +67,13 @@ namespace WorldGen.Notes.Data
         /// A NEW CHANGE ENDS THE FUTURE. Undoing three steps and then typing means the three redos describe a
         /// document that no longer exists, so they are dropped rather than left to restore text the DM has
         /// since replaced.</summary>
-        public void Push(IReadOnlyList<DocBlock> blocks, string focusId, int caret)
+        public void Push(IReadOnlyList<DocBlock> blocks, CharacterCard card, string focusId, int caret)
         {
             if (blocks == null) return;
-            past.Add(new DocSnapshot { Blocks = Copy(blocks), FocusId = focusId, Caret = caret });
+            // card ЧИТАЕТСЯ ЗДЕСЬ, В ТОТ ЖЕ МОМЕНТ, что и blocks — тем же аргументом вызова, а не
+            // позже. Если бы вызывающий сначала поправил карточку и только потом позвал Push, снимок
+            // унёс бы уже НОВОЕ значение, и отмена молча стала бы пустышкой: ни ошибки, ни следа.
+            past.Add(new DocSnapshot { Blocks = Copy(blocks), Character = CharacterOps.CopyCard(card), FocusId = focusId, Caret = caret });
             future.Clear();
             if (past.Count > MaxEntries) past.RemoveAt(0);
         }
@@ -73,10 +81,10 @@ namespace WorldGen.Notes.Data
         /// <summary>The state to restore, or null when there is nothing to go back to. The CURRENT state is
         /// handed in and becomes the redo entry, which is what makes redo possible without every operation
         /// having to describe its own inverse.</summary>
-        public DocSnapshot Undo(IReadOnlyList<DocBlock> current, string focusId, int caret)
+        public DocSnapshot Undo(IReadOnlyList<DocBlock> current, CharacterCard currentCard, string focusId, int caret)
         {
             if (past.Count == 0 || current == null) return null;
-            future.Add(new DocSnapshot { Blocks = Copy(current), FocusId = focusId, Caret = caret });
+            future.Add(new DocSnapshot { Blocks = Copy(current), Character = CharacterOps.CopyCard(currentCard), FocusId = focusId, Caret = caret });
             var snapshot = past[past.Count - 1];
             past.RemoveAt(past.Count - 1);
             return snapshot;
@@ -84,10 +92,10 @@ namespace WorldGen.Notes.Data
 
         /// <summary>Undo's mirror: the state to restore, or null when the DM has not undone anything since
         /// their last change.</summary>
-        public DocSnapshot Redo(IReadOnlyList<DocBlock> current, string focusId, int caret)
+        public DocSnapshot Redo(IReadOnlyList<DocBlock> current, CharacterCard currentCard, string focusId, int caret)
         {
             if (future.Count == 0 || current == null) return null;
-            past.Add(new DocSnapshot { Blocks = Copy(current), FocusId = focusId, Caret = caret });
+            past.Add(new DocSnapshot { Blocks = Copy(current), Character = CharacterOps.CopyCard(currentCard), FocusId = focusId, Caret = caret });
             var snapshot = future[future.Count - 1];
             future.RemoveAt(future.Count - 1);
             return snapshot;

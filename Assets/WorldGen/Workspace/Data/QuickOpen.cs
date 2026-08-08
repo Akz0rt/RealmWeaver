@@ -178,11 +178,9 @@ namespace WorldGen.Workspace.Data
         /// reason.</summary>
         static void CollectWorldMapHit(string needle, List<(int, int, QuickHit)> candidates, ref int seq)
         {
-            string folded = WorkspaceOps.DefaultWorldMapTitle.Trim().ToLowerInvariant();
-            int idx = folded.IndexOf(needle, StringComparison.Ordinal);
-            if (idx < 0) return;
+            if (!TryFoldMatch(WorkspaceOps.DefaultWorldMapTitle, needle, out bool isPrefix)) return;
 
-            int rank = idx == 0 ? NamePrefix : NameContains;
+            int rank = isPrefix ? NamePrefix : NameContains;
             candidates.Add((rank, seq++, new QuickHit
             {
                 Target = new SurfaceRef { Kind = SurfaceKind.WorldMap, Id = "" },
@@ -206,11 +204,9 @@ namespace WorldGen.Workspace.Data
             {
                 if (w == null) continue;
 
-                string folded = (w.Name ?? "").Trim().ToLowerInvariant();
-                int idx = folded.IndexOf(needle, StringComparison.Ordinal);
-                if (idx < 0) continue;
+                if (!TryFoldMatch(w.Name, needle, out bool isPrefix)) continue;
 
-                int rank = idx == 0 ? NamePrefix : NameContains;   // W1
+                int rank = isPrefix ? NamePrefix : NameContains;   // W1
                 candidates.Add((rank, seq++, new QuickHit
                 {
                     // W2 — a world object is not a page, so Target carries no page id; the world identity
@@ -228,11 +224,9 @@ namespace WorldGen.Workspace.Data
 
         static void CollectNameHit(NotesPage p, string needle, List<(int, int, QuickHit)> candidates, ref int seq)
         {
-            string folded = (p.Name ?? "").Trim().ToLowerInvariant();
-            int idx = folded.IndexOf(needle, StringComparison.Ordinal);
-            if (idx < 0) return;
+            if (!TryFoldMatch(p.Name, needle, out bool isPrefix)) return;
 
-            int rank = idx == 0 ? NamePrefix : NameContains;
+            int rank = isPrefix ? NamePrefix : NameContains;
             candidates.Add((rank, seq++, new QuickHit
             {
                 Target = new SurfaceRef { Kind = SurfaceKind.Page, Id = p.Id },
@@ -240,6 +234,26 @@ namespace WorldGen.Workspace.Data
                 Kind = "",
                 Snippet = null,
             }));
+        }
+
+        /// <summary>THE one substring-match rule this class uses for a NAME-style field — fold with
+        /// Trim().ToLowerInvariant(), find the (already-folded) `needle` by ordinal IndexOf, and report
+        /// whether the match sits at index 0 (a prefix) or merely somewhere inside the field. Deliberately
+        /// NOT what CollectBodyHits uses — that fold is UN-trimmed on purpose (see its own comment, S1), so
+        /// it stays a second, separate rule rather than being folded into this one.
+        ///
+        /// EXTRACTED FOR TASK 10a, not duplicated a fourth time: MentionSuggest (Notes/Data) ranks its own
+        /// name/subtitle candidates and the DM's ruling is that "@" must reach exactly what Ctrl+K reaches —
+        /// two hand-written copies of "fold, IndexOf, idx==0" are two chances for that to quietly stop being
+        /// true. CollectWorldMapHit/CollectWorldHits/CollectNameHit above call this now instead of repeating
+        /// the same three lines; their ranking (NamePrefix/NameContains) and result order are unchanged —
+        /// this only names the rule they already shared.</summary>
+        internal static bool TryFoldMatch(string field, string needle, out bool isPrefix)
+        {
+            string folded = (field ?? "").Trim().ToLowerInvariant();
+            int idx = folded.IndexOf(needle, StringComparison.Ordinal);
+            isPrefix = idx == 0;
+            return idx >= 0;
         }
 
         /// <summary>Turns a search hit into the three parts of an inline link, or refuses.

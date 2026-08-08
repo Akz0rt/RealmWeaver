@@ -54,6 +54,9 @@ namespace WorldGen.Rendering
         Slider iconScaleSlider;
         Slider labelScaleSlider;
         Font builtinFont;
+        /// <summary>The map screen «Открыть →» routes a page through — see ResolveMapScreen for why it is
+        /// looked up rather than assigned.</summary>
+        MapScreenController mapScreen;
 
         static readonly ExtensionFilter[] IconFilters =
         {
@@ -591,6 +594,14 @@ namespace WorldGen.Rendering
             UpdateIconPreview(sel);
         }
 
+        /// <summary>«Открыть →»: get-or-create the selected point's page group and open its first page IN A
+        /// TAB. Идёт через MapScreenController.OpenPageTab, а не в модель заметок: понятия «открытая
+        /// страница» у документа больше нет — страницу показывает та панель, у которой она во вкладке.
+        ///
+        /// The map screen is found on demand (ResolveMapScreen) rather than held in a serialized field,
+        /// because nothing in the scene or in code assigns this panel's references beyond what SampleScene
+        /// already stores — a new public field would sit null forever. An empty group is left alone rather
+        /// than indexed into, same guard and same reason as PoiEditorScreen's copy of this row.</summary>
         void OnOpenPagesClicked()
         {
             var sel = poiManager?.GetSelectedPoi();
@@ -603,9 +614,23 @@ namespace WorldGen.Rendering
                 group = doc.CreateGroup(sel.Name, sel.Id);
                 doc.CreatePage(group.Id, "Страница 1");
             }
+            if (group.Pages.Count == 0) return;
 
-            doc.OpenPage(group.Pages[0].Id);
+            var page = group.Pages[0];
+            ResolveMapScreen()?.OpenPageTab(page.Id, page.Name);
             UpdateNotesLabel(sel);
+        }
+
+        /// <summary>The map screen, found on demand and re-tried on every miss — the same idiom, and the same
+        /// two reasons, as CanvasTabPruner.ResolveMap: a Play-mode domain reload wipes a plain field while the
+        /// component it names survives, and the map screen is deactivated whenever another surface is showing.
+        /// Null in a scene without one (a bare test rig), and the single caller treats that as "do
+        /// nothing".</summary>
+        MapScreenController ResolveMapScreen()
+        {
+            if (mapScreen != null) return mapScreen;
+            mapScreen = FindFirstObjectByType<MapScreenController>(FindObjectsInactive.Include);
+            return mapScreen;
         }
 
         void OnPickIconClicked()

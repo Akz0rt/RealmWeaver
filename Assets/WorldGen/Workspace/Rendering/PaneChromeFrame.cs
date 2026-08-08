@@ -10,7 +10,8 @@ namespace WorldGen.Workspace.Rendering
     /// window" — except that "the window" is now the pane.
     ///
     /// WHY A FRAME AND NOT A REPARENT. The obvious alternative — re-parent the whole legacy canvas under the
-    /// pane's ContentArea, the way PageSurfaceHost.Show re-parents DocumentPageView.Root — was rejected:
+    /// pane's ContentArea, the way PageSurfaceHost.Show used to move its one DocumentPageView between panes
+    /// (Task 4 replaced that with a view built inside each pane) — was rejected:
     /// a Canvas nested inside another Canvas stops being a root canvas, which silently disables its own
     /// CanvasScaler (the nested canvas inherits the ROOT's scaleFactor instead) and stacks a second
     /// GraphicRaycaster inside the shell's, a combination this project has no reason to take on for a set of

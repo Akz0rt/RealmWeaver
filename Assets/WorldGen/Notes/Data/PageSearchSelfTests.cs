@@ -15,6 +15,80 @@ namespace WorldGen.Notes.Data
             return blocks;
         }
 
+        /// <summary>Находка ДМ с проверки 8 августа: «не находился текст из граф персонажа». Карточка —
+        /// ГРАНЬ страницы (`Page.Character`), а не блок, поэтому обход `blocks` в неё не заглядывал вовсе.
+        /// Фикстура построена так, чтобы верное и неверное правило РАЗОШЛИСЬ: слово «сумрак» лежит и в
+        /// карточке, и в прозе, поэтому «карточку не ищут» даёт 1 попадание вместо 5, а «ищут, но одно
+        /// поле» — 2 вместо 5.</summary>
+        [ContextMenu("Self-Test: Page Search Character Card")]
+        public void SelfTestPageSearchCharacterCard()
+        {
+            bool ok = true;
+            var resolve = Resolver();
+
+            var blocks = Page("В прозе тоже сумрак");
+            var card = new CharacterCard
+            {
+                Who = "сумрак в глазах",
+                Where = "живёт в сумрак-переулке",
+                Wants = "сумрак и тишины",
+                HowToPlay = "говорит про сумрак",
+            };
+
+            // МУТАНТ: карточку не ищут вовсе — ровно нынешнее поведение, ради отмены которого правка.
+            // МУТАНТ: ищут только одно поле (легко написать `Who` и забыть остальные три).
+            var hits = PageSearch.Find(blocks, card, "сумрак", resolve);
+            if (hits.Count != 5)
+            { Debug.LogError($"FAIL: карточка+проза дали {hits.Count} попаданий, надо 5"); ok = false; }
+
+            // МУТАНТ: попадания карточки дописаны ПОСЛЕ блоков. Шапка персонажа рисуется НАД строками
+            // страницы, значит в порядке чтения она первая — иначе Enter повёл бы ДМ снизу вверх.
+            if (hits.Count == 5)
+            {
+                if (hits[0].Field != PageSearch.CardField.Who
+                    || hits[1].Field != PageSearch.CardField.Where
+                    || hits[2].Field != PageSearch.CardField.Wants
+                    || hits[3].Field != PageSearch.CardField.HowToPlay
+                    || hits[4].Field != PageSearch.CardField.None)
+                {
+                    Debug.LogError("FAIL: порядок полей карточки не «Кто→Где→Чего хочет→Как играть, потом проза»");
+                    ok = false;
+                }
+
+                // МУТАНТ: попаданию карточки оставили BlockId (например, первого блока). Подсветка ищет
+                // строку по BlockId — и зажгла бы ЧУЖУЮ строку прозы там, где совпадения нет.
+                for (int i = 0; i < 4; i++)
+                    if (!string.IsNullOrEmpty(hits[i].BlockId) || hits[i].BlockIndex >= 0)
+                    { Debug.LogError($"FAIL: попадание в карточке несёт блок ({hits[i].BlockId}/{hits[i].BlockIndex})"); ok = false; break; }
+
+                // МУТАНТ: смещение считается от начала карточки, а не от начала ПОЛЯ. Подсветка в поле
+                // выражается смещением внутри этого поля, иначе она уедет.
+                if (hits[1].DisplayStart != "живёт в ".Length)
+                { Debug.LogError($"FAIL: смещение во втором поле {hits[1].DisplayStart}, надо {"живёт в ".Length}"); ok = false; }
+            }
+
+            // МУТАНТ: нет проверки на пустую карточку. Страница без персонажа — это ОБЫЧНАЯ страница,
+            // то есть почти все страницы документа; `Character` там null.
+            if (PageSearch.Find(blocks, null, "сумрак", resolve).Count != 1)
+            { Debug.LogError("FAIL: страница без карточки ищется не как раньше"); ok = false; }
+
+            // Карточка с одним заполненным полем и пустыми остальными — так выглядит только что созданная.
+            var sparse = new CharacterCard { Who = "сумрак", Where = null, Wants = "", HowToPlay = null };
+            if (PageSearch.Find(blocks, sparse, "сумрак", resolve).Count != 2)
+            { Debug.LogError("FAIL: пустые поля карточки посчитаны как совпадения"); ok = false; }
+
+            // МУТАНТ: значения CardField переставлены или пронумерованы иначе. Подсветка в шапке переводит
+            // поле в свой индекс арифметикой `(int)поле − 1` (CharacterHeaderView.FieldIndexOf), потому что
+            // порядок здесь и порядок полей на экране — один и тот же. Перестановка значений не сломала бы
+            // ни компиляцию, ни поиск: она молча подсветила бы ЧУЖОЕ поле.
+            if ((int)PageSearch.CardField.None != 0 || (int)PageSearch.CardField.Who != 1
+                || (int)PageSearch.CardField.Where != 2 || (int)PageSearch.CardField.Wants != 3
+                || (int)PageSearch.CardField.HowToPlay != 4)
+            { Debug.LogError("FAIL: нумерация CardField разошлась с порядком полей шапки"); ok = false; }
+
+            if (ok) Debug.Log("Self-Test: Page Search Character Card — OK");
+        }
+
         [ContextMenu("Self-Test: Page Search")]
         public void SelfTestPageSearch()
         {

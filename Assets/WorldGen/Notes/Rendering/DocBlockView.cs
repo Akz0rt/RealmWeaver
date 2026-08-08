@@ -164,6 +164,16 @@ namespace WorldGen.Notes.Rendering
         /// NotesLinkOps.BuildDisplay's own null-resolver rule.</summary>
         public NotesLinkOps.NameResolver Resolver;
 
+        /// <summary>Whether a [[kind:id]] token's target carries a character card — asked once per resolved
+        /// span, right next to Resolver, whose own null-before-wiring rule this shares: null means "not wired
+        /// yet" and every span renders as an ordinary link, never as a plate whose target cannot be checked.
+        ///
+        /// A PLAIN Func, not a delegate declared next to NameResolver in NotesLinkOps, because the question it
+        /// answers is NOT part of the link grammar — a page link CAN be a plate or not depending on state the
+        /// grammar itself does not carry (Задача 9's own ruling: no new token kind). Assigned by
+        /// DocumentPageView, same as Resolver, from CharacterOps.IsCharacterLink over the same document.</summary>
+        public System.Func<string, string, bool> IsCharacterLink;
+
         /// <summary>The last display built for the resting row: the rendered string plus the two-way index
         /// map. Kept so a click can be turned into a SOURCE caret without re-parsing, and so the caret lands
         /// on the character the DM aimed at rather than that character plus the machinery in front of it.</summary>
@@ -178,10 +188,12 @@ namespace WorldGen.Notes.Rendering
 
         public static float IndentFor(int depth) => IndentBase + Mathf.Max(0, depth) * IndentPerLevel;
 
-        public void Initialize(DocBlock block, RectTransform parent, Font font, NotesLinkOps.NameResolver resolve)
+        public void Initialize(DocBlock block, RectTransform parent, Font font, NotesLinkOps.NameResolver resolve,
+            System.Func<string, string, bool> isCharacterLink)
         {
             data = block;
             Resolver = resolve;
+            IsCharacterLink = isCharacterLink;
 
             var rect = GetComponent<RectTransform>();
             if (rect == null) rect = gameObject.AddComponent<RectTransform>();
@@ -884,9 +896,10 @@ namespace WorldGen.Notes.Rendering
         /// every click into a row containing a link would miss by exactly the machinery's length — the
         /// brackets, the kind, the id and the pipe the DM never sees.</summary>
         // The null case is a row that survived a domain reload: field initializers do not re-run on
-        // deserialization, so this comes back null on a component that is otherwise alive. Such a row is
-        // destroyed by the next Rebuild (DocumentPageView.EnsureWired's own note), but a click can reach it
-        // first, and the identity is the right answer for a row that has rendered nothing since.
+        // deserialization, so this comes back null on a component that is otherwise alive. Since the
+        // two-panes arc's Task 4 such a row is destroyed outright — a page view lives under a pane, and
+        // WorkspaceBuilder.DemolishForRebuild wipes that whole hierarchy on every reload — but a click can
+        // reach it first, and the identity is the right answer for a row that has rendered nothing since.
         int DisplayToSource(int displayCaret) => displayText != null ? displayText.ToSource(displayCaret) : displayCaret;
 
         // ── refresh ───────────────────────────────────────────────────────────
@@ -910,13 +923,17 @@ namespace WorldGen.Notes.Rendering
 
         /// <summary>What the row shows at rest: every [[token]] replaced by its target's CURRENT name, drawn
         /// in the accent colour and made clickable — or, when the target is gone, drawn muted and NOT
-        /// clickable, because prose about something that no longer exists has nowhere to go.
+        /// clickable, because prose about something that no longer exists has nowhere to go. A page link whose
+        /// target carries a character card additionally gets a plate behind its name (Задача 9) — still the
+        /// same [[page:id|Имя]] token, only wrapped differently; see CharacterOps.IsCharacterLink.
         ///
         /// THE COLOUR TAG SITS INSIDE THE LINK TAG, and that nesting was verified against TMP's parser rather
         /// than assumed: `</link>` closes with `linkTextLength = m_characterCount - linkTextfirstCharacterIndex`
         /// (TMP_Text.cs:7620), and a `<color>` tag advances no character count, so the link's character range —
         /// the only thing FindIntersectingLink hit-tests (TMP_TextUtilities.cs:1377-1381) — is unaffected by
-        /// what is nested inside it.
+        /// what is nested inside it. `<mark>`, the plate's tag, is the SAME kind of tag by TMP's own reckoning
+        /// — a formatting instruction with no glyph of its own — so nesting it in the same place changes
+        /// nothing this reasoning already covers.
         ///
         /// The index map built here is kept: it is what turns a click at a rendered character into a caret in
         /// the RAW text the editing field shows.</summary>
@@ -943,6 +960,11 @@ namespace WorldGen.Notes.Rendering
 
             string accent = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Accent));
             string muted = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.Mut));
+            // The character plate's background. AccentSoft, not a new colour: it is already this project's
+            // "soft accent background" role (ConfirmDialog's plate, the navigator's active row, NotesToolbar's
+            // active button). 0.65 alpha copies NotesToolbar.ThemedAlpha(AccentSoft, 0.65f) — the closest
+            // existing precedent for "this control is a highlighted plate", not a fresh number invented here.
+            string plate = ColorUtility.ToHtmlStringRGB(ThemeService.Get(ThemeRole.AccentSoft)) + "A6";
 
             // TAGS AS INSERTIONS AT POSITIONS, rather than as a single walk over the spans, because two
             // INDEPENDENT sets of ranges now cover the same display text — the links, and the search hits —
@@ -950,7 +972,10 @@ namespace WorldGen.Notes.Rendering
             // end inside it, or contain the whole link. A walk that owned one set and spliced the other into
             // it would have to reason about every one of those cases. Collecting both as boundary markers and
             // sorting them does not: TMP keeps a separate stack per tag type, so `<mark>` opened inside a
-            // `<link>` and closed after it is read exactly as written.
+            // `<link>` and closed after it is read exactly as written — for `<mark>` VERSUS `<link>`/`<color>`,
+            // which are different tag types with their own stacks. `<mark>` versus `<mark>` is a different
+            // story — see IsCharacterPlateSuppressedByHit below, right where the character plate's own `<mark>`
+            // is decided.
             insertions.Clear();
 
             foreach (var span in d.Spans)
@@ -958,8 +983,37 @@ namespace WorldGen.Notes.Rendering
                 int end = span.DisplayStart + span.DisplayLength;
                 if (span.Resolved)
                 {
-                    insertions.Add((span.DisplayStart, false, "<link=\"" + span.Kind + ":" + span.Id + "\"><color=#" + accent + ">"));
-                    insertions.Add((end, true, "</color></link>"));
+                    // Задача 9: a link whose target carries a character card is drawn as a PLATE, still inside
+                    // the same <link> and <color> a page link already gets — a character mention must read as
+                    // a SIBLING of an ordinary link, not a foreign control. No new token kind exists for this
+                    // (see NotesLinkOps' class doc and CharacterOps.IsCharacterLink) — the distinction is drawn
+                    // purely, entirely in what wraps the same [[page:id|Имя]] this always was.
+                    //
+                    // <mark> NESTED INSIDE <link>, SAME AS <color> ALREADY IS. Verified against the same TMP
+                    // mechanics the class doc above cites for <color>: neither tag advances the character
+                    // count TMP hit-tests a link's range by (TMP_Text.cs's linkTextLength is a character-count
+                    // difference), so nesting <mark> here changes nothing FindIntersectingLink or the index map
+                    // (DisplayText.ToSource/ToDisplay, built from DisplayStart/DisplayLength alone) can see.
+                    //
+                    // SUPPRESSED WHEN A SEARCH HIT TOUCHES THIS SPAN — see IsCharacterPlateSuppressedByHit's
+                    // own doc for why, and for the rule chosen and its cost.
+                    bool isCharacter = IsCharacterLink != null && IsCharacterLink(span.Kind, span.Id)
+                        && !IsCharacterPlateSuppressedByHit(span.DisplayStart, end);
+                    string open = "<link=\"" + span.Kind + ":" + span.Id + "\">";
+                    string close;
+                    if (isCharacter)
+                    {
+                        open += "<mark=#" + plate + ">";
+                        close = "</mark>";
+                    }
+                    else
+                    {
+                        close = "";
+                    }
+                    open += "<color=#" + accent + ">";
+                    close = "</color>" + close + "</link>";
+                    insertions.Add((span.DisplayStart, false, open));
+                    insertions.Add((end, true, close));
                 }
                 else
                 {
@@ -1003,6 +1057,42 @@ namespace WorldGen.Notes.Rendering
             }
             sb.Append(d.Text, copied, d.Text.Length - copied);
             return sb.ToString();
+        }
+
+        /// <summary>Whether a search hit overlaps [start, end) closely enough that drawing the character
+        /// plate there would be unsafe — see the review finding this exists to fix.
+        ///
+        /// THE HAZARD: the plate and a search-hit highlight are both `&lt;mark&gt;`. TMP keeps exactly ONE
+        /// stack for that tag (HighlightStateStack, and its Remove() pops the top with no tag matching) —
+        /// so two PROPERLY NESTED `&lt;mark&gt;` ranges are safe, but two that only PARTIALLY overlap
+        /// ("start before it and end inside it") open-open-close-close instead of open-close-open-close,
+        /// and the second close pops the wrong range. A DM's search term landing partway across a
+        /// character's name is exactly that case, and it is reachable the instant they search.
+        ///
+        /// THE RULE CHOSEN: the search highlight wins outright. Rather than split the plate's own `&lt;mark&gt;`
+        /// into the sub-ranges the hit does not cover — which would need the same interval-splitting logic
+        /// twice, once for each direction a hit can lean into a span — a span with ANY overlapping hit
+        /// simply gets no plate `&lt;mark&gt;` at all this render. The `&lt;link&gt;`/`&lt;color&gt;` wrapping is
+        /// untouched either way (different stack, see the comment above the insertions loop), so the name
+        /// still reads and still opens on click.
+        ///
+        /// THE COST, STATED RATHER THAN DISCOVERED LATER: a character's plate blinks off for exactly the
+        /// rows/frames where the DM's current search overlaps its name, and returns the moment the hit
+        /// moves on or the search is cleared. Narrower and cheaper than getting interval splitting wrong.</summary>
+        bool IsCharacterPlateSuppressedByHit(int start, int end)
+        {
+            if (searchHits == null) return false;
+            foreach (var hit in searchHits)
+            {
+                if (hit == null || hit.Length <= 0) continue;
+                int hitStart = hit.DisplayStart;
+                int hitEnd = hitStart + hit.Length;
+                // Half-open interval overlap: [start, end) meets [hitStart, hitEnd) iff each starts before
+                // the other ends. Touching at a boundary (hitEnd == start or hitStart == end) is NOT an
+                // overlap — adjacent ranges never cross, only ones that share an interior point do.
+                if (hitStart < end && start < hitEnd) return true;
+            }
+            return false;
         }
 
         /// <summary>Scratch for BuildMarkup. NOT a field initializer for the usual reason — a domain reload

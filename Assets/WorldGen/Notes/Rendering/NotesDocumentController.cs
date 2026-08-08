@@ -7,16 +7,20 @@ using WorldGen.Notes.Data;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Owns the in-memory NotesDocument: group/page CRUD, active-page tracking.
+    /// Owns the in-memory NotesDocument: group/page CRUD.
     /// Attach to any GameObject in the notes UI hierarchy.
+    ///
+    /// NO «ACTIVE PAGE» LIVES HERE (Task 3 of the two-panes arc). A single ActivePage field, plus the event
+    /// that announced it, is why two panes could never show two different pages: whichever pane last claimed
+    /// the Page surface moved a document-wide pointer, so the other pane's tab named a page nobody was
+    /// showing. Which page a pane displays is now the WORKSPACE's fact — it lives in that pane's active tab
+    /// and reaches the view as PageSurfaceHost.Show -> DocumentPageView.ShowPage(id).
     /// </summary>
     public class NotesDocumentController : MonoBehaviour
     {
         public NotesDocument Document { get; private set; } = new NotesDocument();
-        public NotesPage ActivePage { get; private set; }
 
         public event Action OnDocumentChanged;
-        public event Action<NotesPage> OnActivePageChanged;
 
         void Awake()
         {
@@ -24,9 +28,13 @@ namespace WorldGen.Notes.Rendering
             // Task 10f this also seeded an eight-section Lazy-DM scaffold; that seeding is gone
             // (NotesDocOps.CreateSessionSheet's own doc), but the named, ready-to-write page is still a choice
             // rather than an accident.
+            //
+            // CREATED, NOT OPENED. This used to end with OpenPage(sheet.Id), which sounded like «the app opens
+            // on the session sheet» and never was: the default layout is one WorldMap tab
+            // (WorkspaceOps.NewDefault), so no pane's active tab named a Page and the surface stayed hidden.
+            // The sheet is reached the way every other page is — from the navigator, or Ctrl+K.
             var group = CreateGroup("Заметки");
-            var sheet = CreateSessionSheet(group.Id);
-            if (sheet != null) OpenPage(sheet.Id);
+            CreateSessionSheet(group.Id);
         }
 
         // ── Group CRUD ─────────────────────────────────────────────────────────
@@ -51,13 +59,10 @@ namespace WorldGen.Notes.Rendering
         {
             var group = FindGroup(groupId);
             if (group == null) return;
-            bool activeWasInGroup = ActivePage != null && group.Pages.Any(p => p.Id == ActivePage.Id);
             Document.Groups.Remove(group);
-            if (activeWasInGroup)
-            {
-                ActivePage = null;
-                OnActivePageChanged?.Invoke(null);
-            }
+            // Tabs naming the pages this group took with it are closed by CanvasTabPruner, which listens to
+            // OnDocumentChanged below — a group is the seam people forget, so it is answered in one sink
+            // rather than here. See that class's own doc.
             OnDocumentChanged?.Invoke();
         }
 
@@ -125,20 +130,9 @@ namespace WorldGen.Notes.Rendering
             var group = Document.Groups.FirstOrDefault(g => g.Pages.Any(p => p.Id == pageId));
             if (group == null) return;
             group.Pages.RemoveAll(p => p.Id == pageId);
-            if (ActivePage != null && ActivePage.Id == pageId)
-            {
-                ActivePage = null;
-                OnActivePageChanged?.Invoke(null);
-            }
+            // Same as DeleteGroup: the tabs that named this page are closed by CanvasTabPruner off the event
+            // below, in every pane, rather than by blanking one document-wide "active page" here.
             OnDocumentChanged?.Invoke();
-        }
-
-        public void OpenPage(string pageId)
-        {
-            var page = FindPage(pageId);
-            if (page == null || page == ActivePage) return;
-            ActivePage = page;
-            OnActivePageChanged?.Invoke(page);
         }
 
         /// <summary>Raises OnDocumentChanged for a mutation made DIRECTLY against Document by a pure op
@@ -161,16 +155,20 @@ namespace WorldGen.Notes.Rendering
         public PageGroup FindGroupByPoiId(string poiId) =>
             Document.Groups.FirstOrDefault(g => g.LinkedPoiId == poiId);
 
-        /// <summary>Replaces the entire document with a previously-saved one — used when
-        /// loading a project. Unlike OpenPage, this always fires both events unconditionally
-        /// (a load is a completely fresh state, so listeners must refresh regardless of
-        /// whether the new ActivePage happens to share an Id with the old one).</summary>
+        /// <summary>Replaces the entire document with a previously-saved one — used when loading a project.
+        /// Fires unconditionally: a load is a completely fresh state, so every listener must refresh.
+        ///
+        /// IT NO LONGER PICKS A PAGE FOR ANYONE. It used to point ActivePage at the new document's FIRST page
+        /// and announce that, which re-bound the page view whether or not any tab named that page. What
+        /// re-binds the views now is the re-sync at the end of WorkspaceController.EndProjectSwitch — the load's
+        /// last act, by which time the tabs of the incoming project are the ones on screen. See that method's
+        /// own doc: a page tab whose id survives the swap points at an object from the OUTGOING document
+        /// until something re-Shows it, and that re-Show is what this method stopped being responsible
+        /// for.</summary>
         public void LoadDocument(NotesDocument doc)
         {
             Document = doc;
-            ActivePage = Document.Groups.SelectMany(g => g.Pages).FirstOrDefault();
             OnDocumentChanged?.Invoke();
-            OnActivePageChanged?.Invoke(ActivePage);
         }
 
         // ── Internals ──────────────────────────────────────────────────────────
@@ -220,21 +218,19 @@ namespace WorldGen.Notes.Rendering
             doc.Groups.Add(group);
 
             bool docChangedFired = false;
-            NotesPage activePageFromEvent = null;
             System.Action onDocChanged = () => docChangedFired = true;
-            System.Action<NotesPage> onActivePageChanged = p => activePageFromEvent = p;
             OnDocumentChanged += onDocChanged;
-            OnActivePageChanged += onActivePageChanged;
 
             LoadDocument(doc);
 
             OnDocumentChanged -= onDocChanged;
-            OnActivePageChanged -= onActivePageChanged;
 
-            bool ok = docChangedFired && Document == doc && ActivePage == page && activePageFromEvent == page;
+            // The loaded page is looked up rather than read off an "active page" the controller no longer
+            // keeps — the assertion is that the document really was replaced, which is all this method does.
+            bool ok = docChangedFired && Document == doc && FindPage(page.Id) == page;
             Debug.Log(ok
                 ? "Self-Test Notes Document Load: PASS"
-                : $"Self-Test Notes Document Load: FAIL (docChangedFired={docChangedFired}, activePageMatches={ActivePage == page})");
+                : $"Self-Test Notes Document Load: FAIL (docChangedFired={docChangedFired}, pageFound={FindPage(page.Id) == page})");
         }
     }
 }

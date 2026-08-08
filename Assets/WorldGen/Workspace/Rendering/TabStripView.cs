@@ -39,6 +39,8 @@ namespace WorldGen.Workspace.Rendering
         const float CloseButtonSize = 16f;
         const float CloseButtonMargin = 6f;
         const float PlusButtonWidth = 26f;
+        /// <summary>Thickness of the accent line marking the FOCUSED pane — see BuildActivePaneUnderline.</summary>
+        const float ActiveUnderlineHeight = 2f;
 
         /// <summary>The «+» hook: clicking «+» invokes this with the strip's own pane index. Task 8 built
         /// the palette it launches — WorkspaceBuilder assigns QuickOpenPopup.OpenForPane to both strips, and
@@ -127,6 +129,51 @@ namespace WorldGen.Workspace.Rendering
             }
 
             BuildPlusButton();
+            BuildActivePaneUnderline();
+        }
+
+        /// <summary>A 2px accent line along the bottom of the FOCUSED pane's tab strip, and nothing at all in
+        /// the other one — the two-panes arc's Task 5, Step 4.
+        ///
+        /// WHY IT IS NEEDED AT ALL, since Task 6 already tints the active TAB. Since Task 4 both panes draw a
+        /// full, live page of their own, so both look equally "the one being typed in" — and from Task 5 on,
+        /// which of them a Ctrl+Z, a Ctrl+F or an «@» lands in is decided by the caret, falling back to the
+        /// FOCUSED pane when there is no caret anywhere (PageFocusRouter.ActiveView). That fallback is
+        /// invisible state, and this line is the whole of its readout.
+        ///
+        /// BUILT HERE RATHER THAN IN Create, because Rebuild's own first loop destroys EVERY child of this
+        /// strip: anything built once at construction time would survive exactly until the first
+        /// OnLayoutChanged. Rebuild is also precisely where it belongs — FocusPane raises OnLayoutChanged
+        /// (WorkspaceController.cs), so the strip is already being rebuilt at the moment focus moves.
+        ///
+        /// ignoreLayout, because this strip's HorizontalLayoutGroup would otherwise treat the line as a third
+        /// kind of tab and give it a slot in the row. With it set, the group skips the child entirely and the
+        /// anchors below place it against the strip's own bottom edge at full width.
+        ///
+        /// Colour from the theme (ThemeService.Tag/ThemeRole.Accent) like every other pixel in this file, so
+        /// a theme switch repaints it too — the same rule TabDragHandler's insertion marker follows, and the
+        /// same one BuildGhost's CanvasGroup comment explains the alpha exception to.</summary>
+        void BuildActivePaneUnderline()
+        {
+            var layout = controller != null ? controller.Layout : null;
+            if (layout == null || layout.FocusedPane != PaneIndex) return;
+
+            var go = new GameObject("ActivePaneUnderline", typeof(RectTransform));
+            go.transform.SetParent(transform, false);
+            go.AddComponent<LayoutElement>().ignoreLayout = true;
+
+            var img = go.AddComponent<Image>();
+            img.raycastTarget = false;   // a tab drag begun on this line must still reach the strip.
+            ThemeService.Tag(img, ThemeRole.Accent);
+
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(1f, 0f);
+            rect.pivot = new Vector2(0.5f, 0f);
+            // Stretched horizontally by the anchors, so sizeDelta.x is the inset from them (0 = full width)
+            // and only sizeDelta.y is a real height; anchoredPosition 0 sits it ON the bottom edge.
+            rect.sizeDelta = new Vector2(0f, ActiveUnderlineHeight);
+            rect.anchoredPosition = Vector2.zero;
         }
 
         void BuildTab(PaneState pane, int index, bool active)

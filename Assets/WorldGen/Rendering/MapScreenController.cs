@@ -100,6 +100,7 @@ namespace WorldGen.Rendering
             if (poiEditorScreen != null) poiEditorScreen.OnCloseRequested = ClosePoiEditor;
             if (poiInfoPopup != null) poiInfoPopup.OnEditRequested = OpenPoiEditor;
             if (poiEditorScreen != null) poiEditorScreen.OnOpenDungeonRequested = OpenDungeonEditor;
+            if (poiEditorScreen != null) poiEditorScreen.OnOpenPageRequested = OpenPageTab;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnCloseRequested = CloseDungeonEditor;
             if (battleGridScreen != null) battleGridScreen.OnCloseRequested = CloseBattleGrid;
             if (dungeonEditorScreen != null) dungeonEditorScreen.OnOpenBattleGridRequested = OpenBattleGrid;
@@ -357,8 +358,8 @@ namespace WorldGen.Rendering
                     return true;
 
                 case SurfaceKind.Page:
-                    // NotesDocOps.FindPage, the same pure lookup NotesDocumentController.OpenPage resolves
-                    // through — so "the tab survives" and "the page can be opened" cannot disagree.
+                    // NotesDocOps.FindPage, the same pure lookup DocumentPageView.ShowPage resolves the tab's id
+                    // through — so "the tab survives" and "the page can be shown" cannot disagree.
                     //
                     // Explicit null checks rather than `Notes()?.DocumentController?.Document`: both are
                     // UnityEngine.Objects, whose overloaded `==` reports a DESTROYED reference as null, and
@@ -479,6 +480,26 @@ namespace WorldGen.Rendering
         /// «двойное нажатие и выбор в навигаторе должен выдавать то же самое меню». The gestures differ only
         /// in which pane they land in.</summary>
         public void OpenPoiEditor(PoiData poi) => OpenPoiEditorIn(poi, inOtherPane: false);
+
+        /// <summary>Opens a NOTES PAGE in a tab of the focused pane — the same call NavigatorView makes for a
+        /// row under «Заметки» (NavigatorView.cs:536) and the same SurfaceRef DocumentPageView routes an
+        /// inline [[page:…]] link through.
+        ///
+        /// WHY THE POI EDITORS COME THROUGH HERE (two-panes Task 3). PoiEditPanel and PoiEditorScreen used to
+        /// open a place's note by calling NotesDocumentController.OpenPage directly — a call that moved a
+        /// document-wide "active page" pointer and left the WORKSPACE, which owns which tab shows what,
+        /// entirely out of the loop: no tab appeared, and whichever pane happened to have a Page tab active
+        /// silently swapped its content. There is no such pointer any more, so a page can only be opened the
+        /// way every other surface is — by putting it in a tab. This method is that door, and it is here
+        /// because this class already owns the workspace reference (Shell()) and every other Open* gesture.
+        ///
+        /// A blank id is a no-op rather than an empty tab: WorkspaceOps.Open would happily create one, and a
+        /// tab that can never resolve is worse than no tab (see WorkspaceOps.PruneMissing's own doc).</summary>
+        public void OpenPageTab(string pageId, string title)
+        {
+            if (string.IsNullOrEmpty(pageId)) return;
+            OpenSurfaceTab(new SurfaceRef { Kind = SurfaceKind.Page, Id = pageId }, title);
+        }
 
         /// <summary>Closes the POI editor's tab. What the user sees next is whatever tab the workspace makes
         /// active in its place (WorkspaceOps.FixActiveIndexAfterRemoval decides), NOT "the world map" as the
@@ -890,7 +911,7 @@ namespace WorldGen.Rendering
         // this, the ordinary Ц2 flow breaks — open a town, drill into a building (both tabs now open), click
         // the TOWN's tab: the screen comes back on still showing the BUILDING. Two POI-editor tabs, or two
         // dungeons, do the same. PageSurfaceHost never had this problem because its Show ends in
-        // documentController.OpenPage(id), i.e. it re-binds from the id every call; this is the same idea for
+        // pageView.ShowPage(id), i.e. it re-binds from the id every call; this is the same idea for
         // the five screens that have no such call of their own.
         //
         // WHY THE ID IS ENOUGH: every surface id here is a pure function of the data (see PoiEditorSurface /

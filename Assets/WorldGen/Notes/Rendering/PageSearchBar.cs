@@ -104,12 +104,34 @@ namespace WorldGen.Notes.Rendering
             var keyboard = Keyboard.current;
             if (keyboard == null || page == null) return;
 
+            // ONLY THE PANE THE CARET IS IN (two panes arc, Task 5), AND THAT GOES FOR EVERY KEY BELOW, not
+            // only the opening chord. This whole method polls the hardware per VIEW, and since that arc's
+            // Task 4 there is one view per pane — so an ungated Ctrl+F opened BOTH search bars, each calling
+            // ActivateInputField, with Unity's undefined Update order deciding which one ended up holding
+            // the caret. IsKeyboardTarget asks the one router that also answers for undo and «@» (see
+            // DocumentPageView.KeyboardTargetProbe), so all three land in the same pane.
+            //
+            // THE FIRST ROUND OF THIS FIX GATED ONLY Ctrl+F, on the argument that "an already-open bar
+            // belongs to whoever CLICKS in it". That argument does not cover a KEY, where there is no click
+            // to belong to — and two bars open at once is still reachable without one: Ctrl+F in pane 0
+            // (its field takes the caret), click into pane 1's text, Ctrl+F there. From then on one F3 or
+            // Enter stepped BOTH bars and one Esc closed both, so the other pane silently jumped to its own
+            // next match and repainted its highlights. That is exactly the "two owners" this task exists to
+            // remove, so the same gate is on all four keys.
+            //
+            // THE BAR IN THE OTHER PANE IS NOT STRANDED BY THIS: its own box is built under `page.Root`, so
+            // clicking into its field makes that view the caret's view and hands every key back at once.
+            bool ours = page.IsKeyboardTarget;
+
             if ((keyboard.ctrlKey.isPressed || keyboard.rightCtrlKey.isPressed)
-                && keyboard.fKey.wasPressedThisFrame)
+                && keyboard.fKey.wasPressedThisFrame && ours)
             { Open(); return; }
 
             if (!IsOpen) { page.SearchOwnsKeys = false; return; }
 
+            // NOT gated: it is a report about THIS bar's own field, not a key. DocKeyboardController reads it
+            // through KeyboardSuspended to stand down while a search field holds the caret, and that has to
+            // stay true of whichever bar actually holds it.
             page.SearchOwnsKeys = field != null && field.isFocused;
 
             if (clearSelectionWhenFocused && field != null && field.isFocused)
@@ -117,6 +139,8 @@ namespace WorldGen.Notes.Rendering
                 field.MoveTextEnd(false);
                 clearSelectionWhenFocused = false;
             }
+
+            if (!ours) return;
 
             if (keyboard.escapeKey.wasPressedThisFrame) { Close(); return; }
 
@@ -135,8 +159,11 @@ namespace WorldGen.Notes.Rendering
             hits.Clear();
             current = -1;
 
+            // КАРТОЧКА ПЕРЕДАЁТСЯ ЗДЕСЬ, и без этого аргумента правило её не увидит: трёхаргументная форма
+            // Find подставляет card = null. Первый заход починил чистое правило и забыл вызывающую
+            // сторону — поиск по «Кто» так и не находил ничего.
             if (page != null && page.Page != null)
-                hits.AddRange(PageSearch.Find(page.Page.Blocks, query, page.ResolveNameFor));
+                hits.AddRange(PageSearch.Find(page.Page.Blocks, page.Page.Character, query, page.ResolveNameFor));
 
             // Straight to the first match, so typing a name and looking up is enough — the DM should not have
             // to press anything to see where the first one is.
@@ -177,6 +204,19 @@ namespace WorldGen.Notes.Rendering
         {
             if (hit == null || page == null || page.Page == null) return;
 
+            // ПОПАДАНИЕ В КАРТОЧКЕ ЛЕЖИТ НЕ В СТРОКЕ, а в шапке персонажа, и строки у него нет вовсе
+            // (BlockId пуст). Разворачивать нечего, прокручивать к строке нечего — шапка стоит первой в
+            // той же колонке, поэтому «показать её» значит промотать колонку в начало.
+            //
+            // Подсвечивается при этом ПОЛЕ ЦЕЛИКОМ, а не слово в нём: у поля карточки нет отдельного слоя
+            // показа, в котором строка прозы красит буквы разметкой. Почему так и что стоило бы иначе —
+            // в доке CharacterHeaderView.SetSearchHighlights, там же и цена решения.
+            if (hit.Field != PageSearch.CardField.None)
+            {
+                page.RevealTop();
+                return;
+            }
+
             if (NotesDocOps.ExpandTo(page.Page.Blocks, hit.BlockId))
             {
                 // Rebuild re-applies the highlights on its way out, so this does not re-paint them here.
@@ -193,6 +233,11 @@ namespace WorldGen.Notes.Rendering
             if (page == null) return;
 
             var currentHit = current >= 0 && current < hits.Count ? hits[current] : null;
+
+            // Шапка персонажа — такой же получатель подсветки, как строка, и получает ВЕСЬ список: она
+            // сама отбирает из него те попадания, у которых названо её поле (см. её SetSearchHighlights).
+            page.SetCardSearchHighlights(hits, currentHit);
+
             foreach (var row in page.Rows)
             {
                 if (row == null) continue;
@@ -206,6 +251,9 @@ namespace WorldGen.Notes.Rendering
         void ClearHighlights()
         {
             if (page == null) return;
+            // Шапка гасится вместе со строками. Пропустить её значило бы оставить поле подсвеченным после
+            // закрытия строки поиска — подложка сама не гаснет, у неё нет своего повода.
+            page.SetCardSearchHighlights(null, null);
             foreach (var row in page.Rows)
                 if (row != null) row.SetSearchHighlights(null, null);
         }
@@ -222,12 +270,17 @@ namespace WorldGen.Notes.Rendering
 
             hits.Clear();
             if (page != null && page.Page != null)
-                hits.AddRange(PageSearch.Find(page.Page.Blocks, field != null ? field.text : "", page.ResolveNameFor));
+                hits.AddRange(PageSearch.Find(page.Page.Blocks, page.Page.Character,
+                                              field != null ? field.text : "", page.ResolveNameFor));
 
             current = hits.Count > 0 ? 0 : -1;
             if (was != null)
                 for (int i = 0; i < hits.Count; i++)
-                    if (hits[i].BlockId == was.BlockId && hits[i].DisplayStart == was.DisplayStart)
+                    // ПОЛЕ ВХОДИТ В ОПОЗНАНИЕ МЕСТА наравне с блоком и смещением: у попаданий в карточке
+                    // BlockId пуст у ВСЕХ, поэтому без него «Кто, смещение 0» и «Чего хочет, смещение 0»
+                    // считались бы одним и тем же местом, и перестройка перебрасывала бы ДМ между полями.
+                    if (hits[i].BlockId == was.BlockId && hits[i].DisplayStart == was.DisplayStart
+                        && hits[i].Field == was.Field)
                     { current = i; break; }
 
             ApplyHighlights();

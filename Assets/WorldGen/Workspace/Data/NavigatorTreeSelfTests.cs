@@ -205,14 +205,20 @@ namespace WorldGen.Workspace.Data
                 ok = false;
             }
 
-            // N3 — filtering folds case, and empties whole groups away.
+            // N3 — filtering folds case, and empties whole groups away. THIS "no zero-node group survives"
+            // check holds ONLY because the filter here is non-empty («  ТИХИЙ  »): the Characters section
+            // is the one deliberate exception to it, and only when the filter is EMPTY (see the
+            // `groups.Add(section)` comment in NavigatorTree.Build, and
+            // SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty below, which pins that empty-filter
+            // case directly). Do not widen this call to `""` expecting the same assertion to still hold —
+            // it would then fire against a section that is CORRECTLY present.
             groups = NavigatorTree.Build(doc, world, "  ТИХИЙ  ");
             if (groups.Exists(g => g.Nodes.Exists(n => n.Title == "Сессия 1")))
             { Debug.LogError("FAIL tree: filter «  ТИХИЙ  » left «Сессия 1» present, want it excluded (N3)"); ok = false; }
             if (groups.Exists(g => g.Nodes.Count == 0))
             {
                 string emptyTitle = groups.Find(g => g.Nodes.Count == 0)?.Title ?? "?";
-                Debug.LogError($"FAIL tree: group «{emptyTitle}» survived with 0 nodes, want it omitted entirely (N3)");
+                Debug.LogError($"FAIL tree: group «{emptyTitle}» survived with 0 nodes under a NON-EMPTY filter, want it omitted entirely (N3)");
                 ok = false;
             }
 
@@ -316,6 +322,200 @@ namespace WorldGen.Workspace.Data
             { Debug.LogError("FAIL tree: unbinding a page removed it from its authored group too, want it untouched (N2)"); ok = false; }
 
             Debug.Log(ok ? "Self-Test Navigator Tree: PASS" : "Self-Test Navigator Tree: FAIL");
+        }
+
+        // Мутант: раздел персонажей встаёт над обычными группами.
+        // Мутант: группа с флагом рисуется ДВАЖДЫ — и как обычная, и как раздел.
+        [ContextMenu("Self-Test: Characters Section Is Last And Not Duplicated")]
+        public void SelfTestCharactersSectionIsLastAndNotDuplicated()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard() });
+            var sessions = new PageGroup { Title = "Сессии" };
+            sessions.Pages.Add(new NotesPage { Name = "Сессия 1" });
+            doc.Groups.Add(chars);      // хранится ПЕРВОЙ — правило «внизу» и порядок хранения расходятся
+            doc.Groups.Add(sessions);
+
+            var raw = NavigatorTree.Build(doc, null, "");
+            // «Мир» строится ВСЕГДА при пустом фильтре (Matches пропускает всё, «Карта мира» — константа) —
+            // проверяем, что она остаётся первой и здесь, а затем отбрасываем её: она к разделу персонажей
+            // отношения не имеет, и без этого индексы ниже считали бы лишнюю голову.
+            if (raw.Count == 0 || raw[0].Kind != NavGroupKind.World)
+            { Debug.LogError("FAIL: «Мир» перестал быть первым, когда появился раздел персонажей"); ok = false; }
+            var groups = raw.FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 2)
+            { Debug.LogError("FAIL: разделов не два, а " + groups.Count); ok = false; }
+            else
+            {
+                if (groups[0].Kind != NavGroupKind.Authored || groups[0].Title != "Сессии")
+                { Debug.LogError("FAIL: обычная группа не первая"); ok = false; }
+                if (groups[1].Kind != NavGroupKind.Characters)
+                { Debug.LogError("FAIL: раздел персонажей не последний"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Characters Section Is Last And Not Duplicated: PASS" : "Self-Test Characters Section Is Last And Not Duplicated: FAIL");
+        }
+
+        // Мутант: подтягивания нет — раздел показывает только свою группу.
+        // Фикстура: персонаж лежит в ЧУЖОЙ группе, иначе «подтягивание» неотличимо от «показать группу».
+        [ContextMenu("Self-Test: Character In Foreign Group Is Pulled In And Stays")]
+        public void SelfTestCharacterInForeignGroupIsPulledInAndStays()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var town = new PageGroup { Title = "Тихая Гавань" };
+            town.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard { Who = "кузнец" } });
+            town.Pages.Add(new NotesPage { Name = "Порт" });
+            doc.Groups.Add(town);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var groups = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 2)
+            { Debug.LogError("FAIL: нет раздела персонажей при персонаже в чужой группе"); ok = false; }
+            else
+            {
+                var authored = groups[0];
+                if (authored.Nodes.Count != 2)
+                { Debug.LogError("FAIL: персонаж пропал из своей группы (подавление строк запрещено)"); ok = false; }
+
+                var section = groups[1];
+                if (section.Kind != NavGroupKind.Characters)
+                { Debug.LogError("FAIL: второй раздел не персонажи"); ok = false; }
+                if (section.Nodes.Count != 1 || section.Nodes[0].Title != "Ольга Медная")
+                { Debug.LogError("FAIL: персонаж не подтянут в раздел"); ok = false; }
+                else if (section.Nodes[0].Subtitle != "кузнец")
+                { Debug.LogError("FAIL: подпись «кто» не проставлена"); ok = false; }
+            }
+
+            Debug.Log(ok ? "Self-Test Character In Foreign Group Is Pulled In And Stays: PASS" : "Self-Test Character In Foreign Group Is Pulled In And Stays: FAIL");
+        }
+
+        // Мутант: подтянутые не сортируются / свои сортируются вместе с подтянутыми.
+        [ContextMenu("Self-Test: Own Pages Keep Order Pulled Are Sorted")]
+        public void SelfTestOwnPagesKeepOrderPulledAreSorted()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Яков", Character = new CharacterCard() });
+            chars.Pages.Add(new NotesPage { Name = "Анна", Character = new CharacterCard() });
+            doc.Groups.Add(chars);
+
+            var town = new PageGroup { Title = "Тихая Гавань" };
+            town.Pages.Add(new NotesPage { Name = "Пётр", Character = new CharacterCard() });
+            town.Pages.Add(new NotesPage { Name = "Борис", Character = new CharacterCard() });
+            doc.Groups.Add(town);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var section = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World)[1];
+            var names = new List<string>();
+            foreach (var n in section.Nodes) names.Add(n.Title);
+            var got = string.Join(",", names);
+            if (got != "Яков,Анна,Борис,Пётр")
+            { Debug.LogError("FAIL: ожидалось «Яков,Анна,Борис,Пётр» (свои — как разложены, подтянутые — по алфавиту), получено «" + got + "»"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Own Pages Keep Order Pulled Are Sorted: PASS" : "Self-Test Own Pages Keep Order Pulled Are Sorted: FAIL");
+        }
+
+        // Мутант: фильтр не смотрит на подпись.
+        [ContextMenu("Self-Test: Filter Matches Subtitle")]
+        public void SelfTestFilterMatchesSubtitle()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Ольга Медная", Character = new CharacterCard { Who = "кузнец" } });
+            chars.Pages.Add(new NotesPage { Name = "Яков", Character = new CharacterCard { Who = "трактирщик" } });
+            doc.Groups.Add(chars);
+
+            var groups = NavigatorTree.Build(doc, null, "кузн");
+            if (groups.Count != 1)
+            { Debug.LogError("FAIL: раздел не найден по подписи"); ok = false; }
+            else if (groups[0].Nodes.Count != 1 || groups[0].Nodes[0].Title != "Ольга Медная")
+            { Debug.LogError("FAIL: фильтр по подписи отобрал не то"); ok = false; }
+
+            // Non-empty фильтр («нетакого»), совпадений ноль — раздел должен пропасть. Это НЕ общее
+            // правило «пустой раздел всегда исчезает»: при ПУСТОМ фильтре раздел персонажей остаётся
+            // видимым нарочно, даже с нулём узлов (см. исключение в NavigatorTree.Build у
+            // `groups.Add(section)` и SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty ниже) —
+            // здесь проверяется только половина «фильтр реально ничего не нашёл».
+            if (NavigatorTree.Build(doc, null, "нетакого").Count != 0)
+            { Debug.LogError("FAIL: при непустом фильтре, который ничего не находит, раздел показан вместо того, чтобы исчезнуть"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Filter Matches Subtitle: PASS" : "Self-Test Filter Matches Subtitle: FAIL");
+        }
+
+        // Мутант: страница без карточки, лежащая в группе персонажей, выбрасывается из раздела.
+        [ContextMenu("Self-Test: Own Page Without Card Still Shows")]
+        public void SelfTestOwnPageWithoutCardStillShows()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var chars = new PageGroup { Title = "Персонажи", IsCharacters = true };
+            chars.Pages.Add(new NotesPage { Name = "Черновик списка имён" });
+            doc.Groups.Add(chars);
+
+            // «Мир» отбрасывается — см. комментарий в SelfTestCharactersSectionIsLastAndNotDuplicated.
+            var groups = NavigatorTree.Build(doc, null, "").FindAll(g => g.Kind != NavGroupKind.World);
+            if (groups.Count != 1 || groups[0].Nodes.Count != 1)
+            { Debug.LogError("FAIL: страница без карточки исчезла из своей же группы персонажей"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Own Page Without Card Still Shows: PASS" : "Self-Test Own Page Without Card Still Shows: FAIL");
+        }
+
+        // Мутант (a): раздел персонажей возвращается к старому правилу N3 «Nodes.Count > 0» без
+        // исключения — тогда пустой раздел при пустом фильтре не появляется вовсе, и «+ Персонаж»
+        // (единственная кнопка, которая умеет создать первого персонажа — она живёт в заголовке ЭТОГО
+        // раздела, см. NavigatorView.BuildGroupHeader) негде разместить: на свежем проекте, где
+        // персонажей ещё нет, ДМ не может создать первого. Это и есть критическая находка ревью
+        // задачи 7 (отчёт task-7-report.md), которую этот тест закрывает.
+        // Мутант (b): раздел показывается БЕЗУСЛОВНО, вне зависимости от фильтра — тогда «фильтр
+        // ничего не нашёл» и «персонажей ещё не завели» становятся неотличимы на экране, что рулинг
+        // ДМ 2026-08-07 прямо запретил.
+        //
+        // ФИКСТУРА НАРОЧНО БЕЗ ЕДИНОГО ПЕРСОНАЖА: ни одной страницы с CharacterCard, ни одной группы
+        // с IsCharacters. Была бы в документе хотя бы одна карточка — «раздел появился» перестало бы
+        // отличать «показывается всегда» от «показывается, когда непусто», и оба мутанта прошли бы
+        // тест незамеченными: старое правило Nodes.Count>0 тоже показало бы раздел (в нём была бы
+        // хотя бы одна строка), а безусловный мутант — тем более.
+        [ContextMenu("Self-Test: Characters Section Always Visible Unless Filtered Empty")]
+        public void SelfTestCharactersSectionAlwaysVisibleUnlessFilteredEmpty()
+        {
+            bool ok = true;
+            var doc = new NotesDocument();
+            var notes = new PageGroup { Title = "Заметки" };
+            notes.Pages.Add(new NotesPage { Name = "Черновик" });
+            doc.Groups.Add(notes);
+
+            // Пустой фильтр, ноль персонажей во всём документе — «ещё ничего не создано»: раздел
+            // ОБЯЗАН появиться, пусть и с нулём строк, иначе кнопке «+ Персонаж» негде стоять.
+            var empty = NavigatorTree.Build(doc, null, "");
+            var emptySection = empty.Find(g => g.Kind == NavGroupKind.Characters);
+            if (emptySection == null)
+            {
+                Debug.LogError("FAIL: раздел персонажей не появился при пустом фильтре и нуле персонажей в документе — «+ Персонаж» негде разместить, первого персонажа не создать");
+                ok = false;
+            }
+            else if (emptySection.Nodes.Count != 0)
+            {
+                Debug.LogError($"FAIL: раздел персонажей в документе без единого персонажа держит {emptySection.Nodes.Count} узел(-ов), хотели 0");
+                ok = false;
+            }
+
+            // Непустой фильтр, ничего не находящий — «ничего не найдено»: раздел ОБЯЗАН пропасть,
+            // как и любая другая группа под N3.
+            var filtered = NavigatorTree.Build(doc, null, "нетакого");
+            if (filtered.Exists(g => g.Kind == NavGroupKind.Characters))
+            {
+                Debug.LogError("FAIL: раздел персонажей показан при фильтре, который ничего не находит — «ничего не найдено» не должно выглядеть как «раздел существует»");
+                ok = false;
+            }
+
+            Debug.Log(ok
+                ? "Self-Test Characters Section Always Visible Unless Filtered Empty: PASS"
+                : "Self-Test Characters Section Always Visible Unless Filtered Empty: FAIL");
         }
     }
 }

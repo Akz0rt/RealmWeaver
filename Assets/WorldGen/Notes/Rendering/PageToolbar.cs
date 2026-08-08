@@ -37,15 +37,18 @@ namespace WorldGen.Notes.Rendering
 
         Button convertSection, convertItem, convertProse, insertImage, insertCanvas, insertLink, undo, redo;
 
-        // «Ссылка» asks the PAGE rather than holding its own hook: the page outlives this bar, which is
-        // rebuilt whole after a domain reload (see Attach), and a hook stored here would be lost with it.
+        // «Ссылка» asks the PAGE rather than holding its own hook: the hook is the workspace's to fill
+        // (PageLinkBridge.Configure sets DocumentPageView.LinkPicker), and one stored here would be a second
+        // place for it to be missing from.
 
         /// <summary>Builds the bar into the strip the page reserves for it, replacing any previous one.
         ///
         /// REBUILT RATHER THAN REPAIRED, because everything here is chrome with no state worth keeping and
-        /// because a Button's onClick is a runtime listener list that a domain reload does not restore —
-        /// the trap DocumentPageView.EnsureWired documents for its own «+ Раздел». Throwing the old bar away
-        /// and making a new one cannot half-work the way re-finding one can.</summary>
+        /// because a Button's onClick is a runtime listener list that a domain reload does not restore.
+        /// Throwing the old bar away and making a new one cannot half-work the way re-finding one can — and
+        /// since the two-panes arc's Task 4 the reload question does not even arise here: a page view lives
+        /// inside a pane, so the whole view (this bar with it) is destroyed and rebuilt on every
+        /// reload.</summary>
         public static PageToolbar Attach(RectTransform parent, DocumentPageView page, Font font)
         {
             if (parent == null || page == null) return null;

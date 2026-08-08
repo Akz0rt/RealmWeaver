@@ -5,15 +5,15 @@ using UnityEngine.InputSystem.UI;
 namespace WorldGen.Notes.Rendering
 {
     /// <summary>
-    /// Owns the live notes MODEL (NotesDocumentController) and the Page surface's own view
-    /// (DocumentPageView), and nothing else. Through Task 8 this class also built a docked
-    /// map/notes split (NotesLayoutController), a page-tree sidebar (NotesTreeSidebar) and a
-    /// canvas/whiteboard viewport (NotesCanvasController + chrome) — Task 9 (workspace shell
-    /// surfaces) retires all three from this build: the split and sidebar are superseded by the
-    /// workspace's own navigator and panes, and canvas/board rendering is later work entirely (see
-    /// the workspace-shell spec's Р4). Task 10c then DELETED NotesLayoutController.cs and
-    /// NotesTreeSidebar.cs outright, as Task 9 said it would — every comment elsewhere in the project that
-    /// cites either of them by name is citing history, and git is where to read it.
+    /// Owns the live notes MODEL (NotesDocumentController) and the two input helpers that hang off the same
+    /// GameObject (DocKeyboardController and, through it, MentionPopup) — and nothing else. Through Task 8
+    /// this class also built a docked map/notes split (NotesLayoutController), a page-tree sidebar
+    /// (NotesTreeSidebar) and a canvas/whiteboard viewport (NotesCanvasController + chrome) — Task 9
+    /// (workspace shell surfaces) retired all three from this build: the split and sidebar are superseded by
+    /// the workspace's own navigator and panes, and canvas/board rendering is later work entirely (see the
+    /// workspace-shell spec's Р4). Task 10c then DELETED NotesLayoutController.cs and NotesTreeSidebar.cs
+    /// outright, as Task 9 said it would — every comment elsewhere in the project that cites either of them by
+    /// name is citing history, and git is where to read it.
     ///
     /// SampleScene.unity WAS EXPECTED to hold "missing script" MonoBehaviour entries pointing at both, left
     /// behind by Task 10c's deletion for Task 11 to clean up. It never did, and Task 11 checked rather than
@@ -23,13 +23,18 @@ namespace WorldGen.Notes.Rendering
     /// as a note because "the scene still references the deleted sidebar" was carried as a to-do across
     /// three tasks and was never true.
     ///
-    /// DocumentView's root starts parked under a bare, non-Canvas holding transform (nothing renders
-    /// there — Unity draws uGUI only under a Canvas) and is re-parented into whichever workspace pane
-    /// is showing a Page tab by PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs),
-    /// the FIRST time that host's Show() runs. WorkspaceBuilder finds THIS component via
-    /// FindFirstObjectByType and reads DocumentController/DocumentView from it — it must never
-    /// construct its own NotesDocumentController, or the workspace and whatever else references this
-    /// instance (PoiEditorScreen.notesRoot, PoiEditPanel.notesRoot, ProjectMenuBar.notesRoot) would
+    /// THE PAGE VIEW NO LONGER LIVES HERE, and that is the whole of the two-panes arc's Task 4. Until then
+    /// this class AddComponent-ed the ONE DocumentPageView in the project onto its own GameObject and parked
+    /// its root under a bare, non-Canvas "PageViewHolder" transform, from which PageSurfaceHost re-parented
+    /// it into whichever pane showed a Page tab. One view cannot show two pages, so «две страницы рядом»
+    /// needed one view PER PANE — and a per-pane view is built INSIDE that pane's own content area, by
+    /// PageSurfaceHost (Assets/WorldGen/Workspace/Rendering/SurfaceRegistry.cs). The parking spot, the
+    /// property that exposed the view and the post-reload repair that re-found it all went with it; see
+    /// EnsureBuilt for what took over the "already built" test the parking spot used to carry.
+    ///
+    /// WorkspaceBuilder finds THIS component via FindFirstObjectByType and reads DocumentController from it —
+    /// it must never construct its own NotesDocumentController, or the workspace and whatever else references
+    /// this instance (PoiEditorScreen.notesRoot, PoiEditPanel.notesRoot, ProjectMenuBar.notesRoot) would
     /// silently diverge into two different documents.
     ///
     /// Attach to a GameObject in the scene (already is — this predates the workspace-shell plan).
@@ -37,9 +42,26 @@ namespace WorldGen.Notes.Rendering
     public class NotesRootBuilder : MonoBehaviour
     {
         public NotesDocumentController DocumentController { get; private set; }
-        public DocumentPageView DocumentView { get; private set; }
+
+        /// <summary>The keystroke handler, which needs a DocumentPageView to act on and no longer has one to
+        /// be handed at build time: the views are born inside the panes, later, and are destroyed and rebuilt
+        /// with the shell. It is handed a PageFocusRouter instead (WorkspaceBuilder.Awake, once per shell
+        /// rebuild) and asks IT, every frame, which pane's view holds the caret — the two-panes arc's Task 5.
+        /// Through Task 4 it was pointed at one view per creation and pane 0 won, which is why some comments
+        /// nearby still explain the shape of that gap in the past tense.
+        ///
+        /// Re-acquired by GetComponent on BOTH branches of EnsureBuilt rather than trusted to survive: this is
+        /// a plain auto-property with no [SerializeField], so a Play-mode domain reload nulls it while the
+        /// COMPONENT it named stays live on this GameObject — the same mechanic EnsureBuilt's own doc spells
+        /// out for DocumentController.</summary>
+        public DocKeyboardController Keyboard { get; private set; }
 
         Font builtinFont;
+
+        /// <summary>The builtin font every page view is drawn with. Public because PageSurfaceHost builds
+        /// those views now and needs the SAME asset this class would have used — one namer of the resource,
+        /// so the two cannot drift apart.</summary>
+        public Font BuiltinFont => EnsureFont();
 
         void Awake() => EnsureBuilt();
 
@@ -48,78 +70,68 @@ namespace WorldGen.Notes.Rendering
         /// different GameObjects, and WorkspaceBuilder needs DocumentController to exist before it builds the
         /// navigator/Ctrl+K, which read it once at construction time.
         ///
-        /// CORRECTION (round 3 of Task 9's review): an EARLIER version of this method guarded on
-        /// `DocumentController != null` instead of `transform.childCount > 0`, reasoning that childCount was
-        /// only "accidentally" correct once the docked split shrank to a single child. That reasoning was
-        /// backwards and the change was a real bug: `DocumentController` is a plain auto-property with no
-        /// `[SerializeField]`, so its backing field does NOT survive a Play-mode script reload — the SAME
-        /// mechanic WorkspaceController.Awake's own comment documents for `Layout`. A reload would have made
-        /// this guard false again, so `EnsureBuilt` would run to completion a SECOND time and
-        /// AddComponent a SECOND `NotesDocumentController` onto this GameObject — precisely the "two
-        /// divergent NotesDocuments" data-losing bug this class's own doc warns against, and the exact
-        /// failure mode WorkspaceBuilder.EnsureDocumentController exists to prevent from the OTHER direction.
-        /// `transform.childCount > 0` is reload-SAFE (the GameObject/Transform hierarchy is native Unity
-        /// object state, not a plain C# field) and was never accidental — it is the SAME technique
-        /// WorkspaceBuilder.Awake tests on for its own reload detection. The two then do OPPOSITE things with
-        /// the answer, and deliberately: this class returns early and re-points a handful of references,
-        /// because its one child holds no wiring that a reload could break; WorkspaceBuilder demolishes and
-        /// rebuilds, because its children are covered in runtime listeners that a reload does break (see its
-        /// own Awake for the argument). This method always
-        /// creates exactly one child (`PageViewHolder`) when it runs to completion, so the check holds
-        /// permanently once true, reload or not.
+        /// THE "ALREADY BUILT" TEST MUST SURVIVE A DOMAIN RELOAD, and that requirement has outlived two
+        /// different tests. Round 3 of Task 9's review established the rule the hard way: an EARLIER version
+        /// guarded on `DocumentController != null`, i.e. on this class's own auto-property, which has no
+        /// `[SerializeField]` and so does NOT survive a Play-mode script reload — the SAME mechanic
+        /// WorkspaceController.Awake's own comment documents for `Layout`. A reload made that guard false
+        /// again, so EnsureBuilt ran to completion a SECOND time and AddComponent-ed a SECOND
+        /// NotesDocumentController onto this GameObject: two divergent notes documents, i.e. lost data, and
+        /// the exact failure WorkspaceBuilder.EnsureDocumentController exists to prevent from the other side.
+        /// `transform.childCount > 0` replaced it and was reload-SAFE, because the GameObject/Transform
+        /// hierarchy is native Unity state rather than a plain C# field.
         ///
-        /// The early-return branch re-acquires DocumentController/DocumentView via GetComponent rather than
-        /// trusting them to already be set — those are ALSO plain auto-properties with no `[SerializeField]`,
-        /// so a reload wipes them to null too, even though the ACTUAL NotesDocumentController/DocumentPageView
-        /// COMPONENTS they used to point at persist as live, native state on this same GameObject (Unity
-        /// guarantees at most one of each on a GameObject unless AddComponent is called again, which this
-        /// branch deliberately never does). Without this, WorkspaceBuilder.Awake's own post-reload recovery
-        /// (which reads these two properties to reconstruct a PageSurfaceHost — see its own comment) would
-        /// silently register a host wrapping two null references: reachable, harmless to call into, but
-        /// unable to reparent or open anything, functionally identical to not being registered at all — the
-        /// SAME "non-null-but-inert reference is worse than leaving it null" trap WorkspaceBuilder.Awake's
-        /// comment already names for the tab strips/Navigator, closed here instead of merely documented.
+        /// THAT TEST LOST ITS FOOTING IN TASK 4 of the two-panes arc, which deleted the one child this method
+        /// ever created (the "PageViewHolder" parking spot — see the class doc). This class now builds NO
+        /// children at all, so childCount is permanently 0 and the guard would never fire again: the very bug
+        /// above, back through the door the fix came in.
         ///
-        /// ROUND 4: re-acquiring the two COMPONENTS was necessary but not sufficient. DocumentPageView's own
-        /// internals (its root GameObject, viewport, content, placeholder, its document reference and its
-        /// OnActivePageChanged subscription) are wiped by the same reload, and every use of them is
-        /// null-guarded — so the surface does not throw, it silently stops responding to Show/Hide, which can
-        /// leave a page's opaque viewport stuck visible over whatever the pane shows next. EnsureWired (see
-        /// its own doc for the full failure mode) is what repairs that, and it is called from HERE rather than
-        /// from DocumentPageView.Awake because this branch is the only place that can tell "already built,
-        /// possibly after a reload" apart from "never built" — the distinction that decides whether a
-        /// re-find-and-re-assert is a repair or a mis-bind.</summary>
+        /// `GetComponent&lt;NotesDocumentController&gt;() != null` is the replacement, and it is the same KIND
+        /// of test rather than a weaker one. It does not ask a C# field whether it remembers something; it
+        /// asks Unity's live component list what is actually attached to this GameObject — native state, wiped
+        /// by nothing short of Destroy, exactly like the Transform hierarchy. It is emphatically NOT the
+        /// rejected `DocumentController != null`: the property is the wiped reference, GetComponent is the
+        /// live lookup that RECOVERS it, which is why the branch below assigns from it. And it is
+        /// self-reinforcing in the way childCount was: the completing path AddComponents exactly one
+        /// NotesDocumentController, Unity permits at most one per GameObject unless AddComponent is called
+        /// again (which this branch deliberately never does), so the test holds permanently once true.
+        ///
+        /// The early-return branch re-acquires BOTH components rather than trusting the properties — same
+        /// reason, and without it WorkspaceBuilder's rebuild would read a null DocumentController off a
+        /// perfectly live builder and register a page host wrapping nothing: reachable, harmless to call into,
+        /// and unable to open anything — the "non-null-but-inert reference is worse than leaving it null" trap
+        /// WorkspaceBuilder.Awake's comment already names for the tab strips/Navigator.
+        ///
+        /// WHAT USED TO BE REPAIRED HERE AND NO LONGER NEEDS TO BE. Through Task 3 this branch also called
+        /// DocumentPageView.EnsureWired (to re-find the view's own root/viewport/content/placeholder and
+        /// re-establish its subscriptions after a reload) and re-Attached MentionPopup. The view is gone from
+        /// this GameObject, and with it the reason: a page view now lives under a pane's ContentArea, i.e.
+        /// under WorkspaceCanvas, which WorkspaceBuilder.DemolishForRebuild DestroyImmediate-s and rebuilds on
+        /// every reload — there is no half-wiped survivor left to repair. MentionPopup is re-Attached from the
+        /// same rebuild, beside the router it now asks for a view (WorkspaceBuilder.Awake, Task 5).</summary>
         public void EnsureBuilt()
         {
-            if (transform.childCount > 0)
+            var existingDocument = GetComponent<NotesDocumentController>();
+            if (existingDocument != null)
             {
-                DocumentController = GetComponent<NotesDocumentController>();
-                DocumentView = GetComponent<DocumentPageView>();
-                if (DocumentView != null) DocumentView.EnsureWired(DocumentController, EnsureFont());
+                DocumentController = existingDocument;
+                Keyboard = GetComponent<DocKeyboardController>();
                 return;
             }
 
-            builtinFont = EnsureFont();
             EnsureEventSystemExists();
 
             DocumentController = gameObject.AddComponent<NotesDocumentController>();
-
-            // A bare (non-Canvas) parking spot — DocumentPageView.root lives here, inert and unrendered,
-            // until PageSurfaceHost re-parents it into a real pane. See the class doc.
-            var holderGO = new GameObject("PageViewHolder", typeof(RectTransform));
-            holderGO.transform.SetParent(transform, false);
-
-            DocumentView = gameObject.AddComponent<DocumentPageView>();
-            DocumentView.Initialize(DocumentController, holderGO.GetComponent<RectTransform>(), builtinFont);
-
-            var keyboard = gameObject.AddComponent<DocKeyboardController>();
-            keyboard.pageView = DocumentView;
+            // Built here, wired elsewhere: `router`/`mentionPopup` stay null until a workspace shell exists
+            // to point them somewhere. Every use of both is null-guarded in DocKeyboardController itself
+            // (its LateUpdate returns immediately when the router is null OR names no view), so an unwired
+            // controller is inert rather than broken — the state a workspace showing no page should be in.
+            Keyboard = gameObject.AddComponent<DocKeyboardController>();
         }
 
-        /// <summary>The one place the builtin font resource is named. `builtinFont` is itself a plain field a
-        /// reload wipes, and the recovery branch above has to hand a live Font to DocumentPageView.EnsureWired
-        /// (without one, any row Rebuild after a reload would draw text with a null font, i.e. nothing at all)
-        /// — Resources.GetBuiltinResource is cheap and returns the same shared asset every call.</summary>
+        /// <summary>The one place the builtin font resource is named — Resources.GetBuiltinResource is cheap
+        /// and returns the same shared asset every call, so the lazy field is a convenience rather than a
+        /// requirement (and it is itself a plain field a reload wipes, which the lazy re-fetch covers).</summary>
         Font EnsureFont()
         {
             if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");

@@ -28,9 +28,12 @@ namespace WorldGen.Notes.Rendering
     /// ATTACHED TO THE PAGE'S ROOT, which is where uGUI delivers a drop that landed on any descendant: the
     /// event system runs the drop handler up the hierarchy from whatever graphic the pointer was over
     /// (ExecuteEvents.ExecuteHierarchy), and neither a row, nor its input field, nor the ScrollRect handles
-    /// IDropHandler. That also settles the two-pane case structurally rather than by lookup — there is only
-    /// ONE page surface, re-parented by PageSurfaceHost into whichever pane shows a Page tab, so "the pane it
-    /// lands on" is wherever that root currently is.
+    /// IDropHandler. That also settles the two-pane case structurally rather than by lookup, though the
+    /// reason changed in Task 4 of the two-panes arc and the old one is worth keeping. It used to be that
+    /// there was only ONE page surface, re-parented by PageSurfaceHost into whichever pane showed a Page tab,
+    /// so "the pane it lands on" was wherever that root happened to be. There is now one page view per pane,
+    /// each with its own root and its own LinkDropTarget on it — so the drop is delivered to the view whose
+    /// hierarchy the pointer was actually over, which is the same answer reached without any re-parenting.
     ///
     /// KNOWN COST, accepted: a navigator row that handles IDragHandler no longer passes a drag to the
     /// navigator's ScrollRect, so the list can no longer be scrolled by grabbing a row and pulling. The wheel

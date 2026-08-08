@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -72,11 +73,58 @@ namespace WorldGen.Workspace.Rendering
         /// governs nothing there; see BuildGroupHeader's own note where the rect is set).</summary>
         const float AddPageButtonSize = 18f;
 
+        /// <summary>Width of the header's «+ Персонаж» button — wide enough for the label (unlike the
+        /// square «+» an Authored header gets, this one names what it adds, per the brief; the icon-only
+        /// square would be indistinguishable from "add a page to this group", which is not what pressing
+        /// it does — see CreateCharacterAndOpen).</summary>
+        const float AddCharacterButtonWidth = 94f;
+
+        /// <summary>Taller than the ordinary RowHeight (38f) ONLY for a character row — it carries a
+        /// second text line (Subtitle) the ordinary row never has. Sized from the vertical budget spent
+        /// below: NameTopInset + NameLineHeight + SubtitleGap + SubtitleLineHeight + a few px of bottom
+        /// air. Never applied to a non-character row — BuildNodeRow picks RowHeight vs this by
+        /// `isCharacterRow`, so every other row keeps its exact old height (rule 3 of the brief).</summary>
+        const float CharacterRowHeight = 42f;
+
+        const float RowPortraitSize = 24f;
+        const float RowPortraitLeftInset = 7f;
+
+        /// <summary>Where a character row's two text lines start, horizontally — past the portrait plus a
+        /// small gap. An ordinary row's label starts at 14f (see BuildNodeRow); this is wider only because
+        /// the portrait sits where that row has empty margin.</summary>
+        const float CharacterTextLeftInset = RowPortraitLeftInset + RowPortraitSize + 6f;
+
+        const float NameTopInset = 6f;
+        const float NameLineHeight = 18f;
+        const float SubtitleGap = 1f;
+        const float SubtitleLineHeight = 14f;
+
         WorkspaceController controller;
         NotesDocumentController documentController;
         PoiManager poiManager;
         LayoutElement columnLayoutElement;
         Font builtinFont;
+
+        /// <summary>Portrait textures for the CURRENT NavigatorView instance, keyed by the CharacterCard's
+        /// own byte[] reference — never rebuilt into a new Texture2D unless that reference changes, which
+        /// per CharacterCard.Portrait's own contract ("replaced whole, never written into") only happens
+        /// when a portrait is actually swapped. Rebuild() destroys and recreates every row's GameObjects on
+        /// every pass (search keystroke, tab switch, unrelated document edit…), so a per-row cache would be
+        /// worthless — this lives on the view instead, and survives exactly as many rebuilds as the bytes
+        /// underneath a character's portrait stay the same array. See GetOrCreatePortraitTexture and
+        /// EvictStalePortraitTextures for the read and the cleanup halves of this contract.
+        ///
+        /// Dictionary&lt;byte[], Texture2D&gt; uses REFERENCE equality here for free: byte[] overrides
+        /// neither Equals nor GetHashCode, so the default comparer falls back to Object's — the same
+        /// identity test CharacterHeaderView.RefreshPortraitTexture makes with a bare ReferenceEquals, just
+        /// keyed for many rows at once instead of guarding one field.</summary>
+        readonly Dictionary<byte[], Texture2D> portraitCache = new Dictionary<byte[], Texture2D>();
+
+        /// <summary>Scratch set, valid for exactly one Rebuild() call: every portrait byte[] actually drawn
+        /// THIS pass. Cleared at the top of Rebuild, filled by GetOrCreatePortraitTexture as character rows
+        /// are built, consumed by EvictStalePortraitTextures right after — see that method for why an
+        /// entry NOT in this set at that point is stale and must be destroyed.</summary>
+        readonly HashSet<byte[]> portraitCacheLiveThisPass = new HashSet<byte[]>();
 
         Text headerText;
         GameObject searchGO;
@@ -168,6 +216,15 @@ namespace WorldGen.Workspace.Rendering
             // ResolvePoiManager's own comment describes. Unity's `!=` reads a DESTROYED manager as null, in
             // which case there is no list left to remove from and skipping is correct.
             if (poiManager != null) poiManager.OnPoisChanged -= RequestRebuild;
+
+            // The cache's own eviction (EvictStalePortraitTextures) only runs from inside Rebuild — a
+            // shell teardown (WorkspaceBuilder's demolish-and-rebuild, Task 11) destroys this component
+            // without one more Rebuild ever running, so whatever is still cached here would otherwise
+            // never be freed at all: Texture2D is not garbage-collected memory, unlike the Dictionary
+            // holding it.
+            foreach (var texture in portraitCache.Values)
+                if (texture != null) Destroy(texture);
+            portraitCache.Clear();
         }
 
         /// <summary>The live POI store, discovered on every miss (the same shape MapScreenController.Pois()
@@ -342,20 +399,23 @@ namespace WorldGen.Workspace.Rendering
         ///
         /// THE DOMAIN-RELOAD QUESTION this arc has had to answer at every button it added, answered
         /// explicitly rather than left open. A runtime onClick listener is not [SerializeField]-persisted, so
-        /// a Play-mode script reload wipes it while this GameObject survives — the shape
-        /// DocumentPageView.EnsureWired exists to repair for its own «+ Раздел». It needs no repair HERE, and
-        /// the difference is not luck, but the reason CHANGED in Task 11 and the old one is worth keeping.
+        /// a Play-mode script reload wipes it while this GameObject survives — the shape a since-deleted
+        /// repair method (DocumentPageView.EnsureWired) existed for, back when the one page view hung off a
+        /// GameObject outside the shell. It needs no repair HERE, and the difference is not luck, but the
+        /// reason CHANGED in Task 11 and the old one is worth keeping.
         ///
         /// It used to be that this view had no recovery path at all: after a reload `controller`/
         /// `documentController` were null, every row's NavRowClickRouter delegate was gone, and all three
         /// subscriptions that could set rebuildPending died with them, so LateUpdate never rebuilt again
         /// either — this button was dead exactly like the collapse toggle, the search box and every row, and
-        /// an EnsureWired here would have had nothing to be called from.
+        /// a re-wiring method here would have had nothing to be called from.
         ///
         /// Task 11 revived it WHOLESALE instead: WorkspaceBuilder.Awake now demolishes the shell's child
         /// hierarchy and re-runs its own build, so this view is DESTROYED and Create()d again, listener
         /// included. That is why the "built once, never rebuilt" arrangement above is safe for chrome —
-        /// "once" means once per shell, and a reload produces a new shell. The one thing that must stay true
+        /// "once" means once per shell, and a reload produces a new shell. The two-panes arc's Task 4 moved
+        /// the page views under that same demolition and deleted their repair method outright, so the whole
+        /// shell now rests on this one argument rather than two. The one thing that must stay true
         /// for this to keep holding is that every listener here is added during Create; a listener added
         /// later, from somewhere a rebuild does not re-run, would be back to being unrecoverable.</summary>
         void BuildCreateGroupBar(Transform parent)
@@ -452,10 +512,10 @@ namespace WorldGen.Workspace.Rendering
         /// rather than an empty one — and it is the name the page simply KEEPS when «+ Группа» declines the
         /// prompt in favour of naming the group.
         ///
-        /// OPENED THROUGH WorkspaceController.Open, the same call BuildNodeRow's left-click makes — not
-        /// through NotesDocumentController.OpenPage, which would change the notes controller's ActivePage
-        /// without any tab pointing at it (the exact drift ActiveSurface's own doc describes). PageSurfaceHost
-        /// .Show is what calls OpenPage, once the tab exists.
+        /// OPENED THROUGH WorkspaceController.Open, the same call BuildNodeRow's left-click makes — and since
+        /// the two-panes arc's Task 3 there is no other call it could make: a page reaches a view only by
+        /// being named in some pane's tab (PageSurfaceHost.Show -> DocumentPageView.ShowPage), so putting it
+        /// in a tab IS opening it.
         ///
         /// THE FILTER IS CLEARED. With a needle in the search box, a page named «Страница N» almost certainly
         /// does not match it, N3 then omits it (and possibly its whole group), and the button silently appears
@@ -478,6 +538,38 @@ namespace WorldGen.Workspace.Rendering
             ClearFilter();
             controller.Open(new SurfaceRef { Kind = SurfaceKind.Page, Id = page.Id }, page.Name, inOtherPane: false);
             if (renameNewPage) pendingRenamePageId = page.Id;
+        }
+
+        /// <summary>«+ Персонаж» — по образцу CreateGroupWithFirstPage above (create, open, arm a
+        /// rename), but there is only ONE object here, not two: CharacterOps.CreateCharacter already
+        /// returns the page WITH its card attached (Task 6/N4's contract), so there is no separate
+        /// group-then-page step and the rename lands on the page itself, exactly like CreatePageAndOpen's
+        /// own renameNewPage:true — pressing this button names the thing the DM asked to create, not a
+        /// container around it.
+        ///
+        /// CreateCharacter WRITES DIRECTLY INTO documentController.Document — it is a pure Data-layer op
+        /// with no controller of its own to raise an event from (see its own doc: "без документа положить
+        /// страницу некуда"). Left uncalled, NotesDocumentController.NotifyDocumentChanged's own comment
+        /// names this exact shape as the trap: nothing would tell the navigator a character now exists
+        /// until some UNRELATED event happened to fire next. Called explicitly here rather than trusting
+        /// the Open() below to cover it — Open raises OnLayoutChanged, not OnDocumentChanged, and
+        /// NavigatorTree.Build's Characters section only appears at all once EnsureCharactersGroup's group
+        /// exists in the document THIS view rebuilds from.
+        ///
+        /// Unreachable while the column is collapsed, for the same reason CreateGroupWithFirstPage's own
+        /// doc gives: this button lives inside a group header, under `scrollGO`, which Rebuild deactivates
+        /// along with the rest of the tree when collapsed — so the `pendingRenamePageId` this arms can
+        /// never land on a row Rebuild's own collapsed-branch has just dropped the note for.</summary>
+        void CreateCharacterAndOpen()
+        {
+            if (documentController == null) return;
+            var page = CharacterOps.CreateCharacter(documentController.Document, null);
+            if (page == null) return;
+            documentController.NotifyDocumentChanged();
+
+            ClearFilter();
+            controller.Open(new SurfaceRef { Kind = SurfaceKind.Page, Id = page.Id }, page.Name, inOtherPane: false);
+            pendingRenamePageId = page.Id;
         }
 
         /// <summary>Writes the empty needle into BOTH the model and the visible field. `filter` first, so a
@@ -545,6 +637,11 @@ namespace WorldGen.Workspace.Rendering
             activeRenameLabelGO = null;
             renameCancelled = false;
 
+            // Scratch set for THIS pass only — see its own doc. Cleared here rather than only at the end
+            // of the previous Rebuild, so a Rebuild that returns early (nothing does today, but the guard
+            // costs nothing) never leaves a stale set behind for the next one to misread.
+            portraitCacheLiveThisPass.Clear();
+
             // Read-and-clear on the FIRST lines, before anything can throw or early-return below: the notes
             // are for THIS rebuild only, and a pass that fails to find the row must drop one rather than
             // leave it armed for a later one (see pendingRenamePageId's own doc).
@@ -607,12 +704,37 @@ namespace WorldGen.Workspace.Rendering
             var groups = NavigatorTree.Build(doc, WorldObjectSource.Collect(ResolvePoiManager()), filter);
             foreach (var group in groups)
                 BuildGroup(group, activeSurface, renamePageId, renameGroupId);
+
+            EvictStalePortraitTextures();
+        }
+
+        /// <summary>The other half of GetOrCreatePortraitTexture's contract: anything left in `portraitCache`
+        /// that THIS pass did not touch (portraitCacheLiveThisPass) is stale — its character was deleted,
+        /// filtered out, or its portrait byte[] was replaced by a new one under a different reference — and
+        /// its Texture2D is destroyed explicitly rather than left for Unity to collect, which it never does
+        /// on its own for texture memory. Runs every Rebuild, not on some slower timer: Rebuild already
+        /// happens far less than once a frame (LateUpdate's coalescing), so sweeping here costs nothing a
+        /// dedicated GC pass would save.</summary>
+        void EvictStalePortraitTextures()
+        {
+            List<byte[]> stale = null;
+            foreach (var key in portraitCache.Keys)
+                if (!portraitCacheLiveThisPass.Contains(key))
+                    (stale ??= new List<byte[]>()).Add(key);
+            if (stale == null) return;
+            foreach (var key in stale)
+            {
+                var texture = portraitCache[key];
+                if (texture != null) Destroy(texture);   // same null-guard as OnDestroy's own sweep.
+                portraitCache.Remove(key);
+            }
         }
 
         /// <summary>The row highlighted as "active" is the surface shown by the FOCUSED pane's active tab —
-        /// not NotesDocumentController.ActivePage. Those two can differ the moment a page is open in a tab
-        /// without also being the notes controller's own active page (e.g. a background tab), so keying off
-        /// ActivePage the way NotesTreeSidebar does would drift from what the workspace actually shows.</summary>
+        /// which, since the two-panes arc's Task 3, is the ONLY place that fact is recorded. It used to
+        /// compete with NotesDocumentController.ActivePage, a document-wide pointer that could name a page no
+        /// pane was showing; keying off that would have drifted from what the workspace actually shows, and
+        /// with two panes about to show two different pages there is no single answer for it to give.</summary>
         SurfaceRef ActiveSurface()
         {
             PaneState pane = WorkspaceOps.PaneAt(controller.Layout, controller.Layout.FocusedPane);
@@ -639,6 +761,11 @@ namespace WorldGen.Workspace.Rendering
             bool renameThisGroup = !string.IsNullOrEmpty(renameGroupId) && group.Id == renameGroupId;
             BuildGroupHeader(groupGO.transform, group, renameThisGroup);
 
+            // Computed once per group, not per node: every node in a Characters-kind group is drawn with a
+            // portrait+subtitle, every node in every other group is not — same reasoning as
+            // BuildGroupHeader's own group.Kind test.
+            bool isCharacterGroup = group.Kind == NavGroupKind.Characters;
+
             foreach (var node in group.Nodes)
             {
                 bool isActive = activeSurface != null && WorkspaceOps.SameSurface(node.Target, activeSurface);
@@ -650,8 +777,85 @@ namespace WorldGen.Workspace.Rendering
                 // already known to be false for every other row.
                 bool autoRename = renamePageId != null && node.Target != null
                     && node.Target.Kind == SurfaceKind.Page && node.Target.Id == renamePageId;
-                BuildNodeRow(groupGO.transform, node, isActive, autoRename);
+                // Looked up only for a character row — every other row leaves this null and BuildNodeRow
+                // never calls GetOrCreatePortraitTexture for it, so an ordinary page's row costs nothing
+                // extra here. NavNode itself carries no portrait (Task 7's own file-change list is
+                // NavigatorView.cs alone; the Data layer NavNode lives in is done and tested), so this asks
+                // the live document directly, by the same id NavNode.Target already names the page with.
+                byte[] portraitBytes = isCharacterGroup ? FindCharacterPortrait(node.Target.Id) : null;
+                BuildNodeRow(groupGO.transform, node, isActive, autoRename, isCharacterGroup, portraitBytes);
             }
+
+            // NavigatorTree.Build's own deliberate N3 exception (see its comment on `groups.Add(section)`)
+            // keeps the Characters section on screen with ZERO nodes whenever the filter is empty — "no
+            // characters exist yet" must render differently from "the filter found nothing" (ruling ДМ
+            // 2026-08-07). group.Nodes.Count == 0 here can therefore ONLY mean the empty-filter case: a
+            // non-empty filter that matched nothing is never handed a section at all (Build omits it, so
+            // this method never runs for it). This placeholder is what fills the header-with-nothing-under-
+            // it gap that review caught in Task 7 — without it, «+ Персонаж» would sit above a blank space
+            // that could pass for a rendering bug rather than an honest "you haven't made anyone yet".
+            if (isCharacterGroup && group.Nodes.Count == 0) BuildEmptyCharactersRow(groupGO.transform);
+        }
+
+        /// <summary>The one row a Characters section shows when it has nobody in it. Deliberately built
+        /// from scratch rather than through BuildNodeRow: that method exists to render a NavNode with a
+        /// real Target to open, and this row opens nothing — reusing it would mean threading a fake NavNode
+        /// through it, or adding an "is this a placeholder" branch to a method that already branches on
+        /// isCharacterRow, either of which is more state to keep straight than a five-line sibling.
+        ///
+        /// NOT clickable, NOT selectable, and not mistakable for a character with an empty name — by
+        /// omission, not by a disabled flag: no Image (so no raycast surface at all, unlike every real
+        /// row's invisible-but-still-raycasting background — see BuildNodeRow's own `bg`), no
+        /// NavRowClickRouter, no active-row edge marker. A click here has nothing on this GameObject to
+        /// land on and falls through to whatever is behind the navigator column.
+        ///
+        /// STYLE PRECEDENT: this file's one existing "muted text that names an absence" is
+        /// BuildSearch's placeholder ("Поиск...", ThemeRole.Mut + FontStyle.Italic) — mirrored here rather
+        /// than invented, since nothing in NavigatorView renders an EMPTY-LIST row anywhere else (a group
+        /// with zero nodes is simply omitted everywhere else in this file — N3's ordinary rule — which is
+        /// exactly the rule the Characters section is the one deliberate exception to).</summary>
+        void BuildEmptyCharactersRow(Transform parent)
+        {
+            var rowGO = new GameObject("EmptyPlaceholder", typeof(RectTransform));
+            rowGO.transform.SetParent(parent, false);
+            rowGO.AddComponent<LayoutElement>().preferredHeight = RowHeight;
+
+            var textGO = new GameObject("Text", typeof(RectTransform));
+            textGO.transform.SetParent(rowGO.transform, false);
+            var text = textGO.AddComponent<Text>();
+            text.text = "пока никого";
+            text.font = builtinFont;
+            text.fontSize = 13;
+            text.fontStyle = FontStyle.Italic;
+            ThemeService.Tag(text, ThemeRole.Mut);
+            text.alignment = TextAnchor.MiddleLeft;
+            text.raycastTarget = false;
+            var textRect = textGO.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            // Same insets as an ordinary row's Label (BuildNodeRow) — left-aligned under the same margin
+            // real names sit at, so the placeholder reads as part of the same list rather than a stray
+            // banner.
+            textRect.offsetMin = new Vector2(14f, 0f);
+            textRect.offsetMax = new Vector2(-8f, 0f);
+        }
+
+        /// <summary>The live CharacterCard.Portrait for a page id, or null when the page isn't found or
+        /// isn't a character — same shape and same reason as PageGroupPageCount just above (a fresh
+        /// call-time read off documentController.Document, not anything cached at row-build time). Only
+        /// ever called for a node inside the Characters-kind group, but written to cope with any id: an
+        /// ordinary page dragged into that group by hand (CharacterOps.MakeCharacter not yet called on it)
+        /// has no card at all, and IsCharacter's own predicate is what NavigatorTree.MakeNode already
+        /// checks before setting Subtitle — mirrored here rather than assumed, so a row with an empty
+        /// Subtitle also gets the silhouette instead of a NullReferenceException reaching for .Portrait.</summary>
+        byte[] FindCharacterPortrait(string pageId)
+        {
+            var doc = documentController != null ? documentController.Document : null;
+            if (doc == null || string.IsNullOrEmpty(pageId)) return null;
+            foreach (var g in doc.Groups)
+                foreach (var p in g.Pages)
+                    if (p.Id == pageId) return CharacterOps.IsCharacter(p) ? p.Character.Portrait : null;
+            return null;
         }
 
         /// <summary>Called for every group, but only Authored ones get the rename/delete menu — or, since
@@ -691,6 +895,31 @@ namespace WorldGen.Workspace.Rendering
             textRect.anchorMax = Vector2.one;
             textRect.offsetMin = new Vector2(10f, 2f);
             textRect.offsetMax = Vector2.zero;
+
+            // «+ Персонаж» — the ONE thing the brief asks the Characters header for; no rename/delete menu
+            // (unlike an Authored header just below), because this header does not always name the same
+            // object twice in a row: `group.Id` is the flagged group's real id WHEN one already exists
+            // (NavigatorTree.Build sets it from `home.Id`) but "" the very first time this section renders
+            // before any character has ever been created (`home == null` there) — an Id a rename/delete
+            // would have to special-case around for no product reason, since nothing in the brief asked for
+            // renaming this section from here (its Title already tracks the backing group's own name,
+            // renamed the ordinary way from wherever that group appears if the DM filed it as an Authored
+            // group by hand before making its first character).
+            if (group.Kind == NavGroupKind.Characters)
+            {
+                text.raycastTarget = false;
+                textRect.offsetMax = new Vector2(-(AddCharacterButtonWidth + 6f), 0f);
+
+                var addCharacterGO = AddActionButton(go.transform, "+ Персонаж", GroupHeaderHeight - 6f, 10,
+                    TextAnchor.MiddleCenter, 0f, CreateCharacterAndOpen);
+                var addCharacterRect = addCharacterGO.GetComponent<RectTransform>();
+                addCharacterRect.anchorMin = new Vector2(1f, 0.5f);
+                addCharacterRect.anchorMax = new Vector2(1f, 0.5f);
+                addCharacterRect.pivot = new Vector2(1f, 0.5f);
+                addCharacterRect.sizeDelta = new Vector2(AddCharacterButtonWidth, GroupHeaderHeight - 6f);
+                addCharacterRect.anchoredPosition = new Vector2(-4f, 0f);
+                return;
+            }
 
             if (group.Kind != NavGroupKind.Authored) return;
 
@@ -837,8 +1066,14 @@ namespace WorldGen.Workspace.Rendering
         /// <summary>`autoRename` is true for exactly one row per rebuild at most: the page CreatePageAndOpen
         /// just made (see pendingRenamePageId). It can only ever be true inside the Page branch below —
         /// BuildGroup computes it from Target.Kind==Page — which is what keeps the "no rename overlay is
-        /// even CONSTRUCTED for a non-Page row" rule that branch's own comment establishes.</summary>
-        void BuildNodeRow(Transform parent, NavNode node, bool isActive, bool autoRename)
+        /// even CONSTRUCTED for a non-Page row" rule that branch's own comment establishes.
+        ///
+        /// `isCharacterRow`/`portraitBytes` are BuildGroup's only addition for Task 7: every OTHER row is
+        /// built by the exact code that built it before this task (same RowHeight, same single Label rect,
+        /// no Portrait child) — see the guarded block right after the label rect below, which is the only
+        /// place either parameter is read.</summary>
+        void BuildNodeRow(Transform parent, NavNode node, bool isActive, bool autoRename,
+            bool isCharacterRow = false, byte[] portraitBytes = null)
         {
             // Falls back to Target.Kind when Id is empty (the world-map row, whose Id is "" by contract with
             // WorkspaceOps.NewDefault's seed tab) — otherwise this reads as "Node_" in the Hierarchy,
@@ -847,7 +1082,9 @@ namespace WorldGen.Workspace.Rendering
             string idPart = string.IsNullOrEmpty(node.Target.Id) ? node.Target.Kind.ToString() : node.Target.Id;
             var rowGO = new GameObject($"Node_{idPart}", typeof(RectTransform));
             rowGO.transform.SetParent(parent, false);
-            rowGO.AddComponent<LayoutElement>().preferredHeight = RowHeight;
+            // Only a character row gets the taller height — every other row keeps RowHeight exactly as it
+            // was before this task (rule 3 of the brief: "no changed height" for anything else).
+            rowGO.AddComponent<LayoutElement>().preferredHeight = isCharacterRow ? CharacterRowHeight : RowHeight;
             // Structural containment for long titles — Task 6 learned twice that arithmetic truncation
             // alone is not a guarantee, because the ancestor layout can still compress a row below whatever
             // width truncation was budgeted against. Clips every child (label, active edge, rename input) to
@@ -887,10 +1124,52 @@ namespace WorldGen.Workspace.Rendering
             // gives for its own title.raycastTarget=false ("clicks must reach tabBtn, not the label").
             label.raycastTarget = false;
             var labelRect = labelGO.GetComponent<RectTransform>();
-            labelRect.anchorMin = Vector2.zero;
-            labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = new Vector2(14f, 0f);
-            labelRect.offsetMax = new Vector2(-8f, 0f);
+            if (isCharacterRow)
+            {
+                // Top-anchored fixed-height box instead of the ordinary row's full-stretch-plus-centred
+                // label: a character row has a SECOND line (Subtitle) below this one, so the name can no
+                // longer own the whole row height. Anchored at (0,1)/(1,1) — stretched horizontally,
+                // pinned to the row's top edge — with offsetMin/offsetMax carrying both the horizontal
+                // insets AND the vertical box (see NameTopInset's own doc for the numbers this adds up
+                // to). The rename overlay below copies this rect verbatim, so an in-place rename edits
+                // exactly this box, not the whole row.
+                labelRect.anchorMin = new Vector2(0f, 1f);
+                labelRect.anchorMax = new Vector2(1f, 1f);
+                labelRect.pivot = new Vector2(0f, 1f);
+                labelRect.offsetMin = new Vector2(CharacterTextLeftInset, -(NameTopInset + NameLineHeight));
+                labelRect.offsetMax = new Vector2(-8f, -NameTopInset);
+
+                BuildPortraitThumb(rowGO.transform, portraitBytes);
+
+                var subtitleGO = new GameObject("Subtitle", typeof(RectTransform));
+                subtitleGO.transform.SetParent(rowGO.transform, false);
+                var subtitle = subtitleGO.AddComponent<Text>();
+                subtitle.text = node.Subtitle ?? "";
+                subtitle.font = builtinFont;
+                subtitle.fontSize = 10;
+                // Paler than the name unconditionally — Mut, not the isActive Txt/Mut split the label
+                // above uses. An active row's Subtitle staying muted while its name brightens is what
+                // keeps the subtitle reading as a caption rather than a second name.
+                ThemeService.Tag(subtitle, ThemeRole.Mut);
+                subtitle.alignment = TextAnchor.MiddleLeft;
+                subtitle.horizontalOverflow = HorizontalWrapMode.Overflow;
+                subtitle.verticalOverflow = VerticalWrapMode.Truncate;
+                subtitle.raycastTarget = false;   // same reasoning as the label above.
+                var subtitleRect = subtitleGO.GetComponent<RectTransform>();
+                subtitleRect.anchorMin = new Vector2(0f, 1f);
+                subtitleRect.anchorMax = new Vector2(1f, 1f);
+                subtitleRect.pivot = new Vector2(0f, 1f);
+                float subtitleTop = NameTopInset + NameLineHeight + SubtitleGap;
+                subtitleRect.offsetMin = new Vector2(CharacterTextLeftInset, -(subtitleTop + SubtitleLineHeight));
+                subtitleRect.offsetMax = new Vector2(-8f, -subtitleTop);
+            }
+            else
+            {
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = new Vector2(14f, 0f);
+                labelRect.offsetMax = new Vector2(-8f, 0f);
+            }
 
             string pageId = node.Target.Id;
             string rawTitle = node.Title;
@@ -1007,6 +1286,87 @@ namespace WorldGen.Workspace.Rendering
                 drag.Name = node.Title;
                 drag.Font = builtinFont;
             }
+        }
+
+        /// <summary>24×24 portrait thumbnail for a character row — the same technique
+        /// CharacterHeaderView.BuildPortrait/RefreshPortraitTexture uses for the 96×96 card portrait: a
+        /// RawImage with the texture's own centre-square selected via uvRect when there IS a portrait
+        /// (CenterCropUvRect below, copied from that file for the reason its own doc gives), the shared
+        /// SilhouetteSprite() otherwise. No Mask/rounded background here, unlike the card: those exist
+        /// there to blend the portrait into a bigger decorated card; a 24px row thumbnail has no such
+        /// card to blend into, and adding one more Image+Mask PER ROW to a list rebuilt wholesale on every
+        /// pass is exactly the kind of per-row cost this task's own "performance" section warns about
+        /// avoiding without a reason.</summary>
+        void BuildPortraitThumb(Transform parent, byte[] portraitBytes)
+        {
+            var go = new GameObject("Portrait", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.sizeDelta = new Vector2(RowPortraitSize, RowPortraitSize);
+            rect.anchoredPosition = new Vector2(RowPortraitLeftInset, 0f);
+
+            var texture = GetOrCreatePortraitTexture(portraitBytes);
+            if (texture != null)
+            {
+                var raw = go.AddComponent<RawImage>();
+                raw.raycastTarget = false;
+                raw.texture = texture;
+                raw.uvRect = CenterCropUvRect(texture.width, texture.height);
+            }
+            else
+            {
+                var img = go.AddComponent<Image>();
+                img.raycastTarget = false;
+                img.sprite = CharacterHeaderView.SilhouetteSprite();
+                ThemeService.Tag(img, ThemeRole.Mut);
+            }
+        }
+
+        /// <summary>Returns the cached Texture2D for `bytes`, decoding once and reusing it across every
+        /// Rebuild that still shows the same portrait — see `portraitCache`'s own doc for why the cache
+        /// lives on the view rather than the row, and EvictStalePortraitTextures for how an entry stops
+        /// being reused once its character is gone or its portrait changed. Registers `bytes` as
+        /// "live this pass" unconditionally, including on a cache hit — that bookkeeping is what tells the
+        /// end-of-Rebuild sweep this entry is still wanted, and it has to happen on EVERY call, not just
+        /// the first, or a portrait shown on every rebuild but never re-decoded would look stale to the
+        /// sweep after its second call and get destroyed out from under the row still displaying it.</summary>
+        Texture2D GetOrCreatePortraitTexture(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0) return null;
+            portraitCacheLiveThisPass.Add(bytes);
+
+            if (portraitCache.TryGetValue(bytes, out var cached) && cached != null) return cached;
+
+            var texture = new Texture2D(2, 2);
+            if (!texture.LoadImage(bytes)) { Destroy(texture); return null; }
+            portraitCache[bytes] = texture;
+            return texture;
+        }
+
+        /// <summary>The UV rect that crops a `width`×`height` texture down to its centred square —
+        /// identical logic to CharacterHeaderView.CenterCropUvRect (CharacterHeaderView.cs:603-617),
+        /// duplicated rather than called: that method is private to a 96×96 card, this one serves a 24×24
+        /// row, and Task 7's own file-change list is NavigatorView.cs alone. Contrast SilhouetteSprite()
+        /// (CharacterHeaderView.cs:619-628), the sibling case that WAS made public and IS called from here
+        /// instead of copied — that one was singled out by name in the brief as a second consumer; this
+        /// one was not, so it stays private there and gets a local twin here.</summary>
+        static Rect CenterCropUvRect(int width, int height)
+        {
+            if (width <= 0 || height <= 0) return new Rect(0f, 0f, 1f, 1f);
+            if (width > height)
+            {
+                float frac = (float)height / width;
+                return new Rect((1f - frac) * 0.5f, 0f, frac, 1f);
+            }
+            if (height > width)
+            {
+                float frac = (float)width / height;
+                return new Rect(0f, (1f - frac) * 0.5f, 1f, frac);
+            }
+            return new Rect(0f, 0f, 1f, 1f);
         }
 
         /// <summary>The text arrives PRE-SELECTED, which Task 10h's auto-rename depends on (typing must
