@@ -89,6 +89,19 @@ namespace WorldGen.PlayerPrep.Rendering
         LayoutElement backstoryElement;
         ScrollRect backstoryScroll;
 
+        ScrollRect bodyScroll;
+
+        /// <summary>Куда была прокручена середина листа до пересборки, и сколько кадров ещё пытаться
+        /// туда вернуться. Без этого нажатие на навык в самом низу (а навыков восемнадцать)
+        /// перерисовывало лист и отбрасывало игрока в самое начало — к объяснению, ради которого он
+        /// нажимал, приходилось прокручивать заново каждый раз.
+        ///
+        /// Несколько кадров, а не один: раскладка uGUI считается в Canvas.willRenderCanvases, ПОСЛЕ
+        /// LateUpdate, поэтому в первый кадр высота содержимого ещё прежняя и доля прокрутки легла бы
+        /// не туда. Промах стоит неточной позиции, а не поломки, — поэтому просто повторяем.</summary>
+        float pendingScroll;
+        int pendingScrollFrames;
+
         /// <summary>Единственная точка входа. Корень сцены зовёт её из ShowSheet.</summary>
         public static SheetView Build(Transform parent, CharacterFile file)
         {
@@ -142,6 +155,12 @@ namespace WorldGen.PlayerPrep.Rendering
         /// раскладку грязной, и безусловное присваивание каждый кадр пересчитывало бы весь лист.</summary>
         void LateUpdate()
         {
+            if (pendingScrollFrames > 0 && bodyScroll != null)
+            {
+                pendingScrollFrames--;
+                bodyScroll.verticalNormalizedPosition = Mathf.Clamp01(pendingScroll);
+            }
+
             if (backstoryText == null || backstoryElement == null || backstoryScroll == null) return;
 
             float preferred = backstoryText.preferredHeight + 16f;
@@ -175,6 +194,14 @@ namespace WorldGen.PlayerPrep.Rendering
             backstoryText = null;
             backstoryElement = null;
             backstoryScroll = null;
+
+            // Куда была прокручена середина — запомнить ДО сноса, вернуть после (см. поле pendingScroll).
+            if (bodyScroll != null)
+            {
+                pendingScroll = bodyScroll.verticalNormalizedPosition;
+                pendingScrollFrames = 3;
+            }
+            bodyScroll = null;
 
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
@@ -328,6 +355,7 @@ namespace WorldGen.PlayerPrep.Rendering
             content.anchoredPosition = Vector2.zero;
             scroll.content = content;
 
+            bodyScroll = scroll;
             return content;
         }
 
@@ -408,14 +436,22 @@ namespace WorldGen.PlayerPrep.Rendering
                     string.IsNullOrEmpty(root.CurrentPath) ? "" : "Файл: " + root.CurrentPath);
         }
 
+        /// <summary>«Сохранить как…» МОЛЧИТ в ответ, и это не забывчивость. Сказать «лист сохранён»
+        /// здесь не по чему: SaveCurrentAs ничего не возвращает, а отменённый диалог имени оставляет
+        /// CurrentPath прежним — на уже сохранённом листе радостное сообщение выскочило бы после
+        /// отмены, когда не записано ничего. Хуже того, при упавшей записи SaveCurrentAs сам
+        /// показывает «Не удалось сохранить лист», а ConfirmDialog держит на экране ровно один диалог:
+        /// наше сообщение СМЕНИЛО БЫ СОБОЙ рассказ об ошибке.
+        ///
+        /// Ответ игроку тут и так есть — сам диалог выбора имени файла: «первое в жизни сохранение
+        /// спрашивает имя, и диалог сам по себе служит ответом» (SaveCurrent). «Сохранить как…»
+        /// спрашивает имя ВСЕГДА, значит и отвечает всегда.</summary>
         void SaveAsThroughRoot()
         {
             var root = PlayerPrepScreenController.Instance;
             if (root == null) return;
             root.SaveCurrentAs();
-            Rebuild();
-            if (!string.IsNullOrEmpty(root.CurrentPath))
-                ConfirmDialog.ShowInfo(UiKit.Font, "Лист сохранён", "Файл: " + root.CurrentPath);
+            Rebuild();   // показать новый путь в нижней полосе
         }
 
         // ── Шапка ────────────────────────────────────────────────────────────────
@@ -588,11 +624,11 @@ namespace WorldGen.PlayerPrep.Rendering
             hintLe.preferredWidth = 0f;                 // остаток ширины, а не ширина текста
             hintLe.flexibleWidth = 1f;
 
-            if (clickable && expanded == key)
-            {
-                var line = AddLabel(column, explain, 15, WarnText);
-                line.gameObject.AddComponent<LayoutElement>().preferredHeight = 22f;
-            }
+            // Высота объяснения НЕ задаётся: её спрашивает у самого текста вертикальная раскладка,
+            // уже посчитавшая ширину. Пиши мы сюда 22 точки, объяснение длиннее одной строки (у хитов
+            // оно и сейчас под шестьдесят знаков, а справочник — данные, не фикстура) нарисовалось бы
+            // ПОВЕРХ следующей строки: у подписей проекта verticalOverflow = Overflow, они не режутся.
+            if (clickable && expanded == key) AddLabel(column, explain, 15, WarnText);
         }
 
         // ── Нижние разделы ───────────────────────────────────────────────────────
