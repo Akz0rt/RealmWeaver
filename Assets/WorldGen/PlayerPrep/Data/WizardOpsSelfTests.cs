@@ -290,15 +290,165 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: мастер — лишние сверх нормы навыки названы и сняты")]
+        public void SelfTestClassChangeTrimsSkillsOverTheCap()
+        {
+            // РАЗВЕДЕНИЕ «отсеяно по списку» и «отсеяно по количеству»: ОБА навыка персонажа
+            // входят в список Стража, но Страж даёт на выбор один. Мутант «фильтровать только по
+            // членству в списке» оставит оба и промолчит.
+            var rules = Fixtures.Rules();
+            var warden = new ClassDef { Id = "warden", Name = "Страж", HitDie = "d10",
+                SkillChoices = { "stealth", "athletics", "arcana" }, SkillPickCount = 1 };
+            for (int lv = 1; lv <= 20; lv++) warden.Levels.Add(new ClassLevel { Level = lv });
+            rules.Classes.Add(warden);
+
+            var c = Fixtures.Character();
+            c.SubclassId = null; c.Plan.Clear(); c.ExpertiseIds.Clear();
+            c.SkillIds.Clear(); c.SkillIds.Add("stealth"); c.SkillIds.Add("arcana");
+
+            var losses = WizardOps.DescribeClassChange(c, rules, "warden");
+            // Отбор с КОНЦА: уходит «Магия», остаётся «Скрытность». И причина другая — не
+            // «в списке нет», а «класс даёт только столько».
+            bool ok = losses.Count == 1
+                   && losses[0].Contains("Магия")
+                   && !losses[0].Contains("в списке нет");
+
+            WizardOps.ApplyClassChange(c, rules, "warden");
+            // Описание и применение обязаны совпасть дословно: снят ровно названный навык.
+            ok = ok && c.SkillIds.Count == 1 && c.SkillIds[0] == "stealth";
+            if (!ok) Debug.LogError($"FAIL лишние навыки: потери=[{string.Join("; ", losses)}], "
+                                  + $"осталось=[{string.Join(",", c.SkillIds)}]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — пометки на несуществующих ячейках названы и сняты")]
+        public void SelfTestClassChangeDropsPlanMarksWithoutCell()
+        {
+            // У Плута ячейки повышения на 4 и 8; на 6 (как у Воина) её нет. Пометка на 6 уровне
+            // дошла бы до листа и выдала бы черту по ячейке, которой не существует.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character();
+            c.SubclassId = null; c.Plan.Clear();
+            c.Plan.Add(new LevelChoice { Level = 6, Kind = "feat", ValueId = "alert" });  // ячейки нет
+            c.Plan.Add(new LevelChoice { Level = 4, Kind = "feat", ValueId = "alert" });  // ячейка есть
+            c.Plan.Add(new LevelChoice { Level = 4, Kind = "bogus" });                    // вид неизвестен
+
+            var losses = WizardOps.DescribeClassChange(c, rules, "rogue");
+            // Ровно ДВЕ осиротевшие: пометка не на своём уровне и пометка неизвестного вида.
+            // Мутант «не смотреть на уровень» насчитал бы одну, мутант «неизвестный вид оставить» —
+            // тоже одну, а мутант «ячейка всегда есть» — ни одной.
+            bool ok = losses.Count == 1 && losses[0].Contains("2") && !losses[0].Contains("1");
+
+            WizardOps.ApplyClassChange(c, rules, "rogue");
+            // Мутант «снять все пометки повышения» оставил бы 0, мутант «не снимать ничего» — 3.
+            ok = ok && c.Plan.Count == 1 && c.Plan[0].Level == 4 && c.Plan[0].Kind == "feat";
+            if (!ok) Debug.LogError($"FAIL пометки без ячейки: потери=[{string.Join("; ", losses)}], "
+                                  + $"план=[{string.Join(",", c.Plan.Select(p => $"{p.Level}:{p.Kind}"))}]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «осталось выбрать» считает только навыки класса")]
+        public void SelfTestRemainingSkillPicksCountOnlyClassSkills()
+        {
+            // У Разведчика в списке «скрытность» и «атлетика», даёт два. Персонаж взял
+            // «скрытность» (из списка) и «магию» (НЕ из списка), а «атлетика» пришла даром от
+            // предыстории. Верно: занята ОДНА ячейка из двух.
+            // Мутант «минус все взятые» даст 0; мутант «минус ещё и навыки предыстории» — тоже 0.
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "scout", Name = "Разведчик", HitDie = "d8",
+                SkillChoices = { "stealth", "athletics" }, SkillPickCount = 2 });
+            var c = Fixtures.Character(); c.ClassId = "scout";
+
+            int left = WizardOps.RemainingSkillPicks(c, rules);
+            bool ok = left == 1;
+            if (!ok) Debug.LogError($"FAIL осталось выбрать: {left}, ждали 1 "
+                                  + $"(навыки=[{string.Join(",", c.SkillIds)}], предыстория даёт «athletics»)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — «осталось выбрать» не уходит в минус")]
+        public void SelfTestRemainingSkillPicksNeverGoNegative()
+        {
+            // Класс даёт один навык, а в файле их два из его списка — так бывает после смены
+            // класса в старом файле. Мутант без Math.Max покажет «осталось −1».
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "scout", Name = "Разведчик", HitDie = "d8",
+                SkillChoices = { "stealth", "arcana" }, SkillPickCount = 1 });
+            var c = Fixtures.Character(); c.ClassId = "scout";
+
+            int left = WizardOps.RemainingSkillPicks(c, rules);
+            bool ok = left == 0;
+            if (!ok) Debug.LogError($"FAIL осталось выбрать при переборе: {left}, ждали 0");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — сдвоенный спасбросок не удваивает раскладку")]
+        public void SelfTestSuggestedAssignmentDropsDoubledSave()
+        {
+            // RulesIntegrity уникальность спасбросков не проверяет. Без Distinct вышло бы семь
+            // идентификаторов против шести значений стандартного набора.
+            var cls = new ClassDef { Id = "twin", Name = "Двойник", HitDie = "d8",
+                SaveProficiencies = { "wis", "wis", "cha" } };
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "str", "dex", "con", "int" });
+            if (!ok) Debug.LogError($"FAIL сдвоенный спасбросок ({suggested.Count} шт.): "
+                                  + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — класс без списка навыков даёт пустой выбор, а не весь справочник")]
+        public void SelfTestEmptySkillChoicesGiveEmptyList()
+        {
+            // Мутант «нет класса ИЛИ список пуст → весь справочник» подсунул бы игроку навыки,
+            // которых класс не даёт.
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "blank", Name = "Пустой", HitDie = "d8" });
+            var c = Fixtures.Character(); c.ClassId = "blank";
+            var options = WizardOps.AvailableSkills(c, rules);
+            bool ok = options.Count == 0;
+            if (!ok) Debug.LogError("FAIL пустой список класса: ["
+                                  + string.Join(",", options.Select(o => o.Id)) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — на недостающих данных отвечает пусто, а не падает")]
+        public void SelfTestGuardsAgainstMissingData()
+        {
+            // То же соглашение, что у SheetMath.Compute: мастер по построению работает с
+            // НЕДОДЕЛАННЫМ персонажем. Снятый страж даёт не FAIL, а падение — и это тоже FAIL.
+            var rules = Fixtures.Rules();
+            var c = Fixtures.Character();
+            bool ok = WizardOps.AvailableSkills(null, rules).Count == 0
+                   && WizardOps.AvailableSkills(c, null).Count == 0
+                   && WizardOps.RemainingSkillPicks(null, rules) == 0
+                   && WizardOps.RemainingSkillPicks(c, null) == 0
+                   && WizardOps.DescribeClassChange(null, rules, "rogue").Count == 0
+                   && WizardOps.DescribeClassChange(c, null, "rogue").Count == 0;
+
+            WizardOps.ApplyClassChange(null, rules, "rogue");
+            WizardOps.ApplyClassChange(c, null, "rogue");
+            ok = ok && c.ClassId == "rogue" && c.SkillIds.Count == 2;
+            if (!ok) Debug.LogError($"FAIL стражи мастера: класс={c.ClassId}, навыков={c.SkillIds.Count}");
+            Done(ok);
+        }
+
         /// <summary>Справочник с классом «keeper», при переходе в который НИЧЕГО не теряется: он
-        /// разрешает оба навыка персонажа и у него есть компетентность. Персонаж — без подкласса и
-        /// без пометок плана. Всё, что после этого попадёт в список потерь, — ложное срабатывание.</summary>
+        /// разрешает оба навыка персонажа, даёт ровно столько же навыков на выбор, имеет
+        /// компетентность и ячейки повышения там же, где Плут. Персонаж — без подкласса и без
+        /// пометок плана. Всё, что после этого попадёт в список потерь, — ложное срабатывание.</summary>
         static RulesData KeeperRules(out CharacterFile c)
         {
             var rules = Fixtures.Rules();
-            rules.Classes.Add(new ClassDef { Id = "keeper", Name = "Хранитель", HitDie = "d8",
+            var keeper = new ClassDef { Id = "keeper", Name = "Хранитель", HitDie = "d8",
                 SkillChoices = { "stealth", "arcana", "athletics" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1 });
+                ExpertiseLevel = 1, ExpertisePickCount = 1 };
+            for (int lv = 1; lv <= 20; lv++)
+                keeper.Levels.Add(new ClassLevel
+                {
+                    Level = lv,
+                    Choice = lv == 3 ? "subclass" : (lv == 4 || lv == 8 ? "asi" : null)
+                });
+            rules.Classes.Add(keeper);
             c = Fixtures.Character();
             c.SubclassId = null;
             c.Plan.Clear();

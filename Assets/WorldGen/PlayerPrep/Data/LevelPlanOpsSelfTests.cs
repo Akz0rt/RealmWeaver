@@ -17,13 +17,16 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
-        [ContextMenu("Self-Test: план — без класса таблицы нет")]
+        [ContextMenu("Self-Test: план — без класса и без файла таблицы нет")]
         public void SelfTestNoClassNoRows()
         {
-            // Мутант: снят `if (cls == null) return rows` — падение на листе с чужим классом.
+            // Мутанты: снят `cls == null` (падение на листе с чужим классом) либо снят
+            // `file == null` (падение на таблице, показанной до создания персонажа).
             var rows = LevelPlanOps.Rows(null, Fixtures.Character());
-            bool ok = rows != null && rows.Count == 0;
-            if (!ok) Debug.LogError($"FAIL строк без класса: {rows?.Count.ToString() ?? "null"}");
+            var noFile = LevelPlanOps.Rows(Fixtures.Rules().Classes[0], null);
+            bool ok = rows != null && rows.Count == 0 && noFile != null && noFile.Count == 0;
+            if (!ok) Debug.LogError($"FAIL пустые входы: без класса {rows?.Count.ToString() ?? "null"}, "
+                                  + $"без файла {noFile?.Count.ToString() ?? "null"}");
             Done(ok);
         }
 
@@ -48,17 +51,67 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: план — уже выбранный подкласс виден в строке без пометки в плане")]
+        public void SelfTestRowsShowSubclassFromFile()
+        {
+            // НЕТРОНУТАЯ фикстура: подкласс лежит в file.SubclassId, пометки в Plan нет вовсе.
+            // Мутант «смотреть только в Plan» уверял бы «не выбрано» рядом с листом, где умения
+            // подкласса уже посчитаны.
+            var c = Fixtures.Character();
+            bool planIsEmpty = c.Plan.Count == 0 && c.SubclassId == "thief";
+            var rows = LevelPlanOps.Rows(Fixtures.Rules().Classes[0], c);
+            bool ok = planIsEmpty
+                   && rows[2].ChosenId == "thief" && rows[2].ChosenKind == "subclass"
+                   && rows[3].ChosenId == null && rows[3].ChosenKind == null;   // 4 уровень не подхватил
+            if (!ok) Debug.LogError($"FAIL подкласс из файла (план пуст={planIsEmpty}): "
+                                  + $"3-й=«{rows[2].ChosenId ?? "null"}»/{rows[2].ChosenKind ?? "null"}, "
+                                  + $"4-й=«{rows[3].ChosenId ?? "null"}»/{rows[3].ChosenKind ?? "null"}");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: план — строка показывает уже намеченный выбор")]
         public void SelfTestRowsCarryPlannedChoice()
         {
             // Мутант: ChosenId не заполняется (всегда null) — намеченное игроком в таблице не видно.
-            // Мутант: ChosenId = planned?.Kind — вместо «Вор» встал бы «subclass».
+            // Мутант: ChosenId = planned?.Kind — вместо «thief» встал бы «subclass».
             var c = Fixtures.Character();
+            c.SubclassId = null;                 // иначе запасной путь подставил бы то же значение
             c.Plan.Add(new LevelChoice { Level = 3, Kind = "subclass", ValueId = "thief" });
             var rows = LevelPlanOps.Rows(Fixtures.Rules().Classes[0], c);
             bool ok = rows[2].ChosenId == "thief" && rows[0].ChosenId == null && rows[3].ChosenId == null;
             if (!ok) Debug.LogError($"FAIL намеченный выбор: 3-й=«{rows[2].ChosenId ?? "null"}», "
                                   + $"1-й=«{rows[0].ChosenId ?? "null"}»");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: план — ячейка повышения различает «пусто», «черта» и «прибавки»")]
+        public void SelfTestRowsTellHowTheAsiCellIsFilled()
+        {
+            // Три состояния ОДНОЙ и той же ячейки на трёх уровнях. ChoiceKind у всех трёх «asi» —
+            // значит по нему их не различить, и мутант «ChosenKind = lv.Choice» падает на пустой
+            // (12-й) и на занятой чертой (4-й). Мутант «ChosenKind всегда null» падает на обеих
+            // занятых. У черты ЕСТЬ идентификатор, у прибавок его нет по схеме — это и отличает
+            // «занята чертой» от «занята прибавками».
+            var cls = new ClassDef { Id = "pathfinder", Name = "Следопыт", HitDie = "d10" };
+            for (int lv = 1; lv <= 20; lv++)
+                cls.Levels.Add(new ClassLevel
+                {
+                    Level = lv,
+                    Choice = (lv == 4 || lv == 8 || lv == 12) ? "asi" : null
+                });
+
+            var c = Fixtures.Character();
+            c.Plan.Add(new LevelChoice { Level = 4, Kind = "feat", ValueId = "alert" });
+            c.Plan.Add(new LevelChoice { Level = 8, Kind = "asi" });
+
+            var rows = LevelPlanOps.Rows(cls, c);
+            bool ok = rows[3].ChoiceKind == "asi" && rows[3].ChosenKind == "feat" && rows[3].ChosenId == "alert"
+                   && rows[7].ChoiceKind == "asi" && rows[7].ChosenKind == "asi" && rows[7].ChosenId == null
+                   && rows[11].ChoiceKind == "asi" && rows[11].ChosenKind == null && rows[11].ChosenId == null;
+            if (!ok) Debug.LogError("FAIL занятость ячейки: "
+                                  + $"4-й={rows[3].ChosenKind ?? "null"}/«{rows[3].ChosenId ?? "null"}», "
+                                  + $"8-й={rows[7].ChosenKind ?? "null"}/«{rows[7].ChosenId ?? "null"}», "
+                                  + $"12-й={rows[11].ChosenKind ?? "null"}/«{rows[11].ChosenId ?? "null"}»");
             Done(ok);
         }
 
@@ -100,12 +153,15 @@ namespace WorldGen.PlayerPrep.Data
         [ContextMenu("Self-Test: повышение уровня поднимает уровень и называет предстоящие выборы")]
         public void SelfTestLevelUpRaisesAndAsks()
         {
+            // Ждём ВИД, а не текст: экран волен переписать фразу, а задача 12 разбирает Kind.
             // Строк РОВНО одна: мутант «любой выбор — это ещё и подкласс» (`lv.Choice != null`)
             // добавил бы вторую и при проверке одним Any остался бы жив.
             var c = Fixtures.Character(); c.Level = 7;
             var pending = LevelPlanOps.LevelUp(c, Fixtures.Rules());
-            bool ok = c.Level == 8 && pending.Count == 1 && pending[0].Contains("характеристик");
-            if (!ok) Debug.LogError($"FAIL повышение: уровень {c.Level}, ожидания [{string.Join(";", pending)}]");
+            bool ok = c.Level == 8 && pending.Count == 1 && pending[0].Kind == "asi"
+                   && !string.IsNullOrEmpty(pending[0].Text);
+            if (!ok) Debug.LogError($"FAIL повышение: уровень {c.Level}, "
+                                  + $"ожидания [{string.Join(";", pending.Select(p => p.Kind))}]");
             Done(ok);
         }
 
@@ -115,11 +171,9 @@ namespace WorldGen.PlayerPrep.Data
             // Мутант: обе ветки выбора обрабатываются одинаково («любой выбор — это повышение»).
             var c = Fixtures.Character(); c.Level = 2;
             var pending = LevelPlanOps.LevelUp(c, Fixtures.Rules());
-            bool ok = c.Level == 3
-                   && pending.Count == 1
-                   && pending[0].Contains("одкласс")
-                   && !pending[0].Contains("характеристик");
-            if (!ok) Debug.LogError($"FAIL выбор подкласса: уровень {c.Level}, [{string.Join(";", pending)}]");
+            bool ok = c.Level == 3 && pending.Count == 1 && pending[0].Kind == "subclass";
+            if (!ok) Debug.LogError($"FAIL выбор подкласса: уровень {c.Level}, "
+                                  + $"[{string.Join(";", pending.Select(p => p.Kind))}]");
             Done(ok);
         }
 
@@ -130,7 +184,8 @@ namespace WorldGen.PlayerPrep.Data
             var c = Fixtures.Character(); c.Level = 5;
             var pending = LevelPlanOps.LevelUp(c, Fixtures.Rules());
             bool ok = c.Level == 6 && pending.Count == 0;
-            if (!ok) Debug.LogError($"FAIL тихий уровень: уровень {c.Level}, [{string.Join(";", pending)}]");
+            if (!ok) Debug.LogError($"FAIL тихий уровень: уровень {c.Level}, "
+                                  + $"[{string.Join(";", pending.Select(p => p.Kind))}]");
             Done(ok);
         }
 
@@ -151,18 +206,21 @@ namespace WorldGen.PlayerPrep.Data
             var atSeven = LevelPlanOps.LevelUp(c, rules);
 
             bool ok = c.Level == 7
-                   && atSix.Count == 1 && atSix[0].Contains("омпетентн") && atSix[0].Contains("2")
+                   && atSix.Count == 1 && atSix[0].Kind == "expertise" && atSix[0].Text.Contains("2")
                    && atSeven.Count == 0;
             if (!ok) Debug.LogError($"FAIL компетентность: уровень {c.Level}, "
-                                  + $"на 6-м [{string.Join(";", atSix)}], на 7-м [{string.Join(";", atSeven)}]");
+                                  + $"на 6-м [{string.Join(";", atSix.Select(p => p.Kind + ":" + p.Text))}], "
+                                  + $"на 7-м [{string.Join(";", atSeven.Select(p => p.Kind))}]");
             Done(ok);
         }
 
-        [ContextMenu("Self-Test: повышение уровня — класс без данных на новом уровне не мешает поднять уровень")]
-        public void SelfTestLevelUpWithoutLevelDataStillRaises()
+        [ContextMenu("Self-Test: повышение уровня — сперва проверка справочника, потом запись в файл")]
+        public void SelfTestLevelUpChecksRulesBeforeRaising()
         {
-            // Мутант: снят `if (lv == null) return pending` — падение вместо тихого повышения.
-            // Проверяем оба провала поиска: класса нет вовсе и у класса нет строки на этот уровень.
+            // РАЗВЕДЕНИЕ двух провалов поиска. Класс НАЙДЕН, но строки на новый уровень нет —
+            // номер уровня законный, поднимаем. Класса НЕТ ВОВСЕ либо нет справочника — файл не
+            // трогаем: отмены на листе нет намеренно, и «уровень поднят, а дальше не смогли» —
+            // состояние, из которого игрок не выберется.
             var rules = Fixtures.Rules();
             var stub = new ClassDef { Id = "short", Name = "Короткий", HitDie = "d6" };
             for (int lv = 1; lv <= 5; lv++) stub.Levels.Add(new ClassLevel { Level = lv });
@@ -174,11 +232,15 @@ namespace WorldGen.PlayerPrep.Data
             var noCls = Fixtures.Character(); noCls.ClassId = "bogus"; noCls.Level = 5;
             var pendingNone = LevelPlanOps.LevelUp(noCls, rules);
 
+            var noRules = Fixtures.Character(); noRules.Level = 5;
+            var pendingNoRules = LevelPlanOps.LevelUp(noRules, null);
+
             bool ok = shortCls.Level == 6 && pendingShort.Count == 0
-                   && noCls.Level == 6 && pendingNone.Count == 0;
-            if (!ok) Debug.LogError($"FAIL повышение без данных: короткий класс {shortCls.Level} "
-                                  + $"[{string.Join(";", pendingShort)}], без класса {noCls.Level} "
-                                  + $"[{string.Join(";", pendingNone)}]");
+                   && noCls.Level == 5 && pendingNone.Count == 0
+                   && noRules.Level == 5 && pendingNoRules.Count == 0
+                   && LevelPlanOps.LevelUp(null, rules).Count == 0;
+            if (!ok) Debug.LogError($"FAIL порядок проверок: короткий класс {shortCls.Level} (ждали 6), "
+                                  + $"без класса {noCls.Level} (ждали 5), без справочника {noRules.Level} (ждали 5)");
             Done(ok);
         }
 
@@ -188,7 +250,8 @@ namespace WorldGen.PlayerPrep.Data
             var c = Fixtures.Character(); c.Level = 20;
             var pending = LevelPlanOps.LevelUp(c, Fixtures.Rules());
             bool ok = c.Level == 20 && pending.Count == 0;
-            if (!ok) Debug.LogError($"FAIL потолок уровня: {c.Level}, [{string.Join(";", pending)}]");
+            if (!ok) Debug.LogError($"FAIL потолок уровня: {c.Level}, "
+                                  + $"[{string.Join(";", pending.Select(p => p.Kind))}]");
             Done(ok);
         }
 
