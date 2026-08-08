@@ -32,6 +32,24 @@ namespace WorldGen.Notes.Data
             /// <summary>Offset into the block's DISPLAY text, not its stored text.</summary>
             public int DisplayStart;
             public int Length;
+            /// <summary>Поле КАРТОЧКИ персонажа, в котором найдено, или None — тогда попадание в блоке, и
+            /// смысл несут BlockId/BlockIndex. У попадания в карточке BlockId пуст, а BlockIndex равен −1:
+            /// подсветка ищет строку по BlockId, и любое непустое значение зажгло бы ЧУЖУЮ строку.</summary>
+            public CardField Field;
+        }
+
+        /// <summary>Какое поле карточки персонажа. None — не карточка (обычный блок).
+        ///
+        /// Карточка — ГРАНЬ страницы (`NotesPage.Character`), а не блок, и до 8 августа поиск в неё не
+        /// заглядывал вовсе: находка ДМ «не находился текст из граф персонажа». Порядок значений — порядок
+        /// ЧТЕНИЯ на экране, шапка рисуется над строками; на нём держится обход в Find.</summary>
+        public enum CardField
+        {
+            None = 0,
+            Who,
+            Where,
+            Wants,
+            HowToPlay,
         }
 
         /// <summary>Every occurrence of `query`, in document order.
@@ -46,9 +64,40 @@ namespace WorldGen.Notes.Data
         /// would be the opposite of helping.</summary>
         public static List<PageHit> Find(IReadOnlyList<DocBlock> blocks, string query,
                                          NotesLinkOps.NameResolver resolve)
+            => Find(blocks, null, query, resolve);
+
+        /// <summary>То же, но со СТРАНИЦЕЙ ЦЕЛИКОМ: карточка персонажа тоже текст, который ДМ видит.
+        ///
+        /// ПЕРЕГРУЗКА, А НЕ ЧЕТВЁРТЫЙ ПАРАМЕТР У ЕДИНСТВЕННОЙ ФОРМЫ: трёхаргументную зовут два десятка
+        /// самопроверок и обходы, которым карточка не нужна вовсе, и обязать их всех писать `null` значило
+        /// бы поменять два десятка мест ради одного нового.
+        ///
+        /// КАРТОЧКА ПЕРВОЙ, потом блоки. Порядок здесь — порядок ЧТЕНИЯ, а не удобство обхода: шапка
+        /// персонажа рисуется НАД строками страницы, и Enter, ведущий ДМ по совпадениям, обязан идти
+        /// сверху вниз. Внутри карточки — порядок полей на экране (Кто → Где искать → Чего хочет → Как
+        /// играть), тот же, что задаёт CardField.
+        ///
+        /// СМЕЩЕНИЕ СЧИТАЕТСЯ ОТ НАЧАЛА СВОЕГО ПОЛЯ, а не от начала карточки: подсветка в поле выражается
+        /// смещением внутри этого поля, ровно как у блока — внутри его текста.
+        ///
+        /// BuildDisplay ПРИМЕНЯЕТСЯ И К ПОЛЯМ КАРТОЧКИ — по тому же правилу «ищем то, что ДМ видит». Если
+        /// в поле нет ссылок, это тождество и стоит один проход; если ссылка появится, поиск не придётся
+        /// чинить второй раз.</summary>
+        public static List<PageHit> Find(IReadOnlyList<DocBlock> blocks, CharacterCard card, string query,
+                                         NotesLinkOps.NameResolver resolve)
         {
             var hits = new List<PageHit>();
-            if (blocks == null || string.IsNullOrEmpty(query) || string.IsNullOrWhiteSpace(query)) return hits;
+            if (string.IsNullOrEmpty(query) || string.IsNullOrWhiteSpace(query)) return hits;
+
+            if (card != null)
+            {
+                ScanCardField(hits, card.Who, CardField.Who, query, resolve);
+                ScanCardField(hits, card.Where, CardField.Where, query, resolve);
+                ScanCardField(hits, card.Wants, CardField.Wants, query, resolve);
+                ScanCardField(hits, card.HowToPlay, CardField.HowToPlay, query, resolve);
+            }
+
+            if (blocks == null) return hits;
 
             for (int i = 0; i < blocks.Count; i++)
             {
@@ -76,6 +125,33 @@ namespace WorldGen.Notes.Data
                 }
             }
             return hits;
+        }
+
+        /// <summary>Одно поле карточки. Пустое поле пропускается ДО BuildDisplay: только что созданная
+        /// карточка — это одно заполненное поле и три пустых, то есть обычное состояние, а не край.</summary>
+        static void ScanCardField(List<PageHit> hits, string text, CardField field, string query,
+                                  NotesLinkOps.NameResolver resolve)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            string display = NotesLinkOps.BuildDisplay(text, resolve).Text;
+            if (string.IsNullOrEmpty(display)) return;
+
+            int from = 0;
+            while (from <= display.Length - query.Length)
+            {
+                int at = display.IndexOf(query, from, System.StringComparison.OrdinalIgnoreCase);
+                if (at < 0) break;
+                hits.Add(new PageHit
+                {
+                    BlockId = null,
+                    BlockIndex = -1,
+                    DisplayStart = at,
+                    Length = query.Length,
+                    Field = field,
+                });
+                from = at + query.Length;
+            }
         }
 
         /// <summary>Which hit comes after `current`, wrapping round. Returns -1 for an empty list.
