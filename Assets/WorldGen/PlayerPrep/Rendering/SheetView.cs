@@ -38,7 +38,12 @@ namespace WorldGen.PlayerPrep.Rendering
         const float TitleWidth = 230f;
         const float ValueWidth = 96f;
         const float PortraitSide = 112f;
+        const float PortraitActionsWidth = 176f;
         const float MaxBackstoryHeight = 260f;
+        /// <summary>Ниже этого предыстория не сжимается, даже будучи пустой: это поле ввода, и в
+        /// нулевую высоту по нему не попасть мышью.</summary>
+        const float MinBackstoryHeight = 72f;
+        const float HpFieldWidth = 110f;
 
         /// <summary>Заведомо больше любой колонки листа. Ставится предпочтительной шириной СТРОКАМ:
         /// вертикальная раскладка даёт ребёнку Clamp(ширина колонки, min, preferred), поэтому строка с
@@ -58,7 +63,6 @@ namespace WorldGen.PlayerPrep.Rendering
         const float WarnLineHeight = 21f;
         const int WarnFontSize = 15;
         const float WarnCharsPerLine = 205f;      // 1860 точек кеглем 15 ≈ 205 знаков в строке
-        const float WarnButtonHeight = 40f;
         const float MaxWarnHeight = 300f;
 
         static readonly Color Muted = new Color(0.55f, 0.53f, 0.50f);
@@ -133,23 +137,16 @@ namespace WorldGen.PlayerPrep.Rendering
             Rebuild();
         }
 
-        void OnDestroy()
-        {
-            if (portrait == null) return;
-            var texture = portrait.texture;
-            Destroy(portrait);
-            if (texture != null) Destroy(texture);
-            portrait = null;
-        }
+        void OnDestroy() => ReleasePortrait();
 
         /// <summary>Высота предыстории и её прокрутка. Считается ЗДЕСЬ, а не при постройке, потому что
-        /// Text.preferredHeight меряется по нынешней ширине прямоугольника, а в момент постройки её
-        /// ещё нет — раскладка отработает только к концу кадра.
+        /// высота текста меряется по нынешней ширине прямоугольника, а в момент постройки её ещё
+        /// нет — раскладка отработает только к концу кадра.
         ///
         /// ContentSizeFitter на самом блоке предыстории повесить НЕЛЬЗЯ: его высотой управляет
-        /// вертикальная раскладка тела листа, и вдвоём они дерутся, а высота скачет. Поэтому высоту
-        /// назначаем сами, а ContentSizeFitter остаётся только на содержимом прокрутки, у которого
-        /// раскладки-родителя нет.
+        /// вертикальная раскладка тела листа, и вдвоём они дерутся, а высота скачет. Не годится он
+        /// теперь и на содержимом прокрутки — почему, расписано в BuildBackstory. Поэтому ОБЕ высоты
+        /// назначаются здесь, и обе — от одного и того же числа.
         ///
         /// Сравнение с уже назначенной высотой обязательно: присваивание preferredHeight помечает
         /// раскладку грязной, и безусловное присваивание каждый кадр пересчитывало бы весь лист.</summary>
@@ -163,25 +160,49 @@ namespace WorldGen.PlayerPrep.Rendering
 
             if (backstoryText == null || backstoryElement == null || backstoryScroll == null) return;
 
-            float textHeight = backstoryText.preferredHeight;
-            float height = Mathf.Min(textHeight + 16f, MaxBackstoryHeight);
+            // Меряется ТЕКСТ ИЗ ФАЙЛА, а не backstoryText.text: второе — то, что InputField решил
+            // показать, то есть обрезок по высоте прямоугольника, и мерить по нему значило бы
+            // спрашивать у окна, какого размера должно быть окно.
+            float textHeight = MeasureHeight(backstoryText, file == null ? "" : file.Backstory);
+
+            float height = Mathf.Clamp(textHeight + 16f, MinBackstoryHeight, MaxBackstoryHeight);
             if (Mathf.Abs(backstoryElement.preferredHeight - height) > 0.5f)
                 backstoryElement.preferredHeight = height;
+
+            // Содержимое прокрутки — сам текст, и его прямоугольник обязан быть ВО ВСЮ высоту текста,
+            // даже когда коробка ниже. Иначе InputField, у которого это textComponent, покажет ровно
+            // столько строк, сколько влезло, и прокручивать станет нечего.
+            var textRt = backstoryText.rectTransform;
+            if (Mathf.Abs(textRt.sizeDelta.y - textHeight) > 0.5f)
+                textRt.sizeDelta = new Vector2(textRt.sizeDelta.x, textHeight);
 
             // Прокрутка включается, только когда СОДЕРЖИМОМУ не хватает ВЬЮПОРТА: короткая предыстория
             // не должна уезжать под колесом мыши, которое игрок крутит, чтобы пролистать весь лист.
             //
-            // Сравниваются сопоставимые величины, и это не придирка. Вьюпорт растянут по блоку, значит
-            // его высота и есть height; содержимое — сам текст, значит его высота и есть textHeight.
-            // Сравнение «блок с полями против предела» (textHeight + 16 > 260) включало прокрутку уже
-            // на тексте выше 244 точек, хотя до 260 он влезал целиком: в этой полосе ScrollRect стоял
-            // включённым впустую и через IScrollHandler съедал колесо, не сдвигая ничего.
-            bool needsScroll = textHeight > height + 0.5f;
+            // Сравниваются сопоставимые величины, и это не придирка. Вьюпорт — это коробка минус её
+            // поля (6 сверху и 6 снизу, см. BuildBackstory), а содержимое — сам текст. Сравнение
+            // «блок с полями против предела» включало бы прокрутку раньше, чем текст перестал
+            // влезать: в этой полосе ScrollRect стоял бы включённым впустую и через IScrollHandler
+            // съедал колесо, не сдвигая ничего.
+            bool needsScroll = textHeight > height - 12f + 0.5f;
             if (backstoryScroll.enabled != needsScroll)
             {
                 backstoryScroll.enabled = needsScroll;
                 backstoryScroll.vertical = needsScroll;
             }
+        }
+
+        /// <summary>Сколько точек занял бы ЦЕЛИКОМ текст `s`, набранный шрифтом и кеглем подписи `t`
+        /// на её нынешней ширине.
+        ///
+        /// Ровно то же, что делает у себя внутри Text.preferredHeight, — с одной разницей, ради
+        /// которой всё и написано: меряется ПЕРЕДАННАЯ строка, а не та, что лежит в подписи. Для
+        /// подписи это одно и то же; для содержимого InputField — нет, там в подписи живёт обрезок.</summary>
+        static float MeasureHeight(Text t, string s)
+        {
+            if (t == null || t.font == null) return 0f;
+            var settings = t.GetGenerationSettings(new Vector2(t.GetPixelAdjustedRect().size.x, 0f));
+            return t.cachedTextGeneratorForLayout.GetPreferredHeight(s ?? "", settings) / t.pixelsPerUnit;
         }
 
         // ── Пересборка ───────────────────────────────────────────────────────────
@@ -270,7 +291,6 @@ namespace WorldGen.PlayerPrep.Rendering
             if (warnings.Count == 0) return 0f;
             float height = 20f;                                   // отступы полосы
             foreach (var w in warnings) height += WarnLines(w) * WarnLineHeight + 4f;
-            if (sheet != null && sheet.Missing.Count > 0) height += WarnButtonHeight + 4f;
             return Mathf.Min(height, MaxWarnHeight);
         }
 
@@ -301,11 +321,12 @@ namespace WorldGen.PlayerPrep.Rendering
                     WarnLines(w) * WarnLineHeight;
             }
 
-            if (sheet != null && sheet.Missing.Count > 0)
-            {
-                var row = AddRow(band, WarnButtonHeight);
-                AddButton(row, "Доделать в мастере", 280f, BackToWizard);
-            }
+            // КНОПКИ «Доделать в мастере» ЗДЕСЬ БОЛЬШЕ НЕТ, и это не потеря. Дорога в мастер теперь
+            // открыта всегда — кнопкой «Изменить» в нижней полосе (задача 11б), а вторая кнопка в ту
+            // же дверь появлялась бы и исчезала вместе с полосой предупреждений. Дверь, которая
+            // переезжает по экрану в зависимости от того, всё ли заполнено, не запоминается; одна
+            // дверь на постоянном месте — запоминается. Строка «Чего не хватает» осталась на месте и
+            // говорит ровно то же, что говорила.
         }
 
         /// <summary>Открыть мастер на ЭТОМ же персонаже и с ЕГО путём. Путь передаётся намеренно:
@@ -383,6 +404,18 @@ namespace WorldGen.PlayerPrep.Rendering
 
             var root = PlayerPrepScreenController.Instance;
 
+            // «Изменить» ВСЕГДА, а не только когда чего-то не хватает. До задачи 11б дорога в мастер
+            // предлагалась одной кнопкой в полосе предупреждений — то есть ровно тому, у кого лист
+            // недособран; у законченного персонажа изменить класс или разложить прибавки было нечем
+            // вовсе, кроме как создать его заново.
+            var edit = UiKit.Button(bar, "Изменить", BackToWizard, root != null);
+            var editRt = (RectTransform)edit.transform;
+            editRt.anchorMin = new Vector2(0f, 0.5f);
+            editRt.anchorMax = new Vector2(0f, 0.5f);
+            editRt.pivot = new Vector2(0f, 0.5f);
+            editRt.anchoredPosition = new Vector2(252f, 0f);
+            editRt.sizeDelta = new Vector2(190f, 44f);
+
             var saveAs = UiKit.Button(bar, "Сохранить как…", SaveAsThroughRoot, root != null);
             var saveAsRt = (RectTransform)saveAs.transform;
             saveAsRt.anchorMin = new Vector2(1f, 0.5f);
@@ -406,25 +439,22 @@ namespace WorldGen.PlayerPrep.Rendering
                 pathRt.anchorMin = new Vector2(0f, 0.5f);
                 pathRt.anchorMax = new Vector2(0f, 0.5f);
                 pathRt.pivot = new Vector2(0f, 0.5f);
-                pathRt.anchoredPosition = new Vector2(256f, 0f);
-                pathRt.sizeDelta = new Vector2(900f, 30f);
+                // Начинается ПОСЛЕ «Изменить» и кончается ДО «Сохранить как…»: 452 + 840 = 1292 при
+                // полосе шириной 1872 (1920 минус поля), а правая пара кнопок занимает от 1382.
+                pathRt.anchoredPosition = new Vector2(452f, 0f);
+                pathRt.sizeDelta = new Vector2(840f, 30f);
             }
         }
 
+        /// <summary>Вопрос про несохранённое задаёт КОРЕНЬ: снимок сохранённого состояния знает
+        /// только он, и вторая копия этого разговора здесь отвечала бы на один и тот же вопрос иначе,
+        /// чем такая же копия в мастере. Заодно исчезла проверка «if (this == null)» — замыкание,
+        /// живущее через кадр, теперь принадлежит корню и проверяет себя само.</summary>
         void AskBackToList()
         {
             var root = PlayerPrepScreenController.Instance;
             if (root == null) return;
-            ConfirmDialog.Show(UiKit.Font, "Вернуться к списку листов?",
-                "Несохранённые изменения листа будут потеряны.",
-                confirmed =>
-                {
-                    // Ответ приходит ЧЕРЕЗ КАДР, и к этому времени листа может не быть вовсе:
-                    // перекомпиляция скриптов при открытом диалоге пересобирает сцену, а замыкание
-                    // остаётся жить. Проверка на уничтоженный компонент — единственная защита.
-                    if (this == null) return;
-                    if (confirmed) root.BackToList();
-                });
+            root.AskBeforeLeaving("Вернуться к списку листов?", root.BackToList);
         }
 
         /// <summary>«Сохранить» ОТВЕЧАЕТ ВСЛУХ, ровно как у мастера: молчаливая запись в уже известный
@@ -462,6 +492,13 @@ namespace WorldGen.PlayerPrep.Rendering
 
         // ── Шапка ────────────────────────────────────────────────────────────────
 
+        /// <summary>Шапка листа: портрет, имя, подзаголовок. Имя и портрет ПРАВЯТСЯ ПРЯМО ЗДЕСЬ —
+        /// «из-за опечатки в имени гонять восемь шагов мастера глупо» (ДМ, задача 11б).
+        ///
+        /// Имя набирается БЕЗ ПЕРЕСБОРКИ ЛИСТА: onValueChanged кладёт букву в файл и на этом всё.
+        /// Позови он Rebuild — каждая набранная буква уничтожала бы поле вместе с кареткой и фокусом,
+        /// и имя длиннее одного знака набрать было бы физически нельзя. Ничто на листе от имени не
+        /// зависит, так что перерисовывать и нечего.</summary>
         void BuildHeader(Transform content)
         {
             var row = AddRow(content, PortraitSide);
@@ -489,15 +526,76 @@ namespace WorldGen.PlayerPrep.Rendering
                 hintRt.offsetMax = Vector2.zero;
             }
 
+            // Кнопки портрета — в СВОЕЙ колонке. Высоты внутри неё слушаются, потому что у Column
+            // childForceExpandHeight = false; положи мы их прямо в строку — не слушались бы вовсе
+            // (см. оговорку в AddNumberRow).
+            var actions = Column(row, "PortraitActions");
+            var actionsLe = actions.gameObject.AddComponent<LayoutElement>();
+            actionsLe.minWidth = PortraitActionsWidth;
+            actionsLe.preferredWidth = PortraitActionsWidth;
+            actionsLe.flexibleWidth = 0f;
+            AddStackedButton(actions, "Портрет…", PickPortrait, true);
+            bool hasPortrait = file.Portrait != null && file.Portrait.Length > 0;
+            // «Убрать» гаснет, когда убирать нечего: включённая кнопка, которая ничего не делает,
+            // читается как поломка.
+            AddStackedButton(actions, "Убрать портрет", () => SetPortrait(null), hasPortrait);
+
             var column = Column(row, "Who");
             var columnLe = column.gameObject.AddComponent<LayoutElement>();
             columnLe.preferredWidth = 0f;
             columnLe.flexibleWidth = 1f;
 
-            var name = AddLabel(column, string.IsNullOrWhiteSpace(file.Name) ? "Без имени" : file.Name, 28, Accent);
-            name.gameObject.AddComponent<LayoutElement>().preferredHeight = 40f;
+            AddInput(column, file.Name, "Без имени", v => file.Name = v,
+                multiline: false, height: 46f, fontSize: 28, textColor: Accent);
             var subtitle = AddLabel(column, Subtitle(), 17, Muted);
             subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
+        }
+
+        static void AddStackedButton(Transform column, string label, Action onClick, bool enabled)
+        {
+            var btn = UiKit.Button(column, label, onClick, enabled);
+            btn.gameObject.AddComponent<LayoutElement>().preferredHeight = 42f;
+            var text = btn.GetComponentInChildren<Text>();
+            if (text != null) text.fontSize = 16;
+        }
+
+        /// <summary>Выбрать портрет. Отменённый диалог отдаёт null, и затирать им уже выбранный
+        /// портрет нельзя: отмена значит «ничего не менять», а не «убрать» — убирает отдельная
+        /// кнопка. То же правило и та же формулировка, что в WizardView.PickPortrait.</summary>
+        void PickPortrait()
+        {
+            try
+            {
+                var bytes = PortraitImport.PickAndDownscale();
+                if (bytes == null || bytes.Length == 0) return;
+                SetPortrait(bytes);
+            }
+            catch (Exception ex)
+            {
+                ConfirmDialog.ShowInfo(UiKit.Font, "Не удалось загрузить портрет", ex.Message);
+            }
+        }
+
+        /// <summary>Поменять портрет в файле и на экране. null убирает его вовсе.
+        ///
+        /// СТАРЫЙ СПРАЙТ ОСВОБОЖДАЕТСЯ ЗДЕСЬ, и это не педантизм: спрайт держит текстуру до 512 точек,
+        /// сборщик мусора Unity её сам не заберёт, и десяток примерок портрета оставил бы десяток
+        /// текстур в памяти — без единой строчки в журнале.</summary>
+        void SetPortrait(byte[] bytes)
+        {
+            ReleasePortrait();
+            file.Portrait = bytes;
+            portrait = MakeSprite(bytes);
+            Rebuild();
+        }
+
+        void ReleasePortrait()
+        {
+            if (portrait == null) return;
+            var texture = portrait.texture;
+            Destroy(portrait);
+            if (texture != null) Destroy(texture);
+            portrait = null;
         }
 
         /// <summary>«полурослик · плут 5 · вор · солдат». Случаев на каждое место ТРИ, и ни один не
@@ -584,6 +682,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 sheet.SpeedExplain, marked: false);
             AddNumberRow(right, "hp", "Хиты", sheet.MaxHp.ToString(), null,
                 sheet.MaxHpExplain, marked: false);
+            BuildHpOverrideRow(right);
             AddNumberRow(right, null, "Кость хитов",
                 string.IsNullOrEmpty(sheet.HitDie) ? "—" : sheet.HitDie, null, null, marked: false);
             AddNumberRow(right, "prof", "Мастерство", Signed(sheet.ProficiencyBonus), null,
@@ -601,6 +700,54 @@ namespace WorldGen.PlayerPrep.Rendering
                 // числом оказались бы два разных её названия.
                 AddNumberRow(right, "skill:" + skill.SkillId, Mark(skill.Proficient) + skill.Name,
                     Signed(skill.Bonus), skill.Hint, skill.Explain, skill.Proficient);
+        }
+
+        /// <summary>Своё число хитов вместо среднего — за столом их часто бросают костью, и до задачи
+        /// 11б поле MaxHpOverride на лист не выводилось вовсе: вписать своё было негде.
+        ///
+        /// ПОДПИСЬ ПОД СТРОКОЙ БЕРЁТСЯ ГОТОВОЙ (sheet.MaxHpExplain), а не собирается здесь по
+        /// file.MaxHpOverride.HasValue. Строк там четыре и они различают не два случая, а четыре:
+        /// «вписан вручную (среднее дало бы 38)», сама формула среднего, «вписан вручную (класс не
+        /// выбран, среднее считать не по чему)» и рассказ, почему кости хитов нет. Своя копия в слое
+        /// рисования знала бы только два из них — и врала бы ровно там, где лист недособран.
+        ///
+        /// Набор НЕ ПЕРЕСОБИРАЕТ лист (иначе не набрать и двузначного числа): onValueChanged кладёт
+        /// разобранное число в файл, а перерисовка идёт по onEndEdit — то есть когда игрок ушёл из
+        /// поля. Оба обработчика нужны: без первого потерялось бы число, набранное перед самым
+        /// нажатием «Сохранить», без второго «Хиты» строкой выше остались бы прежними навсегда.</summary>
+        void BuildHpOverrideRow(Transform column)
+        {
+            var row = AddRow(column, RowHeight + 8f);
+
+            var title = AddLabel(row, "Свои хиты", 17, Muted);
+            var titleLe = title.gameObject.AddComponent<LayoutElement>();
+            titleLe.minWidth = TitleWidth;
+            titleLe.preferredWidth = TitleWidth;
+            titleLe.flexibleWidth = 0f;
+
+            var input = AddInput(row, file.MaxHpOverride.HasValue ? file.MaxHpOverride.Value.ToString() : "",
+                "среднее", v => file.MaxHpOverride = SheetEdits.ParseMaxHpOverride(v),
+                multiline: false, height: 0f, fontSize: 17, textColor: Accent);
+            input.contentType = InputField.ContentType.IntegerNumber;
+            input.onEndEdit.AddListener(_ => Rebuild());
+            var inputLe = input.GetComponent<LayoutElement>();
+            inputLe.minWidth = HpFieldWidth;
+            inputLe.preferredWidth = HpFieldWidth;
+            inputLe.flexibleWidth = 0f;
+
+            // «Среднее» стирает вписанное. То же самое делает и пустое поле (SheetEdits разбирает
+            // пустоту в null), но кнопка говорит об этом вслух: догадаться, что число убирается
+            // стиранием, можно только попробовав.
+            AddButton(row, "Среднее", 150f, () =>
+            {
+                file.MaxHpOverride = null;
+                Rebuild();
+            });
+
+            var hint = AddLabel(row, sheet.MaxHpExplain ?? "", 14, Faint);
+            var hintLe = hint.gameObject.AddComponent<LayoutElement>();
+            hintLe.preferredWidth = 0f;                 // остаток ширины, а не ширина текста
+            hintLe.flexibleWidth = 1f;
         }
 
         static string Mark(bool proficient) => proficient ? "[×] " : "[ ] ";
@@ -737,26 +884,46 @@ namespace WorldGen.PlayerPrep.Rendering
                 14, Muted).gameObject.AddComponent<LayoutElement>().preferredHeight = 22f;
 
             AddInput(content, file.SpellNotes, "Заговоры, подготовленные заклинания, пометки…",
-                v => file.SpellNotes = v);
+                v => file.SpellNotes = v, multiline: true, height: 160f, fontSize: 16);
         }
 
-        /// <summary>Предыстория растёт до предела, дальше прокручивается. Высоту назначает LateUpdate —
-        /// см. его шапку про то, почему не ContentSizeFitter и не постройка.</summary>
+        /// <summary>Предыстория: правится прямо на листе, растёт до предела, дальше прокручивается.
+        /// Высоты назначает LateUpdate — см. его шапку.
+        ///
+        /// СОБРАНА ИЗ ТРЁХ ОБЪЕКТОВ, И РАЗДЕЛЕНИЕ ВАЖНО. InputField висит на внешней коробке, а
+        /// ScrollRect — на вложенной. Повесь их на один объект, и оба получали бы каждое перетаскивание:
+        /// система событий выполняет обработчик на ВСЕХ подходящих компонентах объекта, так что
+        /// протяжка мышью одновременно выделяла бы текст и крутила бы его. Разнесённые, они делят
+        /// работу честно: нажатие всплывает мимо ScrollRect (тот не берёт PointerDown) до InputField и
+        /// ставит каретку, а протяжка останавливается на ScrollRect и прокручивает.
+        ///
+        /// ContentSizeFitter НА ТЕКСТЕ ЗДЕСЬ БОЛЬШЕ НЕТ, и это не упрощение, а исправление. Пока текст
+        /// был просто подписью, фиттер честно мерил его целиком. Став содержимым InputField, тот же
+        /// текст стал ОБРЕЗАННЫМ: многострочный InputField показывает ровно столько строк, сколько
+        /// влезает в прямоугольник textComponent, — и фиттер, меряя показанное, получал бы высоту
+        /// одной строки, ставил бы её прямоугольнику, отчего InputField показал бы одну строку.
+        /// Замкнутый круг, из которого предыстория никогда не вырастает. Поэтому обе высоты — и
+        /// коробки, и содержимого прокрутки — считаются в LateUpdate по ПОЛНОМУ тексту из файла
+        /// (MeasureHeight), а не по тому, что видно на экране.</summary>
         void BuildBackstory(Transform content)
         {
             AddCaption(content, "Предыстория");
-            if (string.IsNullOrWhiteSpace(file.Backstory))
-            {
-                var empty = AddLabel(content, "Не записана. Её можно вписать в мастере, шаг «Кто ты».",
-                    15, Muted);
-                empty.gameObject.AddComponent<LayoutElement>().preferredHeight = 22f;
-                return;
-            }
 
-            var scrollRt = NewRect(content, "Backstory", typeof(ScrollRect));
-            backstoryElement = scrollRt.gameObject.AddComponent<LayoutElement>();
+            var box = NewRect(content, "Backstory", typeof(Image), typeof(InputField));
+            backstoryElement = box.gameObject.AddComponent<LayoutElement>();
             backstoryElement.preferredWidth = StretchWidth;
-            backstoryElement.preferredHeight = 60f;    // до первого LateUpdate, дальше по тексту
+            backstoryElement.preferredHeight = MinBackstoryHeight;   // до первого LateUpdate
+            box.GetComponent<Image>().color = PlaceholderFill;
+
+            var input = box.GetComponent<InputField>();
+            input.targetGraphic = box.GetComponent<Image>();
+            input.lineType = InputField.LineType.MultiLineNewline;
+
+            var scrollRt = NewRect(box, "Scroll", typeof(ScrollRect));
+            scrollRt.anchorMin = Vector2.zero;
+            scrollRt.anchorMax = Vector2.one;
+            scrollRt.offsetMin = new Vector2(10f, 6f);
+            scrollRt.offsetMax = new Vector2(-10f, -6f);
             backstoryScroll = scrollRt.GetComponent<ScrollRect>();
             backstoryScroll.horizontal = false;
             backstoryScroll.vertical = false;          // включится, только если текст не влез
@@ -772,18 +939,32 @@ namespace WorldGen.PlayerPrep.Rendering
             viewport.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
             backstoryScroll.viewport = viewport;
 
-            // ContentSizeFitter живёт ЗДЕСЬ и только здесь: у содержимого прокрутки родитель — вьюпорт,
-            // а не раскладка, поэтому драться за высоту не с кем.
-            backstoryText = UiKit.Label(viewport, file.Backstory, 16, TextAnchor.UpperLeft);
+            backstoryText = UiKit.Label(viewport, "", 16, TextAnchor.UpperLeft);
+            backstoryText.supportRichText = false;
+            // verticalOverflow остаётся Overflow (умолчание UiKit.Label). Truncate здесь — тихая
+            // поломка: обрезанный текст мерился бы обрезанным, и блок не вырос бы никогда.
             var textRt = backstoryText.rectTransform;
             textRt.anchorMin = new Vector2(0f, 1f);
             textRt.anchorMax = new Vector2(1f, 1f);
             textRt.pivot = new Vector2(0.5f, 1f);
             textRt.sizeDelta = Vector2.zero;
             textRt.anchoredPosition = Vector2.zero;
-            backstoryText.gameObject.AddComponent<ContentSizeFitter>().verticalFit =
-                ContentSizeFitter.FitMode.PreferredSize;
             backstoryScroll.content = textRt;
+            input.textComponent = backstoryText;
+
+            // Подсказка живёт в КОРОБКЕ, а не во вьюпорте: она не содержимое прокрутки и ездить
+            // вместе с ним не должна.
+            var placeholder = UiKit.Label(box, "Откуда он родом, что его гонит вперёд, кого он потерял…",
+                16, TextAnchor.UpperLeft);
+            placeholder.color = Faint;
+            placeholder.fontStyle = FontStyle.Italic;
+            StretchInside(placeholder.rectTransform);
+            input.placeholder = placeholder;
+
+            input.text = file.Backstory ?? "";
+            // Пересборки НЕТ намеренно: она уничтожила бы поле вместе с кареткой на первой же букве.
+            // Высота блока при этом успевает за текстом — её каждый кадр пересчитывает LateUpdate.
+            input.onValueChanged.AddListener(v => file.Backstory = v);
         }
 
         // ── Мелкие построители ───────────────────────────────────────────────────
@@ -879,31 +1060,40 @@ namespace WorldGen.PlayerPrep.Rendering
             label.gameObject.AddComponent<LayoutElement>().preferredHeight = 30f;
         }
 
-        /// <summary>Многострочное поле. Собирается тем же порядком, что и в WizardView.AddInput и
+        /// <summary>Поле правки. Собирается тем же порядком, что и в WizardView.AddInput и
         /// QuickOpenPopup.BuildInputRow: textComponent и placeholder назначаются ДО присваивания text,
         /// иначе InputField пишет в пустоту.
         ///
-        /// Пересборку НЕ зовёт: она уничтожила бы поле прямо во время набора вместе с кареткой.</summary>
-        void AddInput(Transform parent, string value, string placeholderText, Action<string> onChanged)
+        /// Пересборку НЕ зовёт НИ ОДНО поле: она уничтожила бы поле прямо во время набора вместе с
+        /// кареткой и фокусом. Кому перерисовка нужна (хиты), тот вешает её на onEndEdit — то есть на
+        /// уход из поля.</summary>
+        InputField AddInput(Transform parent, string value, string placeholderText, Action<string> onChanged,
+            bool multiline, float height, int fontSize, Color? textColor = null)
         {
             var rt = NewRect(parent, "Input", typeof(Image), typeof(InputField));
             var le = rt.gameObject.AddComponent<LayoutElement>();
-            le.preferredHeight = 160f;
+            le.preferredHeight = height;
             le.preferredWidth = StretchWidth;
             var image = rt.GetComponent<Image>();
             image.color = PlaceholderFill;
 
             var input = rt.GetComponent<InputField>();
             input.targetGraphic = image;
-            input.lineType = InputField.LineType.MultiLineNewline;
+            input.lineType = multiline ? InputField.LineType.MultiLineNewline : InputField.LineType.SingleLine;
 
-            var text = UiKit.Label(rt, "", 16, TextAnchor.UpperLeft);
+            var text = UiKit.Label(rt, "", fontSize, multiline ? TextAnchor.UpperLeft : TextAnchor.MiddleLeft);
             text.supportRichText = false;
-            text.verticalOverflow = VerticalWrapMode.Truncate;
+            if (textColor.HasValue) text.color = textColor.Value;
+            // UiKit.Label переносит по словам — многострочному полю это нужно, однострочному вредно:
+            // длинное имя уехало бы на вторую строку внутри поля высотой в одну. Та же оговорка, что
+            // в WizardView.AddInput.
+            text.horizontalOverflow = multiline ? HorizontalWrapMode.Wrap : HorizontalWrapMode.Overflow;
+            text.verticalOverflow = multiline ? VerticalWrapMode.Truncate : VerticalWrapMode.Overflow;
             StretchInside(text.rectTransform);
             input.textComponent = text;
 
-            var placeholder = UiKit.Label(rt, placeholderText, 16, TextAnchor.UpperLeft);
+            var placeholder = UiKit.Label(rt, placeholderText, fontSize,
+                multiline ? TextAnchor.UpperLeft : TextAnchor.MiddleLeft);
             placeholder.color = Faint;
             placeholder.fontStyle = FontStyle.Italic;
             StretchInside(placeholder.rectTransform);
@@ -911,6 +1101,7 @@ namespace WorldGen.PlayerPrep.Rendering
 
             input.text = value ?? "";
             input.onValueChanged.AddListener(v => onChanged(v));
+            return input;
         }
 
         static void StretchInside(RectTransform rt)

@@ -42,6 +42,21 @@ namespace WorldGen.PlayerPrep.Rendering
         /// дальше, к MissingReferenceException.</summary>
         public SheetView Sheet { get; private set; }
 
+        /// <summary>Лист, каким он лежит на диске (а точнее — каким его в последний раз записали или
+        /// прочитали). null, когда ничего не открыто.
+        ///
+        /// СНИМОК, А НЕ ФЛАЖОК «изменено», и это решение целиком объяснено в SheetSnapshot: правку
+        /// делают мастер, лист и всё, что появится дальше, а забытая пометка стоит молча потерянной
+        /// работы игрока. Обновляется РОВНО В ТРЁХ местах, и все три — здесь: при открытии файла
+        /// (OpenFromDisk, OpenRecent), при создании нового (CreateNew) и после удавшейся записи
+        /// (SaveCurrent, SaveCurrentAs). BackToList обнуляет его заодно с Current — тем же вызовом.
+        ///
+        /// В SetCurrent снимка НЕТ НАМЕРЕННО, хотя пара Current/CurrentPath меняется именно там.
+        /// SetCurrent зовут и OpenWizard, и OpenSheet — то есть каждый переход «лист ⇄ мастер».
+        /// Обновляйся снимок там, правки мастера забывались бы в тот миг, когда игрок нажимает
+        /// «Открыть лист», а правки листа — когда он нажимает «Изменить».</summary>
+        string savedSnapshot;
+
         const float HeaderHeight = 56f;
         // Строка авторства — 480 знаков, кеглем 13 на ширине 1920 это две-три строки. Высота полосы
         // взята с запасом и КОНСТАНТОЙ, а не из Text.preferredHeight: в Awake раскладки ещё не было,
@@ -65,6 +80,8 @@ namespace WorldGen.PlayerPrep.Rendering
             // ровно по той же причине, но его в сцене игрока нет: здесь всегда присутствующая
             // «обвязка» приложения — этот компонент, значит чинить некому, кроме него.
             ConfirmDialog.DismissStranded();
+            // Ровно та же беда и ровно то же лекарство — см. UnsavedChangesPrompt.DismissStranded.
+            UnsavedChangesPrompt.DismissStranded();
             DemolishForRebuild();
 
             LoadRules();
@@ -166,14 +183,11 @@ namespace WorldGen.PlayerPrep.Rendering
             header.GetComponent<Image>().color = new Color(0.12f, 0.12f, 0.13f);
             EdgeLine(header, bottom: true);
 
-            var back = UiKit.Button(header, "← Главный экран", () =>
-            {
-                // Ровно код из задачи 1, шаг 4: выгрузка сцены уничтожает несохранённую работу молча,
-                // а отслеживания изменений в листе нет вовсе — поэтому спрашиваем безусловно.
-                ConfirmDialog.Show(UiKit.Font, "Выйти на главный экран?",
-                    "Несохранённые изменения листа будут потеряны.",
-                    confirmed => { if (confirmed) SceneManager.LoadScene("Home"); });
-            });
+            // Выгрузка сцены уничтожает несохранённую работу молча, поэтому уход отсюда идёт через
+            // общий вопрос. Раньше он был безусловным («изменений никто не считает — спрашиваем
+            // всегда»); теперь считает savedSnapshot, и на нетронутом листе вопроса нет вовсе.
+            var back = UiKit.Button(header, "← Главный экран",
+                () => AskBeforeLeaving("Выйти на главный экран?", () => SceneManager.LoadScene("Home")));
             // Прямоугольник кнопке задаётся ЯВНО. UiKit.Button рождает RectTransform нулевого размера;
             // на главном экране его растягивает VerticalLayoutGroup, а здесь раскладки нет — без этих
             // четырёх строк кнопка есть, но не видна и не нажимается.
@@ -286,6 +300,10 @@ namespace WorldGen.PlayerPrep.Rendering
         public void BackToList()
         {
             SetCurrent(null, null);
+            // Снимок обнуляется вместе с листом — тем же вызовом, что снимает его в остальных трёх
+            // местах: Of(null) и есть null. Отдельной строчки «savedSnapshot = null» здесь нет
+            // намеренно, чтобы способ обнулить снимок не разошёлся со способом его взять.
+            RememberSaved();
             ClearContent();
             ShowList();
         }
@@ -401,6 +419,10 @@ namespace WorldGen.PlayerPrep.Rendering
             // не null, потому что при null список кнопок вообще не строится.
             // Путь НЕ передаётся: персонаж ещё нигде не лежит, и первое «Сохранить» обязано спросить имя.
             OpenWizard(new CharacterFile { RulesId = rules.Id });
+            // Снимок с ПУСТОГО персонажа: «создал и сразу передумал» — это не потерянная работа, и
+            // вопросом при выходе такой лист не заслуживает. Первое же изменение в мастере снимок
+            // разойдётся, и вопрос появится.
+            RememberSaved();
         }
 
         void OpenFromDisk()
@@ -410,6 +432,7 @@ namespace WorldGen.PlayerPrep.Rendering
                 var (file, path) = SheetFileService.Open();
                 if (file == null) return;              // отменили — ничего не делаем
                 SetCurrent(file, path);
+                RememberSaved();                       // только что с диска — расходиться не с чем
                 // Файл собран другим справочником — открываем, но предупреждаем сверху (задача 11).
                 OpenSheet(file);
             }
@@ -431,6 +454,7 @@ namespace WorldGen.PlayerPrep.Rendering
             {
                 var file = SheetFileService.LoadFrom(path);
                 SetCurrent(file, path);
+                RememberSaved();                       // только что с диска — расходиться не с чем
                 OpenSheet(file);
             }
             catch (System.Exception ex)
@@ -459,6 +483,7 @@ namespace WorldGen.PlayerPrep.Rendering
                     CurrentPath = path;
                 }
                 else SheetFileService.Save(Current, CurrentPath);
+                RememberSaved();
                 return true;
             }
             catch (System.Exception ex)
@@ -479,11 +504,54 @@ namespace WorldGen.PlayerPrep.Rendering
                 string path = SheetFileService.SaveAs(Current);
                 if (string.IsNullOrEmpty(path)) return;       // отменили
                 CurrentPath = path;
+                RememberSaved();
             }
             catch (System.Exception ex)
             {
                 ConfirmDialog.ShowInfo(UiKit.Font, "Не удалось сохранить лист", ex.Message);
             }
+        }
+
+        // ── Несохранённое ────────────────────────────────────────────────────────
+
+        /// <summary>Разошёлся ли открытый лист с тем, что записано на диск. false, когда ничего не
+        /// открыто, — на экране списка терять нечего.</summary>
+        public bool HasUnsavedChanges => Current != null && SheetSnapshot.Differs(savedSnapshot, Current);
+
+        /// <summary>«Считать нынешнее состояние сохранённым». Три точки обновления снимка перечислены
+        /// у поля savedSnapshot; звать это откуда-то ещё — значит объявить работу игрока сохранённой,
+        /// когда её никто не записывал.</summary>
+        void RememberSaved() => savedSnapshot = SheetSnapshot.Of(Current);
+
+        /// <summary>Единственный выход с листа и из мастера. Нечего терять — уходим молча; есть что —
+        /// спрашиваем «Сохранить» / «Не сохранять» / «Отмена».
+        ///
+        /// «Сохранить» на ещё не сохранённом листе попадает в «Сохранить как…» само: SaveCurrent при
+        /// пустом CurrentPath спрашивает имя файла. И ИМЕННО ПОЭТОМУ уход привязан к его ответу, а не
+        /// стоит следующей строчкой: отменённый диалог имени и упавшая запись оба дают false, и уйти
+        /// после них значило бы выбросить лист под кнопкой, подписанной «Сохранить».
+        ///
+        /// leave зовётся ЧЕРЕЗ КАДР, из обработчика чужой кнопки, поэтому проверка на уничтоженный
+        /// компонент обязательна: перекомпиляция скриптов при открытом вопросе пересобирает сцену, а
+        /// замыкание остаётся жить. Сравнение с null здесь — Unity-совместимое (тип наследует
+        /// UnityEngine.Object), оператор `?.` тут не годится по причине, расписанной у поля Sheet.</summary>
+        public void AskBeforeLeaving(string title, System.Action leave)
+        {
+            if (leave == null) return;
+            if (!HasUnsavedChanges) { leave(); return; }
+
+            string where = string.IsNullOrEmpty(CurrentPath)
+                ? "Этот лист ещё ни разу не сохранён — «Сохранить» спросит, куда его положить."
+                : "Файл: " + CurrentPath;
+            UnsavedChangesPrompt.Ask(UiKit.Font, title,
+                "В листе есть несохранённые изменения.\n" + where,
+                choice =>
+                {
+                    if (this == null) return;
+                    if (choice == UnsavedChoice.Save) { if (SaveCurrent()) leave(); }
+                    else if (choice == UnsavedChoice.Discard) leave();
+                    // UnsavedChoice.Cancel — не делаем ничего: игрок остаётся там, где был.
+                });
         }
 
         // ── Мелочи ───────────────────────────────────────────────────────────────
