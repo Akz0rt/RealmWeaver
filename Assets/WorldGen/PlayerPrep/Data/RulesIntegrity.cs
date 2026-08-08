@@ -1,13 +1,27 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace WorldGen.PlayerPrep.Data
 {
     /// <summary>Структурные проверки справочника. Запускаются и над синтетическими фикстурами,
-    /// и над ПОСТАВЛЯЕМЫМ файлом — поэтому ловят опечатки в данных, а не только в коде.</summary>
+    /// и над ПОСТАВЛЯЕМЫМ файлом — поэтому ловят опечатки в данных, а не только в коде.
+    ///
+    /// ДВА РОДА ПРОВЕРОК, И ВТОРОЙ ПОЯВИЛСЯ НЕ СРАЗУ. Первый — СОГЛАСОВАННОСТЬ: каждая такая
+    /// проверка это `foreach` по списку, и над ПУСТЫМ списком она даёт ноль ошибок. Пока других не
+    /// было, справочник с `"Classes": []` проходил гейт ровно так же, как справочник с четырьмя
+    /// классами: зелёный цвет означал «ничего не противоречит», а не «данные есть». Второй род —
+    /// НАЛИЧИЕ: обязательный раздел не может быть пуст, у класса не может не быть уровней повышения
+    /// характеристик. Без него первый род не доказывает ничего, потому что пустота ему нравится.
+    ///
+    /// Отдельно проверяется всё, отсутствие чего роняет АРИФМЕТИКУ листа, а не просто молчит:
+    /// `UnarmoredDefenseAbility` вне шести характеристик даёт `AbilityNames[-1]` в
+    /// SheetMathSkills (лист Варвара перестаёт открываться вовсе), `Kind` с опечаткой роняет КД до
+    /// 10 + ловкость, а `HitDie` не вида d8 оставляет максимум хитов нулём.</summary>
     public static class RulesIntegrity
     {
         static readonly string[] Abilities = { "str", "dex", "con", "int", "wis", "cha" };
+        static readonly string[] ItemKinds = { "armor", "shield", "weapon", "gear" };
 
         public static List<string> Check(RulesData r)
         {
@@ -76,7 +90,178 @@ namespace WorldGen.PlayerPrep.Data
                     && f.Category != "fighting-style" && f.Category != "epic-boon")
                     errors.Add($"черта {f.Id}: неизвестный разряд «{f.Category}»");
 
+            // Проверки вынесены в отдельные методы НЕ ради красоты: каждая закомментированная
+            // строка ниже — готовый мутант, а каждая самопроверка ниже названа так, чтобы было
+            // видно, какую строку она держит. Список вызовов и список самопроверок сверяются глазом
+            // за секунду.
+            CheckRequiredSectionsPresent(r, errors);
+            CheckUniqueIds(r, errors);
+            CheckItemKinds(r, errors);
+            CheckRaces(r, errors);
+            CheckBackgroundSkillCount(r, errors);
+
+            foreach (var c in r.Classes)
+            {
+                CheckClassHitDie(c, errors);
+                CheckClassUnarmoredDefense(c, errors);
+                CheckClassHasAbilityScoreLevels(c, errors);
+                CheckClassSpellSlotsNonNegative(c, errors);
+                CheckClassSpellSlotsNeverShrink(c, errors);
+                CheckClassSkillPickCount(c, errors);
+                CheckClassSubclassLevels(c, errors);
+                CheckClassFeatureIdsUnique(c, errors);
+            }
+
             return errors;
+        }
+
+        /// <summary>Пустой обязательный раздел. Единственная проверка, которая отличает
+        /// «справочник целостен» от «справочника нет»: всё остальное здесь — циклы, а цикл по
+        /// пустому списку молчит.</summary>
+        static void CheckRequiredSectionsPresent(RulesData r, List<string> errors)
+        {
+            void Section(int count, string field, string human)
+            {
+                if (count == 0) errors.Add($"справочник: раздел {field} ({human}) пуст");
+            }
+            Section(r.Skills.Count, "Skills", "навыки");
+            Section(r.Items.Count, "Items", "предметы");
+            Section(r.Feats.Count, "Feats", "черты");
+            Section(r.Races.Count, "Races", "виды");
+            Section(r.Backgrounds.Count, "Backgrounds", "предыстории");
+            Section(r.Classes.Count, "Classes", "классы");
+        }
+
+        /// <summary>Повторённый идентификатор. Разрешимость («такой предмет есть») проверялась и
+        /// раньше, но она смотрит в HashSet и на дубль отвечает «есть, конечно». Дубль с другим
+        /// текстом — это две разные записи, из которых берётся всегда первая.</summary>
+        static void CheckUniqueIds(RulesData r, List<string> errors)
+        {
+            void Unique<T>(IEnumerable<T> items, Func<T, string> id, string human)
+            {
+                foreach (var g in items.GroupBy(id).Where(g => g.Count() > 1))
+                    errors.Add($"справочник: {human} {g.Key} объявлен {g.Count()} раза");
+            }
+            Unique(r.Skills, s => s.Id, "навык");
+            Unique(r.Items, i => i.Id, "предмет");
+            Unique(r.Feats, f => f.Id, "черта");
+            Unique(r.Races, x => x.Id, "вид");
+            Unique(r.Backgrounds, b => b.Id, "предыстория");
+            Unique(r.Classes, c => c.Id, "класс");
+        }
+
+        /// <summary>Разряд предмета. У черт разряд проверялся с самого начала, у предметов — нет,
+        /// хотя последствие тяжелее: доспех с Kind «armour» перестаёт быть доспехом, и КД молча
+        /// падает до 10 + ловкость.</summary>
+        static void CheckItemKinds(RulesData r, List<string> errors)
+        {
+            foreach (var i in r.Items.Where(i => !ItemKinds.Contains(i.Kind)))
+                errors.Add($"предмет {i.Id}: неизвестный вид «{i.Kind}»");
+        }
+
+        static void CheckRaces(RulesData r, List<string> errors)
+        {
+            foreach (var x in r.Races.Where(x => x.Speed <= 0))
+                errors.Add($"вид {x.Id}: скорость {x.Speed} — должна быть больше нуля");
+        }
+
+        /// <summary>Предыстория даёт РОВНО два навыка (правила 2024), не «хотя бы два».</summary>
+        static void CheckBackgroundSkillCount(RulesData r, List<string> errors)
+        {
+            foreach (var b in r.Backgrounds.Where(b => b.SkillIds.Count != 2))
+                errors.Add($"предыстория {b.Id}: должно быть ровно 2 навыка, а их {b.SkillIds.Count}");
+        }
+
+        /// <summary>Условие повторяет SheetMath.ParseDie слово в слово — проверять надо ровно то,
+        /// что разберёт арифметика, иначе «d 8» пройдёт здесь и даст 0 хитов там.</summary>
+        static void CheckClassHitDie(ClassDef c, List<string> errors)
+        {
+            bool ok = !string.IsNullOrEmpty(c.HitDie) && c.HitDie[0] == 'd'
+                      && int.TryParse(c.HitDie.Substring(1), out int sides) && sides > 0;
+            if (!ok) errors.Add($"класс {c.Id}: кость хитов «{c.HitDie}» не вида d6, d8, d10 или d12");
+        }
+
+        /// <summary>Пусто — это законно (у одиннадцати классов из двенадцати). Незаконно —
+        /// значение вне шести: SheetMathSkills ищет его через Array.IndexOf и на −1 падает с
+        /// IndexOutOfRange, то есть лист не открывается вовсе.</summary>
+        static void CheckClassUnarmoredDefense(ClassDef c, List<string> errors)
+        {
+            if (!string.IsNullOrEmpty(c.UnarmoredDefenseAbility)
+                && !Abilities.Contains(c.UnarmoredDefenseAbility))
+                errors.Add($"класс {c.Id}: защита без доспехов по «{c.UnarmoredDefenseAbility}» — "
+                         + "характеристика не из шести известных");
+        }
+
+        /// <summary>Уровни повышения — данные без формулы (у Воина их семь, у Плута шесть, у
+        /// прочих пять), поэтому потерянный уровень нечем восстановить и некому заметить.</summary>
+        static void CheckClassHasAbilityScoreLevels(ClassDef c, List<string> errors)
+        {
+            if (!c.Levels.Any(l => l.Choice == "asi"))
+                errors.Add($"класс {c.Id}: нет ни одного уровня повышения характеристик");
+        }
+
+        static void CheckClassSpellSlotsNonNegative(ClassDef c, List<string> errors)
+        {
+            foreach (var l in Rows(c))
+                for (int ring = 0; ring < 9; ring++)
+                    if (l.SpellSlots[ring] < 0)
+                        errors.Add($"класс {c.Id}, уровень {l.Level}: ячеек {ring + 1} круга "
+                                 + $"{l.SpellSlots[ring]} — меньше нуля");
+        }
+
+        /// <summary>Ячейки КРУГ ЗА КРУГОМ не убывают с уровнем — сравнение поколоночное, а не
+        /// построчное. Разводит эти два правила ФИКСТУРА самопроверки (второй круг сперва растёт на
+        /// пятом уровне и лишь потом падает на шестом), а не поставляемые данные: таблица Жреца
+        /// растёт почти на каждом уровне, так что построчное «строки равны» упало бы на ней сразу и
+        /// повсюду — это не тонкий случай, а очевидный.</summary>
+        static void CheckClassSpellSlotsNeverShrink(ClassDef c, List<string> errors)
+        {
+            var rows = Rows(c).OrderBy(l => l.Level).ToList();
+            for (int i = 1; i < rows.Count; i++)
+                for (int ring = 0; ring < 9; ring++)
+                    if (rows[i].SpellSlots[ring] < rows[i - 1].SpellSlots[ring])
+                        errors.Add($"класс {c.Id}: ячеек {ring + 1} круга на уровне {rows[i].Level} "
+                                 + $"{rows[i].SpellSlots[ring]}, а на {rows[i - 1].Level} было "
+                                 + $"{rows[i - 1].SpellSlots[ring]} — таблица убывает");
+        }
+
+        /// <summary>Строки с таблицей ячеек ПРАВИЛЬНОЙ длины. Кривую длину ловит отдельная
+        /// проверка выше; здесь она дала бы вдобавок выход за границу массива.</summary>
+        static IEnumerable<ClassLevel> Rows(ClassDef c)
+            => c.Levels.Where(l => l.SpellSlots != null && l.SpellSlots.Length == 9);
+
+        static void CheckClassSkillPickCount(ClassDef c, List<string> errors)
+        {
+            if (c.SkillPickCount < 0)
+                errors.Add($"класс {c.Id}: выбрать нужно {c.SkillPickCount} навыков — меньше нуля");
+            else if (c.SkillPickCount > c.SkillChoices.Count)
+                errors.Add($"класс {c.Id}: выбрать нужно {c.SkillPickCount} навыков, "
+                         + $"а в списке их {c.SkillChoices.Count}");
+        }
+
+        /// <summary>Сдвоенный уровень У ПОДКЛАССА. У класса это проверялось с самого начала, у
+        /// подкласса — нет, хотя список умений подкласса собирается тем же перебором.</summary>
+        static void CheckClassSubclassLevels(ClassDef c, List<string> errors)
+        {
+            foreach (var sub in c.Subclasses)
+                foreach (var g in sub.Levels.GroupBy(sl => sl.Level).Where(g => g.Count() > 1))
+                    errors.Add($"класс {c.Id}, подкласс {sub.Id}: уровень {g.Key} "
+                             + $"встречается {g.Count()} раза");
+        }
+
+        /// <summary>Идентификатор умения уникален В ПРЕДЕЛАХ КЛАССА, а не всего справочника:
+        /// «Дополнительная атака» законно есть и у Воина, и у Варвара, а вот дважды у одного
+        /// класса — это скопированный уровень.</summary>
+        static void CheckClassFeatureIdsUnique(ClassDef c, List<string> errors)
+        {
+            foreach (var g in c.Levels.SelectMany(l => l.Features)
+                               .GroupBy(f => f.Id).Where(g => g.Count() > 1))
+                errors.Add($"класс {c.Id}: умение {g.Key} объявлено {g.Count()} раза");
+            foreach (var sub in c.Subclasses)
+                foreach (var g in sub.Levels.SelectMany(sl => sl.Features)
+                                   .GroupBy(f => f.Id).Where(g => g.Count() > 1))
+                    errors.Add($"класс {c.Id}, подкласс {sub.Id}: умение {g.Key} "
+                             + $"объявлено {g.Count()} раза");
         }
     }
 }
