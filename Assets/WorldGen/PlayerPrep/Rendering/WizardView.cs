@@ -474,9 +474,14 @@ namespace WorldGen.PlayerPrep.Rendering
             AddLabel(details, $"Кость хитов: {chosen.HitDie}", 17, null, null);
             AddLabel(details, "Спасброски: " + JoinAbilityNames(chosen.SaveProficiencies), 17, null, null);
             AddLabel(details, $"Навыков на выбор: {chosen.SkillPickCount} (шаг 6)", 17, null, null);
-            if (chosen.ExpertiseLevel > 0)
-                AddLabel(details, $"Компетентность: {chosen.ExpertisePickCount} навыка "
-                                  + $"с {chosen.ExpertiseLevel} уровня", 17, null, null);
+            // Выдач бывает две (Плут на 1 и 6, Бард и Следопыт на 2 и 9) — перечисляем ВСЕ, иначе
+            // строка обещала бы половину того, что класс даёт. Слово согласовано по числу:
+            // «1 навык», «2 навыка» (прежде здесь стояло «1 навыка» при любом числе).
+            if (chosen.HasExpertise())
+                AddLabel(details, "Компетентность: " + string.Join(", ", chosen.ExpertiseGrants
+                             .Where(g => g != null)
+                             .Select(g => $"{g.PickCount} {SheetMath.SkillsAfterNumber(g.PickCount)} "
+                                        + $"с {g.Level} уровня").ToArray()), 17, null, null);
         }
 
         /// <summary>Смена класса — единственное разрушительное действие мастера, поэтому спрашиваем ДО,
@@ -991,16 +996,17 @@ namespace WorldGen.PlayerPrep.Rendering
             BuildExpertise(content, cls);
         }
 
-        /// <summary>Второй список — только если у класса компетентность есть И её уровень достигнут.
-        /// Условие ровно то же, что у SheetMath (SheetMathSkills.cs:17): иначе мастер предлагал бы
-        /// выбор, который лист не показывает.</summary>
+        /// <summary>Второй список — только если класс УЖЕ открыл персонажу хоть один навык
+        /// компетентности. Число открытых считает ClassDef.ExpertisePicksAt — та же функция, по
+        /// которой считает лист: иначе мастер предлагал бы выбор, который лист не показывает, либо
+        /// (что и было) гасил кнопки на второй выдаче, которой не знал.</summary>
         void BuildExpertise(Transform content, ClassDef cls)
         {
-            if (cls.ExpertiseLevel <= 0 || file.Level < cls.ExpertiseLevel) return;
+            int allowed = cls.ExpertisePicksAt(file.Level);
+            if (allowed <= 0) return;
 
             AddSpacer(content, 12f);
-            AddCaption(content, $"Компетентность: выбрано {file.ExpertiseIds.Count} "
-                                + $"из {cls.ExpertisePickCount}");
+            AddCaption(content, $"Компетентность: выбрано {file.ExpertiseIds.Count} из {allowed}");
             AddLabel(content, "Компетентность удваивает бонус мастерства. Выбирается из уже взятых "
                               + "навыков класса.", 15, Muted, null);
 
@@ -1040,7 +1046,7 @@ namespace WorldGen.PlayerPrep.Rendering
                     if (chosen) file.ExpertiseIds.Remove(id);
                     else file.ExpertiseIds.Add(id);
                     Rebuild();
-                }, chosen || file.ExpertiseIds.Count < cls.ExpertisePickCount);
+                }, chosen || file.ExpertiseIds.Count < allowed);
                 if (chosen) MarkSelected(btn, true);
             }
         }

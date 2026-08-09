@@ -284,7 +284,7 @@
                        "intimidation", "perception", "persuasion", "survival"],
       "SkillPickCount": 2,
       "StartingEquipment": ["chain-mail", "greatsword", "flail", "javelin", "dungeoneers-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": null, "Features": [
           { "Id": "fighting-style", "Name": "Боевой стиль",
@@ -375,7 +375,7 @@
       "SkillPickCount": 4,
       "StartingEquipment": ["leather", "dagger", "shortsword", "shortbow", "arrows", "quiver",
                             "thieves-tools", "burglars-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 1, "ExpertisePickCount": 2,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [{ "Level": 1, "PickCount": 2 }, { "Level": 6, "PickCount": 2 }],
       "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": null, "Features": [
@@ -463,7 +463,7 @@
       "SkillChoices": ["animal-handling", "athletics", "intimidation", "nature", "perception", "survival"],
       "SkillPickCount": 2,
       "StartingEquipment": ["greataxe", "handaxe", "explorers-pack"],
-      "UnarmoredDefenseAbility": "con", "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": "con", "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": null, "Features": [
           { "Id": "rage", "Name": "Ярость",
@@ -550,7 +550,7 @@
       "SkillChoices": ["history", "insight", "medicine", "persuasion", "religion"],
       "SkillPickCount": 2,
       "StartingEquipment": ["chain-shirt", "shield", "mace", "holy-symbol", "priests-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "spellcasting", "Name": "Заклинательство",
@@ -623,7 +623,7 @@
                        "sleight-of-hand", "stealth", "survival"],
       "SkillPickCount": 3,
       "StartingEquipment": ["leather", "dagger", "musical-instrument", "entertainers-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 2,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [{ "Level": 2, "PickCount": 2 }, { "Level": 9, "PickCount": 2 }],
       "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
@@ -697,7 +697,7 @@
                        "religion"],
       "SkillPickCount": 2,
       "StartingEquipment": ["dagger", "quarterstaff", "robe", "spellbook", "scholars-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 1,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [{ "Level": 2, "PickCount": 1 }],
       "ExpertiseChoices": ["arcana", "history", "medicine", "nature", "investigation", "religion"],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
@@ -769,7 +769,7 @@
       "SkillPickCount": 2,
       "StartingEquipment": ["leather", "shield", "sickle", "druidic-focus", "herbalism-kit",
                             "explorers-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "spellcasting", "Name": "Использование заклинаний",
@@ -845,7 +845,7 @@
                        "religion"],
       "SkillPickCount": 2,
       "StartingEquipment": ["leather", "sickle", "dagger", "arcane-focus", "book", "scholars-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "PactMagic": true,
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [1, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
@@ -919,7 +919,7 @@
       "SkillChoices": ["acrobatics", "athletics", "history", "insight", "religion", "stealth"],
       "SkillPickCount": 2,
       "StartingEquipment": ["spear", "dagger", "artisans-tools", "explorers-pack"],
-      "UnarmoredDefenseAbility": "wis", "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": "wis", "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": null, "Features": [
           { "Id": "martial-arts", "Name": "Боевые искусства",
@@ -1011,7 +1011,7 @@
       "SkillPickCount": 2,
       "StartingEquipment": ["chain-mail", "shield", "longsword", "javelin", "holy-symbol",
                             "priests-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "lay-on-hands", "Name": "Наложение рук",
@@ -1096,7 +1096,7 @@
       "SkillPickCount": 3,
       "StartingEquipment": ["studded-leather", "scimitar", "shortsword", "longbow", "arrows",
                             "quiver", "druidic-focus", "explorers-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 1,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [{ "Level": 2, "PickCount": 1 }, { "Level": 9, "PickCount": 2 }],
       "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
@@ -1180,7 +1180,7 @@
       "SkillChoices": ["arcana", "deception", "insight", "intimidation", "persuasion", "religion"],
       "SkillPickCount": 2,
       "StartingEquipment": ["spear", "dagger", "arcane-focus", "dungeoneers-pack"],
-      "UnarmoredDefenseAbility": null, "ExpertiseLevel": 0, "ExpertisePickCount": 0,
+      "UnarmoredDefenseAbility": null, "ExpertiseGrants": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "spellcasting", "Name": "Использование заклинаний",

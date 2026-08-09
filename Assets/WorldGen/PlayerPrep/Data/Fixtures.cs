@@ -39,7 +39,7 @@ namespace WorldGen.PlayerPrep.Data
                 Id = "rogue", Name = "Плут", Blurb = "…", HitDie = "d8",
                 SaveProficiencies = { "dex", "int" },      // «тел» НЕТ — это и есть расхождение №2
                 SkillChoices = { "stealth", "athletics", "arcana" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1,
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } },
                 StartingEquipment = { "leather", "rope" }
             };
             for (int lv = 1; lv <= 20; lv++)

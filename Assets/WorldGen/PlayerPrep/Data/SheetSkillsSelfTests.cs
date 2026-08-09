@@ -51,10 +51,19 @@ namespace WorldGen.PlayerPrep.Data
             // Мутант «компетентность без проверки владения» (exp = expertise.Contains(...) без prof &&)
             // на этой фикстуре не ловится ни одним другим тестом: везде, где есть компетентность,
             // владение тоже есть — Fixtures.Character() кладёт "stealth" в оба списка сразу.
+            //
+            // ВЫДАЧУ РАСШИРЯЕМ ДО ДВУХ НАВЫКОВ НАРОЧНО. У фикстурного Плута открыт один, а в списке
+            // компетентности их станет два («скрытность» и добавленная «магия»); лишнее сверх
+            // открытого лист отрезает по порядку — и «магия» отвалилась бы ПО ОТСЕЧЕНИЮ, а не по
+            // отсутствию владения. Проверка осталась бы зелёной с убранным `prof &&`, то есть
+            // стала бы пустой. Со второй выдачей «магия» лежит ВНУТРИ открытого числа, и не
+            // сработать может только правило владения — то самое, ради которого тест написан.
+            var rules = Fixtures.Rules();
+            rules.Classes[0].ExpertiseGrants[0].PickCount = 2;
             var c = Fixtures.Character();
             c.SkillIds.Remove("arcana");
             c.ExpertiseIds.Add("arcana");
-            var d = SheetMath.Compute(c, Fixtures.Rules());
+            var d = SheetMath.Compute(c, rules);
             var arc = d.Skills.First(s => s.SkillId == "arcana");
             // ИНТ 12 → +1, без владения компетентность не считается — бонус остаётся голым модификатором.
             bool ok = !arc.Proficient && !arc.Expertise && arc.Bonus == 1;
@@ -108,11 +117,118 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        /// <summary>Бард по правилам 2024: компетентность приходит ДВАЖДЫ — два навыка на 2 уровне и
+        /// ещё два на 9-м. Четыре навыка, все взяты и все с компетентностью в файле; сколько из них
+        /// действительно удвоится, решает уровень.
+        ///
+        /// В фикстуре три навыка, а нужно четыре — четвёртый добавлен здесь: с тремя проверка «на 9
+        /// уровне открыто четыре» упёрлась бы в нехватку навыков, а не в правило.</summary>
+        static RulesData BardWithTwoGrants(out CharacterFile c, int level)
+        {
+            var rules = Fixtures.Rules();
+            rules.Skills.Add(new SkillDef { Id = "persuasion", Name = "Убеждение", AbilityId = "cha" });
+            var bard = new ClassDef { Id = "bard", Name = "Бард", HitDie = "d8",
+                SkillChoices = { "stealth", "athletics", "arcana", "persuasion" }, SkillPickCount = 4,
+                ExpertiseGrants = { new ExpertiseGrant { Level = 2, PickCount = 2 },
+                                    new ExpertiseGrant { Level = 9, PickCount = 2 } } };
+            for (int lv = 1; lv <= 20; lv++)
+                bard.Levels.Add(new ClassLevel { Level = lv, Choice = lv == 4 || lv == 8 ? "asi" : null });
+            rules.Classes.Add(bard);
+
+            c = Fixtures.Character();
+            c.ClassId = "bard"; c.Level = level; c.SubclassId = null;
+            c.SkillIds.Clear();
+            c.ExpertiseIds.Clear();
+            foreach (var id in new[] { "stealth", "athletics", "arcana", "persuasion" })
+            {
+                c.SkillIds.Add(id);
+                c.ExpertiseIds.Add(id);
+            }
+            return rules;
+        }
+
+        [ContextMenu("Self-Test: навыки — вторая выдача компетентности открывает ещё два навыка (Бард 9)")]
+        public void SelfTestSecondExpertiseGrantOpensMoreSkills()
+        {
+            // МУТАНТ: «брать только первую выдачу» (ExpertisePicksAt возвращает PickCount первой
+            // записи). Бард 9 уровня получил бы 2 навыка вместо 4 — ровно то, что делало
+            // приложение до этой правки: кнопки остальных гасли, «Чего не хватает» считало «2 из 2»
+            // и молчало, а текст умения на том же листе обещал ещё два навыка.
+            var rules = BardWithTwoGrants(out var c, 9);
+            var d = SheetMath.Compute(c, rules);
+            int doubled = d.Skills.Count(s => s.Expertise);
+            bool ok = doubled == 4 && !d.Missing.Any(m => m.Contains("Компетентность"));
+            if (!ok) Debug.LogError($"FAIL вторая выдача (Бард 9): удвоено {doubled}, ждали 4; "
+                                  + "чего не хватает: [" + string.Join(" | ", d.Missing) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — до второй выдачи открыты только два навыка (Бард 2)")]
+        public void SelfTestExpertiseGrantsAboveLevelDoNotCount()
+        {
+            // МУТАНТ: «брать сумму всех выдач независимо от уровня». Бард 2 уровня получил бы
+            // четыре навыка вместо двух — компетентность 9 уровня работала бы с самого начала.
+            //
+            // Заодно проверяется ПОРЯДОК отсечения: удваиваются первые два по списку ExpertiseIds
+            // («скрытность» и «атлетика»), а не какие придётся. Мутант «отрезать с начала» оставил
+            // бы «магию» и «убеждение».
+            var rules = BardWithTwoGrants(out var c, 2);
+            var d = SheetMath.Compute(c, rules);
+            var doubled = d.Skills.Where(s => s.Expertise).Select(s => s.SkillId).ToList();
+            bool ok = doubled.Count == 2
+                   && doubled.Contains("stealth") && doubled.Contains("athletics");
+            if (!ok) Debug.LogError("FAIL выдача выше уровня (Бард 2): удвоены ["
+                                  + string.Join(",", doubled) + "], ждали stealth+athletics");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — понижение уровня отнимает лишнюю компетентность, но не стирает её из файла")]
+        public void SelfTestLoweringLevelTrimsExpertiseWithoutErasingIt()
+        {
+            // МУТАНТ: «не отрезать лишнее при чтении». Бард, взявший четыре навыка на 9 уровне и
+            // опустившийся до 8-го, показывал бы удвоенный бонус на всех четырёх.
+            //
+            // ФАЙЛ ПРИ ЭТОМ НЕ ТРОГАЕТСЯ, и это вторая половина правила: ExpertiseIds — плоский
+            // список без уровней, и вычистить его при понижении значило бы стереть работу игрока за
+            // один промах мимо кнопки. Правило считается ПРИ ЧТЕНИИ — тем же приёмом устроен
+            // потолок характеристик.
+            var rules = BardWithTwoGrants(out var c, 9);
+            LevelPlanOps.LevelDown(c);                     // 9 → 8, вторая выдача закрылась
+            var d = SheetMath.Compute(c, rules);
+            int doubled = d.Skills.Count(s => s.Expertise);
+            bool ok = c.Level == 8 && doubled == 2 && c.ExpertiseIds.Count == 4
+                   && !d.Missing.Any(m => m.Contains("Компетентность"));
+            if (!ok) Debug.LogError($"FAIL понижение уровня: уровень {c.Level}, удвоено {doubled} "
+                                  + $"(ждали 2), в файле {c.ExpertiseIds.Count} (ждали 4); "
+                                  + "чего не хватает: [" + string.Join(" | ", d.Missing) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — строка «чего не хватает» согласована по числу")]
+        public void SelfTestMissingExpertiseLineAgreesInNumber()
+        {
+            // Мутант — прежняя строка с жёстким «навыках» при любом числе: «выбрана в 1 навыках».
+            // Проверяется обе формы разом: «в 1 навыке из 4» и «в 0 навыках из 2».
+            var rules = BardWithTwoGrants(out var nine, 9);
+            nine.ExpertiseIds.RemoveRange(1, 3);           // остался один
+            var one = SheetMath.Compute(nine, rules);
+
+            var rulesTwo = BardWithTwoGrants(out var two, 2);
+            two.ExpertiseIds.Clear();                      // не выбрано ни одного
+            var none = SheetMath.Compute(two, rulesTwo);
+
+            bool ok = one.Missing.Any(m => m.Contains("выбрана в 1 навыке из 4"))
+                   && none.Missing.Any(m => m.Contains("выбрана в 0 навыках из 2"));
+            if (!ok) Debug.LogError("FAIL согласование по числу: [" + string.Join(" | ", one.Missing)
+                                  + "] / [" + string.Join(" | ", none.Missing) + "]");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: навыки — компетентность не действует ниже своего уровня")]
         public void SelfTestExpertiseIgnoredBelowItsLevel()
         {
             var rules = Fixtures.Rules();
-            rules.Classes[0].ExpertiseLevel = 6;     // персонаж 5 уровня — ещё рано
+            rules.Classes[0].ExpertiseGrants[0].Level = 6;   // персонаж 5 уровня — ещё рано
             var d = SheetMath.Compute(Fixtures.Character(), rules);
             var st = d.Skills.First(s => s.SkillId == "stealth");
             bool ok = !st.Expertise && st.Bonus == 5;

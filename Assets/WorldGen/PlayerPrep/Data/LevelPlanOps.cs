@@ -82,9 +82,13 @@ namespace WorldGen.PlayerPrep.Data
                 pending.Add(new LevelStep { Kind = "subclass", Text = "Выбери подкласс" });
             if (lv.Choice == "asi")
                 pending.Add(new LevelStep { Kind = "asi", Text = "Повышение характеристик или черта" });
-            if (cls.ExpertiseLevel == next)
+            // ГРАНТ ИМЕННО ЭТОГО УРОВНЯ, а не «есть ли компетентность у класса»: она приходит
+            // дважды (Плут на 1 и 6, Бард и Следопыт на 2 и 9), и спросить надо на каждом из этих
+            // уровней ровно про столько навыков, сколько прибавила эта выдача.
+            int granted = cls.ExpertisePicksGrantedAt(next);
+            if (granted > 0)
                 pending.Add(new LevelStep { Kind = "expertise",
-                    Text = $"Выбери компетентность в {cls.ExpertisePickCount} навыках" });
+                    Text = $"Выбери компетентность в {granted} {SheetMath.SkillsInNumber(granted)}" });
             return pending;
         }
 

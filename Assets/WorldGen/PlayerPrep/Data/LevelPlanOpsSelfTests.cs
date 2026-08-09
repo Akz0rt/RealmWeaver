@@ -197,7 +197,7 @@ namespace WorldGen.PlayerPrep.Data
             // спрашиваем всегда» падают на втором повышении (6→7), где строки быть не должно.
             var rules = Fixtures.Rules();
             var cls = new ClassDef { Id = "hunter", Name = "Охотник", HitDie = "d10",
-                ExpertiseLevel = 6, ExpertisePickCount = 2 };
+                ExpertiseGrants = { new ExpertiseGrant { Level = 6, PickCount = 2 } } };
             for (int lv = 1; lv <= 20; lv++) cls.Levels.Add(new ClassLevel { Level = lv });
             rules.Classes.Add(cls);
 
@@ -211,6 +211,62 @@ namespace WorldGen.PlayerPrep.Data
             if (!ok) Debug.LogError($"FAIL компетентность: уровень {c.Level}, "
                                   + $"на 6-м [{string.Join(";", atSix.Select(p => p.Kind + ":" + p.Text))}], "
                                   + $"на 7-м [{string.Join(";", atSeven.Select(p => p.Kind))}]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: повышение уровня — про компетентность спрашивают на КАЖДОЙ выдаче")]
+        public void SelfTestLevelUpAsksAtEveryExpertiseGrant()
+        {
+            // МУТАНТ: «спрашивать только на первой выдаче» (или, что то же, сравнивать со старым
+            // одиночным ExpertiseLevel). Бард по правилам 2024 получает компетентность на 2 уровне
+            // и ещё раз на 9-м; со второй выдачей приложение молчало бы, и два навыка, обещанные
+            // текстом умения, вписать было бы некуда.
+            //
+            // Второй мутант: «спрашивать про НАКОПЛЕННОЕ число» (ExpertisePicksAt вместо
+            // ExpertisePicksGrantedAt) — на 9 уровне панель просила бы четыре навыка вместо двух
+            // новых.
+            var rules = Fixtures.Rules();
+            var cls = new ClassDef { Id = "bard", Name = "Бард", HitDie = "d8",
+                ExpertiseGrants = { new ExpertiseGrant { Level = 2, PickCount = 2 },
+                                    new ExpertiseGrant { Level = 9, PickCount = 3 } } };
+            for (int lv = 1; lv <= 20; lv++) cls.Levels.Add(new ClassLevel { Level = lv });
+            rules.Classes.Add(cls);
+
+            var c = Fixtures.Character(); c.ClassId = "bard"; c.Level = 1;
+            var atTwo = LevelPlanOps.LevelUp(c, rules);          // 1 → 2, первая выдача
+            c.Level = 8;
+            var atNine = LevelPlanOps.LevelUp(c, rules);         // 8 → 9, вторая выдача
+            var atTen = LevelPlanOps.LevelUp(c, rules);          // 9 → 10, выдачи нет
+
+            // Числа у выдач РАЗНЫЕ (2 и 3) нарочно: с одинаковыми мутант «всегда спрашивать про
+            // первую выдачу» дал бы верный ответ на обеих и выжил бы.
+            bool ok = atTwo.Count == 1 && atTwo[0].Kind == "expertise" && atTwo[0].Text.Contains("2 навыках")
+                   && atNine.Count == 1 && atNine[0].Kind == "expertise" && atNine[0].Text.Contains("3 навыках")
+                   && atTen.Count == 0;
+            if (!ok) Debug.LogError("FAIL две выдачи компетентности: "
+                                  + $"на 2-м [{string.Join(";", atTwo.Select(p => p.Kind + ":" + p.Text))}], "
+                                  + $"на 9-м [{string.Join(";", atNine.Select(p => p.Kind + ":" + p.Text))}], "
+                                  + $"на 10-м [{string.Join(";", atTen.Select(p => p.Kind))}]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: повышение уровня — «в 1 навыке», а не «в 1 навыках»")]
+        public void SelfTestLevelUpExpertiseTextAgreesInNumber()
+        {
+            // Мутант — жёсткое «навыках» при любом числе. У Волшебника и Следопыта первая выдача
+            // ровно один навык, так что фраза видна игроку на поставляемых данных.
+            var rules = Fixtures.Rules();
+            var cls = new ClassDef { Id = "wizard", Name = "Волшебник", HitDie = "d6",
+                ExpertiseGrants = { new ExpertiseGrant { Level = 2, PickCount = 1 } } };
+            for (int lv = 1; lv <= 20; lv++) cls.Levels.Add(new ClassLevel { Level = lv });
+            rules.Classes.Add(cls);
+
+            var c = Fixtures.Character(); c.ClassId = "wizard"; c.Level = 1;
+            var atTwo = LevelPlanOps.LevelUp(c, rules);
+            bool ok = atTwo.Count == 1 && atTwo[0].Text.Contains("в 1 навыке")
+                   && !atTwo[0].Text.Contains("навыках");
+            if (!ok) Debug.LogError("FAIL согласование по числу: ["
+                                  + string.Join(";", atTwo.Select(p => p.Text)) + "]");
             Done(ok);
         }
 

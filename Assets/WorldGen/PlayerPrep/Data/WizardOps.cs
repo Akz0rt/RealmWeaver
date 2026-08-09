@@ -236,7 +236,7 @@ namespace WorldGen.PlayerPrep.Data
             if (gear.Count > 0)
                 losses.Add($"Снаряжение: {string.Join(", ", gear.ToArray())} — набор соберётся заново "
                            + $"под класс «{next.Name}»");
-            if (file.ExpertiseIds.Count > 0 && next.ExpertiseLevel == 0)
+            if (file.ExpertiseIds.Count > 0 && !next.HasExpertise())
                 losses.Add("Компетентность — у нового класса её нет");
             else
             {
@@ -285,7 +285,7 @@ namespace WorldGen.PlayerPrep.Data
             var lost = new HashSet<string>(SkillsLostTo(file, next).Select(l => l.Id));
             file.SkillIds.RemoveAll(lost.Contains);
 
-            if (next.ExpertiseLevel == 0) file.ExpertiseIds.Clear();
+            if (!next.HasExpertise()) file.ExpertiseIds.Clear();
             // Два условия, а не одно: компетентность держится на владении навыком (давний инвариант
             // «ExpertiseIds ⊆ SkillIds») И на разрешении класса брать её именно в этом навыке
             // (ExpertiseChoices). У Волшебника, например, Проницательность в списке навыков есть, а

@@ -492,6 +492,44 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: справочник — кривые выдачи компетентности ловятся")]
+        public void SelfTestExpertiseGrantsChecked()
+        {
+            // МУТАНТ №1 (он же прежняя проверка, которую нельзя было потерять при переходе на
+            // список): выдача есть, а брать нечего.
+            var empty = Minimal();
+            empty.Classes[0].ExpertiseGrants = new List<ExpertiseGrant>
+                { new ExpertiseGrant { Level = 1, PickCount = 0 } };
+            bool loudOnNothingToPick = RulesIntegrity.Check(empty).Any(e => e.Contains("брать нечего"));
+
+            // МУТАНТ №2: уровень вне 1–20 — выдача, до которой не дорасти.
+            var far = Minimal();
+            far.Classes[0].ExpertiseGrants = new List<ExpertiseGrant>
+                { new ExpertiseGrant { Level = 21, PickCount = 2 } };
+            bool loudOnFarLevel = RulesIntegrity.Check(far).Any(e => e.Contains("вне 1–20"));
+
+            // МУТАНТ №3: ДВЕ ВЫДАЧИ НА ОДНОМ УРОВНЕ. Беда, которой у одной пары «уровень + сколько»
+            // быть не могло: число открытых навыков — сумма по всем выдачам, поэтому скопированная
+            // строка молча удваивает его, и справочник остаётся зелёным.
+            var twice = Minimal();
+            twice.Classes[0].ExpertiseGrants = new List<ExpertiseGrant>
+                { new ExpertiseGrant { Level = 6, PickCount = 2 }, new ExpertiseGrant { Level = 6, PickCount = 2 } };
+            bool loudOnDoubleLevel = RulesIntegrity.Check(twice).Any(e => e.Contains("на уровне 6 2 раза"));
+
+            // МУТАНТ №4: «две выдачи — всегда ошибка». Так устроены Плут, Бард и Следопыт, и
+            // запрет сломал бы поставляемые данные.
+            var legit = Minimal();
+            legit.Classes[0].ExpertiseGrants = new List<ExpertiseGrant>
+                { new ExpertiseGrant { Level = 2, PickCount = 2 }, new ExpertiseGrant { Level = 9, PickCount = 2 } };
+            bool quietOnTwoGrants = !RulesIntegrity.Check(legit).Any(e => e.Contains("компетентност"));
+
+            bool ok = loudOnNothingToPick && loudOnFarLevel && loudOnDoubleLevel && quietOnTwoGrants;
+            if (!ok) Debug.LogError($"FAIL выдачи компетентности: брать нечего = {loudOnNothingToPick}, "
+                                  + $"уровень 21 = {loudOnFarLevel}, дубль уровня = {loudOnDoubleLevel}, "
+                                  + $"две законные выдачи молча = {quietOnTwoGrants}");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: справочник — компетентность в навыке, которого класс не даёт, ловится")]
         public void SelfTestExpertiseChoiceOutsideSkillChoicesCaught()
         {

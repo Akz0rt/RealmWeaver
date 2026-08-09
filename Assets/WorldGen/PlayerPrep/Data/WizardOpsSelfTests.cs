@@ -269,7 +269,7 @@ namespace WorldGen.PlayerPrep.Data
         public void SelfTestClassChangeWithNothingLostIsSilent()
         {
             // Страж от ложных срабатываний. Убивает мутантов «строка про подкласс всегда»,
-            // «строка про компетентность без проверки next.ExpertiseLevel == 0», «все навыки теряются».
+            // «строка про компетентность без проверки !next.HasExpertise()», «все навыки теряются».
             var rules = KeeperRules(out var c);
             bool hasExpertise = c.ExpertiseIds.Count > 0;
             var losses = WizardOps.DescribeClassChange(c, rules, "keeper");
@@ -286,7 +286,7 @@ namespace WorldGen.PlayerPrep.Data
             // потерю компетентности тому, у кого её нет.
             var rules = KeeperRules(out var c);
             var plain = rules.Classes.First(x => x.Id == "keeper");
-            plain.ExpertiseLevel = 0;                 // у нового класса компетентности нет…
+            plain.ExpertiseGrants.Clear();            // у нового класса компетентности нет…
             c.ExpertiseIds.Clear();                   // …но и терять нечего
 
             var losses = WizardOps.DescribeClassChange(c, rules, "keeper");
@@ -339,7 +339,7 @@ namespace WorldGen.PlayerPrep.Data
             var rules = Fixtures.Rules();
             rules.Classes.Add(new ClassDef { Id = "shadow", Name = "Тень", HitDie = "d8",
                 SkillChoices = { "stealth" }, SkillPickCount = 1,
-                ExpertiseLevel = 1, ExpertisePickCount = 1 });
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } } });
 
             var c = Fixtures.Character();
             c.ExpertiseIds.Clear();
@@ -371,7 +371,7 @@ namespace WorldGen.PlayerPrep.Data
             var rules = Fixtures.Rules();
             rules.Classes.Add(new ClassDef { Id = "scholar", Name = "Учёный", HitDie = "d6",
                 SkillChoices = { "stealth", "arcana" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1,
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } },
                 ExpertiseChoices = { "arcana" } });          // компетентность только в Магии
 
             var c = Fixtures.Character();                     // навыки: скрытность, магия
@@ -808,7 +808,8 @@ namespace WorldGen.PlayerPrep.Data
             var rules = Fixtures.Rules();
             var fighter = new ClassDef { Id = "fighter", Name = "Воин", HitDie = "d10",
                 SkillChoices = { "stealth", "arcana" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1, StartingEquipment = { "chain" } };
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } },
+                StartingEquipment = { "chain" } };
             for (int lv = 1; lv <= 20; lv++)
                 fighter.Levels.Add(new ClassLevel { Level = lv, Choice = lv == 4 || lv == 8 ? "asi" : null });
             rules.Classes.Add(fighter);
@@ -943,7 +944,7 @@ namespace WorldGen.PlayerPrep.Data
             var rules = Fixtures.Rules();
             var keeper = new ClassDef { Id = "keeper", Name = "Хранитель", HitDie = "d8",
                 SkillChoices = { "stealth", "arcana", "athletics" }, SkillPickCount = 2,
-                ExpertiseLevel = 1, ExpertisePickCount = 1,
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } },
                 StartingEquipment = { "leather" } };
             for (int lv = 1; lv <= 20; lv++)
                 keeper.Levels.Add(new ClassLevel

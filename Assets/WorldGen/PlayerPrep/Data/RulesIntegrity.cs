@@ -53,9 +53,6 @@ namespace WorldGen.PlayerPrep.Data
                     if (!itemIds.Contains(it)) errors.Add($"класс {c.Id}: предмет {it} отсутствует в Items");
                 foreach (var l in c.Levels.Where(l => l.SpellSlots != null && l.SpellSlots.Length != 9))
                     errors.Add($"класс {c.Id}, уровень {l.Level}: в таблице слотов {l.SpellSlots.Length} чисел вместо 9");
-                if (c.ExpertiseLevel > 0 && c.ExpertisePickCount <= 0)
-                    errors.Add($"класс {c.Id}: компетентность объявлена на уровне {c.ExpertiseLevel}, но брать нечего");
-
                 // Опечатка в Choice («ASI», «asi ») молча означала бы «выбора нет» — целый уровень
                 // повышения характеристик исчез бы из данных, а гейт остался зелёным.
                 foreach (var l in c.Levels.Where(l => l.Choice != null
@@ -111,6 +108,7 @@ namespace WorldGen.PlayerPrep.Data
                 CheckClassPactMagicSlots(c, errors);
                 CheckClassSkillPickCount(c, errors);
                 CheckClassExpertiseChoices(c, errors);
+                CheckClassExpertiseGrants(c, errors);
                 CheckClassSubclassLevels(c, errors);
                 CheckClassFeatureIdsUnique(c, errors);
             }
@@ -293,6 +291,32 @@ namespace WorldGen.PlayerPrep.Data
             else if (c.SkillPickCount > c.SkillChoices.Count)
                 errors.Add($"класс {c.Id}: выбрать нужно {c.SkillPickCount} навыков, "
                          + $"а в списке их {c.SkillChoices.Count}");
+        }
+
+        /// <summary>Выдачи компетентности. Три беды, каждая из которых НИЧЕГО НЕ РОНЯЕТ:
+        ///   • «брать нечего» (PickCount ≤ 0) — уровень объявлен, а навыков ноль; прежняя проверка
+        ///     ловила ровно это, и терять её при переходе на список нельзя;
+        ///   • уровень вне 1–20 — выдача, до которой персонаж не дорастёт никогда либо, при нуле и
+        ///     минусе, открытая с самого начала вопреки данным;
+        ///   • ДВЕ ВЫДАЧИ НА ОДНОМ УРОВНЕ — новая беда, которой у одной пары «уровень + сколько»
+        ///     быть не могло: сумма считается по всем выдачам, поэтому скопированная строка молча
+        ///     удваивает число навыков.</summary>
+        static void CheckClassExpertiseGrants(ClassDef c, List<string> errors)
+        {
+            if (c.ExpertiseGrants == null) return;       // «: null» из JSON — это «нет выдач»
+            foreach (var g in c.ExpertiseGrants)
+            {
+                if (g == null) { errors.Add($"класс {c.Id}: пустая запись в выдачах компетентности"); continue; }
+                if (g.PickCount <= 0)
+                    errors.Add($"класс {c.Id}: компетентность объявлена на уровне {g.Level}, "
+                             + "но брать нечего");
+                if (g.Level < 1 || g.Level > 20)
+                    errors.Add($"класс {c.Id}: компетентность выдаётся на уровне {g.Level} — вне 1–20");
+            }
+            foreach (var group in c.ExpertiseGrants.Where(g => g != null)
+                                   .GroupBy(g => g.Level).Where(g => g.Count() > 1))
+                errors.Add($"класс {c.Id}: компетентность выдаётся на уровне {group.Key} "
+                         + $"{group.Count()} раза");
         }
 
         /// <summary>Список навыков, из которых класс даёт компетентность, — ПОДМНОЖЕСТВО его же

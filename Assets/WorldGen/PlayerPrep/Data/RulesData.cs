@@ -50,8 +50,19 @@ namespace WorldGen.PlayerPrep.Data
         public int SkillPickCount;
         public List<string> StartingEquipment = new List<string>();
         public string UnarmoredDefenseAbility;              // null; "con" у Варвара
-        public int ExpertiseLevel;                          // 0 = нет; 1 у Плута
-        public int ExpertisePickCount;                      // 2 у Плута
+        /// <summary>КОГДА и СКОЛЬКО раз класс даёт компетентность. Список, а не одна пара
+        /// «уровень + сколько», потому что по правилам 2024 компетентность приходит ДВАЖДЫ: Плут
+        /// на 1 и 6, Бард на 2 и 9, Следопыт на 2 и 9.
+        ///
+        /// Пока пара была одна, вторая выдача жила только в тексте умения. Бард 9 уровня должен
+        /// иметь компетентность в четырёх навыках; приложение давало отметить два, кнопки
+        /// остальных гасило, а «Чего не хватает» считало «2 из 2» и молчало. Игрок читал на своём
+        /// же листе текст умения, обещающий ещё два навыка, и вписать их было некуда.
+        ///
+        /// Сколько навыков ОТКРЫТО персонажу — сумма PickCount по всем выдачам, чей Level не выше
+        /// его уровня (ExpertisePicksAt). Пустой список значит «компетентности у класса нет».</summary>
+        public List<ExpertiseGrant> ExpertiseGrants = new List<ExpertiseGrant>();
+
         /// <summary>Из КАКИХ навыков берётся компетентность. ПУСТО — «из любого, которым персонаж
         /// владеет», и это самый частый случай: Плут, Бард и Следопыт по правилам 2024 выбирают из
         /// своих владений без всяких ограничений.
@@ -80,6 +91,41 @@ namespace WorldGen.PlayerPrep.Data
             var allowed = ExpertiseChoices;
             return allowed == null || allowed.Count == 0 || allowed.Contains(skillId);
         }
+
+        /// <summary>Даёт ли класс компетентность вообще. Отдельный вопрос от «сколько открыто
+        /// сейчас»: Бард 1 уровня компетентности ещё не имеет, но класс её даёт, и снимать её при
+        /// смене класса на Барда было бы неправильно.</summary>
+        public bool HasExpertise()
+        {
+            return ExpertiseGrants != null && ExpertiseGrants.Count > 0;
+        }
+
+        /// <summary>Сколько навыков компетентности ОТКРЫТО персонажу такого-то уровня: сумма по
+        /// всем выдачам, чей уровень уже взят. Бард 2 уровня — два, Бард 9 — четыре.
+        ///
+        /// Стражи от null стоят здесь, а не у семерых зовущих (лист, мастер трижды, план,
+        /// целостность, смена класса): чужой справочник с «"ExpertiseGrants": null» иначе ронял бы
+        /// экран, а забытая проверка в одном из семи мест видна не была бы.</summary>
+        public int ExpertisePicksAt(int level)
+        {
+            if (ExpertiseGrants == null) return 0;
+            int total = 0;
+            foreach (var g in ExpertiseGrants)
+                if (g != null && g.Level <= level) total += g.PickCount;
+            return total;
+        }
+
+        /// <summary>Сколько компетентности приходит РОВНО на этом уровне — для панели «что
+        /// предстоит выбрать» при повышении. Не то же, что ExpertisePicksAt: там накопленное
+        /// с начала, здесь прибавка одного уровня.</summary>
+        public int ExpertisePicksGrantedAt(int level)
+        {
+            if (ExpertiseGrants == null) return 0;
+            int total = 0;
+            foreach (var g in ExpertiseGrants)
+                if (g != null && g.Level == level) total += g.PickCount;
+            return total;
+        }
         /// <summary>Магия договора Колдуна. Его ячейки живут не по общей таблице: их мало, все они
         /// ОДНОГО круга, и круг этот с уровнем переезжает выше — на 1-м уровне ячейка 1 круга, на
         /// 3-м две ячейки 2 круга, и так далее. В девяти числах SpellSlots это выражается честно
@@ -97,6 +143,13 @@ namespace WorldGen.PlayerPrep.Data
         public bool PactMagic;
         public List<ClassLevel> Levels = new List<ClassLevel>();   // ровно 1..20
         public List<SubclassDef> Subclasses = new List<SubclassDef>();
+    }
+
+    /// <summary>Одна выдача компетентности: на каком уровне и сколько навыков разом.</summary>
+    public class ExpertiseGrant
+    {
+        public int Level;
+        public int PickCount;
     }
 
     /// <summary>Подкласс. В SRD 5.2 у каждого класса ровно один, но список — потому что своя

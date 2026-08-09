@@ -14,14 +14,26 @@ namespace WorldGen.PlayerPrep.Data
             var proficient = new HashSet<string>(file.SkillIds);
             if (bg != null) foreach (var s in bg.SkillIds) proficient.Add(s);
 
-            bool expertiseUnlocked = cls != null && cls.ExpertiseLevel > 0 && level >= cls.ExpertiseLevel;
+            // СКОЛЬКО КОМПЕТЕНТНОСТИ ОТКРЫТО — считается ПРИ ЧТЕНИИ, по нынешнему уровню, а не по
+            // тому, что записано в файле. Компетентность приходит дважды (Плут на 1 и 6, Бард и
+            // Следопыт на 2 и 9), а CharacterFile.ExpertiseIds — плоский список без уровней, и
+            // остаётся плоским нарочно: Бард, взявший четыре навыка на 9 уровне и опустившийся до
+            // 8-го, сохраняет в файле все четыре и снова получит их, поднявшись обратно.
+            // Проверять правило в момент ЗАПИСИ бессмысленно, когда запись не последняя, — тем же
+            // приёмом устроен потолок характеристик.
+            int expertiseAllowed = cls != null ? cls.ExpertisePicksAt(level) : 0;
+
             // ФИЛЬТР ПРИ ЧТЕНИИ, а не только на экране мастера. Класс вправе сузить, из каких
             // навыков берётся компетентность (ClassDef.ExpertiseChoices), и сузить его список
             // задним числом — значит оставить в старых файлах компетентность, которую экран больше
             // не рисует: снять её было бы нечем, а лист продолжал бы удваивать мастерство.
-            var chosenExpertise = expertiseUnlocked
-                ? file.ExpertiseIds.Where(cls.AllowsExpertiseIn).ToList()
-                : new List<string>();
+            //
+            // Лишнее СВЕРХ открытого отрезается по порядку в ExpertiseIds: правило детерминированное
+            // нарочно — «какой навык важнее» программе не по силам, а «первые сколько-то» одинаково
+            // считают и лист, и мастер.
+            var chosenExpertise = cls == null
+                ? new List<string>()
+                : file.ExpertiseIds.Where(cls.AllowsExpertiseIn).Take(expertiseAllowed).ToList();
             var expertise = new HashSet<string>(chosenExpertise);
 
             foreach (var skill in rules.Skills)
@@ -156,8 +168,9 @@ namespace WorldGen.PlayerPrep.Data
                 // Считаются ТОЛЬКО те, что класс даёт выбрать: компетентность, которую он больше не
                 // разрешает, бонуса не даёт (см. фильтр выше), и молчать о ней здесь значило бы
                 // оставить игрока с листом, где недостающего не видно, а бонуса нет.
-                if (expertiseUnlocked && chosenExpertise.Count < cls.ExpertisePickCount)
-                    d.Missing.Add($"Компетентность выбрана в {chosenExpertise.Count} навыках из {cls.ExpertisePickCount}");
+                if (expertiseAllowed > 0 && chosenExpertise.Count < expertiseAllowed)
+                    d.Missing.Add($"Компетентность выбрана в {chosenExpertise.Count} "
+                                + $"{SkillsInNumber(chosenExpertise.Count)} из {expertiseAllowed}");
                 if (subclassUnlocked && string.IsNullOrEmpty(file.SubclassId))
                     d.Missing.Add("Подкласс не выбран");
 

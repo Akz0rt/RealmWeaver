@@ -5,6 +5,41 @@ namespace WorldGen.PlayerPrep.Data
 {
     public class SheetMathSelfTests : MonoBehaviour
     {
+        [ContextMenu("Self-Test: слова — «1 навык», «2 навыка», «5 навыков»")]
+        public void SelfTestSkillWordAgreesWithNumber()
+        {
+            // Правило живёт в Data, а зовёт его СЛОЙ РИСОВАНИЯ (WizardView: «Компетентность:
+            // 2 навыка с 2 уровня»), которого харнесс не видит. Без этой проверки мутант «всегда
+            // навыков» пережил бы весь прогон — что и случилось при первом заходе.
+            //
+            // МУТАНТЫ, которых убивает каждая строка:
+            //   • «всегда навыков» — падает на 1 и 2;
+            //   • «2–4 → навыков» — падает на 2;
+            //   • «считать по последней цифре без исключения на 11–14» — падает на 11 и 21
+            //     («11 навык» вместо «11 навыков»).
+            string s(int n) => $"{n} {SheetMath.SkillsAfterNumber(n)}";
+            bool ok = s(1) == "1 навык" && s(2) == "2 навыка" && s(4) == "4 навыка"
+                   && s(5) == "5 навыков" && s(0) == "0 навыков"
+                   && s(11) == "11 навыков" && s(14) == "14 навыков"
+                   && s(21) == "21 навык" && s(22) == "22 навыка";
+            if (!ok) Debug.LogError("FAIL слово после числа: "
+                                  + string.Join(", ", new[] { 0, 1, 2, 4, 5, 11, 14, 21, 22 }.Select(s)));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: слова — «в 1 навыке», «в 2 навыках»")]
+        public void SelfTestSkillWordAfterPrepositionAgreesWithNumber()
+        {
+            // Падеж ДРУГОЙ, чем у SkillsAfterNumber: у именительного три формы, у предложного две.
+            // Мутант «одна функция на оба случая» дал бы «в 2 навыка».
+            string s(int n) => $"в {n} {SheetMath.SkillsInNumber(n)}";
+            bool ok = s(1) == "в 1 навыке" && s(2) == "в 2 навыках" && s(5) == "в 5 навыках"
+                   && s(0) == "в 0 навыках" && s(11) == "в 11 навыках" && s(21) == "в 21 навыке";
+            if (!ok) Debug.LogError("FAIL слово после предлога: "
+                                  + string.Join(", ", new[] { 0, 1, 2, 5, 11, 21 }.Select(s)));
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: лист — прибавки складываются с базой")]
         public void SelfTestBumpsAddToBase()
         {
