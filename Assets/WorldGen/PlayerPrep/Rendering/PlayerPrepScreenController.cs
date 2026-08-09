@@ -70,6 +70,10 @@ namespace WorldGen.PlayerPrep.Rendering
         RectTransform contentRt;
         RulesData rules;        // null = справочник не загрузился, работать не с чем
         string rulesError;
+        // Справочник разобрался, но сторож нашёл в нём беды. Отдельное поле, а не rulesError: тот
+        // означает «работать не с чем» и читается только веткой rules == null, куда предупреждение
+        // никогда бы не попало.
+        System.Collections.Generic.List<string> rulesProblems = new System.Collections.Generic.List<string>();
 
         void Awake()
         {
@@ -124,12 +128,32 @@ namespace WorldGen.PlayerPrep.Rendering
 
         /// <summary>Справочник читается ОДИН раз и через try: SheetRulesSource.Rules не возвращает
         /// null, а бросает (файла нет / JSON не разобрался). Падать всей сценой из-за этого нельзя —
-        /// игрок должен увидеть, что случилось.</summary>
+        /// игрок должен увидеть, что случилось.
+        ///
+        /// РАЗОБРАЛСЯ ≠ ЦЕЛ, и ровно здесь зовётся сторож RulesIntegrity.Check. До этого его знали
+        /// только самопроверки, то есть стерёг он лишь тот справочник, что уже прошёл сборку, — а
+        /// вся его ценность в обратном: справочник запечён в ресурсы и правится БЕЗ пересборки, и
+        /// опечатка вроде «wisdom» вместо «wis» проходила молча, портя КД (а до соседней починки —
+        /// и вовсе роняя лист).
+        ///
+        /// НАЙДЕННОЕ НЕ ЗАПРЕЩАЕТ РАБОТАТЬ, и это выбор, а не недоделка. Отказ означал бы, что одна
+        /// описка в классе, которым игрок не играет, отнимает у него ВСЕ уже созданные листы; а
+        /// править справочник, не видя, что получается, нельзя вовсе — приложение нужно открытым.
+        /// Единственная беда, которая раньше была смертельной (характеристика вне шести → падение
+        /// Compute), смертельной быть перестала в той же ветке. Поэтому — работаем и кричим:
+        /// список ошибок стоит на экране списка листов, целиком, и уходит только вместе с ними.
+        ///
+        /// Check зовётся ВНУТРИ того же try: справочник, разобравшийся наполовину («"Skills": null»),
+        /// способен уронить самого сторожа, и тогда защита сломала бы экран, который защищает.</summary>
         void LoadRules()
         {
             try
             {
                 rules = SheetRulesSource.Rules;
+                rulesProblems = RulesIntegrity.Check(rules);
+                if (rulesProblems.Count > 0)
+                    Debug.LogError($"[PlayerPrep] сторож нашёл в справочнике правил {rulesProblems.Count}: \n"
+                                 + string.Join("\n", rulesProblems.ToArray()));
             }
             catch (System.Exception ex)
             {
@@ -332,6 +356,35 @@ namespace WorldGen.PlayerPrep.Rendering
             Sheet = SheetView.Build(contentRt, file);
         }
 
+        /// <summary>Что сторож нашёл в справочнике — НАД кнопками, чтобы попалось на глаза раньше, чем
+        /// игрок откроет лист, посчитанный по кривым данным. Рисуется на КАЖДОМ показе списка (список
+        /// строится заново после каждого возврата), а не один раз при запуске: увиденное однажды
+        /// предупреждение не перестаёт быть верным.
+        ///
+        /// Показываются первые несколько бед, остальные — числом: список ошибок бывает длинным (пустой
+        /// раздел «Classes» даёт их десятками), а этот экран не прокручивается, и длинный текст просто
+        /// накрыл бы собою кнопки — подписи здесь не режутся (verticalOverflow = Overflow). Целиком
+        /// они всегда в журнале Unity.</summary>
+        void ShowRulesProblems(Transform column)
+        {
+            if (rulesProblems == null || rulesProblems.Count == 0) return;
+            const int shown = 6;
+            var text = new StringBuilder("Справочник правил разобрался, но в нём ")
+                .Append(rulesProblems.Count)
+                .Append(rulesProblems.Count == 1 ? " беда" : " бед(ы)")
+                .Append(". Листы считаются по нему как есть — числа могут быть неверными:");
+            for (int i = 0; i < rulesProblems.Count && i < shown; i++)
+                text.Append("\n • ").Append(rulesProblems[i]);
+            if (rulesProblems.Count > shown)
+                text.Append("\n • …и ещё ").Append(rulesProblems.Count - shown)
+                    .Append(" — весь список в журнале.");
+
+            var label = UiKit.Label(column, text.ToString(), 15);
+            label.color = new Color(0.90f, 0.55f, 0.35f);
+            int lines = System.Math.Min(rulesProblems.Count, shown + 1) + 2;
+            label.gameObject.AddComponent<LayoutElement>().preferredHeight = lines * 21f;
+        }
+
         void ShowList()
         {
             var column = NewRect(contentRt, "SheetList", typeof(VerticalLayoutGroup));
@@ -354,6 +407,8 @@ namespace WorldGen.PlayerPrep.Rendering
                 err.gameObject.AddComponent<LayoutElement>().preferredHeight = 80f;
                 return;
             }
+
+            ShowRulesProblems(column);
 
             var buttons = NewRect(column, "Actions", typeof(HorizontalLayoutGroup));
             buttons.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
