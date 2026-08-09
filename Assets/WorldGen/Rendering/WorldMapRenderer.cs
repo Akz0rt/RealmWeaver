@@ -82,6 +82,8 @@ namespace WorldGen.Rendering
         [Header("Биом")]
         [Tooltip("Порог elevation, ниже которого клетка считается пляжем.")]
         public float beachElevationThreshold = 0.1f;
+        [Tooltip("Насколько высота остужает температуру ПРИ ГЕНЕРАЦИИ мира. 0.4 ≈ два температурных уровня из пяти на пике. На кисть не влияет: нарисованный биом всегда тот, что выбран.")]
+        public float elevationTempDrop = 0.4f;
 
         [Header("Температура (point-based эпицентры)")]
         [Tooltip("Количество случайных эпицентров температуры на карте.")]
@@ -3094,7 +3096,8 @@ namespace WorldGen.Rendering
                 NumberOfTemperatureEpicenters = numberOfTemperatureEpicenters,
                 EpicenterMinRadius = epicenterMinRadius,
                 EpicenterMaxRadius = epicenterMaxRadius,
-                BaseTemperature = baseTemperature
+                BaseTemperature = baseTemperature,
+                ElevationTempDrop = elevationTempDrop
             };
         }
 

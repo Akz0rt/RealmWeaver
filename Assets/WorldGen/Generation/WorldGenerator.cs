@@ -94,9 +94,11 @@ namespace WorldGen.Generation
         public float EpicenterMinRadius = 150f;
         public float EpicenterMaxRadius = 300f;
         public float BaseTemperature = 0.5f;
-        // Высотного охлаждения биома (ElevationTempDrop) больше нет: биом зависит только от
-        // температуры и влажности, чтобы нарисованный кистью биом и получался на выходе.
-        // Ключ ElevationTempDrop в старых .dndproj просто игнорируется при загрузке.
+        /// <summary>Сколько температуры снимает высота при ГЕНЕРАЦИИ мира: 0.4 ≈ два температурных
+        /// уровня из пяти на пике. Вычитается прямо из cell.Temperature (см. TemperatureField), а не
+        /// из «эффективной» температуры при классификации биома — поэтому горы холодные, а кисть
+        /// биома всё равно даёт ровно тот биом, который выбрали. 0 — рельеф на климат не влияет.</summary>
+        public float ElevationTempDrop = 0.4f;
 
         // --- Влажность: point-based эпицентры (аддитивная поправка к distance-based moisture) ---
 
@@ -284,8 +286,10 @@ namespace WorldGen.Generation
         /// </summary>
         public static void RegenerateTemperature(List<VoronoiCell> cells, GenerationParams p, List<TemperatureEpicenter> epicenters)
         {
-            // Региональная температура (эпицентры). Охлаждение с высотой теперь в BiomeClassifier.
-            TemperatureField.ApplyTemperature(cells, epicenters, p.BaseTemperature);
+            // Региональная температура (эпицентры) + охлаждение с высотой: горы холодные ИМЕННО
+            // здесь, на генерации. Классификация биома высоту не смотрит вовсе — иначе кисть не
+            // могла бы дать выбранный биом на горе (см. TemperatureField).
+            TemperatureField.ApplyTemperature(cells, epicenters, p.BaseTemperature, p.ElevationTempDrop);
         }
 
         /// <summary>Генерирует N эпицентров со случайной позицией/радиусом/поправкой влажности в заданных пользователем границах.</summary>

@@ -139,6 +139,45 @@ namespace WorldGen.Generation
             Debug.Log(ok ? "Self-Test Temperature Field: PASS" : "Self-Test Temperature Field: FAIL");
         }
 
+        // Граница «генерация остужает горы — правка не остужает» целиком. Валит сразу двух мутантов,
+        // тянущих в разные стороны:
+        //   • убрать охлаждение из TemperatureField → пик сгенерируется тёплым (Savanna вместо Forest);
+        //   • вернуть охлаждение в BiomeClassifier → нарисованная на пике Пустыня превратится в Степь,
+        //     причём последняя проверка ловит именно то, как это всплывало у ДМ: не сразу, а после
+        //     переклассификации, которая идёт при каждом ОТКРЫТИИ проекта.
+        [ContextMenu("Self-Test: Elevation Cools Generation Only")]
+        public void SelfTestElevationCoolsGenerationOnly()
+        {
+            bool ok = true;
+            var eps = new System.Collections.Generic.List<TemperatureEpicenter>
+                { new TemperatureEpicenter(new System.Numerics.Vector2(0f, 0f), 0.9f, 100f) };
+            // Обе клетки в одной точке карты — региональная температура у них одинаковая, и
+            // разойтись они могут ТОЛЬКО из-за высоты.
+            var low  = new VoronoiCell(1, new System.Numerics.Vector2(0f, 0f)) { Height = 0.0f, Humidity = 0.5f };
+            var peak = new VoronoiCell(2, new System.Numerics.Vector2(0f, 0f)) { Height = 1.0f, Humidity = 0.5f };
+            var cells = new System.Collections.Generic.List<VoronoiCell> { low, peak };
+
+            TemperatureField.ApplyTemperature(cells, eps, baseTemperature: 0.5f, elevationTempDrop: 0.4f);
+            if (!(low.Temperature > peak.Temperature + 0.3f))
+            { Debug.LogError($"FAIL cooling: низина {low.Temperature:F2}, пик {peak.Temperature:F2} — генерация обязана остужать высоту в САМОЙ температуре клетки"); ok = false; }
+
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            if (low.Biome != Biome.Savanna || peak.Biome != Biome.Forest)
+            { Debug.LogError($"FAIL cooling: сгенерировалось {low.Biome} внизу и {peak.Biome} на пике, ждали Savanna и Forest (пик на два уровня холоднее)"); ok = false; }
+
+            // А теперь ПРАВКА: красим пик пустыней. Высота 1.0 не должна ей мешать.
+            CellOverrideService.SetClimateLevels(peak, 4, 0, 0f);
+            if (peak.Biome != Biome.Desert)
+            { Debug.LogError($"FAIL cooling: кисть дала {peak.Biome} вместо Desert — высота не смеет править нарисованный биом"); ok = false; }
+
+            // И переживает переклассификацию — тот самый проход, что идёт при открытии проекта.
+            CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
+            if (peak.Biome != Biome.Desert)
+            { Debug.LogError($"FAIL cooling: после переклассификации нарисованный биом стал {peak.Biome} — ровно та поломка, из-за которой охлаждение и убрали из классификатора"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Elevation Cooling: PASS" : "Self-Test Elevation Cooling: FAIL");
+        }
+
         [ContextMenu("Self-Test: Level Helpers")]
         public void SelfTestLevelHelpers()
         {
