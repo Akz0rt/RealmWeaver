@@ -31,7 +31,10 @@ namespace WorldGen.Persistence
                 {
                     Id = 4,
                     Width = 9.5f,
-                    MouthIsLake = true,
+                    // Устья РАЗНЫЕ: перепутанные местами при сохранении, они на симметричной
+                    // заготовке остались бы незамеченными, а на карте развернули бы градиент.
+                    StartMouth = RiverMouth.Sea,
+                    EndMouth = RiverMouth.Lake,
                     Points = new List<System.Numerics.Vector2> { new(5f, 5f), new(20f, 30f), new(40f, 35f) }
                 }
             };
@@ -52,8 +55,8 @@ namespace WorldGen.Persistence
                 { Debug.LogError("FAIL rivers: опорные точки русла не пережили сохранение — река открылась бы другой формы"); ok = false; }
                 if (Mathf.Abs(r.Width - 9.5f) > 0.001f)
                 { Debug.LogError($"FAIL rivers: ширина {r.Width}, ждали 9.5 — иначе река откроется не той толщины, что рисовали"); ok = false; }
-                if (!r.MouthIsLake)
-                { Debug.LogError("FAIL rivers: признак озёрного устья потерян — река откроется морского цвета рядом с озером"); ok = false; }
+                if (r.StartMouth != RiverMouth.Sea || r.EndMouth != RiverMouth.Lake)
+                { Debug.LogError($"FAIL rivers: устья открылись как {r.StartMouth}/{r.EndMouth}, ждали Sea/Lake — иначе река сменит цвет и скруглит не тот конец"); ok = false; }
             }
 
             // Файл ПРОШЛОГО формата (ключа Rivers нет вовсе) обязан открываться — просто без рек.
