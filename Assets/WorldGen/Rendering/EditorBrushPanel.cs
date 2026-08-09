@@ -183,12 +183,18 @@ namespace WorldGen.Rendering
         {
             if (sizeSlider == null || brushController == null) return;
             bool river = target == BrushTool.River;
+            // Запомнить ДО смены границ. Сужение диапазона (120 → 20 при переходе на реку) зажимает
+            // текущее значение слайдера и поднимает onValueChanged — а тот, глядя на уже
+            // переключённый инструмент, записал бы 20 в ширину реки. Ширина так «залипала» бы на
+            // максимуме после каждого захода в инструмент.
+            float want = river ? brushController.riverWidth : brushController.brushRadius;
+
             if (sizeLabel != null) sizeLabel.text = river ? "Ширина реки" : "Размер";
             sizeSlider.minValue = river ? 2f : 1f;
             sizeSlider.maxValue = river ? 20f : 120f;
             // Присвоение поднимет onValueChanged, а тот уже разложит значение в нужное поле
             // (см. колбэк слайдера: он смотрит на текущий инструмент).
-            sizeSlider.value = river ? brushController.riverWidth : brushController.brushRadius;
+            sizeSlider.value = Mathf.Clamp(want, sizeSlider.minValue, sizeSlider.maxValue);
         }
 
         void OnModeChanged(BrushMode mode)
