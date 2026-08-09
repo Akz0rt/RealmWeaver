@@ -34,7 +34,11 @@ namespace WorldGen.Rendering
             if (curve == null || curve.Count < 2 || width <= 0f) return mesh;
 
             int n = curve.Count;
-            float half = width * 0.5f;
+            // Сужение считаем ТЕМ ЖЕ правилом, что и маска (RiverPaintOps.HalfWidthAt): предпросмотр
+            // обязан показывать ту реку, которая появится на отпускании, а не ленту ровной ширины.
+            var arc = WorldGen.Generation.RiverPaintOps.ArcLengths(curve);
+            float total = arc[n - 1];
+            float halfAt(int i) => WorldGen.Generation.RiverPaintOps.HalfWidthAt(arc[i], total, width);
 
             var verts = new List<UnityEngine.Vector3>(n * 2 + CapSegments * 2 + 4);
             var colors = new List<UnityEngine.Color32>(verts.Capacity);
@@ -42,7 +46,7 @@ namespace WorldGen.Rendering
 
             for (int i = 0; i < n; i++)
             {
-                Vector2 offset = OffsetAt(curve, i, half);
+                Vector2 offset = OffsetAt(curve, i, halfAt(i));
                 var p = curve[i];
                 verts.Add(new UnityEngine.Vector3(p.X - offset.X, yHeight, p.Y - offset.Y)); colors.Add(color);
                 verts.Add(new UnityEngine.Vector3(p.X + offset.X, yHeight, p.Y + offset.Y)); colors.Add(color);
@@ -55,8 +59,8 @@ namespace WorldGen.Rendering
                 tris.Add(a + 1); tris.Add(b + 0); tris.Add(b + 1);
             }
 
-            AddCap(verts, colors, tris, curve[0], curve[1], half, yHeight, color);
-            AddCap(verts, colors, tris, curve[n - 1], curve[n - 2], half, yHeight, color);
+            AddCap(verts, colors, tris, curve[0], curve[1], halfAt(0), yHeight, color);
+            AddCap(verts, colors, tris, curve[n - 1], curve[n - 2], halfAt(n - 1), yHeight, color);
 
             mesh.indexFormat = verts.Count > 65000
                 ? UnityEngine.Rendering.IndexFormat.UInt32

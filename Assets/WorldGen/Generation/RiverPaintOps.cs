@@ -116,6 +116,40 @@ namespace WorldGen.Generation
             return Smooth(relaxed, subdivisions);
         }
 
+        /// <summary>Во сколько раз тело реки уже её концов. Ползунок ширины задаёт ширину У КОНЦОВ:
+        /// там русло раздаётся, чтобы устье не втыкалось в водоём ниткой, а свободный конец не
+        /// выглядел обрубленным волоском. Между ними река идёт тонкой — по прямой просьбе ДМ.</summary>
+        public const float BodyWidthFactor = 0.45f;
+
+        /// <summary>Полуширина русла на расстоянии distance от начала кривой длиной total.
+        /// Расширение занимает две ширины у каждого конца, но не больше трети реки — иначе у
+        /// короткого ручья расширения двух концов налезли бы друг на друга и тонкого тела не
+        /// осталось бы вовсе. Переход сглажен (плавный шаг): на линейном виден излом берега там,
+        /// где расширение кончилось.</summary>
+        public static float HalfWidthAt(float distance, float total, float width)
+        {
+            float half = width * 0.5f;
+            if (total <= 1e-5f) return half;
+
+            float ramp = Math.Min(width * 2f, total / 3f);
+            if (ramp <= 1e-5f) return half * BodyWidthFactor;
+
+            float t = Math.Clamp(Math.Min(distance, total - distance) / ramp, 0f, 1f);
+            t = t * t * (3f - 2f * t);
+            return half * (1f + (BodyWidthFactor - 1f) * t);
+        }
+
+        /// <summary>Длина по дуге до каждой точки ломаной (первая — ноль). По ней считается сужение
+        /// русла, и считать её обязаны одинаково маска и предпросмотр, иначе они разойдутся.</summary>
+        public static float[] ArcLengths(IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count == 0) return new float[0];
+            var result = new float[points.Count];
+            for (int i = 1; i < points.Count; i++)
+                result[i] = result[i - 1] + Vector2.Distance(points[i - 1], points[i]);
+            return result;
+        }
+
         /// <summary>Выбрасывает точки, стоящие ближе minSpacing к предыдущей оставленной. Концы
         /// сохраняются всегда: у них своё значение (устье, скругление).</summary>
         public static List<Vector2> Thin(IReadOnlyList<Vector2> points, float minSpacing)

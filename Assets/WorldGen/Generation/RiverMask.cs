@@ -45,8 +45,9 @@ namespace WorldGen.Generation
             if (mask == null || curve == null || curve.Count < 2) return;
             if (w <= 0 || h <= 0 || mapWidth <= 1e-5f || mapHeight <= 1e-5f || width <= 0f) return;
 
-            float half = width * 0.5f;
-            float halfSq = half * half;
+            // Русло не одной толщины: широкое у концов, тонкое в теле (RiverPaintOps.HalfWidthAt).
+            var arc = RiverPaintOps.ArcLengths(curve);
+            float total = arc[arc.Length - 1];
 
             int clipX0 = Math.Max(0, rectX);
             int clipY0 = Math.Max(0, rectY);
@@ -56,11 +57,14 @@ namespace WorldGen.Generation
             for (int s = 0; s < curve.Count - 1; s++)
             {
                 Vector2 a = curve[s], b = curve[s + 1];
+                float halfA = RiverPaintOps.HalfWidthAt(arc[s], total, width);
+                float halfB = RiverPaintOps.HalfWidthAt(arc[s + 1], total, width);
+                float halfMax = Math.Max(halfA, halfB);
 
-                int x0 = Math.Max(clipX0, PixelFloorX(Math.Min(a.X, b.X) - half, w, mapWidth));
-                int x1 = Math.Min(clipX1, PixelCeilX(Math.Max(a.X, b.X) + half, w, mapWidth));
-                int y0 = Math.Max(clipY0, PixelFloorX(Math.Min(a.Y, b.Y) - half, h, mapHeight));
-                int y1 = Math.Min(clipY1, PixelCeilX(Math.Max(a.Y, b.Y) + half, h, mapHeight));
+                int x0 = Math.Max(clipX0, PixelFloorX(Math.Min(a.X, b.X) - halfMax, w, mapWidth));
+                int x1 = Math.Min(clipX1, PixelCeilX(Math.Max(a.X, b.X) + halfMax, w, mapWidth));
+                int y0 = Math.Max(clipY0, PixelFloorX(Math.Min(a.Y, b.Y) - halfMax, h, mapHeight));
+                int y1 = Math.Min(clipY1, PixelCeilX(Math.Max(a.Y, b.Y) + halfMax, h, mapHeight));
 
                 for (int y = y0; y <= y1; y++)
                 {
@@ -68,7 +72,14 @@ namespace WorldGen.Generation
                     for (int x = x0; x <= x1; x++)
                     {
                         float px = (x + 0.5f) / w * mapWidth;
-                        if (DistanceToSegmentSq(a, b, new Vector2(px, py)) <= halfSq)
+                        // Полуширина берётся в ТОЙ ЖЕ точке отрезка, куда спроектировался пиксель, и
+                        // считается по её настоящему расстоянию вдоль русла, а не смешиванием
+                        // концов отрезка: у короткого мазка кривая бывает всего из двух точек, и
+                        // смешивание дало бы одну ширину на всю реку — сужение пропало бы совсем.
+                        float t = ProjectOnSegment(a, b, new Vector2(px, py), out float distSq);
+                        float halfHere = RiverPaintOps.HalfWidthAt(
+                            arc[s] + (arc[s + 1] - arc[s]) * t, total, width);
+                        if (distSq <= halfHere * halfHere)
                             mask[y * w + x] = true;
                     }
                 }
@@ -83,13 +94,16 @@ namespace WorldGen.Generation
         static int PixelCeilX(float world, int size, float mapSize)
             => (int)Math.Ceiling(world / mapSize * size - 0.5f);
 
-        static float DistanceToSegmentSq(Vector2 a, Vector2 b, Vector2 p)
+        /// <summary>Куда проектируется точка на отрезок: возвращает параметр [0,1] и заодно квадрат
+        /// расстояния до неё (одно вычисление вместо двух — на миллионах пикселей это заметно).</summary>
+        static float ProjectOnSegment(Vector2 a, Vector2 b, Vector2 p, out float distSq)
         {
             Vector2 ab = b - a;
             float lenSq = ab.LengthSquared();
-            if (lenSq < 1e-8f) return (p - a).LengthSquared();
+            if (lenSq < 1e-8f) { distSq = (p - a).LengthSquared(); return 0f; }
             float t = Math.Clamp(Vector2.Dot(p - a, ab) / lenSq, 0f, 1f);
-            return (p - (a + ab * t)).LengthSquared();
+            distSq = (p - (a + ab * t)).LengthSquared();
+            return t;
         }
     }
 }
