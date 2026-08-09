@@ -1013,7 +1013,23 @@ namespace WorldGen.PlayerPrep.Rendering
                 return;
             }
 
-            foreach (var skillId in file.SkillIds)
+            // Класс вправе сузить список (ClassDef.ExpertiseChoices): у Волшебника компетентность
+            // берётся из шести названных навыков, а Проницательность в их число не входит, хотя
+            // владеть ею класс даёт. Решает справочник, а не условие «если это Волшебник».
+            var eligible = file.SkillIds.Where(cls.AllowsExpertiseIn).ToList();
+            if (cls.ExpertiseChoices != null && cls.ExpertiseChoices.Count > 0)
+                AddLabel(content, "Этот класс даёт компетентность только в: "
+                                  + string.Join(", ", cls.ExpertiseChoices
+                                        .Select(id => rules.Skills.FirstOrDefault(s => s.Id == id)?.Name ?? id)
+                                        .ToArray()) + ".", 15, Muted, null);
+            if (eligible.Count == 0)
+            {
+                AddLabel(content, "Ни один из этих навыков ещё не взят — выберите такой выше.",
+                         16, Faint, null);
+                return;
+            }
+
+            foreach (var skillId in eligible)
             {
                 string id = skillId;
                 string name = rules.Skills.FirstOrDefault(s => s.Id == id)?.Name ?? id;

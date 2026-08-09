@@ -62,6 +62,52 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: навыки — компетентность вне списка класса не удваивает мастерство")]
+        public void SelfTestExpertiseOutsideClassChoicesDoesNotDouble()
+        {
+            // МУТАНТ №1: `AllowsExpertiseIn` всегда true (то есть ExpertiseChoices не читают вовсе).
+            // Тогда «скрытность» удвоится и бонус станет 8 вместо 5 — ровно тот дефект, ради
+            // которого поле заведено: Волшебник 2 уровня ставил компетентность на Проницательность
+            // и получал +4 там, где правила дают +2.
+            //
+            // МУТАНТ №2: фильтр стоит ТОЛЬКО в мастере, а лист считает по-старому. Здесь файл
+            // приходит уже с записанной компетентностью — так выглядит СТАРЫЙ сохранённый лист,
+            // сделанный до того, как класс сузил список. Экран такую строку больше не рисует, снять
+            // её нечем, и без фильтра при чтении она удваивала бы мастерство вечно.
+            //
+            // МУТАНТ №3 (в строке «Чего не хватает»): считать file.ExpertiseIds.Count вместо
+            // подходящих. Тогда лист молчал бы — компетентности нет, а сказать некому.
+            var rules = Fixtures.Rules();
+            rules.Classes[0].ExpertiseChoices.Add("arcana");   // только Магия, но НЕ Скрытность
+            var c = Fixtures.Character();                      // компетентность лежит в «скрытности»
+            var d = SheetMath.Compute(c, rules);
+            var st = d.Skills.First(s => s.SkillId == "stealth");
+            // ЛОВ +2, мастерство +3, владение есть, компетентности класс тут не даёт → 5, а не 8.
+            bool ok = st.Proficient && !st.Expertise && st.Bonus == 5
+                   && d.Missing.Any(m => m.Contains("Компетентность выбрана в 0"));
+            if (!ok) Debug.LogError($"FAIL компетентность вне списка класса: {st.Bonus} "
+                                  + $"комп={st.Expertise}, ждали 5/нет; чего не хватает: ["
+                                  + string.Join(" | ", d.Missing) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — пустой список класса значит «компетентность в любом навыке»")]
+        public void SelfTestEmptyExpertiseChoicesAllowAnySkill()
+        {
+            // ВТОРАЯ ПОЛОВИНА ТОГО ЖЕ И. Мутант: `AllowsExpertiseIn` без ветки «список пуст» —
+            // просто `ExpertiseChoices.Contains(skillId)`. Тогда у Плута, Барда и Следопыта, которые
+            // по правилам 2024 выбирают из своих владений без ограничений, компетентность исчезла бы
+            // целиком, а справочник остался бы зелёным: пустой список законен.
+            var rules = Fixtures.Rules();
+            bool listIsEmpty = rules.Classes[0].ExpertiseChoices.Count == 0;
+            var d = SheetMath.Compute(Fixtures.Character(), rules);
+            var st = d.Skills.First(s => s.SkillId == "stealth");
+            bool ok = listIsEmpty && st.Expertise && st.Bonus == 8;
+            if (!ok) Debug.LogError($"FAIL пустой список компетентности (пуст={listIsEmpty}): "
+                                  + $"{st.Bonus} комп={st.Expertise}, ждали 8/да");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: навыки — компетентность не действует ниже своего уровня")]
         public void SelfTestExpertiseIgnoredBelowItsLevel()
         {

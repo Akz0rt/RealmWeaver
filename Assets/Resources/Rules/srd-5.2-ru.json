@@ -376,6 +376,7 @@
       "StartingEquipment": ["leather", "dagger", "shortsword", "shortbow", "arrows", "quiver",
                             "thieves-tools", "burglars-pack"],
       "UnarmoredDefenseAbility": null, "ExpertiseLevel": 1, "ExpertisePickCount": 2,
+      "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": null, "Features": [
           { "Id": "expertise", "Name": "Компетентность",
@@ -623,6 +624,7 @@
       "SkillPickCount": 3,
       "StartingEquipment": ["leather", "dagger", "musical-instrument", "entertainers-pack"],
       "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 2,
+      "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "bardic-inspiration", "Name": "Вдохновение барда",
@@ -696,6 +698,7 @@
       "SkillPickCount": 2,
       "StartingEquipment": ["dagger", "quarterstaff", "robe", "spellbook", "scholars-pack"],
       "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 1,
+      "ExpertiseChoices": ["arcana", "history", "medicine", "nature", "investigation", "religion"],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "spellcasting", "Name": "Использование заклинаний",
@@ -1094,6 +1097,7 @@
       "StartingEquipment": ["studded-leather", "scimitar", "shortsword", "longbow", "arrows",
                             "quiver", "druidic-focus", "explorers-pack"],
       "UnarmoredDefenseAbility": null, "ExpertiseLevel": 2, "ExpertisePickCount": 1,
+      "ExpertiseChoices": [],
       "Levels": [
         { "Level": 1, "Choice": null, "SpellSlots": [2, 0, 0, 0, 0, 0, 0, 0, 0], "Features": [
           { "Id": "spellcasting", "Name": "Использование заклинаний",

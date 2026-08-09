@@ -492,6 +492,38 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: справочник — компетентность в навыке, которого класс не даёт, ловится")]
+        public void SelfTestExpertiseChoiceOutsideSkillChoicesCaught()
+        {
+            // МУТАНТ №1: проверки нет вовсе. Тогда «компетентность в Магии» у класса, который Магией
+            // владеть не даёт, лежала бы в данных молча: экран такую строку не покажет НИКОГДА
+            // (компетентность требует владения), и заметить опечатку смог бы только знаток правил.
+            var r = Minimal();
+            r.Classes[0].SkillChoices = new List<string> { "stealth", "athletics" };
+            r.Classes[0].ExpertiseChoices = new List<string> { "arcana" };
+            bool loudOnStranger = RulesIntegrity.Check(r).Any(e => e.Contains("rogue") && e.Contains("arcana"));
+
+            // МУТАНТ №2: «любой непустой список — ошибка». Сужение — законное и нужное состояние
+            // (так устроен поставляемый Волшебник), и без этой половины проверка запрещала бы ровно
+            // то, ради чего заведена.
+            var narrowed = Minimal();
+            narrowed.Classes[0].SkillChoices = new List<string> { "stealth", "athletics" };
+            narrowed.Classes[0].ExpertiseChoices = new List<string> { "stealth" };
+            bool quietOnSubset = !RulesIntegrity.Check(narrowed).Any(e => e.Contains("компетентност"));
+
+            // МУТАНТ №3: повтор не ловится. Дубль ничего не роняет и оттого невидим — ровно как
+            // сдвоенный спасбросок, который стережёт Distinct в мастере.
+            var doubled = Minimal();
+            doubled.Classes[0].SkillChoices = new List<string> { "stealth", "athletics" };
+            doubled.Classes[0].ExpertiseChoices = new List<string> { "stealth", "stealth" };
+            bool loudOnDouble = RulesIntegrity.Check(doubled).Any(e => e.Contains("2 раза"));
+
+            bool ok = loudOnStranger && quietOnSubset && loudOnDouble;
+            if (!ok) Debug.LogError($"FAIL список компетентности: чужой навык = {loudOnStranger}, "
+                                  + $"законное сужение молча = {quietOnSubset}, повтор = {loudOnDouble}");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: справочник — сдвоенный уровень подкласса ловится")]
         public void SelfTestDuplicateSubclassLevelCaught()
         {

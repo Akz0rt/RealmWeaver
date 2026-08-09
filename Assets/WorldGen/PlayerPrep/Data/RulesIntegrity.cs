@@ -110,6 +110,7 @@ namespace WorldGen.PlayerPrep.Data
                 CheckClassSpellSlotsNeverShrink(c, errors);
                 CheckClassPactMagicSlots(c, errors);
                 CheckClassSkillPickCount(c, errors);
+                CheckClassExpertiseChoices(c, errors);
                 CheckClassSubclassLevels(c, errors);
                 CheckClassFeatureIdsUnique(c, errors);
             }
@@ -292,6 +293,26 @@ namespace WorldGen.PlayerPrep.Data
             else if (c.SkillPickCount > c.SkillChoices.Count)
                 errors.Add($"класс {c.Id}: выбрать нужно {c.SkillPickCount} навыков, "
                          + $"а в списке их {c.SkillChoices.Count}");
+        }
+
+        /// <summary>Список навыков, из которых класс даёт компетентность, — ПОДМНОЖЕСТВО его же
+        /// SkillChoices. Компетентность требует владения, а владение класс раздаёт только из
+        /// SkillChoices, поэтому идентификатор вне этого списка не может быть выбран НИКОГДА:
+        /// строка в данных есть, а на экране её нет и быть не может.
+        ///
+        /// Проверка нужна именно потому, что такая опечатка НИЧЕГО НЕ РОНЯЕТ: список на экране
+        /// просто окажется короче, чем задумано, и заметить это может только тот, кто знает
+        /// правила наизусть, — то есть ровно не тот, для кого написана эта арка. Пустой список
+        /// законен: он значит «из любого навыка».</summary>
+        static void CheckClassExpertiseChoices(ClassDef c, List<string> errors)
+        {
+            if (c.ExpertiseChoices == null) return;      // «: null» из JSON — это «не заполнено»
+            foreach (var sk in c.ExpertiseChoices.Where(sk => !c.SkillChoices.Contains(sk)))
+                errors.Add($"класс {c.Id}: компетентность объявлена в навыке {sk}, "
+                         + "которого нет в списке навыков этого класса");
+            foreach (var g in c.ExpertiseChoices.GroupBy(sk => sk).Where(g => g.Count() > 1))
+                errors.Add($"класс {c.Id}: навык {g.Key} назван в списке компетентности "
+                         + $"{g.Count()} раза");
         }
 
         /// <summary>Сдвоенный уровень У ПОДКЛАССА. У класса это проверялось с самого начала, у

@@ -15,7 +15,14 @@ namespace WorldGen.PlayerPrep.Data
             if (bg != null) foreach (var s in bg.SkillIds) proficient.Add(s);
 
             bool expertiseUnlocked = cls != null && cls.ExpertiseLevel > 0 && level >= cls.ExpertiseLevel;
-            var expertise = new HashSet<string>(expertiseUnlocked ? file.ExpertiseIds : new List<string>());
+            // ФИЛЬТР ПРИ ЧТЕНИИ, а не только на экране мастера. Класс вправе сузить, из каких
+            // навыков берётся компетентность (ClassDef.ExpertiseChoices), и сузить его список
+            // задним числом — значит оставить в старых файлах компетентность, которую экран больше
+            // не рисует: снять её было бы нечем, а лист продолжал бы удваивать мастерство.
+            var chosenExpertise = expertiseUnlocked
+                ? file.ExpertiseIds.Where(cls.AllowsExpertiseIn).ToList()
+                : new List<string>();
+            var expertise = new HashSet<string>(chosenExpertise);
 
             foreach (var skill in rules.Skills)
             {
@@ -146,8 +153,11 @@ namespace WorldGen.PlayerPrep.Data
                 int picked = file.SkillIds.Count(id => cls.SkillChoices.Contains(id));
                 if (picked < cls.SkillPickCount)
                     d.Missing.Add($"Навыков выбрано {picked} из {cls.SkillPickCount}");
-                if (expertiseUnlocked && file.ExpertiseIds.Count < cls.ExpertisePickCount)
-                    d.Missing.Add($"Компетентность выбрана в {file.ExpertiseIds.Count} навыках из {cls.ExpertisePickCount}");
+                // Считаются ТОЛЬКО те, что класс даёт выбрать: компетентность, которую он больше не
+                // разрешает, бонуса не даёт (см. фильтр выше), и молчать о ней здесь значило бы
+                // оставить игрока с листом, где недостающего не видно, а бонуса нет.
+                if (expertiseUnlocked && chosenExpertise.Count < cls.ExpertisePickCount)
+                    d.Missing.Add($"Компетентность выбрана в {chosenExpertise.Count} навыках из {cls.ExpertisePickCount}");
                 if (subclassUnlocked && string.IsNullOrEmpty(file.SubclassId))
                     d.Missing.Add("Подкласс не выбран");
 

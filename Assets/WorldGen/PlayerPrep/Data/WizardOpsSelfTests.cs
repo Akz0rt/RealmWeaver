@@ -354,6 +354,47 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: мастер — новый класс снимает компетентность, которой не даёт (и говорит об этом)")]
+        public void SelfTestClassChangeDropsExpertiseOutsideNewClassChoices()
+        {
+            // Живой случай на поставляемых данных: Плут с компетентностью в Проницательности
+            // переходит в Волшебника. НАВЫК уцелевает — он есть в списке Волшебника, — а
+            // компетентность в нём класс не даёт (умение «Учёный» называет шесть других навыков).
+            //
+            // МУТАНТ №1: в ApplyClassChange осталось только `!file.SkillIds.Contains(id)`. Тогда
+            // компетентность в Проницательности остаётся в файле, экран её больше не рисует
+            // (снять нечем), и лист удваивал бы мастерство вопреки правилам.
+            // МУТАНТ №2: снятие есть, а строки в диалоге нет — мастер молча отбирает то, о чём
+            // обещал спросить. Обе стороны обязаны считать по одному AllowsExpertiseIn.
+            // МУТАНТ №3: строка выдаётся и на навыки, которые и так теряются, — та же потеря
+            // названа игроку дважды.
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "scholar", Name = "Учёный", HitDie = "d6",
+                SkillChoices = { "stealth", "arcana" }, SkillPickCount = 2,
+                ExpertiseLevel = 1, ExpertisePickCount = 1,
+                ExpertiseChoices = { "arcana" } });          // компетентность только в Магии
+
+            var c = Fixtures.Character();                     // навыки: скрытность, магия
+            c.ExpertiseIds.Clear();
+            c.ExpertiseIds.Add("stealth");                    // …а компетентность — в Скрытности
+
+            var losses = WizardOps.DescribeClassChange(c, rules, "scholar");
+            bool warned = losses.Any(l => l.Contains("Компетентность") && l.Contains("Скрытность"));
+            bool noDoubleTalk = losses.Count(l => l.Contains("Скрытность")) == 1;
+
+            WizardOps.ApplyClassChange(c, rules, "scholar");
+            bool ok = warned && noDoubleTalk
+                   && c.SkillIds.Count == 2                   // сам навык уцелел
+                   && c.SkillIds.Contains("stealth")
+                   && c.ExpertiseIds.Count == 0;              // а компетентность на нём — нет
+            if (!ok) Debug.LogError($"FAIL компетентность вне списка нового класса: предупредил="
+                                  + $"{warned}, без повтора={noDoubleTalk}, навыки=["
+                                  + string.Join(",", c.SkillIds) + "], компетентность=["
+                                  + string.Join(",", c.ExpertiseIds) + "], потери=["
+                                  + string.Join(" | ", losses) + "]");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: мастер — смена на неизвестный класс не трогает файл вовсе")]
         public void SelfTestApplyUnknownClassChangesNothing()
         {

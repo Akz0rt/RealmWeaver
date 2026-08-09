@@ -220,7 +220,8 @@ namespace WorldGen.PlayerPrep.Data
             var next = rules.Classes.FirstOrDefault(c => c.Id == newClassId);
             if (next == null) return losses;
 
-            foreach (var lost in SkillsLostTo(file, next))
+            var lostSkills = SkillsLostTo(file, next);
+            foreach (var lost in lostSkills)
             {
                 var def = rules.Skills.FirstOrDefault(s => s.Id == lost.Id);
                 string name = def?.Name ?? lost.Id;
@@ -237,6 +238,22 @@ namespace WorldGen.PlayerPrep.Data
                            + $"под класс «{next.Name}»");
             if (file.ExpertiseIds.Count > 0 && next.ExpertiseLevel == 0)
                 losses.Add("Компетентность — у нового класса её нет");
+            else
+            {
+                // Класс вправе сузить, из каких навыков берётся компетентность (ExpertiseChoices).
+                // Тогда САМ НАВЫК уцелевает, а компетентность на нём — нет, и промолчать значило бы
+                // снять её тихо: ApplyClassChange ниже считает по тому же AllowsExpertiseIn.
+                //
+                // Про навыки, которые и так теряются, здесь не говорим ВТОРОЙ раз: их потеря уже
+                // названа выше, и компетентность уходит вместе с ними по давнему инварианту
+                // «ExpertiseIds ⊆ SkillIds».
+                var alsoLost = new HashSet<string>(lostSkills.Select(l => l.Id));
+                foreach (var name in file.ExpertiseIds
+                             .Where(id => !alsoLost.Contains(id) && !next.AllowsExpertiseIn(id))
+                             .Select(id => rules.Skills.FirstOrDefault(s => s.Id == id)?.Name ?? id))
+                    losses.Add($"Компетентность в навыке «{name}» — класс «{next.Name}» "
+                             + "даёт компетентность не в нём");
+            }
             if (!string.IsNullOrEmpty(file.SubclassId))
                 losses.Add("Подкласс — его придётся выбрать заново");
             var classPlan = file.Plan.Where(IsSubclassMark).ToList();
@@ -269,7 +286,12 @@ namespace WorldGen.PlayerPrep.Data
             file.SkillIds.RemoveAll(lost.Contains);
 
             if (next.ExpertiseLevel == 0) file.ExpertiseIds.Clear();
-            else file.ExpertiseIds.RemoveAll(id => !file.SkillIds.Contains(id));
+            // Два условия, а не одно: компетентность держится на владении навыком (давний инвариант
+            // «ExpertiseIds ⊆ SkillIds») И на разрешении класса брать её именно в этом навыке
+            // (ExpertiseChoices). У Волшебника, например, Проницательность в списке навыков есть, а
+            // компетентности в ней класс не даёт — и оставленную строку нечем было бы снять.
+            else file.ExpertiseIds.RemoveAll(id => !file.SkillIds.Contains(id)
+                                                   || !next.AllowsExpertiseIn(id));
 
             file.SubclassId = null;
             file.Plan.RemoveAll(p => IsSubclassMark(p) || PlanMarkHasNoCell(p, next));
