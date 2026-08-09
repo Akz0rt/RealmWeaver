@@ -223,6 +223,30 @@ namespace WorldGen.Generation
             if (both[20 * w + 20])
             { Debug.LogError("FAIL mask: угол карты, где рек нет, стал водой"); ok = false; }
 
+            // Приток: конец, впадающий в ЧУЖУЮ реку, не раздаётся — иначе он вышел бы шире ствола,
+            // в который впадает. Свободный исток того же притока раздаётся как обычно.
+            // Приток идёт по x=50 от y=10 (свободный исток) до y=49 (упирается в ствол на y=50).
+            // Мутанты: «раздавать оба конца» валит вторую проверку, «не раздавать ни одного» — первую.
+            var trunk = new PaintedRiver
+            {
+                Id = 1, Width = 6f,
+                Points = new List<Vector2> { new Vector2(10, 50), new Vector2(90, 50) }
+            };
+            var tributary = new PaintedRiver
+            {
+                Id = 2, Width = 6f,
+                Points = new List<Vector2> { new Vector2(50, 10), new Vector2(50, 49) }
+            };
+            var joined = new bool[w * h];
+            RiverMask.StampAll(joined, w, h, mapW, mapH, new List<PaintedRiver> { trunk, tributary });
+
+            if (!joined[11 * w + 52])
+            { Debug.LogError("FAIL mask: свободный исток притока не раздался — он должен вести себя как обычный конец"); ok = false; }
+            if (joined[47 * w + 52])
+            { Debug.LogError("FAIL mask: конец притока раздался у слияния — приток вышел шире ствола, в который впадает"); ok = false; }
+            if (!joined[47 * w + 50])
+            { Debug.LogError("FAIL mask: ось притока у слияния пересохла — сужение съело русло целиком"); ok = false; }
+
             Debug.Log(ok ? "Self-Test River Mask: PASS" : "Self-Test River Mask: FAIL");
         }
 

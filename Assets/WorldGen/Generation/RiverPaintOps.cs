@@ -122,19 +122,30 @@ namespace WorldGen.Generation
         public const float BodyWidthFactor = 0.45f;
 
         /// <summary>Полуширина русла на расстоянии distance от начала кривой длиной total.
-        /// Расширение занимает две ширины у каждого конца, но не больше трети реки — иначе у
-        /// короткого ручья расширения двух концов налезли бы друг на друга и тонкого тела не
-        /// осталось бы вовсе. Переход сглажен (плавный шаг): на линейном виден излом берега там,
-        /// где расширение кончилось.</summary>
-        public static float HalfWidthAt(float distance, float total, float width)
+        ///
+        /// Расширяется только тот конец, которому это положено (wideStart/wideEnd): устье в водоёме
+        /// и свободный исток раздаются, а конец, впадающий в ДРУГУЮ реку, остаётся тонким — приток,
+        /// раздувшийся у самого слияния, выглядел бы шире ствола, в который впадает.
+        ///
+        /// Расширение занимает две ширины, но не больше трети реки — иначе у короткого ручья
+        /// расширения двух концов налезли бы друг на друга и тонкого тела не осталось бы вовсе.
+        /// Переход сглажен (плавный шаг): на линейном виден излом берега там, где он кончился.</summary>
+        public static float HalfWidthAt(float distance, float total, float width,
+                                        bool wideStart = true, bool wideEnd = true)
         {
             float half = width * 0.5f;
+            float body = half * BodyWidthFactor;
             if (total <= 1e-5f) return half;
+            if (!wideStart && !wideEnd) return body;
 
             float ramp = Math.Min(width * 2f, total / 3f);
-            if (ramp <= 1e-5f) return half * BodyWidthFactor;
+            if (ramp <= 1e-5f) return body;
 
-            float t = Math.Clamp(Math.Min(distance, total - distance) / ramp, 0f, 1f);
+            float t = 1f;   // 1 = тело реки, 0 = самый её конец
+            if (wideStart) t = Math.Min(t, distance / ramp);
+            if (wideEnd) t = Math.Min(t, (total - distance) / ramp);
+
+            t = Math.Clamp(t, 0f, 1f);
             t = t * t * (3f - 2f * t);
             return half * (1f + (BodyWidthFactor - 1f) * t);
         }

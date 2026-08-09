@@ -1120,6 +1120,9 @@ namespace WorldGen.Rendering
             var color = MapPalette.GetSlotColor(paletteTheme, PaletteSlot.Shallow);
             color.a = 190;   // полупрозрачно: это ещё не карта, а намерение
             var material = PaintedRiverMaterial();
+            // Конец, впадающий в уже нарисованную реку, не раздаётся — предпросмотр обязан
+            // показывать это сразу, иначе ДМ ведёт приток к стволу вслепую.
+            var existing = RiverMask.BuildRibbons(paintedRivers);
 
             foreach (var segment in segments)
             {
@@ -1128,8 +1131,10 @@ namespace WorldGen.Rendering
                 var part = new GameObject("Preview");
                 part.transform.SetParent(paintedRiverContainer, false);
                 // Y чуть выше ленты берега (0.3) и границ регионов (0.4): предпросмотр лежит ПО карте.
-                part.AddComponent<MeshFilter>().sharedMesh =
-                    RiverMeshBuilder.Build(curve, riverStrokeWidth, 0.45f, color);
+                part.AddComponent<MeshFilter>().sharedMesh = RiverMeshBuilder.Build(
+                    curve, riverStrokeWidth, 0.45f, color,
+                    wideStart: !RiverMask.JoinsAnother(curve[0], riverStrokeWidth, existing, -1),
+                    wideEnd: !RiverMask.JoinsAnother(curve[curve.Count - 1], riverStrokeWidth, existing, -1));
                 part.AddComponent<MeshRenderer>().sharedMaterial = material;
             }
         }

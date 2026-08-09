@@ -28,7 +28,8 @@ namespace WorldGen.Rendering
         const int CapSegments = 8;
 
         public static UnityEngine.Mesh Build(IReadOnlyList<Vector2> curve, float width, float yHeight,
-                                             UnityEngine.Color32 color)
+                                             UnityEngine.Color32 color,
+                                             bool wideStart = true, bool wideEnd = true)
         {
             var mesh = new UnityEngine.Mesh();
             if (curve == null || curve.Count < 2 || width <= 0f) return mesh;
@@ -38,7 +39,8 @@ namespace WorldGen.Rendering
             // обязан показывать ту реку, которая появится на отпускании, а не ленту ровной ширины.
             var arc = WorldGen.Generation.RiverPaintOps.ArcLengths(curve);
             float total = arc[n - 1];
-            float halfAt(int i) => WorldGen.Generation.RiverPaintOps.HalfWidthAt(arc[i], total, width);
+            float halfAt(int i) =>
+                WorldGen.Generation.RiverPaintOps.HalfWidthAt(arc[i], total, width, wideStart, wideEnd);
 
             var verts = new List<UnityEngine.Vector3>(n * 2 + CapSegments * 2 + 4);
             var colors = new List<UnityEngine.Color32>(verts.Capacity);
