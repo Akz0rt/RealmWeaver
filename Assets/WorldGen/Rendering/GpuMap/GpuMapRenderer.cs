@@ -28,6 +28,13 @@ namespace WorldGen.Rendering.GpuMap
         RegionLabelTexture labelTex;
         int[] familyLabel, bandLabel;
         bool[] isLandMask;
+
+        // Нарисованные реки. Держим ОТДЕЛЬНУЮ маску, а не правим isLandMask на месте: isLandMask
+        // переписывают трое (FinishBuild, PatchCellLabelFaceted во время мазка рельефа и
+        // FinalizeLabels на его отпускании), и без своего источника правды река пропадала бы там,
+        // где по ней потом провели любой другой кистью. Поэтому после КАЖДОГО из трёх — ApplyRiverMask.
+        IReadOnlyList<PaintedRiver> paintedRivers;
+        bool[] riverMask;
         List<Corner> bakedCorners;
         IReadOnlyDictionary<int, VoronoiCell> bakedCellById;
         int bakedBands = 5;
@@ -98,6 +105,9 @@ namespace WorldGen.Rendering.GpuMap
             isLandMask = new bool[labelLen];
             RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel, isLandMask,
                 texW, texH, mapW, mapH, bakedSmoothing, bakedDecimation, bakedBands, 0, 0, texW, texH);
+            // Писатель маски №1 из трёх (см. поле riverMask): реки поверх свежеиспечённого берега.
+            RebuildRiverMask();
+            ApplyRiverMask(0, 0, texW, texH);
             if (labelTex == null) labelTex = new RegionLabelTexture();
             labelTex.Build(familyLabel, bandLabel, isLandMask, texW, texH);
             Material.SetTexture("_LabelTex", labelTex.Texture);
@@ -275,6 +285,8 @@ namespace WorldGen.Rendering.GpuMap
                     if (cellIdArray[i] != cell.Id) continue;
                     familyLabel[i] = fam; bandLabel[i] = bnd; isLandMask[i] = land;
                 }
+            // Писатель маски №2 из трёх: мазок рельефа стёр бы реку там, где прошёл по ней.
+            ApplyRiverMask(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
             ExpandLabelDirty(x0, y0, x1, y1);
         }
 
@@ -331,8 +343,95 @@ namespace WorldGen.Rendering.GpuMap
             int rw = rx1 - rx + 1, rh = ry1 - ry + 1;
             RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel, isLandMask,
                 bakedTexW, bakedTexH, bakedMapW, bakedMapH, bakedSmoothing, bakedDecimation, bakedBands, rx, ry, rw, rh);
+            // Писатель маски №3 из трёх: сглаженный перезапек берега тоже не знает про реки.
+            ApplyRiverMask(rx, ry, rw, rh);
             labelTex.PatchRect(familyLabel, bandLabel, isLandMask, rx, ry, rw, rh);
             labelDirty = false;
+        }
+
+        /// <summary>Задаёт нарисованные реки: они становятся ВОДОЙ в маске суша/вода, а дальше карта
+        /// красит их сама — тем же цветом по глубине, тем же ореолом, той же тёмной обводкой и той же
+        /// песчаной кромкой, что и любой водоём (см. RiverMask). Список запоминается по ссылке, так
+        /// что после правки рек хватает RefreshPaintedRivers.</summary>
+        public void SetPaintedRivers(IReadOnlyList<PaintedRiver> rivers)
+        {
+            paintedRivers = rivers;
+            RefreshPaintedRivers();
+        }
+
+        /// <summary>Пересобирает маску рек и всё, что из неё растёт. Дорого (полная перезаливка
+        /// label-текстуры плюс два поля дистанции), поэтому зовётся на ОТПУСКАНИИ кисти, а не на
+        /// каждое движение — во время мазка ДМ видит лёгкий предпросмотр лентой.</summary>
+        public void RefreshPaintedRivers()
+        {
+            if (cellIdArray == null || isLandMask == null || labelTex == null) return;   // карта ещё не запечена
+
+            var previous = riverMask;
+            RebuildRiverMask();
+            if (!DirtyRect(previous, riverMask, out int rx, out int ry, out int rw, out int rh)) return;
+
+            // Берег в изменившейся области печём заново: ApplyRiverMask умеет только топить, и без
+            // этого стёртая река осталась бы водой навсегда. Запаса под сглаживание не нужно —
+            // сам контур берега не двигался, поменялась только маска рек поверх него.
+            RegionLabelBaker.BakeRect(bakedCellById, bakedCorners, cellIdArray, familyLabel, bandLabel, isLandMask,
+                bakedTexW, bakedTexH, bakedMapW, bakedMapH, bakedSmoothing, bakedDecimation, bakedBands,
+                rx, ry, rw, rh);
+            ApplyRiverMask(rx, ry, rw, rh);
+            labelTex.PatchRect(familyLabel, bandLabel, isLandMask, rx, ry, rw, rh);
+
+            // Поля дистанции (глубина, ореол, песок) считаются на всю карту — но в 1/16 пикселей,
+            // как и при мазке рельефа, так что на отпускании это незаметно.
+            coastDirty = true;
+            FinalizeCoast();
+        }
+
+        /// <summary>Прямоугольник, в котором маска рек изменилась (с каёмкой в пиксель). false =
+        /// не изменилась вовсе, и трогать карту незачем. Без этого каждая новая река перепекала бы
+        /// берег всей карты — на 2048 пикселях это видимый рывок.</summary>
+        bool DirtyRect(bool[] before, bool[] after, out int rx, out int ry, out int rw, out int rh)
+        {
+            rx = ry = rw = rh = 0;
+            if (before == null && after == null) return false;
+
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+            int n = (after ?? before).Length;
+            int w = Mathf.Max(1, bakedTexW);
+            for (int i = 0; i < n; i++)
+            {
+                bool a = before != null && before[i];
+                bool b = after != null && after[i];
+                if (a == b) continue;
+                int x = i % w, y = i / w;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+            if (minX > maxX) return false;
+
+            rx = minX; ry = minY; rw = maxX - minX + 1; rh = maxY - minY + 1;
+            return true;
+        }
+
+        void RebuildRiverMask()
+        {
+            if (paintedRivers == null || paintedRivers.Count == 0) { riverMask = null; return; }
+            riverMask = new bool[bakedTexW * bakedTexH];
+            RiverMask.StampAll(riverMask, bakedTexW, bakedTexH, bakedMapW, bakedMapH, paintedRivers);
+        }
+
+        /// <summary>Топит пиксели рек в маске суша/вода внутри прямоугольника. Только топит: осушение
+        /// делает полный перезапек берега (см. RefreshPaintedRivers).</summary>
+        void ApplyRiverMask(int rectX, int rectY, int rectW, int rectH)
+        {
+            if (riverMask == null || isLandMask == null) return;
+            int x1 = Mathf.Min(bakedTexW, rectX + rectW), y1 = Mathf.Min(bakedTexH, rectY + rectH);
+            for (int y = Mathf.Max(0, rectY); y < y1; y++)
+                for (int x = Mathf.Max(0, rectX); x < x1; x++)
+                {
+                    int i = y * bakedTexW + x;
+                    if (riverMask[i]) isLandMask[i] = false;
+                }
         }
 
         static IReadOnlyDictionary<int, VoronoiCell> BuildCellById(IReadOnlyList<VoronoiCell> cells)

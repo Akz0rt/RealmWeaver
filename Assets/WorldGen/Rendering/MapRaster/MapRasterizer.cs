@@ -77,6 +77,11 @@ namespace WorldGen.Rendering.MapRaster
 
         /// <summary>[0,1] "глубина" водной клетки - привязан к WorldMapRenderer.GetWaterDepth01.</summary>
         public Func<VoronoiCell, float> WaterDepth01;
+
+        /// <summary>Нарисованные ДМ реки: они топятся в маске суша/вода наравне с настоящими
+        /// водоёмами, и дальше вся раскраска (глубина, ореол, обводка) достаётся им сама собой -
+        /// см. RiverMask. null или пусто = рек нет.</summary>
+        public IReadOnlyList<PaintedRiver> PaintedRivers;
     }
 
     /// <summary>Все per-pixel буферы одного запекания - хранятся на WorldMapRenderer между вызовами,
@@ -245,6 +250,17 @@ namespace WorldGen.Rendering.MapRaster
                 else
                 {
                     CoastlineContour.RasterizeIsLand(loops, buffers.IsLand, w, h, config.MapWidth, config.MapHeight, rectX, rectY, rectW, rectH);
+                }
+                // Реки топятся сразу после берега и ДО поля дистанции: дальше они уже неотличимы от
+                // прочей воды, и ореол с обводкой достаются им сами (тот же приём, что в GpuMapRenderer).
+                if (config.PaintedRivers != null && config.PaintedRivers.Count > 0)
+                {
+                    var wet = new bool[w * h];
+                    RiverMask.StampAll(wet, w, h, config.MapWidth, config.MapHeight, config.PaintedRivers,
+                                       rectX, rectY, rectW, rectH);
+                    for (int y = rectY; y < rectY + rectH; y++)
+                        for (int x = rectX; x < rectX + rectW; x++)
+                            if (wet[y * w + x]) buffers.IsLand[y * w + x] = false;
                 }
                 if (config.CoastlineGlowWidth > 0)
                     ComputeCoastDistanceRect(buffers, w, h, config.CoastlineGlowWidth + 1f, rectX, rectY, rectW, rectH);
