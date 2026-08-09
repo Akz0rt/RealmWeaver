@@ -119,6 +119,13 @@ namespace WorldGen.Rendering
             float total = distance[n - 1];
             if (total < 1e-5f) return;
 
+            // Шапки досылаются после ленты, но красятся и сужаются ТЕМ ЖЕ, чем кончается поперечник
+            // под ними: у короткой реки растворение дальнего устья дотягивается до ближнего конца
+            // (заход равен 1.25 ширины, а мазок бывает и короче), и шапка «своим» цветом осталась бы
+            // непрозрачным пятном на гаснущем хвосте.
+            var capColor = new UnityEngine.Color32[2];
+            var capHalf = new float[2];
+
             int firstVert = verts.Count;
             for (int i = 0; i < n; i++)
             {
@@ -135,6 +142,9 @@ namespace WorldGen.Rendering
                 else if (kEnd < 1f) c = Lerp(shape.End.MouthWater, c, kEnd);
                 c = Fade(c, k);
 
+                if (i == 0) { capColor[0] = c; capHalf[0] = half * taper; }
+                if (i == n - 1) { capColor[1] = c; capHalf[1] = half * taper; }
+
                 Vector2 offset = OffsetAt(curve, i, half * taper);
                 var p = curve[i];
                 verts.Add(new UnityEngine.Vector3(p.X - offset.X, yHeight, p.Y - offset.Y)); colors.Add(c);
@@ -148,8 +158,8 @@ namespace WorldGen.Rendering
                 tris.Add(a + 1); tris.Add(d + 0); tris.Add(d + 1);
             }
 
-            if (shape.Start.Round) AddCap(verts, colors, tris, curve[0], curve[1], half, yHeight, bandColor);
-            if (shape.End.Round) AddCap(verts, colors, tris, curve[n - 1], curve[n - 2], half, yHeight, bandColor);
+            if (shape.Start.Round) AddCap(verts, colors, tris, curve[0], curve[1], capHalf[0], yHeight, capColor[0]);
+            if (shape.End.Round) AddCap(verts, colors, tris, curve[n - 1], curve[n - 2], capHalf[1], yHeight, capColor[1]);
         }
 
         /// <summary>Полукруглая «шапка» на свободном конце: веер от кончика наружу, от одного края
