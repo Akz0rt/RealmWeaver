@@ -97,8 +97,10 @@ namespace WorldGen.PlayerPrep.Data
             // «нет ключевых → обычный порядок сил, лов, тел…» падает.
             // Сверяем ВСЮ последовательность, а не первые два: мутант «вернуть только ключевые,
             // без .Concat остальных» дал бы ровно те же два первых значения и выжил бы.
+            // Третьим стоит «тел», а не «сил»: Ловкость уже занята ключевыми, и из пары
+            // «Телосложение, Ловкость» остаётся одно Телосложение.
             var suggested = WizardOps.SuggestedAssignment(Fixtures.Rules().Classes[0]);
-            bool ok = suggested.SequenceEqual(new[] { "dex", "int", "str", "con", "wis", "cha" });
+            bool ok = suggested.SequenceEqual(new[] { "dex", "int", "con", "str", "wis", "cha" });
             if (!ok) Debug.LogError("FAIL раскладка: " + string.Join(",", suggested));
             Done(ok);
         }
@@ -110,12 +112,13 @@ namespace WorldGen.PlayerPrep.Data
             // Тел+Хар, ключевая — одна Харизма.
             //   • мутант «порядок по спасбросках» (прежний код) даёт «тел» первым — 15 ляжет в
             //     Телосложение, и первый в жизни игрок соберёт Чародея, который плохо колдует;
-            //   • мутант «сперва ключевые, потом спасброски, потом остальные» даёт «хар, тел, …» —
-            //     его убивает сверка ВСЕЙ последовательности, а не первой позиции.
+            //   • мутант «сперва ключевые, потом спасброски, потом Телосложение с Ловкостью, потом
+            //     остальные» даёт «хар, тел, сил, лов, инт, мдр» — Ловкость уезжает на четвёртое
+            //     место; его убивает сверка ВСЕЙ последовательности, а не первой позиции.
             var cls = new ClassDef { Id = "sorcerer", Name = "Чародей", HitDie = "d6",
                 PrimaryAbilities = { "cha" }, SaveProficiencies = { "con", "cha" } };
             var suggested = WizardOps.SuggestedAssignment(cls);
-            bool ok = suggested.SequenceEqual(new[] { "cha", "str", "dex", "con", "int", "wis" });
+            bool ok = suggested.SequenceEqual(new[] { "cha", "con", "dex", "str", "int", "wis" });
             if (!ok) Debug.LogError("FAIL раскладка Чародея: " + string.Join(",", suggested));
             Done(ok);
         }
@@ -126,13 +129,36 @@ namespace WorldGen.PlayerPrep.Data
             // Вторая расходящаяся фикстура. Настоящий Монах: спасброски Сил+Лов, ключевые —
             // Ловкость И Мудрость, причём Мудрости в спасбросках нет вовсе.
             //   • мутант «порядок по спасброскам» даёт «сил» первым;
-            //   • мутант «взять только первую ключевую» даёт «лов, сил, тел, инт, мдр, хар» —
+            //   • мутант «взять только первую ключевую» даёт «лов, тел, сил, инт, мдр, хар» —
             //     Мудрость уезжает на пятое место, к десятке.
             var cls = new ClassDef { Id = "monk", Name = "Монах", HitDie = "d8",
                 PrimaryAbilities = { "dex", "wis" }, SaveProficiencies = { "str", "dex" } };
             var suggested = WizardOps.SuggestedAssignment(cls);
-            bool ok = suggested.SequenceEqual(new[] { "dex", "wis", "str", "con", "int", "cha" });
+            bool ok = suggested.SequenceEqual(new[] { "dex", "wis", "con", "str", "int", "cha" });
             if (!ok) Debug.LogError("FAIL раскладка Монаха: " + string.Join(",", suggested));
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — за ключевой идут Телосложение и Ловкость, а не Сила (Волшебник)")]
+        public void SelfTestSuggestedAssignmentPutsConAndDexRightAfterPrimary()
+        {
+            // МУТАНТ, КОТОРОГО ЭТА ПРОВЕРКА ОБЯЗАНА УБИТЬ: «после ключевых — остальное обычным
+            // порядком» (то есть UniversallyUseful выкинут). Он даёт «инт, СИЛ, лов, ТЕЛ, мдр, хар»,
+            // и Волшебник получает Силу 14 при Телосложении 12 — Сила ему не нужна ни для чего, а
+            // каждая единица Телосложения это хит за КАЖДЫЙ уровень до двадцатого.
+            //
+            // ФИКСТУРА — ЗАКЛИНАТЕЛЬ С ОДНОЙ КЛЮЧЕВОЙ, и это не украшение. У Воина ключевые «сил» и
+            // «дех», у Варвара — «сил», и там старое правило со новым расходятся на одну позицию
+            // из шести: проверка вышла бы почти пустой. С одной ключевой характеристикой они
+            // расходятся сразу со второй позиции, где и лежит четырнадцать.
+            //
+            // Спасброски у Волшебника «инт»+«мдр» — они здесь заполнены нарочно, чтобы заодно
+            // умер мутант «ключевые и спасброски вперемешку» (он дал бы «инт, мдр, тел, лов, …»).
+            var cls = new ClassDef { Id = "wizard", Name = "Волшебник", HitDie = "d6",
+                PrimaryAbilities = { "int" }, SaveProficiencies = { "int", "wis" } };
+            var suggested = WizardOps.SuggestedAssignment(cls);
+            bool ok = suggested.SequenceEqual(new[] { "int", "con", "dex", "str", "wis", "cha" });
+            if (!ok) Debug.LogError("FAIL раскладка Волшебника: " + string.Join(",", suggested));
             Done(ok);
         }
 
@@ -147,7 +173,7 @@ namespace WorldGen.PlayerPrep.Data
             var cls = new ClassDef { Id = "bogus", Name = "Кривой", HitDie = "d8",
                 PrimaryAbilities = { "cha", "luck", "cha" }, SaveProficiencies = { "con" } };
             var suggested = WizardOps.SuggestedAssignment(cls);
-            bool ok = suggested.SequenceEqual(new[] { "cha", "str", "dex", "con", "int", "wis" });
+            bool ok = suggested.SequenceEqual(new[] { "cha", "con", "dex", "str", "int", "wis" });
             if (!ok) Debug.LogError($"FAIL кривая ключевая характеристика ({suggested.Count} шт.): "
                                   + string.Join(",", suggested));
             Done(ok);
@@ -164,7 +190,7 @@ namespace WorldGen.PlayerPrep.Data
             cls.PrimaryAbilities = null;
             var suggested = WizardOps.SuggestedAssignment(cls);
             // Ключевых нет — работает запасной ход по спасброскам.
-            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "str", "dex", "con", "int" });
+            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "con", "dex", "str", "int" });
             if (!ok) Debug.LogError("FAIL раскладка при null: " + string.Join(",", suggested));
             Done(ok);
         }
@@ -187,7 +213,7 @@ namespace WorldGen.PlayerPrep.Data
             var cls = new ClassDef { Id = "bard", Name = "Бард", HitDie = "d8",
                 SaveProficiencies = { "cha", "luck" } };
             var suggested = WizardOps.SuggestedAssignment(cls);
-            bool ok = suggested.SequenceEqual(new[] { "cha", "str", "dex", "con", "int", "wis" });
+            bool ok = suggested.SequenceEqual(new[] { "cha", "con", "dex", "str", "int", "wis" });
             if (!ok) Debug.LogError("FAIL раскладка с чужим спасброском: " + string.Join(",", suggested));
             Done(ok);
         }
@@ -460,7 +486,7 @@ namespace WorldGen.PlayerPrep.Data
             var cls = new ClassDef { Id = "twin", Name = "Двойник", HitDie = "d8",
                 SaveProficiencies = { "wis", "wis", "cha" } };
             var suggested = WizardOps.SuggestedAssignment(cls);
-            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "str", "dex", "con", "int" });
+            bool ok = suggested.SequenceEqual(new[] { "wis", "cha", "con", "dex", "str", "int" });
             if (!ok) Debug.LogError($"FAIL сдвоенный спасбросок ({suggested.Count} шт.): "
                                   + string.Join(",", suggested));
             Done(ok);
