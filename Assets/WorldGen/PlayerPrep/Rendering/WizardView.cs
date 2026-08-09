@@ -1005,8 +1005,15 @@ namespace WorldGen.PlayerPrep.Rendering
             int allowed = cls.ExpertisePicksAt(file.Level);
             if (allowed <= 0) return;
 
+            // СЧИТАЕМ ТО ЖЕ, ЧТО И ЛИСТ: только компетентность, которую класс даёт выбрать
+            // (SheetMathSkills считает по тому же AllowsExpertiseIn). Разойдись счёт — старый файл,
+            // сделанный до сужения списка, попадал бы в тупик: лист говорит «выбрано 0 из 1», а
+            // мастер считает 1 из 1, гасит все кнопки и не рисует строку, которой этот единственный
+            // счёт занят, — снять её нечем, поставить новую тоже.
+            int chosenCount = file.ExpertiseIds.Count(cls.AllowsExpertiseIn);
+
             AddSpacer(content, 12f);
-            AddCaption(content, $"Компетентность: выбрано {file.ExpertiseIds.Count} из {allowed}");
+            AddCaption(content, $"Компетентность: выбрано {chosenCount} из {allowed}");
             AddLabel(content, "Компетентность удваивает бонус мастерства. Выбирается из уже взятых "
                               + "навыков класса.", 15, Muted, null);
 
@@ -1046,7 +1053,7 @@ namespace WorldGen.PlayerPrep.Rendering
                     if (chosen) file.ExpertiseIds.Remove(id);
                     else file.ExpertiseIds.Add(id);
                     Rebuild();
-                }, chosen || file.ExpertiseIds.Count < allowed);
+                }, chosen || chosenCount < allowed);
                 if (chosen) MarkSelected(btn, true);
             }
         }
