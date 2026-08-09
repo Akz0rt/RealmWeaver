@@ -395,6 +395,42 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: мастер — компетентность на навыке предыстории переживает смену класса")]
+        public void SelfTestClassChangeKeepsExpertiseOnBackgroundSkill()
+        {
+            // Предыстория смену класса переживает целиком — и навык «атлетика», который она даёт, и
+            // компетентность на нём, раз новый класс компетентность в этом навыке разрешает.
+            //
+            // МУТАНТ: в ApplyClassChange владение снова считается по одному file.SkillIds. Навыка
+            // предыстории там нет по построению (ApplyBackgroundChange его оттуда убирает), поэтому
+            // компетентность молча исчезала бы при первой же смене класса — а диалог о ней даже не
+            // предупреждал, потому что терять её не собирался.
+            // ВТОРОЙ МУТАНТ (ложная тревога): строка потери выдаётся на компетентность, которая
+            // никуда не денется, — мастер обещает отобрать то, что оставляет.
+            var rules = Fixtures.Rules();
+            rules.Classes.Add(new ClassDef { Id = "warden", Name = "Страж", HitDie = "d10",
+                SkillChoices = { "arcana" }, SkillPickCount = 1,
+                ExpertiseGrants = { new ExpertiseGrant { Level = 1, PickCount = 1 } } });
+
+            var c = Fixtures.Character();               // предыстория «Солдат» даёт «атлетику»
+            c.ExpertiseIds.Clear();
+            c.ExpertiseIds.Add("athletics");            // компетентность на навыке ПРЕДЫСТОРИИ
+
+            var losses = WizardOps.DescribeClassChange(c, rules, "warden");
+            bool silent = !losses.Any(l => l.Contains("омпетентность"));
+
+            WizardOps.ApplyClassChange(c, rules, "warden");
+            var ath = SheetMath.Compute(c, rules).Skills.First(s => s.SkillId == "athletics");
+            bool ok = silent
+                   && c.ExpertiseIds.SequenceEqual(new[] { "athletics" })
+                   && ath.Expertise && ath.Bonus == 6;   // СИЛ 10 → +0, мастерство +3 вдвое
+            if (!ok) Debug.LogError($"FAIL компетентность предыстории при смене класса: молчал={silent}, "
+                                  + "компетентность=[" + string.Join(",", c.ExpertiseIds) + "], атлетика "
+                                  + $"{ath.Bonus} комп={ath.Expertise} (ждали 6/да); потери=["
+                                  + string.Join(" | ", losses) + "]");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: мастер — смена на неизвестный класс не трогает файл вовсе")]
         public void SelfTestApplyUnknownClassChangesNothing()
         {
@@ -892,13 +928,16 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
-        [ContextMenu("Self-Test: мастер — компетентность уходит вместе со снятым навыком")]
-        public void SelfTestBackgroundChangeDropsOrphanedExpertise()
+        [ContextMenu("Self-Test: мастер — компетентность переживает переезд навыка в предысторию")]
+        public void SelfTestBackgroundChangeKeepsExpertiseOnSkillItGrants()
         {
-            // Инвариант «ExpertiseIds ⊆ SkillIds» — тот же, что соблюдает ApplyClassChange. Мутант,
-            // оставивший компетентность на снятом навыке, спрятал бы её навсегда: список
-            // компетентности мастер строит из file.SkillIds, так что ни увидеть, ни снять.
-            // Компетентность на «магии» при этом обязана уцелеть — она ни при чём.
+            // Новая предыстория даёт «скрытность» даром, поэтому из РУЧНОГО выбора она уходит. Но
+            // владение навыком остаётся, а компетентность держится именно на владении — снять её
+            // было бы починкой хуже поломки: игрок терял бы выбор, ничего не меняя по существу.
+            //
+            // МУТАНТ — прежняя строка `file.ExpertiseIds.RemoveAll(id => !file.SkillIds.Contains(id))`
+            // в ApplyBackgroundChange: она снимала компетентность ровно с тех навыков, которые новая
+            // предыстория и даёт. Спрашиваем и файл, и ЛИСТ: удвоение обязано остаться на месте.
             var rules = Fixtures.Rules();
             rules.Backgrounds.Add(new BackgroundDef { Id = "thug", Name = "Громила", Text = "…",
                 AbilityChoices = { "str", "dex", "con" }, OriginFeatId = "alert",
@@ -906,13 +945,55 @@ namespace WorldGen.PlayerPrep.Data
 
             var c = Fixtures.Character();
             c.SkillIds.Clear(); c.SkillIds.Add("stealth"); c.SkillIds.Add("arcana");
-            c.ExpertiseIds.Clear(); c.ExpertiseIds.Add("stealth"); c.ExpertiseIds.Add("arcana");
+            c.ExpertiseIds.Clear(); c.ExpertiseIds.Add("stealth");
 
             WizardOps.ApplyBackgroundChange(c, rules, "thug");
-            bool ok = c.ExpertiseIds.SequenceEqual(new[] { "arcana" });
-            if (!ok) Debug.LogError("FAIL осиротевшая компетентность: ["
-                                  + string.Join(",", c.ExpertiseIds) + "] при навыках ["
-                                  + string.Join(",", c.SkillIds) + "]");
+            var st = SheetMath.Compute(c, rules).Skills.First(s => s.SkillId == "stealth");
+            bool ok = c.SkillIds.SequenceEqual(new[] { "arcana" })      // из ручного выбора ушла
+                   && c.ExpertiseIds.SequenceEqual(new[] { "stealth" })  // а компетентность осталась
+                   && st.Proficient && st.Expertise && st.Bonus == 8;    // ЛОВ +2, мастерство +3 вдвое
+            if (!ok) Debug.LogError("FAIL компетентность после смены предыстории: навыки=["
+                                  + string.Join(",", c.SkillIds) + "], компетентность=["
+                                  + string.Join(",", c.ExpertiseIds) + $"], скрытность {st.Bonus} "
+                                  + $"влад={st.Proficient} комп={st.Expertise} (ждали 8/да/да)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: мастер — компетентность на потерянном навыке перестаёт считаться, и лист просит выбрать заново")]
+        public void SelfTestExpertiseOnSkillTheNewBackgroundDoesNotGrantStopsCounting()
+        {
+            // Обратный случай к предыдущему и САМАЯ ОПАСНАЯ половина починки. Компетентность стояла
+            // на навыке, который давала СТАРАЯ предыстория; новая его не даёт, в ручном выборе его
+            // тоже нет — владения не осталось.
+            //
+            // МУТАНТ: фильтр при чтении (SheetMath.ExpertiseChosenIds) проверяет только разрешение
+            // класса, без владения. Тогда счёт занят навыком, которого у персонажа нет: «выбрано 1
+            // из 1», строки в мастере не рисуется (навыком не владеем — в список годных он не
+            // попадает), снять нечем, выбрать вместо неё нельзя. Тупик без выхода, ради которого
+            // фильтр и стоит при ЧТЕНИИ, а не при записи.
+            //
+            // Файл при этом НЕ чистится нарочно: вернёт игрок прежнюю предысторию — вернётся и
+            // компетентность, тем же приёмом устроено понижение уровня.
+            var rules = Fixtures.Rules();
+            rules.Backgrounds.Add(new BackgroundDef { Id = "thug", Name = "Громила", Text = "…",
+                AbilityChoices = { "str", "dex", "con" }, OriginFeatId = "alert",
+                SkillIds = { "stealth" } });
+
+            var c = Fixtures.Character();
+            c.BackgroundId = "thug";                       // «скрытность» приходит от предыстории…
+            c.SkillIds.Clear(); c.SkillIds.Add("arcana");
+            c.ExpertiseIds.Clear(); c.ExpertiseIds.Add("stealth");
+
+            WizardOps.ApplyBackgroundChange(c, rules, "soldier");   // …а Солдат даёт «атлетику»
+            var d = SheetMath.Compute(c, rules);
+            var st = d.Skills.First(s => s.SkillId == "stealth");
+            bool ok = !st.Proficient && !st.Expertise
+                   && d.Missing.Any(m => m.Contains("Компетентность выбрана в 0"))
+                   && c.ExpertiseIds.SequenceEqual(new[] { "stealth" });
+            if (!ok) Debug.LogError($"FAIL потерянная компетентность: скрытность влад={st.Proficient} "
+                                  + $"комп={st.Expertise} (ждали нет/нет), в файле ["
+                                  + string.Join(",", c.ExpertiseIds) + "]; чего не хватает: ["
+                                  + string.Join(" | ", d.Missing) + "]");
             Done(ok);
         }
 
