@@ -3,37 +3,54 @@ using System.Numerics;
 
 namespace WorldGen.Rendering
 {
-    /// <summary>Как выглядит один конец русла. Цвета берутся из палитры карты вызывающим
-    /// (см. WorldMapRenderer.RiverEndStyleFor) — строителю меша палитра не нужна.</summary>
+    /// <summary>Как ведёт себя один конец русла.</summary>
     public struct RiverEndStyle
     {
-        /// <summary>Цвет у кромки русла — светлое мелководье, как у берега озера.</summary>
-        public UnityEngine.Color32 Edge;
-        /// <summary>Цвет по оси русла — глубина, как в середине озера.</summary>
-        public UnityEngine.Color32 Center;
-        /// <summary>Конец на суше: скруглить, чтобы река не обрывалась ножом.</summary>
+        /// <summary>Свободный конец на суше: скруглить, чтобы река не обрывалась ножом. Конец,
+        /// упирающийся в другую реку, НЕ скругляется — там слияние, и шапка выпирала бы бугром.</summary>
         public bool Round;
-        /// <summary>Длина, на которой конец гаснет до полной прозрачности (0 — не гасить). Отмеряется
-        /// от кончика русла, а кончик у устья лежит УЖЕ ВНУТРИ водоёма: до самой кромки река идёт в
-        /// полную силу и растворяется только за ней, в воде того же цвета. Поэтому у берега не
-        /// остаётся ни шва, ни бледного хвоста — река читается продолжением водоёма.</summary>
-        public float FadeLength;
-        /// <summary>Длина, на которой поперечный профиль распрямляется: тёмная ось русла подходит к
-        /// устью, уже сойдясь в светлое мелководье. Иначе тёмная сердцевина торчала бы языком в
-        /// светлую прибрежную полосу водоёма (0 — не распрямлять).</summary>
-        public float FlattenLength;
+
+        /// <summary>Длина растворения в водоёме (0 — конец не в воде). На ней русло разом сужается
+        /// к точке, гаснет по прозрачности и перекрашивается в MouthWater. Три вещи сразу, потому
+        /// что по отдельности каждая оставляет след: сужение без гашения даёт клин, гашение без
+        /// сужения — полосу с резкими боками, а верный цвет без первых двух всё равно виден швом,
+        /// когда вода вокруг темнее.</summary>
+        public float MouthLength;
+
+        /// <summary>Цвет воды ПОД кончиком русла — берётся из-под карты вызывающим
+        /// (WorldMapRenderer.MouthWaterColor), а не из общего слота палитры: у берега вода светлее
+        /// от прибрежного ореола, глубже — темнее, и промахнуться цветом здесь заметнее всего.</summary>
+        public UnityEngine.Color32 MouthWater;
+    }
+
+    /// <summary>Одна река на отрисовку: уже сглаженная кривая (см. RiverPaintOps.BuildCurve),
+    /// ширина русла и повадки обоих концов.</summary>
+    public struct RiverShape
+    {
+        public IReadOnlyList<Vector2> Curve;
+        public float Width;
+        public RiverEndStyle Start;
+        public RiverEndStyle End;
     }
 
     /// <summary>
-    /// Строит плоскую ленту русла по сглаженной кривой (см. RiverPaintOps.BuildCurve). Лента лежит
-    /// в плоскости карты, как границы регионов и береговая линия (MapBorderBuilder), — не
-    /// LineRenderer: тот разворачивается к камере и на наклоне «встал бы на ребро».
+    /// Строит ОДИН плоский меш на все нарисованные реки. Лента лежит в плоскости карты, как границы
+    /// регионов и береговая линия (MapBorderBuilder), — не LineRenderer: тот разворачивается к
+    /// камере и на наклоне «встал бы на ребро».
     ///
-    /// Три вершины на поперечник (край—ось—край), а не две: вода в проекте красится светлым
-    /// мелководьем у берега и тёмной глубиной в середине (см. MapRasterizer.ColorForWaterPixel), и
-    /// у реки то же правило — но нарисовать его можно, только имея вершину на оси русла.
-    /// Вдоль русла цвета переливаются от стиля одного конца к стилю другого: река из озера в море
-    /// меняет цвет по дороге. Прозрачность у устья гасится, свободный конец закругляется веером.
+    /// Поперечный градиент (у кромки светлое мелководье, к оси темнее — то же правило, что у
+    /// водоёмов, см. MapRasterizer.ColorForWaterPixel) набирается ВЛОЖЕННЫМИ ПОЛОСАМИ: сначала
+    /// самая широкая лента светлым цветом, поверх неё поуже и темнее, и так до узкой сердцевины.
+    /// Так, а не плавным градиентом на трёх вершинах поперечника, ради ГЛАВНОГО требования ДМ:
+    /// реки, пересекающие друг друга, должны читаться одной рекой, без видимых перекрытий. Полосы
+    /// это дают даром — на перекрестье встречаются куски ОДНОГО И ТОГО ЖЕ цвета, а одинаковый
+    /// непрозрачный цвет поверх себя невидим.
+    ///
+    /// Отсюда же и «один меш на все реки»: порядок отрисовки должен быть строго «все внешние
+    /// полосы всех рек → все следующие → сердцевины». Отдельными объектами это не удержать —
+    /// прозрачная очередь сортирует их по расстоянию до камеры, и от поворота камеры сердцевина
+    /// одной реки перепрыгнула бы поверх кромки другой (мигающий шов, который на скриншоте не
+    /// поймать). Внутри одного меша порядок треугольников и есть порядок закраски (ZWrite off).
     ///
     /// Материал должен быть БЕЛЫМ и полупрозрачным (Sprites/Default) — цвет несут вершины.
     /// Стыки сегментов сводятся усом (miter), иначе на внешней стороне каждого поворота оставался
@@ -50,60 +67,32 @@ namespace WorldGen.Rendering
         /// несколько единиц карты, гранёности на глаз не видно.</summary>
         const int CapSegments = 8;
 
-        public static UnityEngine.Mesh Build(IReadOnlyList<Vector2> polyline, float width, float yHeight,
-                                             RiverEndStyle start, RiverEndStyle end)
+        /// <summary>Вложенных полос в поперечнике. Шесть: разница между кромкой и сердцевиной у
+        /// реки невелика (это мелкая вода, а не бездна), и шагами по шестой части её не видно, а
+        /// вот перекрестье двух рек полосы делают идеально гладким.</summary>
+        public const int DefaultBands = 6;
+
+        public static UnityEngine.Mesh BuildAll(IReadOnlyList<RiverShape> rivers, float yHeight,
+                                                UnityEngine.Color32 edge, UnityEngine.Color32 core,
+                                                int bands = DefaultBands)
         {
             var mesh = new UnityEngine.Mesh();
-            if (polyline == null || polyline.Count < 2 || width <= 0f) return mesh;
+            if (rivers == null || rivers.Count == 0) return mesh;
+            if (bands < 1) bands = 1;
 
-            float half = width * 0.5f;
-            int n = polyline.Count;
+            var verts = new List<UnityEngine.Vector3>();
+            var colors = new List<UnityEngine.Color32>();
+            var tris = new List<int>();
 
-            // Длина по дуге до каждой точки — по ней и цвет вдоль русла, и затухание у концов.
-            var distance = new float[n];
-            for (int i = 1; i < n; i++)
-                distance[i] = distance[i - 1] + Vector2.Distance(polyline[i - 1], polyline[i]);
-            float total = distance[n - 1];
-            if (total < 1e-5f) return mesh;
-
-            var verts = new List<UnityEngine.Vector3>(n * 3 + CapSegments * 2 + 4);
-            var colors = new List<UnityEngine.Color32>(verts.Capacity);
-            var tris = new List<int>((n - 1) * 12 + CapSegments * 6);
-
-            for (int i = 0; i < n; i++)
+            // Внешний цикл — по полосам, внутренний — по рекам. Только такой порядок и даёт
+            // независимость от того, в каком порядке ДМ рисовал реки (см. сводку класса).
+            for (int b = 0; b < bands; b++)
             {
-                Vector2 offset = OffsetAt(polyline, i, half);
-                var p = polyline[i];
-                float t = distance[i] / total;
-                float alpha = AlphaAt(distance[i], total, start, end);
-                var edgeBase = Lerp(start.Edge, end.Edge, t);
-                // У устья профиль распрямляется: чем ближе к воде, тем меньше ось отличается от края.
-                var centerBase = Lerp(edgeBase, Lerp(start.Center, end.Center, t),
-                                      DepthAt(distance[i], total, start, end));
-                var edge = Fade(edgeBase, alpha);
-                var center = Fade(centerBase, alpha);
-
-                verts.Add(new UnityEngine.Vector3(p.X - offset.X, yHeight, p.Y - offset.Y)); colors.Add(edge);
-                verts.Add(new UnityEngine.Vector3(p.X, yHeight, p.Y));                        colors.Add(center);
-                verts.Add(new UnityEngine.Vector3(p.X + offset.X, yHeight, p.Y + offset.Y)); colors.Add(edge);
+                float widthScale = 1f - b / (float)bands;
+                var bandColor = bands == 1 ? core : Lerp(edge, core, b / (float)(bands - 1));
+                foreach (var river in rivers)
+                    AddBand(verts, colors, tris, river, widthScale, bandColor, yHeight);
             }
-
-            // Четыре треугольника на сегмент: половина ленты слева от оси, половина справа.
-            for (int i = 0; i < n - 1; i++)
-            {
-                int a = i * 3, b = (i + 1) * 3;
-                tris.Add(a + 0); tris.Add(b + 0); tris.Add(a + 1);
-                tris.Add(a + 1); tris.Add(b + 0); tris.Add(b + 1);
-                tris.Add(a + 1); tris.Add(b + 1); tris.Add(a + 2);
-                tris.Add(a + 2); tris.Add(b + 1); tris.Add(b + 2);
-            }
-
-            if (start.Round) AddCap(verts, colors, tris, polyline[0], polyline[1], half, yHeight,
-                                     Fade(start.Edge, AlphaAt(0f, total, start, end)),
-                                     Fade(start.Center, AlphaAt(0f, total, start, end)));
-            if (end.Round) AddCap(verts, colors, tris, polyline[n - 1], polyline[n - 2], half, yHeight,
-                                   Fade(end.Edge, AlphaAt(total, total, start, end)),
-                                   Fade(end.Center, AlphaAt(total, total, start, end)));
 
             mesh.indexFormat = verts.Count > 65000
                 ? UnityEngine.Rendering.IndexFormat.UInt32
@@ -115,11 +104,58 @@ namespace WorldGen.Rendering
             return mesh;
         }
 
-        /// <summary>Полукруглая «шапка» на свободном конце: веер от оси русла наружу, от одного
-        /// края поперечника через кончик к другому. Внутрь реки не заходит — продолжает её.</summary>
+        static void AddBand(List<UnityEngine.Vector3> verts, List<UnityEngine.Color32> colors, List<int> tris,
+                            RiverShape shape, float widthScale, UnityEngine.Color32 bandColor, float yHeight)
+        {
+            var curve = shape.Curve;
+            if (curve == null || curve.Count < 2 || shape.Width <= 0f) return;
+
+            int n = curve.Count;
+            float half = shape.Width * 0.5f * widthScale;
+
+            var distance = new float[n];
+            for (int i = 1; i < n; i++)
+                distance[i] = distance[i - 1] + Vector2.Distance(curve[i - 1], curve[i]);
+            float total = distance[n - 1];
+            if (total < 1e-5f) return;
+
+            int firstVert = verts.Count;
+            for (int i = 0; i < n; i++)
+            {
+                float kStart = MouthFactor(distance[i], shape.Start);
+                float kEnd = MouthFactor(total - distance[i], shape.End);
+
+                // Сужение по корню, гашение линейно: у самой воды лента уже почти прозрачна, но
+                // ещё не выродилась в иглу — иначе конец читался бы наконечником стрелы.
+                float k = System.Math.Min(kStart, kEnd);
+                float taper = (float)System.Math.Sqrt(k);
+
+                var c = bandColor;
+                if (kStart < 1f) c = Lerp(shape.Start.MouthWater, c, kStart);
+                else if (kEnd < 1f) c = Lerp(shape.End.MouthWater, c, kEnd);
+                c = Fade(c, k);
+
+                Vector2 offset = OffsetAt(curve, i, half * taper);
+                var p = curve[i];
+                verts.Add(new UnityEngine.Vector3(p.X - offset.X, yHeight, p.Y - offset.Y)); colors.Add(c);
+                verts.Add(new UnityEngine.Vector3(p.X + offset.X, yHeight, p.Y + offset.Y)); colors.Add(c);
+            }
+
+            for (int i = 0; i < n - 1; i++)
+            {
+                int a = firstVert + i * 2, d = firstVert + (i + 1) * 2;
+                tris.Add(a + 0); tris.Add(d + 0); tris.Add(a + 1);
+                tris.Add(a + 1); tris.Add(d + 0); tris.Add(d + 1);
+            }
+
+            if (shape.Start.Round) AddCap(verts, colors, tris, curve[0], curve[1], half, yHeight, bandColor);
+            if (shape.End.Round) AddCap(verts, colors, tris, curve[n - 1], curve[n - 2], half, yHeight, bandColor);
+        }
+
+        /// <summary>Полукруглая «шапка» на свободном конце: веер от кончика наружу, от одного края
+        /// поперечника через кончик к другому. Внутрь реки не заходит — продолжает её.</summary>
         static void AddCap(List<UnityEngine.Vector3> verts, List<UnityEngine.Color32> colors, List<int> tris,
-                           Vector2 tip, Vector2 inward, float half, float yHeight,
-                           UnityEngine.Color32 edgeColor, UnityEngine.Color32 centerColor)
+                           Vector2 tip, Vector2 inward, float half, float yHeight, UnityEngine.Color32 color)
         {
             Vector2 dir = inward - tip;
             if (dir.LengthSquared() < 1e-8f) return;
@@ -129,7 +165,7 @@ namespace WorldGen.Rendering
 
             int centerIndex = verts.Count;
             verts.Add(new UnityEngine.Vector3(tip.X, yHeight, tip.Y));
-            colors.Add(centerColor);
+            colors.Add(color);
 
             int firstRim = verts.Count;
             for (int k = 0; k <= CapSegments; k++)
@@ -138,7 +174,7 @@ namespace WorldGen.Rendering
                 float cos = (float)System.Math.Cos(angle), sin = (float)System.Math.Sin(angle);
                 Vector2 rim = tip + (outward * cos + side * sin) * half;
                 verts.Add(new UnityEngine.Vector3(rim.X, yHeight, rim.Y));
-                colors.Add(edgeColor);
+                colors.Add(color);
             }
 
             for (int k = 0; k < CapSegments; k++)
@@ -149,25 +185,12 @@ namespace WorldGen.Rendering
             }
         }
 
-        /// <summary>Прозрачность в точке: полная непрозрачность в теле реки, плавный уход в ноль на
-        /// длине FadeLength у того конца, что упирается в водоём.</summary>
-        static float AlphaAt(float distance, float total, RiverEndStyle start, RiverEndStyle end)
+        /// <summary>Насколько точка ещё «река», а не «уже водоём»: 1 в теле русла, 0 у самого
+        /// кончика, если этот конец впадает в воду.</summary>
+        static float MouthFactor(float distanceFromTip, RiverEndStyle style)
         {
-            float alpha = 1f;
-            if (start.FadeLength > 0f) alpha = System.Math.Min(alpha, distance / start.FadeLength);
-            if (end.FadeLength > 0f) alpha = System.Math.Min(alpha, (total - distance) / end.FadeLength);
-            return System.Math.Clamp(alpha, 0f, 1f);
-        }
-
-        /// <summary>Насколько в этой точке проявлена «глубина» русла: 1 в теле реки, 0 у самого
-        /// устья. Профиль распрямляется заранее, чтобы в водоём река входила ровной полосой
-        /// мелководья — такой же, какой у водоёма его собственный берег.</summary>
-        static float DepthAt(float distance, float total, RiverEndStyle start, RiverEndStyle end)
-        {
-            float depth = 1f;
-            if (start.FlattenLength > 0f) depth = System.Math.Min(depth, distance / start.FlattenLength);
-            if (end.FlattenLength > 0f) depth = System.Math.Min(depth, (total - distance) / end.FlattenLength);
-            return System.Math.Clamp(depth, 0f, 1f);
+            if (style.MouthLength <= 0f) return 1f;
+            return System.Math.Clamp(distanceFromTip / style.MouthLength, 0f, 1f);
         }
 
         static UnityEngine.Color32 Lerp(UnityEngine.Color32 a, UnityEngine.Color32 b, float t)

@@ -14,72 +14,82 @@ namespace WorldGen.Generation
         static bool Near(Vector2 a, Vector2 b) => Vector2.Distance(a, b) < 0.001f;
 
         // Мутанты, которых валит этот тест:
-        //   • «оставить клетки воды на концах» → первая точка станет (0,0), а не берегом у (5,0);
-        //   • «начать прямо с клетки суши»     → первая точка станет (10,0);
-        //   • «обрезать и середину мазка»      → пропадёт вода ВНУТРИ русла;
-        //   • «мазок по воде — тоже река»      → непустой результат там, где суши не было;
-        //   • «перепутать устья местами»       → море и озеро поменяются концами, а значит градиент
-        //     ляжет задом наперёд и скруглится не тот конец. Ради него концы РАЗНЫЕ: на симметричной
+        //   • «оставить клетки воды на концах»  → первая точка станет (0,0), а не берегом у (5,0);
+        //   • «начать прямо с клетки суши»      → первая точка станет (10,0);
+        //   • «резать только концы, как раньше» → мазок через залив останется ОДНОЙ рекой, идущей
+        //     поверх воды, — ровно то, что ДМ забраковал;
+        //   • «мазок по воде — тоже река»       → непустой результат там, где суши не было;
+        //   • «перепутать устья местами»        → море и озеро поменяются концами, а значит цвет
+        //     устья и скругление достанутся не тому концу. Ради него концы РАЗНЫЕ: на симметричной
         //     заготовке подмена была бы не видна.
-        [ContextMenu("Self-Test: River Trim To Shore")]
-        public void SelfTestTrimToShore()
+        [ContextMenu("Self-Test: River Split At Water")]
+        public void SelfTestSplitAtWater()
         {
             bool ok = true;
 
-            // Море → суша → суша → озеро: оба конца режутся по кромке и заходят за неё на 2.
+            // Море → суша → суша → озеро: одна река, оба конца режутся по кромке и заходят за неё на 2.
             var sites = new List<Vector2> { new Vector2(0, 0), new Vector2(10, 0), new Vector2(20, 0), new Vector2(30, 0) };
             var kind = new List<RiverMouth> { RiverMouth.Sea, RiverMouth.None, RiverMouth.None, RiverMouth.Lake };
-            var trimmed = RiverPaintOps.TrimToShore(sites, kind, overshoot: 2f, out var startMouth, out var endMouth);
-            if (trimmed.Count != 4)
-            { Debug.LogError($"FAIL trim: точек {trimmed.Count}, ждали 4 (берег + две клетки суши + берег)"); ok = false; }
+            var split = RiverPaintOps.SplitAtWater(sites, kind, overshoot: 2f);
+            if (split.Count != 1)
+            { Debug.LogError($"FAIL split: кусков {split.Count}, ждали 1 — вода была только по краям"); ok = false; }
             else
             {
-                if (!Near(trimmed[0], new Vector2(3, 0)))
-                { Debug.LogError($"FAIL trim: начало {trimmed[0]}, ждали (3,0) — берег на (5,0) (середина между центрами суши и воды, она же общее ребро клеток Вороного) плюс заход 2 в сторону воды"); ok = false; }
-                if (!Near(trimmed[1], new Vector2(10, 0)) || !Near(trimmed[2], new Vector2(20, 0)))
-                { Debug.LogError("FAIL trim: клетки суши внутри русла должны остаться как есть"); ok = false; }
-                if (!Near(trimmed[3], new Vector2(27, 0)))
-                { Debug.LogError($"FAIL trim: устье {trimmed[3]}, ждали (27,0) — берег на (25,0) плюс заход 2"); ok = false; }
+                var points = split[0].Points;
+                if (points.Count != 4)
+                { Debug.LogError($"FAIL split: точек {points.Count}, ждали 4 (берег + две клетки суши + берег)"); ok = false; }
+                else
+                {
+                    if (!Near(points[0], new Vector2(3, 0)))
+                    { Debug.LogError($"FAIL split: начало {points[0]}, ждали (3,0) — берег на (5,0) (середина между центрами суши и воды, она же общее ребро клеток Вороного) плюс заход 2 в сторону воды"); ok = false; }
+                    if (!Near(points[1], new Vector2(10, 0)) || !Near(points[2], new Vector2(20, 0)))
+                    { Debug.LogError("FAIL split: клетки суши внутри русла должны остаться как есть"); ok = false; }
+                    if (!Near(points[3], new Vector2(27, 0)))
+                    { Debug.LogError($"FAIL split: устье {points[3]}, ждали (27,0) — берег на (25,0) плюс заход 2"); ok = false; }
+                }
+                if (split[0].StartMouth != RiverMouth.Sea || split[0].EndMouth != RiverMouth.Lake)
+                { Debug.LogError($"FAIL split: устья определились как {split[0].StartMouth}/{split[0].EndMouth}, ждали Sea/Lake — от этого зависит и цвет конца, и скругление"); ok = false; }
             }
-            if (startMouth != RiverMouth.Sea || endMouth != RiverMouth.Lake)
-            { Debug.LogError($"FAIL trim: устья определились как {startMouth}/{endMouth}, ждали Sea/Lake — от этого зависит и цвет каждого конца, и в какую сторону идёт градиент"); ok = false; }
 
             // Тот же мазок задом наперёд обязан поменять устья местами.
             var reversedSites = new List<Vector2>(sites); reversedSites.Reverse();
             var reversedKind = new List<RiverMouth>(kind); reversedKind.Reverse();
-            RiverPaintOps.TrimToShore(reversedSites, reversedKind, 2f, out var revStart, out var revEnd);
-            if (revStart != RiverMouth.Lake || revEnd != RiverMouth.Sea)
-            { Debug.LogError($"FAIL trim: у перевёрнутого мазка устья {revStart}/{revEnd}, ждали Lake/Sea"); ok = false; }
+            var reversed = RiverPaintOps.SplitAtWater(reversedSites, reversedKind, 2f);
+            if (reversed.Count != 1 || reversed[0].StartMouth != RiverMouth.Lake || reversed[0].EndMouth != RiverMouth.Sea)
+            { Debug.LogError("FAIL split: у перевёрнутого мазка устья обязаны поменяться местами (ждали Lake/Sea)"); ok = false; }
 
-            // Конец, не дошедший до воды, — свободный (его потом скругляют).
-            RiverPaintOps.TrimToShore(
-                new List<Vector2> { new Vector2(0, 0), new Vector2(10, 0), new Vector2(20, 0) },
-                new List<RiverMouth> { RiverMouth.None, RiverMouth.None, RiverMouth.Sea },
-                2f, out var freeStart, out var seaEnd);
-            if (freeStart != RiverMouth.None || seaEnd != RiverMouth.Sea)
-            { Debug.LogError($"FAIL trim: концы {freeStart}/{seaEnd}, ждали None/Sea — конец на суше не должен притворяться устьем"); ok = false; }
+            // ГЛАВНОЕ правило: озеро ПОСРЕДИ мазка режет его на две реки, обе в это озеро впадают.
+            var through = RiverPaintOps.SplitAtWater(
+                new List<Vector2> { new Vector2(0, 0), new Vector2(10, 0), new Vector2(20, 0), new Vector2(30, 0) },
+                new List<RiverMouth> { RiverMouth.None, RiverMouth.None, RiverMouth.Lake, RiverMouth.None }, 2f);
+            if (through.Count != 2)
+            { Debug.LogError($"FAIL split: кусков {through.Count}, ждали 2 — через водоём река не течёт, она в нём кончается"); ok = false; }
+            else
+            {
+                if (through[0].StartMouth != RiverMouth.None || through[0].EndMouth != RiverMouth.Lake)
+                { Debug.LogError($"FAIL split: у первого куска концы {through[0].StartMouth}/{through[0].EndMouth}, ждали None/Lake"); ok = false; }
+                if (through[1].StartMouth != RiverMouth.Lake || through[1].EndMouth != RiverMouth.None)
+                { Debug.LogError($"FAIL split: у второго куска концы {through[1].StartMouth}/{through[1].EndMouth}, ждали Lake/None"); ok = false; }
+                // Ни одна точка не должна лежать дальше кромки вглубь озера, чем заход.
+                foreach (var p in through[0].Points)
+                    if (p.X > 17.001f)
+                    { Debug.LogError($"FAIL split: точка {p} залезла в озеро глубже кромки (15,0) плюс заход 2 — река рисуется поверх воды"); ok = false; break; }
+            }
 
             // Мазок целиком по воде — не река.
-            var allWater = RiverPaintOps.TrimToShore(
+            var allWater = RiverPaintOps.SplitAtWater(
                 new List<Vector2> { new Vector2(0, 0), new Vector2(10, 0) },
-                new List<RiverMouth> { RiverMouth.Sea, RiverMouth.Sea }, 2f, out _, out _);
+                new List<RiverMouth> { RiverMouth.Sea, RiverMouth.Sea }, 2f);
             if (allWater.Count != 0)
-            { Debug.LogError("FAIL trim: мазок, не задевший сушу, обязан выбрасываться"); ok = false; }
+            { Debug.LogError("FAIL split: мазок, не задевший сушу, обязан выбрасываться"); ok = false; }
 
-            // Озерцо ПОСРЕДИ реки не режет её надвое.
-            var through = RiverPaintOps.TrimToShore(
-                new List<Vector2> { new Vector2(0, 0), new Vector2(10, 0), new Vector2(20, 0) },
-                new List<RiverMouth> { RiverMouth.None, RiverMouth.Lake, RiverMouth.None }, 2f, out _, out _);
-            if (through.Count != 3 || !Near(through[1], new Vector2(10, 0)))
-            { Debug.LogError("FAIL trim: вода ВНУТРИ мазка обрезаться не должна — режутся только концы"); ok = false; }
-
-            // Одна клетка суши — точка, а не река.
-            var single = RiverPaintOps.TrimToShore(new List<Vector2> { new Vector2(0, 0) },
-                new List<RiverMouth> { RiverMouth.None }, 2f, out _, out _);
+            // Одна клетка суши без соседей-воды — точка, а не река.
+            var single = RiverPaintOps.SplitAtWater(new List<Vector2> { new Vector2(0, 0) },
+                new List<RiverMouth> { RiverMouth.None }, 2f);
             if (single.Count != 0)
-            { Debug.LogError("FAIL trim: из одной точки река не получается"); ok = false; }
+            { Debug.LogError("FAIL split: из одной точки река не получается"); ok = false; }
 
-            Debug.Log(ok ? "Self-Test River Trim: PASS" : "Self-Test River Trim: FAIL");
+            Debug.Log(ok ? "Self-Test River Split: PASS" : "Self-Test River Split: FAIL");
         }
 
         // Мутант, которого валит этот тест: «сглаживание = ломаная» (линейная интерполяция).
@@ -155,68 +165,168 @@ namespace WorldGen.Generation
             Debug.Log(ok ? "Self-Test River Curve: PASS" : "Self-Test River Curve: FAIL");
         }
 
-        // Четыре требования ДМ к виду реки, записанные как проверки: свободный конец скруглён,
-        // устье гаснет, середина темнее краёв, цвет вдоль русла переливается от конца к концу.
-        // Мутанты: «не строить шапку», «не гасить устье», «красить одним цветом поперёк»,
-        // «брать цвет только одного конца».
-        [ContextMenu("Self-Test: River Mesh Shading")]
-        public void SelfTestMeshShading()
+        // Требование ДМ: две пересекающиеся реки должны читаться ОДНОЙ рекой, без перекрытий.
+        //
+        // Мутант, которого валит этот тест: «строить меш рекой за рекой» (внешний цикл по рекам, а
+        // не по полосам) — именно так было раньше. Проверка: точка (20,2) лежит на оси реки Б, но
+        // сбоку от оси реки А. При верном порядке последней её закрашивает сердцевина Б в обоих
+        // случаях; при мутанте — та река, которую построили ПОСЛЕДНЕЙ, и цвет от порядка рисования
+        // зависит. Поэтому меш строится дважды с переставленными реками и цвета сравниваются: тест
+        // вида «в перекрестье какой-то речной цвет» прошёл бы и на сломанном рендере.
+        [ContextMenu("Self-Test: River Mesh Union")]
+        public void SelfTestMeshUnion()
         {
             bool ok = true;
-            var curve = new List<Vector2> { new Vector2(0, 0), new Vector2(20, 0), new Vector2(40, 0) };
-            var free = new WorldGen.Rendering.RiverEndStyle
+            var edge = new Color32(200, 200, 200, 255);
+            var core = new Color32(60, 60, 60, 255);
+
+            var a = new WorldGen.Rendering.RiverShape
             {
-                Edge = new Color32(200, 200, 200, 255), Center = new Color32(60, 60, 60, 255),
-                Round = true, FadeLength = 0f
+                Curve = new List<Vector2> { new Vector2(0, 0), new Vector2(20, 0), new Vector2(40, 0) },
+                Width = 6f
             };
-            var mouth = new WorldGen.Rendering.RiverEndStyle
+            var b = new WorldGen.Rendering.RiverShape
             {
-                Edge = new Color32(0, 0, 200, 255), Center = new Color32(0, 0, 60, 255),
-                Round = false, FadeLength = 10f, FlattenLength = 20f
+                Curve = new List<Vector2> { new Vector2(20, -20), new Vector2(20, 0), new Vector2(20, 20) },
+                Width = 6f
             };
 
-            var mesh = WorldGen.Rendering.RiverMeshBuilder.Build(curve, width: 6f, yHeight: 0.45f, start: free, end: mouth);
+            // На оси Б, но в третьей полосе А (полуширины полос: 3; 2,5; 2; 1,5; 1; 0,5) — здесь
+            // порядок построения и вылезает.
+            var probe = new Vector2(20, 1.8f);
+            var background = new Color(1f, 0f, 1f, 1f);
+            var direct = SampleMesh(WorldGen.Rendering.RiverMeshBuilder.BuildAll(
+                new List<WorldGen.Rendering.RiverShape> { a, b }, 0.45f, edge, core), probe, background);
+            var swapped = SampleMesh(WorldGen.Rendering.RiverMeshBuilder.BuildAll(
+                new List<WorldGen.Rendering.RiverShape> { b, a }, 0.45f, edge, core), probe, background);
+
+            if (SameColor(direct, background))
+            { Debug.LogError("FAIL union: в перекрестье вообще не легло русло — заготовка не проверяет ничего"); ok = false; }
+            if (!SameColor(direct, swapped))
+            { Debug.LogError($"FAIL union: цвет перекрестья зависит от порядка рек ({direct} против {swapped}) — на карте это видимый шов, а от поворота камеры он ещё и мигает"); ok = false; }
+            if (Mathf.Abs(direct.r * 255f - core.r) > 3f)
+            { Debug.LogError($"FAIL union: в точке на оси реки Б красного {direct.r * 255f:F0}, ждали сердцевину {core.r} — объединение обязано показывать самую внутреннюю полосу"); ok = false; }
+
+            // Поперёк русла цвет обязан меняться от кромки к оси — иначе это плоская лента.
+            var rim = SampleMesh(WorldGen.Rendering.RiverMeshBuilder.BuildAll(
+                new List<WorldGen.Rendering.RiverShape> { a }, 0.45f, edge, core), new Vector2(10, 2.8f), background);
+            var axis = SampleMesh(WorldGen.Rendering.RiverMeshBuilder.BuildAll(
+                new List<WorldGen.Rendering.RiverShape> { a }, 0.45f, edge, core), new Vector2(10, 0f), background);
+            if (!(Luma(rim) > Luma(axis) + 20f))
+            { Debug.LogError($"FAIL union: у кромки яркость {Luma(rim):F0}, на оси {Luma(axis):F0} — правило «к берегу светлее, к центру темнее» не применилось"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test River Union: PASS" : "Self-Test River Union: FAIL");
+        }
+
+        // Требование ДМ: место втекания в водоём не должно выглядеть отдельным объектом.
+        // Мутанты: «не сужать конец», «не гасить конец», «красить кончик общим цветом реки».
+        [ContextMenu("Self-Test: River Mesh Mouth")]
+        public void SelfTestMeshMouth()
+        {
+            bool ok = true;
+            var edge = new Color32(200, 200, 200, 255);
+            var core = new Color32(60, 60, 60, 255);
+            var water = new Color32(0, 0, 255, 255);   // нарочно НЕ речной цвет: подмену видно
+
+            var shape = new WorldGen.Rendering.RiverShape
+            {
+                Curve = new List<Vector2> { new Vector2(0, 0), new Vector2(20, 0), new Vector2(40, 0) },
+                Width = 6f,
+                Start = new WorldGen.Rendering.RiverEndStyle { Round = true },
+                End = new WorldGen.Rendering.RiverEndStyle { MouthLength = 10f, MouthWater = water }
+            };
+            var mesh = WorldGen.Rendering.RiverMeshBuilder.BuildAll(
+                new List<WorldGen.Rendering.RiverShape> { shape }, 0.45f, edge, core);
             var verts = mesh.vertices;
             var colors = mesh.colors32;
 
-            if (verts.Length <= curve.Count * 3)
-            { Debug.LogError($"FAIL mesh: вершин {verts.Length} при {curve.Count} точках — свободный конец не скруглён (шапки нет)"); ok = false; }
             if (colors.Length != verts.Length)
-            { Debug.LogError("FAIL mesh: у вершин нет цветов — вся раскраска держится на них"); ok = false; }
-            else
-            {
-                // Поперечник в середине: [край, ось, край].
-                int mid = 1 * 3;
-                if (Luma(colors[mid + 1]) >= Luma(colors[mid]))
-                { Debug.LogError($"FAIL mesh: ось русла (яркость {Luma(colors[mid + 1]):F0}) не темнее края ({Luma(colors[mid]):F0}) — правило «к берегу светлее, к центру темнее» не применилось"); ok = false; }
+            { Debug.LogError("FAIL mouth: у вершин нет цветов — вся раскраска держится на них"); ok = false; }
 
-                // Цвет вдоль русла: у свободного конца край серый (красного 200), у устья синий
-                // (красного 0), а посередине обязана быть их смесь — это и есть градиент.
-                int lastEdge = (curve.Count - 1) * 3;
-                if (!(colors[0].r > 150 && colors[lastEdge].r < 60))
-                { Debug.LogError($"FAIL mesh: концы покрашены как {colors[0].r}/{colors[lastEdge].r} по красному, ждали ~200 и ~0 — каждый конец должен брать цвет своего водоёма"); ok = false; }
-                if (colors[mid].r < 40 || colors[mid].r > 180)
-                { Debug.LogError($"FAIL mesh: в середине русла красного {colors[mid].r}, ждали смесь около 100 — цвет обязан ПЕРЕЛИВАТЬСЯ от конца к концу, а не прыгать"); ok = false; }
+            // Скруглённый конец: у самой левой вершины X должен уйти ЛЕВЕЕ начала русла (шапка).
+            float minX = float.MaxValue;
+            foreach (var v in verts) minX = Mathf.Min(minX, v.x);
+            if (minX > -0.5f)
+            { Debug.LogError($"FAIL mouth: левее начала русла ничего нет (minX {minX:F2}) — свободный конец не скруглён, он обрывается ножом"); ok = false; }
 
-                if (colors[0].a != 255)
-                { Debug.LogError($"FAIL mesh: свободный конец полупрозрачен (альфа {colors[0].a}) — гаснуть должно только устье"); ok = false; }
+            // Сужение: у самого устья лента уже, чем в теле реки.
+            float halfAtMid = HalfWidthNear(verts, 20f), halfAtTip = HalfWidthNear(verts, 40f);
+            if (!(halfAtTip < halfAtMid * 0.35f))
+            { Debug.LogError($"FAIL mouth: полуширина у устья {halfAtTip:F2} против {halfAtMid:F2} в теле — конец не сужается, в водоём воткнётся полоса с резкими боками"); ok = false; }
 
-                byte minAlpha = 255;
-                foreach (var c in colors) if (c.a < minAlpha) minAlpha = c.a;
-                if (minAlpha > 5)
-                { Debug.LogError($"FAIL mesh: минимальная альфа {minAlpha} — устье не гаснет, и стык с водоёмом останется резким"); ok = false; }
+            // Гашение и цвет: у кончика альфа падает почти в ноль, а цвет уходит в цвет воды.
+            byte minAlpha = 255;
+            foreach (var c in colors) minAlpha = (byte)Mathf.Min(minAlpha, c.a);
+            if (minAlpha > 5)
+            { Debug.LogError($"FAIL mouth: минимальная альфа {minAlpha} — устье не гаснет, и стык с водоёмом останется резким"); ok = false; }
 
-                // «Река — продолжение водоёма»: у самого устья поперечник обязан быть РОВНЫМ
-                // мелководьем (ось сошлась с краем), иначе тёмная сердцевина воткнётся языком в
-                // светлую прибрежную полосу. Мутант: не распрямлять профиль у устья.
-                if (Mathf.Abs(Luma(colors[lastEdge + 1]) - Luma(colors[lastEdge])) > 12f)
-                { Debug.LogError($"FAIL mesh: у устья ось (яркость {Luma(colors[lastEdge + 1]):F0}) всё ещё темнее края ({Luma(colors[lastEdge]):F0}) — в водоём река должна входить ровной полосой мелководья"); ok = false; }
-            }
+            Color32 tip = ColorNear(verts, colors, 40f);
+            if (tip.b < 200 || tip.r > 60)
+            { Debug.LogError($"FAIL mouth: у кончика цвет {tip} вместо цвета воды {water} — река въедет в водоём чужим цветом и будет видна отдельной полосой"); ok = false; }
 
-            Debug.Log(ok ? "Self-Test River Mesh: PASS" : "Self-Test River Mesh: FAIL");
+            Debug.Log(ok ? "Self-Test River Mouth: PASS" : "Self-Test River Mouth: FAIL");
         }
 
-        static float Luma(Color32 c) => 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+        /// <summary>Наибольшее отклонение вершины от оси Z=0 среди вершин около заданного X — она же
+        /// полуширина ленты в этом месте.</summary>
+        static float HalfWidthNear(Vector3[] verts, float x)
+        {
+            float best = 0f;
+            foreach (var v in verts)
+                if (Mathf.Abs(v.x - x) < 0.6f) best = Mathf.Max(best, Mathf.Abs(v.z));
+            return best;
+        }
+
+        static Color32 ColorNear(Vector3[] verts, Color32[] colors, float x)
+        {
+            float bestDx = float.MaxValue;
+            Color32 best = default;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                float dx = Mathf.Abs(verts[i].x - x);
+                if (dx >= bestDx) continue;
+                bestDx = dx; best = colors[i];
+            }
+            return best;
+        }
+
+        /// <summary>Красит один пиксель так же, как это делает видеокарта на прозрачной очереди с
+        /// выключенной записью глубины: треугольники в порядке индексов, каждый смешивается с уже
+        /// накопленным по своей альфе. Без этого «перекрытия не видно» проверить нечем.</summary>
+        static Color SampleMesh(Mesh mesh, Vector2 p, Color background)
+        {
+            var verts = mesh.vertices;
+            var colors = mesh.colors32;
+            var tris = mesh.triangles;
+            Color dst = background;
+
+            for (int i = 0; i < tris.Length; i += 3)
+            {
+                Vector2 a = Flat(verts[tris[i]]), b = Flat(verts[tris[i + 1]]), c = Flat(verts[tris[i + 2]]);
+                if (Mathf.Abs(Cross(b - a, c - a)) < 1e-5f) continue;   // выродившийся у кончика — пропускаем
+                if (!InTriangle(p, a, b, c)) continue;
+
+                Color32 src = colors[tris[i]];
+                dst = Color.Lerp(dst, new Color(src.r / 255f, src.g / 255f, src.b / 255f, 1f), src.a / 255f);
+            }
+            return dst;
+        }
+
+        static Vector2 Flat(Vector3 v) => new Vector2(v.x, v.z);
+        static float Cross(Vector2 u, Vector2 w) => u.X * w.Y - u.Y * w.X;
+
+        static bool InTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+        {
+            float d1 = Cross(b - a, p - a), d2 = Cross(c - b, p - b), d3 = Cross(a - c, p - c);
+            bool neg = d1 < 0f || d2 < 0f || d3 < 0f;
+            bool pos = d1 > 0f || d2 > 0f || d3 > 0f;
+            return !(neg && pos);
+        }
+
+        static bool SameColor(Color a, Color b)
+            => Mathf.Abs(a.r - b.r) < 0.01f && Mathf.Abs(a.g - b.g) < 0.01f && Mathf.Abs(a.b - b.b) < 0.01f;
+
+        static float Luma(Color c) => (0.299f * c.r + 0.587f * c.g + 0.114f * c.b) * 255f;
 
         // Мутант, которого валит этот тест: «расстояние до ближайшей ВЕРШИНЫ» вместо расстояния до
         // отрезка — клик по середине длинного участка перестал бы попадать по реке.

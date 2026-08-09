@@ -8,14 +8,23 @@ namespace WorldGen.Generation
     /// Чистая геометрия кисти рек (без UnityEngine — гоняется самотестами без сцены).
     /// Путь от мазка до русла:
     ///   • AppendAnchor  — цепочка клеток под курсором без повторов подряд;
-    ///   • TrimToShore   — концы, ушедшие в воду, обрезаются по кромке водоёма (плюс небольшой
-    ///                     заход за неё) и заодно сообщается, во что упёрся КАЖДЫЙ конец;
+    ///   • SplitAtWater  — мазок режется на куски по КАЖДОМУ заходу в воду, у каждого куска свои
+    ///                     концы, подрезанные по кромке водоёма;
     ///   • BuildCurve    — прореживание, сглаживание углов и сплайн: из ломаной по центрам клеток
     ///                     получается плавная река.
     /// Плюс DistanceToPolyline — попадание курсора по нарисованной реке (режим «Стереть»).
     /// </summary>
     public static class RiverPaintOps
     {
+        /// <summary>Один кусок мазка, ставший отдельной рекой: точки плюс то, во что упёрся каждый
+        /// конец (RiverMouth.None — свободный конец на суше).</summary>
+        public struct Segment
+        {
+            public List<Vector2> Points;
+            public RiverMouth StartMouth;
+            public RiverMouth EndMouth;
+        }
+
         /// <summary>Добавляет точку в цепочку, если она не совпадает с последней (курсор всё ещё
         /// в той же клетке). Возвращает true, если цепочка выросла.</summary>
         public static bool AppendAnchor(List<Vector2> anchors, Vector2 site)
@@ -27,7 +36,10 @@ namespace WorldGen.Generation
         }
 
         /// <summary>
-        /// Обрезает концы русла по кромке воды и определяет, во что каждый конец упирается.
+        /// Режет мазок на реки по воде: КАЖДЫЙ отрезок суши становится своей рекой, а всё, что ДМ
+        /// провёл по воде, выбрасывается. Провести реку насквозь через залив нельзя — из такого
+        /// мазка выйдут две реки, обе впадающие в этот залив, что и есть правда: по водоёму река
+        /// не течёт, она в нём кончается.
         ///
         /// Кромка берётся не на глаз: у соседних клеток Вороного общее ребро — это серединный
         /// перпендикуляр между их центрами, так что СЕРЕДИНА отрезка «центр суши → центр воды»
@@ -35,47 +47,45 @@ namespace WorldGen.Generation
         ///
         /// За кромку русло заходит на overshoot: растр рисует СГЛАЖЕННЫЙ берег, и точная граница
         /// клеток с ним не совпадает пиксель в пиксель — без захода между рекой и водой оставался
-        /// бы зазор. Заход не мозолит глаза, потому что на этом отрезке река гасится по
-        /// прозрачности (см. RiverMeshBuilder), а не рисуется поверх воды сплошной полосой.
+        /// бы зазор. Заход не мозолит глаза, потому что на нём русло разом сужается, гаснет и
+        /// перекрашивается в цвет воды под собой (см. RiverMeshBuilder).
         ///
-        /// Клетки воды ВНУТРИ мазка (река прошла через озерцо насквозь) сохраняются как есть —
-        /// подрезаются только концы. Мазок целиком по воде рекой не становится: возвращается
-        /// пустой список, и вызывающий его выбрасывает.
+        /// Куски короче двух точек отбрасываются: одинокая клетка суши на конце мазка — точка, а не
+        /// река. Мазок целиком по воде даёт пустой список.
         /// </summary>
-        public static List<Vector2> TrimToShore(IReadOnlyList<Vector2> sites, IReadOnlyList<RiverMouth> waterKind,
-                                                float overshoot, out RiverMouth startMouth, out RiverMouth endMouth)
+        public static List<Segment> SplitAtWater(IReadOnlyList<Vector2> sites, IReadOnlyList<RiverMouth> waterKind,
+                                                 float overshoot)
         {
-            startMouth = RiverMouth.None;
-            endMouth = RiverMouth.None;
-
-            var result = new List<Vector2>();
+            var result = new List<Segment>();
             if (sites == null || waterKind == null || sites.Count != waterKind.Count) return result;
 
-            int first = -1, last = -1;
-            for (int i = 0; i < sites.Count; i++)
+            int i = 0;
+            while (i < sites.Count)
             {
-                if (waterKind[i] != RiverMouth.None) continue;
-                if (first < 0) first = i;
-                last = i;
-            }
-            if (first < 0) return result;   // ни одной клетки суши — реки нет
+                if (waterKind[i] != RiverMouth.None) { i++; continue; }
 
-            if (first > 0)
-            {
-                startMouth = waterKind[first - 1];
-                result.Add(ShorePoint(sites[first], sites[first - 1], overshoot));
-            }
-            for (int i = first; i <= last; i++) result.Add(sites[i]);
-            if (last < sites.Count - 1)
-            {
-                endMouth = waterKind[last + 1];
-                result.Add(ShorePoint(sites[last], sites[last + 1], overshoot));
-            }
+                int first = i;
+                while (i < sites.Count && waterKind[i] == RiverMouth.None) i++;
+                int last = i - 1;
 
-            if (result.Count < 2)   // одна точка — это не река
-            {
-                result.Clear();
-                startMouth = endMouth = RiverMouth.None;
+                var points = new List<Vector2>();
+                var startMouth = RiverMouth.None;
+                var endMouth = RiverMouth.None;
+
+                if (first > 0)
+                {
+                    startMouth = waterKind[first - 1];
+                    points.Add(ShorePoint(sites[first], sites[first - 1], overshoot));
+                }
+                for (int k = first; k <= last; k++) points.Add(sites[k]);
+                if (last < sites.Count - 1)
+                {
+                    endMouth = waterKind[last + 1];
+                    points.Add(ShorePoint(sites[last], sites[last + 1], overshoot));
+                }
+
+                if (points.Count >= 2)
+                    result.Add(new Segment { Points = points, StartMouth = startMouth, EndMouth = endMouth });
             }
             return result;
         }
