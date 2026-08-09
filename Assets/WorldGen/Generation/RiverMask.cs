@@ -23,6 +23,9 @@ namespace WorldGen.Generation
         /// неё, когда решают, впадает ли в неё чужой кончик.</summary>
         public struct Ribbon
         {
+            /// <summary>Id исходной реки — по нему предпросмотр отличает свои куски от готовых рек
+            /// (у нарисованных рек Id всегда положителен).</summary>
+            public int Id;
             public List<Vector2> Curve;
             public float Width;
             public bool WideStart, WideEnd;
@@ -40,9 +43,17 @@ namespace WorldGen.Generation
                       ribbon.WideStart, ribbon.WideEnd, rectX, rectY, rectW, rectH);
         }
 
-        /// <summary>Переводит реки в кривые и заодно решает про каждый конец, раздаваться ему или
-        /// нет. Решается ПО МЕСТУ, а не хранится в реке: сотрут ствол — приток сам увидит, что
-        /// впадать больше некуда, и вернёт себе широкий конец.</summary>
+        /// <summary>Насколько кончик вправе НЕ ДОТЯНУТЬСЯ до чужого русла и всё-таки считаться
+        /// притоком, в долях своей ширины. Нужно потому, что опорные точки мазка — это ЦЕНТРЫ
+        /// КЛЕТОК, а не позиция курсора: ведя приток к стволу, ДМ отпускает кнопку, когда курсор
+        /// коснулся ствола на глаз, а последняя опора остаётся в центре клетки, до полуклетки не
+        /// доходя. Отсюда и жалоба «сужается, только если начать рисовать ОТ реки»: в начале мазка
+        /// по стволу нарочно щёлкают, а в конце — как получится.</summary>
+        const float SnapReach = 1.5f;
+
+        /// <summary>Переводит реки в кривые и решает про каждый конец, раздаваться ему или нет.
+        /// Решается ПО МЕСТУ, а не хранится в реке: сотрут ствол — приток сам увидит, что впадать
+        /// больше некуда, и вернёт себе широкий конец.</summary>
         public static List<Ribbon> BuildRibbons(IEnumerable<PaintedRiver> rivers)
         {
             var result = new List<Ribbon>();
@@ -53,54 +64,74 @@ namespace WorldGen.Generation
                 if (river == null || river.Points == null || river.Points.Count < 2) continue;
                 var curve = RiverPaintOps.BuildCurve(river.Points, river.Width);
                 if (curve.Count < 2) continue;
-                result.Add(new Ribbon { Curve = curve, Width = river.Width, WideStart = true, WideEnd = true });
+                result.Add(new Ribbon
+                {
+                    Id = river.Id, Curve = curve, Width = river.Width,
+                    WideStart = true, WideEnd = true
+                });
             }
 
             for (int i = 0; i < result.Count; i++)
             {
                 var ribbon = result[i];
-                ribbon.WideStart = !JoinsAnother(ribbon.Curve[0], ribbon.Width, result, i);
-                ribbon.WideEnd = !JoinsAnother(ribbon.Curve[ribbon.Curve.Count - 1], ribbon.Width, result, i);
+                ribbon.WideStart = !ResolveJoin(ref ribbon, atStart: true, result, i);
+                ribbon.WideEnd = !ResolveJoin(ref ribbon, atStart: false, result, i);
                 result[i] = ribbon;
             }
             return result;
         }
 
-        /// <summary>Дотягивается ли кончик русла до ЧУЖОГО русла настолько, что они сливаются.
+        /// <summary>Впадает ли этот конец в чужое русло — и если почти впадает, ДОТЯГИВАЕТ его до
+        /// чужой оси. Дотягивание обязательно: без него конец, признанный притоком, и сузился бы, и
+        /// остался в стороне — между ним и стволом зияла бы щель там, где ДМ вёл кисть к слиянию.
         ///
-        /// Мерка — не «половина номинальной ширины», а фактическая полуширина чужой реки в ближайшей
-        /// её точке плюс полуширина тела самого кончика: спрашиваем ровно то, что нужно, — «если
-        /// этот конец сузить, будут ли реки всё ещё соприкасаться». Иначе конец, суженный по
-        /// щедрой мерке, отошёл бы от ствола и между ними осталась бы щель.</summary>
-        public static bool JoinsAnother(Vector2 tip, float width, IReadOnlyList<Ribbon> ribbons, int skip)
+        /// Мерка касания — не «половина номинальной ширины», а фактическая полуширина чужой реки в
+        /// ближайшей точке плюс полуширина тела самого кончика: спрашиваем ровно то, что нужно, —
+        /// «если этот конец сузить, будут ли реки всё ещё соприкасаться».</summary>
+        static bool ResolveJoin(ref Ribbon ribbon, bool atStart, IReadOnlyList<Ribbon> ribbons, int skip)
         {
-            if (ribbons == null) return false;
-            float tipBodyHalf = width * 0.5f * RiverPaintOps.BodyWidthFactor;
+            var tip = atStart ? ribbon.Curve[0] : ribbon.Curve[ribbon.Curve.Count - 1];
+            float tipBodyHalf = ribbon.Width * 0.5f * RiverPaintOps.BodyWidthFactor;
+            float reach = ribbon.Width * SnapReach;
+
+            float bestDistance = float.MaxValue;
+            Vector2 bestPoint = tip;
 
             for (int i = 0; i < ribbons.Count; i++)
             {
                 if (i == skip) continue;
                 var other = ribbons[i];
                 if (other.Curve == null || other.Curve.Count < 2) continue;
-                float distance = DistanceToRibbon(other, tip, out float halfThere);
-                if (distance <= halfThere + tipBodyHalf) return true;
+
+                float distance = ClosestOnRibbon(other, tip, out float halfThere, out var point);
+                if (distance <= halfThere + tipBodyHalf) return true;   // уже соприкасаются
+                if (distance < bestDistance) { bestDistance = distance; bestPoint = point; }
             }
-            return false;
+
+            if (bestDistance > reach) return false;
+
+            if (atStart) ribbon.Curve.Insert(0, bestPoint);
+            else ribbon.Curve.Add(bestPoint);
+            return true;
         }
 
-        /// <summary>Расстояние от точки до русла и заодно полуширина русла в ближайшей его точке.</summary>
-        static float DistanceToRibbon(Ribbon ribbon, Vector2 p, out float halfThere)
+        /// <summary>Ближайшая к точке точка чужого русла: расстояние, полуширина русла там и сама
+        /// точка (по ней кончик и дотягивают).</summary>
+        static float ClosestOnRibbon(Ribbon ribbon, Vector2 p, out float halfThere, out Vector2 closest)
         {
             var arc = RiverPaintOps.ArcLengths(ribbon.Curve);
             float total = arc[arc.Length - 1];
 
             float bestSq = float.MaxValue, bestArc = 0f;
+            closest = ribbon.Curve[0];
             for (int s = 0; s < ribbon.Curve.Count - 1; s++)
             {
-                float t = ProjectOnSegment(ribbon.Curve[s], ribbon.Curve[s + 1], p, out float distSq);
+                Vector2 a = ribbon.Curve[s], b = ribbon.Curve[s + 1];
+                float t = ProjectOnSegment(a, b, p, out float distSq);
                 if (distSq >= bestSq) continue;
                 bestSq = distSq;
                 bestArc = arc[s] + (arc[s + 1] - arc[s]) * t;
+                closest = a + (b - a) * t;
             }
 
             halfThere = RiverPaintOps.HalfWidthAt(bestArc, total, ribbon.Width, ribbon.WideStart, ribbon.WideEnd);

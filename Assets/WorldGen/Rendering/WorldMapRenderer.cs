@@ -1120,21 +1120,23 @@ namespace WorldGen.Rendering
             var color = MapPalette.GetSlotColor(paletteTheme, PaletteSlot.Shallow);
             color.a = 190;   // полупрозрачно: это ещё не карта, а намерение
             var material = PaintedRiverMaterial();
-            // Конец, впадающий в уже нарисованную реку, не раздаётся — предпросмотр обязан
-            // показывать это сразу, иначе ДМ ведёт приток к стволу вслепую.
-            var existing = RiverMask.BuildRibbons(paintedRivers);
 
+            // Предпросмотр считается ТЕМ ЖЕ кодом, что и настоящая река: собираем временный список
+            // «уже нарисованные плюс то, что сейчас под курсором» и берём из него свои куски (Id = 0,
+            // у готовых рек Id положителен). Так предпросмотр не может разойтись с тем, что появится
+            // на отпускании, — включая сужение конца, впадающего в чужое русло, и дотягивание до него.
+            var withPreview = new List<PaintedRiver>(paintedRivers);
             foreach (var segment in segments)
+                withPreview.Add(new PaintedRiver { Id = 0, Points = segment.Points, Width = riverStrokeWidth });
+
+            foreach (var ribbon in RiverMask.BuildRibbons(withPreview))
             {
-                var curve = RiverPaintOps.BuildCurve(segment.Points, riverStrokeWidth);
-                if (curve.Count < 2) continue;
+                if (ribbon.Id != 0) continue;
                 var part = new GameObject("Preview");
                 part.transform.SetParent(paintedRiverContainer, false);
                 // Y чуть выше ленты берега (0.3) и границ регионов (0.4): предпросмотр лежит ПО карте.
                 part.AddComponent<MeshFilter>().sharedMesh = RiverMeshBuilder.Build(
-                    curve, riverStrokeWidth, 0.45f, color,
-                    wideStart: !RiverMask.JoinsAnother(curve[0], riverStrokeWidth, existing, -1),
-                    wideEnd: !RiverMask.JoinsAnother(curve[curve.Count - 1], riverStrokeWidth, existing, -1));
+                    ribbon.Curve, ribbon.Width, 0.45f, color, ribbon.WideStart, ribbon.WideEnd);
                 part.AddComponent<MeshRenderer>().sharedMaterial = material;
             }
         }

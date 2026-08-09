@@ -247,6 +247,26 @@ namespace WorldGen.Generation
             if (!joined[47 * w + 50])
             { Debug.LogError("FAIL mask: ось притока у слияния пересохла — сужение съело русло целиком"); ok = false; }
 
+            // Тот же приток, но НЕ ДОВЕДЁННЫЙ до ствола на 6 (опоры мазка — центры клеток, и конец
+            // мазка почти всегда чуть не дотягивается: ДМ отпускает кнопку, когда курсор коснулся
+            // ствола на глаз). Такой конец обязан и сузиться, и ДОТЯНУТЬСЯ до чужой оси.
+            // Мутанты: «мерить только точное касание» валит обе проверки сразу; «сузить, но не
+            // дотягивать» валит проверку щели — приток повис бы рядом со стволом, не сливаясь.
+            var shortOfTrunk = new PaintedRiver
+            {
+                Id = 2, Width = 6f,
+                Points = new List<Vector2> { new Vector2(50, 10), new Vector2(50, 44) }
+            };
+            var snapped = new bool[w * h];
+            RiverMask.StampAll(snapped, w, h, mapW, mapH, new List<PaintedRiver> { trunk, shortOfTrunk });
+
+            if (!snapped[46 * w + 50] || !snapped[48 * w + 50])
+            { Debug.LogError("FAIL mask: между недоведённым притоком и стволом осталась щель — конец не дотянули до чужой оси"); ok = false; }
+            if (snapped[46 * w + 52])
+            { Debug.LogError("FAIL mask: недоведённый приток раздался у слияния — сужение узнаёт только точное касание"); ok = false; }
+            if (!snapped[11 * w + 52])
+            { Debug.LogError("FAIL mask: у недоведённого притока пропал и свободный исток — сузили оба конца вместо одного"); ok = false; }
+
             Debug.Log(ok ? "Self-Test River Mask: PASS" : "Self-Test River Mask: FAIL");
         }
 
