@@ -115,7 +115,12 @@ namespace WorldGen.PlayerPrep.Data
                 bool exp = expertise.Contains(skill.Id);
                 // Компетентность удваивает МАСТЕРСТВО, а не весь бонус.
                 int bonus = mod + (prof ? d.ProficiencyBonus * (exp ? 2 : 1) : 0);
-                string abilityName = AbilityNames[System.Array.IndexOf(AbilityIds, skill.AbilityId)].ToLowerInvariant();
+                // ЧЕРЕЗ AbilityName, а не AbilityNames[IndexOf(...)]: справочник — данные, и опечатка в
+                // SkillDef.AbilityId («dexterity» вместо «dex») давала здесь IndexOf = −1 и
+                // IndexOutOfRangeException внутри Compute — то есть лист не открывался вовсе. AbilityName
+                // на незнакомое отвечает самим идентификатором: опечатка видна на экране, а не роняет
+                // весь лист (и её же называет RulesIntegrity при загрузке справочника).
+                string abilityName = AbilityName(skill.AbilityId).ToLowerInvariant();
                 string explain = $"{Signed(mod)} {abilityName}";
                 if (exp) explain += $", {Signed(d.ProficiencyBonus * 2)} компетентность";
                 else if (prof) explain += $", {Signed(d.ProficiencyBonus)} мастерство";
@@ -148,11 +153,13 @@ namespace WorldGen.PlayerPrep.Data
             else if (cls != null && !string.IsNullOrEmpty(cls.UnarmoredDefenseAbility))
             {
                 // Защита без доспехов действует ТОЛЬКО без доспехов — надел кольчугу, потерял.
-                int extraId = System.Array.IndexOf(AbilityIds, cls.UnarmoredDefenseAbility);
+                // Название характеристики — тоже через AbilityName: опечатка в
+                // ClassDef.UnarmoredDefenseAbility («wisdom» вместо «wis») роняла лист Варвара и Монаха
+                // с IndexOutOfRangeException, а теперь просто печатается как есть.
                 int extra = d.Modifiers.Get(cls.UnarmoredDefenseAbility);
                 d.ArmorClass = 10 + d.Modifiers.Dex + extra + shield;
                 d.ArmorClassExplain = $"10, {Signed(d.Modifiers.Dex)} ловкость, {Signed(extra)} "
-                                    + AbilityNames[extraId].ToLowerInvariant()
+                                    + AbilityName(cls.UnarmoredDefenseAbility).ToLowerInvariant()
                                     + (hasShield ? ", +2 щит" : "");
             }
             else

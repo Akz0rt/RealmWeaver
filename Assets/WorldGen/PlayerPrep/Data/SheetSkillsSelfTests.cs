@@ -362,6 +362,37 @@ namespace WorldGen.PlayerPrep.Data
             Done(ok);
         }
 
+        [ContextMenu("Self-Test: опечатка в характеристике справочника не роняет лист")]
+        public void SelfTestUnknownAbilityIdInRulesDoesNotBreakTheSheet()
+        {
+            // Мутант — «название характеристики берётся как AbilityNames[Array.IndexOf(AbilityIds, id)]»
+            // (ровно то, что стояло тут до починки, в ДВУХ местах): IndexOf даёт −1, и Compute падает с
+            // IndexOutOfRangeException, то есть лист не открывается ВООБЩЕ. Обе дороги в одной фикстуре:
+            //   • SkillDef.AbilityId с опечаткой — строка навыка;
+            //   • ClassDef.UnarmoredDefenseAbility с опечаткой — строка КД.
+            // Второй мутант — «AbilityName на незнакомое отвечает пустой строкой»: падения нет, но
+            // опечатка проглочена, и по экрану её не найти. Поэтому сверяется САМА СТРОКА, а не только
+            // то, что вызов вернулся.
+            var rules = Fixtures.Rules();
+            rules.Skills.First(s => s.Id == "arcana").AbilityId = "intelligence";   // вместо «int»
+            rules.Classes[0].UnarmoredDefenseAbility = "wisdom";                    // вместо «wis»
+            var c = Fixtures.Character();
+            c.Equipment.Remove("leather");                 // без доспеха — иначе ветка КД не та
+
+            var d = SheetMath.Compute(c, rules);           // мутант падает здесь
+
+            var arc = d.Skills.First(s => s.SkillId == "arcana");
+            // Неизвестная характеристика показывается КАК ЕСТЬ и считается нулём: 10 + ЛОВ 2 + 0.
+            bool ok = arc.Explain == "+0 intelligence, +3 мастерство"
+                   && arc.Hint == "intelligence"
+                   && d.ArmorClassExplain == "10, +2 ловкость, +0 wisdom"
+                   && d.ArmorClass == 12;
+            if (!ok) Debug.LogError($"FAIL опечатка в справочнике: навык «{arc.Explain}» / «{arc.Hint}», "
+                                  + $"КД {d.ArmorClass} «{d.ArmorClassExplain}» (ждали «+0 intelligence, "
+                                  + "+3 мастерство» / «intelligence» и 12 «10, +2 ловкость, +0 wisdom»)");
+            Done(ok);
+        }
+
         [ContextMenu("Self-Test: умения — только по текущий уровень")]
         public void SelfTestFeaturesStopAtCurrentLevel()
         {
