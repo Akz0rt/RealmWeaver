@@ -14,22 +14,25 @@ namespace WorldGen.Generation
         Desert, TropicalForest                           // Пустыня, Тропический лес
     }
 
-    /// <summary>Определяет биом из матрицы температура×влажность (BiomeMatrix). Высота охлаждает
-    /// ЭФФЕКТИВНУЮ температуру в момент классификации (spec §2): effTemp = temperature −
-    /// elevationTempDrop·elevation, что сдвигает биом к более холодному соседу по матрице. Вода/пляж
-    /// определяются до матрицы. Чистая функция (drop передаётся явно — тестируемо).</summary>
+    /// <summary>Определяет биом из матрицы температура×влажность (BiomeMatrix). Высота на биом НЕ
+    /// влияет: раньше она охлаждала эффективную температуру (effTemp = temperature −
+    /// elevationTempDrop·elevation) и сдвигала биом к более холодному соседу — из-за этого кисть
+    /// биома на горе давала не тот биом, который выбрал пользователь. Охлаждение убрано целиком:
+    /// что нарисовано, то и получается. Единственная оставшаяся связь с высотой — пляж: клетка ниже
+    /// beachElevationThreshold остаётся берегом (это машинерия побережья, см. BeachClassifier).
+    /// Вода/пляж определяются до матрицы. Чистая функция.</summary>
     public static class BiomeClassifier
     {
         public static Biome Classify(float temperature, float moisture, float elevation,
-                                     float elevationTempDrop, bool isOcean, bool isLake,
+                                     bool isOcean, bool isLake,
                                      float beachElevationThreshold = 0.1f)
         {
             if (isOcean) return Biome.Ocean;
             if (isLake) return Biome.Lake;
             if (elevation < beachElevationThreshold) return Biome.Beach;
 
-            float effTemp = Math.Clamp(temperature - elevationTempDrop * elevation, 0f, 1f);
-            return BiomeMatrix.Get(BiomeMatrix.Level5(effTemp), BiomeMatrix.Level5(moisture));
+            float temp = Math.Clamp(temperature, 0f, 1f);
+            return BiomeMatrix.Get(BiomeMatrix.Level5(temp), BiomeMatrix.Level5(moisture));
         }
     }
 }

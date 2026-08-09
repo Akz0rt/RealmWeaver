@@ -94,10 +94,9 @@ namespace WorldGen.Generation
         public float EpicenterMinRadius = 150f;
         public float EpicenterMaxRadius = 300f;
         public float BaseTemperature = 0.5f;
-        /// <summary>Высотное охлаждение эффективной температуры при классификации биома (spec §2).
-        /// 0.4 ≈ до 2 температурных уровней холоднее на пике (elevation=1). Заменяет прежний
-        /// HeightCoolingFactor (который охлаждал саму температуру в TemperatureField).</summary>
-        public float ElevationTempDrop = 0.4f;
+        // Высотного охлаждения биома (ElevationTempDrop) больше нет: биом зависит только от
+        // температуры и влажности, чтобы нарисованный кистью биом и получался на выходе.
+        // Ключ ElevationTempDrop в старых .dndproj просто игнорируется при загрузке.
 
         // --- Влажность: point-based эпицентры (аддитивная поправка к distance-based moisture) ---
 
@@ -194,7 +193,6 @@ namespace WorldGen.Generation
             RegenerateTemperature(cells, p, temperatureEpicenters);
 
             // --- Классификация биома из температура×влажность, затем пляжи (последними) ---
-            CellOverrideService.ElevationTempDrop = p.ElevationTempDrop;
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
 
@@ -268,7 +266,6 @@ namespace WorldGen.Generation
             onProgress?.Invoke("Расчёт биомов", 3f / 6f);
             CellClimateAverager.ApplyToCells(cells, corners, p.ElevationContrast);
             RegenerateTemperature(cells, p, temperatureEpicenters);            // температура ДО классификации
-            CellOverrideService.ElevationTempDrop = p.ElevationTempDrop;
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);                       // пляжи последними
             yield return null;

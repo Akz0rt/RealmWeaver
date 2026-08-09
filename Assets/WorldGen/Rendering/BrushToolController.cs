@@ -77,7 +77,6 @@ namespace WorldGen.Rendering
         bool hasLastPaintSite;
         float repeatTimer;
         readonly HashSet<int> steppedThisStroke = new HashSet<int>();
-        readonly HashSet<VoronoiCell> biomeStrokeCells = new HashSet<VoronoiCell>();
         bool regionStrokeTouched;
         readonly HashSet<int> regionStrokeLakeCells = new HashSet<int>();   // lake cells a Region stamp passed over (for the 30% rule)
         readonly HashSet<int> waterStrokeCells = new HashSet<int>();        // cells a Water stamp touched (unify their lakes on release)
@@ -129,7 +128,6 @@ namespace WorldGen.Rendering
                 hasLastPaintSite = false;
                 mapRenderer.BeginBrushStroke();
                 steppedThisStroke.Clear();
-                biomeStrokeCells.Clear();
                 regionStrokeTouched = false;
                 regionStrokeLakeCells.Clear();
                 waterStrokeCells.Clear();
@@ -142,11 +140,6 @@ namespace WorldGen.Rendering
             else if (Mouse.current.leftButton.wasReleasedThisFrame && isPainting)
             {
                 isPainting = false;
-                if (biomeStrokeCells.Count > 0)
-                {
-                    mapRenderer.FinalizeBiomeStroke(biomeStrokeCells);
-                    biomeStrokeCells.Clear();
-                }
                 if (regionStrokeTouched)
                 {
                     // 30% rule: a lake the region stroke covered enough of joins the painted region wholesale.
@@ -203,16 +196,20 @@ namespace WorldGen.Rendering
         {
             var affected = BrushOps.CellsInRadius(
                 mapRenderer.Cells, site.x, site.y, brushRadius, shape == BrushShape.Square);
-            if (affected.Count == 0) return;
+            // Минимальная кисть = одна клетка: на маленьком радиусе в круг может не попасть ни один
+            // Site, и мазок был бы пустым. Тогда красим ровно ту клетку, что под курсором.
+            if (affected.Count == 0)
+            {
+                var under = mapRenderer.NearestLookup?.FindNearest(new System.Numerics.Vector2(site.x, site.y));
+                if (under == null) return;
+                affected = new List<VoronoiCell> { under };
+            }
 
             if (activeTool == BrushTool.Biome)
             {
                 var (t, m) = selectedClimateCell.Value;
                 foreach (var cell in affected)
-                {
-                    mapRenderer.BrushSetClimateLevelsPreview(cell, t, m);
-                    biomeStrokeCells.Add(cell);
-                }
+                    mapRenderer.BrushSetClimateLevels(cell, t, m);
                 mapRenderer.RebakeAffectedCells(affected);
                 return;
             }

@@ -33,18 +33,27 @@ namespace WorldGen.Generation
             Debug.Log(ok ? "Self-Test Biome Matrix: PASS" : "Self-Test Biome Matrix: FAIL");
         }
 
-        [ContextMenu("Self-Test: Biome Classifier (cooling)")]
-        public void SelfTestBiomeClassifierCooling()
+        // Guards the "what you paint is what you get" rule: the biome must NOT depend on elevation.
+        // Mutant this kills: any reintroduced cooling term (effTemp = temperature − drop·elevation)
+        // turns the hot PEAK from Savanna into a colder matrix neighbour → the pair disagrees.
+        [ContextMenu("Self-Test: Biome Classifier (elevation-independent)")]
+        public void SelfTestBiomeClassifierElevationIndependent()
         {
             bool ok = true;
             // Water / beach short-circuits.
-            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.5f, 0.4f, isOcean: true,  isLake: false) == Biome.Ocean;
-            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.5f, 0.4f, isOcean: false, isLake: true)  == Biome.Lake;
-            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.05f, 0.4f, false, false, beachElevationThreshold: 0.1f) == Biome.Beach;
-            // Hot lowland → Savanna (t=4, m=2). No cooling at elevation 0.
-            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.0f, 0.4f, false, false, 0f) == Biome.Savanna;
-            // Same climate at the peak: effTemp = 0.9 − 0.4 = 0.5 → t-level 2 → Forest.
-            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 1.0f, 0.4f, false, false, 0f) == Biome.Forest;
+            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.5f, isOcean: true,  isLake: false) == Biome.Ocean;
+            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.5f, isOcean: false, isLake: true)  == Biome.Lake;
+            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.05f, false, false, beachElevationThreshold: 0.1f) == Biome.Beach;
+            // Hot climate (t=4, m=2) → Savanna at sea level...
+            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 0.0f, false, false, 0f) == Biome.Savanna;
+            // ...and the SAME Savanna at the peak: height no longer cools the biome.
+            ok &= BiomeClassifier.Classify(0.9f, 0.5f, 1.0f, false, false, 0f) == Biome.Savanna;
+            // The same holds all the way up the elevation range, for a cold climate too.
+            for (float e = 0f; e <= 1.0001f; e += 0.1f)
+            {
+                ok &= BiomeClassifier.Classify(0.9f, 0.5f, e, false, false, 0f) == Biome.Savanna;
+                ok &= BiomeClassifier.Classify(0.1f, 0.5f, e, false, false, 0f) == Biome.Tundra;
+            }
             Debug.Log(ok ? "Self-Test Biome Classifier: PASS" : "Self-Test Biome Classifier: FAIL");
         }
 
@@ -68,7 +77,6 @@ namespace WorldGen.Generation
                    && land.Biome != Biome.Lake;         // land not in waterCellIds → untouched
 
             // Classification must PRESERVE the lake (the regression reclassified it to land).
-            CellOverrideService.ElevationTempDrop = 0.4f;
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             ok &= lake.Biome == Biome.Lake;              // still a lake after classification
             ok &= ocean.Biome == Biome.Ocean;           // ocean stays ocean
@@ -80,12 +88,12 @@ namespace WorldGen.Generation
         [ContextMenu("Self-Test: ClassifyAll + Override")]
         public void SelfTestClassifyAll()
         {
-            CellOverrideService.ElevationTempDrop = 0.4f;
             var hot  = new VoronoiCell(1, new System.Numerics.Vector2(0, 0)) { Height = 0.2f, Humidity = 0.5f, Temperature = 0.9f };
             var peak = new VoronoiCell(2, new System.Numerics.Vector2(0, 0)) { Height = 1.0f, Humidity = 0.5f, Temperature = 0.9f };
             var cells = new System.Collections.Generic.List<VoronoiCell> { hot, peak };
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
-            bool ok = hot.Biome == Biome.Savanna && peak.Biome == Biome.Forest;   // peak cooled 2 levels
+            // Same climate, different height → SAME biome (a reintroduced cooling term breaks this).
+            bool ok = hot.Biome == Biome.Savanna && peak.Biome == Biome.Savanna;
             // Editing biome via canonical climate yields the target on flat land.
             CellOverrideService.SetClimateLevels(hot, 0, 0, 0f);
             ok &= hot.Biome == Biome.IceWaste;
@@ -150,7 +158,6 @@ namespace WorldGen.Generation
         [ContextMenu("Self-Test: Climate Step")]
         public void SelfTestClimateStep()
         {
-            CellOverrideService.ElevationTempDrop = 0.4f;
             var c = new VoronoiCell(1, new System.Numerics.Vector2(0, 0)) { Height = 0.2f, Humidity = 0.5f, Temperature = 0.5f };
             bool ok = true;
             for (int i = 0; i < 10; i++) CellOverrideService.StepTemperatureLevel(c, +1, 0f);

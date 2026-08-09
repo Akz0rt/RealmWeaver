@@ -82,8 +82,6 @@ namespace WorldGen.Rendering
         [Header("Биом")]
         [Tooltip("Порог elevation, ниже которого клетка считается пляжем.")]
         public float beachElevationThreshold = 0.1f;
-        [Tooltip("Высотное охлаждение эффективной температуры при классификации биома. 0.4 ≈ до 2 уровней холоднее на пике.")]
-        public float elevationTempDrop = 0.4f;
 
         [Header("Температура (point-based эпицентры)")]
         [Tooltip("Количество случайных эпицентров температуры на карте.")]
@@ -233,7 +231,6 @@ namespace WorldGen.Rendering
         {
             if (gpuRenderer != null && gpuRenderer.Material != null)
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
-            WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
             if (Application.isPlaying && cells != null && nearestLookup != null) RebuildDecorations();
         }
 
@@ -319,7 +316,6 @@ namespace WorldGen.Rendering
             // override'ы), а не берутся из загруженного cell.Biome напрямую. Старый per-cell
             // BiomeOverride (снят в Task 5) уже сконвертирован ProjectSerializer'ом в
             // TemperatureOverride/MoistureOverride на этапе Load — здесь он не нужен.
-            WorldGen.Generation.CellOverrideService.ElevationTempDrop = elevationTempDrop;
             WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
             rivers = new List<River>();
@@ -495,7 +491,6 @@ namespace WorldGen.Rendering
             epicenters = WorldGenerator.GenerateRandomEpicenters(genParams);
             WorldGenerator.RegenerateTemperature(cells, genParams, epicenters);
             // Температура влияет на биом → переклассифицируем (было "не трогая biome").
-            CellOverrideService.ElevationTempDrop = genParams.ElevationTempDrop;
             CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
             lastGenParams = genParams;
@@ -919,25 +914,14 @@ namespace WorldGen.Rendering
             if (reassigned.Count > 0) RebakeAffectedCells(reassigned);
         }
 
-        /// <summary>Biome brush DURING-stroke: paints the selected matrix cell and previews it as that biome
-        /// (drop=0, no elevation cooling) for WYSIWYG feedback. Cooling is applied on stroke end via
-        /// FinalizeBiomeStroke. Records pre-change undo state.</summary>
-        public void BrushSetClimateLevelsPreview(VoronoiCell cell, int t, int m)
+        /// <summary>Кисть биома: ставит выбранную клетку матрицы климата — и это же и есть итоговый биом
+        /// (высота на классификацию больше не влияет, поэтому «предпросмотр» и «финал» совпадают —
+        /// доделывать мазок на отпускании кнопки нечем). Пишет undo-состояние до изменения.</summary>
+        public void BrushSetClimateLevels(VoronoiCell cell, int t, int m)
         {
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
-            CellOverrideService.SetClimateLevelsPreview(cell, t, m, beachElevationThreshold);
-        }
-
-        /// <summary>Biome-brush stroke end: reclassifies the painted cells with the REAL elevation cooling
-        /// (honest final biome), then rebakes. No new undo snapshot — the stroke's pre-change state was already
-        /// captured on first touch, so Ctrl+Z still reverts to before the stroke.</summary>
-        public void FinalizeBiomeStroke(System.Collections.Generic.IEnumerable<VoronoiCell> strokeCells)
-        {
-            if (cells == null) return;
-            foreach (var cell in strokeCells)
-                CellOverrideService.RecomputeBiome(cell, beachElevationThreshold);
-            RebakeAffectedCells(strokeCells);
+            CellOverrideService.SetClimateLevels(cell, t, m, beachElevationThreshold);
         }
 
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя
@@ -2919,8 +2903,7 @@ namespace WorldGen.Rendering
                 NumberOfTemperatureEpicenters = numberOfTemperatureEpicenters,
                 EpicenterMinRadius = epicenterMinRadius,
                 EpicenterMaxRadius = epicenterMaxRadius,
-                BaseTemperature = baseTemperature,
-                ElevationTempDrop = elevationTempDrop
+                BaseTemperature = baseTemperature
             };
         }
 

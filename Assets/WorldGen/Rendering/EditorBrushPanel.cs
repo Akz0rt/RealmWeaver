@@ -355,7 +355,9 @@ namespace WorldGen.Rendering
 
             BuildShapeRow(t);
 
-            BuildLabeledSlider(t, "Размер", 8f, 120f, 42f, out sizeSlider, out sizeValue, out _, isPercent: false, v =>
+            // Минимум 1 — «одна клетка»: такой радиус почти всегда не ловит ни одного Site, и
+            // BrushToolController.ApplyStamp падает на клетку прямо под курсором (ровно одну).
+            BuildLabeledSlider(t, "Размер", 1f, 120f, 42f, out sizeSlider, out sizeValue, out _, isPercent: false, v =>
             {
                 if (brushController != null) brushController.brushRadius = v;
             });

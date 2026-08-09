@@ -62,10 +62,7 @@ namespace WorldGen.Rendering
 
         string BuildInfo(VoronoiCell c, Vector2 site)
         {
-            float drop = CellOverrideService.ElevationTempDrop;
-            float effTemp = Mathf.Clamp01(c.EffectiveTemperature - drop * c.EffectiveElevation);
             int tL = BiomeMatrix.Level5(c.EffectiveTemperature);
-            int eL = BiomeMatrix.Level5(effTemp);
             int mL = BiomeMatrix.Level5(c.EffectiveMoisture);
             var landform = LandformClassifier.Of(c.EffectiveElevation);
             var family = MapPalette.GetFamily(c.Biome);
@@ -76,7 +73,6 @@ namespace WorldGen.Rendering
             if (c.EffectiveIsOcean) sb.AppendLine("Вода: океан");
             else if (c.EffectiveIsLake) sb.AppendLine("Вода: озеро");
             sb.AppendLine($"Температура: {c.EffectiveTemperature:F2}  →  ур. {tL + 1}/5 ({TempNames[tL]})");
-            sb.AppendLine($"Эфф. темп (−высота·{drop:F2}): {effTemp:F2}  →  ур. {eL + 1}/5 ({TempNames[eL]})");
             sb.AppendLine($"Влажность: {c.EffectiveMoisture:F2}  →  ур. {mL + 1}/5 ({MoistNames[mL]})");
             sb.AppendLine($"Высота: {c.EffectiveElevation:F2}  →  {LandformNames[(int)landform]}");
             bool anyOverride = c.TemperatureOverride.HasValue || c.MoistureOverride.HasValue

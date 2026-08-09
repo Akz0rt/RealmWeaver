@@ -292,8 +292,7 @@ namespace WorldGen.Persistence
             bool ok = res.Success
                    && Mathf.Approximately(c.TemperatureOverride ?? -1f, BiomeMatrix.LevelCenter(rep.t))
                    && Mathf.Approximately(c.MoistureOverride ?? -1f, BiomeMatrix.LevelCenter(rep.m));
-            // After a classify pass the derived biome is Savanna on flat land.
-            CellOverrideService.ElevationTempDrop = 0.4f;
+            // After a classify pass the derived biome is Savanna.
             CellOverrideService.ClassifyAll(res.Cells, 0f);
             ok &= c.Biome == Biome.Savanna;
             Debug.Log(ok ? "Self-Test Legacy Migration: PASS" : "Self-Test Legacy Migration: FAIL");

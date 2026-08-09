@@ -17,12 +17,6 @@ namespace WorldGen.Generation
     /// </summary>
     public static class CellOverrideService
     {
-        /// <summary>Карта-широкая константа высотного охлаждения биома (spec §2). Задаётся один раз
-        /// при генерации (из GenerationParams.ElevationTempDrop) и при загрузке (из
-        /// WorldMapRenderer.elevationTempDrop); читается RecomputeBiome. Ambient, чтобы не тащить
-        /// параметр через все override-методы (у каждого биом всё равно один и тот же drop).</summary>
-        public static float ElevationTempDrop = 0.4f;
-
         // --- Climate override ---
 
         /// <summary>
@@ -177,27 +171,9 @@ namespace WorldGen.Generation
         /// </summary>
         public static void RecomputeBiome(VoronoiCell cell, float beachElevationThreshold)
         {
-            RecomputeBiome(cell, beachElevationThreshold, ElevationTempDrop);
-        }
-
-        /// <summary>Reclassifies using an explicit cooling drop instead of the ambient ElevationTempDrop
-        /// (drop=0 for the WYSIWYG biome-brush preview during a stroke; real drop on stroke end). Water/beach
-        /// short-circuits still apply.</summary>
-        public static void RecomputeBiome(VoronoiCell cell, float beachElevationThreshold, float drop)
-        {
             cell.Biome = BiomeClassifier.Classify(
                 cell.EffectiveTemperature, cell.EffectiveMoisture, cell.EffectiveElevation,
-                drop, cell.EffectiveIsOcean, cell.EffectiveIsLake, beachElevationThreshold);
-        }
-
-        /// <summary>Like SetClimateLevels but classifies with drop=0 — the painted land cell previews as the
-        /// selected biome regardless of elevation (WYSIWYG). Used DURING a biome-brush stroke; the stroke end
-        /// reclassifies with the real drop. Ocean/lake/beach still short-circuit correctly.</summary>
-        public static void SetClimateLevelsPreview(VoronoiCell cell, int tempLevel, int moistLevel, float beachElevationThreshold)
-        {
-            cell.TemperatureOverride = BiomeMatrix.LevelCenter(tempLevel);
-            cell.MoistureOverride    = BiomeMatrix.LevelCenter(moistLevel);
-            RecomputeBiome(cell, beachElevationThreshold, drop: 0f);
+                cell.EffectiveIsOcean, cell.EffectiveIsLake, beachElevationThreshold);
         }
 
         /// <summary>Классифицирует биом для каждой клетки. Используется
