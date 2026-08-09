@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace WorldGen.Generation
@@ -6,10 +7,18 @@ namespace WorldGen.Generation
     /// Один "мазок кистью" - от нажатия ЛКМ до отпускания. Хранит состояние каждой затронутой
     /// клетки ДО первого изменения в рамках этого мазка (если клетка задета кистью несколько
     /// раз за один проход, сохраняется только самое первое, "досмазковое" состояние).
+    ///
+    /// Кроме клеток мазок может нести ДЕЙСТВИЯ отмены (UndoActions) — для правок, которые в
+    /// клетках не живут вовсе: нарисованная кисть-река лежит отдельным списком, и «вернуть как
+    /// было» для неё значит убрать/вернуть саму реку. Без этого речной мазок не трогал бы ни
+    /// одной клетки, считался бы пустым и молча не попадал в историю.
     /// </summary>
     public class BrushStroke
     {
         public readonly Dictionary<VoronoiCell, CellSnapshot> PreStrokeState = new Dictionary<VoronoiCell, CellSnapshot>();
+
+        /// <summary>Действия отмены этого мазка, в порядке применения (откатываются с конца).</summary>
+        public readonly List<Action> UndoActions = new List<Action>();
 
         /// <summary>Сохраняет состояние клетки, если она ещё не была затронута в этом мазке. Вызывать ПЕРЕД применением изменения к клетке.</summary>
         public void RecordIfNew(VoronoiCell cell)
@@ -18,7 +27,7 @@ namespace WorldGen.Generation
                 PreStrokeState[cell] = CellSnapshot.Capture(cell);
         }
 
-        public bool IsEmpty => PreStrokeState.Count == 0;
+        public bool IsEmpty => PreStrokeState.Count == 0 && UndoActions.Count == 0;
     }
 
     /// <summary>
@@ -44,6 +53,13 @@ namespace WorldGen.Generation
             currentStroke?.RecordIfNew(cell);
         }
 
+        /// <summary>Кладёт в текущий мазок действие «вернуть как было» для правки, которая не живёт
+        /// в клетках (нарисованная река). Вызывать ПОСЛЕ самой правки — действие её отменяет.</summary>
+        public void RecordUndoAction(System.Action undo)
+        {
+            if (undo != null) currentStroke?.UndoActions.Add(undo);
+        }
+
         /// <summary>Завершает текущий мазок и кладёт его в стек истории - вызывать при отпускании ЛКМ.</summary>
         public void EndStroke()
         {
@@ -60,6 +76,9 @@ namespace WorldGen.Generation
             var stroke = undoStack.Pop();
             foreach (var kvp in stroke.PreStrokeState)
                 kvp.Value.RestoreOverridesTo(kvp.Key);
+            // С конца: если мазок успел сделать два действия, снимать их надо в обратном порядке.
+            for (int i = stroke.UndoActions.Count - 1; i >= 0; i--)
+                stroke.UndoActions[i]?.Invoke();
 
             return true;
         }

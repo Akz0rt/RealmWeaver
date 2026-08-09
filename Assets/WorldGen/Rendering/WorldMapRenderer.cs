@@ -183,6 +183,18 @@ namespace WorldGen.Rendering
         List<River> rivers;
         GenerationParams lastGenParams; // храним последние параметры, чтобы RegenerateTemperature мог работать без полной генерации
         Transform riverContainer; // родительский объект для всех LineRenderer рек - упрощает очистку при перегенерации
+
+        // --- Нарисованные кистью реки (генератор рек к ним отношения не имеет) ---
+        readonly List<PaintedRiver> paintedRivers = new List<PaintedRiver>();
+        int nextPaintedRiverId = 1;
+        Transform paintedRiverContainer;
+        // Состояние открытого мазка реки: центры пройденных клеток и признак «клетка — вода».
+        List<System.Numerics.Vector2> riverStrokeSites;
+        List<bool> riverStrokeWater;
+        bool riverStrokeTouchedSea, riverStrokeTouchedLake;
+        float riverStrokeWidth = 6f;
+        Material riverMatSea, riverMatLake;   // по одному на цвет — см. PaintedRiverMaterial
+
         Transform borderContainer;        // родитель для меш-объектов границ
         GameObject regionBorderObject;    // меш-лента границ регионов
         GameObject coastlineObject;       // меш-лента береговой линии
@@ -279,6 +291,9 @@ namespace WorldGen.Rendering
             cells = WorldGenerator.GenerateWorld(genParams, out epicenters, out moistureEpicenters, out rivers);
             corners = CornerGraphBuilder.Build(cells); // тот же детерминированный пересчёт, что внутри генератора - нужен здесь только для рендера рек по позициям corners
             lastGenParams = genParams;
+            // Нарисованные реки стираются вместе со старым миром: их русла лежат в мировых
+            // координатах, а материк под ними теперь совсем другой.
+            ClearPaintedRivers();
             BuildMesh(cells);
             BuildRivers();
             BuildBorders();
@@ -319,6 +334,10 @@ namespace WorldGen.Rendering
             WorldGen.Generation.CellOverrideService.ClassifyAll(cells, beachElevationThreshold: 0f);
             BeachClassifier.AssignCoastalBeaches(cells);
             rivers = new List<River>();
+            // Реки открываемого проекта поставит LoadPaintedRivers (ProjectMenuBar, сразу после
+            // загрузки); здесь важно снять реки ПРЕДЫДУЩЕГО проекта — иначе они бы остались висеть
+            // над чужой картой, если в новом файле рек нет.
+            ClearPaintedRivers();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
             lastGenParams = referenceParams;
@@ -922,6 +941,178 @@ namespace WorldGen.Rendering
             if (cells == null) return;
             brushUndo.RecordBeforeChange(cell);
             CellOverrideService.SetClimateLevels(cell, t, m, beachElevationThreshold);
+        }
+
+        // ---- Кисть рек ----------------------------------------------------------
+        //
+        // Река — рисунок поверх карты, а не свойство клеток: она не меняет воду, биом, влажность и
+        // не режет регионы. Отсюда и хранение: список точек в мировых координатах, живущий рядом с
+        // клетками, а не в них. Правка рельефа русло не двигает; новая генерация мира — стирает
+        // (материка, по которому текла река, больше нет).
+
+        /// <summary>Все нарисованные реки — для сохранения проекта.</summary>
+        public IReadOnlyList<PaintedRiver> PaintedRivers => paintedRivers;
+
+        /// <summary>Начинает мазок реки заданной ширины (мировые единицы). Точки добавляет
+        /// AppendRiverCell, а решение «река или мусор» принимается на отпускании (EndRiverStroke).</summary>
+        public void BeginRiverStroke(float width)
+        {
+            riverStrokeSites = new List<System.Numerics.Vector2>();
+            riverStrokeWater = new List<bool>();
+            riverStrokeTouchedSea = riverStrokeTouchedLake = false;
+            riverStrokeWidth = Mathf.Max(0.5f, width);
+        }
+
+        /// <summary>Добавляет в открытый мазок клетку под курсором (повтор подряд игнорируется) и
+        /// перерисовывает предпросмотр русла.</summary>
+        public void AppendRiverCell(VoronoiCell cell)
+        {
+            if (cell == null || riverStrokeSites == null) return;
+            if (!RiverPaintOps.AppendAnchor(riverStrokeSites, cell.Site)) return;
+
+            bool ocean = cell.EffectiveIsOcean;
+            bool lake = cell.EffectiveIsLake;
+            riverStrokeWater.Add(ocean || lake);
+            if (ocean) riverStrokeTouchedSea = true;
+            if (lake) riverStrokeTouchedLake = true;
+
+            RebuildPaintedRivers();
+        }
+
+        /// <summary>Закрывает мазок реки: концы, ушедшие в воду, подрезаются по кромке водоёма, и
+        /// если после этого осталось хотя бы два опорных пункта — река рождается. Записывает
+        /// действие отмены в текущий мазок (Ctrl+Z убирает реку целиком).</summary>
+        public void EndRiverStroke()
+        {
+            if (riverStrokeSites == null) return;
+
+            var anchors = RiverPaintOps.TrimToShore(riverStrokeSites, riverStrokeWater);
+            riverStrokeSites = null;
+            riverStrokeWater = null;
+
+            if (anchors.Count >= 2)
+            {
+                var river = new PaintedRiver
+                {
+                    Id = nextPaintedRiverId++,
+                    Points = anchors,
+                    Width = riverStrokeWidth,
+                    // Море «главнее» озера: река, вышедшая к морю, красится морским мелководьем,
+                    // и только чисто озёрная — озёрным (см. PaintedRiverColor).
+                    MouthIsLake = riverStrokeTouchedLake && !riverStrokeTouchedSea
+                };
+                paintedRivers.Add(river);
+                brushUndo.RecordUndoAction(() => { paintedRivers.Remove(river); RebuildPaintedRivers(); });
+            }
+
+            RebuildPaintedRivers();
+        }
+
+        /// <summary>Стирает реку под точкой (в мировых координатах карты), если попали. Ctrl+Z
+        /// возвращает её на место. Возвращает true, если что-то стёрли.</summary>
+        public bool EraseRiverAt(System.Numerics.Vector2 point, float extraTolerance = 4f)
+        {
+            PaintedRiver hit = null;
+            float bestDistance = float.MaxValue;
+            foreach (var river in paintedRivers)
+            {
+                var curve = RiverPaintOps.Smooth(river.Points);
+                float d = RiverPaintOps.DistanceToPolyline(curve, point);
+                if (d > river.Width * 0.5f + extraTolerance) continue;
+                if (d >= bestDistance) continue;
+                bestDistance = d;
+                hit = river;
+            }
+            if (hit == null) return false;
+
+            int index = paintedRivers.IndexOf(hit);
+            paintedRivers.Remove(hit);
+            brushUndo.RecordUndoAction(() =>
+            {
+                paintedRivers.Insert(Mathf.Clamp(index, 0, paintedRivers.Count), hit);
+                RebuildPaintedRivers();
+            });
+            RebuildPaintedRivers();
+            return true;
+        }
+
+        /// <summary>Заменяет все нарисованные реки (загрузка проекта). Пустой список = стереть все.</summary>
+        public void LoadPaintedRivers(IEnumerable<PaintedRiver> loaded)
+        {
+            paintedRivers.Clear();
+            nextPaintedRiverId = 1;
+            if (loaded != null)
+                foreach (var river in loaded)
+                {
+                    if (river == null || river.Points == null || river.Points.Count < 2) continue;
+                    paintedRivers.Add(river);
+                    if (river.Id >= nextPaintedRiverId) nextPaintedRiverId = river.Id + 1;
+                }
+            RebuildPaintedRivers();
+        }
+
+        /// <summary>Убирает все нарисованные реки (новая генерация мира).</summary>
+        public void ClearPaintedRivers() => LoadPaintedRivers(null);
+
+        /// <summary>Цвет русла берётся из палитры карты — тем же слотом мелководья, каким закрашена
+        /// вода вокруг: морская река = Shallow, чисто озёрная = LakeS. Поэтому в месте, где река
+        /// доходит до берега, она подхватывает цвет того самого водоёма, в который впадает.
+        /// Материала ровно два (море/озеро) и они переиспользуются: русло пересобирается на КАЖДОЙ
+        /// новой клетке мазка, и материал на каждую пересборку копил бы сотни объектов за мазок —
+        /// созданные в рантайме материалы Unity сама не убирает.</summary>
+        Material PaintedRiverMaterial(bool mouthIsLake)
+        {
+            ref Material slotMat = ref mouthIsLake ? ref riverMatLake : ref riverMatSea;
+            if (slotMat == null)
+                slotMat = new Material(Shader.Find("Sprites/Default")); // unlit, двусторонний, как у границ
+            Color32 c = MapPalette.GetSlotColor(paletteTheme, mouthIsLake ? PaletteSlot.LakeS : PaletteSlot.Shallow);
+            slotMat.color = new Color(c.r / 255f, c.g / 255f, c.b / 255f, 1f);
+            return slotMat;
+        }
+
+        /// <summary>Пересобирает меши всех нарисованных рек (плюс предпросмотр открытого мазка).
+        /// Рек единицы, а точек в каждой десятки — пересборка целиком дешевле, чем учёт того,
+        /// что именно изменилось.</summary>
+        void RebuildPaintedRivers()
+        {
+            if (paintedRiverContainer != null)
+            {
+                // Меш сносим руками: уничтожение объекта его не забирает, а мазок пересобирает
+                // русло десятки раз — иначе за один мазок в памяти оседает десяток мёртвых мешей.
+                foreach (var mf in paintedRiverContainer.GetComponentsInChildren<MeshFilter>())
+                    if (mf.sharedMesh != null) Destroy(mf.sharedMesh);
+                Destroy(paintedRiverContainer.gameObject);
+                paintedRiverContainer = null;
+            }
+
+            bool hasPreview = riverStrokeSites != null && riverStrokeSites.Count >= 2;
+            if (paintedRivers.Count == 0 && !hasPreview) return;
+
+            var containerGO = new GameObject("PaintedRivers");
+            containerGO.transform.SetParent(transform, false);
+            paintedRiverContainer = containerGO.transform;
+
+            foreach (var river in paintedRivers)
+                CreateRiverObject($"River_{river.Id}", RiverPaintOps.Smooth(river.Points), river.Width, river.MouthIsLake);
+
+            if (hasPreview)
+            {
+                // Предпросмотр рисуется НЕподрезанным: пока кнопка нажата, ДМ видит ровно ту линию,
+                // которую ведёт. Подрезка по кромке воды случится на отпускании — иначе конец русла
+                // прыгал бы туда-сюда при каждом заходе курсора в воду и обратно.
+                bool lakeOnly = riverStrokeTouchedLake && !riverStrokeTouchedSea;
+                CreateRiverObject("River_Preview", RiverPaintOps.Smooth(riverStrokeSites), riverStrokeWidth, lakeOnly);
+            }
+        }
+
+        void CreateRiverObject(string name, List<System.Numerics.Vector2> curve, float width, bool mouthIsLake)
+        {
+            if (curve == null || curve.Count < 2) return;
+            var go = new GameObject(name);
+            go.transform.SetParent(paintedRiverContainer, false);
+            // Y чуть выше ленты берега (0.3) и границ регионов (0.4): река течёт ПО карте, а не под ней.
+            go.AddComponent<MeshFilter>().sharedMesh = RiverMeshBuilder.Build(curve, width, 0.45f);
+            go.AddComponent<MeshRenderer>().sharedMaterial = PaintedRiverMaterial(mouthIsLake);
         }
 
         /// <summary>ПРИМЕР использования: применяет override "вечная зима" (низкая температура, средняя

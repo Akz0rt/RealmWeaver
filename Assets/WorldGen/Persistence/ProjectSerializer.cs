@@ -21,6 +21,7 @@ namespace WorldGen.Persistence
         public List<RegionLabelData> RegionLabels;
         public List<RegionData> Regions;
         public List<InteriorData> Dungeons;
+        public List<PaintedRiver> Rivers;
     }
 
     /// <summary>
@@ -30,7 +31,14 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 17;  // 17: у страницы появилась карточка персонажа.
+        public const int CurrentFormatVersion = 18;  // 18: у карты появились реки, нарисованные кистью.
+                                                     // Миграции нет: ключа Rivers в старом файле нет,
+                                                     // и его отсутствие означает «рек не рисовали».
+                                                     // Бумп ДОКУМЕНТИРУЮЩИЙ — чтобы старая сборка
+                                                     // предупредила, а не сохранила проект молча без
+                                                     // всех нарисованных рек.
+                                                     //
+                                                     // 17: у страницы появилась карточка персонажа.
                                                      // Миграции нет: ключа Character нет в старом файле,
                                                      // и его отсутствие и есть «обычная страница».
                                                      // Номер поднят, чтобы СТАРАЯ сборка предупредила,
@@ -135,11 +143,15 @@ namespace WorldGen.Persistence
             Converters = { new CanvasObjectDataConverter(), new ColorJsonConverter() }
         };
 
+        /// <summary>rivers — необязательный последний параметр: реки кистью появились в версии 18,
+        /// и делать их обязательными значило бы переписать все прежние вызовы (в том числе десяток
+        /// самотестов), ничего этим не проверив.</summary>
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
                                  IReadOnlyList<PoiData> pois, NotesDocument notes,
                                  IReadOnlyList<RegionLabelData> regionLabels,
                                  IReadOnlyList<RegionData> regions,
-                                 IReadOnlyList<InteriorData> dungeons)
+                                 IReadOnlyList<InteriorData> dungeons,
+                                 IReadOnlyList<PaintedRiver> rivers = null)
         {
             var data = new ProjectSaveData
             {
@@ -151,7 +163,8 @@ namespace WorldGen.Persistence
                 Notes = notes,
                 RegionLabels = new List<RegionLabelData>(regionLabels),
                 Regions = new List<RegionData>(regions ?? new List<RegionData>()),
-                Dungeons = new List<InteriorData>(dungeons ?? new List<InteriorData>())
+                Dungeons = new List<InteriorData>(dungeons ?? new List<InteriorData>()),
+                Rivers = new List<PaintedRiver>(rivers ?? new List<PaintedRiver>())
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -197,7 +210,8 @@ namespace WorldGen.Persistence
                 // of the project loads normally.
                 Dungeons = data.FormatVersion >= 5
                     ? (data.Dungeons ?? new List<InteriorData>())
-                    : new List<InteriorData>()
+                    : new List<InteriorData>(),
+                Rivers = data.Rivers ?? new List<PaintedRiver>()
             };
 
             // Three UNGATED, idempotent normalizations, deliberately not guarded on FormatVersion: each one

@@ -45,7 +45,9 @@ namespace WorldGen.Rendering
         Outline circleIconOutline, squareIconOutline;
         Slider sizeSlider, strengthSlider;
         Text sizeValue, strengthValue;
+        Text sizeLabel;              // подпись слайдера размера: «Размер» / «Ширина реки»
         GameObject strengthGroupGO;
+        GameObject shapeRowGO;       // строка «Форма» — реке не нужна
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
@@ -143,27 +145,50 @@ namespace WorldGen.Rendering
             }
 
             // Режим (Поднять/Опустить/Сгладить) бессмыслен для категории — прячем на биоме.
-            // Для воды сегмент показывается, но переименован в Океан/Суша.
+            // Для воды сегмент показывается, но переименован в Океан/Суша, для реки — в Рисовать/Стереть.
             bool isBiome = target == BrushTool.Biome;
             bool isWater = target == BrushTool.Water;
+            bool isRiver = target == BrushTool.River;
             if (modeCaptionGO != null) modeCaptionGO.SetActive(!isBiome);
             if (modeSegmentGO != null) modeSegmentGO.SetActive(!isBiome);
-            RelabelModeSegment(isWater);
-            // Сгладить не применим к воде: если выбран - переключаем на Океан (Raise).
-            if (isWater && brushController != null && brushController.mode == BrushMode.Smooth)
+            RelabelModeSegment(target);
+            // Сгладить не применим ни к воде, ни к реке: если выбран - переключаем на первый режим.
+            if ((isWater || isRiver) && brushController != null && brushController.mode == BrushMode.Smooth)
                 OnModeChanged(BrushMode.Raise);
+
+            // Форма отпечатка реке не нужна: русло идёт по клетке под курсором, а не по площади.
+            if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver);
+            SyncSizeSliderTo(target);
 
             UpdateBiomePaletteVisibility();
             UpdateStrengthVisibility();
         }
 
         /// <summary>Инструмент Вода: сегмент режима показывает Океан(Raise)/Суша(Lower) и прячет
-        /// Сгладить. Остальные инструменты - обычные Поднять/Опустить/Сгладить.</summary>
-        void RelabelModeSegment(bool water)
+        /// Сгладить. Реки: Рисовать(Raise)/Стереть(Lower), тоже без Сгладить. Остальные инструменты -
+        /// обычные Поднять/Опустить/Сгладить.</summary>
+        void RelabelModeSegment(BrushTool target)
         {
-            if (modeSegTxt.TryGetValue(BrushMode.Raise, out var r)) r.text = water ? "Океан" : "Поднять";
-            if (modeSegTxt.TryGetValue(BrushMode.Lower, out var l)) l.text = water ? "Суша" : "Опустить";
-            if (modeSegBg.TryGetValue(BrushMode.Smooth, out var s)) s.gameObject.SetActive(!water);
+            bool water = target == BrushTool.Water;
+            bool river = target == BrushTool.River;
+            if (modeSegTxt.TryGetValue(BrushMode.Raise, out var r)) r.text = water ? "Океан" : river ? "Рисовать" : "Поднять";
+            if (modeSegTxt.TryGetValue(BrushMode.Lower, out var l)) l.text = water ? "Суша" : river ? "Стереть" : "Опустить";
+            if (modeSegBg.TryGetValue(BrushMode.Smooth, out var s)) s.gameObject.SetActive(!water && !river);
+        }
+
+        /// <summary>Ползунок «Размер» один, а величины у инструментов разные: у обычной кисти это
+        /// радиус захвата (1..120), у реки — ШИРИНА русла (2..20, река всегда идёт по одной клетке).
+        /// Поэтому при смене инструмента слайдеру меняются границы, подпись и текущее значение.</summary>
+        void SyncSizeSliderTo(BrushTool target)
+        {
+            if (sizeSlider == null || brushController == null) return;
+            bool river = target == BrushTool.River;
+            if (sizeLabel != null) sizeLabel.text = river ? "Ширина реки" : "Размер";
+            sizeSlider.minValue = river ? 2f : 1f;
+            sizeSlider.maxValue = river ? 20f : 120f;
+            // Присвоение поднимет onValueChanged, а тот уже разложит значение в нужное поле
+            // (см. колбэк слайдера: он смотрит на текущий инструмент).
+            sizeSlider.value = river ? brushController.riverWidth : brushController.brushRadius;
         }
 
         void OnModeChanged(BrushMode mode)
@@ -357,9 +382,12 @@ namespace WorldGen.Rendering
 
             // Минимум 1 — «одна клетка»: такой радиус почти всегда не ловит ни одного Site, и
             // BrushToolController.ApplyStamp падает на клетку прямо под курсором (ровно одну).
-            BuildLabeledSlider(t, "Размер", 1f, 120f, 42f, out sizeSlider, out sizeValue, out _, isPercent: false, v =>
+            sizeLabel = BuildLabeledSlider(t, "Размер", 1f, 120f, 42f, out sizeSlider, out sizeValue, out _, isPercent: false, v =>
             {
-                if (brushController != null) brushController.brushRadius = v;
+                if (brushController == null) return;
+                // Один ползунок на два смысла — см. SyncSizeSliderTo.
+                if (currentTarget == BrushTool.River) brushController.riverWidth = v;
+                else brushController.brushRadius = v;
             });
 
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
@@ -381,13 +409,16 @@ namespace WorldGen.Rendering
             grid.spacing = new Vector2(6f, 6f);
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             grid.constraintCount = 2;
-            gridGO.AddComponent<LayoutElement>().preferredHeight = 28f * 2f + 6f;
+            // Высота под ТРИ ряда: шесть пилюль в две колонки. Раньше стояло два ряда на пять пилюль —
+            // последний ряд вылезал за отведённую высоту и наезжал на подпись «РЕЖИМ».
+            gridGO.AddComponent<LayoutElement>().preferredHeight = 28f * 3f + 6f * 2f;
 
             AddPill(gridGO.transform, BrushTool.Elevation, "Высота");
             AddPill(gridGO.transform, BrushTool.Temperature, "Температура");
             AddPill(gridGO.transform, BrushTool.Moisture, "Влажность");
             AddPill(gridGO.transform, BrushTool.Biome, "Биом");
             AddPill(gridGO.transform, BrushTool.Water, "Вода");
+            AddPill(gridGO.transform, BrushTool.River, "Реки");
         }
 
         void AddPill(Transform parent, BrushTool target, string label)
@@ -468,6 +499,7 @@ namespace WorldGen.Rendering
             var rowGO = new GameObject("ShapeRow");
             rowGO.transform.SetParent(t, false);
             rowGO.AddComponent<LayoutElement>().preferredHeight = 30f;
+            shapeRowGO = rowGO;
 
             var labelGO = new GameObject("Label");
             labelGO.transform.SetParent(rowGO.transform, false);
@@ -523,7 +555,9 @@ namespace WorldGen.Rendering
             return (img, outline);
         }
 
-        void BuildLabeledSlider(Transform t, string label, float min, float max, float def,
+        /// <summary>Возвращает Text ПОДПИСИ слайдера — её текст может меняться на лету (у реки
+        /// «Размер» становится «Шириной реки», см. SyncSizeSliderTo).</summary>
+        Text BuildLabeledSlider(Transform t, string label, float min, float max, float def,
                                 out Slider slider, out Text valueLabel, out GameObject groupGO, bool isPercent,
                                 System.Action<float> onChanged)
         {
@@ -583,6 +617,7 @@ namespace WorldGen.Rendering
             refresh(def);
             slider.onValueChanged.AddListener(v => { refresh(v); onChanged?.Invoke(v); });
             onChanged?.Invoke(def);
+            return labelText;
         }
 
         // ── Contextual biome palette (in-panel section, Brush + target = Biome) ───

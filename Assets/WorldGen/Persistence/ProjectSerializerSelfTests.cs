@@ -16,6 +16,60 @@ namespace WorldGen.Persistence
     /// </summary>
     public class ProjectSerializerSelfTests : MonoBehaviour
     {
+        // Мутанты, которых валит этот тест: «Rivers не пишется в файл», «Rivers не читается обратно»,
+        // «ширина/устье теряются» (река ожила бы стандартной толщины и не того цвета) и «файл без
+        // ключа Rivers падает или даёт null» — старые проекты обязаны открываться просто без рек.
+        [ContextMenu("Self-Test: Painted Rivers Round-Trip")]
+        public void SelfTestPaintedRiversRoundTrip()
+        {
+            bool ok = true;
+            var genParams = new GenerationParams { Seed = 3, Width = 100f, Height = 100f };
+            var notes = new NotesDocument();
+            var rivers = new List<PaintedRiver>
+            {
+                new PaintedRiver
+                {
+                    Id = 4,
+                    Width = 9.5f,
+                    MouthIsLake = true,
+                    Points = new List<System.Numerics.Vector2> { new(5f, 5f), new(20f, 30f), new(40f, 35f) }
+                }
+            };
+
+            string path = Path.Combine(Application.temporaryCachePath, "painted_rivers_roundtrip.dndproj");
+            ProjectSerializer.Save(path, genParams, new List<VoronoiCell>(), new List<PoiData>(), notes,
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>(), rivers);
+            var result = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!result.Success || result.Rivers == null || result.Rivers.Count != 1)
+            { Debug.LogError($"FAIL rivers: загрузилось {(result.Rivers == null ? "null" : result.Rivers.Count.ToString())} рек, ждали 1"); ok = false; }
+            else
+            {
+                var r = result.Rivers[0];
+                if (r.Points == null || r.Points.Count != 3
+                    || System.Numerics.Vector2.Distance(r.Points[1], new System.Numerics.Vector2(20f, 30f)) > 0.001f)
+                { Debug.LogError("FAIL rivers: опорные точки русла не пережили сохранение — река открылась бы другой формы"); ok = false; }
+                if (Mathf.Abs(r.Width - 9.5f) > 0.001f)
+                { Debug.LogError($"FAIL rivers: ширина {r.Width}, ждали 9.5 — иначе река откроется не той толщины, что рисовали"); ok = false; }
+                if (!r.MouthIsLake)
+                { Debug.LogError("FAIL rivers: признак озёрного устья потерян — река откроется морского цвета рядом с озером"); ok = false; }
+            }
+
+            // Файл ПРОШЛОГО формата (ключа Rivers нет вовсе) обязан открываться — просто без рек.
+            string legacyJson =
+                "{ \"FormatVersion\": 17, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [] }";
+            string legacyPath = Path.Combine(Application.temporaryCachePath, "painted_rivers_legacy.dndproj");
+            File.WriteAllText(legacyPath, legacyJson);
+            var legacy = ProjectSerializer.Load(legacyPath);
+            try { File.Delete(legacyPath); } catch { }
+            if (!legacy.Success || legacy.Rivers == null || legacy.Rivers.Count != 0)
+            { Debug.LogError("FAIL rivers: проект, сделанный до появления рек, должен открываться пустым списком рек, а не падать и не давать null"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Painted Rivers: PASS" : "Self-Test Painted Rivers: FAIL");
+        }
+
         [ContextMenu("Self-Test: Project Round-Trip")]
         public void SelfTestRoundTrip()
         {

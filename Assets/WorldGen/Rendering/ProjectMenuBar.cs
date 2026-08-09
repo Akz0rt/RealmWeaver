@@ -211,7 +211,8 @@ namespace WorldGen.Rendering
                 var regionLabels = regionLabelManager != null ? new List<RegionLabelData>(regionLabelManager.GetAll()) : new List<RegionLabelData>();
                 var regions = mapRenderer.regionManager != null ? new List<RegionData>(mapRenderer.regionManager.Regions) : new List<RegionData>();
                 var dungeons = dungeonManager != null ? new List<InteriorData>(dungeonManager.GetAll()) : new List<InteriorData>();
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons);
+                var paintedRivers = new List<PaintedRiver>(mapRenderer.PaintedRivers);
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons, paintedRivers);
             }
             catch (System.Exception ex)
             {
@@ -339,6 +340,9 @@ namespace WorldGen.Rendering
                 if (result.Regions != null && result.Regions.Count > 0) mapRenderer.showRegionBordersLayer = true;
 
                 mapRenderer.LoadFromCells(result.Cells, result.GenerationParams);
+                // Строго ПОСЛЕ LoadFromCells: та снимает реки предыдущего проекта (см. её код),
+                // так что порядок наоборот оставил бы карту без только что загруженных рек.
+                mapRenderer.LoadPaintedRivers(result.Rivers);
                 poiManager?.LoadPois(result.Pois);
                 dungeonManager?.LoadDungeons(result.Dungeons);
                 regionLabelManager?.LoadLabels(result.RegionLabels);

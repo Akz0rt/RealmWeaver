@@ -8,8 +8,8 @@ using WorldGen.Rendering.Theme;
 namespace WorldGen.Rendering
 {
     /// <summary>Что редактирует кисть. Elevation/Temperature/Moisture — относительное изменение;
-    /// Biome — прямая замена биома выбранным из палитры.</summary>
-    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water, Region }
+    /// Biome — прямая замена биома выбранным из палитры; River — рисунок русла поверх карты.</summary>
+    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water, Region, River }
 
     /// <summary>Режим для Elevation/Temperature/Moisture. Для Biome не применяется.</summary>
     public enum BrushMode { Raise, Lower, Smooth }
@@ -55,6 +55,8 @@ namespace WorldGen.Rendering
         public float strength = 0.6f;
         [Tooltip("Выбранная клетка матрицы (темп-уровень, влажн-уровень) для режима 'Биом'. null — красить нечем.")]
         public (int t, int m)? selectedClimateCell = null;
+        [Tooltip("Ширина русла для режима 'Реки' в мировых единицах. Это НЕ радиус захвата: река всегда идёт по клетке под курсором, какой бы широкой ни была.")]
+        public float riverWidth = 6f;
         [Tooltip("Id региона для режима 'Регион' (устанавливается панелью регионов). -1 = стереть (снять клетку с региона).")]
         public int selectedRegionId = -1;
         [Tooltip("Интервал в секундах между повторными применениями, пока ЛКМ зажата на месте. Не зависит от FPS.")]
@@ -131,6 +133,9 @@ namespace WorldGen.Rendering
                 regionStrokeTouched = false;
                 regionStrokeLakeCells.Clear();
                 waterStrokeCells.Clear();
+                // Река рисуется одним мазком-цепочкой, поэтому мазок надо открыть ДО первой точки.
+                // В режиме «Стереть» мазка нет: клик убирает реку под курсором и на этом всё.
+                if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.BeginRiverStroke(riverWidth);
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -140,6 +145,9 @@ namespace WorldGen.Rendering
             else if (Mouse.current.leftButton.wasReleasedThisFrame && isPainting)
             {
                 isPainting = false;
+                // Реку закрываем ПЕРВОЙ: EndRiverStroke кладёт действие отмены в открытый мазок, а
+                // EndBrushStroke ниже этот мазок уже отправляет в историю.
+                if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.EndRiverStroke();
                 if (regionStrokeTouched)
                 {
                     // 30% rule: a lake the region stroke covered enough of joins the painted region wholesale.
@@ -192,8 +200,28 @@ namespace WorldGen.Rendering
             }
         }
 
+        /// <summary>Для инструмента «Реки» сегмент режима переименован в Рисовать(Raise)/Стереть(Lower)
+        /// — см. EditorBrushPanel.RelabelModeSegment.</summary>
+        bool IsRiverEraseMode => activeTool == BrushTool.River && mode == BrushMode.Lower;
+
         void ApplyStamp(Vector2 site)
         {
+            if (activeTool == BrushTool.River)
+            {
+                var point = new System.Numerics.Vector2(site.x, site.y);
+                if (IsRiverEraseMode)
+                {
+                    mapRenderer.EraseRiverAt(point);
+                    return;
+                }
+                // Радиус кисти реке не указ: ползунок задаёт ШИРИНУ русла, а идёт оно ровно по той
+                // клетке, что под курсором — иначе широкой кистью цепляло бы соседние и русло
+                // виляло бы вбок само по себе.
+                var under = mapRenderer.NearestLookup?.FindNearest(point);
+                if (under != null) mapRenderer.AppendRiverCell(under);
+                return;
+            }
+
             var affected = BrushOps.CellsInRadius(
                 mapRenderer.Cells, site.x, site.y, brushRadius, shape == BrushShape.Square);
             // Минимальная кисть = одна клетка: на маленьком радиусе в круг может не попасть ни один
@@ -343,13 +371,18 @@ namespace WorldGen.Rendering
             cursorRing.endColor = c;
             cursorRing.widthMultiplier = cursorLineWidth;
 
-            if (shape == BrushShape.Square)
+            // У реки ползунок задаёт ширину русла, а не радиус захвата — контур показывает именно
+            // её (кружок в полреки), иначе курсор обещал бы область, которую река не трогает.
+            bool river = activeTool == BrushTool.River;
+            float radius = river ? Mathf.Max(riverWidth * 0.5f, 1f) : brushRadius;
+
+            if (shape == BrushShape.Square && !river)
             {
                 cursorRing.positionCount = 4;
-                cursorRing.SetPosition(0, new Vector3(site.x - brushRadius, cursorHeight, site.y - brushRadius));
-                cursorRing.SetPosition(1, new Vector3(site.x + brushRadius, cursorHeight, site.y - brushRadius));
-                cursorRing.SetPosition(2, new Vector3(site.x + brushRadius, cursorHeight, site.y + brushRadius));
-                cursorRing.SetPosition(3, new Vector3(site.x - brushRadius, cursorHeight, site.y + brushRadius));
+                cursorRing.SetPosition(0, new Vector3(site.x - radius, cursorHeight, site.y - radius));
+                cursorRing.SetPosition(1, new Vector3(site.x + radius, cursorHeight, site.y - radius));
+                cursorRing.SetPosition(2, new Vector3(site.x + radius, cursorHeight, site.y + radius));
+                cursorRing.SetPosition(3, new Vector3(site.x - radius, cursorHeight, site.y + radius));
             }
             else
             {
@@ -358,9 +391,9 @@ namespace WorldGen.Rendering
                 {
                     float a = (i / (float)CircleSegments) * Mathf.PI * 2f;
                     cursorRing.SetPosition(i, new Vector3(
-                        site.x + Mathf.Cos(a) * brushRadius,
+                        site.x + Mathf.Cos(a) * radius,
                         cursorHeight,
-                        site.y + Mathf.Sin(a) * brushRadius));
+                        site.y + Mathf.Sin(a) * radius));
                 }
             }
 

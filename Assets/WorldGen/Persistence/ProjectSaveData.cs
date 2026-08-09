@@ -24,5 +24,9 @@ namespace WorldGen.Persistence
         /// <summary>Cave dungeons, one per owning POI (InteriorData.OwnerPoiId == PoiData.Id).
         /// Added in FormatVersion 4; older saves have this empty (a POI with no dungeon is valid).</summary>
         public List<InteriorData> Dungeons = new List<InteriorData>();
+        /// <summary>Реки, нарисованные кистью (генератор рек сюда не пишет — он выключен и его реки
+        /// не сохранялись никогда). Появились в FormatVersion 18; в файлах постарше ключа нет, и
+        /// это читается как «рек не рисовали».</summary>
+        public List<PaintedRiver> Rivers = new List<PaintedRiver>();
     }
 }
