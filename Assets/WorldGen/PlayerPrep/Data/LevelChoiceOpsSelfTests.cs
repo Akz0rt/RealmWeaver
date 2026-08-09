@@ -135,53 +135,96 @@ namespace WorldGen.PlayerPrep.Data
         [ContextMenu("Self-Test: план — прибавка не поднимает характеристику выше 20")]
         public void SelfTestChooseAsiRespectsTheCapOfTwenty()
         {
-            // Мутант: «потолок 20 не проверяется» — характеристика уезжает в 21.
+            // Мутант: «потолок 20 не держится вовсе» — характеристика уезжает в 21. Спрашивается он у
+            // СЧЁТА (AbilityTotal), потому что записи потолок больше не касается.
             var near = Fixtures.Character(); near.Base.Dex = 19;
             LevelChoiceOps.ChooseAsi(near, 8, new List<string> { "dex" });
             int nearTotal = SheetMath.AbilityTotal(near, "dex", 8);
+            // Мутант «обрезка вернулась в ChooseAsi»: в файле оказался бы +1. База 19 подобрана ровно
+            // для этого — при базе 15 обрезка и её отсутствие пишут одно и то же.
+            int nearWritten = near.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 8).Sum(b => b.Amount);
 
-            // На самом потолке прибавка не записывается ВОВСЕ: «+0 Ловкость» в файле выглядела бы
-            // выбором, который что-то делает.
+            // НА САМОМ ПОТОЛКЕ ПРИБАВКА ВСЁ РАВНО ЗАПИСЫВАЕТСЯ ЦЕЛИКОМ. Панель такой выбор не даёт
+            // (кнопка гаснет при 20), но если он всё-таки сделан, файл обязан помнить обещанное: игрок,
+            // понизивший потом базу, получит своё повышение полным.
             var full = Fixtures.Character(); full.Base.Dex = 20;
             LevelChoiceOps.ChooseAsi(full, 8, new List<string> { "dex" });
+            int fullWritten = full.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 8).Sum(b => b.Amount);
+            int fullTotal = SheetMath.AbilityTotal(full, "dex", 8);
 
-            // Мутант «итог считается ДО того, как снята прошлая прибавка»: второй выбор той же
-            // характеристики увидел бы собственную прошлую прибавку и урезался бы об неё до нуля.
+            // Мутант «RemoveBumps из ChooseAsi убрана»: второй выбор той же характеристики положил бы
+            // ВТОРУЮ прибавку рядом с первой. Сверяется ЗАПИСАННОЕ, а не итог: итог обе версии дают
+            // одинаковый (18+2+2 = 22 режется потолком до 20), и проверка по нему была бы пустой.
             var twice = Fixtures.Character(); twice.Base.Dex = 18;
             LevelChoiceOps.ChooseAsi(twice, 8, new List<string> { "dex" });
             LevelChoiceOps.ChooseAsi(twice, 8, new List<string> { "dex" });
-            int twiceTotal = SheetMath.AbilityTotal(twice, "dex", 8);
+            var twiceBumps = twice.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 8).ToList();
 
-            bool ok = nearTotal == 20
-                   && near.Bumps.Count(b => SheetMath.BumpLevel(b.Source) == 8) == 1
-                   && !full.Bumps.Any(b => SheetMath.BumpLevel(b.Source) == 8)
-                   && twiceTotal == 20;
-            if (!ok) Debug.LogError($"FAIL потолок 20: с 19 стало {nearTotal} (ждали 20), "
-                                  + $"с 20 прибавок {full.Bumps.Count(b => SheetMath.BumpLevel(b.Source) == 8)} (ждали 0), "
-                                  + $"дважды с 18 стало {twiceTotal} (ждали 20)");
+            bool ok = nearTotal == 20 && nearWritten == 2
+                   && fullWritten == 2 && fullTotal == 20
+                   && twiceBumps.Count == 1 && twiceBumps[0].Amount == 2
+                   && SheetMath.AbilityTotal(twice, "dex", 8) == 20;
+            if (!ok) Debug.LogError($"FAIL потолок 20: с 19 стало {nearTotal} (ждали 20) при записанных "
+                                  + $"{nearWritten} (ждали 2), с 20 записано {fullWritten} (ждали 2) при итоге "
+                                  + $"{fullTotal} (ждали 20), дважды с 18 прибавок {twiceBumps.Count} "
+                                  + $"(ждали 1) на {twiceBumps.Sum(b => b.Amount)} (ждали 2)");
             Done(ok);
         }
 
-        [ContextMenu("Self-Test: план — потолок берётся на целевом уровне и держится при любом порядке")]
+        [ContextMenu("Self-Test: план — надкусанное потолком повышение лист называет вслух")]
+        public void SelfTestChooseAsiKeepsThePromiseAndTheSheetExplainsTheLoss()
+        {
+            // ГЛАВНАЯ ПРОВЕРКА НАХОДКИ. Мутант — «обрезка при записи вернулась в ChooseAsi»
+            // (`Math.Min(each, AbilityCap - now)` и `continue`): в файле остаётся +1, лист печатает
+            // «Ловкость 19 → 20 (+1)», и о пропавшей половине не говорит НИКТО — ни кнопка, ни строка
+            // ячейки, ни лист. База 19 нарочно: при 15 обе версии кладут одно и то же.
+            var rules = RulesWithFeats();
+            var c = Fixtures.Character();       // 5 уровень
+            c.Base.Dex = 19;
+            LevelChoiceOps.ChooseAsi(c, 4, new List<string> { "dex" });
+
+            var atFour = c.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 4).ToList();
+            bool ok = atFour.Count == 1 && atFour[0].AbilityId == "dex" && atFour[0].Amount == 2;
+
+            // И глазами листа: число упёрлось в 20, а объяснение называет обе половины.
+            var d = SheetMath.Compute(c, rules);
+            const string want = "Ловкость 19 → 20 (+1 из +2: выше 20 характеристика не растёт)";
+            string got = d.AbilityExplain.TryGetValue("dex", out var e) ? e : "(нет)";
+            ok &= d.Total.Dex == 20 && got == want;
+
+            // Второй выигрыш: игрок понизил базу задним числом в мастере — и повышение вернулось
+            // ПОЛНЫМ. С обрезкой при записи оно осталось бы урезанным навсегда.
+            c.Base.Dex = 15;
+            var after = SheetMath.Compute(c, rules);
+            string gotAfter = after.AbilityExplain.TryGetValue("dex", out var e2) ? e2 : "(нет)";
+            ok &= after.Total.Dex == 17 && gotAfter == "Ловкость 15 → 17 (+2)";
+
+            if (!ok) Debug.LogError($"FAIL обещанное повышение: записано {atFour.Sum(b => b.Amount)} (ждали 2), "
+                                  + $"лист «{got}» (ждали «{want}»), после понижения базы «{gotAfter}» "
+                                  + "(ждали «Ловкость 15 → 17 (+2)»)");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: план — потолок держится счётом при любом порядке и после правки базы")]
         public void SelfTestAsiCapUsesTargetLevelAndAnyOrder()
         {
-            // ДВЕ находки в одной фикстуре, и обе — про то, что прошлые проверки пропускали.
+            // ПОТОЛОК ДЕРЖИТ СЧЁТ, А НЕ МИГ ВЫБОРА, и здесь три дороги, на которых миг выбора
+            // проигрывает. Прежний «мутант №1» (`AbilityTotal(file, id, file.Level)` вместо `level` в
+            // ChooseAsi) из этого списка ушёл вместе с обрезкой при записи: ChooseAsi больше ничего не
+            // считает и уровня для счёта не спрашивает вовсе.
             //
-            // Мутант №1: `AbilityTotal(file, id, file.Level)` вместо `level` в ChooseAsi. Прежние
-            // фикстуры его не ловили вовсе: между file.Level (5) и целевым уровнем в них не лежало ни
-            // одной прибавки, и оба правила отвечали одинаково. Здесь между ними прибавка ЕСТЬ.
+            // Дорога первая: два повышения подряд. В файл ложится обещанное целиком — 17+2+2, — а
+            // двадцатку держит AbilityTotal. Заодно видно, что прибавка 12 уровня не действует на 8-м.
             var byOrder = Fixtures.Character();                                  // 5 уровень
             byOrder.Base.Dex = 17;
             LevelChoiceOps.ChooseAsi(byOrder, 8, new List<string> { "dex" });    // 17 → 19
-            LevelChoiceOps.ChooseAsi(byOrder, 12, new List<string> { "dex" });   // на 12-м уже 19 → влезает +1
+            LevelChoiceOps.ChooseAsi(byOrder, 12, new List<string> { "dex" });   // на 12-м 19 → 20, обещано +2
             int atTwelve = byOrder.Bumps.Where(b => SheetMath.BumpLevel(b.Source) == 12).Sum(b => b.Amount);
-            // Сверяется ЗАПИСАННОЕ, а не итог: итог теперь режет потолок в SheetMath.AbilityTotal, и
-            // оба правила дали бы 20. Расходятся они ровно в том, что легло в файл, — +1 против +2.
-            bool ok = atTwelve == 1 && SheetMath.AbilityTotal(byOrder, "dex", 12) == 20;
+            bool ok = atTwelve == 2 && SheetMath.AbilityTotal(byOrder, "dex", 12) == 20
+                   && SheetMath.AbilityTotal(byOrder, "dex", 8) == 19;
 
-            // Мутант №2: «потолок держит только миг выбора». Тот же выбор в ОБРАТНОМ порядке: записи
-            // друг про друга не знают, в файле честно лежит 17+2+2, и удержать двадцатку может только
-            // счёт. Без потолка в AbilityTotal здесь выходит 21 — ровно то, что нашёл проверяющий.
+            // Дорога вторая: тот же выбор в ОБРАТНОМ порядке — записи друг про друга не знают. Без
+            // потолка в AbilityTotal здесь выходит 21 — ровно то, что нашёл проверяющий.
             var reversed = Fixtures.Character();
             reversed.Base.Dex = 17;
             LevelChoiceOps.ChooseAsi(reversed, 12, new List<string> { "dex" });
@@ -198,8 +241,9 @@ namespace WorldGen.PlayerPrep.Data
             raised.Base.Dex = 19;
             ok &= SheetMath.AbilityTotal(raised, "dex", 8) == 20;
 
-            if (!ok) Debug.LogError($"FAIL потолок и порядок: записано на 12 «{atTwelve}» (ждали 1), "
+            if (!ok) Debug.LogError($"FAIL потолок и порядок: записано на 12 «{atTwelve}» (ждали 2), "
                                   + $"итог по порядку {SheetMath.AbilityTotal(byOrder, "dex", 12)} (ждали 20), "
+                                  + $"он же на 8 {SheetMath.AbilityTotal(byOrder, "dex", 8)} (ждали 19), "
                                   + $"итог наоборот {SheetMath.AbilityTotal(reversed, "dex", 12)} (ждали 20, записано {written} из 4), "
                                   + $"после правки базы {SheetMath.AbilityTotal(raised, "dex", 8)} (ждали 20)");
             Done(ok);
