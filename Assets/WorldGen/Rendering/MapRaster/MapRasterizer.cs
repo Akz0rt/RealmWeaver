@@ -126,6 +126,11 @@ namespace WorldGen.Rendering.MapRaster
     /// </summary>
     public static class MapRasterizer
     {
+        /// <summary>За столько пикселей от берега вода считается «глубокой». Держать в согласии с
+        /// _WaterDepthRange в MapTerrain.shader (GpuMapRenderer): по этой величине красятся
+        /// нарисованные реки, и разойдись они — CPU-фолбэк рисовал бы реки не того цвета.</summary>
+        const float WaterDepthRangePixels = 70f;
+
         public static MapRasterBuffers CreateEmptyBuffers(int width, int height)
         {
             int n = width * height;
@@ -520,7 +525,14 @@ namespace WorldGen.Rendering.MapRaster
             if (!config.ShowReliefLayer)
                 return ClampColor32(shallowOrLakeS.r, shallowOrLakeS.g, shallowOrLakeS.b);
 
-            float depth = Mathf.Clamp01(config.WaterDepth01(cell));
+            // Пиксель воды, чья ближайшая клетка — СУША, бывает только один: нарисованная река
+            // (см. RiverMask). Глубину у клетки брать нельзя — там «1 минус высота суши», и русло
+            // темнело бы от рельефа под собой, до черноты на низине. Берём её, как GPU-шейдер, из
+            // поля дистанции до берега: узкое русло всегда мелкое, широкое — глубже к середине.
+            bool paintedRiver = !(cell.EffectiveIsOcean || cell.EffectiveIsLake);
+            float depth = paintedRiver
+                ? Mathf.Clamp01(buffers.CoastDistance[y * w + x] / WaterDepthRangePixels)
+                : Mathf.Clamp01(config.WaterDepth01(cell));
 
             float r = Mathf.Lerp(shallowOrLakeS.r, deep.r, depth);
             float g = Mathf.Lerp(shallowOrLakeS.g, deep.g, depth);

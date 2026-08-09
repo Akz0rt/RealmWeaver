@@ -190,7 +190,11 @@ namespace WorldGen.Rendering
             float want = river ? brushController.riverWidth : brushController.brushRadius;
 
             if (sizeLabel != null) sizeLabel.text = river ? "Ширина реки" : "Размер";
-            sizeSlider.minValue = river ? 2f : 1f;
+            // Минимум 5, а не 2: поля дистанции берега и суши считаются в 1/4 разрешения текстуры
+            // (CoastDistanceTexture, CoastDownscale), и русло тоньше этой сетки то попадает в
+            // отсчёт, то нет — ореол и песчаная кромка шли бы вдоль реки клочьями. Пять мировых
+            // единиц при 750/2048 — это ~13 пикселей, сетка их ловит уверенно.
+            sizeSlider.minValue = river ? 5f : 1f;
             sizeSlider.maxValue = river ? 20f : 120f;
             // Присвоение поднимет onValueChanged, а тот уже разложит значение в нужное поле
             // (см. колбэк слайдера: он смотрит на текущий инструмент).
