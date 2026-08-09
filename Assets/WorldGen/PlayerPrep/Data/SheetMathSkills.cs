@@ -5,14 +5,80 @@ namespace WorldGen.PlayerPrep.Data
 {
     public static partial class SheetMath
     {
+        /// <summary>КАКИМИ НАВЫКАМИ ПЕРСОНАЖ ВЛАДЕЕТ — в порядке показа: сперва добранные у класса
+        /// вручную, затем данные предысторией, без повторов. Третьего источника нет: виды навыков по
+        /// правилам 2024 не дают, и поля под них у RaceDef тоже нет.
+        ///
+        /// Функция ОДНА на всё приложение нарочно. Владение спрашивают лист, мастер (список
+        /// компетентности и его счётчик) и смена класса; пока каждый складывал два списка у себя —
+        /// а мастер и вовсе смотрел в один file.SkillIds, — компетентность нельзя было поставить на
+        /// навык предыстории. Правила такого различия не знают: умение Плута говорит «ты выбираешь
+        /// два навыка, КОТОРЫМИ ВЛАДЕЕШЬ», не спрашивая, откуда владение пришло.
+        ///
+        /// Список, а не набор, потому что порядок виден игроку — по нему мастер рисует строки. Для
+        /// вопроса «владеет ли» зовущему хватает Contains: навыков у персонажа единицы.</summary>
+        public static List<string> ProficientSkillIds(IEnumerable<string> chosenSkillIds, BackgroundDef bg)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>();
+            if (chosenSkillIds != null)
+                foreach (var id in chosenSkillIds) if (seen.Add(id)) result.Add(id);
+            if (bg != null && bg.SkillIds != null)
+                foreach (var id in bg.SkillIds) if (seen.Add(id)) result.Add(id);
+            return result;
+        }
+
+        /// <summary>То же по файлу целиком. Отдельная перегрузка нужна потому, что смена класса
+        /// спрашивает про владение, которое ЕЩЁ НЕ записано в файл (часть навыков вот-вот уйдёт), —
+        /// но складывает два источника всё равно перегрузка выше, в одном экземпляре.</summary>
+        public static List<string> ProficientSkillIds(CharacterFile file, RulesData rules)
+        {
+            if (file == null) return new List<string>();
+            return ProficientSkillIds(file.SkillIds,
+                rules == null ? null : rules.Backgrounds.FirstOrDefault(b => b.Id == file.BackgroundId));
+        }
+
+        /// <summary>Навыки, на которые персонажу МОЖНО поставить компетентность: владение (см.
+        /// ProficientSkillIds) И разрешение класса брать её именно в этом навыке
+        /// (ClassDef.ExpertiseChoices). Волшебник с предысторией «Мудрец» видит здесь Магию и
+        /// Историю — обе от предыстории, обе в шестёрке умения «Учёный», — но не Проницательность:
+        /// владеть ею класс даёт, а компетентности в ней не даёт.
+        ///
+        /// Со справочником навыков список НАМЕРЕННО не сверяется. Неизвестный идентификатор всё
+        /// равно займёт ячейку при чтении (фильтр ниже проверяет владение и разрешение, а не
+        /// существование), и выброси его отсюда — мастер не нарисовал бы строку, которой ячейка
+        /// занята: снять нечем, поставить новую тоже. Про такой навык говорит UnknownIds.</summary>
+        public static List<string> ExpertiseEligibleIds(CharacterFile file, RulesData rules, ClassDef cls)
+        {
+            if (file == null || cls == null) return new List<string>();
+            return ProficientSkillIds(file, rules).Where(cls.AllowsExpertiseIn).ToList();
+        }
+
+        /// <summary>Компетентность ИЗ ФАЙЛА, которая годится: та, что стоит на подходящем навыке
+        /// (ExpertiseEligibleIds). Порядок — как в file.ExpertiseIds, потому что по нему отрезается
+        /// лишнее.
+        ///
+        /// ПОТОЛОК ПО УРОВНЮ ЗДЕСЬ НЕ ПРИМЕНЯЕТСЯ, и это разделение сознательное. Лист берёт
+        /// .Take(cls.ExpertisePicksAt(level)) — сверх открытого бонуса не бывает. Мастер считает по
+        /// этой же функции БЕЗ потолка: Барду, опустившемуся с 9 уровня на 8, он честно говорит
+        /// «выбрано 4 из 2», а не «2 из 2» при четырёх отмеченных строках, и видно, сколько снять.
+        /// Само правило годности при этом у обоих одно — расхождение в нём однажды уже заперло
+        /// игрока между «выбрано 0 из 1» на листе и погашенными кнопками в мастере.</summary>
+        public static List<string> ExpertiseChosenIds(CharacterFile file, RulesData rules, ClassDef cls)
+        {
+            if (file == null || cls == null) return new List<string>();
+            var eligible = ExpertiseEligibleIds(file, rules, cls);
+            return file.ExpertiseIds.Where(eligible.Contains).ToList();
+        }
+
         static void ComputeSkillsAcAndFeatures(DerivedSheet d, CharacterFile file, RulesData rules,
             RaceDef race, ClassDef cls, BackgroundDef bg, int level)
         {
             // ── Навыки ────────────────────────────────────────────────────────────────────────
             // Владение приходит из двух источников — предыстория даёт фиксированные, класс
-            // добирается вручную. Набор, а не список: взять один навык дважды нельзя.
-            var proficient = new HashSet<string>(file.SkillIds);
-            if (bg != null) foreach (var s in bg.SkillIds) proficient.Add(s);
+            // добирается вручную. Складывает их ProficientSkillIds, и лист спрашивает ту же
+            // функцию, что мастер: «чем персонаж владеет» — один вопрос с одним ответом.
+            var proficient = new HashSet<string>(ProficientSkillIds(file.SkillIds, bg));
 
             // СКОЛЬКО КОМПЕТЕНТНОСТИ ОТКРЫТО — считается ПРИ ЧТЕНИИ, по нынешнему уровню, а не по
             // тому, что записано в файле. Компетентность приходит дважды (Плут на 1 и 6, Бард и
@@ -23,24 +89,30 @@ namespace WorldGen.PlayerPrep.Data
             // приёмом устроен потолок характеристик.
             int expertiseAllowed = cls != null ? cls.ExpertisePicksAt(level) : 0;
 
-            // ФИЛЬТР ПРИ ЧТЕНИИ, а не только на экране мастера. Класс вправе сузить, из каких
-            // навыков берётся компетентность (ClassDef.ExpertiseChoices), и сузить его список
-            // задним числом — значит оставить в старых файлах компетентность, которую экран больше
-            // не рисует: снять её было бы нечем, а лист продолжал бы удваивать мастерство.
+            // ФИЛЬТР ПРИ ЧТЕНИИ, а не только на экране мастера, и проверяет он ОБА условия годности
+            // (ExpertiseChosenIds): владение навыком и разрешение класса. Файл переживает и то и
+            // другое — сменил предысторию, и навык, на котором стояла компетентность, персонажу
+            // больше не принадлежит; сузили список класса задним числом, и компетентность оказалась
+            // вне него. Не отсеки такую строку здесь — экран её не рисует (навыка-то нет), снять
+            // нечем, а счётчик говорит «выбрано 1 из 1»: тупик, из которого игроку не выбраться.
+            // С фильтром она отваливается сама, «чего не хватает» просит выбрать заново, и правка
+            // файла при смене предыстории не нужна вовсе.
             //
             // Лишнее СВЕРХ открытого отрезается по порядку в ExpertiseIds: правило детерминированное
             // нарочно — «какой навык важнее» программе не по силам, а «первые сколько-то» одинаково
             // считают и лист, и мастер.
-            var chosenExpertise = cls == null
-                ? new List<string>()
-                : file.ExpertiseIds.Where(cls.AllowsExpertiseIn).Take(expertiseAllowed).ToList();
+            var chosenExpertise = ExpertiseChosenIds(file, rules, cls).Take(expertiseAllowed).ToList();
             var expertise = new HashSet<string>(chosenExpertise);
 
             foreach (var skill in rules.Skills)
             {
                 int mod = d.Modifiers.Get(skill.AbilityId);
                 bool prof = proficient.Contains(skill.Id);
-                bool exp = prof && expertise.Contains(skill.Id);
+                // Владение здесь ВТОРОЙ раз не проверяется: фильтр выше пропускает компетентность
+                // только на навыке, которым персонаж владеет, и повторное условие было бы вторым
+                // экземпляром того же правила — с ним мутант, снявший проверку из фильтра, оставался
+                // бы незаметен на числах.
+                bool exp = expertise.Contains(skill.Id);
                 // Компетентность удваивает МАСТЕРСТВО, а не весь бонус.
                 int bonus = mod + (prof ? d.ProficiencyBonus * (exp ? 2 : 1) : 0);
                 string abilityName = AbilityNames[System.Array.IndexOf(AbilityIds, skill.AbilityId)].ToLowerInvariant();

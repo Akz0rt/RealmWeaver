@@ -48,9 +48,10 @@ namespace WorldGen.PlayerPrep.Data
         {
             // «Магия» не входит ни в SkillIds, ни в навыки предыстории — значит владения нет вовсе.
             // Компетентность в такой навык всё равно записана (мастер мог натыкать её раньше владения).
-            // Мутант «компетентность без проверки владения» (exp = expertise.Contains(...) без prof &&)
-            // на этой фикстуре не ловится ни одним другим тестом: везде, где есть компетентность,
-            // владение тоже есть — Fixtures.Character() кладёт "stealth" в оба списка сразу.
+            // МУТАНТ: фильтр при чтении (SheetMath.ExpertiseChosenIds) без проверки владения — только
+            // AllowsExpertiseIn. На этой фикстуре он не ловится ни одним другим тестом: везде, где
+            // есть компетентность, владение тоже есть — Fixtures.Character() кладёт "stealth" в оба
+            // списка сразу.
             //
             // ВЫДАЧУ РАСШИРЯЕМ ДО ДВУХ НАВЫКОВ НАРОЧНО. У фикстурного Плута открыт один, а в списке
             // компетентности их станет два («скрытность» и добавленная «магия»); лишнее сверх
@@ -97,6 +98,74 @@ namespace WorldGen.PlayerPrep.Data
             if (!ok) Debug.LogError($"FAIL компетентность вне списка класса: {st.Bonus} "
                                   + $"комп={st.Expertise}, ждали 5/нет; чего не хватает: ["
                                   + string.Join(" | ", d.Missing) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — компетентность берётся и из навыков предыстории")]
+        public void SelfTestExpertiseEligibleIncludesBackgroundSkills()
+        {
+            // ЖИВОЙ СЛУЧАЙ ДМа в синтетическом виде: единственный годный навык приходит ОТ
+            // ПРЕДЫСТОРИИ, а всё, что взято у класса, класс для компетентности запрещает.
+            //
+            // МУТАНТ №1: список годных снова строится из одного file.SkillIds. Тогда он пуст —
+            // Волшебник-Мудрец не может поставить компетентность ни на Магию, ни на Историю, хотя
+            // владеет обеими. Фикстура построена так, что под старым правилом ответ ДРУГОЙ: ни один
+            // выбранный у класса навык в шестёрку не входит.
+            // МУТАНТ №2: владение сложили, а разрешение класса (AllowsExpertiseIn) читать перестали.
+            // Тогда в список попадут все четыре навыка, включая Проницательность от предыстории,
+            // которой класс компетентности не даёт. На одном «Мудреце» этот мутант не ловится —
+            // оба его навыка внутри шестёрки, — поэтому предыстория здесь даёт навык ВНЕ списка.
+            var rules = Fixtures.Rules();
+            rules.Skills.Add(new SkillDef { Id = "insight", Name = "Проницательность", AbilityId = "wis" });
+            rules.Backgrounds[0].SkillIds.Add("insight");          // Солдат: атлетика + проницательность
+            rules.Classes[0].ExpertiseChoices.Add("athletics");    // компетентность ТОЛЬКО в атлетике
+
+            var c = Fixtures.Character();                          // у класса взяты скрытность и магия
+            c.ExpertiseIds.Clear();
+            c.ExpertiseIds.Add("athletics");
+
+            var eligible = SheetMath.ExpertiseEligibleIds(c, rules, rules.Classes[0]);
+            var d = SheetMath.Compute(c, rules);
+            var ath = d.Skills.First(s => s.SkillId == "athletics");
+            // СИЛ 8 + 2 от предыстории = 10 → +0; мастерство +3, компетентность → +6.
+            bool ok = eligible.SequenceEqual(new[] { "athletics" })
+                   && ath.Proficient && ath.Expertise && ath.Bonus == 6
+                   && !d.Missing.Any(m => m.Contains("Компетентность"));
+            if (!ok) Debug.LogError("FAIL компетентность от предыстории: годные ["
+                                  + string.Join(",", eligible) + "] (ждали [athletics]), атлетика "
+                                  + $"{ath.Bonus} влад={ath.Proficient} комп={ath.Expertise} (ждали 6/да/да); "
+                                  + "чего не хватает: [" + string.Join(" | ", d.Missing) + "]");
+            Done(ok);
+        }
+
+        [ContextMenu("Self-Test: навыки — Волшебник-Мудрец видит Магию и Историю, но не Проницательность (поставляемый справочник)")]
+        public void SelfTestWizardWithSageExpertiseOnRealRules()
+        {
+            // ТОТ ЖЕ СЛУЧАЙ НА НАСТОЯЩИХ ДАННЫХ, дословно как его нашёл ДМ: Волшебник 2 уровня с
+            // предысторией «Мудрец». Мудрец даёт Магию и Историю — обе в шестёрке умения «Учёный», —
+            // а руками у класса взята Проницательность, которой в шестёрке нет.
+            //
+            // Проверка по поставляемому файлу нужна отдельно от синтетической: правило верное, но
+            // прочитанное не из тех полей (скажем, из SkillChoices вместо ExpertiseChoices) на
+            // фикстуре могло бы совпасть случайно. Провайдера подкладывают снаружи; его отсутствие —
+            // ошибка, а не повод пропустить.
+            if (RulesTextSource.Provider == null)
+            {
+                Debug.LogError("FAIL Волшебник-Мудрец: RulesTextSource.Provider не задан — "
+                             + "проверка данных не выполнялась");
+                return;
+            }
+            var rules = RulesLoader.FromJson(RulesTextSource.Provider());
+            var wizard = rules.Classes.First(x => x.Id == "wizard");
+            var c = new CharacterFile { RulesId = rules.Id, Name = "Тест", Level = 2,
+                ClassId = "wizard", BackgroundId = "sage" };
+            c.SkillIds.Add("insight");                  // навык класса, но компетентности в нём нет
+
+            var eligible = SheetMath.ExpertiseEligibleIds(c, rules, wizard);
+            bool ok = eligible.Contains("arcana") && eligible.Contains("history")
+                   && !eligible.Contains("insight");
+            if (!ok) Debug.LogError("FAIL Волшебник-Мудрец: годные для компетентности ["
+                                  + string.Join(",", eligible) + "], ждали Магию и Историю без Проницательности");
             Done(ok);
         }
 
