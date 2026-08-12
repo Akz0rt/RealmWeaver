@@ -39,6 +39,10 @@ namespace MountainHarness
             ObtuseBranchDoesNotStealTheAxis();
             RingCoverageSuppressesSkeleton();
             ForkRescuesRingOverThinArms();
+            CoverageCutEndsAreNotExtended();
+            RingStrokeKeepsClosedAxis();
+            MaskBorderIsAlwaysBackground();
+            AxesAreReproducible();
             ErasedGapSplitsAxesToo();
 
             WaistProfile();
@@ -555,6 +559,117 @@ namespace MountainHarness
                   rings == 1 && skel == 0,
                   $"колец {rings}, осей от скелета {skel} — похоже, критерий глубины сделали местным: " +
                   "перепиши проверку под новое правило");
+        }
+
+        /// <summary>
+        /// Продлеваются только СВОБОДНЫЕ концы. Конец, появившийся от резки покрытием, продлевать
+        /// нельзя: он уйдёт внутрь массы, где кольцо уже проложило ось, и посадит там вторую цепь гор
+        /// поперёк первой.
+        ///
+        /// Фикстура — гантель: два толстых блина, соединённых тонкой перемычкой. Под блинами кольца
+        /// принимаются и покрывают их целиком, перемычка для кольца слишком тонка и достаётся
+        /// скелету. Оба конца этой оси — срезы покрытием, значит она обязана остаться в перемычке.
+        /// Мутант: продлевать, не глядя на Tip0/Tip1, — ось уползёт в блины на восемь десятков ячеек.
+        /// </summary>
+        static void CoverageCutEndsAreNotExtended()
+        {
+            var left = Stroke(1, 40f, new Vector2(0, 0), new Vector2(0, 0));
+            var right = Stroke(2, 40f, new Vector2(200, 0), new Vector2(200, 0));
+            var neck = Stroke(3, 15f, new Vector2(0, 0), new Vector2(200, 0));
+
+            var blob = Blob(left, right, neck);
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 15f));
+            var field = DistanceField.Build(mask);
+            var axes = AxisBuilder.Build(mask, field, 22f / mask.Cell);
+
+            int rings = 0, skel = 0;
+            float min = float.MaxValue, max = float.MinValue;
+            foreach (var axis in axes)
+            {
+                if (axis.FromRing) { rings++; continue; }
+                skel++;
+                foreach (var p in axis.Points)
+                {
+                    float x = mask.GridToWorld(p.X, p.Y).X;
+                    if (x < min) min = x;
+                    if (x > max) max = x;
+                }
+            }
+
+            Check("Гантель: у каждого блина своё кольцо", rings == 2, $"колец {rings}, ждали 2");
+            Check("Гантель: перемычка досталась скелету", skel >= 1, "оси в перемычке нет вовсе");
+            Check("Гантель: срезанные покрытием концы не продлеваются",
+                  skel >= 1 && min > 30f && max < 170f,
+                  $"ось ушла за перемычку: X от {min:0} до {max:0}, ждали внутри 30…170");
+        }
+
+        /// <summary>
+        /// Замкнутая ось обязана дожить до конца доводки замкнутой. Шов тут хрупок по устройству: у
+        /// цикла первая и последняя точки — одна и та же ячейка, но подтяжка к гребню считает им
+        /// РАЗНЫЕ касательные (у первой сосед справа, у последней — слева) и может развести их до
+        /// пяти ячеек, а замкнутой ось признаётся при зазоре меньше двух. Разъехались — ось сочтут
+        /// открытой и выпустят из шва два отростка внутрь массы. Дальше это важно и нарезке (§8
+        /// режет замкнутую ось иначе).
+        /// </summary>
+        static void RingStrokeKeepsClosedAxis()
+        {
+            var pts = new List<Vector2>();
+            for (int i = 0; i <= 72; i++)
+            {
+                double t = i / 72.0 * Math.PI * 2.0;
+                pts.Add(new Vector2(300f + 130f * (float)Math.Cos(t), 300f + 130f * (float)Math.Sin(t)));
+            }
+            var blob = Blob(Stroke(1, 30f, pts.ToArray()));
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 30f));
+            var field = DistanceField.Build(mask);
+            var axes = AxisBuilder.Build(mask, field, 22f / mask.Cell);
+
+            Check("Кольцевой мазок: ровно одна ось", axes.Count == 1, $"осей {axes.Count}");
+            if (axes.Count != 1) return;
+
+            var axis = axes[0];
+            float seam = Vector2.Distance(axis.Points[0], axis.Points[axis.Points.Count - 1]);
+            Check("Кольцевой мазок: ось замкнута", axis.Closed && !axis.FromRing,
+                  $"замкнута = {axis.Closed}, от кольца = {axis.FromRing}");
+            Check("Кольцевой мазок: шов не разошёлся", seam < AxisBuilder.ClosedGap,
+                  $"зазор {seam:0.00} ячейки при пороге {AxisBuilder.ClosedGap}");
+        }
+
+        /// <summary>
+        /// Утоньшение отказалось от проверки границ в горячем цикле, потому что активными бывают
+        /// только внутренние ячейки. Держится это на том, что габариты пятна считаются С УЧЁТОМ
+        /// радиуса кисти, и поле в шесть ячеек кладётся уже поверх них. Если это когда-нибудь
+        /// перестанет быть правдой, масса вылезет на кромку и уцелеет там толстым ободом — молча.
+        /// Мутант: убрать из StrokeGeometry.Bounds расширение на радиус.
+        /// </summary>
+        static void MaskBorderIsAlwaysBackground()
+        {
+            var blob = Blob(Stroke(1, 120f, new Vector2(0, 0), new Vector2(300, 200)));
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 120f));
+
+            bool clean = true;
+            for (int x = 0; x < mask.W; x++) if (mask.At(x, 0) || mask.At(x, mask.H - 1)) clean = false;
+            for (int y = 0; y < mask.H; y++) if (mask.At(0, y) || mask.At(mask.W - 1, y)) clean = false;
+
+            Check("Маска: кромка всегда фон", clean, "масса дошла до края сетки");
+        }
+
+        /// <summary>Два прогона — один результат. Порядок обхода словарей на пути к осям задан явно
+        /// (ячейки скелета по возрастанию индекса, сортировки с разводом ничьих), но правило это
+        /// негласное и ломается незаметно. Мутант: любой обход по Dictionary без явного порядка.</summary>
+        static void AxesAreReproducible()
+        {
+            var first = CapsuleAxes(out var mask);
+            var second = AxisBuilder.Build(mask, DistanceField.Build(mask), 22f / mask.Cell);
+
+            bool same = first.Count == second.Count;
+            for (int i = 0; same && i < first.Count; i++)
+            {
+                if (first[i].Points.Count != second[i].Points.Count) { same = false; break; }
+                for (int k = 0; k < first[i].Points.Count; k++)
+                    if (first[i].Points[k] != second[i].Points[k]) { same = false; break; }
+            }
+            Check("Повторяемость: два прогона дают те же оси", same, "результат разъехался между прогонами");
         }
 
         /// <summary>Оси длинной толстой массы. Возвращает заодно маску — она нужна для перевода в мир.</summary>
