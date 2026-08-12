@@ -45,6 +45,7 @@ namespace MountainHarness
             AxesAreReproducible();
             ErasedGapSplitsAxesToo();
 
+            GridPointIsTheCellCentre();
             LinkCountIsChosenByRatio();
             AnisotropyPacksVerticalLinks();
             JitterSpreadsLengthsButKeepsThemClose();
@@ -712,6 +713,32 @@ namespace MountainHarness
         }
 
         // ── §8 «Нарезка на звенья», §10 порядок, §11 ярусы ──────────────────────────────────────
+
+        /// <summary>
+        /// Целая координата сетки — ЦЕНТР ячейки, а не её угол. Растеризация решает судьбу ячейки по
+        /// центру, поле расстояний считает значение там же — значит и обратный перевод в мир обязан
+        /// давать ту же точку. Иначе весь нарисованный массив съезжает от мазка на полклетки: мало,
+        /// но систематически и во все стороны сразу.
+        /// Мутант: убрать полклетки из GridToWorld — закрашенные ячейки окажутся за краем кисти.
+        /// </summary>
+        static void GridPointIsTheCellCentre()
+        {
+            var stroke = Stroke(1, 40f, new Vector2(0, 0), new Vector2(120, 60));
+            var mask = MountainMask.Build(Blob(stroke), MountainMask.ChooseCell(22f, 40f));
+
+            float worst = 0f;
+            for (int y = 0; y < mask.H; y++)
+                for (int x = 0; x < mask.W; x++)
+                {
+                    if (!mask.At(x, y)) continue;
+                    var world = mask.GridToWorld(x, y);
+                    float over = StrokeGeometry.DistanceToStroke(world, stroke) - stroke.Radius;
+                    if (over > worst) worst = over;
+                }
+
+            Check("Сетка: целая координата — центр ячейки", worst < 0.05f * mask.Cell,
+                  $"закрашенная ячейка уехала за кисть на {worst / mask.Cell:0.###} ячейки");
+        }
 
         /// <summary>
         /// Число звеньев подбирается по ОТНОШЕНИЮ шага к цели, а не по разности и не округлением.
