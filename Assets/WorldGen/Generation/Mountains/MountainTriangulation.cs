@@ -66,7 +66,7 @@ namespace WorldGen.Generation.Mountains
 
                 if (IsEar(loop, alive, prev, here, next))
                 {
-                    tris.Add(origin[prev]); tris.Add(origin[here]); tris.Add(origin[next]);
+                    Emit(tris, origin, loop, prev, here, next);
                     alive.RemoveAt(cursor % n);
                     cursor = cursor % alive.Count;
                     continue;
@@ -77,10 +77,17 @@ namespace WorldGen.Generation.Mountains
             // Сторож на случай, если ушей не нашлось вовсе (например, точки легли на одну прямую):
             // остаток закрываем веером. Лучше слегка неверный низ горы, чем повисший цикл.
             for (int i = 1; i + 1 < alive.Count; i++)
-            {
-                tris.Add(origin[alive[0]]); tris.Add(origin[alive[i]]); tris.Add(origin[alive[i + 1]]);
-            }
+                Emit(tris, origin, loop, alive[0], alive[i], alive[i + 1]);
+
             return tris.ToArray();
+        }
+
+        /// <summary>Кладёт треугольник, пропуская вырожденные: нулевой площади они всё равно не
+        /// рисуют, а в меше это мусор, который потом ищи глазами.</summary>
+        static void Emit(List<int> tris, List<int> origin, List<Vector2> loop, int a, int b, int c)
+        {
+            if (Math.Abs(Cross(loop[a], loop[b], loop[c])) * 0.5f <= 1e-5f) return;
+            tris.Add(origin[a]); tris.Add(origin[b]); tris.Add(origin[c]);
         }
 
         /// <summary>Ухо — выпуклая вершина, в чей треугольник не попала ни одна другая вершина.</summary>
