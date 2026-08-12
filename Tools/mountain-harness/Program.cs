@@ -18,6 +18,7 @@ namespace MountainHarness
         {
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
+            if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
 
             MaskMeasuresToSegment();
@@ -37,6 +38,7 @@ namespace MountainHarness
             ForkStitchesIntoOneAxis();
             ObtuseBranchDoesNotStealTheAxis();
             RingCoverageSuppressesSkeleton();
+            ForkRescuesRingOverThinArms();
             ErasedGapSplitsAxesToo();
 
             WaistProfile();
@@ -507,6 +509,52 @@ namespace MountainHarness
             Check("Ластик: ось есть у обеих половин", left && right,
                   $"слева {(left ? "есть" : "нет")}, справа {(right ? "есть" : "нет")}");
             Check("Ластик: поперёк разрыва оси нет", !inside, "ось прошла по стёртому месту");
+        }
+
+        /// <summary>
+        /// ИЗЪЯН, ЗАФИКСИРОВАННЫЙ НАРОЧНО (показать ДМ на чекпоинте задачи 5).
+        ///
+        /// Критерий §5 «под кольцом должна быть глубина» меряет глубину у КОМПОНЕНТЫ целиком. У
+        /// развилки в месте схождения рукавов масса толще, чем в самих рукавах: вписанная окружность
+        /// там больше. Одного этого утолщения хватает, чтобы кольцо было принято НА ВСЮ компоненту —
+        /// и оно уходит гулять вдоль тонких рукавов той самой вырожденной петлёй, ради запрета
+        /// которой §5 и написан. Скелет при этом срезается покрытием подчистую.
+        ///
+        /// Тот же изъян есть и в прототипе ДМ — правило там буквально то же. Лечится он тем, что
+        /// глубину надо мерить МЕСТНО, вдоль контура, и резать кольцо на принятые и отвергнутые
+        /// куски; но это правка самого алгоритма, а не переноса, и решать её ДМ.
+        ///
+        /// Проверка нарочно утверждает НЫНЕШНЕЕ поведение: если она однажды покраснеет, значит
+        /// критерий сделали местным — тогда её надо переписать под новое правило, а не «починить».
+        /// </summary>
+        static void ForkRescuesRingOverThinArms()
+        {
+            var arm = 30f;                       // рукав тоньше 1.6·R — сам по себе кольца не заслужил
+            var blob = Blob(Stroke(1, arm, new Vector2(0, 0), new Vector2(250, 0)),
+                            Stroke(2, arm, new Vector2(250, 0), new Vector2(440, 110)),
+                            Stroke(3, arm, new Vector2(250, 0), new Vector2(440, -110)));
+
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, arm));
+            var field = DistanceField.Build(mask);
+            float radiusCells = 22f / mask.Cell;
+
+            var midArm = mask.WorldToGrid(new Vector2(120, 0));
+            float armDepth = DistanceField.Sample(field, mask.W, mask.H, midArm.X, midArm.Y);
+            float need = radiusCells * (1f + RingSelection.DepthMargin);
+
+            Check("Развилка: рукав сам по себе кольца не заслуживает", armDepth < need,
+                  $"толщина рукава {armDepth:0.0} ≥ порога {need:0.0} — фикстура перестала быть тонкой");
+            Check("Развилка: узел глубже порога", DistanceField.Max(field) >= need,
+                  $"узел {DistanceField.Max(field):0.0} < порога {need:0.0} — фикстура перестала быть развилкой");
+
+            int rings = 0, skel = 0;
+            foreach (var axis in AxisBuilder.Build(mask, field, radiusCells))
+                if (axis.FromRing) rings++; else skel++;
+
+            Check("Развилка: узел вытягивает кольцо на всю развилку (известный изъян §5)",
+                  rings == 1 && skel == 0,
+                  $"колец {rings}, осей от скелета {skel} — похоже, критерий глубины сделали местным: " +
+                  "перепиши проверку под новое правило");
         }
 
         /// <summary>Оси длинной толстой массы. Возвращает заодно маску — она нужна для перевода в мир.</summary>

@@ -43,6 +43,130 @@ namespace MountainHarness
             Console.WriteLine($"готово: {path}");
         }
 
+        /// <summary>
+        /// Вторая картинка — про оси, а не про горы: след мазка, принятые кольца и то, что осталось
+        /// от скелета после резки покрытием. Смотреть надо ровно три вещи: не лезет ли ось за край
+        /// мазка (продление концов), не идёт ли она вторым слоем поверх кольца (резка покрытием) и
+        /// цела ли она в развилке (сшивка).
+        /// </summary>
+        public static void WriteAxes(string path)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>");
+            sb.Append("<rect width='1200' height='900' fill='#efe7d5'/>");
+
+            Axes(sb, "тонкая масса: кольцу не хватает глубины", 33f,
+                 new[] { new[] { new Vector2(80, 800), new Vector2(520, 800) } }, null);
+
+            Axes(sb, "толстая масса: кольцо плюс сердцевина", 66f,
+                 new[] { new[] { new Vector2(760, 800), new Vector2(1120, 800) } }, null);
+
+            Axes(sb, "развилка", 30f, new[]
+            {
+                new[] { new Vector2(80, 480), new Vector2(330, 480) },
+                new[] { new Vector2(330, 480), new Vector2(520, 590) },
+                new[] { new Vector2(330, 480), new Vector2(520, 370) },
+            }, null);
+
+            Axes(sb, "кольцо", 30f, new[] { RingPts(new Vector2(900, 470), 130f) }, null);
+
+            Axes(sb, "ластик посередине", 40f,
+                 new[] { new[] { new Vector2(80, 150), new Vector2(520, 150) } },
+                 new[] { new[] { new Vector2(300, 60), new Vector2(300, 240) } });
+
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
+        static Vector2[] RingPts(Vector2 c, float radius)
+        {
+            var pts = new Vector2[73];
+            for (int i = 0; i <= 72; i++)
+            {
+                double a = i / 72.0 * Math.PI * 2;
+                pts[i] = new Vector2(c.X + (float)Math.Cos(a) * radius, c.Y + (float)Math.Sin(a) * radius);
+            }
+            return pts;
+        }
+
+        static void Axes(StringBuilder sb, string title, float brush, Vector2[][] paint, Vector2[][] erase)
+        {
+            const float MountainR = 22f;
+
+            var blob = new MountainBlob();
+            int id = 1;
+            foreach (var p in paint)
+            {
+                var s = new MountainStroke { Id = id++, Radius = brush };
+                s.Points.AddRange(p);
+                blob.Strokes.Add(s);
+            }
+            if (erase != null)
+                foreach (var e in erase)
+                {
+                    var s = new MountainStroke { Id = id++, Radius = brush, Erase = true };
+                    s.Points.AddRange(e);
+                    blob.Erasers.Add(s);
+                }
+
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(MountainR, brush));
+            var field = DistanceField.Build(mask);
+            var axes = AxisBuilder.Build(mask, field, MountainR / mask.Cell);
+
+            foreach (var p in paint)
+            {
+                sb.Append("<polyline fill='none' stroke='#c9bda2' stroke-width='").Append(F(brush * 2))
+                  .Append("' stroke-linecap='round' stroke-linejoin='round' points='");
+                foreach (var q in p) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+                sb.Append("'/>");
+            }
+            if (erase != null)
+                foreach (var e in erase)
+                {
+                    sb.Append("<polyline fill='none' stroke='#efe7d5' stroke-width='").Append(F(brush * 2))
+                      .Append("' stroke-linecap='round' stroke-linejoin='round' points='");
+                    foreach (var q in e) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+                    sb.Append("'/>");
+                }
+
+            int rings = 0, skel = 0;
+            foreach (var axis in axes)
+            {
+                if (axis.FromRing) rings++; else skel++;
+                string colour = axis.FromRing ? "#2c6fbb" : "#a3282f";
+                sb.Append("<polyline fill='none' stroke='").Append(colour)
+                  .Append("' stroke-width='2.2' points='");
+                foreach (var g in axis.Points)
+                {
+                    var world = mask.GridToWorld(g.X, g.Y);
+                    sb.Append(F(world.X)).Append(',').Append(F(Flip(world.Y))).Append(' ');
+                }
+                if (axis.Closed)
+                {
+                    var first = mask.GridToWorld(axis.Points[0].X, axis.Points[0].Y);
+                    sb.Append(F(first.X)).Append(',').Append(F(Flip(first.Y)));
+                }
+                sb.Append("'/>");
+
+                // Концы осей помечены: по ним видно, докуда дотянулось продление.
+                if (!axis.Closed)
+                    foreach (int i in new[] { 0, axis.Points.Count - 1 })
+                    {
+                        var world = mask.GridToWorld(axis.Points[i].X, axis.Points[i].Y);
+                        sb.Append("<circle r='3.5' fill='").Append(colour).Append("' cx='")
+                          .Append(F(world.X)).Append("' cy='").Append(F(Flip(world.Y))).Append("'/>");
+                    }
+            }
+            var tails = new StringBuilder();
+            foreach (var axis in axes)
+            {
+                if (axis.Closed || axis.FromRing) continue;
+                tails.Append($"; концы D = {axis.Depths[0]:0.0} и {axis.Depths[axis.Depths.Length - 1]:0.0}");
+            }
+            Console.WriteLine($"{title}: колец {rings}, осей от скелета {skel}, сетка {mask.W}×{mask.H}{tails}");
+        }
+
         static List<Vector2> Curved()
         {
             var pts = new List<Vector2>();
