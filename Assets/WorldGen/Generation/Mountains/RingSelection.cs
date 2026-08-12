@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 
 namespace WorldGen.Generation.Mountains
 {
@@ -23,16 +24,43 @@ namespace WorldGen.Generation.Mountains
     /// Но буквальное применение правила ломается там, где масса лишь чуть шире 2R: изолиния уровня R
     /// превращается в узкую петлю, огибающую пятно с двух сторон. Формально это кольцо, по существу
     /// — дважды пройденная осевая линия, и хуже того: такая петля разрезает сквозную ось надвое, и
-    /// цепь гор рвётся. Поэтому кольцо принимается, только если ПОД НИМ ЕСТЬ ГЛУБИНА: у компоненты
-    /// связности множества {D ≥ L} максимум поля обязан быть не меньше L + 0.6R. Отвергнутая
-    /// компонента заведомо не толще 1.6R — ровно того предела, до которого раздувается скелетная ось
-    /// (§9), поэтому она ничего не теряет, уходя к скелету.
+    /// цепь гор рвётся. Поэтому кольцо принимается, только если ПОД НИМ ЕСТЬ ГЛУБИНА: не меньше
+    /// L + 0.6R. Отвергнутый кусок заведомо не толще 1.6R — ровно того предела, до которого
+    /// раздувается скелетная ось (§9), поэтому он ничего не теряет, уходя к скелету.
+    ///
+    /// Глубина меряется МЕСТНО, и это правка против PDF и прототипа, сделанная по решению ДМ.
+    /// Буквальное правило берёт максимум поля по всей компоненте связности {D ≥ L} — и на развилке
+    /// протекает: в месте схождения рукавов вписанная окружность больше самих рукавов, одного этого
+    /// утолщения хватает, чтобы кольцо приняли ЦЕЛИКОМ, после чего оно уходит вдоль тонких рукавов
+    /// той самой вырожденной петлёй, ради запрета которой §5 и написан. Рукав получал две цепи гор
+    /// по бокам вместо одной посередине.
+    ///
+    /// Местная глубина — максимум поля в окне радиуса R вокруг точки контура, по своей компоненте.
+    /// Окно именно R, и это не на глаз: поле расстояний липшицево, поэтому ячейка с D ≥ L + 0.6R
+    /// лежит не ближе 0.6R от линии уровня L — то есть если глубина есть, окно R её заведомо
+    /// поймает; а под локально толстой массой D дорастает до ≈ L + R, и порог берётся с запасом.
+    /// Чужая компонента из окна исключается: два разных куска {D ≥ L} могут пройти в паре ячеек
+    /// друг от друга, и толстый иначе вытянул бы соседний тонкий.
+    ///
+    /// Кольцо после замера режется на принятые куски: замкнутая петля над развилкой становится
+    /// дугой над узлом, рукава остаются скелету.
     /// </summary>
     public static class RingSelection
     {
         /// <summary>Запас глубины, ниже которого кольцо отвергается. Связан с потолком ширины
         /// скелетной оси: 1 + 0.6 = 1.6R.</summary>
         public const float DepthMargin = 0.6f;
+
+        /// <summary>Радиус окна замера местной глубины, в радиусах горы.</summary>
+        public const float LocalWindow = 1f;
+
+        /// <summary>Принятый кусок короче этого (в радиусах) — огрызок: одна гора, приставленная
+        /// сбоку к цепи со скелета. Пусть лучше весь кусок ведёт скелет.</summary>
+        public const float MinRunFactor = 1.5f;
+
+        /// <summary>Отвергнутый провал короче этого (в радиусах) зарастает: на ровном кольце замер
+        /// у порога дрожит, и без этого целое кольцо рассыпалось бы на дуги по швам дрожания.</summary>
+        public const float GapHealFactor = 1f;
 
         /// <summary>Предохранитель от бесконечного цикла на испорченном поле.</summary>
         const int MaxLevels = 64;
@@ -47,7 +75,7 @@ namespace WorldGen.Generation.Mountains
             return levels;
         }
 
-        /// <summary>Кольца, прошедшие отбор по глубине, от края вглубь.</summary>
+        /// <summary>Кольца — и куски колец — прошедшие отбор по глубине, от края вглубь.</summary>
         public static List<RingAxis> Select(float[] field, int w, int h, float radiusCells)
         {
             var accepted = new List<RingAxis>();
@@ -57,45 +85,168 @@ namespace WorldGen.Generation.Mountains
             {
                 var labels = new int[w * h];
                 for (int i = 0; i < labels.Length; i++) labels[i] = -1;
-                var depth = ComponentDepths(field, w, h, level, labels);
+                LabelComponents(field, w, h, level, labels);
 
                 foreach (var contour in IsoContours.Trace(field, w, h, level))
                 {
                     if (contour.Points.Count < 4) continue;
                     int id = LabelAt(labels, w, h, contour.Points[0].X, contour.Points[0].Y);
                     if (id < 0) continue;
-                    if (depth[id] < level + DepthMargin * radiusCells) continue;
-                    accepted.Add(new RingAxis { Contour = contour, Level = level });
+                    Cut(contour, field, labels, id, w, h, level, radiusCells, accepted);
                 }
             }
             return accepted;
         }
 
-        /// <summary>Размечает компоненты связности множества {D ≥ level} и возвращает максимум поля
-        /// в каждой. Обход по четырём соседям: по восьми две массы, соприкасающиеся только углом,
-        /// считались бы одной, и мелкая заусеница делилась бы глубиной соседа.</summary>
-        static List<float> ComponentDepths(float[] field, int w, int h, float level, int[] labels)
+        /// <summary>
+        /// Меряет глубину вдоль контура и складывает в список принятые куски. Целиком принятое
+        /// кольцо кладётся как есть — замкнутость важна, ось по нему пойдёт без шва.
+        /// </summary>
+        static void Cut(IsoContour contour, float[] field, int[] labels, int id, int w, int h,
+                        float level, float radiusCells, List<RingAxis> accepted)
         {
-            var depths = new List<float>();
+            var pts = contour.Points;
+            bool closed = contour.Closed;
+            // У замкнутого контура последняя точка повторяет первую — считаем её один раз.
+            int n = closed ? pts.Count - 1 : pts.Count;
+            if (n < 4) return;
+
+            var ok = Classify(pts, n, field, labels, id, w, h,
+                              LocalWindow * radiusCells, level + DepthMargin * radiusCells);
+
+            bool all = true, none = true;
+            for (int i = 0; i < n; i++) { if (ok[i]) none = false; else all = false; }
+            if (none) return;
+            if (all)
+            {
+                accepted.Add(new RingAxis { Contour = contour, Level = level });
+                return;
+            }
+
+            // Обход выкладываем в прямую линию. У замкнутого начинаем с начала принятого куска —
+            // иначе кусок, лежащий на шве, развалился бы надвое на ровном месте.
+            int start = 0;
+            if (closed)
+                for (int i = 0; i < n; i++)
+                    if (ok[i] && !ok[(i + n - 1) % n]) { start = i; break; }
+
+            var order = new int[n];
+            var flag = new bool[n];
+            for (int k = 0; k < n; k++)
+            {
+                order[k] = closed ? (start + k) % n : k;
+                flag[k] = ok[order[k]];
+            }
+
+            for (int k = 0; k < n; )
+            {
+                if (flag[k]) { k++; continue; }
+                int j = k;
+                while (j < n && !flag[j]) j++;
+                // У замкнутого «конец» смыкается с началом, поэтому внутренними считаются все провалы.
+                bool interior = closed || (k > 0 && j < n);
+                if (interior && ArcLength(pts, order, k, j) < GapHealFactor * radiusCells)
+                    for (int t = k; t < j; t++) flag[t] = true;
+                k = j;
+            }
+
+            for (int k = 0; k < n; )
+            {
+                if (!flag[k]) { k++; continue; }
+                int j = k;
+                while (j < n && flag[j]) j++;
+                if (ArcLength(pts, order, k, j) >= MinRunFactor * radiusCells && j - k >= 4)
+                {
+                    var piece = new IsoContour { Closed = false };
+                    for (int t = k; t < j; t++) piece.Points.Add(pts[order[t]]);
+                    accepted.Add(new RingAxis { Contour = piece, Level = level });
+                }
+                k = j;
+            }
+        }
+
+        /// <summary>
+        /// Для каждой точки контура: есть ли под ней глубина. Замер стоит окна на точку, а меняется
+        /// вдоль контура плавно (поле липшицево: шаг в клетку меняет глубину не больше чем на клетку),
+        /// поэтому меряем через каждую четверть окна, а ответ держим до следующего замера. Границу
+        /// принятого это сдвигает не больше чем на четверть окна — меньше, чем зарастает провал.
+        /// </summary>
+        static bool[] Classify(List<Vector2> pts, int n, float[] field, int[] labels, int id,
+                               int w, int h, float window, float need)
+        {
+            var ok = new bool[n];
+            float step = Math.Max(1f, window * 0.25f);
+            float travelled = float.MaxValue;
+            bool value = false;
+
+            for (int i = 0; i < n; i++)
+            {
+                if (i > 0) travelled += Vector2.Distance(pts[i - 1], pts[i]);
+                if (travelled >= step)
+                {
+                    value = LocalDepth(field, labels, id, w, h, pts[i], window) >= need;
+                    travelled = 0f;
+                }
+                ok[i] = value;
+            }
+            return ok;
+        }
+
+        /// <summary>Максимум поля в окне вокруг точки, по своей компоненте.</summary>
+        static float LocalDepth(float[] field, int[] labels, int id, int w, int h, Vector2 p, float window)
+        {
+            int x0 = Math.Max(0, (int)Math.Floor(p.X - window));
+            int x1 = Math.Min(w - 1, (int)Math.Ceiling(p.X + window));
+            int y0 = Math.Max(0, (int)Math.Floor(p.Y - window));
+            int y1 = Math.Min(h - 1, (int)Math.Ceiling(p.Y + window));
+
+            float best = 0f, limit = window * window;
+            for (int y = y0; y <= y1; y++)
+            {
+                float dy = y - p.Y;
+                for (int x = x0; x <= x1; x++)
+                {
+                    int k = y * w + x;
+                    if (labels[k] != id) continue;
+                    float dx = x - p.X;
+                    if (dx * dx + dy * dy > limit) continue;
+                    if (field[k] > best) best = field[k];
+                }
+            }
+            return best;
+        }
+
+        /// <summary>Длина куска обхода [from, to) вдоль контура, в ячейках.</summary>
+        static float ArcLength(List<Vector2> pts, int[] order, int from, int to)
+        {
+            float sum = 0f;
+            for (int k = from; k + 1 < to; k++)
+                sum += Vector2.Distance(pts[order[k]], pts[order[k + 1]]);
+            return sum;
+        }
+
+        /// <summary>Размечает компоненты связности множества {D ≥ level}. Обход по четырём соседям:
+        /// по восьми две массы, соприкасающиеся только углом, считались бы одной, и мелкая заусеница
+        /// делилась бы глубиной соседа.</summary>
+        static void LabelComponents(float[] field, int w, int h, float level, int[] labels)
+        {
             var stack = new Stack<int>();
+            int next = 0;
 
             for (int start = 0; start < field.Length; start++)
             {
                 if (field[start] < level || labels[start] >= 0) continue;
 
-                int id = depths.Count;
-                float max = 0f;
+                int id = next++;
                 labels[start] = id;
                 stack.Push(start);
 
                 while (stack.Count > 0)
                 {
                     int i = stack.Pop();
-                    if (field[i] > max) max = field[i];
                     int x = i % w, y = i / w;
                     Push(x + 1, y); Push(x - 1, y); Push(x, y + 1); Push(x, y - 1);
                 }
-                depths.Add(max);
 
                 void Push(int nx, int ny)
                 {
@@ -106,7 +257,6 @@ namespace WorldGen.Generation.Mountains
                     stack.Push(k);
                 }
             }
-            return depths;
         }
 
         /// <summary>Метка компоненты рядом с точкой контура. Сама точка лежит НА линии уровня, то

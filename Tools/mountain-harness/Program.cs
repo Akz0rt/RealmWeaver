@@ -39,7 +39,9 @@ namespace MountainHarness
             ForkStitchesIntoOneAxis();
             ObtuseBranchDoesNotStealTheAxis();
             RingCoverageSuppressesSkeleton();
-            ForkRescuesRingOverThinArms();
+            ForkKeepsRingOffThinArms();
+            RingOverThickMassStaysWhole();
+            EveryMaskCellHasAnAxisNearby();
             CoverageCutEndsAreNotExtended();
             RingStrokeKeepsClosedAxis();
             MaskBorderIsAlwaysBackground();
@@ -636,22 +638,19 @@ namespace MountainHarness
         }
 
         /// <summary>
-        /// ИЗЪЯН, ЗАФИКСИРОВАННЫЙ НАРОЧНО (показать ДМ на чекпоинте задачи 5).
+        /// §5 после правки «глубина меряется местно» (решение ДМ, 2026-08-12).
         ///
-        /// Критерий §5 «под кольцом должна быть глубина» меряет глубину у КОМПОНЕНТЫ целиком. У
-        /// развилки в месте схождения рукавов масса толще, чем в самих рукавах: вписанная окружность
-        /// там больше. Одного этого утолщения хватает, чтобы кольцо было принято НА ВСЮ компоненту —
-        /// и оно уходит гулять вдоль тонких рукавов той самой вырожденной петлёй, ради запрета
-        /// которой §5 и написан. Скелет при этом срезается покрытием подчистую.
+        /// Раньше глубина мерилась у КОМПОНЕНТЫ целиком, и развилка протекала: в месте схождения
+        /// рукавов масса толще самих рукавов, одного этого утолщения хватало, чтобы кольцо приняли
+        /// на всю компоненту — и оно уходило вдоль тонких рукавов той самой вырожденной петлёй, ради
+        /// запрета которой §5 и написан. Рукав получал две цепи гор по бокам вместо одной посередине.
         ///
-        /// Тот же изъян есть и в прототипе ДМ — правило там буквально то же. Лечится он тем, что
-        /// глубину надо мерить МЕСТНО, вдоль контура, и резать кольцо на принятые и отвергнутые
-        /// куски; но это правка самого алгоритма, а не переноса, и решать её ДМ.
-        ///
-        /// Проверка нарочно утверждает НЫНЕШНЕЕ поведение: если она однажды покраснеет, значит
-        /// критерий сделали местным — тогда её надо переписать под новое правило, а не «починить».
+        /// Утверждается ровно то, что меняет правило, и утверждается ГЕОМЕТРИЕЙ, а не счётом осей:
+        /// счёт «колец 1, скелетных 3» сошёлся бы и по неверной причине. Над серединой рукава обязан
+        /// идти скелет, и кольца там не должно быть даже близко: если бы оно текло вдоль рукава, оно
+        /// прошло бы в 0.36R от осевой (рукав толщиной 1.36R, кольцо на уровне R).
         /// </summary>
-        static void ForkRescuesRingOverThinArms()
+        static void ForkKeepsRingOffThinArms()
         {
             var arm = 30f;                       // рукав тоньше 1.6·R — сам по себе кольца не заслужил
             var blob = Blob(Stroke(1, arm, new Vector2(0, 0), new Vector2(250, 0)),
@@ -671,14 +670,98 @@ namespace MountainHarness
             Check("Развилка: узел глубже порога", DistanceField.Max(field) >= need,
                   $"узел {DistanceField.Max(field):0.0} < порога {need:0.0} — фикстура перестала быть развилкой");
 
-            int rings = 0, skel = 0;
+            float nearestRing = float.MaxValue, nearestSkeleton = float.MaxValue;
             foreach (var axis in AxisBuilder.Build(mask, field, radiusCells))
-                if (axis.FromRing) rings++; else skel++;
+            {
+                foreach (var p in axis.Points)
+                {
+                    float d = Vector2.Distance(p, midArm);
+                    if (axis.FromRing) nearestRing = Math.Min(nearestRing, d);
+                    else nearestSkeleton = Math.Min(nearestSkeleton, d);
+                }
+            }
 
-            Check("Развилка: узел вытягивает кольцо на всю развилку (известный изъян §5)",
-                  rings == 1 && skel == 0,
-                  $"колец {rings}, осей от скелета {skel} — похоже, критерий глубины сделали местным: " +
-                  "перепиши проверку под новое правило");
+            Check("Развилка: над серединой рукава идёт скелетная ось",
+                  nearestSkeleton <= radiusCells,
+                  $"ближайшая скелетная ось в {nearestSkeleton:0.0} ячейках при допуске {radiusCells:0.0}");
+            Check("Развилка: кольцо на рукав не заходит",
+                  nearestRing > 2f * radiusCells,
+                  $"кольцо прошло в {nearestRing:0.0} ячейках от осевой рукава — глубину снова меряют " +
+                  "не местно");
+        }
+
+        /// <summary>
+        /// Парная к предыдущей, и без неё та зелёная по неверной причине. Мутант «окно замера 0.3R»
+        /// (меньше липшицева порога 0.6R) не примет НИКОГДА и НИГДЕ: колец не станет вовсе — а
+        /// проверка развилки этому только обрадуется, она ровно отсутствия кольца и требует.
+        ///
+        /// Здесь наоборот: под ровной толстой массой кольцо обязано остаться ОДНИМ ЦЕЛЫМ ЗАМКНУТЫМ.
+        /// Режется — значит замер дрожит у порога и провалы не зарастают; исчезло — значит окно
+        /// слишком мало или минимальный кусок слишком длинен.
+        /// </summary>
+        static void RingOverThickMassStaysWhole()
+        {
+            var blob = Blob(Stroke(1, 20f, new Vector2(0, 0), new Vector2(300, 0)));
+            var mask = MountainMask.Build(blob, 1f);
+            var field = DistanceField.Build(mask);
+            var rings = RingSelection.Select(field, mask.W, mask.H, 10f);
+
+            Check("§5: под толстой массой кольцо одно", rings.Count == 1, $"кусков {rings.Count}");
+            if (rings.Count != 1) return;
+            Check("§5: и оно замкнуто", rings[0].Contour.Closed, "кольцо порезали на дуги");
+        }
+
+        /// <summary>
+        /// §14: массив не зияет. Каждая ячейка маски обязана лежать близко к какой-нибудь оси —
+        /// иначе там просто не встанет гора, и в массиве будет дыра.
+        ///
+        /// Проверка добавлена вместе с резкой колец (§5), потому что резка — ровно та правка, которой
+        /// легче всего дыру и проделать: слишком строгий замер или слишком длинный минимальный кусок
+        /// съедят кольцо, а скелет на освободившееся место встать не обязан. Порог 2R взят с запасом
+        /// к устройству покрытия: кольца идут через 2R по глубине, значит от любой точки до своего
+        /// кольца не больше R, и ещё R остаётся на кривизну и на стыки со скелетом.
+        /// </summary>
+        static void EveryMaskCellHasAnAxisNearby()
+        {
+            NoHoles("Развилка", Blob(Stroke(1, 30f, new Vector2(0, 0), new Vector2(250, 0)),
+                                     Stroke(2, 30f, new Vector2(250, 0), new Vector2(440, 110)),
+                                     Stroke(3, 30f, new Vector2(250, 0), new Vector2(440, -110))), 30f);
+            NoHoles("Клякса", Blob(Stroke(1, 90f, new Vector2(150, 0), new Vector2(330, 60))), 90f);
+        }
+
+        static void NoHoles(string name, MountainBlob blob, float brushRadius)
+        {
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, brushRadius));
+            var field = DistanceField.Build(mask);
+            float radiusCells = 22f / mask.Cell;
+            var axes = AxisBuilder.Build(mask, field, radiusCells);
+
+            // Оси в растр, растр обратить, посчитать расстояние — тем же инструментом, что и толщину.
+            var stamped = new byte[mask.W * mask.H];
+            foreach (var axis in axes)
+            {
+                for (int i = 1; i < axis.Points.Count; i++)
+                {
+                    Vector2 a = axis.Points[i - 1], b = axis.Points[i];
+                    int steps = Math.Max(1, (int)Math.Ceiling(Vector2.Distance(a, b) * 2f));
+                    for (int t = 0; t <= steps; t++)
+                    {
+                        Vector2 p = a + (b - a) * ((float)t / steps);
+                        int x = (int)Math.Round(p.X), y = (int)Math.Round(p.Y);
+                        if (x >= 0 && y >= 0 && x < mask.W && y < mask.H) stamped[y * mask.W + x] = 1;
+                    }
+                }
+            }
+            var inverted = new byte[stamped.Length];
+            for (int i = 0; i < inverted.Length; i++) inverted[i] = stamped[i] != 0 ? (byte)0 : (byte)1;
+            var toAxis = DistanceField.Build(inverted, mask.W, mask.H);
+
+            float worst = 0f;
+            for (int i = 0; i < mask.Cells.Length; i++)
+                if (mask.Cells[i] != 0 && toAxis[i] > worst) worst = toAxis[i];
+
+            Check($"§14 «{name}»: дыр в массиве нет", worst <= 2f * radiusCells,
+                  $"самая дальняя ячейка в {worst:0.0} ячейках от оси при допуске {2f * radiusCells:0.0}");
         }
 
         /// <summary>
