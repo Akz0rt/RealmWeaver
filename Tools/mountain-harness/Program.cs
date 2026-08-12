@@ -48,6 +48,7 @@ namespace MountainHarness
             AxesAreReproducible();
             ErasedGapSplitsAxesToo();
             MountainsStayOnLand();
+            UndoingABridgeSplitsTheMassifBack();
 
             GridPointIsTheCellCentre();
             LinkCountIsChosenByRatio();
@@ -636,6 +637,35 @@ namespace MountainHarness
             Check("Ластик: ось есть у обеих половин", left && right,
                   $"слева {(left ? "есть" : "нет")}, справа {(right ? "есть" : "нет")}");
             Check("Ластик: поперёк разрыва оси нет", !inside, "ось прошла по стёртому месту");
+        }
+
+        /// <summary>
+        /// Обещание кисти, ради которого в файле лежат ТОЛЬКО мазки: отмена мазка, слившего два
+        /// массива, обязана разлить их обратно. Отменять тут нечего и незачем — мазок просто
+        /// выкидывается из списка, и всё производное считается заново по оставшимся.
+        ///
+        /// Проверяется именно то, что меняет правило: число ПЯТЕН до перемычки, с ней и после её
+        /// снятия — 2, 1, 2. Мутант «считать пятна один раз и запоминать» на такой фикстуре виден
+        /// сразу, а на проверке «после отмены гор столько же, сколько было» — нет: чисел там поровну
+        /// и при слипшихся пятнах тоже.
+        /// </summary>
+        static void UndoingABridgeSplitsTheMassifBack()
+        {
+            var left = Stroke(1, 30f, new Vector2(0, 0), new Vector2(120, 0));
+            var right = Stroke(2, 30f, new Vector2(400, 0), new Vector2(520, 0));
+            var bridge = Stroke(3, 30f, new Vector2(100, 0), new Vector2(420, 0));
+
+            var apart = new List<MountainStroke> { left, right };
+            Check("Кисть: врозь — два пятна", BlobBuilder.Group(apart).Count == 2,
+                  $"пятен {BlobBuilder.Group(apart).Count}");
+
+            var bridged = new List<MountainStroke> { left, right, bridge };
+            Check("Кисть: перемычка слила в одно", BlobBuilder.Group(bridged).Count == 1,
+                  $"пятен {BlobBuilder.Group(bridged).Count}");
+
+            bridged.Remove(bridge);   // ровно это и делает отмена мазка
+            Check("Кисть: отмена перемычки разлила обратно", BlobBuilder.Group(bridged).Count == 2,
+                  $"пятен {BlobBuilder.Group(bridged).Count} — слипание пережило отмену");
         }
 
         /// <summary>
