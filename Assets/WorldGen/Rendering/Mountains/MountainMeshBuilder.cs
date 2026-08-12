@@ -33,7 +33,9 @@ namespace WorldGen.Rendering.Mountains
             var mesh = new UnityEngine.Mesh();
             if (shapes == null || shapes.Count == 0) return mesh;
 
-            shapes.Sort((a, b) => b.Depth.CompareTo(a.Depth));
+            // Порядок задаёт чистый слой: при равной глубине там доразбирают по ярусу, а простая
+            // сортировка по Depth ещё и неустойчива — рисунок ездил бы между запусками.
+            MountainGeometry.SortForPainting(shapes);
 
             float depthMin = float.PositiveInfinity, depthMax = float.NegativeInfinity;
             foreach (var s in shapes)

@@ -45,6 +45,18 @@ namespace MountainHarness
             AxesAreReproducible();
             ErasedGapSplitsAxesToo();
 
+            LinkCountIsChosenByRatio();
+            AnisotropyPacksVerticalLinks();
+            JitterSpreadsLengthsButKeepsThemClose();
+            ClosedAxisSeamMoves();
+            ShortBranchGetsALinkNotAHole();
+            FreeEndsOnlyAtTips();
+            LinksTileTheAxis();
+            TiersFollowDepthBands();
+            TierHeightIsNormalizedToThisBlob();
+            PainterOrderIsFarToNear();
+            GeometryIsReproducible();
+
             WaistProfile();
             SharedWidthAtVertebra();
             ChainsShareEnds();
@@ -697,6 +709,280 @@ namespace MountainHarness
                 Console.WriteLine($"кисть = {ratio:F0}·R: сетка {mask.W}×{mask.H}, толщина {brush / mask.Cell:F0} ячеек, " +
                                   $"утоньшение {watch.Elapsed.TotalMilliseconds:F1} мс");
             }
+        }
+
+        // ── §8 «Нарезка на звенья», §10 порядок, §11 ярусы ──────────────────────────────────────
+
+        /// <summary>
+        /// Число звеньев подбирается по ОТНОШЕНИЮ шага к цели, а не по разности и не округлением.
+        /// Ось в 1.45·T: и «сколько целых поместилось», и «округлить» дают одно звено, а правильное
+        /// правило — два, потому что 0.725·T ближе к цели В РАЗАХ, чем 1.45·T (порог переключения —
+        /// среднее геометрическое √2, а не середина 1.5).
+        /// Мутанты: убрать доводку count+1; заменить критерий на округление.
+        /// </summary>
+        static void LinkCountIsChosenByRatio()
+        {
+            var links = SplitLine(145f, false, 100f, 0f, 1f, 1);
+            Check("Нарезка: 1.45·T режется надвое", links.Count == 2, $"звеньев {links.Count}, ждали 2");
+
+            var one = SplitLine(120f, false, 100f, 0f, 1f, 1);
+            Check("Нарезка: 1.2·T остаётся одним звеном", one.Count == 1, $"звеньев {one.Count}, ждали 1");
+        }
+
+        /// <summary>
+        /// Метрика анизотропна: вертикаль дороже горизонтали в a раз, поэтому вертикальный участок
+        /// оси набирает целевую длину быстрее и получает БОЛЬШЕ звеньев. Фикстура — две оси одной
+        /// геометрической длины, вдоль и поперёк.
+        /// Мутант: считать длину обычным гипотенузным способом (a игнорируется) — числа сравняются.
+        /// </summary>
+        static void AnisotropyPacksVerticalLinks()
+        {
+            var flat = SplitLine(200f, false, 100f, 0f, 1.6f, 1);
+            var tall = SplitLine(200f, true, 100f, 0f, 1.6f, 1);
+            Check("Анизотропия: вертикаль режется чаще", tall.Count > flat.Count,
+                  $"вдоль {flat.Count}, поперёк {tall.Count} — ждали, что поперёк больше");
+        }
+
+        /// <summary>
+        /// Разброс длин обязан быть заметным, но связанным: §14 требует, чтобы звенья одной оси
+        /// отличались не больше чем в 1.22 раза. При весах 1 ± 0.06 предел — 1.13.
+        /// Мутанты: не применять веса вовсе (все длины совпадут); не нормировать веса на их сумму
+        /// (последние звенья упрутся в конец оси и выродятся).
+        /// </summary>
+        static void JitterSpreadsLengthsButKeepsThemClose()
+        {
+            var even = SplitLine(1000f, false, 100f, 0f, 1f, 7);
+            var mixed = SplitLine(1000f, false, 100f, 0.06f, 1f, 7);
+
+            Check("Разброс: без него звенья равны", Spread(even) < 1.001f, $"разброс {Spread(even):0.###}");
+            Check("Разброс: с ним звенья разные", Spread(mixed) > 1.02f, $"разброс {Spread(mixed):0.###}");
+            Check("Разброс: но не больше 1.22 раза", Spread(mixed) < 1.22f, $"разброс {Spread(mixed):0.###}");
+        }
+
+        /// <summary>
+        /// У замкнутой оси шов ставится в случайное место: иначе на всех кольцах массива стык звеньев
+        /// приходился бы на одну сторону, и правильность видна глазом. Разброс длин выключен нарочно —
+        /// иначе оси разъехались бы и без сдвига шва, и проверка стала бы пустой.
+        /// Мутант: убрать прокрутку точек при closed.
+        /// </summary>
+        static void ClosedAxisSeamMoves()
+        {
+            var first = SplitRing(100f, 100f, 0f, 3);
+            var second = SplitRing(100f, 100f, 0f, 11);
+
+            Check("Кольцо: режется минимум надвое", first.Count >= 2, $"звеньев {first.Count}");
+            if (first.Count == 0 || second.Count == 0) return;
+
+            float moved = Vector2.Distance(first[0].Pts[0], second[0].Pts[0]);
+            Check("Кольцо: шов стоит не всегда на одном месте", moved > 1f,
+                  $"шов сдвинулся на {moved:0.##} — ждали заметного сдвига");
+        }
+
+        /// <summary>
+        /// §14 «короткое звено между развилками». Прототип выбрасывает ось короче 0.15·T целиком, и
+        /// на месте короткой ветки между двумя развилками остаётся ДЫРА в массиве. Здесь ось по длине
+        /// не выбрасывается: она становится одним звеном, а строить ли над ним гору, решает уже
+        /// геометрия доли и подошвы.
+        /// Мутант: вернуть отброс «total &lt; 0.15·T» — звеньев станет ноль.
+        /// </summary>
+        static void ShortBranchGetsALinkNotAHole()
+        {
+            var links = SplitLine(12f, false, 100f, 0f, 1f, 5, tip0: false, tip1: false);
+            Check("Коротышка: получает звено, а не дырку", links.Count == 1, $"звеньев {links.Count}, ждали 1");
+            if (links.Count == 1)
+                Check("Коротышка: звено накрывает её целиком", Near(links[0].Length, 12f, 0.01f),
+                      $"длина звена {links[0].Length:0.##} вместо 12");
+        }
+
+        /// <summary>
+        /// §14 «вылет за мазок»: подошва растягивается только туда, где есть сосед. Сосед есть у
+        /// каждого стыка звеньев, а ещё — за концом оси, упёршимся в развилку или срезанным покрытием
+        /// кольца; свободен лишь настоящий конец гряды.
+        /// Мутант: определять свободный конец по номеру звена, как во временной резке шипа, — тогда
+        /// у оси, продолжающейся другой осью, крайняя гора недосчитается растяжения и в массиве
+        /// появится шов.
+        /// </summary>
+        static void FreeEndsOnlyAtTips()
+        {
+            var half = SplitLine(300f, false, 100f, 0f, 1f, 2, tip0: true, tip1: false);
+            Check("Концы: свободный конец узнан", half.Count >= 2 && half[0].FreeStart,
+                  "начало оси не отмечено свободным");
+            Check("Концы: конец у развилки свободным не считается",
+                  half.Count >= 2 && !half[half.Count - 1].FreeEnd,
+                  "конец у развилки отмечен свободным — подошву туда не растянут");
+
+            var ring = SplitRing(100f, 100f, 0f, 4);
+            bool anyFree = false;
+            foreach (var link in ring) if (link.FreeStart || link.FreeEnd) anyFree = true;
+            Check("Концы: у замкнутой оси свободных нет", !anyFree, "у кольца нашёлся свободный конец");
+        }
+
+        /// <summary>
+        /// Звенья обязаны выстилать ось без дыр и без нахлёстов: конец одного — ровно начало
+        /// следующего, а первое и последнее упираются в концы самой оси. Дыра здесь — это разрыв в
+        /// цепи гор, который никакой заливкой не закрыть. Ось с изломом взята нарочно: на прямой
+        /// ошибка на одну точку не видна.
+        /// Мутант: относить промежуточные точки оси к звену по «&lt;=» вместо «&lt;» (точка достанется
+        /// обоим соседям) или сдвинуть метки на единицу.
+        /// </summary>
+        static void LinksTileTheAxis()
+        {
+            var pts = new List<Vector2>
+            {
+                new Vector2(0, 0), new Vector2(100, 0), new Vector2(100, 100), new Vector2(200, 100),
+            };
+            var widths = new List<float> { 20, 20, 20, 20 };
+            var links = LinkSplitter.Split(pts, widths, widths, false, true, true, 100f, 0f, 1f,
+                                           new Mulberry32(9));
+
+            bool chained = links.Count == 3;
+            for (int i = 1; i < links.Count; i++)
+            {
+                var end = links[i - 1].Pts[links[i - 1].Pts.Count - 1];
+                if (Vector2.Distance(end, links[i].Pts[0]) > 1e-4f) chained = false;
+            }
+            Check("Звенья: цепь без разрывов", chained, $"звеньев {links.Count}, стык разошёлся");
+
+            if (links.Count == 0) return;
+            var last = links[links.Count - 1].Pts;
+            Check("Звенья: цепь начинается и кончается концами оси",
+                  Vector2.Distance(links[0].Pts[0], pts[0]) < 1e-4f &&
+                  Vector2.Distance(last[last.Count - 1], pts[pts.Count - 1]) < 1e-4f,
+                  "крайние звенья не дотянулись до концов оси");
+
+            float sum = 0f;
+            foreach (var link in links) sum += link.Length;
+            Check("Звенья: сумма длин — вся ось", Near(sum, 300f, 0.01f), $"сумма {sum:0.##} вместо 300");
+        }
+
+        /// <summary>
+        /// §11: ярус — это номер слоя 2R, в котором стоит середина звена. Номер ограничен сверху
+        /// числом ярусов: у толстой массы глубина уезжает далеко, и без ограничения появился бы ярус,
+        /// которому не назначено ни высоты, ни (в будущем) прорисовки.
+        /// Мутант: убрать ограничение — глубокое звено получит ярус 4 вместо 2.
+        /// </summary>
+        static void TiersFollowDepthBands()
+        {
+            var settings = new MountainSettings { Radius = 10f, Tiers = 3, EdgeHeight = 0.55f };
+            var links = new List<AxisLink>
+            {
+                new AxisLink { MidDepth = 5f },     // слой 0
+                new AxisLink { MidDepth = 25f },    // слой 1
+                new AxisLink { MidDepth = 90f },    // слой 4, но ярусов всего три
+            };
+            MountainGeometry.AssignTiers(links, settings);
+
+            Check("Ярусы: край мазка — нулевой", links[0].Tier == 0, $"ярус {links[0].Tier}");
+            Check("Ярусы: следующий слой — первый", links[1].Tier == 1, $"ярус {links[1].Tier}");
+            Check("Ярусы: глубина обрезана числом ярусов", links[2].Tier == 2, $"ярус {links[2].Tier}");
+            Check("Ярусы: у края высота ниже, чем в сердцевине",
+                  Near(links[0].TierScale, 0.55f, 1e-4f) && Near(links[2].TierScale, 1f, 1e-4f),
+                  $"край {links[0].TierScale:0.###}, сердцевина {links[2].TierScale:0.###}");
+        }
+
+        /// <summary>
+        /// Высота нормируется на самый глубокий ярус ЭТОГО пятна, а не на предельный номер. У узкого
+        /// мазка, где слоёв всего два, самые глубокие горы обязаны выйти полной высоты — иначе весь
+        /// массив окажется приземистым без всякой причины.
+        /// Мутант: делить на (Tiers − 1) — глубокое звено получит 0.775 вместо единицы.
+        /// </summary>
+        static void TierHeightIsNormalizedToThisBlob()
+        {
+            var settings = new MountainSettings { Radius = 10f, Tiers = 3, EdgeHeight = 0.55f };
+            var links = new List<AxisLink>
+            {
+                new AxisLink { MidDepth = 5f },
+                new AxisLink { MidDepth = 25f },
+            };
+            MountainGeometry.AssignTiers(links, settings);
+
+            Check("Ярусы: самый глубокий ярус пятна даёт полную высоту",
+                  Near(links[1].TierScale, 1f, 1e-4f), $"множитель {links[1].TierScale:0.###}");
+        }
+
+        /// <summary>
+        /// §10 порядок маляра: дальняя гора кладётся раньше, ближняя закрывает её собой. Ближе — это
+        /// НИЖЕ по экрану, то есть меньше Y. При равной глубине разбираем по ярусу (§14 «глубина
+        /// между слоями»): вложенное кольцо стоит глубже в массе, значит оно дальше.
+        /// Мутанты: сортировать по возрастанию (массив вывернется наизнанку); убрать разбор по ярусу.
+        /// </summary>
+        static void PainterOrderIsFarToNear()
+        {
+            var near = new MountainShape { Depth = 10f, Tier = 0, Apex = new Vector2(1, 0) };
+            var far = new MountainShape { Depth = 30f, Tier = 0, Apex = new Vector2(2, 0) };
+            var deep = new MountainShape { Depth = 10f, Tier = 2, Apex = new Vector2(3, 0) };
+            var shapes = new List<MountainShape> { near, far, deep };
+
+            MountainGeometry.SortForPainting(shapes);
+            Check("Маляр: дальняя гора первая", ReferenceEquals(shapes[0], far),
+                  $"первой легла гора с вершиной {shapes[0].Apex.X}");
+            Check("Маляр: при равной глубине глубокий ярус дальше",
+                  ReferenceEquals(shapes[1], deep) && ReferenceEquals(shapes[2], near),
+                  $"порядок {shapes[1].Apex.X} → {shapes[2].Apex.X}, ждали 3 → 1");
+        }
+
+        /// <summary>
+        /// Сквозная проверка всего конвейера: мазок → горы. Два прогона обязаны дать один рисунок —
+        /// иначе он будет ездить при каждом перерисовывании слоя.
+        /// Мутанты: неустойчивая сортировка гор без разбора ничьих; зерно, взятое не от старшего
+        /// мазка, а от чего-нибудь текучего.
+        /// </summary>
+        static void GeometryIsReproducible()
+        {
+            var settings = new MountainSettings { Radius = 22f };
+            var first = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+            var second = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+
+            Check("Конвейер: из мазка выросли горы", first.Count >= 3, $"гор {first.Count}");
+            bool same = first.Count == second.Count;
+            for (int i = 0; same && i < first.Count; i++)
+                if (Vector2.Distance(first[i].Apex, second[i].Apex) > 1e-4f ||
+                    !Near(first[i].Depth, second[i].Depth, 1e-4f)) same = false;
+            Check("Конвейер: два прогона дают тот же рисунок", same, "горы разъехались между прогонами");
+        }
+
+        /// <summary>Во сколько раз самое длинное звено длиннее самого короткого.</summary>
+        static float Spread(List<AxisLink> links)
+        {
+            if (links.Count == 0) return 1f;
+            float min = float.PositiveInfinity, max = 0f;
+            foreach (var link in links)
+            {
+                if (link.Length < min) min = link.Length;
+                if (link.Length > max) max = link.Length;
+            }
+            return min > 0f ? max / min : float.PositiveInfinity;
+        }
+
+        /// <summary>Прямая ось заданной длины, вдоль или поперёк экрана, с постоянной шириной.</summary>
+        static List<AxisLink> SplitLine(float length, bool vertical, float target, float jitter,
+                                        float aniso, uint seed, bool tip0 = true, bool tip1 = true)
+        {
+            var pts = new List<Vector2>();
+            var widths = new List<float>();
+            for (int i = 0; i <= 20; i++)
+            {
+                float t = length * i / 20f;
+                pts.Add(vertical ? new Vector2(0, t) : new Vector2(t, 0));
+                widths.Add(20f);
+            }
+            return LinkSplitter.Split(pts, widths, widths, false, tip0, tip1, target, jitter, aniso,
+                                      new Mulberry32(seed));
+        }
+
+        /// <summary>Замкнутая ось — окружность заданного радиуса.</summary>
+        static List<AxisLink> SplitRing(float radius, float target, float jitter, uint seed)
+        {
+            var pts = new List<Vector2>();
+            var widths = new List<float>();
+            for (int i = 0; i < 64; i++)
+            {
+                double a = i / 64.0 * Math.PI * 2.0;
+                pts.Add(new Vector2(radius * (float)Math.Cos(a), radius * (float)Math.Sin(a)));
+                widths.Add(15f);
+            }
+            return LinkSplitter.Split(pts, widths, widths, true, false, false, target, jitter, 1f,
+                                      new Mulberry32(seed));
         }
 
         // ── мелочь ──────────────────────────────────────────────────────────────────────────────

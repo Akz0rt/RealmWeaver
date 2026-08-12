@@ -23,6 +23,12 @@ namespace WorldGen.Generation.Mountains
 
         public bool Closed;
 
+        /// <summary>Свободен ли конец оси: Tip — это конец, за которым ничего нет. Конец, упёршийся
+        /// в развилку или срезанный покрытием кольца, свободным не считается — там ось продолжается
+        /// другой осью, и подошву крайней горы туда растягивать нужно (§10).</summary>
+        public bool Tip0;
+        public bool Tip1;
+
         /// <summary>Кольцо (§4) или скелет (§6). Различие видно и в ширине: скелетной оси позволено
         /// раздуться до 1.6 радиуса, кольцу — ровно до радиуса.</summary>
         public bool FromRing;
@@ -101,7 +107,9 @@ namespace WorldGen.Generation.Mountains
                 var pts = AxisPolish.Resample(ring.Contour.Points, ResampleStep);
                 if (pts.Count < 4) continue;
                 pts = AxisPolish.Smooth(pts, ring.Contour.Closed, RingSmoothPasses);
-                axes.Add(Finish(pts, field, w, h, ring.Contour.Closed, true, ring.Level, radiusCells));
+                // Кольцо — линия уровня внутри массы: оно замкнуто, свободных концов у него нет.
+                axes.Add(Finish(pts, field, w, h, ring.Contour.Closed, true, ring.Level, radiusCells,
+                                false, false));
             }
 
             var blurred = DistanceField.Blur(field, w, h, BlurPasses);
@@ -124,19 +132,23 @@ namespace WorldGen.Generation.Mountains
                     pts = AxisPolish.ExtendEnds(pts, field, w, h, run.Tip0, run.Tip1,
                                                 ExtendStep, ExtendStop, ExtendMaxSteps);
 
-                axes.Add(Finish(pts, field, w, h, closed, false, 0f, radiusCells * SkeletonWidthCap));
+                axes.Add(Finish(pts, field, w, h, closed, false, 0f, radiusCells * SkeletonWidthCap,
+                                run.Tip0 && !closed, run.Tip1 && !closed));
             }
             return axes;
         }
 
         /// <summary>Меряет ширину и глубину под готовой линией и складывает ось.</summary>
         static MountainAxis Finish(List<Vector2> pts, float[] field, int w, int h,
-                                   bool closed, bool fromRing, float level, float widthCap)
+                                   bool closed, bool fromRing, float level, float widthCap,
+                                   bool tip0, bool tip1)
         {
             var axis = new MountainAxis
             {
                 Points = pts,
                 Closed = closed,
+                Tip0 = tip0,
+                Tip1 = tip1,
                 FromRing = fromRing,
                 Level = level,
                 Widths = new float[pts.Count],

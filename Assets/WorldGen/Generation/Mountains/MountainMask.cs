@@ -47,9 +47,14 @@ namespace WorldGen.Generation.Mountains
             return Math.Min(byMountain, byBrush);
         }
 
-        public Vector2 GridToWorld(float gx, float gy) => new Vector2(Ox + gx * Cell, Oy + gy * Cell);
+        /// <summary>Мир по координате сетки. Целая координата — ЦЕНТР ячейки: именно в центре
+        /// растеризация решает, закрашена ли ячейка, и именно там поле расстояний считает своё
+        /// значение. Без этих полклетки нарисованный массив съезжал бы от мазка на полшага сетки.</summary>
+        public Vector2 GridToWorld(float gx, float gy)
+            => new Vector2(Ox + (gx + 0.5f) * Cell, Oy + (gy + 0.5f) * Cell);
 
-        public Vector2 WorldToGrid(Vector2 p) => new Vector2((p.X - Ox) / Cell, (p.Y - Oy) / Cell);
+        public Vector2 WorldToGrid(Vector2 p)
+            => new Vector2((p.X - Ox) / Cell - 0.5f, (p.Y - Oy) / Cell - 0.5f);
 
         public bool At(int x, int y) => x >= 0 && y >= 0 && x < W && y < H && Cells[y * W + x] != 0;
 
