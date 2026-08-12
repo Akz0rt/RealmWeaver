@@ -1139,15 +1139,19 @@ namespace WorldGen.Rendering
         public System.Func<System.Numerics.Vector2, bool> BuildLandProbe()
         {
             if (useGpuRenderer && gpuRenderer != null
-                && gpuRenderer.TryLandMaskSnapshot(out var mask, out int texW, out int texH,
+                && gpuRenderer.TryLandMaskSnapshot(out var mask, out var rivers, out int texW, out int texH,
                                                    out float mw, out float mh))
             {
+                bool riversAreLand = rivers != null && rivers.Length >= texW * texH;
                 return p =>
                 {
                     int x = (int)(p.X / mw * texW);
                     int y = (int)(p.Y / mh * texH);
                     if (x < 0 || y < 0 || x >= texW || y >= texH) return false;
-                    return mask[y * texW + x];
+                    int i = y * texW + x;
+                    // Нарисованная река в маске берега значится водой, но для гор она землёй и
+                    // остаётся: иначе река, проведённая через хребет, вырезала бы в нём просеку.
+                    return mask[i] || (riversAreLand && rivers[i]);
                 };
             }
 

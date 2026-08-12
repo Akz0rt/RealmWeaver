@@ -59,10 +59,15 @@ namespace WorldGen.Rendering.GpuMap
         /// один раз, фон досчитает по старой, но целой карте, а не наполовину по новой.
         /// Возвращает false, пока карта не испечена.
         /// </summary>
-        public bool TryLandMaskSnapshot(out bool[] mask, out int texW, out int texH,
+        public bool TryLandMaskSnapshot(out bool[] mask, out bool[] rivers, out int texW, out int texH,
                                         out float mapW, out float mapH)
         {
             mask = isLandMask;
+            // Нарисованные реки отдаём ОТДЕЛЬНО, потому что в самой маске они значатся водой
+            // (ApplyRiverMask их туда и вписывает — берегу и пляжу это нужно). Спрашивающему решать,
+            // считать ли реку водой: слою гор, например, незачем — иначе река, проведённая через
+            // хребет, вырезала бы в нём просеку.
+            rivers = riverMask;
             texW = bakedTexW; texH = bakedTexH;
             mapW = bakedMapW; mapH = bakedMapH;
             return mask != null && texW > 0 && texH > 0 && mapW > 0f && mapH > 0f
