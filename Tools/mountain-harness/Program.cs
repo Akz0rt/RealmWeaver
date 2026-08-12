@@ -19,6 +19,17 @@ namespace MountainHarness
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
 
+            MaskMeasuresToSegment();
+            EraserSubtracts();
+            EraserSplitsMass();
+            BlobsAreTransitive();
+            EraserDoesNotMerge();
+            SeedComesFromOldestStroke();
+            DistanceIsExactlyEuclidean();
+            LevelsStepByTwoR();
+            ShallowRingIsRejected();
+            GridSizeIsCapped();
+
             WaistProfile();
             SharedWidthAtVertebra();
             ChainsShareEnds();
@@ -29,6 +40,150 @@ namespace MountainHarness
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
+        }
+
+        // ── §2 «От мазка к пятну» ───────────────────────────────────────────────────────────────
+
+        /// <summary>Маска мерит расстояние до ОТРЕЗКА, а не до его концов. Фикстура нарочно длинная:
+        /// середина мазка от обоих концов далеко, и мутант «мерить до ближайшей точки ломаной»
+        /// оставит там пусто.</summary>
+        static void MaskMeasuresToSegment()
+        {
+            var blob = Blob(Stroke(1, 10f, new Vector2(0, 0), new Vector2(200, 0)));
+            var mask = MountainMask.Build(blob, 1f);
+            Check("Маска: середина длинного мазка закрашена", Filled(mask, new Vector2(100, 5)), "середина пуста");
+            Check("Маска: снаружи радиуса пусто", !Filled(mask, new Vector2(100, 25)), "закрашено вне кисти");
+        }
+
+        /// <summary>Стирающий мазок вычитается из маски, а не добавляется в неё. Мутант: класть
+        /// ластик тем же значением — середина останется закрашенной.</summary>
+        static void EraserSubtracts()
+        {
+            var paint = Stroke(1, 10f, new Vector2(0, 0), new Vector2(200, 0));
+            var eraser = Stroke(2, 20f, new Vector2(100, 0), new Vector2(100, 0));
+            eraser.Erase = true;
+            var blob = BlobBuilder.Group(new List<MountainStroke> { paint, eraser })[0];
+            var mask = MountainMask.Build(blob, 1f);
+
+            Check("Ластик: под ним пусто", !Filled(mask, new Vector2(100, 0)), "ластик не стёр");
+            Check("Ластик: остальное на месте", Filled(mask, new Vector2(10, 0)), "стёрлось лишнее");
+        }
+
+        /// <summary>Стирающий мазок поперёк массива оставляет ОДНО пятно из мазков, но ДВА куска
+        /// массы, и дальше они живут каждый своей осью. Мутант: считать связность по восьми соседям
+        /// — узкая перемычка по диагонали склеит куски обратно.</summary>
+        static void EraserSplitsMass()
+        {
+            var paint = Stroke(1, 10f, new Vector2(0, 0), new Vector2(200, 0));
+            var eraser = Stroke(2, 25f, new Vector2(100, -40), new Vector2(100, 40));
+            eraser.Erase = true;
+            var blob = BlobBuilder.Group(new List<MountainStroke> { paint, eraser })[0];
+            var mask = MountainMask.Build(blob, 1f);
+
+            int parts = mask.Components().Count;
+            Check("Ластик: масса распалась надвое", parts == 2, $"кусков {parts}, ждали 2");
+        }
+
+        /// <summary>A задевает B, B задевает C, A и C далеко друг от друга — всё равно одно пятно.
+        /// Мутант: слияние парами без системы непересекающихся множеств — получится два пятна, и
+        /// какие именно, будет зависеть от порядка рисования.</summary>
+        static void BlobsAreTransitive()
+        {
+            var a = Stroke(1, 10f, new Vector2(0, 0), new Vector2(50, 0));
+            var b = Stroke(2, 10f, new Vector2(45, 0), new Vector2(105, 0));
+            var c = Stroke(3, 10f, new Vector2(100, 0), new Vector2(150, 0));
+            // Порядок нарочно перевёрнут: сначала крайние, связующий последним.
+            var blobs = BlobBuilder.Group(new List<MountainStroke> { a, c, b });
+            Check("Пятна: транзитивность", blobs.Count == 1, $"пятен {blobs.Count}, ждали 1");
+        }
+
+        /// <summary>Ластик, задевший два массива, НЕ объявляет их одним. Мутант: считать стирающий
+        /// мазок обычным при группировке — два массива слипнутся в одно пятно, и общая ось пойдёт
+        /// через пустоту между ними.</summary>
+        static void EraserDoesNotMerge()
+        {
+            var left = Stroke(1, 10f, new Vector2(0, 0), new Vector2(50, 0));
+            var right = Stroke(2, 10f, new Vector2(200, 0), new Vector2(250, 0));
+            var eraser = Stroke(3, 10f, new Vector2(40, 0), new Vector2(210, 0));
+            eraser.Erase = true;
+
+            var blobs = BlobBuilder.Group(new List<MountainStroke> { left, right, eraser });
+            bool bothGotIt = blobs.Count == 2 && blobs[0].Erasers.Count == 1 && blobs[1].Erasers.Count == 1;
+            Check("Ластик: не сливает пятна", blobs.Count == 2, $"пятен {blobs.Count}, ждали 2");
+            Check("Ластик: достался обоим пятнам", bothGotIt, "ластик приписан не всем задетым пятнам");
+        }
+
+        /// <summary>Зерно берётся от САМОГО СТАРОГО мазка пятна: дорисовка не должна перетасовать уже
+        /// нарисованный хребет. Мутант: зерно от последнего мазка или от их числа — сместится при
+        /// любой дорисовке.</summary>
+        static void SeedComesFromOldestStroke()
+        {
+            var blob = Blob(Stroke(7, 10f, new Vector2(0, 0), new Vector2(50, 0)),
+                            Stroke(3, 10f, new Vector2(40, 0), new Vector2(90, 0)));
+            uint before = blob.Seed;
+            blob.Strokes.Add(Stroke(42, 10f, new Vector2(85, 0), new Vector2(140, 0)));
+            uint after = blob.Seed;
+
+            Check("Зерно: от старшего мазка", before == MountainBlob.Fnv(3), $"{before} вместо {MountainBlob.Fnv(3)}");
+            Check("Зерно: дорисовка его не двигает", before == after, $"{before} → {after}");
+        }
+
+        // ── §3 «Поле расстояний» ────────────────────────────────────────────────────────────────
+
+        /// <summary>Расстояние ТОЧНОЕ евклидово, а не приближение. Фикстура: единственная ячейка фона
+        /// в углу, замер по катетам 3 и 4. Мутант-чамфер (или манхэттен) даст 7, шахматное — 4,
+        /// и только честная евклидова метрика — 5.</summary>
+        static void DistanceIsExactlyEuclidean()
+        {
+            var mask = new MountainMask { W = 24, H = 24, Cell = 1f, Ox = 0f, Oy = 0f, Cells = new byte[24 * 24] };
+            for (int i = 0; i < mask.Cells.Length; i++) mask.Cells[i] = 1;
+            mask.Cells[0] = 0;
+
+            var field = DistanceField.Build(mask);
+            float at = field[4 * 24 + 3];
+            Check("Поле: точное евклидово (3,4) → 5", Near(at, 5f, 1e-3f), $"{at:0.####} вместо 5");
+        }
+
+        // ── §4 и §5, кольца ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>Уровни идут с шагом 2R от R: полосы, которые они накрывают, стыкуются встык.
+        /// Мутант: шаг R — полосы наложатся вдвое, и колец станет вдвое больше.</summary>
+        static void LevelsStepByTwoR()
+        {
+            var levels = RingSelection.Levels(10f, 2f);
+            bool ok = levels.Count == 3 && Near(levels[0], 2f, 1e-4f) && Near(levels[1], 6f, 1e-4f) && Near(levels[2], 10f, 1e-4f);
+            Check("Кольца: уровни (2k+1)·R", ok, string.Join(", ", levels));
+        }
+
+        /// <summary>§5, сердце отбора. Две фикстуры отличаются ТОЛЬКО толщиной, и правильное правило
+        /// отвечает на них по-разному: под массой толщиной 1.1R глубины нет — кольцо там выродилось
+        /// бы в дважды пройденную осевую линию и разрезало сквозную ось надвое; под массой толщиной
+        /// 2R глубина есть, и кольцо законно. Мутант: убрать проверку глубины — примутся оба.</summary>
+        static void ShallowRingIsRejected()
+        {
+            int thin = AcceptedRings(strokeRadius: 11f, mountainRadiusCells: 10f);
+            int thick = AcceptedRings(strokeRadius: 20f, mountainRadiusCells: 10f);
+            Check("§5: под тонкой массой кольца нет", thin == 0, $"принято колец {thin}, ждали 0");
+            Check("§5: под толстой массой кольцо есть", thick >= 1, $"принято колец {thick}, ждали хотя бы 1");
+        }
+
+        static int AcceptedRings(float strokeRadius, float mountainRadiusCells)
+        {
+            var blob = Blob(Stroke(1, strokeRadius, new Vector2(0, 0), new Vector2(300, 0)));
+            var mask = MountainMask.Build(blob, 1f);
+            var field = DistanceField.Build(mask);
+            return RingSelection.Select(field, mask.W, mask.H, mountainRadiusCells).Count;
+        }
+
+        /// <summary>Мазок через всю карту не должен рождать миллионы ячеек: шаг сетки огрубляется,
+        /// пока не влезет. Мутант: убрать потолок — сетка вырастет на два порядка и подвесит кисть.</summary>
+        static void GridSizeIsCapped()
+        {
+            var blob = Blob(Stroke(1, 5f, new Vector2(0, 0), new Vector2(20000, 20000)));
+            var mask = MountainMask.Build(blob, 0.5f, maxCells: 200_000);
+            long cells = (long)mask.W * mask.H;
+            Check("Сетка: потолок соблюдён", cells <= 200_000, $"ячеек {cells}");
+            Check("Сетка: шаг огрублён, а не обрезано пятно", mask.Cell > 0.5f, $"шаг остался {mask.Cell}");
         }
 
         // ── §9 «Гармошка» ───────────────────────────────────────────────────────────────────────
@@ -167,6 +322,26 @@ namespace MountainHarness
         }
 
         // ── мелочь ──────────────────────────────────────────────────────────────────────────────
+
+        static MountainStroke Stroke(int id, float radius, params Vector2[] points)
+        {
+            var stroke = new MountainStroke { Id = id, Radius = radius };
+            stroke.Points.AddRange(points);
+            return stroke;
+        }
+
+        static MountainBlob Blob(params MountainStroke[] strokes)
+        {
+            var blob = new MountainBlob();
+            blob.Strokes.AddRange(strokes);
+            return blob;
+        }
+
+        static bool Filled(MountainMask mask, Vector2 world)
+        {
+            var g = mask.WorldToGrid(world);
+            return mask.At((int)Math.Round(g.X), (int)Math.Round(g.Y));
+        }
 
         static AxisLink Horizontal(float length, float halfWidth)
         {
