@@ -79,6 +79,104 @@ namespace MountainHarness
             Console.WriteLine($"готово: {path}");
         }
 
+        /// <summary>
+        /// Третья картинка — сквозная: те же мазки, что и в картинке осей, но доведённые до самих гор
+        /// настоящим конвейером (MountainGeometry). Смотреть надо: сплошная ли гряда (перевалы, а не
+        /// ряд кучек), не вылезла ли подошва за след мазка у свободных концов, и держится ли порядок
+        /// маляра — ближняя гора обязана закрывать дальнюю.
+        /// </summary>
+        public static void WriteMassif(string path)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>");
+            sb.Append("<rect width='1200' height='900' fill='#efe7d5'/>");
+
+            Massif(sb, "тонкая масса", 33f,
+                   new[] { new[] { new Vector2(80, 760), new Vector2(520, 760) } }, null);
+            Massif(sb, "толстая масса", 66f,
+                   new[] { new[] { new Vector2(760, 740), new Vector2(1120, 740) } }, null);
+            Massif(sb, "развилка", 30f, new[]
+            {
+                new[] { new Vector2(80, 440), new Vector2(330, 440) },
+                new[] { new Vector2(330, 440), new Vector2(520, 550) },
+                new[] { new Vector2(330, 440), new Vector2(520, 330) },
+            }, null);
+            Massif(sb, "кольцо", 30f, new[] { RingPts(new Vector2(900, 430), 130f) }, null);
+            Massif(sb, "ластик посередине", 40f,
+                   new[] { new[] { new Vector2(80, 120), new Vector2(520, 120) } },
+                   new[] { new[] { new Vector2(300, 30), new Vector2(300, 210) } });
+
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
+        static void Massif(StringBuilder sb, string title, float brush, Vector2[][] paint, Vector2[][] erase)
+        {
+            var blob = new MountainBlob();
+            int id = 1;
+            foreach (var p in paint)
+            {
+                var s = new MountainStroke { Id = id++, Radius = brush };
+                s.Points.AddRange(p);
+                blob.Strokes.Add(s);
+            }
+            if (erase != null)
+                foreach (var e in erase)
+                {
+                    var s = new MountainStroke { Id = id++, Radius = brush, Erase = true };
+                    s.Points.AddRange(e);
+                    blob.Erasers.Add(s);
+                }
+
+            var settings = new MountainSettings { Radius = 22f };
+            var shapes = MountainGeometry.Build(blob, settings, out _, out var links);
+
+            foreach (var p in paint)
+            {
+                sb.Append("<polyline fill='none' stroke='#ded2b8' stroke-width='").Append(F(brush * 2))
+                  .Append("' stroke-linecap='round' stroke-linejoin='round' points='");
+                foreach (var q in p) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+                sb.Append("'/>");
+            }
+
+            float dMin = float.PositiveInfinity, dMax = float.NegativeInfinity;
+            foreach (var s in shapes)
+            {
+                if (s.Depth < dMin) dMin = s.Depth;
+                if (s.Depth > dMax) dMax = s.Depth;
+            }
+            float span = Math.Max(1f, dMax - dMin);
+
+            foreach (var shape in shapes)
+            {
+                // 0 — самая дальняя гора, 1 — самая ближняя: воздушная перспектива.
+                float t = (dMax - shape.Depth) / span;
+                sb.Append("<polygon fill='").Append(Tone(t)).Append("' points='");
+                foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+                for (int i = shape.Front.Count - 1; i >= 0; i--)
+                    sb.Append(F(shape.Front[i].X)).Append(',').Append(F(Flip(shape.Front[i].Y))).Append(' ');
+                sb.Append("'/>");
+
+                sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-opacity='0.4' stroke-width='1.2' points='");
+                foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+                sb.Append("'/>");
+            }
+
+            int free = 0;
+            foreach (var link in links) if (link.FreeStart || link.FreeEnd) free++;
+            Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}, свободных концов {free}");
+        }
+
+        /// <summary>Тон по глубине: от дальнего к ближнему.</summary>
+        static string Tone(float t)
+        {
+            int r = (int)Math.Round(77 + (28 - 77) * t);
+            int g = (int)Math.Round(107 + (44 - 107) * t);
+            int b = (int)Math.Round(118 + (52 - 118) * t);
+            return $"rgb({r},{g},{b})";
+        }
+
         static Vector2[] RingPts(Vector2 c, float radius)
         {
             var pts = new Vector2[73];

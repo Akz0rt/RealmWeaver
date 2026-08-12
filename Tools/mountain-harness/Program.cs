@@ -19,6 +19,7 @@ namespace MountainHarness
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
             if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
+            if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
 
             MaskMeasuresToSegment();
@@ -784,6 +785,14 @@ namespace MountainHarness
             Check("Разброс: без него звенья равны", Spread(even) < 1.001f, $"разброс {Spread(even):0.###}");
             Check("Разброс: с ним звенья разные", Spread(mixed) > 1.02f, $"разброс {Spread(mixed):0.###}");
             Check("Разброс: но не больше 1.22 раза", Spread(mixed) < 1.22f, $"разброс {Spread(mixed):0.###}");
+
+            // Двадцать звеньев при разбросе в четверть — то место, где видно, нормированы ли веса на
+            // свою сумму. Ненормированные дают правильные длины всем, кроме ПОСЛЕДНЕГО: он получает
+            // остаток, в который стекается вся накопленная ошибка, и при большом разбросе вырождается.
+            // Предел (1+j)/(1−j) выполняется по построению, поэтому проверка не на глазок.
+            var wild = SplitLine(2000f, false, 100f, 0.25f, 1f, 7);
+            Check("Разброс: даже большой остаётся в своих пределах", Spread(wild) < 1.25f / 0.75f,
+                  $"разброс {Spread(wild):0.###} при пределе {1.25f / 0.75f:0.###}, звеньев {wild.Count}");
         }
 
         /// <summary>
