@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Кисть «горы» — шаг 1: оси мазка</title>
+<style>
+  :root{
+    --ink:#0d1418;
+    --ink-2:#131e23;
+    --line:#22333b;
+    --paper:#e8e2d4;
+    --mist:#8fa3aa;
+    --amber:#e0a353;
+    --cyan:#5fd0c5;
+    --rose:#d8737f;
+    --text:#cfdbdf;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased;
+    display:flex;justify-content:center;
+    padding:22px 18px 40px;
+  }
+  .wrap{width:100%;max-width:1040px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  h1{
+    font-family:"Helvetica Neue",Inter,system-ui,sans-serif;
+    font-size:19px;font-weight:650;letter-spacing:-.01em;margin:0;color:var(--paper);
+  }
+  .step{
+    font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);
+    border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);
+    padding:2px 7px;border-radius:2px;
+  }
+  .sub{color:var(--mist);font-size:12.5px}
+
+  .stage{
+    position:relative;border:1px solid var(--line);border-radius:3px;
+    background:var(--ink-2);overflow:hidden;
+  }
+  canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}
+  .empty{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--mist);font-size:13px;pointer-events:none;letter-spacing:.04em;
+  }
+  .empty.hidden{display:none}
+
+  .panel{
+    margin-top:12px;display:grid;gap:14px 22px;
+    grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+    align-items:start;
+  }
+  .ctrl label{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--mist);margin-bottom:5px}
+  .ctrl .val{color:var(--paper);letter-spacing:0}
+  input[type=range]{width:100%;accent-color:var(--amber);height:18px}
+  .checks{display:flex;flex-direction:column;gap:7px}
+  .checks label{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer}
+  input[type=checkbox]{accent-color:var(--cyan);width:14px;height:14px}
+  .buttons{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+  button{
+    font:inherit;font-size:12.5px;color:var(--text);background:transparent;
+    border:1px solid var(--line);border-radius:2px;padding:6px 12px;cursor:pointer;
+  }
+  button:hover{border-color:var(--mist);color:var(--paper)}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  .readout{
+    margin-top:14px;border-top:1px solid var(--line);padding-top:10px;
+    display:flex;gap:26px;flex-wrap:wrap;font-size:12px;color:var(--mist);
+  }
+  .readout b{color:var(--paper);font-weight:500}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:4px}
+  .swatch{width:14px;height:3px;border-radius:2px;display:inline-block}
+  footer{margin-top:16px;color:var(--mist);font-size:12px;max-width:70ch}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Кисть «горы»</h1>
+    <span class="step">шаг 4 · горы</span>
+    <span class="sub">над каждым звеном поднимается гора, подошвы перекрываются в гряду</span>
+  </header>
+
+  <div class="stage">
+    <canvas id="c" width="1040" height="640"></canvas>
+    <div class="empty" id="empty">Проведи мазок мышью или пальцем</div>
+  </div>
+
+  <div class="panel">
+    <div class="ctrl">
+      <label>Радиус кисти <span class="val" id="brushVal">30 px</span></label>
+      <input type="range" id="brush" min="5" max="120" value="30">
+    </div>
+    <div class="ctrl">
+      <label>Радиус горы R <span class="val" id="axisVal">44 px</span></label>
+      <input type="range" id="axis" min="8" max="160" value="44">
+    </div>
+    <div class="ctrl">
+      <label>Длина звена <span class="val" id="linkVal">×1.6 · 70 px</span></label>
+      <input type="range" id="link" min="60" max="320" value="160">
+    </div>
+    <div class="ctrl">
+      <label>Разброс длин <span class="val" id="jitVal">6 %</span></label>
+      <input type="range" id="jitter" min="0" max="30" value="6">
+    </div>
+    <div class="ctrl">
+      <label>Сжатие по вертикали <span class="val" id="perspVal">×1.6 → 44 px</span></label>
+      <input type="range" id="persp" min="100" max="260" value="160">
+    </div>
+    <div class="ctrl">
+      <label>Талия на позвонке <span class="val" id="waistVal">55 %</span></label>
+      <input type="range" id="waist" min="15" max="95" value="55">
+    </div>
+    <div class="ctrl">
+      <label>Высота горы <span class="val" id="hVal">×2.2</span></label>
+      <input type="range" id="height" min="40" max="420" value="220">
+    </div>
+    <div class="ctrl">
+      <label>Перекрытие подошв <span class="val" id="ovVal">×1.40</span></label>
+      <input type="range" id="overlap" min="100" max="220" value="140">
+    </div>
+    <div class="ctrl">
+      <label>Ярусов <span class="val" id="tiersVal">3</span></label>
+      <input type="range" id="tiers" min="1" max="4" value="3">
+    </div>
+    <div class="ctrl">
+      <label>Высота у края <span class="val" id="edgeVal">55 %</span></label>
+      <input type="range" id="edgeH" min="20" max="100" value="55">
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="showMounds" checked> Горы</label>
+      <label><input type="checkbox" id="showFolds"> Подошвы (гармошка)</label>
+      <label><input type="checkbox" id="showAxes" checked> Оси и позвонки</label>
+      <label><input type="checkbox" id="showTiers"> Подсветить ярусы</label>
+      <label><input type="checkbox" id="showFill"> Заливка мазка</label>
+      <label><input type="checkbox" id="showCover"> Круги покрытия</label>
+      <label><input type="checkbox" id="showNodes"> Узлы осей</label>
+      <label><input type="checkbox" id="showSkel"> Полная медиальная ось</label>
+      <label><input type="checkbox" id="showPeaks" checked> Проекции вершин</label>
+    </div>
+    <div class="buttons">
+      <button id="undo">Убрать последний мазок</button>
+      <button id="clear">Очистить холст</button>
+    </div>
+  </div>
+
+  <div class="readout">
+    <span><span class="key"><i class="swatch" style="background:#e0a353"></i></span>контур-кольцо: <b id="nRing">0</b></span>
+    <span><span class="key"><i class="swatch" style="background:#5fd0c5"></i></span>скелет: <b id="nSkel">0</b></span>
+    <span>пятен: <b id="nStroke">0</b></span>
+    <span>звеньев: <b id="nLink">0</b></span>
+    <span>пересчёт: <b id="ms">—</b></span>
+  </div>
+
+  <footer>
+    Пересекающиеся мазки — одно пятно: маска, оси и звенья считаются по их объединению.
+    Над каждым звеном поднимается гора: подошва — эллипс вдоль звена, сплющенный по вертикали,
+    вершина над проекцией, склон вогнутый. Подошвы соседей перекрываются, поэтому склоны пересекаются
+    выше земли и дают перевалы, а не отдельные зубцы. Рисуются от дальних к ближним; дальние светлее.
+    Ширина доли идёт по расстоянию до края мазка, но не больше радиуса горы, поэтому отростки сами сходят на нет.
+  </footer>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+const CELL = 2;                 // размер ячейки растровой сетки, px
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+
+const ui = {
+  brush: document.getElementById("brush"),
+  axis: document.getElementById("axis"),
+  brushVal: document.getElementById("brushVal"),
+  axisVal: document.getElementById("axisVal"),
+  link: document.getElementById("link"),
+  jitter: document.getElementById("jitter"),
+  persp: document.getElementById("persp"),
+  perspVal: document.getElementById("perspVal"),
+  linkVal: document.getElementById("linkVal"),
+  jitVal: document.getElementById("jitVal"),
+  waist: document.getElementById("waist"),
+  waistVal: document.getElementById("waistVal"),
+  height: document.getElementById("height"),
+  overlap: document.getElementById("overlap"),
+  tiers: document.getElementById("tiers"),
+  tiersVal: document.getElementById("tiersVal"),
+  edgeH: document.getElementById("edgeH"),
+  edgeVal: document.getElementById("edgeVal"),
+  ovVal: document.getElementById("ovVal"),
+  hVal: document.getElementById("hVal"),
+  showMounds: document.getElementById("showMounds"),
+  showAxes: document.getElementById("showAxes"),
+  showTiers: document.getElementById("showTiers"),
+  showFolds: document.getElementById("showFolds"),
+  showFill: document.getElementById("showFill"),
+  showCover: document.getElementById("showCover"),
+  showNodes: document.getElementById("showNodes"),
+  showSkel: document.getElementById("showSkel"),
+  showPeaks: document.getElementById("showPeaks"),
+  undo: document.getElementById("undo"),
+  clear: document.getElementById("clear"),
+  nRing: document.getElementById("nRing"),
+  nSkel: document.getElementById("nSkel"),
+  nStroke: document.getElementById("nStroke"),
+  nLink: document.getElementById("nLink"),
+  ms: document.getElementById("ms"),
+  empty: document.getElementById("empty"),
+};
+
+let blobs = [];
+let history = [];
+let current = null;
+let preview = null;        // пятно, пересчитываемое прямо во время рисования
+let liveTimer = null, liveCost = 0, curSeed = 0;
+
+/* ---------- растеризация пятна (одного или нескольких мазков) в маску ---------- */
+
+function buildMask(b){
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  for(const part of b.parts){
+    for(const p of part.pts){
+      if(p[0]-part.brushR<minx) minx=p[0]-part.brushR;
+      if(p[0]+part.brushR>maxx) maxx=p[0]+part.brushR;
+      if(p[1]-part.brushR<miny) miny=p[1]-part.brushR;
+      if(p[1]+part.brushR>maxy) maxy=p[1]+part.brushR;
+    }
+  }
+  const pad = 6*CELL;
+  const ox = minx-pad, oy = miny-pad;
+  const W = Math.ceil((maxx+pad-ox)/CELL)+1;
+  const H = Math.ceil((maxy+pad-oy)/CELL)+1;
+  const mask = new Uint8Array(W*H);
+  const stamp = (ax,ay,bx,by,r) => {
+    const gx0 = Math.max(0, Math.floor((Math.min(ax,bx)-r-ox)/CELL));
+    const gx1 = Math.min(W-1, Math.ceil((Math.max(ax,bx)+r-ox)/CELL));
+    const gy0 = Math.max(0, Math.floor((Math.min(ay,by)-r-oy)/CELL));
+    const gy1 = Math.min(H-1, Math.ceil((Math.max(ay,by)+r-oy)/CELL));
+    const dx=bx-ax, dy=by-ay, len2=dx*dx+dy*dy;
+    for(let gy=gy0; gy<=gy1; gy++){
+      const py = oy+(gy+0.5)*CELL;
+      for(let gx=gx0; gx<=gx1; gx++){
+        const px = ox+(gx+0.5)*CELL;
+        let t = len2>0 ? ((px-ax)*dx+(py-ay)*dy)/len2 : 0;
+        t = t<0?0:t>1?1:t;
+        const qx = px-(ax+dx*t), qy = py-(ay+dy*t);
+        if(qx*qx+qy*qy <= r*r) mask[gy*W+gx] = 1;
+      }
+    }
+  };
+  for(const part of b.parts){
+    const r = part.brushR, pts = part.pts;
+    if(pts.length === 1) stamp(pts[0][0],pts[0][1],pts[0][0],pts[0][1],r);
+    for(let i=1;i<pts.length;i++) stamp(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1],r);
+  }
+  return {mask,W,H,ox,oy};
+}
+
+/* ---------- пересечение мазков ---------- */
+
+function ptSegDist(px,py,ax,ay,bx,by){
+  const dx=bx-ax, dy=by-ay, len2=dx*dx+dy*dy;
+  let t = len2>0 ? ((px-ax)*dx+(py-ay)*dy)/len2 : 0;
+  t = t<0?0:t>1?1:t;
+  return Math.hypot(px-(ax+dx*t), py-(ay+dy*t));
+}
+
+function segSegDist(a1,a2,b1,b2){
+  const d1x=a2[0]-a1[0], d1y=a2[1]-a1[1];
+  const d2x=b2[0]-b1[0], d2y=b2[1]-b1[1];
+  const den = d1x*d2y - d1y*d2x;
+  if(Math.abs(den) > 1e-9){
+    const s = ((b1[0]-a1[0])*d2y - (b1[1]-a1[1])*d2x)/den;
+    const u = ((b1[0]-a1[0])*d1y - (b1[1]-a1[1])*d1x)/den;
+    if(s>=0 && s<=1 && u>=0 && u<=1) return 0;
+  }
+  return Math.min(
+    ptSegDist(a1[0],a1[1],b1[0],b1[1],b2[0],b2[1]),
+    ptSegDist(a2[0],a2[1],b1[0],b1[1],b2[0],b2[1]),
+    ptSegDist(b1[0],b1[1],a1[0],a1[1],a2[0],a2[1]),
+    ptSegDist(b2[0],b2[1],a1[0],a1[1],a2[0],a2[1])
+  );
+}
+
+function partBBox(p){
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  for(const q of p.pts){
+    if(q[0]<minx)minx=q[0]; if(q[0]>maxx)maxx=q[0];
+    if(q[1]<miny)miny=q[1]; if(q[1]>maxy)maxy=q[1];
+  }
+  return [minx-p.brushR, miny-p.brushR, maxx+p.brushR, maxy+p.brushR];
+}
+
+function partsOverlap(pa, pb){
+  const A = partBBox(pa), B = partBBox(pb);
+  if(A[0]>B[2] || B[0]>A[2] || A[1]>B[3] || B[1]>A[3]) return false;
+  const rr = pa.brushR + pb.brushR;
+  const P = pa.pts, Q = pb.pts;
+  const nP = Math.max(1, P.length-1), nQ = Math.max(1, Q.length-1);
+  for(let i=0;i<nP;i++){
+    const a1=P[i], a2=P[Math.min(i+1,P.length-1)];
+    for(let j=0;j<nQ;j++){
+      const b1=Q[j], b2=Q[Math.min(j+1,Q.length-1)];
+      if(segSegDist(a1,a2,b1,b2) <= rr) return true;
+    }
+  }
+  return false;
+}
+
+/* ---------- точное евклидово расстояние (Felzenszwalb) ---------- */
+
+function edtDist(bin, W, H){
+  const INF = 1e20, n = Math.max(W,H);
+  const d = new Float64Array(W*H);
+  for(let i=0;i<W*H;i++) d[i] = bin[i] ? INF : 0;
+  const f = new Float64Array(n), out = new Float64Array(n);
+  const v = new Int32Array(n), z = new Float64Array(n+1);
+  const dt1d = (len) => {
+    let k=0; v[0]=0; z[0]=-INF; z[1]=INF;
+    for(let q=1;q<len;q++){
+      let s = ((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k]);
+      while(s<=z[k]){ k--; s = ((f[q]+q*q)-(f[v[k]]+v[k]*v[k]))/(2*q-2*v[k]); }
+      k++; v[k]=q; z[k]=s; z[k+1]=INF;
+    }
+    k=0;
+    for(let q=0;q<len;q++){
+      while(z[k+1]<q) k++;
+      const dx=q-v[k]; out[q]=dx*dx+f[v[k]];
+    }
+  };
+  for(let x=0;x<W;x++){
+    for(let y=0;y<H;y++) f[y]=d[y*W+x];
+    dt1d(H);
+    for(let y=0;y<H;y++) d[y*W+x]=out[y];
+  }
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++) f[x]=d[y*W+x];
+    dt1d(W);
+    for(let x=0;x<W;x++) d[y*W+x]=Math.sqrt(out[x]);
+  }
+  return d; // расстояние до ближайшего нуля, в ячейках
+}
+
+/* ---------- изолинии (marching squares) ---------- */
+
+function isoContours(D, W, H, L){
+  const segs = [];
+  const ip = (x1,y1,v1,x2,y2,v2) => {
+    const t = (L-v1)/(v2-v1);
+    return [x1+(x2-x1)*t, y1+(y2-y1)*t];
+  };
+  for(let y=0;y<H-1;y++){
+    for(let x=0;x<W-1;x++){
+      const v0=D[y*W+x], v1=D[y*W+x+1], v2=D[(y+1)*W+x+1], v3=D[(y+1)*W+x];
+      let idx=0;
+      if(v0>=L)idx|=1; if(v1>=L)idx|=2; if(v2>=L)idx|=4; if(v3>=L)idx|=8;
+      if(idx===0||idx===15) continue;
+      const T=()=>ip(x,y,v0,x+1,y,v1);
+      const R=()=>ip(x+1,y,v1,x+1,y+1,v2);
+      const B=()=>ip(x,y+1,v3,x+1,y+1,v2);
+      const Lf=()=>ip(x,y,v0,x,y+1,v3);
+      switch(idx){
+        case 1: case 14: segs.push([Lf(),T()]); break;
+        case 2: case 13: segs.push([T(),R()]); break;
+        case 3: case 12: segs.push([Lf(),R()]); break;
+        case 4: case 11: segs.push([R(),B()]); break;
+        case 6: case 9:  segs.push([T(),B()]); break;
+        case 7: case 8:  segs.push([Lf(),B()]); break;
+        case 5: {
+          const c=(v0+v1+v2+v3)/4;
+          if(c>=L){segs.push([Lf(),B()]);segs.push([T(),R()]);}
+          else{segs.push([Lf(),T()]);segs.push([R(),B()]);}
+          break;
+        }
+        case 10: {
+          const c=(v0+v1+v2+v3)/4;
+          if(c>=L){segs.push([Lf(),T()]);segs.push([R(),B()]);}
+          else{segs.push([Lf(),B()]);segs.push([T(),R()]);}
+          break;
+        }
+      }
+    }
+  }
+  // сшиваем отрезки в полилинии
+  const key = p => Math.round(p[0]*1000)+","+Math.round(p[1]*1000);
+  const nodes = new Map();
+  segs.forEach((s,i)=>{
+    for(const p of s){
+      const k = key(p);
+      if(!nodes.has(k)) nodes.set(k,{p,seg:[]});
+      nodes.get(k).seg.push(i);
+    }
+  });
+  const used = new Array(segs.length).fill(false);
+  const paths = [];
+  const walk = (startKey) => {
+    const pts = [nodes.get(startKey).p];
+    let cur = startKey;
+    while(true){
+      const node = nodes.get(cur);
+      let si = -1;
+      for(const i of node.seg) if(!used[i]){ si=i; break; }
+      if(si<0) break;
+      used[si]=true;
+      const s = segs[si];
+      const other = key(s[0])===cur ? s[1] : s[0];
+      pts.push(other);
+      cur = key(other);
+    }
+    return pts;
+  };
+  for(const [k,node] of nodes){
+    if(node.seg.length===1 && !node.seg.every(i=>used[i])){
+      const p = walk(k);
+      if(p.length>2) paths.push({pts:p, closed:false});
+    }
+  }
+  for(let i=0;i<segs.length;i++){
+    if(used[i]) continue;
+    const k = key(segs[i][0]);
+    const p = walk(k);
+    if(p.length>2) paths.push({pts:p, closed:true});
+  }
+  return paths;
+}
+
+function blurField(D, W, H, passes){
+  let a = D, b = new Float64Array(W*H);
+  for(let k=0;k<passes;k++){
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        let s=0, n=0;
+        for(let dy=-1;dy<=1;dy++){
+          const yy=y+dy; if(yy<0||yy>=H) continue;
+          for(let dx=-1;dx<=1;dx++){
+            const xx=x+dx; if(xx<0||xx>=W) continue;
+            s += a[yy*W+xx]; n++;
+          }
+        }
+        b[y*W+x] = s/n;
+      }
+    }
+    const t=a; a=b; b=(t===D) ? new Float64Array(W*H) : t;
+  }
+  return a;
+}
+
+/* ---------- утоньшение (Zhang–Suen): сохраняет концы ветвей ---------- */
+
+const RING = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+const N4 = [[1,0],[-1,0],[0,1],[0,-1]];
+
+function thin(src, W, H){
+  const img = Uint8Array.from(src);
+  const at = (x,y) => (x<0||y<0||x>=W||y>=H) ? 0 : img[y*W+x];
+  let active = [];
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++) if(img[y*W+x]) active.push(y*W+x);
+  let changed = true, guard = 0;
+  while(changed && guard++ < 600){
+    changed = false;
+    for(let step=0; step<2; step++){
+      const kill = [], next = [];
+      for(const idx of active){
+        if(!img[idx]) continue;
+        next.push(idx);
+        const x = idx%W, y = (idx/W)|0;
+        const p = RING.map(([dx,dy])=>at(x+dx,y+dy));
+        let B=0; for(const q of p) B+=q;
+        if(B<2||B>6) continue;
+        let A=0;
+        for(let i=0;i<8;i++) if(p[i]===0 && p[(i+1)%8]===1) A++;
+        if(A!==1) continue;
+        const [N,NE,E,SE,S,SW,Wn,NW] = p;
+        if(step===0){ if(N&&E&&S) continue; if(E&&S&&Wn) continue; }
+        else        { if(N&&E&&Wn) continue; if(N&&S&&Wn) continue; }
+        kill.push(idx);
+      }
+      active = next;
+      if(kill.length){ changed = true; for(const i of kill) img[i]=0; }
+    }
+  }
+  return img;
+}
+
+/* ---------- разбор скелета в граф и полилинии ---------- */
+
+function skeletonPaths(sk, W, H, pruneLen){
+  const ek = (a,b) => a<b ? a+"_"+b : b+"_"+a;
+
+  // граф скелета: диагональ отбрасывается, если тот же переход есть по ортогонали,
+  // иначе «лесенки» дают ложные развилки
+  const build = () => {
+    const adj = new Map();
+    for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++) if(sk[y*W+x]) adj.set(y*W+x, new Set());
+    for(const i of adj.keys()){
+      const x = i%W, y = (i/W)|0;
+      for(const [dx,dy] of RING){
+        const j = (y+dy)*W + (x+dx);
+        if(!adj.has(j)) continue;
+        if(dx && dy && (adj.has(y*W+x+dx) || adj.has((y+dy)*W+x))) continue;
+        adj.get(i).add(j);
+      }
+    }
+    return adj;
+  };
+
+  const trace = () => {
+    const adj = build();
+    const deg = new Map();
+    for(const [i,st] of adj) deg.set(i, st.size);
+    const isNode = i => deg.get(i) !== 2;
+    const used = new Set();
+    const paths = [];
+    const walk = (u,v) => {
+      const pts = [u, v];
+      used.add(ek(u,v));
+      let prev = u, cur = v;
+      while(!isNode(cur)){
+        let nxt = -1;
+        for(const w of adj.get(cur)) if(w !== prev && !used.has(ek(cur,w))){ nxt = w; break; }
+        if(nxt < 0) break;
+        used.add(ek(cur,nxt));
+        pts.push(nxt);
+        prev = cur; cur = nxt;
+      }
+      return pts;
+    };
+    for(const i of adj.keys()) if(isNode(i))
+      for(const j of adj.get(i)) if(!used.has(ek(i,j))) paths.push(walk(i,j));
+    for(const i of adj.keys())
+      for(const j of adj.get(i)) if(!used.has(ek(i,j))) paths.push(walk(i,j));
+    return {paths, adj, deg};
+  };
+
+  const px = i => i%W, py = i => (i/W)|0;
+
+  for(let round=0; round<8; round++){
+    const {paths, adj, deg} = trace();
+    let removed = false;
+
+    // шипы: короткая ветка со свободным концом
+    for(const p of paths){
+      if(p.length >= pruneLen) continue;
+      if(deg.get(p[0]) !== 1 && deg.get(p[p.length-1]) !== 1) continue;
+      for(let i=0;i<p.length;i++){
+        const keep = (i===0 || i===p.length-1) && deg.get(p[i]) >= 3;
+        if(!keep) sk[p[i]] = 0;
+      }
+      removed = true;
+    }
+
+    if(!removed){
+      // пузыри: две ветки, идущие рядом между теми же развилками.
+      // настоящая дыра в кляксе так не выглядит — её стороны расходятся далеко
+      const cid = new Map(); let c = 0;
+      for(const i of adj.keys()){
+        if(deg.get(i) === 2 || cid.has(i)) continue;
+        const st = [i]; cid.set(i, c);
+        while(st.length){
+          const u = st.pop();
+          for(const w of adj.get(u)) if(deg.get(w) !== 2 && !cid.has(w)){ cid.set(w, c); st.push(w); }
+        }
+        c++;
+      }
+      const groups = new Map();
+      paths.forEach((p,i) => {
+        const a = cid.get(p[0]), b = cid.get(p[p.length-1]);
+        if(a === undefined || b === undefined) return;
+        const k = a<b ? a+"_"+b : b+"_"+a;
+        if(!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(i);
+      });
+      const apart = (A,B) => {                   // насколько далеко ветки расходятся
+        let worst = 0;
+        for(let i=0;i<A.length;i+=2){
+          let best = Infinity;
+          for(let j=0;j<B.length;j++){
+            const d = Math.hypot(px(A[i])-px(B[j]), py(A[i])-py(B[j]));
+            if(d < best) best = d;
+          }
+          if(best > worst) worst = best;
+        }
+        return worst;
+      };
+      for(const [,g] of groups){
+        if(g.length < 2) continue;
+        g.sort((a,b) => paths[b].length - paths[a].length);
+        for(const gi of g.slice(1)){
+          const p = paths[gi];
+          if(apart(p, paths[g[0]]) > 5) continue;
+          for(let i=1;i<p.length-1;i++) sk[p[i]] = 0;
+          removed = true;
+        }
+      }
+    }
+    if(!removed) break;
+  }
+
+  const fin = trace();
+  return fin.paths
+    .filter(p => p.length >= 2)
+    .map(p => ({
+      pts: p.map(i => [px(i), py(i)]),
+      tip0: (fin.deg.get(p[0]) || 0) <= 1,          // свободный кончик, а не развилка
+      tip1: (fin.deg.get(p[p.length-1]) || 0) <= 1
+    }));
+}
+
+/* ---------- сшивание веток в узлах ---------- */
+// в развилке ветки, идущие «насквозь», должны стать одной осью:
+// иначе кольцо, дорисованное вторым мазком, распадётся на дуги в точке стыка
+
+function stitchPaths(paths){
+  const items = [];
+  paths.forEach((p,pi) => {
+    for(const side of [0,1]){
+      const q = side===0 ? p.pts[0] : p.pts[p.pts.length-1];
+      items.push({pi, side, q});
+    }
+  });
+  // концы собираем в кластеры по близости: развилка на растре — это пятно
+  // из нескольких соседних пикселей, а не одна точка
+  const RAD = 3.5, cl = new Array(items.length).fill(-1);
+  let nc = 0;
+  for(let i=0;i<items.length;i++){
+    if(cl[i] >= 0) continue;
+    const st = [i]; cl[i] = nc;
+    while(st.length){
+      const u = st.pop();
+      for(let v=0;v<items.length;v++){
+        if(cl[v] >= 0) continue;
+        if(Math.hypot(items[u].q[0]-items[v].q[0], items[u].q[1]-items[v].q[1]) <= RAD){ cl[v] = nc; st.push(v); }
+      }
+    }
+    nc++;
+  }
+  const ends = new Map();
+  items.forEach((it,i) => {
+    if(!ends.has(cl[i])) ends.set(cl[i], []);
+    ends.get(cl[i]).push(it);
+  });
+
+  const dirOf = (p, side) => {           // направление от конца внутрь пути
+    const pts = p.pts, n = pts.length, m = Math.min(10, n-1);
+    const a = side===0 ? pts[0] : pts[n-1];
+    const b = side===0 ? pts[m] : pts[n-1-m];
+    const dx = b[0]-a[0], dy = b[1]-a[1], L = Math.hypot(dx,dy) || 1;
+    return [dx/L, dy/L];
+  };
+
+  const partner = new Map();
+  for(const [,list] of ends){
+    if(list.length < 2) continue;
+    const dirs = list.map(e => dirOf(paths[e.pi], e.side));
+    const used = new Array(list.length).fill(false);
+    const cands = [];
+    for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++)
+      cands.push({i, j, score: dirs[i][0]*dirs[j][0] + dirs[i][1]*dirs[j][1]});
+    cands.sort((a,b) => a.score - b.score);   // ближе к -1 — прямее продолжение
+    // в кластере ровно два конца — это просто разрыв линии, соединяем без вопросов
+    const limit = list.length === 2 ? 1 : -0.25;
+    for(const c of cands){
+      if(used[c.i] || used[c.j] || c.score > limit) continue;
+      used[c.i] = used[c.j] = true;
+      const A = list[c.i], B = list[c.j];
+      partner.set(A.pi+":"+A.side, B.pi+":"+B.side);
+      partner.set(B.pi+":"+B.side, A.pi+":"+A.side);
+    }
+  }
+
+  const usedPath = new Array(paths.length).fill(false);
+  const out = [];
+  for(let i=0;i<paths.length;i++){
+    if(usedPath[i]) continue;
+    // откатываемся к началу цепочки
+    let pi = i, side = 0, guard = 0;
+    const back = new Set([i]);
+    while(guard++ < 2000){
+      const k = partner.get(pi+":"+side);
+      if(!k) break;
+      const [pj,sj] = k.split(":").map(Number);
+      if(back.has(pj)) break;
+      back.add(pj);
+      pi = pj; side = 1-sj;
+    }
+    // и собираем её вперёд
+    let pts = [], tip0 = null, tip1 = true, cur = pi, cside = side;
+    const seen = new Set();
+    while(guard++ < 4000){
+      if(seen.has(cur)) break;
+      seen.add(cur); usedPath[cur] = true;
+      const p = paths[cur];
+      if(tip0 === null) tip0 = cside===0 ? p.tip0 : p.tip1;
+      tip1 = cside===0 ? p.tip1 : p.tip0;
+      const seq = cside===0 ? p.pts : p.pts.slice().reverse();
+      pts = pts.length ? pts.concat(seq.slice(1)) : seq.slice();
+      const k = partner.get(cur+":"+(1-cside));
+      if(!k) break;
+      const [pj,sj] = k.split(":").map(Number);
+      if(seen.has(pj)){ tip0 = tip1 = false; break; }   // цепочка замкнулась
+      cur = pj; cside = sj;
+    }
+    if(pts.length >= 2) out.push({pts, tip0: !!tip0, tip1: !!tip1});
+  }
+  return out;
+}
+
+/* ---------- подтяжка оси к гребню поля расстояний ---------- */
+
+function sampleField(F, W, H, x, y){
+  if(x<0||y<0||x>W-2||y>H-2) return 0;
+  const x0=Math.floor(x), y0=Math.floor(y), fx=x-x0, fy=y-y0;
+  const a=F[y0*W+x0], b=F[y0*W+x0+1], c=F[(y0+1)*W+x0], d=F[(y0+1)*W+x0+1];
+  return a*(1-fx)*(1-fy) + b*fx*(1-fy) + c*(1-fx)*fy + d*fx*fy;
+}
+
+function snapToRidge(pts, D, W, H, maxOff){
+  const sample = (x,y) => (x<0||y<0||x>W-2||y>H-2) ? -1 : sampleField(D,W,H,x,y);
+  let cur = pts;
+  for(let it=0; it<2; it++){
+    cur = cur.map((p,i) => {
+      const a = cur[Math.max(0,i-1)], b = cur[Math.min(cur.length-1,i+1)];
+      const tx=b[0]-a[0], ty=b[1]-a[1];
+      const len=Math.hypot(tx,ty);
+      if(len<1e-6) return p;
+      const nx=-ty/len, ny=tx/len;
+      let best=p, bestV=sample(p[0],p[1]);
+      for(let t=-maxOff; t<=maxOff; t+=0.2){
+        const qx=p[0]+nx*t, qy=p[1]+ny*t;
+        const v=sample(qx,qy);
+        if(v>bestV){ bestV=v; best=[qx,qy]; }
+      }
+      return best;
+    });
+  }
+  return cur;
+}
+
+/* ---------- сглаживание и прореживание ---------- */
+
+function resample(pts, minStep){
+  const out = [pts[0]];
+  for(let i=1;i<pts.length;i++){
+    const a = out[out.length-1], b = pts[i];
+    if(Math.hypot(b[0]-a[0], b[1]-a[1]) >= minStep) out.push(b);
+  }
+  if(out.length>1) out[out.length-1] = pts[pts.length-1];
+  return out;
+}
+
+function smooth(pts, closed, iters){
+  let cur = pts;
+  if(cur.length<3) return cur;
+  for(let it=0; it<iters; it++){
+    cur = cur.map((p,i)=>{
+      if(!closed && (i===0 || i===cur.length-1)) return p;
+      const a = cur[(i-1+cur.length)%cur.length];
+      const b = cur[(i+1)%cur.length];
+      return [(a[0]+2*p[0]+b[0])/4, (a[1]+2*p[1]+b[1])/4];
+    });
+  }
+  return cur;
+}
+
+/* ---------- нарезка осей на звенья ---------- */
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// длина, в которой вертикаль «дороже» горизонтали: при a > 1 путь вверх-вниз
+// набирается быстрее, поэтому позвонки на вертикальных участках ложатся чаще
+function metricLen(dx, dy, a){ return Math.hypot(dx, dy*a); }
+
+function splitPolyline(pts, wids, deps, closed, target, jitter, rnd, aniso){
+  let P = pts, Wd = wids, Dp = deps;
+  if(closed){
+    const k = Math.floor(rnd()*pts.length);          // шов кольца не всегда в одном месте
+    P = pts.slice(k).concat(pts.slice(0,k));
+    Wd = wids.slice(k).concat(wids.slice(0,k));
+    Dp = deps.slice(k).concat(deps.slice(0,k));
+    P = P.concat([P[0]]);
+    Wd = Wd.concat([Wd[0]]);
+    Dp = Dp.concat([Dp[0]]);
+  }
+  const cum = [0];
+  for(let i=1;i<P.length;i++)
+    cum.push(cum[i-1] + metricLen(P[i][0]-P[i-1][0], P[i][1]-P[i-1][1], aniso));
+  const total = cum[cum.length-1];
+  if(total < 2 || P.length < 2) return null;
+  if(total < target*0.15) return null;                // совсем крошка — не звено
+
+  // число звеньев подбираем так, чтобы шаг был как можно ближе к целевому
+  // (сравниваем отношения, а не разности — иначе длинные звенья штрафуются слабее)
+  let count = Math.max(1, Math.floor(total/target));
+  const dev = n => Math.abs(Math.log((total/n)/target));
+  if(dev(count+1) < dev(count)) count++;
+  if(closed && total > target*0.9) count = Math.max(2, count);
+
+  const w = []; let sum = 0;
+  for(let i=0;i<count;i++){ const v = 1 + (rnd()*2-1)*jitter; w.push(v); sum += v; }
+  const marks = [0]; let acc = 0;
+  for(let i=0;i<count;i++){ acc += total*w[i]/sum; marks.push(Math.min(acc, total)); }
+  marks[count] = total;
+
+  const at = (s) => {
+    let lo = 0, hi = cum.length-1;
+    while(lo < hi-1){ const m = (lo+hi)>>1; if(cum[m] <= s) lo = m; else hi = m; }
+    if(lo > cum.length-2) lo = cum.length-2;
+    const seg = (cum[lo+1]-cum[lo]) || 1;
+    const t = (s-cum[lo])/seg;
+    const p = [P[lo][0]+(P[lo+1][0]-P[lo][0])*t, P[lo][1]+(P[lo+1][1]-P[lo][1])*t];
+    let tx = P[lo+1][0]-P[lo][0], ty = P[lo+1][1]-P[lo][1];
+    const L = Math.hypot(tx,ty) || 1;
+    return {p, t:[tx/L, ty/L], w: Wd[lo] + (Wd[lo+1]-Wd[lo])*t,
+            d: Dp[lo] + (Dp[lo+1]-Dp[lo])*t};
+  };
+
+  const links = [], joints = [];
+  for(let i=0;i<count;i++){
+    const a = at(marks[i]), b = at(marks[i+1]);
+    const sub = [a.p], subW = [a.w];
+    for(let j=0;j<P.length;j++){
+      if(cum[j] > marks[i]+1e-6 && cum[j] < marks[i+1]-1e-6){ sub.push(P[j]); subW.push(Wd[j]); }
+    }
+    sub.push(b.p); subW.push(b.w);
+    const mid = at((marks[i]+marks[i+1])/2);
+    links.push({pts:sub, ws:subW, mid:mid.p, tan:mid.t, midW:mid.w, midD:mid.d,
+                hj: 0.82 + rnd()*0.36, len:marks[i+1]-marks[i]});
+    joints.push(a);
+  }
+  if(!closed) joints.push(at(total));
+  return {links, joints};
+}
+
+function splitStroke(s){
+  const R = +ui.axis.value;
+  const target = R * (+ui.link.value/100);
+  const jit = +ui.jitter.value/100;
+  const aniso = +ui.persp.value/100;
+  const nT = +ui.tiers.value;
+  const edge = +ui.edgeH.value/100;
+  s.axes.forEach((a,i) => {
+    const rnd = mulberry32((s.seed + i*7919) | 0);
+    const r = splitPolyline(a.pts, a.wid, a.dep, a.closed, target, jit, rnd, aniso);
+    a.links = r ? r.links : null;
+    a.joints = r ? r.joints : null;
+    a.tiny = !r;
+  });
+  // ярусы: чем глубже внутри кляксы стоит гора, тем она выше и (в будущем)
+  // тем подробнее прорисована. границы ярусов — те же слои по 2R, которыми
+  // строятся кольца: ярус 0 — гряда по краю, ярус 1 — следующий слой внутрь и т.д.
+  const band = 2*R;
+  let maxTier = 0;
+  for(const a of s.axes){
+    if(!a.links) continue;
+    for(const lk of a.links){
+      lk.tier = Math.min(nT-1, Math.floor((lk.midD || 0)/band));
+      if(lk.tier > maxTier) maxTier = lk.tier;
+    }
+  }
+  // высота нормируется на самый глубокий ярус ЭТОГО пятна: у мазка, где слой
+  // всего один, горы не должны оказаться поголовно приземистыми
+  for(const a of s.axes){
+    if(!a.links) continue;
+    for(const lk of a.links) lk.hs = maxTier > 0 ? edge + (1-edge)*(lk.tier/maxTier) : 1;
+  }
+  s.maxTier = maxTier;
+}
+
+/* ---------- силуэт звена: широко в середине, узко на позвонках ---------- */
+
+function linkOutline(link, waist){
+  const P = link.pts, Wd = link.ws;
+  const cum = [0];
+  for(let i=1;i<P.length;i++) cum.push(cum[i-1] + Math.hypot(P[i][0]-P[i-1][0], P[i][1]-P[i-1][1]));
+  const total = cum[cum.length-1];
+  if(total < 1) return null;
+
+  const at = (s) => {
+    let lo=0, hi=cum.length-1;
+    while(lo < hi-1){ const m=(lo+hi)>>1; if(cum[m] <= s) lo = m; else hi = m; }
+    if(lo > cum.length-2) lo = cum.length-2;
+    const seg = (cum[lo+1]-cum[lo]) || 1, t = (s-cum[lo])/seg;
+    let tx = P[lo+1][0]-P[lo][0], ty = P[lo+1][1]-P[lo][1];
+    const L = Math.hypot(tx,ty) || 1;
+    return {
+      x: P[lo][0]+(P[lo+1][0]-P[lo][0])*t,
+      y: P[lo][1]+(P[lo+1][1]-P[lo][1])*t,
+      nx: -ty/L, ny: tx/L,
+      w: Wd[lo] + (Wd[lo+1]-Wd[lo])*t
+    };
+  };
+
+  const N = Math.max(8, Math.ceil(total/3));
+  const left = [], right = [];
+  for(let k=0;k<=N;k++){
+    const u = k/N;
+    const q = at(total*u);
+    const h = q.w * (waist + (1-waist)*Math.pow(Math.sin(Math.PI*u), 0.6));
+    left.push([q.x+q.nx*h, q.y+q.ny*h]);
+    right.push([q.x-q.nx*h, q.y-q.ny*h]);
+  }
+  return left.concat(right.reverse());
+}
+
+/* ---------- горка над звеном ---------- */
+// подошва — та же доля-гармошка, только сплющенная по вертикали: земля видна
+// под углом, тем же самым, из-за которого позвонки по вертикали идут чаще.
+// склон спадает до самой подошвы; вогнутый профиль — полого у подножия,
+// круче всего у гребня, поэтому два склона сходятся в острую вершину.
+
+function moundShape(base0, link, hFactor, squash, overlap){
+  const n = base0.length;
+  if(n < 6) return null;
+  // доля растягивается ВДОЛЬ оси в k раз относительно своего центра: подошвы
+  // соседей перекрываются, склоны пересекаются выше земли — получается перевал.
+  // поперёк оси ничего не меняется, поэтому ширина по-прежнему из поля D.
+  const C = link.mid, u = link.tan, nx = -u[1], ny = u[0];
+  const base = base0.map(p => {
+    const dx = p[0]-C[0], dy = p[1]-C[1];
+    const al = (dx*u[0] + dy*u[1]) * overlap;
+    const ac = dx*nx + dy*ny;
+    const x = C[0] + u[0]*al + nx*ac;
+    const y = C[1] + u[1]*al + ny*ac;
+    return [x, C[1] + (y - C[1])*squash];
+  });
+
+  let iL = 0, iR = 0, yMax = -Infinity;
+  for(let i=0;i<n;i++){
+    if(base[i][0] < base[iL][0]) iL = i;
+    if(base[i][0] > base[iR][0]) iR = i;
+    if(base[i][1] > yMax) yMax = base[i][1];
+  }
+  const Pl = base[iL], Pr = base[iR];
+  if(Pr[0] - Pl[0] < 4) return null;
+
+  const chain = (from,to) => { const r=[]; let i=from; for(;;){ r.push(base[i]); if(i===to) break; i=(i+1)%n; } return r; };
+  const c1 = chain(iR, iL), c2 = chain(iL, iR).reverse();
+  const avgY = c => c.reduce((s,q)=>s+q[1],0)/c.length;
+  const front = avgY(c1) >= avgY(c2) ? c1 : c2;      // ближняя, нижняя дуга подошвы
+
+  const H = hFactor * link.midW * (link.hj || 1) * (link.hs || 1);
+  let ax = link.mid[0];
+  const span = Pr[0] - Pl[0];
+  ax = Math.max(Pl[0] + span*0.15, Math.min(Pr[0] - span*0.15, ax));
+  const apex = [ax, link.mid[1] - H];
+
+  const g = t => Math.pow(t, 1.6);
+  const pts = [Pl];
+  for(let i=1;i<=18;i++){
+    const t = i/18;
+    pts.push([Pl[0] + (apex[0]-Pl[0])*t, Pl[1] + (apex[1]-Pl[1])*g(t)]);
+  }
+  for(let i=1;i<=18;i++){
+    const t = i/18;
+    pts.push([apex[0] + (Pr[0]-apex[0])*t, Pr[1] + (apex[1]-Pr[1])*g(1-t)]);
+  }
+  const crest = pts.slice();                          // видимый гребень: два склона
+  for(let i=1;i<front.length;i++) pts.push(front[i]);
+  return {pts, crest, apex, depth: yMax, tier: link.tier || 0};
+}
+
+/* ---------- главный расчёт осей мазка ---------- */
+
+function computeAxes(s, R_px){
+  const {mask,W,H,ox,oy} = buildMask(s);
+  const D = edtDist(mask, W, H);           // расстояние до края мазка, в ячейках
+  const R = R_px / CELL;
+  let maxD = 0;
+  for(let i=0;i<W*H;i++) if(mask[i] && D[i]>maxD) maxD = D[i];
+
+  const axes = [];
+  const ringsGrid = [];
+  for(let L=R, guard=0; L<=maxD && guard<64; L+=2*R, guard++){
+    // кольцо на уровне L оправдано, только если под ним есть глубина:
+    // иначе изолиния вырождается в узкую петлю вокруг чуть более широкого места
+    // и разрезает сквозную ось надвое. такие места отдаём скелету.
+    const lab = new Int32Array(W*H).fill(-1);
+    const depth = [];
+    for(let i=0;i<W*H;i++){
+      if(D[i] < L || lab[i] >= 0) continue;
+      const id = depth.length; let mx = 0;
+      const st = [i]; lab[i] = id;
+      while(st.length){
+        const j = st.pop();
+        if(D[j] > mx) mx = D[j];
+        const x = j%W, y = (j/W)|0;
+        for(const [dx,dy] of N4){
+          const nx = x+dx, ny = y+dy;
+          if(nx<0||ny<0||nx>=W||ny>=H) continue;
+          const k = ny*W+nx;
+          if(D[k] >= L && lab[k] < 0){ lab[k] = id; st.push(k); }
+        }
+      }
+      depth.push(mx);
+    }
+    const labelAt = (gx,gy) => {
+      const x0 = Math.floor(gx), y0 = Math.floor(gy);
+      for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]){
+        const x = x0+dx, y = y0+dy;
+        if(x>=0 && y>=0 && x<W && y<H && lab[y*W+x] >= 0) return lab[y*W+x];
+      }
+      return -1;
+    };
+    for(const c of isoContours(D, W, H, L)){
+      if(c.pts.length < 4) continue;
+      const id = labelAt(c.pts[0][0], c.pts[0][1]);
+      if(id < 0 || depth[id] < L + 0.6*R) continue;
+      ringsGrid.push(c);
+    }
+  }
+
+  // растеризуем кольца и меряем, что они уже покрывают
+  let dAx = null;
+  if(ringsGrid.length){
+    const am = new Uint8Array(W*H);
+    const put = (x,y)=>{ if(x>=0&&y>=0&&x<W&&y<H) am[y*W+x]=1; };
+    for(const c of ringsGrid){
+      for(let i=1;i<c.pts.length;i++){
+        const [x1,y1] = c.pts[i-1], [x2,y2] = c.pts[i];
+        const steps = Math.max(1, Math.ceil(Math.hypot(x2-x1,y2-y1)*2));
+        for(let t=0;t<=steps;t++){
+          put(Math.round(x1+(x2-x1)*t/steps), Math.round(y1+(y2-y1)*t/steps));
+        }
+      }
+    }
+    const inv = new Uint8Array(W*H);
+    for(let i=0;i<W*H;i++) inv[i] = am[i] ? 0 : 1;
+    dAx = edtDist(inv, W, H);
+  }
+
+  // медиальная ось всего мазка: она по построению идёт ВДОЛЬ отростков
+  const Ds = blurField(D, W, H, 3);        // сглаженное поле: без него ось обрастает шипами
+  const sk = thin(mask, W, H);
+  const fullSkel = stitchPaths(skeletonPaths(sk, W, H, Math.max(5, R*0.9)));
+
+  // оставляем только те участки оси, куда кольца не дотянулись
+  const covered = (x,y) => dAx ? dAx[y*W+x] <= R + 2 : false;
+  const runs = [];
+  for(const sp of fullSkel){
+    const p = sp.pts;
+    let i = 0;
+    while(i < p.length){
+      while(i < p.length && covered(p[i][0],p[i][1])) i++;
+      if(i >= p.length) break;
+      let j = i;
+      while(j < p.length && !covered(p[j][0],p[j][1])) j++;
+      const a = Math.max(0, i-1), b = Math.min(p.length, j+1); // стыкуем с покрытием
+      if(b-a >= 3) runs.push({pts: p.slice(a,b), tip0: a===0 && sp.tip0, tip1: b===p.length && sp.tip1});
+      i = j;
+    }
+  }
+
+  const toPx = ([gx,gy]) => [ox + gx*CELL, oy + gy*CELL];
+
+  // полуширина мазка вдоль оси: до края, но не шире радиуса горы
+  const dAtPx = (x,y) => sampleField(D, W, H, (x-ox)/CELL, (y-oy)/CELL)*CELL;
+  const widthsFor = (pts, cap) => pts.map(([x,y]) => Math.min(dAtPx(x,y), cap));
+  const depthFor  = pts => pts.map(([x,y]) => dAtPx(x,y));   // без потолка: мера «глубины»
+
+  // медиальная ось обрывается за полуширину до кончика мазка — дотягиваем её,
+  // иначе масса не заполняет закругления и торцы
+  const extendEnds = (pts, doHead, doTail) => {
+    const grow = (a,b) => {
+      const dx=b[0]-a[0], dy=b[1]-a[1], L=Math.hypot(dx,dy)||1;
+      const ux=dx/L, uy=dy/L, out=[];
+      let x=b[0], y=b[1];
+      for(let k=0;k<60;k++){
+        x+=ux*3; y+=uy*3;
+        if(dAtPx(x,y) < 1.5) break;
+        out.push([x,y]);
+      }
+      return out;
+    };
+    const n = pts.length;
+    const head = doHead ? grow(pts[Math.min(3,n-1)], pts[0]).reverse() : [];
+    const tail = doTail ? grow(pts[Math.max(0,n-4)], pts[n-1]) : [];
+    return head.concat(pts, tail);
+  };
+
+  for(const c of ringsGrid){
+    let pts = resample(c.pts.map(toPx), 2.5);
+    if(pts.length < 4) continue;
+    pts = smooth(pts, c.closed, 2);
+    axes.push({pts, wid: widthsFor(pts, R_px), dep: depthFor(pts), closed:c.closed, kind:"ring"});
+  }
+
+  for(const r of runs){
+    const g = snapToRidge(r.pts.map(p=>[p[0],p[1]]), Ds, W, H, 2.5);
+    let pts = resample(g.map(toPx), 2.5);
+    if(pts.length < 3) continue;
+    const closed = pts.length > 8 &&
+      Math.hypot(pts[0][0]-pts[pts.length-1][0], pts[0][1]-pts[pts.length-1][1]) < CELL*2;
+    pts = smooth(pts, closed, 4);
+    if(!closed) pts = extendEnds(pts, r.tip0, r.tip1);
+    axes.push({pts, wid: widthsFor(pts, R_px*1.6), dep: depthFor(pts), closed, kind:"skel"});
+  }
+
+  s.axes = axes;
+  s.maxD = maxD * CELL;
+  s.debugSkel = fullSkel.map(sp => resample(sp.pts.map(toPx), 2.5));
+  splitStroke(s);
+}
+
+/* ---------- отрисовка ---------- */
+
+function drawPath(pts, closed){
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  if(closed) ctx.closePath();
+  ctx.stroke();
+}
+
+function render(){
+  const R = +ui.axis.value;
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // сетка-подложка
+  ctx.strokeStyle = "rgba(255,255,255,0.028)";
+  ctx.lineWidth = 1;
+  for(let x=40; x<cv.width; x+=40){ ctx.beginPath(); ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,cv.height); ctx.stroke(); }
+  for(let y=40; y<cv.height; y+=40){ ctx.beginPath(); ctx.moveTo(0,y+.5); ctx.lineTo(cv.width,y+.5); ctx.stroke(); }
+
+  const shown = blobs.filter(b => !(preview && preview.hidden.has(b)));
+  if(preview) shown.push(preview.blob);
+  const parts = [];
+  for(const b of shown) for(const p of b.parts) parts.push(p);
+  if(current && !preview) parts.push(current);
+
+  if(ui.showFill.checked){
+    // одним непрозрачным слоем, иначе перекрытия мазков читаются как швы
+    ctx.strokeStyle = "#1a262b";
+    ctx.fillStyle = "#1a262b";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for(const s of parts){
+      ctx.lineWidth = s.brushR*2;
+      if(s.pts.length===1){
+        ctx.beginPath(); ctx.arc(s.pts[0][0], s.pts[0][1], s.brushR, 0, Math.PI*2); ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(s.pts[0][0], s.pts[0][1]);
+        for(let i=1;i<s.pts.length;i++) ctx.lineTo(s.pts[i][0], s.pts[i][1]);
+        ctx.stroke();
+      }
+    }
+  }
+
+  if(ui.showFolds.checked){
+    const waist = +ui.waist.value/100;
+    // сначала общая масса одним цветом — стыки звеньев не видны,
+    // потом складки поверх, чтобы читалась гармошка
+    ctx.fillStyle = "#2b4048";
+    for(const s of shown) for(const a of s.axes){
+      if(a.tiny || !a.links) continue;
+      for(const lk of a.links){
+        const o = linkOutline(lk, waist);
+        if(!o) continue;
+        ctx.beginPath();
+        ctx.moveTo(o[0][0], o[0][1]);
+        for(let i=1;i<o.length;i++) ctx.lineTo(o[i][0], o[i][1]);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.strokeStyle = "rgba(232,226,212,0.22)";
+    ctx.lineWidth = 1;
+    for(const s of shown) for(const a of s.axes){
+      if(a.tiny || !a.links) continue;
+      for(const lk of a.links){
+        const o = linkOutline(lk, waist);
+        if(!o) continue;
+        ctx.beginPath();
+        ctx.moveTo(o[0][0], o[0][1]);
+        for(let i=1;i<o.length;i++) ctx.lineTo(o[i][0], o[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  }
+
+  let nRing=0, nSkel=0, nLink=0;
+
+  if(ui.showCover.checked){
+    ctx.strokeStyle = "rgba(95,208,197,0.13)";
+    ctx.lineWidth = 1;
+    for(const s of shown) for(const a of s.axes){
+      let acc = 0;
+      ctx.beginPath();
+      for(let i=1;i<a.pts.length;i++){
+        const d = Math.hypot(a.pts[i][0]-a.pts[i-1][0], a.pts[i][1]-a.pts[i-1][1]);
+        acc += d;
+        if(acc >= R*0.75){
+          acc = 0;
+          ctx.moveTo(a.pts[i][0]+R, a.pts[i][1]);
+          ctx.arc(a.pts[i][0], a.pts[i][1], R, 0, Math.PI*2);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+
+  if(ui.showMounds.checked){
+    const waist = +ui.waist.value/100, hf = +ui.height.value/100;
+    const ov = +ui.overlap.value/100;
+    const sq = 1/Math.max(1, +ui.persp.value/100);
+    const mounds = [];
+    for(const s of shown) for(const a of s.axes){
+      if(a.tiny || !a.links) continue;
+      for(const lk of a.links){
+        const o = linkOutline(lk, waist);
+        if(!o) continue;
+        const m = moundShape(o, lk, hf, sq, ov);
+        if(m) mounds.push(m);
+      }
+    }
+    // маляр: дальние горы выше по холсту, поэтому рисуем по возрастанию низа подошвы
+    mounds.sort((p,q) => p.depth - q.depth);
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    // воздушная перспектива: дальние горы светлее. цвет берётся от глубины,
+    // поэтому у соседей он почти одинаков и заливки сливаются без швов
+    let dMin = Infinity, dMax = -Infinity;
+    for(const m of mounds){ if(m.depth<dMin) dMin=m.depth; if(m.depth>dMax) dMax=m.depth; }
+    const span = Math.max(1, dMax-dMin);
+    const far = [77,107,118], near = [28,44,52];
+    const tierCol = [[70,92,104],[86,120,118],[176,142,92],[200,120,110]];
+    const byTier = ui.showTiers.checked;
+    for(const m of mounds){
+      const t = (m.depth-dMin)/span;
+      const c = byTier ? tierCol[Math.min(3, m.tier)]
+                       : far.map((v,i) => Math.round(v + (near[i]-v)*t));
+      ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.beginPath();
+      ctx.moveTo(m.pts[0][0], m.pts[0][1]);
+      for(let i=1;i<m.pts.length;i++) ctx.lineTo(m.pts[i][0], m.pts[i][1]);
+      ctx.closePath();
+      ctx.fill();
+      // обводится только гребень: дуга подошвы резала бы соседа поперёк
+      ctx.strokeStyle = "rgba(240,236,226,0.40)";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(m.crest[0][0], m.crest[0][1]);
+      for(let i=1;i<m.crest.length;i++) ctx.lineTo(m.crest[i][0], m.crest[i][1]);
+      ctx.stroke();
+    }
+  }
+
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+
+  if(ui.showSkel.checked){
+    ctx.strokeStyle = "rgba(216,115,127,0.55)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    for(const s of shown) for(const p of (s.debugSkel||[])) if(p.length>1) drawPath(p,false);
+    ctx.setLineDash([]);
+  }
+
+  const tick = Math.max(5, Math.min(15, R*0.32));
+
+  for(const s of shown){
+    for(const a of s.axes){
+      if(a.tiny) continue;
+      const col = a.kind==="ring" ? "224,163,83" : "95,208,197";
+      if(a.kind==="ring") nRing++; else nSkel++;
+      if(a.links) nLink += a.links.length;
+
+      // проекция вершины — середина звена; не зависит от показа осей
+      if(ui.showPeaks.checked && a.links){
+        ctx.fillStyle = "#d8737f";
+        for(const lk of a.links){
+          ctx.beginPath();
+          ctx.arc(lk.mid[0], lk.mid[1], 2.8, 0, Math.PI*2);
+          ctx.fill();
+        }
+      }
+
+      if(!ui.showAxes.checked) continue;
+
+      if(a.links){
+        ctx.lineWidth = 1.8;
+        a.links.forEach((lk,i) => {
+          ctx.strokeStyle = `rgba(${col},${i%2 ? 0.5 : 1})`;
+          drawPath(lk.pts, false);
+        });
+      } else {
+        ctx.strokeStyle = `rgb(${col})`;
+        ctx.lineWidth = 1.6;
+        drawPath(a.pts, a.closed);
+      }
+
+      // позвонки: поперечные засечки на стыках звеньев
+      if(a.joints){
+        ctx.strokeStyle = "rgba(232,226,212,0.85)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for(const j of a.joints){
+          const nx = -j.t[1], ny = j.t[0];
+          ctx.moveTo(j.p[0]-nx*tick, j.p[1]-ny*tick);
+          ctx.lineTo(j.p[0]+nx*tick, j.p[1]+ny*tick);
+        }
+        ctx.stroke();
+      }
+
+      if(ui.showNodes.checked && !a.closed){
+        ctx.fillStyle = `rgb(${col})`;
+        for(const p of [a.pts[0], a.pts[a.pts.length-1]]){
+          ctx.beginPath(); ctx.arc(p[0], p[1], 2.4, 0, Math.PI*2); ctx.fill();
+        }
+      }
+    }
+  }
+
+  ui.nLink.textContent = nLink;
+
+  if(current){                          // мгновенный след кисти, пока превью пересчитывается
+    ctx.strokeStyle = "rgba(232,226,212,0.13)";
+    ctx.fillStyle = "rgba(232,226,212,0.13)";
+    ctx.lineWidth = current.brushR*2;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    if(current.pts.length===1){
+      ctx.beginPath(); ctx.arc(current.pts[0][0], current.pts[0][1], current.brushR, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(current.pts[0][0], current.pts[0][1]);
+      for(let i=1;i<current.pts.length;i++) ctx.lineTo(current.pts[i][0], current.pts[i][1]);
+      ctx.stroke();
+    }
+  }
+
+  ui.nRing.textContent = nRing;
+  ui.nSkel.textContent = nSkel;
+  ui.nStroke.textContent = shown.length;
+  ui.empty.classList.toggle("hidden", parts.length>0);
+}
+
+function recomputeAll(){
+  const t0 = performance.now();
+  const R = +ui.axis.value;
+  for(const b of blobs) computeAxes(b, R);
+  ui.ms.textContent = (performance.now()-t0).toFixed(0) + " мс";
+  render();
+}
+
+/* ---------- ввод ---------- */
+
+function posOf(e){
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX-r.left) * cv.width/r.width, (e.clientY-r.top) * cv.height/r.height];
+}
+
+function overlappedBlobs(part){
+  return blobs.filter(b => b.parts.some(p => partsOverlap(p, part)));
+}
+
+function buildPreview(){
+  if(!current) return;
+  const hit = overlappedBlobs(current);
+  const blob = {
+    parts: hit.reduce((acc,b)=>acc.concat(b.parts), []).concat([current]),
+    seed: hit.length ? hit[0].seed : curSeed,
+    axes: [], debugSkel: []
+  };
+  const t0 = performance.now();
+  computeAxes(blob, +ui.axis.value);
+  liveCost = performance.now() - t0;
+  preview = {blob, hidden: new Set(hit), part: current};
+  ui.ms.textContent = liveCost.toFixed(0) + " мс";
+  render();
+}
+
+// пересчёт стоит десятки-сотни мс, поэтому идём не чаще, чем он успевает
+function scheduleLive(){
+  if(liveTimer) return;
+  liveTimer = setTimeout(() => { liveTimer = null; buildPreview(); }, Math.max(40, liveCost));
+}
+
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId);
+  curSeed = (Math.random()*1e9)|0;
+  current = { pts:[posOf(e)], brushR:+ui.brush.value };
+  preview = null;
+  render();
+});
+cv.addEventListener("pointermove", e => {
+  if(!current) return;
+  const p = posOf(e);
+  const last = current.pts[current.pts.length-1];
+  if(Math.hypot(p[0]-last[0], p[1]-last[1]) < 2) return;
+  current.pts.push(p);
+  render();
+  scheduleLive();
+});
+const finish = () => {
+  if(!current) return;
+  const part = current; current = null;
+  if(liveTimer){ clearTimeout(liveTimer); liveTimer = null; }
+  history.push(blobs.slice());
+  if(history.length > 40) history.shift();
+
+  // всё, что пересеклось с новым мазком, становится одним пятном
+  const hit = [], rest = [];
+  for(const b of blobs){
+    if(b.parts.some(p => partsOverlap(p, part))) hit.push(b); else rest.push(b);
+  }
+  let merged;
+  if(preview && preview.part === part && preview.blob.parts.length === hit.reduce((n,b)=>n+b.parts.length,0)+1){
+    merged = preview.blob;                       // превью уже посчитано — берём как есть
+  } else {
+    merged = {
+      parts: hit.reduce((acc,b)=>acc.concat(b.parts), []).concat([part]),
+      seed: hit.length ? hit[0].seed : curSeed,
+      axes: [], debugSkel: []
+    };
+    const t0 = performance.now();
+    computeAxes(merged, +ui.axis.value);
+    ui.ms.textContent = (performance.now()-t0).toFixed(0) + " мс";
+  }
+  preview = null;
+  blobs = rest.concat([merged]);
+  render();
+};
+cv.addEventListener("pointerup", finish);
+cv.addEventListener("pointercancel", finish);
+cv.addEventListener("pointerleave", finish);
+
+const syncLabels = () => {
+  ui.brushVal.textContent = ui.brush.value + " px";
+  ui.axisVal.textContent = ui.axis.value + " px";
+  const k = +ui.link.value/100;
+  ui.linkVal.textContent = "×" + k.toFixed(2) + " · " + Math.round(+ui.axis.value*k) + " px";
+  ui.jitVal.textContent = ui.jitter.value + " %";
+  ui.waistVal.textContent = ui.waist.value + " %";
+  ui.hVal.textContent = "×" + (+ui.height.value/100).toFixed(2);
+  ui.ovVal.textContent = "×" + (+ui.overlap.value/100).toFixed(2);
+  ui.tiersVal.textContent = ui.tiers.value;
+  ui.edgeVal.textContent = ui.edgeH.value + " %";
+  const a = +ui.persp.value/100;
+  ui.perspVal.textContent = "×" + a.toFixed(2) + " → " + Math.round(+ui.axis.value*k/a) + " px";
+};
+const resplit = () => { syncLabels(); for(const b of blobs) splitStroke(b); render(); };
+
+ui.brush.addEventListener("input", syncLabels);
+ui.axis.addEventListener("input", syncLabels);
+ui.axis.addEventListener("change", recomputeAll);
+ui.link.addEventListener("input", resplit);
+ui.jitter.addEventListener("input", resplit);
+ui.tiers.addEventListener("input", resplit);
+ui.edgeH.addEventListener("input", resplit);
+ui.persp.addEventListener("input", resplit);
+ui.waist.addEventListener("input", () => { ui.waistVal.textContent = ui.waist.value + " %"; render(); });
+ui.height.addEventListener("input", () => { ui.hVal.textContent = "×" + (+ui.height.value/100).toFixed(2); render(); });
+ui.overlap.addEventListener("input", () => { ui.ovVal.textContent = "×" + (+ui.overlap.value/100).toFixed(2); render(); });
+for(const id of ["showMounds","showAxes","showTiers","showFolds","showFill","showCover","showNodes","showSkel","showPeaks"]) ui[id].addEventListener("change", render);
+ui.undo.addEventListener("click", () => { if(history.length){ blobs = history.pop(); preview = null; render(); } });
+ui.clear.addEventListener("click", () => { blobs = []; history = []; preview = null; render(); });
+
+syncLabels();
+render();
+})();
+</script>
+</body>
+</html>
