@@ -366,43 +366,57 @@ namespace MountainHarness
         /// </summary>
         static void TriangulationCoversTheSilhouetteExactly()
         {
-            var pts = new List<Vector2>();
-            for (int i = 0; i <= 8; i++)
+            // Кольцевой мазок нарочно: у кольца полно звеньев, которые одновременно изогнуты и идут
+            // близко к вертикали, — то есть ровно тех, у кого подошва заворачивается назад по X.
+            var ring = new List<Vector2>();
+            for (int i = 0; i <= 72; i++)
             {
-                double a = Math.PI * (0.5 - 0.16 * i / 8.0);
-                pts.Add(new Vector2(150f * (float)Math.Sin(a), 150f * (float)Math.Cos(a)));
+                double a = i / 72.0 * Math.PI * 2.0;
+                ring.Add(new Vector2(300f + 130f * (float)Math.Cos(a), 300f + 130f * (float)Math.Sin(a)));
             }
-            var link = new AxisLink { Pts = pts, MidW = 20f };
-            for (int i = 0; i < pts.Count; i++) link.Ws.Add(20f);
-            link.Mid = pts[pts.Count / 2];
-            link.Tan = Vector2.Normalize(pts[pts.Count - 1] - pts[0]);
+            var shapes = MountainGeometry.Build(Blob(Stroke(1, 30f, ring.ToArray())),
+                                                new MountainSettings { Radius = 22f });
+            if (shapes.Count < 8) { Fail("Триангуляция", $"гор всего {shapes.Count}"); return; }
 
-            var shape = Mound(link, 1.4f, 1.4f);
-            if (shape == null) { Fail("Триангуляция", "гора не построена"); return; }
-
-            // Силуэт: гребень слева направо, следом подошва справа налево.
-            var loop = new List<Vector2>(shape.Crest);
-            for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
-            float silhouette = Math.Abs(SignedArea(loop));
-
-            var verts = new List<Vector2>(shape.Crest);
-            verts.AddRange(shape.Front);
-            int[] tris = MountainTriangulation.Fill(shape);
-
-            float sum = 0f, absSum = 0f;
-            for (int i = 0; i + 2 < tris.Length; i += 3)
+            float worstOverlap = 0f, worstFlip = 0f;
+            int folded = 0;
+            bool simple = true;
+            foreach (var shape in shapes)
             {
-                float area = SignedArea(new List<Vector2> { verts[tris[i]], verts[tris[i + 1]], verts[tris[i + 2]] });
-                sum += area;
-                absSum += Math.Abs(area);
+                if (!IsMonotone(shape.Front)) folded++;
+
+                // Силуэт: гребень слева направо, следом подошва справа налево.
+                var loop = new List<Vector2>(shape.Crest);
+                for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
+                float silhouette = Math.Abs(SignedArea(loop));
+                if (silhouette <= 0f) continue;
+                if (!IsSimple(loop)) simple = false;
+
+                var verts = new List<Vector2>(shape.Crest);
+                verts.AddRange(shape.Front);
+                int[] tris = MountainTriangulation.Fill(shape);
+
+                float sum = 0f, absSum = 0f;
+                for (int i = 0; i + 2 < tris.Length; i += 3)
+                {
+                    float area = SignedArea(new List<Vector2>
+                        { verts[tris[i]], verts[tris[i + 1]], verts[tris[i + 2]] });
+                    sum += area;
+                    absSum += Math.Abs(area);
+                }
+
+                worstOverlap = Math.Max(worstOverlap, Math.Abs(absSum - silhouette) / silhouette);
+                worstFlip = Math.Max(worstFlip, Math.Abs(Math.Abs(sum) - silhouette) / silhouette);
             }
 
-            Check("Триангуляция: треугольники не налезают и не вылезают",
-                  Near(absSum, silhouette, silhouette * 0.005f),
-                  $"сумма модулей {absSum:0.#} против площади силуэта {silhouette:0.#}");
-            Check("Триангуляция: ни один треугольник не вывернут",
-                  Near(Math.Abs(sum), silhouette, silhouette * 0.005f),
-                  $"модуль суммы {Math.Abs(sum):0.#} против площади силуэта {silhouette:0.#}");
+            Check("Триангуляция: фикстура трудная — подошвы заворачиваются", folded >= 4,
+                  $"завернувшихся подошв {folded} из {shapes.Count} — фикстура перестала быть трудной");
+            Check("Триангуляция: силуэт горы простой", simple,
+                  "силуэт сам себя пересекает — на этом отрезание ушей уже не стоит");
+            Check("Триангуляция: треугольники не налезают и не вылезают", worstOverlap < 0.001f,
+                  $"худший перебор площади {worstOverlap * 100f:0.###} %");
+            Check("Триангуляция: ни один треугольник не вывернут", worstFlip < 0.001f,
+                  $"худший недобор площади {worstFlip * 100f:0.###} %");
         }
 
         /// <summary>
@@ -1141,6 +1155,27 @@ namespace MountainHarness
             return LinkSplitter.Split(pts, widths, widths, true, false, false, target, jitter, 1f,
                                       new Mulberry32(seed));
         }
+
+        static bool IsSimple(List<Vector2> loop)
+        {
+            int n = loop.Count;
+            for (int i = 0; i < n; i++)
+                for (int j = i + 2; j < n; j++)
+                {
+                    if (i == 0 && j == n - 1) continue;
+                    if (Crosses(loop[i], loop[i + 1], loop[j], loop[(j + 1) % n])) return false;
+                }
+            return true;
+        }
+
+        static bool Crosses(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            float s1 = Side(a, b, c), s2 = Side(a, b, d), s3 = Side(c, d, a), s4 = Side(c, d, b);
+            return ((s1 > 0 && s2 < 0) || (s1 < 0 && s2 > 0)) && ((s3 > 0 && s4 < 0) || (s3 < 0 && s4 > 0));
+        }
+
+        static float Side(Vector2 a, Vector2 b, Vector2 p)
+            => (b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X);
 
         // ── мелочь ──────────────────────────────────────────────────────────────────────────────
 
