@@ -1,0 +1,31 @@
+<!--
+  Офлайн-стенд слоя гор: гоняет НАСТОЯЩИЙ код из Assets/WorldGen/Generation/Mountains без Unity.
+  Тот слой написан без единой ссылки на UnityEngine именно ради этого.
+
+  Два режима:
+      dotnet run -c Release [SEP] checks    инварианты, печатает PASS/FAIL
+      dotnet run -c Release [SEP] svg       рисует peek.svg — геометрию можно посмотреть глазами
+  где [SEP] — двухдефисный разделитель аргументов (в XML-комментарии его не написать).
+  Запускать из bash: PowerShell 5.1 разделитель проглатывает.
+
+  Исходники подключены ГЛОБОМ ПО МЕСТУ, а не копией в gen/, как у notes-harness. Там копия завелась
+  из-за отдельного рабочего дерева, и она же дала известную ловушку: без sync.ps1 стенд зеленеет на
+  старом коде, а новый тест молча не запускается. Прямая ссылка эту ловушку убирает совсем: файл,
+  добавленный в слой, компилируется здесь в тот же миг.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>mountainharness</AssemblyName>
+    <RootNamespace>MountainHarness</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0169;CS0649;CS0162;CS0219</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Assets\WorldGen\Generation\Mountains\**\*.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Preview.cs" />
+  </ItemGroup>
+</Project>

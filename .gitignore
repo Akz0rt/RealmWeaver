@@ -77,3 +77,13 @@ crashlytics-build.properties
 /Tools/player-harness/bin/
 /Tools/player-harness/obj/
 /Tools/player-harness/gen/
+
+# Tools/mountain-harness — то же для слоя гор (арка «кисть гор»). Отличие одно: gen/ тут нет, проект
+# ссылается на Assets/WorldGen/Generation/Mountains глобом ПО МЕСТУ. Копия завелась у остальных из-за
+# отдельного рабочего дерева и дала известную ловушку — стенд зеленел на старом коде; прямая ссылка её
+# убирает. peek.svg/peek.png — картинка для глаз, результат прогона, а не исходник.
+!/Tools/mountain-harness/*.csproj
+/Tools/mountain-harness/bin/
+/Tools/mountain-harness/obj/
+/Tools/mountain-harness/peek.svg
+/Tools/mountain-harness/peek.png
