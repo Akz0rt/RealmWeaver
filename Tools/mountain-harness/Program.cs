@@ -18,6 +18,7 @@ namespace MountainHarness
         {
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
+            if (mode == "time") { TimeThinning(); return 0; }
 
             MaskMeasuresToSegment();
             EraserSubtracts();
@@ -29,6 +30,13 @@ namespace MountainHarness
             LevelsStepByTwoR();
             ShallowRingIsRejected();
             GridSizeIsCapped();
+
+            ThinningKeepsTheLoop();
+            SpurIsPruned();
+            BubbleCollapsesButDonutSurvives();
+            ForkStitchesIntoOneAxis();
+            RingCoverageSuppressesSkeleton();
+            ErasedGapSplitsAxesToo();
 
             WaistProfile();
             SharedWidthAtVertebra();
@@ -321,7 +329,242 @@ namespace MountainHarness
                   "подошва стала монотонной — похоже, изъян починили: перепиши проверку под новое правило");
         }
 
+        // ── §6–§7 «Скелет и доводка оси» ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Утоньшение обязано сохранять связность и топологию: у кольцевого мазка ось остаётся ОДНОЙ
+        /// замкнутой петлёй. Мутанты: снять проверку «ровно один переход 0→1» (a != 1) — петля
+        /// перекусывается или съедается целиком; вернуть маску как есть — она вовсе не утоньшилась.
+        /// </summary>
+        static void ThinningKeepsTheLoop()
+        {
+            var pts = new List<Vector2>();
+            for (int i = 0; i <= 64; i++)
+            {
+                double t = i / 64.0 * Math.PI * 2.0;
+                pts.Add(new Vector2(200f + 60f * (float)Math.Cos(t), 200f + 60f * (float)Math.Sin(t)));
+            }
+            var blob = Blob(Stroke(1, 15f, pts.ToArray()));
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 15f));
+            var sk = Skeleton.Thin(mask);
+
+            int filled = 0, thinned = 0;
+            for (int i = 0; i < mask.Cells.Length; i++) { if (mask.Cells[i] != 0) filled++; if (sk[i] != 0) thinned++; }
+
+            Check("Скелет: кольцо утоньшилось", thinned > 0 && thinned * 5 < filled,
+                  $"масса {filled} ячеек, скелет {thinned} — утоньшения не было");
+            Check("Скелет: кольцо осталось одним куском", RasterComponents(sk, mask.W, mask.H) == 1,
+                  $"кусков {RasterComponents(sk, mask.W, mask.H)}, ждали один");
+        }
+
+        /// <summary>
+        /// Шип — короткая ветка со свободным концом — срезается. Фикстура нарисована прямо в растре
+        /// скелета: так проверяется само правило, а не то, как неровность мазка превратилась в шип.
+        /// Проверка обязана краснеть В ОБЕ СТОРОНЫ, поэтому длина порога перебирается: при нулевом
+        /// пороге шип выживает (две оси вместо одной), при огромном срезается и сама ось (ни одной).
+        /// </summary>
+        static void SpurIsPruned()
+        {
+            Check("Скелет: шип срезан", SpurPaths(6) == 1, $"осей {SpurPaths(6)}, ждали одну");
+            Check("Скелет: при нулевом пороге шип выживает", SpurPaths(0) > 1,
+                  "шип исчез и без порога — значит, срезает его не обрезка");
+            Check("Скелет: при огромном пороге не остаётся ничего", SpurPaths(1000) == 0,
+                  "ось уцелела вопреки порогу — обрезка не смотрит на длину");
+        }
+
+        /// <summary>Сколько осей даёт «линия с коротким отростком» при заданном пороге обрезки.</summary>
+        static int SpurPaths(int pruneLen)
+        {
+            const int w = 60, h = 40;
+            var sk = new byte[w * h];
+            HLine(sk, w, 5, 45, 20);
+            VLine(sk, w, 25, 16, 20);           // отросток длиной 5 ячеек
+            return AxisStitching.Stitch(Skeleton.Branches(sk, w, h, pruneLen)).Count;
+        }
+
+        /// <summary>
+        /// Пузырь схлопывается, а настоящая дыра — нет. Обе половины обязательны: без первой выживает
+        /// мутант «не схлопывать никогда», без второй — мутант «схлопывать всегда», а он страшнее:
+        /// он съедает кольцевые массивы, ради которых весь §4 и написан.
+        /// </summary>
+        static void BubbleCollapsesButDonutSurvives()
+        {
+            const int w = 60, h = 40;
+
+            // Пузырь: линия, в середине которой две ветки расходятся всего на две ячейки.
+            var bubble = new byte[w * h];
+            HLine(bubble, w, 5, 15, 20);
+            HLine(bubble, w, 20, 45, 20);
+            HLine(bubble, w, 16, 19, 19);
+            HLine(bubble, w, 16, 19, 21);
+            var paths = AxisStitching.Stitch(Skeleton.Branches(bubble, w, h, 4));
+            Check("Скелет: пузырь схлопнулся", paths.Count == 1, $"осей {paths.Count}, ждали одну");
+            Check("Скелет: после схлопывания ось идёт из конца в конец",
+                  paths.Count == 1 && HasPoint(paths[0], 5, 20) && HasPoint(paths[0], 45, 20),
+                  "ось потеряла конец");
+
+            // Дыра: та же пара развилок, но ветки расходятся на двадцать ячеек.
+            var donut = new byte[w * h];
+            HLine(donut, w, 5, 55, 30);
+            VLine(donut, w, 15, 10, 30);
+            HLine(donut, w, 15, 35, 10);
+            VLine(donut, w, 35, 10, 30);
+            Skeleton.Branches(donut, w, h, 4);
+            Check("Скелет: у настоящей дыры уцелели обе стороны",
+                  donut[30 * w + 25] != 0 && donut[10 * w + 25] != 0,
+                  "одну из сторон дыры стёрли как пузырь");
+        }
+
+        /// <summary>
+        /// В развилке сшиваются те концы, что идут НАВСТРЕЧУ друг другу. Проверяется не число осей, а
+        /// то, что сквозная ось действительно сквозная: мутант «брать первую попавшуюся пару, не
+        /// сортируя по прямизне» даёт то же самое число осей, но склеивает поперечину с половиной
+        /// перекладины. Мутант «не сшивать вовсе» ловится числом.
+        /// </summary>
+        static void ForkStitchesIntoOneAxis()
+        {
+            const int w = 60, h = 40;
+            var sk = new byte[w * h];
+            HLine(sk, w, 5, 45, 20);
+            VLine(sk, w, 25, 5, 20);
+
+            var raw = Skeleton.Branches(sk, w, h, 4);
+            var stitched = AxisStitching.Stitch(raw);
+
+            Check("Сшивка: развилка даёт три ветки", raw.Count == 3, $"веток {raw.Count}");
+            Check("Сшивка: остаются две оси", stitched.Count == 2, $"осей {stitched.Count}, ждали две");
+
+            bool through = false;
+            foreach (var p in stitched) if (HasPoint(p, 5, 20) && HasPoint(p, 45, 20)) through = true;
+            Check("Сшивка: перекладина стала одной осью", through,
+                  "сквозной оси нет — сшили не те концы");
+        }
+
+        /// <summary>
+        /// Скелет режется покрытием колец: там, где кольцо уже проложило ось, второй оси быть не
+        /// должно. Масса подобрана так, что кольцо ложится в восемнадцати ячейках от осевой линии —
+        /// ближе предела R + 2. Мутант «ничего не покрыто» добавит вдоль той же массы вторую ось.
+        /// </summary>
+        static void RingCoverageSuppressesSkeleton()
+        {
+            var axes = CapsuleAxes(out _);
+            int rings = 0, skel = 0;
+            foreach (var a in axes) { if (a.FromRing) rings++; else skel++; }
+
+            Check("Покрытие: кольцо принято", rings == 1, $"колец {rings}, ждали одно");
+            Check("Покрытие: скелет под кольцом отброшен", skel == 0,
+                  $"осей от скелета {skel} — покрытие не сработало");
+        }
+
+        /// <summary>
+        /// Ластик режет не только маску, но и оси: у разорванного массива ось есть у каждой половины
+        /// и ни одной поперёк разрыва. Проверка сквозная — она смотрит на итог всей цепочки, тогда
+        /// как остальные проверяют по одному правилу. Мутант: ластик кладётся как краска.
+        /// </summary>
+        static void ErasedGapSplitsAxesToo()
+        {
+            var blob = Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(400, 0)));
+            blob.Erasers.Add(Stroke(2, 40f, new Vector2(200, -80), new Vector2(200, 80)));
+
+            var mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 40f));
+            var field = DistanceField.Build(mask);
+            var axes = AxisBuilder.Build(mask, field, 22f / mask.Cell);
+
+            bool left = false, right = false, inside = false;
+            foreach (var axis in axes)
+            {
+                foreach (var p in axis.Points)
+                {
+                    float x = mask.GridToWorld(p.X, p.Y).X;
+                    if (x < 150f) left = true;
+                    else if (x > 250f) right = true;
+                    else inside = true;
+                }
+            }
+
+            Check("Ластик: ось есть у обеих половин", left && right,
+                  $"слева {(left ? "есть" : "нет")}, справа {(right ? "есть" : "нет")}");
+            Check("Ластик: поперёк разрыва оси нет", !inside, "ось прошла по стёртому месту");
+        }
+
+        /// <summary>Оси длинной толстой массы. Возвращает заодно маску — она нужна для перевода в мир.</summary>
+        static List<MountainAxis> CapsuleAxes(out MountainMask mask)
+        {
+            var blob = Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 0)));
+            mask = MountainMask.Build(blob, MountainMask.ChooseCell(22f, 40f));
+            var field = DistanceField.Build(mask);
+            return AxisBuilder.Build(mask, field, 22f / mask.Cell);
+        }
+
+        /// <summary>Замер, а не проверка: во что обходится утоньшение на самой крупной массе стенда.
+        /// План опасался, что оно съест сотни миллисекунд; число говорит само за себя.</summary>
+        static void TimeThinning()
+        {
+            foreach (float ratio in new[] { 1f, 2f, 4f, 6f, 10f })
+            {
+                const float r = 22f;
+                float brush = r * ratio;
+                var blob = Blob(Stroke(1, brush, new Vector2(0, 0), new Vector2(900, 0)));
+                var mask = MountainMask.Build(blob, MountainMask.ChooseCell(r, brush));
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                Skeleton.Thin(mask);
+                watch.Stop();
+                Console.WriteLine($"кисть = {ratio:F0}·R: сетка {mask.W}×{mask.H}, толщина {brush / mask.Cell:F0} ячеек, " +
+                                  $"утоньшение {watch.Elapsed.TotalMilliseconds:F1} мс");
+            }
+        }
+
         // ── мелочь ──────────────────────────────────────────────────────────────────────────────
+
+        static void HLine(byte[] raster, int w, int x0, int x1, int y)
+        {
+            for (int x = x0; x <= x1; x++) raster[y * w + x] = 1;
+        }
+
+        static void VLine(byte[] raster, int w, int x, int y0, int y1)
+        {
+            for (int y = y0; y <= y1; y++) raster[y * w + x] = 1;
+        }
+
+        static bool HasPoint(AxisPath path, float x, float y)
+        {
+            foreach (var p in path.Pts) if (Near(p.X, x, 0.01f) && Near(p.Y, y, 0.01f)) return true;
+            return false;
+        }
+
+        /// <summary>Число связных кусков растра по ВОСЬМИ соседям: скелет идёт лесенкой, и по четырём
+        /// наклонная линия распалась бы на отдельные ячейки.</summary>
+        static int RasterComponents(byte[] raster, int w, int h)
+        {
+            var seen = new bool[w * h];
+            var stack = new Stack<int>();
+            int count = 0;
+
+            for (int start = 0; start < raster.Length; start++)
+            {
+                if (raster[start] == 0 || seen[start]) continue;
+                count++;
+                seen[start] = true;
+                stack.Push(start);
+                while (stack.Count > 0)
+                {
+                    int i = stack.Pop();
+                    int x = i % w, y = i / w;
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                            int k = ny * w + nx;
+                            if (raster[k] == 0 || seen[k]) continue;
+                            seen[k] = true;
+                            stack.Push(k);
+                        }
+                }
+            }
+            return count;
+        }
+
 
         static MountainStroke Stroke(int id, float radius, params Vector2[] points)
         {

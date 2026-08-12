@@ -18,11 +18,14 @@ namespace WorldGen.Generation.Mountains
         const double Inf = 1e20;
 
         /// <summary>Расстояние до фона в ячейках. Для ячеек фона — ноль.</summary>
-        public static float[] Build(MountainMask mask)
+        public static float[] Build(MountainMask mask) => Build(mask.Cells, mask.W, mask.H);
+
+        /// <summary>То же для произвольного растра. Нужно не только маске пятна: расстояние до
+        /// принятых колец меряется так же, только растр там — сами кольца.</summary>
+        public static float[] Build(byte[] cells, int w, int h)
         {
-            int w = mask.W, h = mask.H;
             var d = new double[w * h];
-            for (int i = 0; i < d.Length; i++) d[i] = mask.Cells[i] != 0 ? Inf : 0.0;
+            for (int i = 0; i < d.Length; i++) d[i] = cells[i] != 0 ? Inf : 0.0;
 
             int n = Math.Max(w, h);
             var f = new double[n];
