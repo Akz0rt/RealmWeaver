@@ -670,16 +670,27 @@ namespace MountainHarness
             Check("Развилка: узел глубже порога", DistanceField.Max(field) >= need,
                   $"узел {DistanceField.Max(field):0.0} < порога {need:0.0} — фикстура перестала быть развилкой");
 
-            float nearestRing = float.MaxValue, nearestSkeleton = float.MaxValue;
+            var node = mask.WorldToGrid(new Vector2(250, 0));
+            float nearestRing = float.MaxValue, nearestSkeleton = float.MaxValue, ringAtNode = float.MaxValue;
             foreach (var axis in AxisBuilder.Build(mask, field, radiusCells))
             {
                 foreach (var p in axis.Points)
                 {
                     float d = Vector2.Distance(p, midArm);
-                    if (axis.FromRing) nearestRing = Math.Min(nearestRing, d);
+                    if (axis.FromRing)
+                    {
+                        nearestRing = Math.Min(nearestRing, d);
+                        ringAtNode = Math.Min(ringAtNode, Vector2.Distance(p, node));
+                    }
                     else nearestSkeleton = Math.Min(nearestSkeleton, d);
                 }
             }
+
+            // Кольцо обязано остаться НАД УЗЛОМ: узел толст, глубина под ним есть, он кольцо заслужил.
+            // Без этой половины проверки правило «резать» неотличимо от правила «выбросить целиком» —
+            // мутант «минимальный кусок = 20R» выкинул бы все дуги, и остальные проверки промолчали.
+            Check("Развилка: над узлом кольцо осталось", ringAtNode <= 2f * radiusCells,
+                  $"ближайшая дуга кольца в {ringAtNode:0.0} ячейках от узла — куски кольца не доживают");
 
             Check("Развилка: над серединой рукава идёт скелетная ось",
                   nearestSkeleton <= radiusCells,
@@ -897,8 +908,17 @@ namespace MountainHarness
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 Skeleton.Thin(mask);
                 watch.Stop();
+
+                // Отбор колец меряется рядом: замер местной глубины (§5) стоит окна на точку контура,
+                // и это единственное место конвейера, где цена растёт от длины контура, а не площади.
+                var field = DistanceField.Build(mask);
+                var ringWatch = System.Diagnostics.Stopwatch.StartNew();
+                int rings = RingSelection.Select(field, mask.W, mask.H, r / mask.Cell).Count;
+                ringWatch.Stop();
+
                 Console.WriteLine($"кисть = {ratio:F0}·R: сетка {mask.W}×{mask.H}, толщина {brush / mask.Cell:F0} ячеек, " +
-                                  $"утоньшение {watch.Elapsed.TotalMilliseconds:F1} мс");
+                                  $"утоньшение {watch.Elapsed.TotalMilliseconds:F1} мс, " +
+                                  $"кольца ({rings} шт.) {ringWatch.Elapsed.TotalMilliseconds:F1} мс");
             }
         }
 
