@@ -47,6 +47,7 @@ namespace MountainHarness
             MaskBorderIsAlwaysBackground();
             AxesAreReproducible();
             ErasedGapSplitsAxesToo();
+            MountainsStayOnLand();
 
             GridPointIsTheCellCentre();
             LinkCountIsChosenByRatio();
@@ -635,6 +636,44 @@ namespace MountainHarness
             Check("Ластик: ось есть у обеих половин", left && right,
                   $"слева {(left ? "есть" : "нет")}, справа {(right ? "есть" : "нет")}");
             Check("Ластик: поперёк разрыва оси нет", !inside, "ось прошла по стёртому месту");
+        }
+
+        /// <summary>
+        /// Решение ДМ 2026-08-13: горы идут исключительно по суше. Подрезка сделана ОДНИМ местом —
+        /// маской, до поля расстояний, — поэтому проверяется тоже одним: где прошли оси и звенья.
+        /// Мутант: не звать подрезку — звенья уйдут в море на полторы сотни единиц.
+        ///
+        /// Оговорка, которую проверка утверждает намеренно и которую надо знать: подрезана МАССА, а
+        /// не рисунок. Гора растёт вверх по экрану, поэтому у северного берега её гребень всё равно
+        /// свесится над водой — подошва останется на суше. Иначе пришлось бы отодвигать горы от
+        /// берега на две их высоты, и берег оголился бы.
+        /// </summary>
+        static void MountainsStayOnLand()
+        {
+            const float coast = 200f;                       // суша слева от берега, море справа
+            Func<Vector2, bool> land = p => p.X < coast;
+
+            var settings = new MountainSettings { Radius = 22f, IsLand = land };
+            var acrossCoast = Blob(Stroke(1, 30f, new Vector2(60, 0), new Vector2(400, 0)));
+            var shapes = MountainGeometry.Build(acrossCoast, settings, out var mask, out var links);
+
+            Check("Суша: горы на суше всё-таки выросли", shapes.Count > 0, "гор не выросло вовсе");
+
+            float worst = float.NegativeInfinity;
+            foreach (var link in links)
+                foreach (var p in link.Pts)
+                    if (p.X > worst) worst = p.X;
+
+            // Допуск — ячейка: подрезка судит по ЦЕНТРУ ячейки, значит закрашенная ячейка законно
+            // выступает за берег на полшага сетки, а ось по ней — ещё на столько же.
+            float limit = coast + (mask?.Cell ?? 1f);
+            Check("Суша: звенья не уходят в море", worst <= limit,
+                  $"звено дошло до X = {worst:0.0} при берегe {coast} и допуске {limit:0.0}");
+
+            var inTheSea = Blob(Stroke(1, 30f, new Vector2(280, 0), new Vector2(430, 0)));
+            var drowned = MountainGeometry.Build(inTheSea, settings);
+            Check("Суша: мазок по морю не даёт ничего", drowned.Count == 0,
+                  $"в море выросло {drowned.Count} гор");
         }
 
         /// <summary>

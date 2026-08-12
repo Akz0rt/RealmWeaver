@@ -63,6 +63,15 @@ namespace WorldGen.Generation.Mountains
         /// ячеек: если не влезает, шаг увеличивается, пока не влезет.
         /// </summary>
         public static MountainMask Build(MountainBlob blob, float desiredCell, int maxCells = 4_000_000)
+            => Build(blob, desiredCell, null, maxCells);
+
+        /// <summary>
+        /// Тот же расчёт с ограничением по суше: ячейка, чей ЦЕНТР не на суше, гаснет. Считается
+        /// после всех мазков и ластиков — вода тут ровно такой же вычитающий штамп, только чужой.
+        /// isLand = null означает «ограничения нет».
+        /// </summary>
+        public static MountainMask Build(MountainBlob blob, float desiredCell,
+                                         Func<Vector2, bool> isLand, int maxCells = 4_000_000)
         {
             if (blob == null || blob.Strokes.Count == 0) return null;
 
@@ -92,7 +101,23 @@ namespace WorldGen.Generation.Mountains
 
             foreach (var stroke in blob.Strokes) mask.Stamp(stroke, 1);
             foreach (var eraser in blob.Erasers) mask.Stamp(eraser, 0);
+            if (isLand != null) mask.ClipToLand(isLand);
             return mask;
+        }
+
+        /// <summary>Гасит всё, что не на суше. Спрашиваем только у закрашенных ячеек: пустых в
+        /// маске большинство, а запрос стоит поиска ближайшей клетки карты.</summary>
+        void ClipToLand(Func<Vector2, bool> isLand)
+        {
+            for (int y = 0; y < H; y++)
+            {
+                for (int x = 0; x < W; x++)
+                {
+                    int i = y * W + x;
+                    if (Cells[i] == 0) continue;
+                    if (!isLand(GridToWorld(x, y))) Cells[i] = 0;
+                }
+            }
         }
 
         /// <summary>Кладёт мазок в маску: value = 1 рисует, 0 стирает.</summary>

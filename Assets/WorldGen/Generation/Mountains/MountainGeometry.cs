@@ -35,7 +35,7 @@ namespace WorldGen.Generation.Mountains
             foreach (var s in blob.Strokes) if (s.Radius < brush) brush = s.Radius;
             foreach (var s in blob.Erasers) if (s.Radius < brush) brush = s.Radius;
 
-            mask = MountainMask.Build(blob, MountainMask.ChooseCell(settings.Radius, brush));
+            mask = MountainMask.Build(blob, MountainMask.ChooseCell(settings.Radius, brush), settings.IsLand);
             if (mask == null) return new List<MountainShape>();
 
             var field = DistanceField.Build(mask);
