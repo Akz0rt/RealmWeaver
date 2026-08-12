@@ -75,6 +75,8 @@ namespace WorldGen.Rendering.Mountains
         [Tooltip("Цвет ленты следа кисти, которая видна, пока считаются горы.")]
         public Color previewColor = new Color(0.95f, 0.45f, 0.25f, 0.30f);
 
+        const string ContainerName = "СлойГор";
+
         readonly List<MountainStroke> strokes = new List<MountainStroke>();
         int nextStrokeId = 1;
 
@@ -266,7 +268,14 @@ namespace WorldGen.Rendering.Mountains
             {
                 var renderer = Renderer();
                 Transform parent = renderer != null ? renderer.transform : transform;
-                var go = new GameObject("СлойГор") { hideFlags = HideFlags.DontSave };
+
+                // Пересборка кода в редакторе обнуляет поля компонента, но объекты сцены переживает.
+                // Не поискав старый слой, мы завели бы второй поверх первого — и «Убрать всё»
+                // чистило бы только новый, а старый так и остался бы висеть на карте.
+                var stale = parent.Find(ContainerName);
+                if (stale != null) KillContainer(stale);
+
+                var go = new GameObject(ContainerName) { hideFlags = HideFlags.DontSave };
                 go.transform.SetParent(parent, false);
                 go.SetActive(visible);
                 container = go.transform;
@@ -306,10 +315,24 @@ namespace WorldGen.Rendering.Mountains
                 : new Vector2(renderer.mapWidth * 0.5f, renderer.mapHeight * 0.5f);
         }
 
+        void OnValidate()
+        {
+            if (container != null) container.gameObject.SetActive(visible);
+        }
+
         void OnDestroy()
         {
-            if (container != null) Kill(container.gameObject);
+            if (container != null) KillContainer(container);
             if (material != null) Kill(material);
+        }
+
+        /// <summary>Сносит слой вместе с мешами: уничтожение объекта их НЕ забирает, а слой
+        /// пересобирается за каждый мазок — иначе в памяти оседают мёртвые меши.</summary>
+        static void KillContainer(Transform target)
+        {
+            foreach (var filter in target.GetComponentsInChildren<MeshFilter>())
+                if (filter.sharedMesh != null) Kill(filter.sharedMesh);
+            Kill(target.gameObject);
         }
 
         static void Kill(Object target)
