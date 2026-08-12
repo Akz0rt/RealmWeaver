@@ -294,8 +294,9 @@ namespace WorldGen.Rendering
             corners = CornerGraphBuilder.Build(cells); // тот же детерминированный пересчёт, что внутри генератора - нужен здесь только для рендера рек по позициям corners
             lastGenParams = genParams;
             // Нарисованные реки стираются вместе со старым миром: их русла лежат в мировых
-            // координатах, а материк под ними теперь совсем другой.
+            // координатах, а материк под ними теперь совсем другой. Мазки гор — по той же причине.
             ClearPaintedRivers();
+            MountainLayer?.ClearStrokes();
             BuildMesh(cells);
             BuildRivers();
             BuildBorders();
@@ -338,8 +339,10 @@ namespace WorldGen.Rendering
             rivers = new List<River>();
             // Реки открываемого проекта поставит LoadPaintedRivers (ProjectMenuBar, сразу после
             // загрузки); здесь важно снять реки ПРЕДЫДУЩЕГО проекта — иначе они бы остались висеть
-            // над чужой картой, если в новом файле рек нет.
+            // над чужой картой, если в новом файле рек нет. С горами то же самое: их загрузка
+            // придёт следующей задачей (формат 19), а снимать чужие надо уже сейчас.
             ClearPaintedRivers();
+            MountainLayer?.ClearStrokes();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
             lastGenParams = referenceParams;
@@ -1069,6 +1072,107 @@ namespace WorldGen.Rendering
 
         /// <summary>Убирает все нарисованные реки (новая генерация мира).</summary>
         public void ClearPaintedRivers() => LoadPaintedRivers(null);
+
+        // ---- Кисть гор ----------------------------------------------------------
+        //
+        // Мазки гор живут в слое (MountainLayer): там же считается их геометрия, и там же они лежат
+        // для сохранения. Сюда вынесены только вызовы кисти — BrushToolController знает ровно один
+        // WorldMapRenderer и про слои знать не обязан. Устройство мазка повторяет реку: пока ЛКМ
+        // зажата, копится ломаная и показывается лента следа, а горы считаются на отпускании.
+
+        Mountains.MountainLayer mountainLayer;
+        List<System.Numerics.Vector2> mountainStrokePoints;
+        float mountainStrokeRadius;
+        bool mountainStrokeErase;
+
+        /// <summary>Слой гор на этом же объекте. null, если слой не повешен — кисть тогда молчит.</summary>
+        public Mountains.MountainLayer MountainLayer
+            => mountainLayer != null ? mountainLayer : (mountainLayer = GetComponent<Mountains.MountainLayer>());
+
+        public void BeginMountainStroke(float radius, bool erase)
+        {
+            mountainStrokePoints = new List<System.Numerics.Vector2>();
+            mountainStrokeRadius = Mathf.Max(1f, radius);
+            mountainStrokeErase = erase;
+        }
+
+        /// <summary>Добавляет точку в открытый мазок. Точки, легшие вплотную к предыдущей,
+        /// отбрасываются: за секунду ведения мышь даёт их сотни, а маску они рисуют одну и ту же.</summary>
+        public void AppendMountainPoint(System.Numerics.Vector2 point)
+        {
+            if (mountainStrokePoints == null) return;
+            if (mountainStrokePoints.Count > 0)
+            {
+                var last = mountainStrokePoints[mountainStrokePoints.Count - 1];
+                float step = mountainStrokeRadius * 0.25f;
+                if (System.Numerics.Vector2.DistanceSquared(last, point) < step * step) return;
+            }
+            mountainStrokePoints.Add(point);
+            MountainLayer?.ShowPreview(mountainStrokePoints, mountainStrokeRadius);
+        }
+
+        /// <summary>Закрывает мазок гор: он уходит в слой, слой пересчитывается. Ctrl+Z убирает
+        /// мазок из списка — и всё производное честно пересчитывается по оставшимся, поэтому мазок,
+        /// сливший два массива, при отмене разливает их обратно сам.</summary>
+        public void EndMountainStroke()
+        {
+            var points = mountainStrokePoints;
+            mountainStrokePoints = null;
+            var layer = MountainLayer;
+            if (layer == null || points == null || points.Count == 0) return;
+
+            var stroke = layer.AddStroke(points, mountainStrokeRadius, mountainStrokeErase);
+            if (stroke == null) { layer.ClearPreview(); return; }
+
+            brushUndo.RecordUndoAction(() => layer.RemoveStroke(stroke));
+        }
+
+        /// <summary>
+        /// Признак «здесь суша» для фонового счёта гор (решение ДМ: горы идут только по суше).
+        ///
+        /// Отдаём ЧИСТУЮ функцию по снимку, а не запрос к живой карте: спрашивать будут из фонового
+        /// потока, а живые клетки правит кисть. Главный путь — сглаженная маска берега из GPU-слоя:
+        /// та же, из которой нарисован берег, поэтому горы встают ровно по видимой кромке. Запасной
+        /// путь (GPU-рендер выключен) снимает сушу в свою сетку — грубее на пару единиц, зато тоже
+        /// снимок.
+        /// </summary>
+        public System.Func<System.Numerics.Vector2, bool> BuildLandProbe()
+        {
+            if (useGpuRenderer && gpuRenderer != null
+                && gpuRenderer.TryLandMaskSnapshot(out var mask, out int texW, out int texH,
+                                                   out float mw, out float mh))
+            {
+                return p =>
+                {
+                    int x = (int)(p.X / mw * texW);
+                    int y = (int)(p.Y / mh * texH);
+                    if (x < 0 || y < 0 || x >= texW || y >= texH) return false;
+                    return mask[y * texW + x];
+                };
+            }
+
+            const int Side = 384;
+            var lookup = nearestLookup;
+            if (lookup == null) return null;
+
+            var grid = new bool[Side * Side];
+            float cw = mapWidth / Side, ch = mapHeight / Side;
+            for (int y = 0; y < Side; y++)
+            {
+                for (int x = 0; x < Side; x++)
+                {
+                    var cell = lookup.FindNearest(new System.Numerics.Vector2((x + 0.5f) * cw, (y + 0.5f) * ch));
+                    grid[y * Side + x] = cell != null && !cell.EffectiveIsOcean && !cell.EffectiveIsLake;
+                }
+            }
+            return p =>
+            {
+                int x = (int)(p.X / cw);
+                int y = (int)(p.Y / ch);
+                if (x < 0 || y < 0 || x >= Side || y >= Side) return false;
+                return grid[y * Side + x];
+            };
+        }
 
         /// <summary>Материал предпросмотра русла: белый и полупрозрачный (Sprites/Default, очередь
         /// Transparent, ZWrite off) — цвет несут вершины меша.</summary>

@@ -47,7 +47,10 @@ namespace WorldGen.Rendering
         Text sizeValue, strengthValue;
         Text sizeLabel;              // подпись слайдера размера: «Размер» / «Ширина реки»
         GameObject strengthGroupGO;
-        GameObject shapeRowGO;       // строка «Форма» — реке не нужна
+        GameObject shapeRowGO;       // строка «Форма» — реке и горам не нужна
+        Slider mountainSizeSlider;   // «Размер гор» — только для инструмента «Горы»
+        Text mountainSizeValue;
+        GameObject mountainSizeGroupGO;
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
@@ -149,15 +152,19 @@ namespace WorldGen.Rendering
             bool isBiome = target == BrushTool.Biome;
             bool isWater = target == BrushTool.Water;
             bool isRiver = target == BrushTool.River;
+            bool isMountain = target == BrushTool.Mountain;
             if (modeCaptionGO != null) modeCaptionGO.SetActive(!isBiome);
             if (modeSegmentGO != null) modeSegmentGO.SetActive(!isBiome);
             RelabelModeSegment(target);
-            // Сгладить не применим ни к воде, ни к реке: если выбран - переключаем на первый режим.
-            if ((isWater || isRiver) && brushController != null && brushController.mode == BrushMode.Smooth)
+            // Сгладить не применим ни к воде, ни к реке, ни к горам: если выбран — переключаем на первый.
+            if ((isWater || isRiver || isMountain) && brushController != null && brushController.mode == BrushMode.Smooth)
                 OnModeChanged(BrushMode.Raise);
 
             // Форма отпечатка реке не нужна: русло идёт по клетке под курсором, а не по площади.
-            if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver);
+            // Горам не нужна тоже: мазок — лента круглой кисти.
+            if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver && !isMountain);
+            if (mountainSizeGroupGO != null) mountainSizeGroupGO.SetActive(isMountain);
+            SyncMountainSlider(isMountain);
             SyncSizeSliderTo(target);
 
             UpdateBiomePaletteVisibility();
@@ -170,10 +177,10 @@ namespace WorldGen.Rendering
         void RelabelModeSegment(BrushTool target)
         {
             bool water = target == BrushTool.Water;
-            bool river = target == BrushTool.River;
-            if (modeSegTxt.TryGetValue(BrushMode.Raise, out var r)) r.text = water ? "Океан" : river ? "Рисовать" : "Поднять";
-            if (modeSegTxt.TryGetValue(BrushMode.Lower, out var l)) l.text = water ? "Суша" : river ? "Стереть" : "Опустить";
-            if (modeSegBg.TryGetValue(BrushMode.Smooth, out var s)) s.gameObject.SetActive(!water && !river);
+            bool draws = target == BrushTool.River || target == BrushTool.Mountain;
+            if (modeSegTxt.TryGetValue(BrushMode.Raise, out var r)) r.text = water ? "Океан" : draws ? "Рисовать" : "Поднять";
+            if (modeSegTxt.TryGetValue(BrushMode.Lower, out var l)) l.text = water ? "Суша" : draws ? "Стереть" : "Опустить";
+            if (modeSegBg.TryGetValue(BrushMode.Smooth, out var s)) s.gameObject.SetActive(!water && !draws);
         }
 
         /// <summary>Ползунок «Размер» один, а величины у инструментов разные: у обычной кисти это
@@ -199,6 +206,20 @@ namespace WorldGen.Rendering
             // Присвоение поднимет onValueChanged, а тот уже разложит значение в нужное поле
             // (см. колбэк слайдера: он смотрит на текущий инструмент).
             sizeSlider.value = Mathf.Clamp(want, sizeSlider.minValue, sizeSlider.maxValue);
+        }
+
+        /// <summary>Подтягивает «Размер гор» из слоя: число живёт там, панель его только показывает.
+        /// Иначе после перезахода в инструмент ползунок молча вернул бы своё начальное значение и
+        /// затёр им подобранное.</summary>
+        void SyncMountainSlider(bool isMountain)
+        {
+            if (!isMountain || mountainSizeSlider == null || mapRenderer == null) return;
+            var layer = mapRenderer.MountainLayer;
+            if (layer == null) return;
+            mountainSizeSlider.SetValueWithoutNotify(
+                Mathf.Clamp(layer.mountainRadius, mountainSizeSlider.minValue, mountainSizeSlider.maxValue));
+            // Подпись пишем сами: значение поставлено без уведомления, и колбэк её не тронул.
+            if (mountainSizeValue != null) mountainSizeValue.text = $"{Mathf.RoundToInt(layer.mountainRadius)} px";
         }
 
         void OnModeChanged(BrushMode mode)
@@ -400,6 +421,18 @@ namespace WorldGen.Rendering
                 else brushController.brushRadius = v;
             });
 
+            // Ползунков у гор два, и это разные вещи: «Размер» — ширина мазка (сколько земли занял
+            // массив), «Размер гор» — величина ОДНОЙ горы. Второй меняет всю геометрию слоя, поэтому
+            // слой пересчитывается заново — на отпускании ползунка, а не на каждый его пиксель.
+            BuildLabeledSlider(t, "Размер гор", 3f, 40f, 10f, out mountainSizeSlider, out mountainSizeValue,
+                               out mountainSizeGroupGO, isPercent: false, v =>
+            {
+                var layer = mapRenderer != null ? mapRenderer.MountainLayer : null;
+                if (layer == null) return;
+                layer.mountainRadius = v;
+                layer.RebuildSoon();
+            });
+
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
             {
                 if (brushController != null) brushController.strength = v;
@@ -419,9 +452,10 @@ namespace WorldGen.Rendering
             grid.spacing = new Vector2(6f, 6f);
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             grid.constraintCount = 2;
-            // Высота под ТРИ ряда: шесть пилюль в две колонки. Раньше стояло два ряда на пять пилюль —
-            // последний ряд вылезал за отведённую высоту и наезжал на подпись «РЕЖИМ».
-            gridGO.AddComponent<LayoutElement>().preferredHeight = 28f * 3f + 6f * 2f;
+            // Высота под ЧЕТЫРЕ ряда: семь пилюль в две колонки. Число рядов приходится держать
+            // руками: у сетки высота не считается по содержимому, и недосчитанный ряд вылезает за
+            // отведённое место и наезжает на подпись «РЕЖИМ» — так уже было при пятой пилюле.
+            gridGO.AddComponent<LayoutElement>().preferredHeight = 28f * 4f + 6f * 3f;
 
             AddPill(gridGO.transform, BrushTool.Elevation, "Высота");
             AddPill(gridGO.transform, BrushTool.Temperature, "Температура");
@@ -429,6 +463,7 @@ namespace WorldGen.Rendering
             AddPill(gridGO.transform, BrushTool.Biome, "Биом");
             AddPill(gridGO.transform, BrushTool.Water, "Вода");
             AddPill(gridGO.transform, BrushTool.River, "Реки");
+            AddPill(gridGO.transform, BrushTool.Mountain, "Горы");
         }
 
         void AddPill(Transform parent, BrushTool target, string label)

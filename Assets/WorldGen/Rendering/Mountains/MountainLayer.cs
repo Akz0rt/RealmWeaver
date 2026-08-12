@@ -65,6 +65,8 @@ namespace WorldGen.Rendering.Mountains
         [Range(0, 255)] public int crestAlpha = 90;
         [Tooltip("Показывать ли слой.")]
         public bool visible = true;
+        [Tooltip("Горы только по суше (решение ДМ). Снять — можно рисовать и по воде.")]
+        public bool onlyOnLand = true;
 
         [Header("Цвет")]
         [Tooltip("Брать концы тональной шкалы из палитры карты (слоты MtnL и MtnS). Снять — красить своими цветами ниже.")]
@@ -88,6 +90,7 @@ namespace WorldGen.Rendering.Mountains
         Task<List<MountainShape>> pending;
         int generation;
         int pendingGeneration;
+        float rebuildAt = -1f;
 
         public IReadOnlyList<MountainStroke> Strokes => strokes;
 
@@ -109,7 +112,9 @@ namespace WorldGen.Rendering.Mountains
         public void RemoveStroke(MountainStroke stroke)
         {
             if (stroke == null || !strokes.Remove(stroke)) return;
-            Rebuild();
+            // Отложенно: «Отменить всё» снимает мазки по одному, и на каждый считать заново — это
+            // десяток лишних полных пересчётов подряд ради последнего.
+            RebuildSoon(0.05f);
         }
 
         public void ClearStrokes()
@@ -165,8 +170,25 @@ namespace WorldGen.Rendering.Mountains
             pending = Task.Run(() => Compute(snapshot, settings));
         }
 
+        /// <summary>Просит пересчёт «попозже». Нужен ползункам: ДМ ведёт ползунок, значение меняется
+        /// на каждый пиксель, а полный пересчёт стоит десятки миллисекунд — считать столько раз
+        /// незачем. Каждый новый вызов отодвигает срок, поэтому считается один раз, когда ползунок
+        /// замер.</summary>
+        public void RebuildSoon(float delay = 0.2f)
+        {
+            // Вне игры Update не тикает — отложенный пересчёт там просто не наступил бы никогда.
+            if (!Application.isPlaying) { Rebuild(); return; }
+            rebuildAt = Time.realtimeSinceStartup + Mathf.Max(0f, delay);
+        }
+
         void Update()
         {
+            if (rebuildAt > 0f && Time.realtimeSinceStartup >= rebuildAt)
+            {
+                rebuildAt = -1f;
+                Rebuild();
+            }
+
             if (pending == null || !pending.IsCompleted) return;
 
             var finished = pending;
@@ -221,8 +243,11 @@ namespace WorldGen.Rendering.Mountains
             };
         }
 
+        /// <summary>Настройки для одного пересчёта. Признак суши берётся СНИМКОМ здесь, на главном
+        /// потоке: считать будут в фоне, а спрашивать живую карту оттуда нельзя.</summary>
         MountainSettings BuildSettings() => new MountainSettings
         {
+            IsLand = onlyOnLand ? Renderer()?.BuildLandProbe() : null,
             Radius = Mathf.Max(0.01f, mountainRadius),
             LinkFactor = linkLengthFactor,
             LengthJitter = lengthJitter,

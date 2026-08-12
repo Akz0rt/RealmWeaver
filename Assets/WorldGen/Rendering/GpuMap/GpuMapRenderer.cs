@@ -52,6 +52,23 @@ namespace WorldGen.Rendering.GpuMap
         bool labelDirty;
         int lblMinX, lblMinY, lblMaxX, lblMaxY;
 
+        /// <summary>
+        /// Снимок сглаженной маски суша/вода — той самой, из которой нарисован берег. Отдаётся
+        /// именно СНИМКОМ, одним куском вместе с размерами: читать его будет фоновый счёт слоя гор,
+        /// а перепекание карты подменяет массив целиком (isLandMask = new bool[...]). Взяв ссылку
+        /// один раз, фон досчитает по старой, но целой карте, а не наполовину по новой.
+        /// Возвращает false, пока карта не испечена.
+        /// </summary>
+        public bool TryLandMaskSnapshot(out bool[] mask, out int texW, out int texH,
+                                        out float mapW, out float mapH)
+        {
+            mask = isLandMask;
+            texW = bakedTexW; texH = bakedTexH;
+            mapW = bakedMapW; mapH = bakedMapH;
+            return mask != null && texW > 0 && texH > 0 && mapW > 0f && mapH > 0f
+                   && mask.Length >= texW * texH;
+        }
+
         void EnsureMaterial()
         {
             if (Material != null) return;

@@ -9,7 +9,7 @@ namespace WorldGen.Rendering
 {
     /// <summary>Что редактирует кисть. Elevation/Temperature/Moisture — относительное изменение;
     /// Biome — прямая замена биома выбранным из палитры; River — рисунок русла поверх карты.</summary>
-    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water, Region, River }
+    public enum BrushTool { Elevation, Temperature, Moisture, Biome, Water, Region, River, Mountain }
 
     /// <summary>Режим для Elevation/Temperature/Moisture. Для Biome не применяется.</summary>
     public enum BrushMode { Raise, Lower, Smooth }
@@ -136,6 +136,10 @@ namespace WorldGen.Rendering
                 // Река рисуется одним мазком-цепочкой, поэтому мазок надо открыть ДО первой точки.
                 // В режиме «Стереть» мазка нет: клик убирает реку под курсором и на этом всё.
                 if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.BeginRiverStroke(riverWidth);
+                // Ластик гор — тоже МАЗОК (решение ДМ): им отгрызают край массива и разрезают его
+                // надвое, поэтому у него и начало, и конец такие же, как у рисующего.
+                if (activeTool == BrushTool.Mountain)
+                    mapRenderer.BeginMountainStroke(brushRadius, IsMountainEraseMode);
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -148,6 +152,8 @@ namespace WorldGen.Rendering
                 // Реку закрываем ПЕРВОЙ: EndRiverStroke кладёт действие отмены в открытый мазок, а
                 // EndBrushStroke ниже этот мазок уже отправляет в историю.
                 if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.EndRiverStroke();
+                // Горы — по той же причине ПЕРВЫМИ: EndMountainStroke кладёт отмену в открытый мазок.
+                if (activeTool == BrushTool.Mountain) mapRenderer.EndMountainStroke();
                 if (regionStrokeTouched)
                 {
                     // 30% rule: a lake the region stroke covered enough of joins the painted region wholesale.
@@ -204,8 +210,19 @@ namespace WorldGen.Rendering
         /// — см. EditorBrushPanel.RelabelModeSegment.</summary>
         bool IsRiverEraseMode => activeTool == BrushTool.River && mode == BrushMode.Lower;
 
+        /// <summary>У гор сегмент режима тоже переименован в Рисовать(Raise)/Стереть(Lower).</summary>
+        bool IsMountainEraseMode => activeTool == BrushTool.Mountain && mode == BrushMode.Lower;
+
         void ApplyStamp(Vector2 site)
         {
+            if (activeTool == BrushTool.Mountain)
+            {
+                // Горы не свойство клеток: мазок копится в мировых координатах, клетки под ним не
+                // трогаются вовсе. Рельеф от гор придёт отдельной работой и тоже будет производным.
+                mapRenderer.AppendMountainPoint(new System.Numerics.Vector2(site.x, site.y));
+                return;
+            }
+
             if (activeTool == BrushTool.River)
             {
                 var point = new System.Numerics.Vector2(site.x, site.y);
@@ -376,7 +393,8 @@ namespace WorldGen.Rendering
             bool river = activeTool == BrushTool.River;
             float radius = river ? Mathf.Max(riverWidth * 0.5f, 1f) : brushRadius;
 
-            if (shape == BrushShape.Square && !river)
+            // Горам квадрат не положен: мазок — это лента круглой кисти, и штамп у неё круглый.
+            if (shape == BrushShape.Square && !river && activeTool != BrushTool.Mountain)
             {
                 cursorRing.positionCount = 4;
                 cursorRing.SetPosition(0, new Vector3(site.x - radius, cursorHeight, site.y - radius));
