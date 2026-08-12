@@ -22,29 +22,20 @@ namespace WorldGen.Rendering.Mountains
     public static class MountainMeshBuilder
     {
         /// <summary>
-        /// yHeight — высота слоя над плоскостью карты; far/near — концы тональной шкалы (дальние
-        /// светлее); ink — цвет линии гребня; crestWidth — её толщина в мировых единицах.
-        /// Список сортируется на месте: дальняя гора (её ближайшая точка ВЫШЕ по экрану) идёт первой.
+        /// Складывает горы в готовый меш. Порядок подачи — тот, в котором список пришёл: сортировку
+        /// делает чистый слой (MountainGeometry.SortForPainting), тон — он же (AssignTone), здесь
+        /// только выбирается цвет по готовому тону.
+        ///
+        /// mesh — меш, который надо переписать. Пересчёт идёт за каждый мазок, и меш тут крупный;
+        /// поэтому его переиспользуют, а не заводят новый: иначе за мазок в памяти оседает десяток
+        /// мёртвых мешей, и убирать их приходится вручную.
         /// </summary>
-        public static UnityEngine.Mesh Build(List<MountainShape> shapes, float yHeight,
-                                             UnityEngine.Color32 far, UnityEngine.Color32 near,
-                                             UnityEngine.Color32 ink, float crestWidth)
+        public static void Build(UnityEngine.Mesh mesh, List<MountainShape> shapes,
+                                 in MountainPaintStyle style)
         {
-            var mesh = new UnityEngine.Mesh();
-            if (shapes == null || shapes.Count == 0) return mesh;
-
-            // Порядок задаёт чистый слой: при равной глубине там доразбирают по ярусу, а простая
-            // сортировка по Depth ещё и неустойчива — рисунок ездил бы между запусками.
-            MountainGeometry.SortForPainting(shapes);
-
-            float depthMin = float.PositiveInfinity, depthMax = float.NegativeInfinity;
-            foreach (var s in shapes)
-            {
-                if (s.Depth < depthMin) depthMin = s.Depth;
-                if (s.Depth > depthMax) depthMax = s.Depth;
-            }
-            float span = depthMax - depthMin;
-            if (span <= 0f) span = 1f;
+            if (mesh == null) return;
+            mesh.Clear();
+            if (shapes == null || shapes.Count == 0) return;
 
             var verts = new List<UnityEngine.Vector3>();
             var colors = new List<UnityEngine.Color32>();
@@ -52,11 +43,9 @@ namespace WorldGen.Rendering.Mountains
 
             foreach (var shape in shapes)
             {
-                // 0 — самая дальняя гора, 1 — самая ближняя.
-                float t = (depthMax - shape.Depth) / span;
-                var fill = UnityEngine.Color32.Lerp(far, near, t);
-                AddFill(shape, fill, yHeight, verts, colors, tris);
-                AddCrest(shape, ink, crestWidth, yHeight, verts, colors, tris);
+                var fill = UnityEngine.Color32.Lerp(style.Far, style.Near, shape.Tone);
+                AddFill(shape, fill, style.LayerY, verts, colors, tris);
+                AddCrest(shape, style.Ink, style.CrestWidth, style.LayerY, verts, colors, tris);
             }
 
             mesh.indexFormat = verts.Count > 65000
@@ -66,6 +55,13 @@ namespace WorldGen.Rendering.Mountains
             mesh.SetColors(colors);
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
+        }
+
+        /// <summary>Тот же меш, но новым объектом — так удобнее одноразовым вызовам (шип).</summary>
+        public static UnityEngine.Mesh Build(List<MountainShape> shapes, in MountainPaintStyle style)
+        {
+            var mesh = new UnityEngine.Mesh();
+            Build(mesh, shapes, style);
             return mesh;
         }
 
@@ -76,7 +72,17 @@ namespace WorldGen.Rendering.Mountains
                                                    UnityEngine.Color32 color)
         {
             var mesh = new UnityEngine.Mesh();
-            if (line == null || line.Count < 2 || width <= 0f) return mesh;
+            BuildRibbon(mesh, line, width, yHeight, color);
+            return mesh;
+        }
+
+        /// <summary>Та же лента в готовый меш: превью пересобирается на каждое движение курсора.</summary>
+        public static void BuildRibbon(UnityEngine.Mesh mesh, List<Vec2> line, float width,
+                                       float yHeight, UnityEngine.Color32 color)
+        {
+            if (mesh == null) return;
+            mesh.Clear();
+            if (line == null || line.Count < 2 || width <= 0f) return;
 
             var verts = new List<UnityEngine.Vector3>(line.Count * 2);
             var colors = new List<UnityEngine.Color32>(line.Count * 2);
@@ -88,40 +94,20 @@ namespace WorldGen.Rendering.Mountains
             mesh.SetColors(colors);
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
-            return mesh;
         }
 
-        /// <summary>Тело горы. Силуэт монотонен по горизонтали — гребень и ближняя дуга подошвы идут
-        /// слева направо между одними и теми же концами, — поэтому он сшивается проходом по двум
-        /// цепям сразу, без общего алгоритма триангуляции.</summary>
+        /// <summary>Тело горы: точки как есть, треугольники — из чистого слоя, который умеет сшивать
+        /// полосу и при завернувшейся подошве (см. MountainTriangulation).</summary>
         static void AddFill(MountainShape shape, UnityEngine.Color32 color, float y,
                             List<UnityEngine.Vector3> verts, List<UnityEngine.Color32> colors, List<int> tris)
         {
-            var crest = shape.Crest;
-            var front = shape.Front;
-            if (crest.Count < 2 || front.Count < 2) return;
+            var indices = MountainTriangulation.Fill(shape);
+            if (indices.Length == 0) return;
 
             int baseIndex = verts.Count;
-            foreach (var p in crest) { verts.Add(new UnityEngine.Vector3(p.X, y, p.Y)); colors.Add(color); }
-            int frontStart = verts.Count;
-            foreach (var p in front) { verts.Add(new UnityEngine.Vector3(p.X, y, p.Y)); colors.Add(color); }
-
-            int i = 0, j = 0;
-            while (i < crest.Count - 1 || j < front.Count - 1)
-            {
-                bool advanceCrest = j >= front.Count - 1 ||
-                                    (i < crest.Count - 1 && crest[i + 1].X <= front[j + 1].X);
-                if (advanceCrest)
-                {
-                    tris.Add(baseIndex + i); tris.Add(frontStart + j); tris.Add(baseIndex + i + 1);
-                    i++;
-                }
-                else
-                {
-                    tris.Add(baseIndex + i); tris.Add(frontStart + j); tris.Add(frontStart + j + 1);
-                    j++;
-                }
-            }
+            foreach (var p in shape.Crest) { verts.Add(new UnityEngine.Vector3(p.X, y, p.Y)); colors.Add(color); }
+            foreach (var p in shape.Front) { verts.Add(new UnityEngine.Vector3(p.X, y, p.Y)); colors.Add(color); }
+            foreach (int index in indices) tris.Add(baseIndex + index);
         }
 
         /// <summary>Линия гребня: лента постоянной ширины вдоль двух склонов. Без шапок и без

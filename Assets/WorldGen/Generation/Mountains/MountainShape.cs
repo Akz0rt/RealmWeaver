@@ -33,5 +33,10 @@ namespace WorldGen.Generation.Mountains
 
         /// <summary>Ярус звена (§11).</summary>
         public int Tier;
+
+        /// <summary>Тон воздушной перспективы: 0 — самая дальняя гора массива (светлая), 1 — самая
+        /// ближняя (тёмная). Считается из Depth (MountainGeometry.AssignTone), а КАКИМИ цветами
+        /// закрасить эти два конца, решает уже рендер по палитре карты.</summary>
+        public float Tone;
     }
 }

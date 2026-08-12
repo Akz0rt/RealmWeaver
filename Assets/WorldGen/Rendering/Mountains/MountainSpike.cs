@@ -162,10 +162,20 @@ namespace WorldGen.Rendering.Mountains
                 if (shape != null) shapes.Add(shape);
             }
 
+            // Тон раздаёт чистый слой: у шипа горы построены руками, и без этого вызова они все
+            // вышли бы одного — самого дальнего — цвета.
+            MountainGeometry.AssignTone(shapes);
+            MountainGeometry.SortForPainting(shapes);
+
+            var style = new MountainPaintStyle
+            {
+                Far = farColor, Near = nearColor, Ink = inkColor,
+                CrestWidth = crestWidth, LayerY = layerY,
+            };
+
             var body = new GameObject("Горы");
             body.transform.SetParent(container, false);
-            body.AddComponent<MeshFilter>().sharedMesh = MountainMeshBuilder.Build(
-                shapes, layerY, farColor, nearColor, inkColor, crestWidth);
+            body.AddComponent<MeshFilter>().sharedMesh = MountainMeshBuilder.Build(shapes, style);
             body.AddComponent<MeshRenderer>().sharedMaterial = material;
 
             Debug.Log($"[Горы] Шип собран: звеньев {links.Count}, гор {shapes.Count}, R={mountainRadius}.");

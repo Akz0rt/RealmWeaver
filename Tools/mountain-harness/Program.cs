@@ -66,6 +66,8 @@ namespace MountainHarness
             ApexHeight();
             FreeEndStretch();
             NearVerticalLinkIsKnownArtifact();
+            TriangulationCoversTheSilhouetteExactly();
+            ToneRunsFromFarToNear();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
@@ -345,9 +347,99 @@ namespace MountainHarness
             var shape = Mound(link, 1.4f, 1.4f);
             if (shape == null) { Fail("Изогнутое вертикальное звено", "гора не построена"); return; }
 
-            Check("Изогнутое вертикальное звено: подошва заворачивается (ждём фикса в задаче 5)",
+            Check("Изогнутое вертикальное звено: подошва заворачивается назад по X",
                   !IsMonotone(shape.Front),
-                  "подошва стала монотонной — похоже, изъян починили: перепиши проверку под новое правило");
+                  "подошва стала монотонной — фикстура перестала быть трудной, подбери другую дугу");
+        }
+
+        /// <summary>
+        /// Триангуляция обязана выложить силуэт горы РОВНО один раз: без налезающих друг на друга
+        /// треугольников, без вылезающих за силуэт и без вывернутых. Фикстура — то самое изогнутое
+        /// почти вертикальное звено, у которого подошва заворачивается назад по X (проверка выше
+        /// как раз это и утверждает): сшивка «продвигай отставшего по X» на нём и ломалась.
+        ///
+        /// Два утверждения, и оба нужны. Сумма МОДУЛЕЙ площадей ловит перекрытие и вылет: лишний
+        /// треугольник добавляет площади. Модуль СУММЫ ловит вывернутый: он вычитается вместо того,
+        /// чтобы прибавляться. Одной суммы модулей мало — вывернутый треугольник она считает
+        /// добросовестным, а на экране его не видно вовсе (грани не отсекаются).
+        /// Мутант: вернуть сравнение по X вместо доли пройденной длины.
+        /// </summary>
+        static void TriangulationCoversTheSilhouetteExactly()
+        {
+            var pts = new List<Vector2>();
+            for (int i = 0; i <= 8; i++)
+            {
+                double a = Math.PI * (0.5 - 0.16 * i / 8.0);
+                pts.Add(new Vector2(150f * (float)Math.Sin(a), 150f * (float)Math.Cos(a)));
+            }
+            var link = new AxisLink { Pts = pts, MidW = 20f };
+            for (int i = 0; i < pts.Count; i++) link.Ws.Add(20f);
+            link.Mid = pts[pts.Count / 2];
+            link.Tan = Vector2.Normalize(pts[pts.Count - 1] - pts[0]);
+
+            var shape = Mound(link, 1.4f, 1.4f);
+            if (shape == null) { Fail("Триангуляция", "гора не построена"); return; }
+
+            // Силуэт: гребень слева направо, следом подошва справа налево.
+            var loop = new List<Vector2>(shape.Crest);
+            for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
+            float silhouette = Math.Abs(SignedArea(loop));
+
+            var verts = new List<Vector2>(shape.Crest);
+            verts.AddRange(shape.Front);
+            int[] tris = MountainTriangulation.Fill(shape);
+
+            float sum = 0f, absSum = 0f;
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                float area = SignedArea(new List<Vector2> { verts[tris[i]], verts[tris[i + 1]], verts[tris[i + 2]] });
+                sum += area;
+                absSum += Math.Abs(area);
+            }
+
+            Check("Триангуляция: треугольники не налезают и не вылезают",
+                  Near(absSum, silhouette, silhouette * 0.005f),
+                  $"сумма модулей {absSum:0.#} против площади силуэта {silhouette:0.#}");
+            Check("Триангуляция: ни один треугольник не вывернут",
+                  Near(Math.Abs(sum), silhouette, silhouette * 0.005f),
+                  $"модуль суммы {Math.Abs(sum):0.#} против площади силуэта {silhouette:0.#}");
+        }
+
+        /// <summary>
+        /// Тон воздушной перспективы: 0 у самой дальней горы массива, 1 у самой ближней. «Дальше» —
+        /// это ВЫШЕ по экрану, то есть больше Y. При заданном размахе шкала набирается на первых его
+        /// единицах вглубь, а не растягивается на весь массив.
+        /// Мутанты: перевернуть шкалу; при заданном размахе не ограничивать её единицей.
+        /// </summary>
+        static void ToneRunsFromFarToNear()
+        {
+            var far = new MountainShape { Depth = 100f };
+            var middle = new MountainShape { Depth = 60f };
+            var near = new MountainShape { Depth = 20f };
+            var shapes = new List<MountainShape> { far, middle, near };
+
+            MountainGeometry.AssignTone(shapes);
+            Check("Тон: дальняя гора светлая, ближняя тёмная",
+                  Near(far.Tone, 0f, 1e-4f) && Near(near.Tone, 1f, 1e-4f),
+                  $"дальняя {far.Tone:0.###}, ближняя {near.Tone:0.###}");
+            Check("Тон: середина посередине", Near(middle.Tone, 0.5f, 1e-4f), $"{middle.Tone:0.###}");
+
+            MountainGeometry.AssignTone(shapes, 40f);
+            Check("Тон: заданный размах набирается и упирается в единицу",
+                  Near(middle.Tone, 1f, 1e-4f) && Near(near.Tone, 1f, 1e-4f),
+                  $"середина {middle.Tone:0.###}, ближняя {near.Tone:0.###}");
+        }
+
+        /// <summary>Площадь замкнутого многоугольника со знаком (формула шнурков).</summary>
+        static float SignedArea(List<Vector2> loop)
+        {
+            float area = 0f;
+            for (int i = 0; i < loop.Count; i++)
+            {
+                Vector2 a = loop[i], b = loop[(i + 1) % loop.Count];
+                area += a.X * b.Y - b.X * a.Y;
+            }
+            return area * 0.5f;
         }
 
         // ── §6–§7 «Скелет и доводка оси» ────────────────────────────────────────────────────────

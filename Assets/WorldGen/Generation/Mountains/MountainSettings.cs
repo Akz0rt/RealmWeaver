@@ -44,6 +44,10 @@ namespace WorldGen.Generation.Mountains
         /// <summary>Высота горы нулевого яруса как доля высоты самого глубокого (§11).</summary>
         public float EdgeHeight = 0.55f;
 
+        /// <summary>Размах тональной шкалы в мировых единицах. Ноль — «по фактической глубине
+        /// массива», как в прототипе (см. MountainGeometry.AssignTone).</summary>
+        public float ToneSpan = 0f;
+
         public float LinkLength => Math.Max(1e-4f, Radius * LinkFactor);
 
         /// <summary>Сжатие подошвы по вертикали — обратное анизотропии.</summary>
