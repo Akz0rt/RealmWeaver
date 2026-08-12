@@ -35,6 +35,7 @@ namespace MountainHarness
             SpurIsPruned();
             BubbleCollapsesButDonutSurvives();
             ForkStitchesIntoOneAxis();
+            ObtuseBranchDoesNotStealTheAxis();
             RingCoverageSuppressesSkeleton();
             ErasedGapSplitsAxesToo();
 
@@ -416,10 +417,9 @@ namespace MountainHarness
         }
 
         /// <summary>
-        /// В развилке сшиваются те концы, что идут НАВСТРЕЧУ друг другу. Проверяется не число осей, а
-        /// то, что сквозная ось действительно сквозная: мутант «брать первую попавшуюся пару, не
-        /// сортируя по прямизне» даёт то же самое число осей, но склеивает поперечину с половиной
-        /// перекладины. Мутант «не сшивать вовсе» ловится числом.
+        /// В развилке сшиваются те концы, что идут НАВСТРЕЧУ друг другу. Отросток тут строго
+        /// поперечный, поэтому порог «прямизны» отбраковывает его в одиночку: мутант, которого ловит
+        /// эта фикстура, — «не сшивать вовсе». За сортировку по прямизне отвечает следующая проверка.
         /// </summary>
         static void ForkStitchesIntoOneAxis()
         {
@@ -438,6 +438,28 @@ namespace MountainHarness
             foreach (var p in stitched) if (HasPoint(p, 5, 20) && HasPoint(p, 45, 20)) through = true;
             Check("Сшивка: перекладина стала одной осью", through,
                   "сквозной оси нет — сшили не те концы");
+        }
+
+        /// <summary>
+        /// Отросток под тупым углом: с одной из половин перекладины он тоже «идёт навстречу», порог
+        /// проходят ОБЕ пары, и выбрать правильную может только сортировка по прямизне. Мутант «брать
+        /// пары в том порядке, в каком они перечислились» приклеивает отросток к правой половине, а
+        /// левую оставляет отдельной осью. Осей при этом всё равно две — поэтому проверяется не их
+        /// число, а то, что сквозная ось действительно сквозная.
+        /// </summary>
+        static void ObtuseBranchDoesNotStealTheAxis()
+        {
+            const int w = 60, h = 40;
+            var sk = new byte[w * h];
+            HLine(sk, w, 5, 45, 25);
+            Line(sk, w, 25, 24, 8, 15);          // отросток примерно под 150°
+
+            var stitched = AxisStitching.Stitch(Skeleton.Branches(sk, w, h, 4));
+
+            bool through = false;
+            foreach (var p in stitched) if (HasPoint(p, 5, 25) && HasPoint(p, 45, 25)) through = true;
+            Check("Сшивка: тупой отросток не перехватил ось", through,
+                  "перекладина разорвана — пары выбраны не по прямизне");
         }
 
         /// <summary>
@@ -524,6 +546,22 @@ namespace MountainHarness
         static void VLine(byte[] raster, int w, int x, int y0, int y1)
         {
             for (int y = y0; y <= y1; y++) raster[y * w + x] = 1;
+        }
+
+        /// <summary>Отрезок по Брезенхэму — нужен наклонным фикстурам.</summary>
+        static void Line(byte[] raster, int w, int x0, int y0, int x1, int y1)
+        {
+            int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+            int dy = -Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+            int err = dx + dy;
+            while (true)
+            {
+                raster[y0 * w + x0] = 1;
+                if (x0 == x1 && y0 == y1) break;
+                int e2 = 2 * err;
+                if (e2 >= dy) { err += dy; x0 += sx; }
+                if (e2 <= dx) { err += dx; y0 += sy; }
+            }
         }
 
         static bool HasPoint(AxisPath path, float x, float y)
