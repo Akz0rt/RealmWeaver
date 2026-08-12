@@ -1081,6 +1081,7 @@ namespace WorldGen.Rendering
         // зажата, копится ломаная и показывается лента следа, а горы считаются на отпускании.
 
         Mountains.MountainLayer mountainLayer;
+        bool[] landProbeGrid;   // запасной путь BuildLandProbe: снимок суши в своей сетке
         List<System.Numerics.Vector2> mountainStrokePoints;
         float mountainStrokeRadius;
         bool mountainStrokeErase;
@@ -1136,8 +1137,20 @@ namespace WorldGen.Rendering
         /// путь (GPU-рендер выключен) снимает сушу в свою сетку — грубее на пару единиц, зато тоже
         /// снимок.
         /// </summary>
+        /// <summary>
+        /// Суша поменялась (мазок воды): снимок для запасного пути устарел, а горы, оказавшиеся
+        /// теперь в море, обязаны исчезнуть. Слой считает подрезку по снимку и сам про правку воды
+        /// не узнаёт — сказать ему приходится отсюда.
+        /// </summary>
+        public void LandChanged()
+        {
+            landProbeGrid = null;
+            MountainLayer?.RebuildSoon();
+        }
+
         public System.Func<System.Numerics.Vector2, bool> BuildLandProbe()
         {
+
             if (useGpuRenderer && gpuRenderer != null
                 && gpuRenderer.TryLandMaskSnapshot(out var mask, out var rivers, out int texW, out int texH,
                                                    out float mw, out float mh))
@@ -1159,15 +1172,22 @@ namespace WorldGen.Rendering
             var lookup = nearestLookup;
             if (lookup == null) return null;
 
-            var grid = new bool[Side * Side];
             float cw = mapWidth / Side, ch = mapHeight / Side;
-            for (int y = 0; y < Side; y++)
+            // Снимок держим до правки воды: он стоит 147 тысяч поисков ближайшей клетки, а зовут
+            // его на каждый пересчёт слоя — в том числе на каждое движение ползунка «Размер гор».
+            var grid = landProbeGrid;
+            if (grid == null)
             {
-                for (int x = 0; x < Side; x++)
+                grid = new bool[Side * Side];
+                for (int y = 0; y < Side; y++)
                 {
-                    var cell = lookup.FindNearest(new System.Numerics.Vector2((x + 0.5f) * cw, (y + 0.5f) * ch));
-                    grid[y * Side + x] = cell != null && !cell.EffectiveIsOcean && !cell.EffectiveIsLake;
+                    for (int x = 0; x < Side; x++)
+                    {
+                        var cell = lookup.FindNearest(new System.Numerics.Vector2((x + 0.5f) * cw, (y + 0.5f) * ch));
+                        grid[y * Side + x] = cell != null && !cell.EffectiveIsOcean && !cell.EffectiveIsLake;
+                    }
                 }
+                landProbeGrid = grid;
             }
             return p =>
             {

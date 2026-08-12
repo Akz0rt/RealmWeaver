@@ -169,6 +169,9 @@ namespace WorldGen.Rendering
                     mapRenderer.ReconcileWaterWithMapEdge();
                     mapRenderer.UnifyTouchedLakes(waterStrokeCells);
                     mapRenderer.RebuildBorders();
+                    // Горы подрезаны по суше СНИМКОМ, сделанным в момент их счёта. Залив море поверх
+                    // хребта, ДМ иначе смотрел бы на горы посреди воды, пока не тронет мазок гор.
+                    mapRenderer.LandChanged();
                 }
                 regionStrokeLakeCells.Clear();
                 waterStrokeCells.Clear();
