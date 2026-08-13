@@ -19,7 +19,7 @@ namespace MountainHarness
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
             if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
-            if (mode == "one") { Preview.WriteOne("one.svg"); return 0; }
+            if (mode == "look") { Preview.WriteLook("look.svg"); return 0; }
             if (mode == "cells") { Preview.WriteCells("cells.svg"); return 0; }
             if (mode == "app") { Preview.WriteAppLike("app.svg"); return 0; }
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }

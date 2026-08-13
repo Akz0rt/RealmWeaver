@@ -85,39 +85,85 @@ namespace MountainHarness
         /// ряд кучек), не вылезла ли подошва за след мазка у свободных концов, и держится ли порядок
         /// маляра — ближняя гора обязана закрывать дальнюю.
         /// </summary>
-        // ВРЕМЕННО: одиночные горы на звеньях разного наклона, крупно.
-        public static void WriteOne(string path)
+        /// <summary>
+        /// Лист вариантов внешнего вида для ДМ: одна и та же масса, нарисованная разной остротой
+        /// склона и высотой. Показатель склона — единственный рычаг «остриё против взгляда сверху»:
+        /// больше единицы даёт вогнутый склон и пик, единица — прямой треугольник, меньше единицы —
+        /// выпуклый склон и тупую макушку.
+        /// </summary>
+        public static void WriteLook(string path)
         {
+            float[] exps = { 1.6f, 1.0f, 0.7f, 0.45f };
+            string[] names = { "1.6 — сейчас, остриё", "1.0 — прямой склон", "0.7 — тупая макушка", "0.45 — купол" };
+            float[] heights = { 2.2f, 1.5f };
+
             var sb = new StringBuilder();
-            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='620' viewBox='0 0 1200 620'>");
-            sb.Append("<rect width='1200' height='620' fill='#efe7d5'/>");
-            double[] angles = { 0, Math.PI / 4, Math.PI / 2 };
-            string[] names = { "поперёк", "наискось", "вдоль" };
-            for (int a = 0; a < angles.Length; a++)
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1240' height='980' viewBox='0 0 1240 980'>");
+            sb.Append("<rect width='1240' height='980' fill='#efe7d5'/>");
+
+            // Мир перевёрнут по Y относительно холста (см. Flip), поэтому всё, что рисуется
+            // ГЕОМЕТРИЕЙ, ставится в мировых координатах, а подписи — прямо в экранных.
+            for (int i = 0; i < exps.Length; i++)
             {
-                float cx = 200 + a * 320, cy = 400;
-                var tan = new Vector2((float)Math.Cos(angles[a]), (float)Math.Sin(angles[a]));
-                for (int j = 0; j < 3; j++)
+                float cx = 175 + i * 295;
+                Label(sb, cx - 95, 32, names[i]);
+                OneMound(sb, new Vector2(cx, Flip(150f)), exps[i]);
+
+                for (int j = 0; j < heights.Length; j++)
                 {
-                    var link = MakeLink(new Vector2(cx, cy) + tan * (j * 16f), tan, 16f, 10f);
-                    var outline = LinkOutline.Build(link, 0.55f, 1f);
-                    var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 1f);
-                    if (m == null) continue;
-                    float top = m.Apex.Y, low = m.Depth, left = m.Crest[0].X, right = m.Crest[m.Crest.Count - 1].X;
-                    Console.WriteLine($"{names[a]} #{j}: ширина {right - left:0.#}, высота {top - link.Mid.Y:0.#}, юбка вниз {link.Mid.Y - low:0.#}");
-                    sb.Append("<polygon fill='").Append(j == 0 ? "#3d5b66" : j == 1 ? "#54727d" : "#6b8994").Append("' points='");
-                    foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
-                    for (int i = m.Front.Count - 1; i >= 0; i--)
-                        sb.Append(F(m.Front[i].X)).Append(',').Append(F(Flip(m.Front[i].Y))).Append(' ');
-                    sb.Append("'/>");
-                    sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-width='1.4' points='");
-                    foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
-                    sb.Append("'/>");
+                    float screenY = 400f + j * 290f;
+                    if (i == 0) Label(sb, 18, screenY - 120f, $"высота ×{heights[j]:0.0}");
+                    CellLook(sb, new Vector2(cx, Flip(screenY)), 95f, exps[i], heights[j]);
                 }
             }
             sb.Append("</svg>");
             File.WriteAllText(path, sb.ToString());
             Console.WriteLine($"готово: {path}");
+        }
+
+        static void Label(StringBuilder sb, float x, float y, string text)
+            => sb.Append("<text x='").Append(F(x)).Append("' y='").Append(F(y))
+                 .Append("' font-family='sans-serif' font-size='15' fill='#5a5348'>").Append(text).Append("</text>");
+
+        /// <summary>Одна гора крупно — чтобы силуэт был виден без соседей.</summary>
+        static void OneMound(StringBuilder sb, Vector2 centre, float exponent)
+        {
+            var link = MakeLink(centre, new Vector2(1, 0), 58f, 36f);
+            var outline = LinkOutline.Build(link, 0.55f, 2.4f);
+            var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 2f, exponent);
+            if (m == null) return;
+            sb.Append("<polygon fill='#48626d' points='");
+            foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+            for (int i = m.Front.Count - 1; i >= 0; i--)
+                sb.Append(F(m.Front[i].X)).Append(',').Append(F(Flip(m.Front[i].Y))).Append(' ');
+            sb.Append("'/>");
+            sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-opacity='0.55' stroke-width='2' points='");
+            foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+            sb.Append("'/>");
+        }
+
+        /// <summary>Масса, построенная путём ПРИЛОЖЕНИЯ — маска из многоугольников клеток.</summary>
+        static void CellLook(StringBuilder sb, Vector2 centre, float radius, float exponent, float height)
+        {
+            const float step = 15f;
+            var polys = new List<IReadOnlyList<Vector2>>();
+            for (float x = centre.X - radius; x <= centre.X + radius; x += step)
+                for (float y = centre.Y - radius; y <= centre.Y + radius; y += step)
+                {
+                    var c = new Vector2(x, y);
+                    if ((c - centre).Length() > radius) continue;
+                    float h = step * 0.5f;
+                    polys.Add(new List<Vector2>
+                    {
+                        new Vector2(c.X - h, c.Y - h), new Vector2(c.X + h, c.Y - h),
+                        new Vector2(c.X + h, c.Y + h), new Vector2(c.X - h, c.Y + h),
+                    });
+                }
+
+            var settings = new MountainSettings { Radius = 10f, SlopeExponent = exponent, HeightFactor = height };
+            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
+            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            Paint(sb, MountainGeometry.BuildFromMask(mask, settings, out _));
         }
 
         static AxisLink MakeLink(Vector2 mid, Vector2 tan, float len, float w)

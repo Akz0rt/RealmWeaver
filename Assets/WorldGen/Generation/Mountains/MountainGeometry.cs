@@ -160,7 +160,7 @@ namespace WorldGen.Generation.Mountains
                 float back = link.FreeStart ? 1f : settings.Stretch;
                 float forward = link.FreeEnd ? 1f : settings.Stretch;
                 var shape = MoundBuilder.Build(outline, link, settings.HeightFactor, settings.Squash,
-                                               back, forward, settings.MinSpan);
+                                               back, forward, settings.MinSpan, settings.SlopeExponent);
                 if (shape != null) shapes.Add(shape);
             }
 

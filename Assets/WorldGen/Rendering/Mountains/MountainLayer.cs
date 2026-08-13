@@ -47,6 +47,8 @@ namespace WorldGen.Rendering.Mountains
         public float heightFactor = 2.2f;
         [Tooltip("k — растяжение подошвы вдоль оси. Больше — выше перевалы, плотнее массив.")]
         public float stretch = 1.4f;
+        [Tooltip("Острота вершины. Больше 1 — острый пик (взгляд сбоку), 1 — прямой треугольник, меньше 1 — тупая макушка (взгляд сверху).")]
+        [Range(0.35f, 2.5f)] public float slopeExponent = 1.6f;
         [Tooltip("Сколько ярусов различаем: ярус 0 — гряда по краю массива.")]
         [Range(1, 4)] public int tiers = 3;
         [Tooltip("Высота горы у края массива как доля высоты в сердцевине.")]
@@ -277,6 +279,7 @@ namespace WorldGen.Rendering.Mountains
             Waist = waist,
             HeightFactor = heightFactor,
             Stretch = stretch,
+            SlopeExponent = slopeExponent,
             Tiers = tiers,
             EdgeHeight = edgeHeight,
         };

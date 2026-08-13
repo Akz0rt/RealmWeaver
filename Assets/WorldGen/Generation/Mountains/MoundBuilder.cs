@@ -26,10 +26,9 @@ namespace WorldGen.Generation.Mountains
         /// <summary>Отсчётов на один склон.</summary>
         const int SlopeSamples = 18;
 
-        /// <summary>Показатель склона: больше единицы — склон вогнутый, пологий у подножия и самый
-        /// крутой у гребня, поэтому два склона сходятся в ОСТРУЮ вершину. Привычная сглаживающая
-        /// 3t²−2t³ дала бы нулевую производную на вершине, то есть плоскую макушку.</summary>
-        const double SlopeExponent = 1.6;
+        /// <summary>Показатель склона по умолчанию — тот, что в §10. Живое значение приходит
+        /// настройкой: им и правится «остриё против взгляда сверху».</summary>
+        public const float DefaultSlopeExponent = 1.6f;
 
         /// <summary>Доля полуразмаха подошвы, ближе которой к краю вершина не ставится: иначе у
         /// косого звена вершина съезжает на самый угол и склон вырождается в вертикаль.</summary>
@@ -50,7 +49,8 @@ namespace WorldGen.Generation.Mountains
         /// </summary>
         public static MountainShape Build(IReadOnlyList<Vector2> outline, AxisLink link,
                                           float heightFactor, float squash,
-                                          float stretchBack, float stretchFwd, float minSpan)
+                                          float stretchBack, float stretchFwd, float minSpan,
+                                          float slopeExponent = DefaultSlopeExponent)
         {
             if (outline == null || outline.Count < 6 || link == null) return null;
 
@@ -128,13 +128,13 @@ namespace WorldGen.Generation.Mountains
             for (int i = 1; i <= SlopeSamples; i++)
             {
                 float t = i / (float)SlopeSamples;
-                float g = (float)Math.Pow(t, SlopeExponent);
+                float g = (float)Math.Pow(t, slopeExponent);
                 crest.Add(new Vector2(pl.X + (apex.X - pl.X) * t, pl.Y + (apex.Y - pl.Y) * g));
             }
             for (int i = 1; i <= SlopeSamples; i++)
             {
                 float t = i / (float)SlopeSamples;
-                float g = (float)Math.Pow(1f - t, SlopeExponent);
+                float g = (float)Math.Pow(1f - t, slopeExponent);
                 crest.Add(new Vector2(apex.X + (pr.X - apex.X) * t, pr.Y + (apex.Y - pr.Y) * g));
             }
 
