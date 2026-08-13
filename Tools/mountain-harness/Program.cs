@@ -153,29 +153,51 @@ namespace MountainHarness
         // ── Разворот 2026-08-14: масса приходит из клеток карты ─────────────────────────────────
 
         /// <summary>
-        /// Соседний массив не двигает соседа. Это ЕДИНСТВЕННОЕ, что после разворота гарантируется
-        /// про устойчивость рисунка, и потому его и проверяем: прежнее «зерно от старшего мазка»
-        /// потеряло предмет (у массива из клеток нет старшего), а полной устойчивости не бывает —
-        /// ось пересчитывается вместе со своей массой.
+        /// Появление второй массы не двигает уже нарисованную первую.
         ///
-        /// Мутант: зерно, взятое от номера массива или от номера оси в общем списке. Тогда
-        /// нарисованный на другом конце карты хребет перетасовал бы уже принятый — молча.
+        /// Это ЕДИНСТВЕННОЕ, что после разворота 2026-08-14 гарантируется про устойчивость рисунка:
+        /// прежнее «зерно от старшего мазка» потеряло предмет (у массива из клеток старшего нет), а
+        /// полной устойчивости не бывает — ось пересчитывается вместе со своей массой.
+        ///
+        /// Фикстура выстроена так, чтобы правильное и неправильное РАСХОДИЛИСЬ. Вторая масса лежит
+        /// ЮГО-ЗАПАДНЕЕ первой и в той же маске, поэтому её ось обходится раньше и забирает нулевой
+        /// номер, сдвигая номер первой. Мутант «зерно от номера оси» на этом и валится. Первая
+        /// попытка этой проверки ставила массы в РАЗНЫЕ маски и была пустой: там номера и так
+        /// начинаются с нуля у каждой, и мутант её пережил.
+        ///
+        /// Координаты целые, а шаг сетки при этих числах ровно 1: тогда расширение рамки сдвигает
+        /// начало сетки на целое число ячеек, и первая масса ложится в те же точки замера. Иначе
+        /// проверка падала бы от подвижки полуклетки, а не от зерна.
         /// </summary>
         static void MassifsDoNotDisturbEachOther()
         {
             var settings = new MountainSettings { Radius = 22f };
-            var alone = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
-            // Второй массив НАМЕРЕННО стоит раньше первого в списке: если зерно берётся от номера в
-            // списке, первый массив после этого поедет.
-            var neighbourFirst = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(-900, -600), new Vector2(-600, -560))), settings);
-            var together = MountainGeometry.Build(Blob(Stroke(2, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+            var east = Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40));
+            var southWest = Stroke(2, 40f, new Vector2(-600, -600), new Vector2(-400, -560));
 
-            bool same = alone.Count == together.Count && alone.Count > 0;
-            for (int i = 0; same && i < alone.Count; i++)
-                if (Vector2.Distance(alone[i].Apex, together[i].Apex) > 1e-3f) same = false;
+            var alone = MountainGeometry.Build(Blob(east), settings);
+            var together = MountainGeometry.Build(Blob(east, southWest), settings);
 
-            Check("Массивы: сосед не сдвинул уже нарисованное", same && neighbourFirst.Count > 0,
-                  $"гор было {alone.Count}, стало {together.Count} — массив поехал от появления соседа");
+            // Из общего счёта берём только восточные горы: западные — новые, им и положено появиться.
+            var eastAlone = EastOf(alone, -200f);
+            var eastTogether = EastOf(together, -200f);
+
+            bool same = eastAlone.Count == eastTogether.Count && eastAlone.Count > 0;
+            for (int i = 0; same && i < eastAlone.Count; i++)
+                if (Vector2.Distance(eastAlone[i], eastTogether[i]) > 1e-3f) same = false;
+
+            Check("Массивы: вторая масса не сдвинула первую", same,
+                  $"вершин было {eastAlone.Count}, стало {eastTogether.Count} — первая масса поехала");
+            Check("Массивы: вторая масса вообще появилась", together.Count > alone.Count,
+                  $"гор было {alone.Count}, стало {together.Count}");
+        }
+
+        static List<Vector2> EastOf(List<MountainShape> shapes, float x)
+        {
+            var result = new List<Vector2>();
+            foreach (var shape in shapes) if (shape.Apex.X > x) result.Add(shape.Apex);
+            result.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
+            return result;
         }
 
         /// <summary>
@@ -193,25 +215,18 @@ namespace MountainHarness
             var right = new List<Vector2> { new(40, 0), new(80, 0), new(80, 40), new(40, 40) };
             var mask = MountainMask.FromPolygons(new List<IReadOnlyList<Vector2>> { left, right }, 1f);
 
-            Check("Клетки: заливка попала внутрь", mask != null && Filled(mask, 20, 20) && Filled(mask, 60, 20),
+            Check("Клетки: заливка попала внутрь", mask != null && Filled(mask, new Vector2(20, 20)) && Filled(mask, new Vector2(60, 20)),
                   "середины клеток не залиты");
             Check("Клетки: шов не оставил щели", mask != null && mask.Components().Count == 1,
                   $"кусков {(mask == null ? -1 : mask.Components().Count)}, ждали 1");
 
             // Угол квадрата: до сглаживания залит, после — срезан.
-            bool cornerBefore = Filled(mask, 79f, 39f);
+            bool cornerBefore = Filled(mask, new Vector2(79f, 39f));
             mask.Smooth(6);
-            bool cornerAfter = Filled(mask, 79f, 39f);
+            bool cornerAfter = Filled(mask, new Vector2(79f, 39f));
             Check("Клетки: сглаживание срезает угол мозаики", cornerBefore && !cornerAfter,
                   $"угол до {cornerBefore}, после {cornerAfter}");
-            Check("Клетки: сглаживание не съело середину", Filled(mask, 40f, 20f), "середина массы погасла");
-        }
-
-        static bool Filled(MountainMask mask, float wx, float wy)
-        {
-            if (mask == null) return false;
-            var g = mask.WorldToGrid(new Vector2(wx, wy));
-            return mask.At((int)MathF.Round(g.X), (int)MathF.Round(g.Y));
+            Check("Клетки: сглаживание не съело середину", Filled(mask, new Vector2(40f, 20f)), "середина массы погасла");
         }
 
         /// <summary>
