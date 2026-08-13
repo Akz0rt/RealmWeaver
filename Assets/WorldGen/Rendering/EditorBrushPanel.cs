@@ -48,9 +48,22 @@ namespace WorldGen.Rendering
         Text sizeLabel;              // подпись слайдера размера: «Размер» / «Ширина реки»
         GameObject strengthGroupGO;
         GameObject shapeRowGO;       // строка «Форма» — реке не нужна
-        Slider mountainSizeSlider;   // «Размер гор» — только для инструмента «Горы»
-        Text mountainSizeValue;
-        GameObject mountainSizeGroupGO;
+        /// <summary>
+        /// Ползунки гор. Панель их только ПОКАЗЫВАЕТ: число живёт в слое, а не здесь. Держим
+        /// списком, потому что всем им нужно одно и то же — прятаться вне инструмента «Горы» и
+        /// подтягиваться из слоя при заходе в него.
+        /// </summary>
+        class MountainKnob
+        {
+            public GameObject Group;
+            public Slider Slider;
+            public Text Value;
+            public System.Func<Mountains.MountainLayer, float> Get;
+            public System.Action<Mountains.MountainLayer, float> Set;
+            public System.Func<float, string> Format;
+        }
+
+        readonly List<MountainKnob> mountainKnobs = new List<MountainKnob>();
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
@@ -163,8 +176,9 @@ namespace WorldGen.Rendering
             // Форма отпечатка реке не нужна: русло идёт по клетке под курсором, а не по площади.
             // Горам нужна: с 2026-08-14 кисть гор — обычная кисть по клеткам, только пишет высоту.
             if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver);
-            if (mountainSizeGroupGO != null) mountainSizeGroupGO.SetActive(isMountain);
-            SyncMountainSlider(isMountain);
+            foreach (var knob in mountainKnobs)
+                if (knob.Group != null) knob.Group.SetActive(isMountain);
+            SyncMountainKnobs(isMountain);
             SyncSizeSliderTo(target);
 
             UpdateBiomePaletteVisibility();
@@ -208,18 +222,53 @@ namespace WorldGen.Rendering
             sizeSlider.value = Mathf.Clamp(want, sizeSlider.minValue, sizeSlider.maxValue);
         }
 
-        /// <summary>Подтягивает «Размер гор» из слоя: число живёт там, панель его только показывает.
+        /// <summary>Слой гор, если он есть. Ползунки без него молчат — и панель, и слой должны
+        /// пережить сцену, где слоя не повесили.</summary>
+        Mountains.MountainLayer Layer() => mapRenderer != null ? mapRenderer.MountainLayer : null;
+
+        /// <summary>Подтягивает ползунки гор из слоя: числа живут там, панель их только показывает.
         /// Иначе после перезахода в инструмент ползунок молча вернул бы своё начальное значение и
         /// затёр им подобранное.</summary>
-        void SyncMountainSlider(bool isMountain)
+        void SyncMountainKnobs(bool isMountain)
         {
-            if (!isMountain || mountainSizeSlider == null || mapRenderer == null) return;
-            var layer = mapRenderer.MountainLayer;
+            if (!isMountain) return;
+            var layer = Layer();
             if (layer == null) return;
-            mountainSizeSlider.SetValueWithoutNotify(
-                Mathf.Clamp(layer.mountainRadius, mountainSizeSlider.minValue, mountainSizeSlider.maxValue));
-            // Подпись пишем сами: значение поставлено без уведомления, и колбэк её не тронул.
-            if (mountainSizeValue != null) mountainSizeValue.text = $"{Mathf.RoundToInt(layer.mountainRadius)} px";
+            foreach (var knob in mountainKnobs)
+            {
+                if (knob.Slider == null) continue;
+                float v = Mathf.Clamp(knob.Get(layer), knob.Slider.minValue, knob.Slider.maxValue);
+                knob.Slider.SetValueWithoutNotify(v);
+                // Подпись пишем сами: значение поставлено без уведомления, и колбэк её не тронул.
+                if (knob.Value != null) knob.Value.text = knob.Format(v);
+            }
+        }
+
+        /// <summary>
+        /// Ползунок, чьё число живёт в слое гор. Начальное значение берётся ИЗ СЛОЯ, а не из
+        /// константы: BuildLabeledSlider поднимает свой колбэк сразу при сборке, и с константой
+        /// панель затирала бы то, что выставлено в инспекторе, ещё до первого показа.
+        /// </summary>
+        void AddMountainKnob(Transform t, string label, float min, float max, float fallback,
+                             System.Func<Mountains.MountainLayer, float> get,
+                             System.Action<Mountains.MountainLayer, float> set,
+                             System.Func<float, string> format)
+        {
+            var layer = Layer();
+            float def = layer != null ? Mathf.Clamp(get(layer), min, max) : fallback;
+
+            var knob = new MountainKnob { Get = get, Set = set, Format = format };
+            BuildLabeledSlider(t, label, min, max, def, out knob.Slider, out knob.Value, out knob.Group,
+                               isPercent: false, v =>
+            {
+                var live = Layer();
+                if (live == null) return;
+                set(live, v);
+                // Пересчёт отложенный: ДМ ведёт ползунок, значение меняется на каждый пиксель, а
+                // полный счёт слоя стоит десятки миллисекунд.
+                live.RebuildSoon();
+            }, format);
+            mountainKnobs.Add(knob);
         }
 
         void OnModeChanged(BrushMode mode)
@@ -421,17 +470,30 @@ namespace WorldGen.Rendering
                 else brushController.brushRadius = v;
             });
 
-            // Ползунков у гор два, и это разные вещи: «Размер» — ширина мазка (сколько земли занял
-            // массив), «Размер гор» — величина ОДНОЙ горы. Второй меняет всю геометрию слоя, поэтому
-            // слой пересчитывается заново — на отпускании ползунка, а не на каждый его пиксель.
-            BuildLabeledSlider(t, "Размер гор", 3f, 40f, 10f, out mountainSizeSlider, out mountainSizeValue,
-                               out mountainSizeGroupGO, isPercent: false, v =>
-            {
-                var layer = mapRenderer != null ? mapRenderer.MountainLayer : null;
-                if (layer == null) return;
-                layer.mountainRadius = v;
-                layer.RebuildSoon();
-            });
+            // «Размер» и «Размер гор» — разные вещи: первый задаёт ширину мазка (сколько земли
+            // занял массив), второй — величину ОДНОЙ горы. Дальше идут числа самого рисунка, они
+            // уехали сюда из инспектора слоя (задача 10): крутить их надо, глядя на карту.
+            AddMountainKnob(t, "Размер гор", 3f, 40f, 10f,
+                            l => l.mountainRadius, (l, v) => l.mountainRadius = v,
+                            v => $"{Mathf.RoundToInt(v)} px");
+
+            AddMountainKnob(t, "Высота гор", 1f, 4f, 2.2f,
+                            l => l.heightFactor, (l, v) => l.heightFactor = v,
+                            v => $"×{v:0.0}");
+
+            // Сглаживание контура: клетки карты стоят через 15 единиц, а гора — 10, поэтому без
+            // него край массива выходит мозаикой. Мера — в радиусах горы, чтобы не переставлять её
+            // следом за «Размером гор».
+            AddMountainKnob(t, "Сглаживание", 0f, 1.5f, 0.5f,
+                            l => l.maskSmoothing, (l, v) => l.maskSmoothing = v,
+                            v => v <= 0.001f ? "нет" : $"{v:0.0} R");
+
+            // Открытый вопрос ДМ (чекпоинт 5, пункт 2): 0 — тон набирается по фактической глубине
+            // массива, как в прототипе, и одиночная гора выходит поголовно светлой; больше нуля —
+            // шкала фиксированная, и одиночная гора получает свой тон наравне с хребтом.
+            AddMountainKnob(t, "Размах тона", 0f, 300f, 0f,
+                            l => l.toneSpan, (l, v) => l.toneSpan = v,
+                            v => v <= 0.5f ? "по массиву" : $"{Mathf.RoundToInt(v)} px");
 
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
             {
@@ -602,9 +664,12 @@ namespace WorldGen.Rendering
 
         /// <summary>Возвращает Text ПОДПИСИ слайдера — её текст может меняться на лету (у реки
         /// «Размер» становится «Шириной реки», см. SyncSizeSliderTo).</summary>
+        /// <param name="format">Своя подпись значения. Без неё число читается как «N px» — верно для
+        /// размеров, но не для множителя высоты и не для «размаха тона», у которого ноль значит
+        /// «по массиву», а не «нисколько».</param>
         Text BuildLabeledSlider(Transform t, string label, float min, float max, float def,
                                 out Slider slider, out Text valueLabel, out GameObject groupGO, bool isPercent,
-                                System.Action<float> onChanged)
+                                System.Action<float> onChanged, System.Func<float, string> format = null)
         {
             // Контейнер группирует "подпись+значение" и слайдер вплотную (иначе межэлементный
             // отступ VLG разносит их так же, как соседние блоки, и группа теряется).
@@ -658,7 +723,9 @@ namespace WorldGen.Rendering
 
             var valText = valueLabel;
             System.Action<float> refresh = v =>
-                valText.text = isPercent ? $"{Mathf.RoundToInt(v * 100f)}%" : $"{Mathf.RoundToInt(v)} px";
+                valText.text = format != null ? format(v)
+                             : isPercent ? $"{Mathf.RoundToInt(v * 100f)}%"
+                                         : $"{Mathf.RoundToInt(v)} px";
             refresh(def);
             slider.onValueChanged.AddListener(v => { refresh(v); onChanged?.Invoke(v); });
             onChanged?.Invoke(def);
