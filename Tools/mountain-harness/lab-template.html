@@ -1,0 +1,570 @@
+<title>Горы — живое превью</title>
+<style>
+  :root {
+    --bg: #14171a;
+    --panel: #1c2126;
+    --panel-2: #232a30;
+    --line: #313a42;
+    --text: #dfe4e8;
+    --dim: #8b969f;
+    --accent: #7fb0c4;
+    --accent-2: #c9a86a;
+    --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--ui); font-size: 14px; line-height: 1.45;
+  }
+  .wrap { display: flex; min-height: 100vh; align-items: stretch; }
+
+  aside {
+    width: 330px; flex: 0 0 330px; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 18px 18px 28px;
+    overflow-y: auto; max-height: 100vh;
+  }
+  main { flex: 1 1 auto; padding: 18px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+
+  h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: 0.02em; }
+  .sub { color: var(--dim); font-size: 12px; margin: 0 0 18px; }
+
+  .group { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 16px; }
+  .group:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+  .group h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--accent); margin: 0 0 12px; font-weight: 600;
+  }
+
+  .row { margin-bottom: 13px; }
+  .row label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  .row label span:first-child { color: var(--text); }
+  .val { font-family: var(--mono); font-size: 12px; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--dim); font-size: 11.5px; margin-top: 4px; line-height: 1.4; }
+
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  input[type=checkbox] { accent-color: var(--accent); margin-right: 7px; }
+  .check { display: flex; align-items: center; cursor: pointer; }
+
+  .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+  .seg button {
+    flex: 1 1 auto; padding: 6px 8px; font: inherit; font-size: 12.5px;
+    background: var(--panel-2); color: var(--dim);
+    border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #10161a; border-color: var(--accent); font-weight: 600; }
+  .seg button:hover:not([aria-pressed="true"]) { color: var(--text); }
+
+  .presets { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+  .presets button {
+    padding: 5px 9px; font: inherit; font-size: 12px;
+    background: transparent; color: var(--accent-2);
+    border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+  }
+  .presets button:hover { border-color: var(--accent-2); }
+
+  .stage { flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+           background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; min-height: 0; }
+  canvas { max-width: 100%; max-height: calc(100vh - 210px); display: block; border-radius: 3px; }
+
+  .out { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
+  .out h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 600; }
+  .out .bar { display: flex; gap: 10px; align-items: flex-start; }
+  .out p { margin: 0; flex: 1 1 auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; color: var(--text); white-space: pre-wrap; }
+  .out button {
+    flex: 0 0 auto; padding: 7px 14px; font: inherit; font-size: 12.5px;
+    background: var(--accent); color: #10161a; border: 0; border-radius: 4px; cursor: pointer; font-weight: 600;
+  }
+  .meta { color: var(--dim); font-size: 11.5px; margin-top: 9px; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 880px) {
+    .wrap { flex-direction: column; }
+    aside { width: auto; flex: none; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
+    canvas { max-height: none; }
+  }
+</style>
+
+
+<div class="wrap">
+<aside>
+  <h1>Горы — живое превью</h1>
+  <p class="sub">Звенья посчитаны настоящим кодом слоя. Всё, что ниже, пересчитывается прямо здесь.</p>
+
+  <div class="group">
+    <h2>Заготовки</h2>
+    <div class="presets" id="presets"></div>
+    <div class="hint">Ставят все ползунки разом. Дальше можно крутить.</div>
+  </div>
+
+  <div class="group">
+    <h2>Что рисуем</h2>
+    <div class="seg" id="fixture"></div>
+  </div>
+
+  <div class="group">
+    <h2>Форма горы</h2>
+    <div class="row">
+      <label><span>Острота</span><span class="val" id="v-sharp"></span></label>
+      <input type="range" id="sharp" min="0" max="1" step="0.01">
+      <div class="hint">Купол → синусоида → конус → шпиль. Заменяет прежний показатель склона.</div>
+    </div>
+    <div class="row">
+      <label><span>Высота</span><span class="val" id="v-height"></span></label>
+      <input type="range" id="height" min="0.8" max="3.6" step="0.05">
+      <div class="hint">Во сколько раз гора выше своей полуширины.</div>
+    </div>
+    <div class="row">
+      <label><span>Ярусов</span><span class="val" id="v-levels"></span></label>
+      <input type="range" id="levels" min="2" max="12" step="1">
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="apex"><span>Вершина в точку</span></label>
+      <div class="hint">Без неё гора кончается площадкой в 1/N подошвы и читается срезанной.</div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Подошва</h2>
+    <div class="row">
+      <label><span>Талия</span><span class="val" id="v-waist"></span></label>
+      <input type="range" id="waist" min="0.15" max="0.95" step="0.01">
+      <div class="hint">Насколько доля перетянута на стыке звеньев.</div>
+    </div>
+    <div class="row">
+      <label><span>Растяжение</span><span class="val" id="v-stretch"></span></label>
+      <input type="range" id="stretch" min="1" max="2.2" step="0.05">
+      <div class="hint">Больше — подошвы соседей глубже заходят друг в друга, выше перевалы.</div>
+    </div>
+    <div class="row">
+      <label><span>Угол взгляда</span><span class="val" id="v-aniso"></span></label>
+      <input type="range" id="aniso" min="1" max="2.6" step="0.05">
+      <div class="hint">Во сколько раз подошва сплющена по вертикали.</div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Цвет</h2>
+    <div class="row">
+      <div class="seg" id="palette"></div>
+    </div>
+    <div class="row">
+      <label><span>Полоса яруса</span><span class="val" id="v-spread"></span></label>
+      <input type="range" id="spread" min="0" max="0.7" step="0.01">
+      <div class="hint">Слой массы задаёт цвет, ярус горы гуляет внутри этой полосы. Шире зазора между слоями — градация по слоям пропадёт.</div>
+    </div>
+    <div class="row">
+      <label><span>Контраст слоёв</span><span class="val" id="v-contrast"></span></label>
+      <input type="range" id="contrast" min="-1" max="1" step="0.05">
+    </div>
+    <div class="row" id="row-earth">
+      <label><span>Низ темнее земли</span><span class="val" id="v-earth"></span></label>
+      <input type="range" id="earth" min="0.55" max="1" step="0.01">
+      <div class="hint">Ровно цвет карты стирает границу массы — и хребет перестаёт читаться объектом.</div>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Обводка</h2>
+    <div class="row"><div class="seg" id="ink"></div></div>
+    <div class="row">
+      <label><span>Заметность</span><span class="val" id="v-inkA"></span></label>
+      <input type="range" id="inkA" min="0" max="1" step="0.02">
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Холст</h2>
+    <div class="row"><label class="check"><input type="checkbox" id="floor"><span>Разноцветный пол</span></label></div>
+    <div class="row"><label class="check"><input type="checkbox" id="axes"><span>Показать оси звеньев</span></label></div>
+  </div>
+</aside>
+
+<main>
+  <div class="stage"><canvas id="cv" width="900" height="760"></canvas></div>
+  <div class="out">
+    <h3>Скопируй это мне, когда понравится</h3>
+    <div class="bar">
+      <p id="prompt"></p>
+      <button id="copy">Копировать</button>
+    </div>
+    <div class="meta" id="meta"></div>
+  </div>
+</main>
+</div>
+
+<script>
+const DATA = {{DATA}};
+
+// ── шкала остроты ──────────────────────────────────────────────────────────────────────────
+// Четыре опорные кривые «высота яруса по его радиусу», между ними — плавный переход. Все
+// убывают по r, поэтому и любая их смесь убывает: ярусы гарантированно идут снизу вверх.
+const ANCHORS = [
+  r => Math.sqrt(Math.max(0, 1 - r * r)),          // купол
+  r => Math.acos(Math.min(1, Math.max(-1, 2 * r - 1))) / Math.PI,  // синусоида
+  r => 1 - r,                                       // конус
+  r => Math.pow(1 - r, 1.6),                        // шпиль
+];
+const ANCHOR_NAMES = ['купол', 'синусоида', 'конус', 'шпиль'];
+const APEX_R = 0.05;
+
+function lift(sharp, r) {
+  r = Math.min(1, Math.max(0, r));
+  const s = Math.min(0.9999, Math.max(0, sharp)) * (ANCHORS.length - 1);
+  const i = Math.floor(s), f = s - i;
+  return ANCHORS[i](r) * (1 - f) + ANCHORS[i + 1](r) * f;
+}
+
+function anchorName(sharp) {
+  const s = sharp * (ANCHORS.length - 1);
+  const i = Math.round(s);
+  const near = Math.abs(s - i) < 0.12;
+  return near ? ANCHOR_NAMES[i] : ANCHOR_NAMES[Math.floor(s)] + '→' + ANCHOR_NAMES[Math.ceil(s)];
+}
+
+// ── доля-гармошка (порт LinkOutline) ───────────────────────────────────────────────────────
+function outlineOf(link, waist, step) {
+  const p = link.p, w = link.w, n0 = w.length;
+  const cum = new Float32Array(n0);
+  for (let i = 1; i < n0; i++) {
+    const dx = p[2 * i] - p[2 * i - 2], dy = p[2 * i + 1] - p[2 * i - 1];
+    cum[i] = cum[i - 1] + Math.hypot(dx, dy);
+  }
+  const total = cum[n0 - 1];
+  if (total < step * 0.25) return null;
+  const n = Math.max(8, Math.ceil(total / step));
+
+  const left = new Float32Array((n + 1) * 2), right = new Float32Array((n + 1) * 2);
+  for (let k = 0; k <= n; k++) {
+    const u = k / n, s = total * u;
+    let lo = 0, hi = n0 - 1;
+    while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= s) lo = mid; else hi = mid; }
+    if (lo > n0 - 2) lo = n0 - 2;
+    const seg = cum[lo + 1] - cum[lo];
+    const t = seg > 0 ? (s - cum[lo]) / seg : 0;
+    const ax = p[2 * lo], ay = p[2 * lo + 1], bx = p[2 * lo + 2], by = p[2 * lo + 3];
+    let dx = bx - ax, dy = by - ay;
+    let len = Math.hypot(dx, dy);
+    if (len <= 0) { dx = 1; dy = 0; len = 1; }
+    const px = ax + dx * t, py = ay + dy * t;
+    const nx = -dy / len, ny = dx / len;
+    const ww = w[lo] + (w[lo + 1] - w[lo]) * t;
+    const h = ww * (waist + (1 - waist) * Math.pow(Math.sin(Math.PI * u), 0.6));
+    left[2 * k] = px + nx * h;  left[2 * k + 1] = py + ny * h;
+    right[2 * k] = px - nx * h; right[2 * k + 1] = py - ny * h;
+  }
+
+  const out = new Float32Array((n + 1) * 4);
+  for (let k = 0; k <= n; k++) { out[2 * k] = left[2 * k]; out[2 * k + 1] = left[2 * k + 1]; }
+  for (let k = 0; k <= n; k++) {
+    const j = (n + 1) + k, src = n - k;
+    out[2 * j] = right[2 * src]; out[2 * j + 1] = right[2 * src + 1];
+  }
+  return out;
+}
+
+// ── стопка ярусов (порт Stack) ─────────────────────────────────────────────────────────────
+function stackOf(out, link, s) {
+  const n = out.length / 2;
+  const cx = link.m[0], cy = link.m[1];
+  const ax = link.t[0], ay = link.t[1];
+  const bx = -ay, by = ax;
+  const squash = 1 / Math.max(1, s.aniso);
+  const back = link.f0 ? 1 : s.stretch, fwd = link.f1 ? 1 : s.stretch;
+
+  const base = new Float32Array(n * 2);
+  let depth = Infinity;
+  for (let i = 0; i < n; i++) {
+    const dx = out[2 * i] - cx, dy = out[2 * i + 1] - cy;
+    let a = dx * ax + dy * ay;
+    a *= a >= 0 ? fwd : back;
+    const t = dx * bx + dy * by;
+    const qx = cx + ax * a + bx * t, qy = cy + ay * a + by * t;
+    base[2 * i] = qx;
+    base[2 * i + 1] = cy + (qy - cy) * squash;
+    if (base[2 * i + 1] < depth) depth = base[2 * i + 1];
+  }
+
+  const height = s.height * link.mw * link.hj * link.ts;
+  const rings = s.apex ? s.levels + 1 : s.levels;
+  const list = [];
+  for (let j = 0; j < rings; j++) {
+    const r = j < s.levels ? (s.levels - j) / s.levels : APEX_R;
+    const up = height * lift(s.sharp, r);
+    const ring = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      ring[2 * i] = cx + (base[2 * i] - cx) * r;
+      ring[2 * i + 1] = cy + (base[2 * i + 1] - cy) * r + up;
+    }
+    list.push(ring);
+  }
+  return { rings: list, depth, tier: link.tier, ground: link.ground };
+}
+
+// ── краски ─────────────────────────────────────────────────────────────────────────────────
+const ROCK = [43, 53, 64];
+function tone(t) {
+  return [Math.round(77 + (28 - 77) * t), Math.round(107 + (44 - 107) * t), Math.round(118 + (52 - 118) * t)];
+}
+function tierMix(tier, count, contrast) {
+  const last = Math.max(1, count - 1);
+  const step = Math.min(Math.max(tier, 0), count - 1) / last;
+  return 0.5 + (step - 0.5) * Math.min(1, Math.max(-1, contrast));
+}
+function colourOf(shape, levelT, s) {
+  const band = tierMix(shape.tier, s.tiers, s.contrast);
+  const mix = Math.min(1, Math.max(0, band + s.spread * (levelT - 0.5)));
+  let c;
+  if (s.palette === 'invert') c = tone(1 - mix);
+  else if (s.palette === 'ground') {
+    const g = shape.ground, k = s.earth;
+    c = [g[0] * k + (ROCK[0] - g[0] * k) * mix,
+         g[1] * k + (ROCK[1] - g[1] * k) * mix,
+         g[2] * k + (ROCK[2] - g[2] * k) * mix];
+  } else c = tone(mix);
+  return 'rgb(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' + Math.round(c[2]) + ')';
+}
+
+// ── пол ────────────────────────────────────────────────────────────────────────────────────
+// Пятна биомов, чтобы было видно, как горы берут цвет земли. Рисуется и на холст, и на
+// невидимую копию — с неё спрашивается цвет под каждой горой (один раз при загрузке).
+const W = 900, H = 760;
+const PATCHES = [
+  ['#c6bb8e', [[0, 0, W, H]]],
+  ['#8d9d70', [[0, 0, 430, 330]]],
+  ['#cdbb92', [[500, 380, 400, 380]]],
+  ['#9fb4a6', [[0, 470, 380, 290]]],
+  ['#d8d6cc', [[560, 0, 340, 250]]],
+];
+function paintFloor(ctx) {
+  for (const [colour, rects] of PATCHES) {
+    ctx.fillStyle = colour;
+    for (const [x, y, w, h] of rects) {
+      ctx.beginPath();
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      if (x === 0 && y === 0 && w === W && h === H) ctx.rect(0, 0, W, H);
+      ctx.fill();
+    }
+  }
+}
+const floorCv = document.createElement('canvas');
+floorCv.width = W; floorCv.height = H;
+const floorCtx = floorCv.getContext('2d', { willReadFrequently: true });
+paintFloor(floorCtx);
+const floorData = floorCtx.getImageData(0, 0, W, H).data;
+function groundAt(x, y) {
+  const px = Math.min(W - 1, Math.max(0, Math.round(x)));
+  const py = Math.min(H - 1, Math.max(0, Math.round(DATA.canvasH - y)));
+  const i = (py * W + px) * 4;
+  return [floorData[i], floorData[i + 1], floorData[i + 2]];
+}
+for (const f of DATA.fixtures)
+  for (const link of f.links) link.ground = groundAt(link.m[0], link.m[1]);
+
+// ── состояние ──────────────────────────────────────────────────────────────────────────────
+const DEFAULTS = {
+  fixture: 0, sharp: 0.66, height: 2.2, levels: 6, apex: true,
+  waist: 0.55, stretch: 1.4, aniso: 1.6,
+  palette: 'slate', spread: 0.4, contrast: 1, earth: 0.78,
+  ink: 'none', inkA: 0.5, floor: true, axes: false,
+};
+const state = Object.assign({}, DEFAULTS);
+
+const PRESETS = {
+  'Моё предложение': {},
+  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top' },
+  'Пологие холмы': { sharp: 0.18, height: 1.3, levels: 5, spread: 0.35 },
+  'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, spread: 0.3 },
+  'Растут из карты': { palette: 'ground', earth: 0.78, spread: 0.45, floor: true },
+  'Ступени рельефа': { levels: 4, sharp: 0.4, ink: 'all', inkA: 0.4, spread: 0.5 },
+};
+
+const SEGS = {
+  fixture: DATA.fixtures.map((f, i) => [i, f.name]),
+  palette: [['slate', 'Сланец'], ['invert', 'Светлые макушки'], ['ground', 'От карты']],
+  ink: [['none', 'Нет'], ['top', 'Макушка'], ['all', 'Каждый ярус']],
+};
+
+// ── рисование ──────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let lastCount = 0, lastMs = 0;
+
+function build() {
+  const f = DATA.fixtures[state.fixture];
+  const s = { ...state, tiers: f.tiers };
+  const shapes = [];
+  for (const link of f.links) {
+    const out = outlineOf(link, s.waist, f.sampleStep);
+    if (!out) continue;
+    shapes.push(stackOf(out, link, s));
+  }
+  shapes.sort((a, b) => b.depth - a.depth);
+  return { shapes, s };
+}
+
+function ring(path, r) {
+  const n = r.length / 2;
+  path.moveTo(r[0], DATA.canvasH - r[1]);
+  for (let i = 1; i < n; i++) path.lineTo(r[2 * i], DATA.canvasH - r[2 * i + 1]);
+  path.closePath();
+}
+
+function draw() {
+  const t0 = performance.now();
+  const { shapes, s } = build();
+
+  if (s.floor) ctx.drawImage(floorCv, 0, 0);
+  else { ctx.fillStyle = '#efe7d5'; ctx.fillRect(0, 0, W, H); }
+
+  for (const shape of shapes) {
+    const rings = shape.rings, n = rings.length;
+
+    let p = new Path2D(); ring(p, rings[0]);
+    ctx.fillStyle = colourOf(shape, 0, s);
+    ctx.fill(p);
+
+    for (let j = 1; j < n; j++) {
+      const colour = colourOf(shape, n > 1 ? j / (n - 1) : 0, s);
+      const lo = rings[j - 1], hi = rings[j], count = lo.length / 2;
+
+      // Полоса между соседними ярусами — одним путём из четырёхугольников и одной заливкой:
+      // по отдельности их вышло бы под шестьдесят тысяч на кадр, и ползунок бы не ехал.
+      const band = new Path2D();
+      for (let k = 0; k + 1 < count; k++) {
+        band.moveTo(lo[2 * k], DATA.canvasH - lo[2 * k + 1]);
+        band.lineTo(lo[2 * k + 2], DATA.canvasH - lo[2 * k + 3]);
+        band.lineTo(hi[2 * k + 2], DATA.canvasH - hi[2 * k + 3]);
+        band.lineTo(hi[2 * k], DATA.canvasH - hi[2 * k + 1]);
+        band.closePath();
+      }
+      ctx.fillStyle = colour;
+      ctx.fill(band);
+
+      const cap = new Path2D(); ring(cap, hi);
+      ctx.fill(cap);
+
+      if (s.ink === 'all' || (s.ink === 'top' && j === n - 1)) {
+        ctx.strokeStyle = 'rgba(244,240,230,' + s.inkA + ')';
+        ctx.lineWidth = 1;
+        ctx.stroke(cap);
+      }
+    }
+  }
+
+  if (s.axes) {
+    const f = DATA.fixtures[state.fixture];
+    ctx.strokeStyle = 'rgba(200,60,50,0.85)'; ctx.lineWidth = 1.4;
+    for (const link of f.links) {
+      ctx.beginPath();
+      for (let i = 0; i < link.p.length / 2; i++) {
+        const x = link.p[2 * i], y = DATA.canvasH - link.p[2 * i + 1];
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  lastCount = shapes.length;
+  lastMs = performance.now() - t0;
+}
+
+// ── подпись ────────────────────────────────────────────────────────────────────────────────
+function fmt(v, d) { return v.toFixed(d).replace('.', ','); }
+
+function updatePrompt() {
+  const parts = [];
+  parts.push('острота ' + fmt(state.sharp, 2) + ' (' + anchorName(state.sharp) + ')');
+  parts.push('высота ×' + fmt(state.height, 2));
+  parts.push('ярусов ' + state.levels + (state.apex ? ' и вершина в точку' : ', без вершины в точку'));
+  if (state.waist !== DEFAULTS.waist) parts.push('талия ' + fmt(state.waist, 2));
+  if (state.stretch !== DEFAULTS.stretch) parts.push('растяжение ' + fmt(state.stretch, 2));
+  if (state.aniso !== DEFAULTS.aniso) parts.push('угол взгляда ' + fmt(state.aniso, 2));
+
+  const pal = { slate: 'сланцевая шкала', invert: 'светлые макушки', ground: 'цвет от карты' }[state.palette];
+  const colour = ['краска — ' + pal, 'полоса яруса ' + fmt(state.spread, 2),
+                  'контраст слоёв ' + fmt(state.contrast, 2)];
+  if (state.palette === 'ground') colour.push('низ темнее земли до ' + fmt(state.earth, 2));
+
+  const ink = { none: 'без обводки', top: 'обводка макушки', all: 'обводка каждого яруса' }[state.ink];
+  const inkPart = state.ink === 'none' ? ink : ink + ' с заметностью ' + fmt(state.inkA, 2);
+
+  document.getElementById('prompt').textContent =
+    'Поставь горам такой вид: ' + parts.join(', ') + '. Цвет: ' + colour.join(', ') + '. ' +
+    inkPart.charAt(0).toUpperCase() + inkPart.slice(1) + '.';
+
+  document.getElementById('meta').textContent =
+    'гор в кадре: ' + lastCount + ' · пересчёт и отрисовка: ' + lastMs.toFixed(1) + ' мс · фикстура: ' +
+    DATA.fixtures[state.fixture].name;
+}
+
+// ── связывание ─────────────────────────────────────────────────────────────────────────────
+let queued = false;
+function updateAll() {
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; draw(); updatePrompt(); syncLabels(); });
+}
+
+function syncLabels() {
+  document.getElementById('v-sharp').textContent = fmt(state.sharp, 2) + ' · ' + anchorName(state.sharp);
+  document.getElementById('v-height').textContent = '×' + fmt(state.height, 2);
+  document.getElementById('v-levels').textContent = state.levels;
+  document.getElementById('v-waist').textContent = fmt(state.waist, 2);
+  document.getElementById('v-stretch').textContent = fmt(state.stretch, 2);
+  document.getElementById('v-aniso').textContent = fmt(state.aniso, 2);
+  document.getElementById('v-spread').textContent = state.spread === 0 ? 'нет' : fmt(state.spread, 2);
+  document.getElementById('v-contrast').textContent =
+    state.contrast === 0 ? 'ровно' : fmt(state.contrast, 2);
+  document.getElementById('v-earth').textContent = fmt(state.earth, 2);
+  document.getElementById('v-inkA').textContent = fmt(state.inkA, 2);
+  document.getElementById('row-earth').style.display = state.palette === 'ground' ? '' : 'none';
+  for (const key of Object.keys(SEGS))
+    for (const b of document.getElementById(key).children)
+      b.setAttribute('aria-pressed', String(b.dataset.value == state[key]));
+  for (const key of ['apex', 'floor', 'axes']) document.getElementById(key).checked = state[key];
+  for (const key of ['sharp', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+    document.getElementById(key).value = state[key];
+}
+
+for (const key of ['sharp', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+  document.getElementById(key).addEventListener('input', e => {
+    state[key] = parseFloat(e.target.value);
+    updateAll();
+  });
+
+for (const key of ['apex', 'floor', 'axes'])
+  document.getElementById(key).addEventListener('change', e => { state[key] = e.target.checked; updateAll(); });
+
+for (const [key, options] of Object.entries(SEGS)) {
+  const host = document.getElementById(key);
+  for (const [value, label] of options) {
+    const b = document.createElement('button');
+    b.textContent = label; b.dataset.value = value; b.type = 'button';
+    b.addEventListener('click', () => {
+      state[key] = typeof DEFAULTS[key] === 'number' ? Number(value) : value;
+      updateAll();
+    });
+    host.appendChild(b);
+  }
+}
+
+const presetHost = document.getElementById('presets');
+for (const [name, patch] of Object.entries(PRESETS)) {
+  const b = document.createElement('button');
+  b.textContent = name; b.type = 'button';
+  b.addEventListener('click', () => {
+    Object.assign(state, DEFAULTS, patch);
+    updateAll();
+  });
+  presetHost.appendChild(b);
+}
+
+document.getElementById('copy').addEventListener('click', async e => {
+  await navigator.clipboard.writeText(document.getElementById('prompt').textContent);
+  const b = e.target, was = b.textContent;
+  b.textContent = 'Скопировано';
+  setTimeout(() => { b.textContent = was; }, 1200);
+});
+
+updateAll();
+</script>

@@ -28,5 +28,6 @@
     <Compile Include="Program.cs" />
     <Compile Include="Preview.cs" />
     <Compile Include="Stack.cs" />
+    <Compile Include="Export.cs" />
   </ItemGroup>
 </Project>
