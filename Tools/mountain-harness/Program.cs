@@ -20,6 +20,7 @@ namespace MountainHarness
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
             if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
             if (mode == "one") { Preview.WriteOne("one.svg"); return 0; }
+            if (mode == "cells") { Preview.WriteCells("cells.svg"); return 0; }
             if (mode == "app") { Preview.WriteAppLike("app.svg"); return 0; }
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
@@ -74,7 +75,8 @@ namespace MountainHarness
             ApexHeight();
             FreeEndStretch();
             LobeCapKeepsTheSkirtShort();
-            NearVerticalLinkIsKnownArtifact();
+            CurvedVerticalLinkKeepsAStraightFoot();
+            CellMaskSilhouettesAreSimple();
             TriangulationCoversTheSilhouetteExactly();
             TierRampSpreadsTiers();
 
@@ -440,21 +442,16 @@ namespace MountainHarness
                   $"юбка {skirt:0.##}, потолок ждали {capped:0.##}, без потолка было бы {uncapped:0.##}");
         }
 
-        /// <summary>ИЗВЕСТНЫЙ ИЗЪЯН, зафиксированный замером, а не проверка правила.
+        /// <summary>
+        /// Изогнутое почти вертикальное звено — самая трудная фикстура: сырая подошва у него
+        /// заворачивается назад по X. ДО 2026-08-14 это считалось безобидным и держалось проверкой
+        /// «подошва завернулась»; ДМ показал скриншотами, что не безобидно — силуэт при этом сам
+        /// себя пересекает, и в горе появляется угловатый ВЫКУС, сквозь который видно карту.
+        /// Теперь подошва выпрямляется (MoundBuilder.MakeMonotone), и проверка требует обратного.
         ///
-        /// Если звено одновременно ИЗОГНУТО и идёт близко к вертикали, ближняя дуга его подошвы
-        /// заворачивается назад по X — перестаёт быть монотонной. На кольце такими выходят 9 гор из
-        /// 15 (замер: `dotnet run [SEP] svg`). Прямая вертикальная ось этим не страдает, изогнутая
-        /// пологая — тоже; нужно именно сочетание.
-        ///
-        /// Чем это грозит: MountainMeshBuilder сшивает тело горы полосой между двумя цепями и
-        /// опирается на монотонность. На такой подошве он выдаёт налезающие треугольники. Сейчас
-        /// они не видны (заливка сплошная, Cull Off), но проступят, как только появится штриховка,
-        /// боковой свет или полупрозрачность. Фикс — в задаче 5, вместе с триангуляцией.
-        ///
-        /// Проверка держит факт под замком: перестанет проходить — значит изъян починили или он
-        /// изменил природу, и то и другое надо заметить, а не пропустить.</summary>
-        static void NearVerticalLinkIsKnownArtifact()
+        /// Мутант: не выпрямлять — подошва этой фикстуры завернётся, проверка упадёт.
+        /// </summary>
+        static void CurvedVerticalLinkKeepsAStraightFoot()
         {
             // Звено-дуга у «бока» кольца: касательная почти вертикальна, сама дуга заметно изогнута.
             var pts = new List<Vector2>();
@@ -472,9 +469,60 @@ namespace MountainHarness
             var shape = Mound(link, 1.4f, 1.4f);
             if (shape == null) { Fail("Изогнутое вертикальное звено", "гора не построена"); return; }
 
-            Check("Изогнутое вертикальное звено: подошва заворачивается назад по X",
-                  !IsMonotone(shape.Front),
-                  "подошва стала монотонной — фикстура перестала быть трудной, подбери другую дугу");
+            var loop = new List<Vector2>(shape.Crest);
+            for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
+
+            Check("Изогнутое вертикальное звено: подошва идёт слева направо", IsMonotone(shape.Front),
+                  "подошва завернулась назад по X — в горе будет выкус");
+            Check("Изогнутое вертикальное звено: силуэт не пересекает сам себя", IsSimple(loop),
+                  "силуэт самопересекается");
+        }
+
+        /// <summary>
+        /// Силуэты на маске ПРИЛОЖЕНИЯ, а не на мазке. Маска здесь строится из многоугольников
+        /// клеток и сглаживается — ровно как в игре; её контур бугрист на шаге клетки (15 единиц
+        /// при горе 10), оси от этого куда извилистее, и подошвы заворачиваются вчетверо чаще.
+        /// Замер до выпрямления: самопересекались 14 силуэтов из 115, у 48 подошва завёрнута,
+        /// худшая ошибка площади 5.9 % — это и были «выкусы» на скриншотах ДМ. На мазке той же
+        /// толщины изъян почти не виден (1–2 из 156), поэтому фикстура обязана быть КЛЕТОЧНОЙ.
+        ///
+        /// Мутант: не выпрямлять подошву — счётчики вернутся к 14 и 48.
+        /// </summary>
+        static void CellMaskSilhouettesAreSimple()
+        {
+            var polys = new List<IReadOnlyList<Vector2>>();
+            var centre = new Vector2(300, 300);
+            for (float x = centre.X - 120f; x <= centre.X + 120f; x += 15f)
+                for (float y = centre.Y - 120f; y <= centre.Y + 120f; y += 15f)
+                {
+                    var q = new Vector2(x, y);
+                    if ((q - centre).Length() > 120f) continue;
+                    polys.Add(new List<Vector2>
+                    {
+                        new Vector2(q.X - 7.5f, q.Y - 7.5f), new Vector2(q.X + 7.5f, q.Y - 7.5f),
+                        new Vector2(q.X + 7.5f, q.Y + 7.5f), new Vector2(q.X - 7.5f, q.Y + 7.5f),
+                    });
+                }
+
+            var settings = new MountainSettings { Radius = 10f };
+            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
+            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
+            if (shapes.Count < 50) { Fail("Клеточная маска", $"гор всего {shapes.Count}"); return; }
+
+            int folded = 0, notSimple = 0;
+            foreach (var shape in shapes)
+            {
+                if (!IsMonotone(shape.Front)) folded++;
+                var loop = new List<Vector2>(shape.Crest);
+                for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
+                if (!IsSimple(loop)) notSimple++;
+            }
+
+            Check("Клеточная маска: ни одна подошва не завернулась", folded == 0,
+                  $"завёрнутых {folded} из {shapes.Count}");
+            Check("Клеточная маска: силуэты почти все простые", notSimple <= 1,
+                  $"самопересекающихся {notSimple} из {shapes.Count}");
         }
 
         /// <summary>
@@ -534,8 +582,12 @@ namespace MountainHarness
                 worstFlip = Math.Max(worstFlip, Math.Abs(Math.Abs(sum) - silhouette) / silhouette);
             }
 
-            Check("Триангуляция: фикстура трудная — подошвы заворачиваются", folded >= 4,
-                  $"завернувшихся подошв {folded} из {shapes.Count} — фикстура перестала быть трудной");
+            // Прежде здесь стояло «фикстура трудная — подошвы заворачиваются». С 2026-08-14 подошвы
+            // выпрямляются на выходе из MoundBuilder, поэтому трудность фикстуры держится иначе: у
+            // кольца заведомо есть звенья, изогнутые и близкие к вертикали, — это те самые, на
+            // которых сшивка полосой и врала.
+            Check("Триангуляция: фикстура трудная — подошвы выпрямлены все до одной", folded == 0,
+                  $"завернувшихся подошв {folded} из {shapes.Count}");
             Check("Триангуляция: силуэт горы простой", simple,
                   "силуэт сам себя пересекает — на этом отрезание ушей уже не стоит");
             Check("Триангуляция: треугольники не налезают и не вылезают", worstOverlap < 0.001f,

@@ -111,6 +111,7 @@ namespace WorldGen.Generation.Mountains
             Reverse(arcB);
             var front = AverageY(arcA) <= AverageY(arcB) ? arcA : arcB;
             Reverse(front);   // обе дуги идут справа налево — разворачиваем в «слева направо»
+            front = MakeMonotone(front);
 
             float height = heightFactor * link.MidW * link.HeightJitter * link.TierScale;
             float apexX = Math.Max(pl.X + span * ApexInset, Math.Min(pr.X - span * ApexInset, link.Mid.X));
@@ -138,6 +139,43 @@ namespace WorldGen.Generation.Mountains
                 Depth = nearest,
                 Tier = link.Tier,
             };
+        }
+
+        /// <summary>
+        /// Выпрямляет ближнюю дугу подошвы: оставляет только ход СЛЕВА НАПРАВО, а из точек, вставших
+        /// друг над другом, — нижнюю.
+        ///
+        /// Зачем. У звена, которое одновременно изогнуто и идёт близко к вертикали, подошва
+        /// заворачивается назад по X. Силуэт (гребень + подошва) тогда сам себя пересекает, и в
+        /// заливке появляется ВЫКУС — угловатая дыра, сквозь которую видно карту. Это тот самый
+        /// «известный изъян», записанный в задаче 5 как безобидный: на мазках он и правда редок
+        /// (2 горы из 156), но маска приложения строится по многоугольникам КЛЕТОК, её контур
+        /// бугрист на своём шаге, оси от этого куда извилистее — и на ней самопересекается уже
+        /// 14 силуэтов из 115. Изъян нашёл ДМ 2026-08-14 по скриншотам.
+        ///
+        /// Почему именно нижняя точка: подошва — это ВИДИМЫЙ низ горы. Если над одним X у подошвы
+        /// оказалось два уровня, зритель видит нижний, верхний закрыт телом самой горы.
+        /// </summary>
+        static List<Vector2> MakeMonotone(List<Vector2> chain)
+        {
+            var result = new List<Vector2>(chain.Count);
+            foreach (var p in chain)
+            {
+                bool skip = false;
+                // result.Count > 1, а не > 0: ЛЕВЫЙ конец неприкосновенен — в него приходит гребень,
+                // и потерянный конец рвёт силуэт (замер: 42 горы из 156 с разошедшейся площадью).
+                while (result.Count > 1 && result[result.Count - 1].X >= p.X)
+                {
+                    if (result[result.Count - 1].Y <= p.Y) { skip = true; break; }
+                    result.RemoveAt(result.Count - 1);
+                }
+                if (!skip) result.Add(p);
+            }
+            // Правый конец обязан остаться на месте: гребень приходит ровно в него, и потерянный
+            // конец разорвал бы силуэт.
+            var last = chain[chain.Count - 1];
+            if (result.Count == 0 || result[result.Count - 1] != last) result.Add(last);
+            return result.Count >= 2 ? result : chain;
         }
 
         /// <summary>Кусок замкнутого силуэта от индекса from до to по возрастанию индекса.</summary>

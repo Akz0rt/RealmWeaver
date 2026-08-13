@@ -132,6 +132,48 @@ namespace MountainHarness
             return link;
         }
 
+        // ВРЕМЕННО: путь ПРИЛОЖЕНИЯ — маска из многоугольников клеток + сглаживание.
+        public static void WriteCells(string path)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>");
+            sb.Append("<rect width='1200' height='900' fill='#efe7d5'/>");
+            CellMassif(sb, new Vector2(300, 250), 120f, 0.5f);
+            CellMassif(sb, new Vector2(850, 250), 120f, 0f);
+            CellMassif(sb, new Vector2(300, 660), 60f, 0.5f);
+            CellMassif(sb, new Vector2(850, 660), 60f, 0f);
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
+        /// <summary>Клетки карты стоят через 15 единиц — берём квадраты того же шага, центры внутри круга.</summary>
+        static void CellMassif(StringBuilder sb, Vector2 centre, float radius, float smoothing)
+        {
+            const float step = 15f;
+            var polys = new List<IReadOnlyList<Vector2>>();
+            for (float x = centre.X - radius; x <= centre.X + radius; x += step)
+                for (float y = centre.Y - radius; y <= centre.Y + radius; y += step)
+                {
+                    var c = new Vector2(x, y);
+                    if ((c - centre).Length() > radius) continue;
+                    float h = step * 0.5f;
+                    polys.Add(new List<Vector2>
+                    {
+                        new Vector2(c.X - h, c.Y - h), new Vector2(c.X + h, c.Y - h),
+                        new Vector2(c.X + h, c.Y + h), new Vector2(c.X - h, c.Y + h),
+                    });
+                }
+
+            var settings = new MountainSettings { Radius = 10f };
+            float cell = MountainMask.ChooseCell(settings.Radius, settings.Radius);
+            var mask = MountainMask.FromPolygons(polys, cell);
+            if (smoothing > 0f) mask.Smooth((int)Math.Round(smoothing * settings.Radius / mask.Cell));
+            var shapes = MountainGeometry.BuildFromMask(mask, settings, out var links);
+            Console.WriteLine($"клетки r={radius} сглаж={smoothing}: гор {shapes.Count}");
+            Paint(sb, shapes);
+        }
+
         public static void WriteAppLike(string path)
         {
             var sb = new StringBuilder();
@@ -201,24 +243,27 @@ namespace MountainHarness
                 sb.Append("'/>");
             }
 
+            Paint(sb, shapes);
+
+            int free = 0;
+            foreach (var link in links) if (link.FreeStart || link.FreeEnd) free++;
+            Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}, свободных концов {free}");
+        }
+
+        static void Paint(StringBuilder sb, List<MountainShape> shapes)
+        {
             foreach (var shape in shapes)
             {
-                // Цвет по ярусу, как в приложении: внешний слой светлый, сердцевина тёмная.
                 float t = MountainTierRamp.Mix(shape.Tier, 3, 1f);
                 sb.Append("<polygon fill='").Append(Tone(t)).Append("' points='");
                 foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
                 for (int i = shape.Front.Count - 1; i >= 0; i--)
                     sb.Append(F(shape.Front[i].X)).Append(',').Append(F(Flip(shape.Front[i].Y))).Append(' ');
                 sb.Append("'/>");
-
                 sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-opacity='0.4' stroke-width='1.2' points='");
                 foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
                 sb.Append("'/>");
             }
-
-            int free = 0;
-            foreach (var link in links) if (link.FreeStart || link.FreeEnd) free++;
-            Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}, свободных концов {free}");
         }
 
         /// <summary>Краска по доле шкалы: 0 — светлый конец, 1 — тёмный.</summary>
