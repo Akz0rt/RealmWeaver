@@ -124,6 +124,22 @@
   </div>
 
   <div class="group">
+    <h2>Связь между горами</h2>
+    <div class="row">
+      <label><span>Перепонка</span><span class="val" id="v-web"></span></label>
+      <input type="range" id="web" min="0" max="1" step="0.02">
+      <div class="hint">Общее тело вдоль оси, до этой доли высоты горы. 0 — его нет, и гряда снова
+        рассыпается на отдельные конусы.</div>
+    </div>
+    <div class="row">
+      <label><span>Ширина перепонки</span><span class="val" id="v-webW"></span></label>
+      <input type="range" id="webW" min="0.25" max="1" step="0.02">
+      <div class="hint">Доля от ширины массы. Уже единицы — из-под перепонки видны юбки гор, и
+        они читаются вершинами на общем хребте, а не сплошной стеной.</div>
+    </div>
+  </div>
+
+  <div class="group">
     <h2>Подошва</h2>
     <div class="row">
       <label><span>Талия</span><span class="val" id="v-waist"></span></label>
@@ -262,6 +278,70 @@ function outlineOf(link, waist, step) {
   return out;
 }
 
+// ── перепонка (связь между горами) ─────────────────────────────────────────────────────────
+//
+// Гряда из отдельных конусов — это ряд кучек, а не горная масса. Перепонка — лента вдоль САМОЙ
+// оси звена, поднятая до доли высоты горы: соседние горы садятся на общее тело и торчат из него
+// вершинами.
+//
+// Строится по звену, а не по всей оси, ровно ради порядка маляра: цельная лента через весь хребет
+// растянулась бы по всей глубине картинки, и её нельзя было бы поставить ни перед горой, ни за
+// ней. А куски сходятся без шва сами — соседние звенья делят точку стыка.
+//
+// Сужение здесь ПОПЕРЕЧНОЕ, не равномерное: у горы верхний ярус должен стягиваться в вершину, а
+// у перепонки — оставаться коньком во всю длину звена. Это её работа.
+function webOf(link, s) {
+  const p = link.p, w = link.w, n0 = w.length;
+  const cum = new Float32Array(n0);
+  for (let i = 1; i < n0; i++)
+    cum[i] = cum[i - 1] + Math.hypot(p[2 * i] - p[2 * i - 2], p[2 * i + 1] - p[2 * i - 1]);
+  const total = cum[n0 - 1];
+  if (total <= 0) return null;
+
+  const n = Math.max(6, Math.min(40, Math.round(total / 2)));
+  const squash = 1 / Math.max(1, s.aniso);
+  const tall = s.web * s.height * link.ts;
+  const wide = s.webW;
+
+  const px = new Float32Array(n + 1), py = new Float32Array(n + 1);
+  const nx = new Float32Array(n + 1), ny = new Float32Array(n + 1), ww = new Float32Array(n + 1);
+  for (let k = 0; k <= n; k++) {
+    const dist = total * (k / n);
+    let lo = 0, hi = n0 - 1;
+    while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= dist) lo = mid; else hi = mid; }
+    if (lo > n0 - 2) lo = n0 - 2;
+    const seg = cum[lo + 1] - cum[lo];
+    const t = seg > 0 ? (dist - cum[lo]) / seg : 0;
+    const ax = p[2 * lo], ay = p[2 * lo + 1];
+    let dx = p[2 * lo + 2] - ax, dy = p[2 * lo + 3] - ay;
+    let len = Math.hypot(dx, dy);
+    if (len <= 0) { dx = 1; dy = 0; len = 1; }
+    px[k] = ax + dx * t; py[k] = ay + dy * t;
+    nx[k] = -dy / len; ny[k] = dx / len;
+    ww[k] = w[lo] + (w[lo + 1] - w[lo]) * t;
+  }
+
+  const rings = [];
+  let depth = Infinity;
+  for (let j = 0; j < s.levels; j++) {
+    const r = (s.levels - j) / s.levels;
+    const ring = new Float32Array((n + 1) * 4);
+    for (let k = 0; k <= n; k++) {
+      const h = ww[k] * wide * r;
+      const up = tall * ww[k] * lift(s.sharp, r);
+      const ox = nx[k] * h, oy = ny[k] * h * squash;
+      ring[2 * k] = px[k] + ox;             ring[2 * k + 1] = py[k] + oy + up;
+      const m = (n + 1) + k, src = n - k;
+      const bx = nx[src] * ww[src] * wide * r, by = ny[src] * ww[src] * wide * r * squash;
+      ring[2 * m] = px[src] - bx;
+      ring[2 * m + 1] = py[src] - by + tall * ww[src] * lift(s.sharp, r);
+      if (j === 0) depth = Math.min(depth, ring[2 * k + 1], ring[2 * m + 1]);
+    }
+    rings.push(ring);
+  }
+  return { rings, depth, tier: link.tier, ground: link.ground, web: true };
+}
+
 // ── стопка ярусов (порт Stack) ─────────────────────────────────────────────────────────────
 function stackOf(out, link, s) {
   const n = out.length / 2;
@@ -362,7 +442,7 @@ for (const f of DATA.fixtures)
 
 // ── состояние ──────────────────────────────────────────────────────────────────────────────
 const DEFAULTS = {
-  fixture: 0, sharp: 0.66, height: 2.2, levels: 6, apex: true,
+  fixture: 0, sharp: 0.66, height: 2.2, levels: 6, apex: true, web: 0.7, webW: 0.72,
   waist: 0.55, stretch: 1.4, aniso: 1.6,
   palette: 'slate', spread: 0.4, contrast: 1, earth: 0.78,
   ink: 'none', inkA: 0.5, floor: true, axes: false,
@@ -371,9 +451,10 @@ const state = Object.assign({}, DEFAULTS);
 
 const PRESETS = {
   'Моё предложение': {},
-  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top' },
+  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top', web: 0 },
+  'Без перепонки': { web: 0 },
   'Пологие холмы': { sharp: 0.18, height: 1.3, levels: 5, spread: 0.35 },
-  'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, spread: 0.3 },
+  'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, spread: 0.3, web: 0.6 },
   'Растут из карты': { palette: 'ground', earth: 0.78, spread: 0.45, floor: true },
   'Ступени рельефа': { levels: 4, sharp: 0.4, ink: 'all', inkA: 0.4, spread: 0.5 },
 };
@@ -394,11 +475,17 @@ function build() {
   const s = { ...state, tiers: f.tiers };
   const shapes = [];
   for (const link of f.links) {
+    if (s.web > 0) {
+      const web = webOf(link, s);
+      if (web) shapes.push(web);
+    }
     const out = outlineOf(link, s.waist, f.sampleStep);
     if (!out) continue;
     shapes.push(stackOf(out, link, s));
   }
-  shapes.sort((a, b) => b.depth - a.depth);
+  // Дальнее рисуется раньше. При равной глубине перепонка идёт ПЕРЕД горой: они стоят на одном
+  // месте, гора выше, и на своём пятне она обязана закрыть перепонку целиком.
+  shapes.sort((a, b) => (b.depth - a.depth) || ((a.web ? 0 : 1) - (b.web ? 0 : 1)));
   return { shapes, s };
 }
 
@@ -443,7 +530,9 @@ function draw() {
       const cap = new Path2D(); ring(cap, hi);
       ctx.fill(cap);
 
-      if (s.ink === 'all' || (s.ink === 'top' && j === n - 1)) {
+      // Перепонку не обводим никогда: её линия прочертила бы соседнюю гору поперёк — ровно то,
+      // из-за чего и дугу подошвы никогда не обводили.
+      if (!shape.web && (s.ink === 'all' || (s.ink === 'top' && j === n - 1))) {
         ctx.strokeStyle = 'rgba(244,240,230,' + s.inkA + ')';
         ctx.lineWidth = 1;
         ctx.stroke(cap);
@@ -475,6 +564,7 @@ function updatePrompt() {
   const parts = [];
   parts.push('острота ' + fmt(state.sharp, 2) + ' (' + anchorName(state.sharp) + ')');
   parts.push('высота ×' + fmt(state.height, 2));
+  parts.push(state.web === 0 ? 'без перепонки' : 'перепонка ' + fmt(state.web, 2) + ' высоты и ' + fmt(state.webW, 2) + ' ширины');
   parts.push('ярусов ' + state.levels + (state.apex ? ' и вершина в точку' : ', без вершины в точку'));
   if (state.waist !== DEFAULTS.waist) parts.push('талия ' + fmt(state.waist, 2));
   if (state.stretch !== DEFAULTS.stretch) parts.push('растяжение ' + fmt(state.stretch, 2));
@@ -508,6 +598,8 @@ function updateAll() {
 function syncLabels() {
   document.getElementById('v-sharp').textContent = fmt(state.sharp, 2) + ' · ' + anchorName(state.sharp);
   document.getElementById('v-height').textContent = '×' + fmt(state.height, 2);
+  document.getElementById('v-webW').textContent = fmt(state.webW, 2);
+  document.getElementById('v-web').textContent = state.web === 0 ? 'нет' : fmt(state.web, 2) + ' высоты';
   document.getElementById('v-levels').textContent = state.levels;
   document.getElementById('v-waist').textContent = fmt(state.waist, 2);
   document.getElementById('v-stretch').textContent = fmt(state.stretch, 2);
@@ -522,11 +614,11 @@ function syncLabels() {
     for (const b of document.getElementById(key).children)
       b.setAttribute('aria-pressed', String(b.dataset.value == state[key]));
   for (const key of ['apex', 'floor', 'axes']) document.getElementById(key).checked = state[key];
-  for (const key of ['sharp', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+  for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
     document.getElementById(key).value = state[key];
 }
 
-for (const key of ['sharp', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
   document.getElementById(key).addEventListener('input', e => {
     state[key] = parseFloat(e.target.value);
     updateAll();
