@@ -35,6 +35,10 @@ namespace WorldGen.Generation.Mountains
         /// косого звена вершина съезжает на самый угол и склон вырождается в вертикаль.</summary>
         const float ApexInset = 0.15f;
 
+        /// <summary>Потолок на полудлину подошвы вдоль оси, в полуширинах горы. См. подробности в
+        /// Build: он держит юбку горы соразмерной её высоте, когда звено вышло длинным.</summary>
+        const float LobeCapFactor = 1.2f;
+
         /// <summary>
         /// Гора над звеном. outline — замкнутый силуэт доли (LinkOutline.Build).
         /// stretchBack/stretchFwd — растяжение подошвы вдоль оси назад и вперёд (k из §10); у
@@ -54,14 +58,36 @@ namespace WorldGen.Generation.Mountains
             // Подошва: вдоль оси — растяжение (каждая сторона своим множителем), поперёк — ничего,
             // поэтому ширина горы остаётся ровно той, что дало поле расстояний, и силуэт не теряет
             // связи с формой мазка. Затем всё сплющивается по вертикали относительно середины.
-            var baseline = new Vector2[n];
+            var along = new float[n];
+            var side = new float[n];
+            float longest = 0f;
             for (int i = 0; i < n; i++)
             {
                 Vector2 d = outline[i] - c;
-                float along = d.X * u.X + d.Y * u.Y;
-                along *= along >= 0f ? stretchFwd : stretchBack;
-                float side = d.X * across.X + d.Y * across.Y;
-                Vector2 p = c + u * along + across * side;
+                float a = d.X * u.X + d.Y * u.Y;
+                a *= a >= 0f ? stretchFwd : stretchBack;
+                along[i] = a;
+                side[i] = d.X * across.X + d.Y * across.Y;
+                float abs = Math.Abs(a);
+                if (abs > longest) longest = abs;
+            }
+
+            // Потолок на длину подошвы вдоль оси. Без него длинное звено отращивает длинную юбку:
+            // подошва — это план, вид сверху, и у гряды, уходящей ВВЕРХ по картинке, вся её длина
+            // ложится вниз по экрану. Гора тогда превращается в приземистую «чешуйку» с рюшем
+            // вместо склонов — это и был изъян, найденный ДМ 2026-08-14.
+            //
+            // Мера — полуширина самой горы. При 1.2·w юбка выходит той же доли высоты, что у горы
+            // ПОПЕРЁК экрана (замер: ширина 22, высота 22, юбка 7), а горы поперёк потолка не
+            // замечают вовсе: растяжение даёт им 1.12·w, и перекрытие соседей, из которого выходят
+            // перевалы, остаётся нетронутым.
+            float cap = LobeCapFactor * link.MidW;
+            float shrink = longest > cap && cap > 0f ? cap / longest : 1f;
+
+            var baseline = new Vector2[n];
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 p = c + u * (along[i] * shrink) + across * side[i];
                 baseline[i] = new Vector2(p.X, c.Y + (p.Y - c.Y) * squash);
             }
 

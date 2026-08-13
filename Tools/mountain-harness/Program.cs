@@ -19,6 +19,8 @@ namespace MountainHarness
             string mode = args.Length > 0 ? args[0] : "checks";
             if (mode == "svg") { Preview.Write("peek.svg"); return 0; }
             if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
+            if (mode == "one") { Preview.WriteOne("one.svg"); return 0; }
+            if (mode == "app") { Preview.WriteAppLike("app.svg"); return 0; }
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
 
@@ -54,7 +56,7 @@ namespace MountainHarness
 
             GridPointIsTheCellCentre();
             LinkCountIsChosenByRatio();
-            AnisotropyPacksVerticalLinks();
+            AnisotropySpreadsVerticalLinks();
             JitterSpreadsLengthsButKeepsThemClose();
             ClosedAxisSeamMoves();
             ShortBranchGetsALinkNotAHole();
@@ -71,6 +73,7 @@ namespace MountainHarness
             MonotoneAlongGentleLink();
             ApexHeight();
             FreeEndStretch();
+            LobeCapKeepsTheSkirtShort();
             NearVerticalLinkIsKnownArtifact();
             TriangulationCoversTheSilhouetteExactly();
             TierRampSpreadsTiers();
@@ -392,7 +395,10 @@ namespace MountainHarness
         /// одинаково — левый вылет станет равен правому.</summary>
         static void FreeEndStretch()
         {
-            var link = Horizontal(100f, 20f);
+            // Звено берём соразмерное горе (длина ≈ 1.6·полуширины, как её режет §8), а не в пять
+            // раз длиннее: у длинного срабатывает потолок на подошву (LobeCapFactor), и проверка
+            // мерила бы уже его, а не растяжение.
+            var link = Horizontal(32f, 20f);
             var plain = Mound(link, 1f, 1f);
             var oneSided = Mound(link, 1f, 1.4f);
             if (plain == null || oneSided == null) { Fail("Растяжение", "гора не построена"); return; }
@@ -404,6 +410,34 @@ namespace MountainHarness
 
             Check("Растяжение: свободный конец не растянут", Near(leftOne, leftPlain, 0.01f), $"{leftOne:0.##} вместо {leftPlain:0.##}");
             Check("Растяжение: внутренний конец растянут в k", Near(rightOne, rightPlain * 1.4f, 0.01f), $"{rightOne:0.##} вместо {rightPlain * 1.4f:0.##}");
+        }
+
+        /// <summary>
+        /// Потолок на длину подошвы: у звена, вышедшего много длиннее самой горы, юбка не растёт
+        /// вместе с ним. Подошва — это план, вид сверху, и на гряде, уходящей ВВЕРХ ПО КАРТИНКЕ, вся
+        /// её длина ложится вниз по экрану; без потолка гора превращается в приземистую чешуйку с
+        /// рюшем вместо склонов.
+        ///
+        /// Звено обязано быть ВЕРТИКАЛЬНЫМ, иначе проверка пуста: у горизонтального длина ложится
+        /// вбок и юбки не касается вовсе — там потолок нечему ловить (на этом первая редакция
+        /// проверки и попалась).
+        ///
+        /// Юбка длинного звена обязана упереться в потолок: 1.2·w сплющенные вдвое с небольшим.
+        /// Мутант — убрать потолок: юбка станет по полудлине звена, то есть впятеро больше.
+        /// </summary>
+        static void LobeCapKeepsTheSkirtShort()
+        {
+            const float w = 20f, squash = 1f / 1.6f;
+            var link = Vertical(200f, w);
+            var mound = Mound(link, 1f, 1f);
+            if (mound == null) { Fail("Потолок подошвы", "гора не построена"); return; }
+
+            float skirt = link.Mid.Y - mound.Depth;
+            float capped = 1.2f * w * squash;      // потолок LobeCapFactor, сплющенный
+            float uncapped = 100f * squash;        // полудлина звена, сплющенная — это без потолка
+            Check("Потолок подошвы: длинное вертикальное звено не отращивает юбку",
+                  Near(skirt, capped, 1.5f) && skirt < uncapped * 0.5f,
+                  $"юбка {skirt:0.##}, потолок ждали {capped:0.##}, без потолка было бы {uncapped:0.##}");
         }
 
         /// <summary>ИЗВЕСТНЫЙ ИЗЪЯН, зафиксированный замером, а не проверка правила.
@@ -1142,25 +1176,24 @@ namespace MountainHarness
         }
 
         /// <summary>
-        /// Метрика анизотропна: вертикаль дороже горизонтали в a раз, поэтому вертикальный участок
-        /// оси набирает целевую длину быстрее и получает БОЛЬШЕ звеньев. Фикстура — две оси одной
-        /// геометрической длины, вдоль и поперёк.
-        /// Мутант: считать длину обычным гипотенузным способом (a игнорируется) — числа сравняются.
+        /// Метрика анизотропна, и с 2026-08-14 в ОБРАТНУЮ §8 сторону: вертикаль дешевле горизонтали
+        /// в a раз, поэтому вертикальный участок оси набирает целевую длину медленнее и получает
+        /// МЕНЬШЕ звеньев — горы на нём стоят реже. Причина в комментарии к MetricLength: гора от
+        /// наклона звена не меняется, меняется только то, как соседи закрывают друг друга, и на
+        /// вертикали прежний частый шаг хоронил дальнюю гору под ближней.
+        ///
+        /// Фикстура — две оси одной геометрической длины, вдоль и поперёк.
+        /// Мутанты: считать длину обычным гипотенузным способом (числа сравняются); вернуть §8
+        /// как было (знак перевернётся, и проверка поймает именно это).
         /// </summary>
-        static void AnisotropyPacksVerticalLinks()
+        static void AnisotropySpreadsVerticalLinks()
         {
             var flat = SplitLine(200f, false, 100f, 0f, 1.6f, 1);
             var tall = SplitLine(200f, true, 100f, 0f, 1.6f, 1);
-            Check("Анизотропия: вертикаль режется чаще", tall.Count > flat.Count,
-                  $"вдоль {flat.Count}, поперёк {tall.Count} — ждали, что поперёк больше");
+            Check("Анизотропия: вертикаль режется РЕЖЕ", tall.Count < flat.Count,
+                  $"поперёк {flat.Count}, вдоль {tall.Count} — ждали, что вдоль меньше");
         }
 
-        /// <summary>
-        /// Разброс длин обязан быть заметным, но связанным: §14 требует, чтобы звенья одной оси
-        /// отличались не больше чем в 1.22 раза. При весах 1 ± 0.06 предел — 1.13.
-        /// Мутанты: не применять веса вовсе (все длины совпадут); не нормировать веса на их сумму
-        /// (последние звенья упрутся в конец оси и выродятся).
-        /// </summary>
         static void JitterSpreadsLengthsButKeepsThemClose()
         {
             var even = SplitLine(1000f, false, 100f, 0f, 1f, 7);
@@ -1550,6 +1583,19 @@ namespace MountainHarness
                 Pts = new List<Vector2> { new Vector2(0, 0), new Vector2(length, 0) },
                 Mid = new Vector2(length * 0.5f, 0),
                 Tan = new Vector2(1, 0),
+                MidW = halfWidth,
+            };
+            for (int i = 0; i < 2; i++) link.Ws.Add(halfWidth);
+            return link;
+        }
+
+        static AxisLink Vertical(float length, float halfWidth)
+        {
+            var link = new AxisLink
+            {
+                Pts = new List<Vector2> { new Vector2(0, 0), new Vector2(0, length) },
+                Mid = new Vector2(0, length * 0.5f),
+                Tan = new Vector2(0, 1),
                 MidW = halfWidth,
             };
             for (int i = 0; i < 2; i++) link.Ws.Add(halfWidth);

@@ -85,6 +85,67 @@ namespace MountainHarness
         /// ряд кучек), не вылезла ли подошва за след мазка у свободных концов, и держится ли порядок
         /// маляра — ближняя гора обязана закрывать дальнюю.
         /// </summary>
+        // ВРЕМЕННО: одиночные горы на звеньях разного наклона, крупно.
+        public static void WriteOne(string path)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='620' viewBox='0 0 1200 620'>");
+            sb.Append("<rect width='1200' height='620' fill='#efe7d5'/>");
+            double[] angles = { 0, Math.PI / 4, Math.PI / 2 };
+            string[] names = { "поперёк", "наискось", "вдоль" };
+            for (int a = 0; a < angles.Length; a++)
+            {
+                float cx = 200 + a * 320, cy = 400;
+                var tan = new Vector2((float)Math.Cos(angles[a]), (float)Math.Sin(angles[a]));
+                for (int j = 0; j < 3; j++)
+                {
+                    var link = MakeLink(new Vector2(cx, cy) + tan * (j * 16f), tan, 16f, 10f);
+                    var outline = LinkOutline.Build(link, 0.55f, 1f);
+                    var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 1f);
+                    if (m == null) continue;
+                    float top = m.Apex.Y, low = m.Depth, left = m.Crest[0].X, right = m.Crest[m.Crest.Count - 1].X;
+                    Console.WriteLine($"{names[a]} #{j}: ширина {right - left:0.#}, высота {top - link.Mid.Y:0.#}, юбка вниз {link.Mid.Y - low:0.#}");
+                    sb.Append("<polygon fill='").Append(j == 0 ? "#3d5b66" : j == 1 ? "#54727d" : "#6b8994").Append("' points='");
+                    foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+                    for (int i = m.Front.Count - 1; i >= 0; i--)
+                        sb.Append(F(m.Front[i].X)).Append(',').Append(F(Flip(m.Front[i].Y))).Append(' ');
+                    sb.Append("'/>");
+                    sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-width='1.4' points='");
+                    foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+                    sb.Append("'/>");
+                }
+            }
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
+        static AxisLink MakeLink(Vector2 mid, Vector2 tan, float len, float w)
+        {
+            var link = new AxisLink { Mid = mid, Tan = tan, MidW = w };
+            for (int i = 0; i <= 8; i++)
+            {
+                float t = i / 8f - 0.5f;
+                link.Pts.Add(mid + tan * (len * t));
+                link.Ws.Add(w);
+            }
+            return link;
+        }
+
+        public static void WriteAppLike(string path)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>");
+            sb.Append("<rect width='1200' height='900' fill='#efe7d5'/>");
+            Massif(sb, "поперёк", 42f, new[] { new[] { new Vector2(80, 780), new Vector2(520, 780) } }, null, 10f);
+            Massif(sb, "вдоль", 42f, new[] { new[] { new Vector2(760, 560), new Vector2(760, 860) } }, null, 10f);
+            Massif(sb, "наискось", 42f, new[] { new[] { new Vector2(100, 200), new Vector2(480, 520) } }, null, 10f);
+            Massif(sb, "клякса", 90f, new[] { new[] { new Vector2(900, 300), new Vector2(950, 330) } }, null, 10f);
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
         public static void WriteMassif(string path)
         {
             var sb = new StringBuilder();
@@ -111,7 +172,7 @@ namespace MountainHarness
             Console.WriteLine($"готово: {path}");
         }
 
-        static void Massif(StringBuilder sb, string title, float brush, Vector2[][] paint, Vector2[][] erase)
+        static void Massif(StringBuilder sb, string title, float brush, Vector2[][] paint, Vector2[][] erase, float R = 22f)
         {
             var blob = new MountainBlob();
             int id = 1;
@@ -129,7 +190,7 @@ namespace MountainHarness
                     blob.Erasers.Add(s);
                 }
 
-            var settings = new MountainSettings { Radius = 22f };
+            var settings = new MountainSettings { Radius = R };
             var shapes = MountainGeometry.Build(blob, settings, out _, out var links);
 
             foreach (var p in paint)
