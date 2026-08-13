@@ -172,6 +172,13 @@
       <label><span>Контраст слоёв</span><span class="val" id="v-contrast"></span></label>
       <input type="range" id="contrast" min="-1" max="1" step="0.05">
     </div>
+    <div class="row">
+      <label><span>Глубина цветом</span><span class="val" id="v-depthTone"></span></label>
+      <input type="range" id="depthTone" min="0" max="0.5" step="0.01">
+      <div class="hint">Чем дальше от зрителя, тем темнее. Гасит готовую краску последним слоем,
+        поэтому со слоями массы и ярусами не спорит. Считается от места на карте, а не от размаха
+        нарисованного: иначе новый хребет на другом конце карты перекрасил бы все прежние.</div>
+    </div>
     <div class="row" id="row-earth">
       <label><span>Низ темнее земли</span><span class="val" id="v-earth"></span></label>
       <input type="range" id="earth" min="0.55" max="1" step="0.01">
@@ -390,6 +397,20 @@ function tierMix(tier, count, contrast) {
   const step = Math.min(Math.max(tier, 0), count - 1) / last;
   return 0.5 + (step - 0.5) * Math.min(1, Math.max(-1, contrast));
 }
+// Глубина цветом: чем дальше от зрителя, тем темнее. Затемнение НАКЛАДЫВАЕТСЯ последним, поверх
+// готовой краски, и только гасит её. Поэтому оно не спорит ни со слоями массы, ни с ярусами: те
+// решают, какого цвета гора, а это — насколько она в дымке. Прежняя заливка по глубине была
+// именно ПРАВИЛОМ ЦВЕТА и потому воевала с ярусами; её и сняли 2026-08-14.
+//
+// Считается от МИРОВОЙ координаты, а не от размаха того, что нарисовано. Иначе новый массив,
+// нарисованный на другом конце карты, молча перекрасил бы все прежние: тот же изъян, из-за
+// которого зерно оси берут от её собственного положения (см. MountainGeometry.AxisSeed).
+function haze(depth, s) {
+  if (s.depthTone <= 0) return 1;
+  const far = Math.min(1, Math.max(0, depth / DATA.canvasH));
+  return 1 - s.depthTone * far;
+}
+
 function colourOf(shape, levelT, s) {
   const band = tierMix(shape.tier, s.tiers, s.contrast);
   const mix = Math.min(1, Math.max(0, band + s.spread * (levelT - 0.5)));
@@ -401,7 +422,8 @@ function colourOf(shape, levelT, s) {
          g[1] * k + (ROCK[1] - g[1] * k) * mix,
          g[2] * k + (ROCK[2] - g[2] * k) * mix];
   } else c = tone(mix);
-  return 'rgb(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' + Math.round(c[2]) + ')';
+  const k = haze(shape.depth, s);
+  return 'rgb(' + Math.round(c[0] * k) + ',' + Math.round(c[1] * k) + ',' + Math.round(c[2] * k) + ')';
 }
 
 // ── пол ────────────────────────────────────────────────────────────────────────────────────
@@ -444,15 +466,16 @@ for (const f of DATA.fixtures)
 const DEFAULTS = {
   fixture: 0, sharp: 0.66, height: 2.2, levels: 6, apex: true, web: 0.7, webW: 0.72,
   waist: 0.55, stretch: 1.4, aniso: 1.6,
-  palette: 'slate', spread: 0.4, contrast: 1, earth: 0.78,
-  ink: 'none', inkA: 0.5, floor: true, axes: false,
+  palette: 'invert', spread: 0.52, contrast: 0.85, earth: 0.78, depthTone: 0.18,
+  ink: 'all', inkA: 0.12, floor: true, axes: false,
 };
 const state = Object.assign({}, DEFAULTS);
 
 const PRESETS = {
-  'Моё предложение': {},
-  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top', web: 0 },
+  'Твой выбор': {},
+  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top', web: 0, palette: 'slate', contrast: 1, depthTone: 0 },
   'Без перепонки': { web: 0 },
+  'Без глубины цветом': { depthTone: 0 },
   'Пологие холмы': { sharp: 0.18, height: 1.3, levels: 5, spread: 0.35 },
   'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, spread: 0.3, web: 0.6 },
   'Растут из карты': { palette: 'ground', earth: 0.78, spread: 0.45, floor: true },
@@ -572,7 +595,8 @@ function updatePrompt() {
 
   const pal = { slate: 'сланцевая шкала', invert: 'светлые макушки', ground: 'цвет от карты' }[state.palette];
   const colour = ['краска — ' + pal, 'полоса яруса ' + fmt(state.spread, 2),
-                  'контраст слоёв ' + fmt(state.contrast, 2)];
+                  'контраст слоёв ' + fmt(state.contrast, 2),
+                  state.depthTone === 0 ? 'без глубины цветом' : 'глубина цветом ' + fmt(state.depthTone, 2)];
   if (state.palette === 'ground') colour.push('низ темнее земли до ' + fmt(state.earth, 2));
 
   const ink = { none: 'без обводки', top: 'обводка макушки', all: 'обводка каждого яруса' }[state.ink];
@@ -607,6 +631,7 @@ function syncLabels() {
   document.getElementById('v-spread').textContent = state.spread === 0 ? 'нет' : fmt(state.spread, 2);
   document.getElementById('v-contrast').textContent =
     state.contrast === 0 ? 'ровно' : fmt(state.contrast, 2);
+  document.getElementById('v-depthTone').textContent = state.depthTone === 0 ? 'нет' : fmt(state.depthTone, 2);
   document.getElementById('v-earth').textContent = fmt(state.earth, 2);
   document.getElementById('v-inkA').textContent = fmt(state.inkA, 2);
   document.getElementById('row-earth').style.display = state.palette === 'ground' ? '' : 'none';
@@ -614,11 +639,11 @@ function syncLabels() {
     for (const b of document.getElementById(key).children)
       b.setAttribute('aria-pressed', String(b.dataset.value == state[key]));
   for (const key of ['apex', 'floor', 'axes']) document.getElementById(key).checked = state[key];
-  for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+  for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'depthTone', 'inkA'])
     document.getElementById(key).value = state[key];
 }
 
-for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'inkA'])
+for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'depthTone', 'inkA'])
   document.getElementById(key).addEventListener('input', e => {
     state[key] = parseFloat(e.target.value);
     updateAll();
