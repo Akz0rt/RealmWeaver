@@ -589,15 +589,19 @@ function updatePrompt() {
   parts.push('высота ×' + fmt(state.height, 2));
   parts.push(state.web === 0 ? 'без перепонки' : 'перепонка ' + fmt(state.web, 2) + ' высоты и ' + fmt(state.webW, 2) + ' ширины');
   parts.push('ярусов ' + state.levels + (state.apex ? ' и вершина в точку' : ', без вершины в точку'));
-  if (state.waist !== DEFAULTS.waist) parts.push('талия ' + fmt(state.waist, 2));
-  if (state.stretch !== DEFAULTS.stretch) parts.push('растяжение ' + fmt(state.stretch, 2));
-  if (state.aniso !== DEFAULTS.aniso) parts.push('угол взгляда ' + fmt(state.aniso, 2));
+  // Печатаются ВСЕ числа, а не только отличные от значений по умолчанию. Эта строчка — единственное,
+  // что возвращается от ДМ ко мне, и по ней ставятся числа в приложении. А значения по умолчанию
+  // здесь меняются от разговора к разговору: сегодня в них лёг выбор ДМ, и «не по умолчанию» уже
+  // означает не то, что означало вчера. Умолчание в такой строчке — это тихое расхождение.
+  parts.push('талия ' + fmt(state.waist, 2));
+  parts.push('растяжение ' + fmt(state.stretch, 2));
+  parts.push('угол взгляда ' + fmt(state.aniso, 2));
 
   const pal = { slate: 'сланцевая шкала', invert: 'светлые макушки', ground: 'цвет от карты' }[state.palette];
   const colour = ['краска — ' + pal, 'полоса яруса ' + fmt(state.spread, 2),
                   'контраст слоёв ' + fmt(state.contrast, 2),
                   state.depthTone === 0 ? 'без глубины цветом' : 'глубина цветом ' + fmt(state.depthTone, 2)];
-  if (state.palette === 'ground') colour.push('низ темнее земли до ' + fmt(state.earth, 2));
+  colour.push('низ темнее земли до ' + fmt(state.earth, 2));
 
   const ink = { none: 'без обводки', top: 'обводка макушки', all: 'обводка каждого яруса' }[state.ink];
   const inkPart = state.ink === 'none' ? ink : ink + ' с заметностью ' + fmt(state.inkA, 2);
