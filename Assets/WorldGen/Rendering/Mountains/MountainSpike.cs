@@ -162,14 +162,15 @@ namespace WorldGen.Rendering.Mountains
                 if (shape != null) shapes.Add(shape);
             }
 
-            // Тон раздаёт чистый слой: у шипа горы построены руками, и без этого вызова они все
-            // вышли бы одного — самого дальнего — цвета.
-            MountainGeometry.AssignTone(shapes);
             MountainGeometry.SortForPainting(shapes);
 
+            // Ярусы шип не раздаёт: горы у него построены руками, без поля глубины, и все выходят
+            // нулевого яруса — то есть одного, внешнего цвета. Шипу этого хватает, он про порядок
+            // рисования, а не про манеру.
             var style = new MountainPaintStyle
             {
                 Far = farColor, Near = nearColor, Ink = inkColor,
+                TierCount = 3, TierContrast = 1f,
                 CrestWidth = crestWidth, LayerY = layerY,
             };
 

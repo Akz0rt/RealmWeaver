@@ -164,40 +164,11 @@ namespace WorldGen.Generation.Mountains
                 if (shape != null) shapes.Add(shape);
             }
 
-            AssignTone(shapes, settings.ToneSpan);
+            // Тона по глубине (воздушной перспективы, §10) здесь больше нет: решением ДМ 2026-08-14
+            // цвет задаёт ЯРУС — внешнему слою один, среднему другой, внутреннему третий, чтобы
+            // читалась форма массы. Долю вдоль шкалы считает MountainTierRamp, краски берёт рендер.
             SortForPainting(shapes);
             return shapes;
-        }
-
-        /// <summary>
-        /// Воздушная перспектива: дальние горы светлее ближних. Тон считается по глубине подошвы, и
-        /// у соседей он поэтому почти одинаков — заливки сливаются без швов, а по всему массиву
-        /// набирается плавный переход.
-        ///
-        /// Размах по умолчанию (span ≤ 0) — фактический, от самой дальней горы ЭТОГО массива до
-        /// самой ближней, как в прототипе. Заданный размах в мировых единицах — другой уговор: тон
-        /// набирается на первых span единицах вглубь, дальше всё одинаково тёмное. Что выбрать,
-        /// решает ДМ на чекпоинте; по умолчанию стоит то, на что он смотрел в прототипе.
-        /// </summary>
-        public static void AssignTone(List<MountainShape> shapes, float span = 0f)
-        {
-            if (shapes == null || shapes.Count == 0) return;
-
-            float far = float.NegativeInfinity, near = float.PositiveInfinity;
-            foreach (var shape in shapes)
-            {
-                if (shape.Depth > far) far = shape.Depth;
-                if (shape.Depth < near) near = shape.Depth;
-            }
-
-            float scale = span > 0f ? span : far - near;
-            if (scale <= 0f)
-            {
-                foreach (var shape in shapes) shape.Tone = 0f;
-                return;
-            }
-            foreach (var shape in shapes)
-                shape.Tone = Math.Min(1f, Math.Max(0f, (far - shape.Depth) / scale));
         }
 
         /// <summary>

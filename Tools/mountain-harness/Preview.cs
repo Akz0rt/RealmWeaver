@@ -140,18 +140,10 @@ namespace MountainHarness
                 sb.Append("'/>");
             }
 
-            float dMin = float.PositiveInfinity, dMax = float.NegativeInfinity;
-            foreach (var s in shapes)
-            {
-                if (s.Depth < dMin) dMin = s.Depth;
-                if (s.Depth > dMax) dMax = s.Depth;
-            }
-            float span = Math.Max(1f, dMax - dMin);
-
             foreach (var shape in shapes)
             {
-                // 0 — самая дальняя гора, 1 — самая ближняя: воздушная перспектива.
-                float t = (dMax - shape.Depth) / span;
+                // Цвет по ярусу, как в приложении: внешний слой светлый, сердцевина тёмная.
+                float t = MountainTierRamp.Mix(shape.Tier, 3, 1f);
                 sb.Append("<polygon fill='").Append(Tone(t)).Append("' points='");
                 foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
                 for (int i = shape.Front.Count - 1; i >= 0; i--)
@@ -168,7 +160,7 @@ namespace MountainHarness
             Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}, свободных концов {free}");
         }
 
-        /// <summary>Тон по глубине: от дальнего к ближнему.</summary>
+        /// <summary>Краска по доле шкалы: 0 — светлый конец, 1 — тёмный.</summary>
         static string Tone(float t)
         {
             int r = (int)Math.Round(77 + (28 - 77) * t);

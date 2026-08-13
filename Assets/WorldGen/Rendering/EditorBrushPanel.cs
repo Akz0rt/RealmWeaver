@@ -249,10 +249,13 @@ namespace WorldGen.Rendering
         /// константы: BuildLabeledSlider поднимает свой колбэк сразу при сборке, и с константой
         /// панель затирала бы то, что выставлено в инспекторе, ещё до первого показа.
         /// </summary>
+        /// <param name="repaintOnly">Число красит, но не двигает геометрию — тогда меш собирается
+        /// заново из уже посчитанного рисунка, а не считается с нуля. Полный счёт большого массива
+        /// стоит четверть секунды, и ползунок цвета на нём дёргался бы вместо того, чтобы ехать.</param>
         void AddMountainKnob(Transform t, string label, float min, float max, float fallback,
                              System.Func<Mountains.MountainLayer, float> get,
                              System.Action<Mountains.MountainLayer, float> set,
-                             System.Func<float, string> format)
+                             System.Func<float, string> format, bool repaintOnly = false)
         {
             var layer = Layer();
             float def = layer != null ? Mathf.Clamp(get(layer), min, max) : fallback;
@@ -266,7 +269,7 @@ namespace WorldGen.Rendering
                 set(live, v);
                 // Пересчёт отложенный: ДМ ведёт ползунок, значение меняется на каждый пиксель, а
                 // полный счёт слоя стоит десятки миллисекунд.
-                live.RebuildSoon();
+                if (repaintOnly) live.Repaint(); else live.RebuildSoon();
             }, format);
             mountainKnobs.Add(knob);
         }
@@ -488,12 +491,19 @@ namespace WorldGen.Rendering
                             l => l.maskSmoothing, (l, v) => l.maskSmoothing = v,
                             v => v <= 0.001f ? "нет" : $"{v:0.0} R");
 
-            // Открытый вопрос ДМ (чекпоинт 5, пункт 2): 0 — тон набирается по фактической глубине
-            // массива, как в прототипе, и одиночная гора выходит поголовно светлой; больше нуля —
-            // шкала фиксированная, и одиночная гора получает свой тон наравне с хребтом.
-            AddMountainKnob(t, "Размах тона", 0f, 300f, 0f,
-                            l => l.toneSpan, (l, v) => l.toneSpan = v,
-                            v => v <= 0.5f ? "по массиву" : $"{Mathf.RoundToInt(v)} px");
+            // Раскраска по ярусам (решение ДМ 2026-08-14): внешнему слою один цвет, среднему другой,
+            // внутреннему третий. «Ярусов» меняет и ГЕОМЕТРИЮ — по ярусам раздаётся высота, — поэтому
+            // требует полного пересчёта, а контраст только перекрашивает готовое.
+            AddMountainKnob(t, "Ярусов", 1f, 4f, 3f,
+                            l => l.tiers, (l, v) => l.tiers = Mathf.RoundToInt(v),
+                            v => $"{Mathf.RoundToInt(v)}");
+
+            AddMountainKnob(t, "Контраст ярусов", -1f, 1f, 1f,
+                            l => l.tierContrast, (l, v) => l.tierContrast = v,
+                            v => Mathf.Abs(v) <= 0.02f ? "ровно"
+                               : v > 0f ? $"ядро темнее {Mathf.RoundToInt(v * 100f)}%"
+                                        : $"ядро светлее {Mathf.RoundToInt(-v * 100f)}%",
+                            repaintOnly: true);
 
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
             {

@@ -73,7 +73,7 @@ namespace MountainHarness
             FreeEndStretch();
             NearVerticalLinkIsKnownArtifact();
             TriangulationCoversTheSilhouetteExactly();
-            ToneRunsFromFarToNear();
+            TierRampSpreadsTiers();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
@@ -511,28 +511,47 @@ namespace MountainHarness
         }
 
         /// <summary>
-        /// Тон воздушной перспективы: 0 у самой дальней горы массива, 1 у самой ближней. «Дальше» —
-        /// это ВЫШЕ по экрану, то есть больше Y. При заданном размахе шкала набирается на первых его
-        /// единицах вглубь, а не растягивается на весь массив.
-        /// Мутанты: перевернуть шкалу; при заданном размахе не ограничивать её единицей.
+        /// Шкала красок по ярусам (решение ДМ 2026-08-14): внешнему слою один цвет, среднему другой,
+        /// внутреннему третий. Здесь только ДОЛЯ вдоль шкалы — краски берёт рендер из палитры карты,
+        /// и Unity стенду не виден.
+        ///
+        /// Мутанты, ради которых написано:
+        /// — делить на tierCount вместо tierCount−1: внутренний ярус недотягивает до тёмного конца;
+        /// — нормировать по самому глубокому ярусу ЭТОЙ массы: узкая гряда докрашивается до ядра,
+        ///   которого у неё нет (у ВЫСОТЫ нормировка как раз есть — см. TierHeightIsNormalized…,
+        ///   и путать эти два правила нельзя);
+        /// — считать долю как step·contrast: нулевой контраст даёт не средний цвет, а светлый;
+        /// — брать контраст по модулю: отрицательный перестаёт переворачивать шкалу.
         /// </summary>
-        static void ToneRunsFromFarToNear()
+        static void TierRampSpreadsTiers()
         {
-            var far = new MountainShape { Depth = 100f };
-            var middle = new MountainShape { Depth = 60f };
-            var near = new MountainShape { Depth = 20f };
-            var shapes = new List<MountainShape> { far, middle, near };
+            Check("Ярусы-цвет: внешний светлый, средний посередине, внутренний тёмный",
+                  Near(MountainTierRamp.Mix(0, 3, 1f), 0f, 1e-4f)
+                  && Near(MountainTierRamp.Mix(1, 3, 1f), 0.5f, 1e-4f)
+                  && Near(MountainTierRamp.Mix(2, 3, 1f), 1f, 1e-4f),
+                  $"{MountainTierRamp.Mix(0, 3, 1f):0.###} / {MountainTierRamp.Mix(1, 3, 1f):0.###}"
+                  + $" / {MountainTierRamp.Mix(2, 3, 1f):0.###}");
 
-            MountainGeometry.AssignTone(shapes);
-            Check("Тон: дальняя гора светлая, ближняя тёмная",
-                  Near(far.Tone, 0f, 1e-4f) && Near(near.Tone, 1f, 1e-4f),
-                  $"дальняя {far.Tone:0.###}, ближняя {near.Tone:0.###}");
-            Check("Тон: середина посередине", Near(middle.Tone, 0.5f, 1e-4f), $"{middle.Tone:0.###}");
+            // Узкая масса добралась лишь до яруса 1 из трёх. Её сердцевина обязана взять СРЕДНЮЮ
+            // краску, а не тёмную: цвет говорит «какой это слой», а не «самое глубокое, что тут есть».
+            Check("Ярусы-цвет: узкая гряда не докрашивается до сердцевины",
+                  Near(MountainTierRamp.Mix(1, 3, 1f), 0.5f, 1e-4f),
+                  $"{MountainTierRamp.Mix(1, 3, 1f):0.###}");
 
-            MountainGeometry.AssignTone(shapes, 40f);
-            Check("Тон: заданный размах набирается и упирается в единицу",
-                  Near(middle.Tone, 1f, 1e-4f) && Near(near.Tone, 1f, 1e-4f),
-                  $"середина {middle.Tone:0.###}, ближняя {near.Tone:0.###}");
+            Check("Ярусы-цвет: нулевой контраст — вся масса одного СРЕДНЕГО цвета",
+                  Near(MountainTierRamp.Mix(0, 3, 0f), 0.5f, 1e-4f)
+                  && Near(MountainTierRamp.Mix(2, 3, 0f), 0.5f, 1e-4f),
+                  $"{MountainTierRamp.Mix(0, 3, 0f):0.###} / {MountainTierRamp.Mix(2, 3, 0f):0.###}");
+
+            Check("Ярусы-цвет: отрицательный контраст переворачивает шкалу",
+                  Near(MountainTierRamp.Mix(0, 3, -1f), 1f, 1e-4f)
+                  && Near(MountainTierRamp.Mix(2, 3, -1f), 0f, 1e-4f),
+                  $"{MountainTierRamp.Mix(0, 3, -1f):0.###} / {MountainTierRamp.Mix(2, 3, -1f):0.###}");
+
+            Check("Ярусы-цвет: ярус за пределом настройки зажимается",
+                  Near(MountainTierRamp.Mix(9, 3, 1f), 1f, 1e-4f)
+                  && Near(MountainTierRamp.Mix(-4, 3, 1f), 0f, 1e-4f),
+                  $"{MountainTierRamp.Mix(9, 3, 1f):0.###} / {MountainTierRamp.Mix(-4, 3, 1f):0.###}");
         }
 
         /// <summary>Площадь замкнутого многоугольника со знаком (формула шнурков).</summary>

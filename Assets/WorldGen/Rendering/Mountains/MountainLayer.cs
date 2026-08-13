@@ -57,8 +57,8 @@ namespace WorldGen.Rendering.Mountains
         public float layerY = 0.6f;
         [Tooltip("Толщина линии гребня в мировых единицах.")]
         public float crestWidth = 0.35f;
-        [Tooltip("Размах тональной шкалы в мировых единицах. 0 — по фактической глубине массива, как в прототипе.")]
-        public float toneSpan = 0f;
+        [Tooltip("Насколько расходятся краски ярусов: 1 — во всю шкалу (сердцевина тёмная), 0 — вся масса одного цвета, −1 — наоборот, сердцевина светлая.")]
+        [Range(-1f, 1f)] public float tierContrast = 1f;
         [Tooltip("Прозрачность блика на гребне, 0…255.")]
         [Range(0, 255)] public int crestAlpha = 90;
         [Tooltip("Показывать ли слой.")]
@@ -86,6 +86,7 @@ namespace WorldGen.Rendering.Mountains
         Material material;
         MeshFilter body;
 
+        List<MountainShape> lastShapes;   // последний посчитанный рисунок — чтобы перекрашивать без счёта
         Task<List<MountainShape>> pending;
         int generation;
         int pendingGeneration;
@@ -228,21 +229,36 @@ namespace WorldGen.Rendering.Mountains
 
         void Apply(List<MountainShape> shapes)
         {
+            lastShapes = shapes;
             EnsureContainer();
             if (body == null) return;
 
             MountainMeshBuilder.Build(body.sharedMesh, shapes, Style());
         }
 
+        /// <summary>
+        /// Перекрасить, НЕ пересчитывая. Цвет ярусов — дело стиля, геометрия от него не зависит
+        /// ни на йоту, а полный счёт большого массива стоит четверть секунды: ползунок контраста
+        /// иначе дёргался бы вместо того, чтобы ехать.
+        /// </summary>
+        public void Repaint()
+        {
+            if (lastShapes == null) return;
+            Apply(lastShapes);
+        }
+
         MountainPaintStyle Style()
         {
             if (useMapPalette)
-                return MountainPaintStyle.FromPalette(Theme(), crestWidth, layerY, (byte)crestAlpha);
+                return MountainPaintStyle.FromPalette(Theme(), crestWidth, layerY, tiers, tierContrast,
+                                                      (byte)crestAlpha);
 
             return new MountainPaintStyle
             {
                 Far = farColor,
                 Near = nearColor,
+                TierCount = tiers,
+                TierContrast = tierContrast,
                 Ink = inkColor,
                 CrestWidth = crestWidth,
                 LayerY = layerY,
@@ -263,7 +279,6 @@ namespace WorldGen.Rendering.Mountains
             Stretch = stretch,
             Tiers = tiers,
             EdgeHeight = edgeHeight,
-            ToneSpan = toneSpan,
         };
 
         // ── хозяйство ───────────────────────────────────────────────────────────────────────────
@@ -328,6 +343,9 @@ namespace WorldGen.Rendering.Mountains
         void OnValidate()
         {
             if (container != null) container.gameObject.SetActive(visible);
+            // Перекраска, а не пересчёт: правку геометрических чисел в инспекторе всё равно надо
+            // подтвердить кнопкой пересчёта, а цвет ярусов видно сразу и стоит он копейки.
+            Repaint();
         }
 
         void OnDestroy()
