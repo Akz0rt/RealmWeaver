@@ -153,6 +153,63 @@ namespace MountainHarness
         }
 
         /// <summary>
+        /// Второй лист: ДМ сказал «чуть острее» и «это всё-таки горы, а не холмики». Значит крутятся
+        /// сразу два числа — острота (непрерывная шкала от синусоиды к шпилю) и высота, — и у всех
+        /// вариантов включена настоящая вершина вместо площадки наверху.
+        /// </summary>
+        public static void WriteSharp(string path)
+        {
+            var cards = new (string Title, float Sharp, float Height, bool Apex)[]
+            {
+                ("прошлый лист: 0, ×1,5",       0f,    1.5f, false),
+                ("острота 0,4 · высота ×2,2",   0.4f,  2.2f, true),
+                ("острота 0,7 · высота ×2,2",   0.7f,  2.2f, true),
+                ("острота 0,4 · высота ×2,8",   0.4f,  2.8f, true),
+                ("острота 0,7 · высота ×2,8",   0.7f,  2.8f, true),
+                ("острота 1,0 · высота ×2,8",   1f,    2.8f, true),
+                ("острота 0,7 · высота ×3,4",   0.7f,  3.4f, true),
+            };
+
+            for (int i = 0; i < cards.Length; i++)
+            {
+                var sb = new StringBuilder();
+                sb.Append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 620' width='340' height='620'>");
+                sb.Append("<rect width='340' height='620' fill='#efe7d5'/>");
+                Label(sb, 14, 30, cards[i].Title);
+
+                var link = MakeLink(new Vector2(170, Flip(170f)), new Vector2(1, 0), 46f, 30f);
+                var outline = LinkOutline.Build(link, 0.55f, 2f);
+                if (outline != null)
+                {
+                    var one = Stack.Build(outline, link, cards[i].Height, 1f / 1.6f, 1.4f, 1.4f,
+                                          6, Schedule.Sine, cards[i].Sharp, cards[i].Apex);
+                    if (one != null) PaintStacks(sb, new List<StackShape> { one }, "none");
+                }
+
+                SharpRidge(sb, cards[i].Sharp, cards[i].Height, cards[i].Apex);
+                sb.Append("</svg>");
+                string file = path.Replace(".svg", $"-{i + 1}.svg");
+                File.WriteAllText(file, sb.ToString());
+                Console.WriteLine($"готово: {file} — {cards[i].Title}");
+            }
+        }
+
+        static void SharpRidge(StringBuilder sb, float sharp, float height, bool apex)
+        {
+            var path = new[]
+            {
+                new Vector2(85, 540), new Vector2(125, 490), new Vector2(140, 425),
+                new Vector2(205, 380), new Vector2(220, 315),
+            };
+            var settings = new MountainSettings { Radius = 10f, HeightFactor = height };
+            var mask = MountainMask.FromPolygons(CellsAlongPath(path, 30f), MountainMask.ChooseCell(10f, 10f));
+            if (mask == null) return;
+            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            MountainGeometry.BuildFromMask(mask, settings, out var links);
+            PaintStacks(sb, Stack.BuildAll(links, settings, 6, Schedule.Sine, sharp, apex), "none");
+        }
+
+        /// <summary>
         /// Сетка профилей: расписание ярусов по столбцам, высота по строкам. Одна гора в клетке —
         /// это вопрос «какой формы гора», отдельно от вопроса «как выглядит гряда».
         /// </summary>

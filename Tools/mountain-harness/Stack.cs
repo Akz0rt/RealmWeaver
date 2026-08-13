@@ -43,6 +43,11 @@ namespace MountainHarness
 
     static class Stack
     {
+        /// <summary>Радиус кольца-вершины в долях подошвы. Не ноль: кольцо нулевого радиуса
+        /// схлопывается в точку, и полоса под ним вырождается в веер из нулевых треугольников.</summary>
+        public const float ApexRadius = 0.05f;
+
+
         /// <summary>
         /// Высота яруса по его радиусу — ОБРАТНАЯ функция к «радиус от высоты», и взята она так
         /// намеренно. Ярусы раздаются равными шагами по РАДИУСУ (1, (N−1)/N, … 1/N), а расписание
@@ -67,8 +72,24 @@ namespace MountainHarness
         }
 
         /// <summary>
+        /// ОСТРОТА одним числом: 0 — «синусоида», 1 — «шпиль», между ними всё промежуточное.
+        ///
+        /// Заведена после первого листа: ДМ попросил «чуть острее», а из четырёх именованных
+        /// расписаний «чуть» не выбирается — между синусоидой и шпилем зазор в целую манеру. Смесь
+        /// двух кривых остаётся строго убывающей по r, потому что убывают обе, — значит ярусы
+        /// по-прежнему идут снизу вверх без пересечений.
+        /// </summary>
+        public static float LiftBlend(float sharp, float r)
+        {
+            float a = Math.Min(1f, Math.Max(0f, sharp));
+            return LiftAt(Schedule.Sine, r) * (1f - a) + LiftAt(Schedule.Peak, r) * a;
+        }
+
+        /// <summary>
         /// Ярусы одной горы, снизу вверх. outline — замкнутый силуэт доли (LinkOutline.Build), то же,
         /// что получает MoundBuilder.
+        ///
+        /// sharp ≥ 0 — острота непрерывной шкалой, тогда schedule не смотрится вовсе.
         ///
         /// Подошва строится теми же двумя преобразованиями, что и сейчас (§10): растяжение вдоль оси
         /// — чтобы подошвы соседей перекрывались и цепь читалась грядой, — и сжатие по вертикали
@@ -84,7 +105,8 @@ namespace MountainHarness
         public static StackShape Build(IReadOnlyList<Vector2> outline, AxisLink link,
                                        float heightFactor, float squash,
                                        float stretchBack, float stretchFwd,
-                                       int levels, Schedule schedule)
+                                       int levels, Schedule schedule,
+                                       float sharp = -1f, bool apex = false)
         {
             if (outline == null || outline.Count < 6 || link == null || levels < 2) return null;
 
@@ -108,10 +130,14 @@ namespace MountainHarness
             float height = heightFactor * link.MidW * link.HeightJitter * link.TierScale;
 
             var shape = new StackShape { Depth = depth, Tier = link.Tier, Centre = c };
-            for (int j = 0; j < levels; j++)
+            // Верхнее кольцо радиуса 1/N — это площадка, а не вершина: при шести ярусах макушка
+            // выходит шириной в шестую часть подошвы, и гора читается срезанной. apex добавляет
+            // последнее кольцо почти в точку, и над площадкой встаёт настоящая вершина.
+            int rings = apex ? levels + 1 : levels;
+            for (int j = 0; j < rings; j++)
             {
-                float r = (levels - j) / (float)levels;   // 1 … 1/N, никогда не ноль
-                float lift = height * LiftAt(schedule, r);
+                float r = j < levels ? (levels - j) / (float)levels : ApexRadius;
+                float lift = height * (sharp >= 0f ? LiftBlend(sharp, r) : LiftAt(schedule, r));
                 var ring = new List<Vector2>(n);
                 for (int i = 0; i < n; i++)
                 {
@@ -126,7 +152,8 @@ namespace MountainHarness
 
         /// <summary>Весь массив: звенья настоящего конвейера → стопки, уже в порядке маляра.</summary>
         public static List<StackShape> BuildAll(IReadOnlyList<AxisLink> links, MountainSettings settings,
-                                                int levels, Schedule schedule)
+                                                int levels, Schedule schedule,
+                                                float sharp = -1f, bool apex = false)
         {
             var result = new List<StackShape>();
             if (links == null) return result;
@@ -138,7 +165,7 @@ namespace MountainHarness
                 float back = link.FreeStart ? 1f : settings.Stretch;
                 float fwd = link.FreeEnd ? 1f : settings.Stretch;
                 var shape = Build(outline, link, settings.HeightFactor, settings.Squash,
-                                  back, fwd, levels, schedule);
+                                  back, fwd, levels, schedule, sharp, apex);
                 if (shape != null) result.Add(shape);
             }
 
