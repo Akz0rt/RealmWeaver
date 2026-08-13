@@ -91,8 +91,12 @@ namespace WorldGen.Rendering
             AddLayerToggleRow(t, "Биом / климат",    true, on => mapRenderer?.SetShowBiomeLayer(on));
             AddLayerToggleRow(t, "Границы регионов", true, on => mapRenderer?.SetShowRegionBordersLayer(on));
             AddLayerToggleRow(t, "Береговая линия",  false, on => mapRenderer?.SetShowCoastlineLayer(on));
-            AddLayerToggleRow(t, "Декорации", mapRenderer != null && mapRenderer.decorationConfig.enabled,
-                on => mapRenderer?.SetShowDecorations(on));
+            // Прячет только РИСУНОК гор: рельеф под ним остаётся горным (в режиме «Рельеф» полоса
+            // видна). Значение по умолчанию берём у самого слоя, а не константой — иначе строка
+            // соврала бы про снятую в инспекторе галку.
+            AddLayerToggleRow(t, "Горы", mapRenderer == null || mapRenderer.MountainLayer == null
+                                         || mapRenderer.MountainLayer.visible,
+                on => mapRenderer?.SetShowMountains(on));
             AddLayerToggleRow(t, "Названия регионов", true, on => regionLabelOverlay?.SetVisible(on));
             AddLayerToggleRow(t, "Редактировать названия", false, on =>
             {

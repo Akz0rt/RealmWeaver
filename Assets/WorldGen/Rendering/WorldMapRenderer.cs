@@ -147,12 +147,9 @@ namespace WorldGen.Rendering
         [Tooltip("Большая сторона запекаемой текстуры карты в пикселях; меньшая считается по аспекту mapWidth:mapHeight.")]
         public int rasterLongSide = 2048;
 
-        [Header("Декорации (iso-спрайты террейна)")]
-        public WorldGen.Rendering.Decorations.DecorationConfig decorationConfig = new WorldGen.Rendering.Decorations.DecorationConfig();
-
-        WorldGen.Rendering.Decorations.DecorationRenderer decorationRenderer;
-        WorldGen.Rendering.Decorations.DecorationCatalog decorationCatalog;
-        System.Collections.Generic.List<WorldGen.Rendering.Decorations.DecorationInstance> decorationInstances;
+        // Слой старых декораций (iso-спрайты деревьев, холмов, гор) снесён целиком 2026-08-14,
+        // решение ДМ: «будем менять и заменять». Первым на смену пришёл слой гор
+        // (Rendering/Mountains), остальные типы рисуем заново, когда до них дойдёт черёд.
 
         [Header("Пляж (песок у берега)")]
         [Range(0f, 60f)] public float beachWidth = 20f;
@@ -245,14 +242,12 @@ namespace WorldGen.Rendering
         {
             if (gpuRenderer != null && gpuRenderer.Material != null)
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
-            if (Application.isPlaying && cells != null && nearestLookup != null) RebuildDecorations();
         }
 
         void OnDestroy()
         {
             if (rasterTexture != null) Destroy(rasterTexture);
             if (rasterMaterial != null) Destroy(rasterMaterial);
-            if (decorationCatalog != null && decorationCatalog.Atlas != null) Destroy(decorationCatalog.Atlas);
         }
 
         /// <summary>Sprites/Default: unlit, double-sided (Cull Off) - как у рек/границ в этом же файле
@@ -305,7 +300,6 @@ namespace WorldGen.Rendering
                 PositionCameraOverMap();
 
             OnDisplayChanged?.Invoke();
-            RebuildDecorations();
             // ПОСЛЕ BuildMesh, а не до: горы подрезаются по маске берега, которую печёт он. Раньше —
             // и новые горы легли бы по берегу прежнего мира (в редакторе, где счёт не откладывается,
             // это видно сразу же).
@@ -363,7 +357,6 @@ namespace WorldGen.Rendering
         {
             BuildRivers();
             BuildBorders();
-            RebuildDecorations();
 
             if (targetCamera != null)
                 PositionCameraOverMap();
@@ -589,7 +582,7 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>Self-creates the political region-name label overlay (Task 7) the first time it's
-        /// needed - same "new child GameObject + AddComponent" idiom as EnsureDecorationRenderer, so this
+        /// needed - the same "new child GameObject + AddComponent" idiom the mountain layer uses, so this
         /// needs NO scene wiring (no Inspector references to assign in the Editor).</summary>
         void EnsurePoliticalLabelOverlay()
         {
@@ -697,8 +690,6 @@ namespace WorldGen.Rendering
             // FinalizeLabels ДО FinalizeCoast: поле дистанции берега сеется из сглаженной маски
             // (isLandMask), поэтому маску надо сначала пере-печь из угловатой заплатки в гладкую.
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.FinalizeLabels(); gpuRenderer.FinalizeCoast(); }
-            // Декорации: пересчитать затронутую область (или всю карту, если rect не отслеживается).
-            RefreshDecorationsRect(new Rect(0, 0, mapWidth, mapHeight));
             OnDisplayChanged?.Invoke();
         }
 
@@ -3313,42 +3304,6 @@ namespace WorldGen.Rendering
             nearestLookup = new NearestCellLookup(cells, minPointDistance);
         }
 
-        void EnsureDecorationRenderer()
-        {
-            if (decorationCatalog == null)
-                decorationCatalog = WorldGen.Rendering.Decorations.DecorationCatalog.BuildPlaceholder();
-            if (decorationRenderer == null)
-            {
-                var go = new GameObject("Decorations");
-                go.transform.SetParent(transform, false); // локальные коорд. карты
-                decorationRenderer = go.AddComponent<WorldGen.Rendering.Decorations.DecorationRenderer>();
-                decorationRenderer.Init(decorationCatalog);
-            }
-        }
-
-        /// <summary>Полная перерасстановка декораций из текущих клеток/сида/темы.</summary>
-        public void RebuildDecorations()
-        {
-            EnsureDecorationRenderer();
-            if (cells == null || nearestLookup == null) return;
-            decorationInstances = WorldGen.Rendering.Decorations.DecorationPlacer.Place(
-                cells, nearestLookup, seed, mapWidth, mapHeight, decorationConfig, paletteTheme);
-            decorationRenderer.SetInstances(decorationInstances);
-            decorationRenderer.Visible = decorationConfig.enabled;
-        }
-
-        /// <summary>Rect-scoped обновление: выкинуть инстансы в rect, дорасставить, ре-сортировать.</summary>
-        public void RefreshDecorationsRect(Rect worldRect)
-        {
-            if (decorationInstances == null) { RebuildDecorations(); return; }
-            EnsureDecorationRenderer();
-            decorationInstances.RemoveAll(d => worldRect.Contains(d.worldPos));
-            WorldGen.Rendering.Decorations.DecorationPlacer.PlaceRect(
-                decorationInstances, nearestLookup, seed, mapWidth, mapHeight, decorationConfig, paletteTheme, worldRect);
-            decorationInstances.Sort((a, b) => b.sortZ.CompareTo(a.sortZ)); // descending, see DecorationPlacer.Place
-            decorationRenderer.SetInstances(decorationInstances);
-        }
-
         /// <summary>Один плоский квад mapWidth×mapHeight в плоскости XZ - заменяет тысячи
         /// клеточных fan-мешей. Цвет приходит из текстуры (см. RebakeAll), не из vertex color.
         /// Sprites/Default не culлит грани, так что winding order (0,1,2 vs 0,2,1) здесь не важен -
@@ -3454,12 +3409,11 @@ namespace WorldGen.Rendering
             OnDisplayChanged?.Invoke();
         }
 
-        public void SetShowDecorations(bool on)
+        /// <summary>Показ слоя гор из панели «Слои». Прячет только рисунок: рельеф под ним остаётся
+        /// горным, и в режиме «Рельеф» полоса гор видна по-прежнему.</summary>
+        public void SetShowMountains(bool on)
         {
-            decorationConfig.enabled = on;
-            if (decorationRenderer != null) decorationRenderer.Visible = on;
-            EnsureDecorationRenderer();
-            if (on && (decorationInstances == null || decorationInstances.Count == 0)) RebuildDecorations();
+            MountainLayer?.SetVisible(on);
         }
 
         /// <summary>Текущее количество РЕАЛЬНО используемых регионов на карте (может быть меньше numberOfRegions, если генерация прошла нестандартно) - нужно легенде, чтобы не показывать несуществующие записи.</summary>
@@ -3534,7 +3488,12 @@ namespace WorldGen.Rendering
             // (иначе после Undo/recolor берег засеется гранёным). То же, что в EndBrushStroke.
             if (useGpuRenderer && gpuRenderer != null) { gpuRenderer.UpdateCells(cells); gpuRenderer.FinalizeLabels(); gpuRenderer.FinalizeCoast(); }
             else RebakeAll();
-            RebuildDecorations();
+            // Горы — производные от высоты клеток, а сюда приходят именно массовые правки клеток:
+            // Ctrl+Z, «Отменить всё», сброс override'ов. Раньше на этом месте стояла перерасстановка
+            // декораций, и после отмены рисунок гор оставался от отменённого мазка — высота уже
+            // вернулась, а хребет на карте стоял. Пересчёт отложенный, так что лишние вызовы с
+            // перекраски регионов схлопываются в один.
+            ReliefChanged();
         }
 
         /// <summary>Заливает цвета регионов в GPU-материал (_RegionColor) - режим "Регионы".
