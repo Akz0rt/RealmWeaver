@@ -107,6 +107,273 @@ namespace MountainHarness
             }
         }
 
+        /// <summary>
+        /// Лист вариантов под ДРУГОЕ устройство горы (предложение ДМ 2026-08-15): гора как стопка
+        /// ярусов. Каждая карточка — одна и та же пара картинок: гора крупно (виден профиль) и гряда
+        /// из клеток, уходящая ВВЕРХ по картинке с изломом, — то самое место, где ДМ находил
+        /// «рыбью чешую» у нынешнего силуэта.
+        /// </summary>
+        public static void WriteStack(string path)
+        {
+            var cards = new (string Title, Schedule? Plan, float Height, int Levels, string Ink, string Look)[]
+            {
+                ("сейчас — остриё",              null,          2.2f, 0,  "none", "slate"),
+                ("конус ×2,2, 6 ярусов",         Schedule.Cone, 2.2f, 6,  "none", "slate"),
+                ("синусоида ×2,2, 6 ярусов",     Schedule.Sine, 2.2f, 6,  "none", "slate"),
+                ("конус ×1,5, 6 ярусов",         Schedule.Cone, 1.5f, 6,  "none", "slate"),
+                ("синусоида ×1,5, 6 ярусов",     Schedule.Sine, 1.5f, 6,  "none", "slate"),
+                ("синусоида ×1,5, 3 яруса",      Schedule.Sine, 1.5f, 3,  "none", "slate"),
+                ("синусоида ×1,5, 10 ярусов",    Schedule.Sine, 1.5f, 10, "none", "slate"),
+                ("синусоида ×1,5 — обводка макушки", Schedule.Sine, 1.5f, 6, "top", "slate"),
+                ("синусоида ×1,5 — обводка ярусов",  Schedule.Sine, 1.5f, 6, "all", "slate"),
+                ("светлые макушки",              Schedule.Sine, 1.5f, 6,  "none", "invert"),
+                ("цвет от карты",                Schedule.Sine, 1.5f, 6,  "none", "ground"),
+            };
+
+            for (int i = 0; i < cards.Length; i++)
+            {
+                var sb = new StringBuilder();
+                sb.Append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 580' width='340' height='580'>");
+                if (cards[i].Look == "ground")
+                {
+                    sb.Append("<rect width='150' height='580' fill='#cdbb92'/>");
+                    sb.Append("<rect x='150' width='190' height='580' fill='#8d9d70'/>");
+                }
+                else sb.Append("<rect width='340' height='580' fill='#efe7d5'/>");
+                Label(sb, 14, 30, cards[i].Title);
+                StackMound(sb, new Vector2(170, Flip(150f)), cards[i].Plan, cards[i].Height,
+                           cards[i].Levels, cards[i].Ink, cards[i].Look);
+                StackRidge(sb, cards[i].Plan, cards[i].Height, cards[i].Levels, cards[i].Ink,
+                           cards[i].Look);
+                sb.Append("</svg>");
+                string file = path.Replace(".svg", $"-{i + 1}.svg");
+                File.WriteAllText(file, sb.ToString());
+                Console.WriteLine($"готово: {file} — {cards[i].Title}");
+            }
+        }
+
+        /// <summary>
+        /// Сетка профилей: расписание ярусов по столбцам, высота по строкам. Одна гора в клетке —
+        /// это вопрос «какой формы гора», отдельно от вопроса «как выглядит гряда».
+        /// </summary>
+        public static void WriteProfiles(string path)
+        {
+            var plans = new (string Title, Schedule? Plan)[]
+            {
+                ("сейчас (силуэт)", null),
+                ("шпиль",  Schedule.Peak),
+                ("конус",  Schedule.Cone),
+                ("купол",  Schedule.Dome),
+                ("синусоида", Schedule.Sine),
+            };
+            float[] heights = { 2.2f, 1.5f, 1.0f };
+            const int levels = 6;
+            const float cellW = 240f, cellH = 210f, gutter = 92f, header = 40f;
+
+            var sb = new StringBuilder();
+            float w = gutter + cellW * plans.Length, h = header + cellH * heights.Length;
+            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ").Append(F(w)).Append(' ')
+              .Append(F(h)).Append("' width='").Append(F(w)).Append("' height='").Append(F(h)).Append("'>");
+            sb.Append("<rect width='").Append(F(w)).Append("' height='").Append(F(h)).Append("' fill='#efe7d5'/>");
+
+            for (int c = 0; c < plans.Length; c++)
+                Label(sb, gutter + cellW * c + 16f, 26f, plans[c].Title);
+
+            for (int r = 0; r < heights.Length; r++)
+            {
+                Label(sb, 14f, header + cellH * r + cellH * 0.55f, $"высота ×{heights[r]:0.0}");
+                for (int c = 0; c < plans.Length; c++)
+                {
+                    float ox = gutter + cellW * c + cellW * 0.5f;
+                    float oy = header + cellH * r + cellH * 0.86f;
+                    var link = MakeLink(new Vector2(0, 0), new Vector2(1, 0), 46f, 30f);
+                    var outline = LinkOutline.Build(link, 0.55f, 2f);
+                    if (outline == null) continue;
+
+                    if (plans[c].Plan == null)
+                    {
+                        var m = MoundBuilder.Build(outline, link, heights[r], 1f / 1.6f, 1.4f, 1.4f, 2f, 1.6f);
+                        if (m == null) continue;
+                        sb.Append("<polygon fill='").Append(Tone(0.6f)).Append("' points='");
+                        foreach (var q in m.Crest) sb.Append(F(ox + q.X)).Append(',').Append(F(oy - q.Y)).Append(' ');
+                        for (int i = m.Front.Count - 1; i >= 0; i--)
+                            sb.Append(F(ox + m.Front[i].X)).Append(',').Append(F(oy - m.Front[i].Y)).Append(' ');
+                        sb.Append("'/>");
+                        continue;
+                    }
+
+                    var shape = Stack.Build(outline, link, heights[r], 1f / 1.6f, 1.4f, 1.4f,
+                                            levels, plans[c].Plan.Value);
+                    if (shape != null) EmitStack(sb, shape, ox, oy, "none");
+                }
+            }
+
+            sb.Append("</svg>");
+            File.WriteAllText(path, sb.ToString());
+            Console.WriteLine($"готово: {path}");
+        }
+
+        /// <summary>Стопка на холст со сдвигом начала: экран = (ox + x, oy − y).</summary>
+        static void EmitStack(StringBuilder sb, StackShape shape, float ox, float oy, string ink,
+                              string look = "slate")
+        {
+            int n = shape.Levels.Count;
+            if (n == 0) return;
+
+            // Подошва целиком — под ней ничего не просвечивает.
+            Fill(sb, shape.Levels[0], Paint(look, shape.Centre, 0f), ox, oy);
+
+            // Между соседними ярусами — ПОЛОСА, а не вертикальная стенка. Вертикальная превращала
+            // гору в катушку: у каждой ступени был отвес. Полоса же соединяет край нижнего яруса с
+            // краем верхнего, поэтому огибающая стопки выходит гладкой сама собой, а ярусы читаются
+            // цветом. Точек у ярусов поровну — они одна и та же доля, сжатая к середине, — так что
+            // полоса сшивается «застёжкой» по номеру точки.
+            for (int j = 1; j < n; j++)
+            {
+                string fill = Paint(look, shape.Centre, n > 1 ? j / (float)(n - 1) : 0f);
+                var lower = shape.Levels[j - 1];
+                var upper = shape.Levels[j];
+                int count = Math.Min(lower.Count, upper.Count);
+                for (int k = 0; k + 1 < count; k++)
+                    sb.Append("<polygon fill='").Append(fill).Append("' points='")
+                      .Append(F(ox + lower[k].X)).Append(',').Append(F(oy - lower[k].Y)).Append(' ')
+                      .Append(F(ox + lower[k + 1].X)).Append(',').Append(F(oy - lower[k + 1].Y)).Append(' ')
+                      .Append(F(ox + upper[k + 1].X)).Append(',').Append(F(oy - upper[k + 1].Y)).Append(' ')
+                      .Append(F(ox + upper[k].X)).Append(',').Append(F(oy - upper[k].Y)).Append("'/>");
+
+                Fill(sb, upper, fill, ox, oy);
+
+                if (ink == "all" || (ink == "top" && j == n - 1))
+                {
+                    sb.Append("<polygon fill='none' stroke='#f0ece2' stroke-opacity='0.5' stroke-width='1.2' points='");
+                    foreach (var p in upper) sb.Append(F(ox + p.X)).Append(',').Append(F(oy - p.Y)).Append(' ');
+                    sb.Append("'/>");
+                }
+            }
+        }
+
+        static void Fill(StringBuilder sb, List<Vector2> ring, string colour, float ox, float oy)
+        {
+            sb.Append("<polygon fill='").Append(colour).Append("' points='");
+            foreach (var p in ring) sb.Append(F(ox + p.X)).Append(',').Append(F(oy - p.Y)).Append(' ');
+            sb.Append("'/>");
+        }
+
+        /// <summary>Одна гора крупно: либо нынешний силуэт, либо стопка ярусов.</summary>
+        static void StackMound(StringBuilder sb, Vector2 centre, Schedule? plan, float height,
+                               int levels, string ink, string look)
+        {
+            var link = MakeLink(centre, new Vector2(1, 0), 46f, 30f);
+            var outline = LinkOutline.Build(link, 0.55f, 2f);
+            if (outline == null) return;
+
+            if (plan == null) { OneMound(sb, centre, 1.6f); return; }
+
+            var shape = Stack.Build(outline, link, height, 1f / 1.6f, 1.4f, 1.4f, levels, plan.Value);
+            if (shape != null) PaintStacks(sb, new List<StackShape> { shape }, ink, look);
+        }
+
+        /// <summary>
+        /// Гряда с изломом, уходящая вверх по картинке. Построена ПУТЁМ ПРИЛОЖЕНИЯ: клетки карты
+        /// стоят через 15 единиц, из них собирается маска, дальше — настоящий конвейер.
+        /// </summary>
+        static void StackRidge(StringBuilder sb, Schedule? plan, float height, int levels,
+                               string ink, string look)
+        {
+            var path = new[]
+            {
+                new Vector2(85, 500), new Vector2(125, 450), new Vector2(140, 385),
+                new Vector2(205, 340), new Vector2(220, 275),
+            };
+            var polys = CellsAlongPath(path, 30f);
+
+            var settings = new MountainSettings { Radius = 10f, HeightFactor = height };
+            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
+            if (mask == null) return;
+            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            var shapes = MountainGeometry.BuildFromMask(mask, settings, out var links);
+
+            if (plan == null) { Paint(sb, shapes); return; }
+            PaintStacks(sb, Stack.BuildAll(links, settings, levels, plan.Value), ink, look);
+        }
+
+        /// <summary>Клетки карты (квадраты шагом 15) вдоль ломаной, заданной В ЭКРАННЫХ координатах.</summary>
+        static List<IReadOnlyList<Vector2>> CellsAlongPath(Vector2[] screenPath, float halfWidth)
+        {
+            const float step = 15f;
+            var path = new Vector2[screenPath.Length];
+            for (int i = 0; i < screenPath.Length; i++)
+                path[i] = new Vector2(screenPath[i].X, Flip(screenPath[i].Y));
+
+            float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
+            foreach (var p in path)
+            {
+                minX = Math.Min(minX, p.X - halfWidth); maxX = Math.Max(maxX, p.X + halfWidth);
+                minY = Math.Min(minY, p.Y - halfWidth); maxY = Math.Max(maxY, p.Y + halfWidth);
+            }
+
+            var polys = new List<IReadOnlyList<Vector2>>();
+            float h = step * 0.5f;
+            for (float x = (float)Math.Floor(minX / step) * step; x <= maxX; x += step)
+                for (float y = (float)Math.Floor(minY / step) * step; y <= maxY; y += step)
+                {
+                    var c = new Vector2(x, y);
+                    if (DistanceToPath(path, c) > halfWidth) continue;
+                    polys.Add(new List<Vector2>
+                    {
+                        new Vector2(c.X - h, c.Y - h), new Vector2(c.X + h, c.Y - h),
+                        new Vector2(c.X + h, c.Y + h), new Vector2(c.X - h, c.Y + h),
+                    });
+                }
+            return polys;
+        }
+
+        static float DistanceToPath(Vector2[] path, Vector2 p)
+        {
+            float best = float.MaxValue;
+            for (int i = 1; i < path.Length; i++)
+            {
+                Vector2 a = path[i - 1], b = path[i], d = b - a;
+                float len2 = d.LengthSquared();
+                float t = len2 < 1e-8f ? 0f : Math.Min(1f, Math.Max(0f, Vector2.Dot(p - a, d) / len2));
+                best = Math.Min(best, (p - (a + d * t)).Length());
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Стопки на холст. Внутри горы ярусы идут снизу вверх, поэтому верхний закрывает нижний;
+        /// сами горы уже отсортированы порядком маляра. Цвет задаёт ЯРУС ПО ВЫСОТЕ: у соседей он в
+        /// точности одинаков, и подошвы сливаются в одну ленту вдоль всей гряды.
+        /// </summary>
+        static void PaintStacks(StringBuilder sb, List<StackShape> shapes, string ink, string look = "slate")
+        {
+            foreach (var shape in shapes) EmitStack(sb, shape, 0f, CanvasH, ink, look);
+        }
+
+        /// <summary>
+        /// Краска яруса. slate — сланцевая шкала, светлый низ и тёмный верх. invert —
+        /// наоборот, макушки светлые. ground — та самая проба «горы растут из карты»: нижний
+        /// ярус берёт цвет земли под горой и лишь притемняет его, верхний уходит в камень.
+        /// Притемнение обязательно: ровно цвет карты стирает внешнюю границу массы,
+        /// и хребет перестаёт читаться объектом.
+        /// </summary>
+        static string Paint(string look, Vector2 centre, float t)
+        {
+            if (look == "invert") return Tone(1f - t);
+            if (look != "ground") return Tone(t);
+
+            // Карточка из двух биомов: слева песок, справа лес. Настоящая проба спросит
+            // цвет у карты (WorldMapRenderer.GetColorForCell), здесь он подделан по X.
+            float[] ground = centre.X < 150f ? new float[] { 205, 187, 146 } : new float[] { 141, 157, 112 };
+            float[] rock = { 43, 53, 64 };
+            const float k = 0.78f;   // нижний ярус — земля, притемнённая на пятую часть
+            int r = (int)Math.Round(ground[0] * k + (rock[0] - ground[0] * k) * t);
+            int g = (int)Math.Round(ground[1] * k + (rock[1] - ground[1] * k) * t);
+            int b = (int)Math.Round(ground[2] * k + (rock[2] - ground[2] * k) * t);
+            return "rgb(" + r + "," + g + "," + b + ")";
+        }
+
         static void Label(StringBuilder sb, float x, float y, string text)
             => sb.Append("<text x='").Append(F(x)).Append("' y='").Append(F(y))
                  .Append("' font-family='sans-serif' font-size='15' fill='#5a5348'>").Append(text).Append("</text>");
