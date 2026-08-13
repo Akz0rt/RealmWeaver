@@ -94,31 +94,17 @@ namespace MountainHarness
         public static void WriteLook(string path)
         {
             float[] exps = { 1.6f, 1.0f, 0.7f, 0.45f };
-            string[] names = { "1.6 — сейчас, остриё", "1.0 — прямой склон", "0.7 — тупая макушка", "0.45 — купол" };
-            float[] heights = { 2.2f, 1.5f };
-
-            var sb = new StringBuilder();
-            sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='1240' height='980' viewBox='0 0 1240 980'>");
-            sb.Append("<rect width='1240' height='980' fill='#efe7d5'/>");
-
-            // Мир перевёрнут по Y относительно холста (см. Flip), поэтому всё, что рисуется
-            // ГЕОМЕТРИЕЙ, ставится в мировых координатах, а подписи — прямо в экранных.
             for (int i = 0; i < exps.Length; i++)
             {
-                float cx = 175 + i * 295;
-                Label(sb, cx - 95, 32, names[i]);
-                OneMound(sb, new Vector2(cx, Flip(150f)), exps[i]);
-
-                for (int j = 0; j < heights.Length; j++)
-                {
-                    float screenY = 400f + j * 290f;
-                    if (i == 0) Label(sb, 18, screenY - 120f, $"высота ×{heights[j]:0.0}");
-                    CellLook(sb, new Vector2(cx, Flip(screenY)), 95f, exps[i], heights[j]);
-                }
+                var sb = new StringBuilder();
+                sb.Append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 420' width='300' height='420'>");
+                OneMound(sb, new Vector2(150, Flip(80f)), exps[i]);
+                CellLook(sb, new Vector2(150, Flip(280f)), 95f, exps[i], 2.2f);
+                sb.Append("</svg>");
+                string file = path.Replace(".svg", $"-{i + 1}.svg");
+                File.WriteAllText(file, sb.ToString());
+                Console.WriteLine($"готово: {file}");
             }
-            sb.Append("</svg>");
-            File.WriteAllText(path, sb.ToString());
-            Console.WriteLine($"готово: {path}");
         }
 
         static void Label(StringBuilder sb, float x, float y, string text)
@@ -128,8 +114,8 @@ namespace MountainHarness
         /// <summary>Одна гора крупно — чтобы силуэт был виден без соседей.</summary>
         static void OneMound(StringBuilder sb, Vector2 centre, float exponent)
         {
-            var link = MakeLink(centre, new Vector2(1, 0), 58f, 36f);
-            var outline = LinkOutline.Build(link, 0.55f, 2.4f);
+            var link = MakeLink(centre, new Vector2(1, 0), 46f, 30f);
+            var outline = LinkOutline.Build(link, 0.55f, 2f);
             var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 2f, exponent);
             if (m == null) return;
             sb.Append("<polygon fill='#48626d' points='");
