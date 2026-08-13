@@ -10,21 +10,19 @@ namespace WorldGen.Rendering.Mountains
     /// <summary>
     /// Слой нарисованных гор: хранит мазки и показывает то, что из них выросло.
     ///
-    /// Устройство простое и повторяет нарисованные реки: в памяти лежат ТОЛЬКО мазки, вся геометрия
-    /// производная и считается заново. Отменить мазок — значит выкинуть его из списка и пересчитать;
-    /// откатывать нечего, и мазок, сливший два массива, при отмене честно разливает их обратно.
+    /// Устройство простое: слой не хранит НИЧЕГО. Источник гор — рельеф (решение ДМ 2026-08-14):
+    /// горами считаются клетки карты, у которых высота дотянула до MountainElevation, а рисунок —
+    /// их декорация. Отсюда даром достаются слияние и разрезание массивов (это соседство клеток),
+    /// подрезка по воде, отмена (обычная отмена правки клеток) и открытие проекта (клетки и так в
+    /// файле).
     ///
-    /// Считается всё в фоне, потому что счёт стоит десятки миллисекунд (а на исполинском мазке —
-    /// сотни), и в кадр он не помещается. Отсюда две тонкости, обе намеренные:
+    /// Считается всё в фоне, потому что счёт стоит десятки миллисекунд (а на исполинском массиве —
+    /// сотни), и в кадр он не помещается. Пока идёт счёт, на карте уже видна правка САМОГО РЕЛЬЕФА:
+    /// клетки перепеклись сразу, а рисунок догоняет. Отдельной ленты-превью поэтому нет — она была
+    /// нужна, пока горы не меняли ничего, кроме себя.
     ///
-    /// • В РЕДАКТОРЕ, когда сцена не запущена, Update не тикает — и результат фонового счёта некому
-    ///   было бы забрать. Поэтому вне игры считаем прямо в вызове: пункт меню обязан работать, иначе
-    ///   на чекпоинте ДМ жмёт кнопку и не видит ничего.
-    /// • Пока идёт счёт, показывается лента следа кисти. Она появляется мгновенно и говорит «мазок
-    ///   принят», а горы подменяют её, когда досчитаются. Так же сделано у рек и рельефа.
-    ///
-    /// Кисти на этом слое ещё нет — она придёт задачей позже; сейчас мазок ставится пунктом
-    /// контекстного меню компонента.
+    /// В РЕДАКТОРЕ, когда сцена не запущена, Update не тикает — и результат фонового счёта некому
+    /// было бы забрать. Поэтому вне игры считаем прямо в вызове.
     /// </summary>
     public class MountainLayer : MonoBehaviour
     {
@@ -67,6 +65,8 @@ namespace WorldGen.Rendering.Mountains
         public bool visible = true;
         [Tooltip("Горы только по суше (решение ДМ). Снять — можно рисовать и по воде.")]
         public bool onlyOnLand = true;
+        [Tooltip("Сглаживание контура массива, в радиусах горы. Клетки карты стоят через 15 единиц, а гора — 10, поэтому без сглаживания контур выходит мозаикой. 0 — не сглаживать.")]
+        [Range(0f, 1.5f)] public float maskSmoothing = 0.5f;
 
         [Header("Цвет")]
         [Tooltip("Брать концы тональной шкалы из палитры карты (слоты MtnL и MtnS). Снять — красить своими цветами ниже.")]
@@ -74,96 +74,65 @@ namespace WorldGen.Rendering.Mountains
         public Color farColor = new Color(0.55f, 0.59f, 0.64f, 1f);
         public Color nearColor = new Color(0.16f, 0.18f, 0.22f, 1f);
         public Color inkColor = new Color(0.94f, 0.93f, 0.89f, 0.35f);
-        [Tooltip("Цвет ленты следа кисти, которая видна, пока считаются горы.")]
-        public Color previewColor = new Color(0.95f, 0.45f, 0.25f, 0.30f);
 
         const string ContainerName = "СлойГор";
 
-        readonly List<MountainStroke> strokes = new List<MountainStroke>();
-        int nextStrokeId = 1;
+        /// <summary>Высота, с которой клетка считается ГОРОЙ. То же число, по которому
+        /// LandformClassifier отделяет Mountains от Hills, — специально одно, чтобы «группа рельефа»
+        /// и «что нарисовано» не разъехались.</summary>
+        public const float MountainElevation = 0.5f;
 
         Transform container;
         Material material;
         MeshFilter body;
-        MeshFilter preview;
 
         Task<List<MountainShape>> pending;
         int generation;
         int pendingGeneration;
         float rebuildAt = -1f;
 
-        public IReadOnlyList<MountainStroke> Strokes => strokes;
+        // ── что рисовать: массивы из клеток карты ───────────────────────────────────────────────
+        //
+        // Слой НИЧЕГО не хранит. Источник гор — рельеф: клетки, у которых высота дотянула до
+        // MountainElevation. Отсюда всё остальное даром: слияние и разрезание массивов — это
+        // соседство клеток, подрезка по суше — вода просто не горная группа, отмена — обычная
+        // отмена правки клеток, а открытие проекта не требует ни загрузки, ни формата, потому что
+        // клетки в файле и так лежат.
 
-        // ── мазки ───────────────────────────────────────────────────────────────────────────────
-
-        /// <summary>Кладёт мазок и пересчитывает слой. Точки — в Site-координатах карты.</summary>
-        public MountainStroke AddStroke(List<Vec2> points, float radius, bool erase)
+        /// <summary>
+        /// Снимок массивов на главном потоке: список многоугольников клеток по каждому связному
+        /// куску. Именно снимок, а не ссылки на клетки, — считать будут в фоне, а клетки правит
+        /// кисть.
+        /// </summary>
+        List<List<IReadOnlyList<Vec2>>> SnapshotMassifs()
         {
-            if (points == null || points.Count == 0 || radius <= 0f) return null;
-            var stroke = new MountainStroke { Id = nextStrokeId++, Radius = radius, Erase = erase };
-            stroke.Points.AddRange(points);
-            strokes.Add(stroke);
-            Rebuild();
-            return stroke;
-        }
+            var result = new List<List<IReadOnlyList<Vec2>>>();
+            var renderer = Renderer();
+            var cells = renderer != null ? renderer.Cells : null;
+            if (cells == null || cells.Count == 0) return result;
 
-        /// <summary>Убирает мазок (отмена). Номера не переиспользуются: по самому старому мазку
-        /// пятна берётся зерно разброса, и повторно выданный номер сдвинул бы уже нарисованное.</summary>
-        public void RemoveStroke(MountainStroke stroke)
-        {
-            if (stroke == null || !strokes.Remove(stroke)) return;
-            // Отложенно: «Отменить всё» снимает мазки по одному, и на каждый считать заново — это
-            // десяток лишних полных пересчётов подряд ради последнего.
-            RebuildSoon(0.05f);
-        }
+            var byId = new Dictionary<int, WorldGen.Generation.VoronoiCell>(cells.Count);
+            foreach (var cell in cells) byId[cell.Id] = cell;
 
-        public void ClearStrokes()
-        {
-            if (strokes.Count == 0) return;
-            strokes.Clear();
-            nextStrokeId = 1;
-            Rebuild();
-        }
+            var mountainIds = new List<int>();
+            foreach (var cell in cells)
+            {
+                if (cell.EffectiveIsOcean || cell.EffectiveIsLake) continue;
+                if (cell.EffectiveElevation < MountainElevation) continue;
+                if (cell.Polygon == null || cell.Polygon.Count < 3) continue;
+                mountainIds.Add(cell.Id);
+            }
+            if (mountainIds.Count == 0) return result;
 
-        /// <summary>Заменяет все мазки разом (открытие проекта). Пустой список — стереть всё.
-        ///
-        /// НОМЕРА МАЗКОВ БЕРУТСЯ ИЗ ФАЙЛА и не перевыдаются. Это не аккуратность ради аккуратности:
-        /// зерно разброса пятна — хеш САМОГО СТАРОГО номера в нём (MountainBlob.Seed), поэтому
-        /// перенумеровать мазки при загрузке значит перетасовать звенья уже нарисованного хребта.
-        /// Ни падения, ни сообщения при этом не будет — просто открытый проект окажется не тем,
-        /// который сохраняли.
-        ///
-        /// Мазок из одной точки — это тычок кистью, он законный, и отбрасывать его по числу точек
-        /// (как это делает загрузка рек, где меньше двух точек русла не бывает) нельзя.</summary>
-        public void LoadStrokes(IEnumerable<MountainStroke> loaded)
-        {
-            strokes.Clear();
-            nextStrokeId = 1;
-            if (loaded != null)
-                foreach (var stroke in loaded)
-                {
-                    if (stroke == null || stroke.Points == null || stroke.Points.Count == 0) continue;
-                    if (stroke.Radius <= 0f) continue;
-                    strokes.Add(stroke);
-                    if (stroke.Id >= nextStrokeId) nextStrokeId = stroke.Id + 1;
-                }
-            Rebuild();
-        }
-
-        // ── показ ───────────────────────────────────────────────────────────────────────────────
-
-        /// <summary>Лента следа кисти: показывает, что мазок принят, пока горы считаются.</summary>
-        public void ShowPreview(List<Vec2> points, float radius)
-        {
-            EnsureContainer();
-            if (preview == null || points == null || points.Count < 2 || radius <= 0f) return;
-            MountainMeshBuilder.BuildRibbon(preview.sharedMesh, points, radius * 2f, layerY - 0.05f,
-                                            previewColor);
-        }
-
-        public void ClearPreview()
-        {
-            if (preview != null && preview.sharedMesh != null) preview.sharedMesh.Clear();
+            foreach (var piece in ReliefMassifs.Split(mountainIds, id =>
+                         byId.TryGetValue(id, out var c) ? c.NeighborIds : null))
+            {
+                var polygons = new List<IReadOnlyList<Vec2>>(piece.Count);
+                foreach (int id in piece)
+                    if (byId.TryGetValue(id, out var cell)) polygons.Add(cell.Polygon);
+                if (polygons.Count > 0) result.Add(polygons);
+            }
+            return result;
         }
 
         public void SetVisible(bool value)
@@ -174,26 +143,26 @@ namespace WorldGen.Rendering.Mountains
 
         /// <summary>
         /// Пересчёт слоя. В игре уходит в фон, в редакторе считается на месте (там некому забрать
-        /// результат). Устаревшие ответы отбрасываются по номеру поколения: ДМ ведёт мазок, счёт
-        /// запускается на каждое движение, и прийти они могут не по порядку.
+        /// результат). Устаревшие ответы отбрасываются по номеру поколения: правки идут пачками, и
+        /// прийти ответы могут не по порядку.
         /// </summary>
         public void Rebuild()
         {
             EnsureContainer();
             generation++;
 
-            var snapshot = Snapshot();
+            var snapshot = SnapshotMassifs();
             var settings = BuildSettings();
 
             if (!Application.isPlaying)
             {
                 pending = null;
-                Apply(Compute(snapshot, settings));
+                Apply(Compute(snapshot, settings, maskSmoothing));
                 return;
             }
 
             pendingGeneration = generation;
-            pending = Task.Run(() => Compute(snapshot, settings));
+            pending = Task.Run(() => Compute(snapshot, settings, maskSmoothing));
         }
 
         /// <summary>Просит пересчёт «попозже». Нужен ползункам: ДМ ведёт ползунок, значение меняется
@@ -233,14 +202,26 @@ namespace WorldGen.Rendering.Mountains
         }
 
         /// <summary>Считается ЦЕЛИКОМ без UnityEngine — за этим и держится чистый слой.</summary>
-        static List<MountainShape> Compute(List<MountainStroke> snapshot, MountainSettings settings)
+        static List<MountainShape> Compute(List<List<IReadOnlyList<Vec2>>> massifs,
+                                           MountainSettings settings, float smoothing)
         {
             var shapes = new List<MountainShape>();
-            foreach (var blob in BlobBuilder.Group(snapshot))
-                shapes.AddRange(MountainGeometry.Build(blob, settings));
+            foreach (var polygons in massifs)
+            {
+                // Шаг сетки берётся по горе: кисти, по чьей ширине его раньше подбирали, у массива
+                // из клеток нет вовсе.
+                float cell = MountainMask.ChooseCell(settings.Radius, settings.Radius);
+                var mask = MountainMask.FromPolygons(polygons, cell);
+                if (mask == null) continue;
+                mask.Smooth(Mathf.RoundToInt(Mathf.Max(0f, smoothing) * settings.Radius / mask.Cell));
+                // Подрезка по суше — ПОСЛЕ сглаживания: иначе сглаживание вернуло бы массу за
+                // кромку воды, и хребет снова полез бы в море.
+                if (settings.IsLand != null) mask.ClipToLand(settings.IsLand);
+                shapes.AddRange(MountainGeometry.BuildFromMask(mask, settings, out _));
+            }
 
-            // Тон раздан внутри пятна, а порядок маляра — общий: гора южного массива обязана
-            // закрывать гору северного, даже если они из разных пятен.
+            // Тон раздан внутри массива, а порядок маляра — общий: гора южного массива обязана
+            // закрывать гору северного, даже если они разные.
             MountainGeometry.SortForPainting(shapes);
             return shapes;
         }
@@ -251,7 +232,6 @@ namespace WorldGen.Rendering.Mountains
             if (body == null) return;
 
             MountainMeshBuilder.Build(body.sharedMesh, shapes, Style());
-            ClearPreview();
         }
 
         MountainPaintStyle Style()
@@ -286,23 +266,11 @@ namespace WorldGen.Rendering.Mountains
             ToneSpan = toneSpan,
         };
 
-        List<MountainStroke> Snapshot()
-        {
-            var copy = new List<MountainStroke>(strokes.Count);
-            foreach (var stroke in strokes)
-            {
-                var clone = new MountainStroke { Id = stroke.Id, Radius = stroke.Radius, Erase = stroke.Erase };
-                clone.Points.AddRange(stroke.Points);
-                copy.Add(clone);
-            }
-            return copy;
-        }
-
         // ── хозяйство ───────────────────────────────────────────────────────────────────────────
 
         void EnsureContainer()
         {
-            if (container != null && body != null && preview != null) return;
+            if (container != null && body != null) return;
 
             if (material == null)
             {
@@ -333,7 +301,6 @@ namespace WorldGen.Rendering.Mountains
             }
 
             body = body != null ? body : Part("Горы");
-            preview = preview != null ? preview : Part("СледМазка");
         }
 
         MeshFilter Part(string name)
@@ -358,14 +325,6 @@ namespace WorldGen.Rendering.Mountains
             return mapRenderer;
         }
 
-        Vector2 MapCenter()
-        {
-            var renderer = Renderer();
-            return renderer == null
-                ? new Vector2(250f, 250f)
-                : new Vector2(renderer.mapWidth * 0.5f, renderer.mapHeight * 0.5f);
-        }
-
         void OnValidate()
         {
             if (container != null) container.gameObject.SetActive(visible);
@@ -378,7 +337,7 @@ namespace WorldGen.Rendering.Mountains
         }
 
         /// <summary>Сносит слой вместе с мешами: уничтожение объекта их НЕ забирает, а слой
-        /// пересобирается за каждый мазок — иначе в памяти оседают мёртвые меши.</summary>
+        /// пересобирается за каждую правку рельефа — иначе в памяти оседают мёртвые меши.</summary>
         static void KillContainer(Transform target)
         {
             foreach (var filter in target.GetComponentsInChildren<MeshFilter>())
@@ -391,49 +350,5 @@ namespace WorldGen.Rendering.Mountains
             if (Application.isPlaying) Destroy(target); else DestroyImmediate(target);
         }
 
-        // ── пробные мазки (кисти ещё нет) ───────────────────────────────────────────────────────
-
-        [ContextMenu("Мазок: гряда по дуге")]
-        public void TestRidge()
-        {
-            Vector2 c = MapCenter();
-            float length = mountainRadius * 14f;
-            var points = new List<Vec2>();
-            for (int i = 0; i <= 40; i++)
-            {
-                float t = i / 40f;
-                points.Add(new Vec2(c.x - length * 0.5f + length * t,
-                                    c.y + Mathf.Sin(t * Mathf.PI * 1.2f) * mountainRadius * 3f));
-            }
-            AddStroke(points, mountainRadius * 1.4f, false);
-        }
-
-        [ContextMenu("Мазок: широкий массив")]
-        public void TestMassif()
-        {
-            Vector2 c = MapCenter();
-            float length = mountainRadius * 8f;
-            var points = new List<Vec2>
-            {
-                new Vec2(c.x - length * 0.5f, c.y - mountainRadius * 4f),
-                new Vec2(c.x + length * 0.5f, c.y - mountainRadius * 4f),
-            };
-            AddStroke(points, mountainRadius * 3f, false);
-        }
-
-        [ContextMenu("Мазок: ластик поперёк")]
-        public void TestEraser()
-        {
-            Vector2 c = MapCenter();
-            var points = new List<Vec2>
-            {
-                new Vec2(c.x, c.y - mountainRadius * 6f),
-                new Vec2(c.x, c.y + mountainRadius * 6f),
-            };
-            AddStroke(points, mountainRadius * 0.8f, true);
-        }
-
-        [ContextMenu("Убрать всё")]
-        public void TestClear() => ClearStrokes();
     }
 }

@@ -47,7 +47,7 @@ namespace WorldGen.Rendering
         Text sizeValue, strengthValue;
         Text sizeLabel;              // подпись слайдера размера: «Размер» / «Ширина реки»
         GameObject strengthGroupGO;
-        GameObject shapeRowGO;       // строка «Форма» — реке и горам не нужна
+        GameObject shapeRowGO;       // строка «Форма» — реке не нужна
         Slider mountainSizeSlider;   // «Размер гор» — только для инструмента «Горы»
         Text mountainSizeValue;
         GameObject mountainSizeGroupGO;
@@ -161,8 +161,8 @@ namespace WorldGen.Rendering
                 OnModeChanged(BrushMode.Raise);
 
             // Форма отпечатка реке не нужна: русло идёт по клетке под курсором, а не по площади.
-            // Горам не нужна тоже: мазок — лента круглой кисти.
-            if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver && !isMountain);
+            // Горам нужна: с 2026-08-14 кисть гор — обычная кисть по клеткам, только пишет высоту.
+            if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver);
             if (mountainSizeGroupGO != null) mountainSizeGroupGO.SetActive(isMountain);
             SyncMountainSlider(isMountain);
             SyncSizeSliderTo(target);

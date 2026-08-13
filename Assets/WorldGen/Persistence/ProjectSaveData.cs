@@ -28,9 +28,8 @@ namespace WorldGen.Persistence
         /// не сохранялись никогда). Появились в FormatVersion 18; в файлах постарше ключа нет, и
         /// это читается как «рек не рисовали».</summary>
         public List<PaintedRiver> Rivers = new List<PaintedRiver>();
-        /// <summary>Мазки кисти гор. В файле лежат ТОЛЬКО мазки: маска, оси, звенья и сами горы —
-        /// производное и считается при загрузке заново (см. MountainStroke). Появились в
-        /// FormatVersion 19; в файлах постарше ключа нет, и это читается как «гор не рисовали».</summary>
-        public List<Generation.Mountains.MountainStroke> Mountains = new List<Generation.Mountains.MountainStroke>();
+        // Мазков гор здесь НЕТ и не будет: по решению ДМ 2026-08-14 источник гор — рельеф, а он
+        // лежит в клетках (VoronoiCell.ElevationOverride) и сохраняется вместе с ними. Ключ
+        // Mountains существовал один день в формате 19 и снят вместе с ним — см. ProjectSerializer.
     }
 }

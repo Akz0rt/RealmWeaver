@@ -16,8 +16,34 @@ namespace WorldGen.Generation.Mountains
     /// </summary>
     public static class MountainGeometry
     {
-        /// <summary>Смещение зерна для каждой следующей оси — простое число, как в прототипе.</summary>
+        /// <summary>Смещение зерна для каждой следующей оси — простое число, как в прототипе.
+        /// Осталось от прежней схемы «зерно пятна + номер оси»; сама схема снята (см. AxisSeed).</summary>
         public const uint AxisSeedStep = 7919u;
+
+        /// <summary>Шаг округления положения оси при выводе зерна, в мировых единицах.</summary>
+        public const float AxisSeedQuantum = 1f;
+
+        /// <summary>
+        /// Зерно разброса оси — из ЕЁ СОБСТВЕННОГО ПОЛОЖЕНИЯ, а не из личности массива.
+        ///
+        /// Так пришлось сделать после разворота 2026-08-14. Раньше зерно бралось от самого старого
+        /// мазка пятна, и это держало уже нарисованное на месте при дорисовке. У массива из клеток
+        /// «самого старого» нет вовсе, а любая замена — номер компоненты, наименьший номер клетки —
+        /// меняется от каждой правки где угодно и перетасовала бы принятый хребет молча.
+        ///
+        /// Честная оговорка: полной устойчивости не бывает и не было. Ось пересчитывается вместе с
+        /// массой, и удлинение гряды двигает её звенья в любом случае. Что зерно от положения
+        /// ГАРАНТИРУЕТ — соседи не мешают друг другу: нарисовал второй массив на другом конце карты,
+        /// первый не шелохнулся. Это и проверяется стендом.
+        /// </summary>
+        public static uint AxisSeed(IReadOnlyList<Vector2> pts)
+        {
+            if (pts == null || pts.Count == 0) return 0u;
+            Vector2 mid = pts[pts.Count / 2];
+            int qx = (int)Math.Round(mid.X / AxisSeedQuantum);
+            int qy = (int)Math.Round(mid.Y / AxisSeedQuantum);
+            return unchecked(MountainBlob.Fnv(qx) * 16777619u ^ MountainBlob.Fnv(qy));
+        }
 
         /// <summary>Весь путь от пятна до гор. Удобно и для рендера, и для проверок: короче него
         /// сквозной проверки не напишешь.</summary>
@@ -37,10 +63,22 @@ namespace WorldGen.Generation.Mountains
 
             mask = MountainMask.Build(blob, MountainMask.ChooseCell(settings.Radius, brush), settings.IsLand);
             if (mask == null) return new List<MountainShape>();
+            return BuildFromMask(mask, settings, out links);
+        }
+
+        /// <summary>
+        /// Тот же путь от ГОТОВОЙ маски. Приложение ходит сюда: маску ему даёт рельеф (клетки, у
+        /// которых высота дотянула до «горы»), а не мазок.
+        /// </summary>
+        public static List<MountainShape> BuildFromMask(MountainMask mask, MountainSettings settings,
+                                                        out List<AxisLink> links)
+        {
+            links = new List<AxisLink>();
+            if (mask == null || settings == null) return new List<MountainShape>();
 
             var field = DistanceField.Build(mask);
             var axes = AxisBuilder.Build(mask, field, settings.Radius / mask.Cell);
-            links = BuildLinks(mask, axes, blob.Seed, settings);
+            links = BuildLinks(mask, axes, settings);
             return Build(links, settings);
         }
 
@@ -50,7 +88,7 @@ namespace WorldGen.Generation.Mountains
         /// производный рельеф (задача 8).
         /// </summary>
         public static List<AxisLink> BuildLinks(MountainMask mask, IReadOnlyList<MountainAxis> axes,
-                                                uint seed, MountainSettings settings)
+                                                MountainSettings settings)
         {
             var links = new List<AxisLink>();
             if (mask == null || axes == null || settings == null) return links;
@@ -70,9 +108,7 @@ namespace WorldGen.Generation.Mountains
                     dep.Add(axis.Depths[j] * mask.Cell);
                 }
 
-                // Зерно у каждой оси своё, но выведено из зерна ПЯТНА: дорисовка мазка не
-                // перетасовывает уже нарисованное, потому что зерно пятна берётся от старшего мазка.
-                var rng = new Mulberry32(unchecked(seed + (uint)i * AxisSeedStep));
+                var rng = new Mulberry32(AxisSeed(pts));
                 links.AddRange(LinkSplitter.Split(pts, wid, dep, axis.Closed, axis.Tip0, axis.Tip1,
                                                   settings.LinkLength, settings.LengthJitter,
                                                   settings.Anisotropy, rng));

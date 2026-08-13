@@ -294,9 +294,9 @@ namespace WorldGen.Rendering
             corners = CornerGraphBuilder.Build(cells); // тот же детерминированный пересчёт, что внутри генератора - нужен здесь только для рендера рек по позициям corners
             lastGenParams = genParams;
             // Нарисованные реки стираются вместе со старым миром: их русла лежат в мировых
-            // координатах, а материк под ними теперь совсем другой. Мазки гор — по той же причине.
+            // координатах, а материк под ними теперь совсем другой. Горы стирать не надо — они
+            // производные от высоты новых клеток, — но пересчитать по ним придётся.
             ClearPaintedRivers();
-            ClearMountainStrokes();
             BuildMesh(cells);
             BuildRivers();
             BuildBorders();
@@ -306,6 +306,10 @@ namespace WorldGen.Rendering
 
             OnDisplayChanged?.Invoke();
             RebuildDecorations();
+            // ПОСЛЕ BuildMesh, а не до: горы подрезаются по маске берега, которую печёт он. Раньше —
+            // и новые горы легли бы по берегу прежнего мира (в редакторе, где счёт не откладывается,
+            // это видно сразу же).
+            ReliefChanged();
             OnWorldRegenerated?.Invoke();
         }
 
@@ -339,10 +343,9 @@ namespace WorldGen.Rendering
             rivers = new List<River>();
             // Реки открываемого проекта поставит LoadPaintedRivers (ProjectMenuBar, сразу после
             // загрузки); здесь важно снять реки ПРЕДЫДУЩЕГО проекта — иначе они бы остались висеть
-            // над чужой картой, если в новом файле рек нет. С горами то же самое: их загрузка
-            // придёт следующей задачей (формат 19), а снимать чужие надо уже сейчас.
+            // над чужой картой, если в новом файле рек нет. Горы снимать не надо и нечем: они
+            // производные от высоты клеток, и сменившиеся клетки сами дадут другие горы.
             ClearPaintedRivers();
-            ClearMountainStrokes();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
             lastGenParams = referenceParams;
@@ -366,6 +369,9 @@ namespace WorldGen.Rendering
                 PositionCameraOverMap();
 
             OnDisplayChanged?.Invoke();
+            // Горы считаются ЗДЕСЬ, а не в первой половине: они подрезаются по маске берега, а её
+            // печёт перепек между двумя половинами. Из первой половины они вышли бы по чужому берегу.
+            ReliefChanged();
             OnWorldRegenerated?.Invoke();
         }
 
@@ -790,7 +796,11 @@ namespace WorldGen.Rendering
             {
                 cell.WaterOverride = WaterOverrideType.ForceLand;
                 float n = WorldGen.Rendering.MapRaster.Noise.Fbm(cell.Site.X * 0.045f, cell.Site.Y * 0.045f, seed, 4);
-                cell.ElevationOverride = Mathf.Clamp(beachElevationThreshold + 0.08f + n * 0.55f, 0f, 1f);
+                // Потолок НИЖЕ порога гор, и это не мелочь: с 2026-08-14 горы рисуются там, где
+                // высота дотянула до MountainElevation, а прежняя формула давала до 0.73 — рисуя
+                // берег, ДМ получал бы вдоль него горную гряду, которую не просил.
+                cell.ElevationOverride = Mathf.Clamp(beachElevationThreshold + 0.08f + n * 0.55f,
+                                                     0f, Mountains.MountainLayer.MountainElevation - 0.05f);
             }
             else
             {
@@ -1075,89 +1085,60 @@ namespace WorldGen.Rendering
 
         // ---- Кисть гор ----------------------------------------------------------
         //
-        // Мазки гор живут в слое (MountainLayer): там же считается их геометрия, и там же они лежат
-        // для сохранения. Сюда вынесены только вызовы кисти — BrushToolController знает ровно один
-        // WorldMapRenderer и про слои знать не обязан. Устройство мазка повторяет реку: пока ЛКМ
-        // зажата, копится ломаная и показывается лента следа, а горы считаются на отпускании.
+        // Кисть гор НИЧЕГО не хранит: она поднимает высоту клеток, а слой (MountainLayer) рисует
+        // горы по клеткам, у которых высота дотянула до горной. Это решение ДМ 2026-08-14 —
+        // «кисть задаёт рельеф, а горы декорация рельефа, а не наоборот». Поэтому здесь нет ни
+        // накопления мазка, ни его отмены: правка клеток откатывается тем же BrushUndoManager, что
+        // и у кисти рельефа, а слой пересчитывается на отпускании кисти.
 
         Mountains.MountainLayer mountainLayer;
         bool[] landProbeGrid;   // запасной путь BuildLandProbe: снимок суши в своей сетке
-        List<System.Numerics.Vector2> mountainStrokePoints;
-        float mountainStrokeRadius;
-        bool mountainStrokeErase;
+
+        /// <summary>Высота, в которую кисть гор поднимает клетку. Внутри полосы «горы» (0.5…0.75),
+        /// но не в «вершинах»: вершины пусть остаются тем, что ДМ поднял отдельно кистью рельефа.</summary>
+        const float mountainPaintElevation = 0.7f;
+
+        /// <summary>Высота, в которую опускает стирающая кисть: ниже порога гор, но заметно выше
+        /// пляжа — стёртая гора становится равниной, а не берегом.</summary>
+        const float mountainErasedElevation = 0.45f;
 
         /// <summary>Слой гор на этом же объекте. null, если слой не повешен — кисть тогда молчит.</summary>
         public Mountains.MountainLayer MountainLayer
             => mountainLayer != null ? mountainLayer : (mountainLayer = GetComponent<Mountains.MountainLayer>());
 
-        /// <summary>Все мазки гор — для сохранения проекта. Пустой список, если слой не повешен:
-        /// компонент ставится в сцене руками, и «слоя нет» — обычное состояние, а не ошибка,
-        /// в котором сохранение обязано работать.</summary>
-        public IReadOnlyList<Generation.Mountains.MountainStroke> MountainStrokes
-        {
-            get
-            {
-                var layer = MountainLayer;
-                return layer != null
-                    ? layer.Strokes
-                    : (IReadOnlyList<Generation.Mountains.MountainStroke>)System.Array.Empty<Generation.Mountains.MountainStroke>();
-            }
-        }
-
-        /// <summary>Ставит мазки гор открываемого проекта. Зовётся ПОСЛЕ LoadFromCells: та снимает
-        /// горы предыдущего проекта, и обратный порядок оставил бы карту без только что
-        /// загруженных.</summary>
-        public void LoadMountainStrokes(IEnumerable<Generation.Mountains.MountainStroke> loaded)
-        {
-            landProbeGrid = null;   // суша теперь другая — снимок для запасного пути устарел
-            MountainLayer?.LoadStrokes(loaded);
-        }
-
-        /// <summary>Убирает все мазки гор (новая генерация мира, открытие проекта). Заодно роняет
-        /// снимок суши: материк сменился целиком, и кэш запасного пути от прежнего мира подрезал бы
-        /// новые горы по чужому берегу.</summary>
-        public void ClearMountainStrokes()
+        /// <summary>Мир сменился целиком (генерация или открытие проекта). Горы в файле не лежат —
+        /// они производные от высоты клеток, поэтому «загрузить» их нельзя и не нужно: достаточно
+        /// пересчитать по новым клеткам. Заодно роняем снимок суши: кэш запасного пути от прежнего
+        /// мира подрезал бы горы по чужому берегу.</summary>
+        public void ReliefChanged()
         {
             landProbeGrid = null;
-            MountainLayer?.ClearStrokes();
+            MountainLayer?.RebuildSoon();
         }
 
-        public void BeginMountainStroke(float radius, bool erase)
+        /// <summary>
+        /// Кисть гор правит ВЫСОТУ клетки — той же дорогой, что кисть рельефа, и с той же отменой.
+        ///
+        /// make = true поднимает клетку в горную полосу, false опускает обратно в равнину. Обе
+        /// правки односторонние (max и min), а не «поставить число»: иначе рисующая кисть срезала бы
+        /// уже стоящие вершины до своего уровня, а стирающая поднимала бы низину до своего.
+        ///
+        /// Стирающая ставит высоту ЯВНО ниже порога, а не снимает override: под мазком мог лежать
+        /// сгенерированный хребет, и «вернуть как было» вернуло бы гору.
+        /// </summary>
+        public void BrushSetMountain(VoronoiCell cell, bool make)
         {
-            mountainStrokePoints = new List<System.Numerics.Vector2>();
-            mountainStrokeRadius = Mathf.Max(1f, radius);
-            mountainStrokeErase = erase;
-        }
+            if (cells == null || cell == null) return;
+            if (cell.EffectiveIsOcean || cell.EffectiveIsLake) return;   // горы идут только по суше
 
-        /// <summary>Добавляет точку в открытый мазок. Точки, легшие вплотную к предыдущей,
-        /// отбрасываются: за секунду ведения мышь даёт их сотни, а маску они рисуют одну и ту же.</summary>
-        public void AppendMountainPoint(System.Numerics.Vector2 point)
-        {
-            if (mountainStrokePoints == null) return;
-            if (mountainStrokePoints.Count > 0)
-            {
-                var last = mountainStrokePoints[mountainStrokePoints.Count - 1];
-                float step = mountainStrokeRadius * 0.25f;
-                if (System.Numerics.Vector2.DistanceSquared(last, point) < step * step) return;
-            }
-            mountainStrokePoints.Add(point);
-            MountainLayer?.ShowPreview(mountainStrokePoints, mountainStrokeRadius);
-        }
+            float current = cell.EffectiveElevation;
+            float target = make
+                ? Mathf.Max(current, mountainPaintElevation)
+                : Mathf.Min(current, mountainErasedElevation);
+            if (Mathf.Approximately(target, current)) return;
 
-        /// <summary>Закрывает мазок гор: он уходит в слой, слой пересчитывается. Ctrl+Z убирает
-        /// мазок из списка — и всё производное честно пересчитывается по оставшимся, поэтому мазок,
-        /// сливший два массива, при отмене разливает их обратно сам.</summary>
-        public void EndMountainStroke()
-        {
-            var points = mountainStrokePoints;
-            mountainStrokePoints = null;
-            var layer = MountainLayer;
-            if (layer == null || points == null || points.Count == 0) return;
-
-            var stroke = layer.AddStroke(points, mountainStrokeRadius, mountainStrokeErase);
-            if (stroke == null) { layer.ClearPreview(); return; }
-
-            brushUndo.RecordUndoAction(() => layer.RemoveStroke(stroke));
+            brushUndo.RecordBeforeChange(cell);
+            CellOverrideService.ApplyElevationOverride(new[] { cell }, target, beachElevationThreshold);
         }
 
         /// <summary>

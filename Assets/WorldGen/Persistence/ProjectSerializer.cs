@@ -22,7 +22,6 @@ namespace WorldGen.Persistence
         public List<RegionData> Regions;
         public List<InteriorData> Dungeons;
         public List<PaintedRiver> Rivers;
-        public List<Generation.Mountains.MountainStroke> Mountains;
     }
 
     /// <summary>
@@ -32,14 +31,15 @@ namespace WorldGen.Persistence
     /// </summary>
     public static class ProjectSerializer
     {
-        public const int CurrentFormatVersion = 19;  // 19: у карты появились горы, нарисованные кистью.
-                                                     // В файл идут ТОЛЬКО мазки — вся геометрия гор
-                                                     // производная и считается при загрузке заново.
-                                                     // Миграции нет: ключа Mountains в старом файле
-                                                     // нет, и его отсутствие означает «гор не рисовали».
-                                                     // Бумп ДОКУМЕНТИРУЮЩИЙ — чтобы старая сборка
-                                                     // предупредила, а не сохранила проект молча без
-                                                     // всех нарисованных гор.
+        public const int CurrentFormatVersion = 18;  // НОМЕР 19 СУЩЕСТВОВАЛ ОДИН ДЕНЬ И СНЯТ. Он нёс
+                                                     // список мазков кисти гор; 2026-08-14 ДМ решил,
+                                                     // что источник гор — РЕЛЬЕФ, а не мазок, и горы
+                                                     // стали производными от высоты клеток, которая
+                                                     // и так лежит в файле с первых версий. Хранить
+                                                     // стало нечего, и номер возвращён к 18: ни один
+                                                     // файл с 19 в мир не ушёл (ту сборку никто, кроме
+                                                     // стенда, не запускал). Следующая арка берёт 19
+                                                     // заново — свободен.
                                                      //
                                                      // 18: у карты появились реки, нарисованные кистью.
                                                      // Миграции нет: ключа Rivers в старом файле нет,
@@ -153,19 +153,17 @@ namespace WorldGen.Persistence
             Converters = { new CanvasObjectDataConverter(), new ColorJsonConverter() }
         };
 
-        /// <summary>rivers и mountains — необязательные последние параметры: реки кистью появились в
-        /// версии 18, горы в 19, и делать их обязательными значило бы переписать все прежние вызовы
-        /// (в том числе десяток самотестов), ничего этим не проверив. Цена необязательности —
-        /// молчание: путь сохранения, который забыли дописать, скомпилируется и потеряет мазки без
-        /// единой жалобы, поэтому вызовов ровно два (ProjectMenuBar и самотесты), и добавляя третий,
-        /// передавай горы явно.</summary>
+        /// <summary>rivers — необязательный последний параметр: реки кистью появились в версии 18,
+        /// и делать их обязательными значило бы переписать все прежние вызовы (в том числе десяток
+        /// самотестов), ничего этим не проверив. Цена необязательности — молчание: путь сохранения,
+        /// который забыли дописать, скомпилируется и потеряет реки без единой жалобы, поэтому
+        /// вызовов ровно два (ProjectMenuBar и самотесты).</summary>
         public static void Save(string path, GenerationParams genParams, IReadOnlyList<VoronoiCell> cells,
                                  IReadOnlyList<PoiData> pois, NotesDocument notes,
                                  IReadOnlyList<RegionLabelData> regionLabels,
                                  IReadOnlyList<RegionData> regions,
                                  IReadOnlyList<InteriorData> dungeons,
-                                 IReadOnlyList<PaintedRiver> rivers = null,
-                                 IReadOnlyList<Generation.Mountains.MountainStroke> mountains = null)
+                                 IReadOnlyList<PaintedRiver> rivers = null)
         {
             var data = new ProjectSaveData
             {
@@ -178,9 +176,7 @@ namespace WorldGen.Persistence
                 RegionLabels = new List<RegionLabelData>(regionLabels),
                 Regions = new List<RegionData>(regions ?? new List<RegionData>()),
                 Dungeons = new List<InteriorData>(dungeons ?? new List<InteriorData>()),
-                Rivers = new List<PaintedRiver>(rivers ?? new List<PaintedRiver>()),
-                Mountains = new List<Generation.Mountains.MountainStroke>(
-                    mountains ?? new List<Generation.Mountains.MountainStroke>())
+                Rivers = new List<PaintedRiver>(rivers ?? new List<PaintedRiver>())
             };
 
             string json = JsonConvert.SerializeObject(data, BuildSettings());
@@ -227,8 +223,7 @@ namespace WorldGen.Persistence
                 Dungeons = data.FormatVersion >= 5
                     ? (data.Dungeons ?? new List<InteriorData>())
                     : new List<InteriorData>(),
-                Rivers = data.Rivers ?? new List<PaintedRiver>(),
-                Mountains = data.Mountains ?? new List<Generation.Mountains.MountainStroke>()
+                Rivers = data.Rivers ?? new List<PaintedRiver>()
             };
 
             // Three UNGATED, idempotent normalizations, deliberately not guarded on FormatVersion: each one

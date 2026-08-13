@@ -59,8 +59,14 @@ namespace WorldGen.Generation.Mountains
         public bool At(int x, int y) => x >= 0 && y >= 0 && x < W && y < H && Cells[y * W + x] != 0;
 
         /// <summary>
-        /// Растеризует пятно. desiredCell — желаемый шаг (ChooseCell), maxCells — потолок на число
-        /// ячеек: если не влезает, шаг увеличивается, пока не влезет.
+        /// Растеризует пятно из МАЗКОВ. desiredCell — желаемый шаг (ChooseCell), maxCells — потолок
+        /// на число ячеек: если не влезает, шаг увеличивается, пока не влезет.
+        ///
+        /// ВНИМАНИЕ: с 2026-08-14 это путь СТЕНДА, а не приложения. Источником гор стал рельеф, и
+        /// приложение строит маску из многоугольников клеток карты (FromPolygons). Мазок остался
+        /// удобной заготовкой для проверок — «масса в форме проведённой линии» описывается одной
+        /// строкой, — но кисть в него больше не пишет и в файле его нет. Не подключай обратно как
+        /// живой путь, не прочитав раздел «Разворот» в плане арки.
         /// </summary>
         public static MountainMask Build(MountainBlob blob, float desiredCell, int maxCells = 4_000_000)
             => Build(blob, desiredCell, null, maxCells);
@@ -78,6 +84,55 @@ namespace WorldGen.Generation.Mountains
             StrokeGeometry.Bounds(blob.Strokes, out float minX, out float minY, out float maxX, out float maxY);
             if (float.IsInfinity(minX)) return null;
 
+            var mask = Allocate(minX, minY, maxX, maxY, desiredCell, maxCells);
+
+            foreach (var stroke in blob.Strokes) mask.Stamp(stroke, 1);
+            foreach (var eraser in blob.Erasers) mask.Stamp(eraser, 0);
+            if (isLand != null) mask.ClipToLand(isLand);
+            return mask;
+        }
+
+        /// <summary>
+        /// Растеризует массив, заданный МНОГОУГОЛЬНИКАМИ КЛЕТОК КАРТЫ. Это главный путь с 2026-08-14:
+        /// источник гор — рельеф, а рельеф живёт в клетках, поэтому масса приходит сюда не мазком, а
+        /// списком клеток, у которых высота дотянула до «горы».
+        ///
+        /// Заливка идёт по каждому многоугольнику отдельно (правило чётности), а не «по объединению»:
+        /// клетки Вороного стыкуются ребро в ребро, общие вершины у них ОДНИ И ТЕ ЖЕ, поэтому
+        /// пересечения строки с общим ребром считаются у соседей одинаково и щели по шву не
+        /// возникает. Волосяные щели от округления добирает сглаживание (Smooth), которое всё равно
+        /// нужно: контур из клеток без него — мозаика с углами по 15 единиц при горе в 10.
+        /// </summary>
+        public static MountainMask FromPolygons(IReadOnlyList<IReadOnlyList<Vector2>> polygons,
+                                                float desiredCell, int maxCells = 4_000_000)
+        {
+            if (polygons == null || polygons.Count == 0) return null;
+
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
+            foreach (var poly in polygons)
+            {
+                if (poly == null) continue;
+                foreach (var p in poly)
+                {
+                    if (p.X < minX) minX = p.X;
+                    if (p.Y < minY) minY = p.Y;
+                    if (p.X > maxX) maxX = p.X;
+                    if (p.Y > maxY) maxY = p.Y;
+                }
+            }
+            if (float.IsInfinity(minX)) return null;
+
+            var mask = Allocate(minX, minY, maxX, maxY, desiredCell, maxCells);
+            foreach (var poly in polygons) mask.FillPolygon(poly);
+            return mask;
+        }
+
+        /// <summary>Сетка по габаритам с полем и потолком на число ячеек. Общая для обоих входов —
+        /// мазка и клеток карты.</summary>
+        static MountainMask Allocate(float minX, float minY, float maxX, float maxY,
+                                     float desiredCell, int maxCells)
+        {
             float cell = Math.Max(1e-4f, desiredCell);
             int w, h;
             while (true)
@@ -88,8 +143,7 @@ namespace WorldGen.Generation.Mountains
                 if ((long)w * h <= maxCells || w <= 4 || h <= 4) break;
                 cell *= 1.5f;
             }
-
-            var mask = new MountainMask
+            return new MountainMask
             {
                 W = w,
                 H = h,
@@ -98,16 +152,83 @@ namespace WorldGen.Generation.Mountains
                 Oy = minY - PadCells * cell,
                 Cells = new byte[w * h],
             };
+        }
 
-            foreach (var stroke in blob.Strokes) mask.Stamp(stroke, 1);
-            foreach (var eraser in blob.Erasers) mask.Stamp(eraser, 0);
-            if (isLand != null) mask.ClipToLand(isLand);
-            return mask;
+        /// <summary>Заливка одного выпуклого или невыпуклого многоугольника по строкам сетки.</summary>
+        void FillPolygon(IReadOnlyList<Vector2> poly)
+        {
+            if (poly == null || poly.Count < 3) return;
+
+            float lo = float.PositiveInfinity, hi = float.NegativeInfinity;
+            foreach (var p in poly) { if (p.Y < lo) lo = p.Y; if (p.Y > hi) hi = p.Y; }
+
+            int gy0 = Math.Max(0, (int)Math.Ceiling((lo - Oy) / Cell - 0.5f));
+            int gy1 = Math.Min(H - 1, (int)Math.Floor((hi - Oy) / Cell - 0.5f));
+            var xs = new List<float>(8);
+
+            for (int gy = gy0; gy <= gy1; gy++)
+            {
+                float py = Oy + (gy + 0.5f) * Cell;
+                xs.Clear();
+                for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
+                {
+                    Vector2 a = poly[j], b = poly[i];
+                    // Полуоткрытое правило [min, max): вершина, ровно попавшая на строку, считается
+                    // ОДИН раз, иначе чётность у соседних клеток разъедется и по шву пойдёт щель.
+                    if ((a.Y <= py) == (b.Y <= py)) continue;
+                    float t = (py - a.Y) / (b.Y - a.Y);
+                    xs.Add(a.X + t * (b.X - a.X));
+                }
+                if (xs.Count < 2) continue;
+                xs.Sort();
+
+                for (int k = 0; k + 1 < xs.Count; k += 2)
+                {
+                    int gx0 = Math.Max(0, (int)Math.Ceiling((xs[k] - Ox) / Cell - 0.5f));
+                    int gx1 = Math.Min(W - 1, (int)Math.Floor((xs[k + 1] - Ox) / Cell - 0.5f));
+                    for (int gx = gx0; gx <= gx1; gx++) Cells[gy * W + gx] = 1;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Сглаживание контура: ячейка остаётся в массе, если масса занимает больше половины окна
+        /// радиуса radiusCells вокруг неё. Это скругляет углы мозаики из клеток карты и заодно
+        /// затягивает волосяные щели по швам.
+        ///
+        /// Считается через суммы по прямоугольникам (интегральное изображение), поэтому цена не
+        /// зависит от радиуса окна: иначе широкое окно на крупном массиве стоило бы больше, чем весь
+        /// остальной конвейер.
+        /// </summary>
+        public void Smooth(int radiusCells)
+        {
+            if (radiusCells <= 0 || Cells == null) return;
+
+            var sum = new int[(W + 1) * (H + 1)];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    sum[(y + 1) * (W + 1) + x + 1] = Cells[y * W + x]
+                        + sum[y * (W + 1) + x + 1] + sum[(y + 1) * (W + 1) + x] - sum[y * (W + 1) + x];
+
+            var next = new byte[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                int y0 = Math.Max(0, y - radiusCells), y1 = Math.Min(H - 1, y + radiusCells);
+                for (int x = 0; x < W; x++)
+                {
+                    int x0 = Math.Max(0, x - radiusCells), x1 = Math.Min(W - 1, x + radiusCells);
+                    int filled = sum[(y1 + 1) * (W + 1) + x1 + 1] - sum[y0 * (W + 1) + x1 + 1]
+                               - sum[(y1 + 1) * (W + 1) + x0] + sum[y0 * (W + 1) + x0];
+                    int total = (y1 - y0 + 1) * (x1 - x0 + 1);
+                    next[y * W + x] = (byte)(filled * 2 > total ? 1 : 0);
+                }
+            }
+            Cells = next;
         }
 
         /// <summary>Гасит всё, что не на суше. Спрашиваем только у закрашенных ячеек: пустых в
         /// маске большинство, а запрос стоит поиска ближайшей клетки карты.</summary>
-        void ClipToLand(Func<Vector2, bool> isLand)
+        public void ClipToLand(Func<Vector2, bool> isLand)
         {
             for (int y = 0; y < H; y++)
             {

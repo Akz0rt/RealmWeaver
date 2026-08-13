@@ -212,8 +212,9 @@ namespace WorldGen.Rendering
                 var regions = mapRenderer.regionManager != null ? new List<RegionData>(mapRenderer.regionManager.Regions) : new List<RegionData>();
                 var dungeons = dungeonManager != null ? new List<InteriorData>(dungeonManager.GetAll()) : new List<InteriorData>();
                 var paintedRivers = new List<PaintedRiver>(mapRenderer.PaintedRivers);
-                var mountains = new List<WorldGen.Generation.Mountains.MountainStroke>(mapRenderer.MountainStrokes);
-                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons, paintedRivers, mountains);
+                // Гор в списке аргументов нет намеренно: они производные от высоты клеток, которая
+                // сохраняется вместе с mapRenderer.Cells (решение ДМ 2026-08-14).
+                ProjectSerializer.Save(path, mapRenderer.LastGenParams, mapRenderer.Cells, pois, notes, regionLabels, regions, dungeons, paintedRivers);
             }
             catch (System.Exception ex)
             {
@@ -344,10 +345,6 @@ namespace WorldGen.Rendering
                 // Строго ПОСЛЕ LoadFromCells: та снимает реки предыдущего проекта (см. её код),
                 // так что порядок наоборот оставил бы карту без только что загруженных рек.
                 mapRenderer.LoadPaintedRivers(result.Rivers);
-                // Горы — тоже строго после LoadFromCells, и по двум причинам сразу: та снимает мазки
-                // предыдущего проекта, а её же RebakeAll печёт маску суши, по которой горы
-                // подрезаются. Загрузить раньше — значит подрезать новые горы по берегу старой карты.
-                mapRenderer.LoadMountainStrokes(result.Mountains);
                 poiManager?.LoadPois(result.Pois);
                 dungeonManager?.LoadDungeons(result.Dungeons);
                 regionLabelManager?.LoadLabels(result.RegionLabels);

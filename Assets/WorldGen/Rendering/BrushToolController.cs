@@ -136,10 +136,6 @@ namespace WorldGen.Rendering
                 // Река рисуется одним мазком-цепочкой, поэтому мазок надо открыть ДО первой точки.
                 // В режиме «Стереть» мазка нет: клик убирает реку под курсором и на этом всё.
                 if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.BeginRiverStroke(riverWidth);
-                // Ластик гор — тоже МАЗОК (решение ДМ): им отгрызают край массива и разрезают его
-                // надвое, поэтому у него и начало, и конец такие же, как у рисующего.
-                if (activeTool == BrushTool.Mountain)
-                    mapRenderer.BeginMountainStroke(brushRadius, IsMountainEraseMode);
                 PaintAtCursor();
             }
             else if (Mouse.current.leftButton.isPressed && isPainting)
@@ -152,8 +148,6 @@ namespace WorldGen.Rendering
                 // Реку закрываем ПЕРВОЙ: EndRiverStroke кладёт действие отмены в открытый мазок, а
                 // EndBrushStroke ниже этот мазок уже отправляет в историю.
                 if (activeTool == BrushTool.River && !IsRiverEraseMode) mapRenderer.EndRiverStroke();
-                // Горы — по той же причине ПЕРВЫМИ: EndMountainStroke кладёт отмену в открытый мазок.
-                if (activeTool == BrushTool.Mountain) mapRenderer.EndMountainStroke();
                 if (regionStrokeTouched)
                 {
                     // 30% rule: a lake the region stroke covered enough of joins the painted region wholesale.
@@ -169,13 +163,16 @@ namespace WorldGen.Rendering
                     mapRenderer.ReconcileWaterWithMapEdge();
                     mapRenderer.UnifyTouchedLakes(waterStrokeCells);
                     mapRenderer.RebuildBorders();
-                    // Горы подрезаны по суше СНИМКОМ, сделанным в момент их счёта. Залив море поверх
-                    // хребта, ДМ иначе смотрел бы на горы посреди воды, пока не тронет мазок гор.
-                    mapRenderer.LandChanged();
                 }
                 regionStrokeLakeCells.Clear();
                 waterStrokeCells.Clear();
                 mapRenderer.EndBrushStroke();
+                // Рисунок гор — производное от рельефа, поэтому пересчитывается на ОТПУСКАНИИ и
+                // только у тех кистей, что рельеф меняют. Считать его на каждое движение нельзя:
+                // полный проход стоит десятки миллисекунд, а на крупном массиве сотни.
+                if (activeTool == BrushTool.Mountain || activeTool == BrushTool.Elevation
+                    || activeTool == BrushTool.Water)
+                    mapRenderer.ReliefChanged();
             }
         }
 
@@ -218,14 +215,6 @@ namespace WorldGen.Rendering
 
         void ApplyStamp(Vector2 site)
         {
-            if (activeTool == BrushTool.Mountain)
-            {
-                // Горы не свойство клеток: мазок копится в мировых координатах, клетки под ним не
-                // трогаются вовсе. Рельеф от гор придёт отдельной работой и тоже будет производным.
-                mapRenderer.AppendMountainPoint(new System.Numerics.Vector2(site.x, site.y));
-                return;
-            }
-
             if (activeTool == BrushTool.River)
             {
                 var point = new System.Numerics.Vector2(site.x, site.y);
@@ -251,6 +240,16 @@ namespace WorldGen.Rendering
                 var under = mapRenderer.NearestLookup?.FindNearest(new System.Numerics.Vector2(site.x, site.y));
                 if (under == null) return;
                 affected = new List<VoronoiCell> { under };
+            }
+
+            if (activeTool == BrushTool.Mountain)
+            {
+                // Кисть гор — это кисть РЕЛЬЕФА: она поднимает клетки в горную полосу, а рисунок по
+                // ним построит слой гор. Ластик — та же кисть наоборот, опускает обратно в равнину.
+                bool make = !IsMountainEraseMode;
+                foreach (var cell in affected) mapRenderer.BrushSetMountain(cell, make);
+                mapRenderer.RebakeAffectedCells(affected);
+                return;
             }
 
             if (activeTool == BrushTool.Biome)
@@ -396,8 +395,7 @@ namespace WorldGen.Rendering
             bool river = activeTool == BrushTool.River;
             float radius = river ? Mathf.Max(riverWidth * 0.5f, 1f) : brushRadius;
 
-            // Горам квадрат не положен: мазок — это лента круглой кисти, и штамп у неё круглый.
-            if (shape == BrushShape.Square && !river && activeTool != BrushTool.Mountain)
+            if (shape == BrushShape.Square && !river)
             {
                 cursorRing.positionCount = 4;
                 cursorRing.SetPosition(0, new Vector3(site.x - radius, cursorHeight, site.y - radius));

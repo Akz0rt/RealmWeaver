@@ -27,8 +27,9 @@ namespace MountainHarness
             EraserSplitsMass();
             BlobsAreTransitive();
             EraserDoesNotMerge();
-            SeedComesFromOldestStroke();
-            StrokeIdIsPartOfTheDrawing();
+            MassifsDoNotDisturbEachOther();
+            PolygonMaskFillsAndSmooths();
+            MassifsSplitByCellNeighbourhood();
             DistanceIsExactlyEuclidean();
             LevelsStepByTwoR();
             ShallowRingIsRejected();
@@ -149,41 +150,89 @@ namespace MountainHarness
             Check("Ластик: достался обоим пятнам", bothGotIt, "ластик приписан не всем задетым пятнам");
         }
 
-        /// <summary>Зерно берётся от САМОГО СТАРОГО мазка пятна: дорисовка не должна перетасовать уже
-        /// нарисованный хребет. Мутант: зерно от последнего мазка или от их числа — сместится при
-        /// любой дорисовке.</summary>
-        static void SeedComesFromOldestStroke()
-        {
-            var blob = Blob(Stroke(7, 10f, new Vector2(0, 0), new Vector2(50, 0)),
-                            Stroke(3, 10f, new Vector2(40, 0), new Vector2(90, 0)));
-            uint before = blob.Seed;
-            blob.Strokes.Add(Stroke(42, 10f, new Vector2(85, 0), new Vector2(140, 0)));
-            uint after = blob.Seed;
+        // ── Разворот 2026-08-14: масса приходит из клеток карты ─────────────────────────────────
 
-            Check("Зерно: от старшего мазка", before == MountainBlob.Fnv(3), $"{before} вместо {MountainBlob.Fnv(3)}");
-            Check("Зерно: дорисовка его не двигает", before == after, $"{before} → {after}");
+        /// <summary>
+        /// Соседний массив не двигает соседа. Это ЕДИНСТВЕННОЕ, что после разворота гарантируется
+        /// про устойчивость рисунка, и потому его и проверяем: прежнее «зерно от старшего мазка»
+        /// потеряло предмет (у массива из клеток нет старшего), а полной устойчивости не бывает —
+        /// ось пересчитывается вместе со своей массой.
+        ///
+        /// Мутант: зерно, взятое от номера массива или от номера оси в общем списке. Тогда
+        /// нарисованный на другом конце карты хребет перетасовал бы уже принятый — молча.
+        /// </summary>
+        static void MassifsDoNotDisturbEachOther()
+        {
+            var settings = new MountainSettings { Radius = 22f };
+            var alone = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+            // Второй массив НАМЕРЕННО стоит раньше первого в списке: если зерно берётся от номера в
+            // списке, первый массив после этого поедет.
+            var neighbourFirst = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(-900, -600), new Vector2(-600, -560))), settings);
+            var together = MountainGeometry.Build(Blob(Stroke(2, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+
+            bool same = alone.Count == together.Count && alone.Count > 0;
+            for (int i = 0; same && i < alone.Count; i++)
+                if (Vector2.Distance(alone[i].Apex, together[i].Apex) > 1e-3f) same = false;
+
+            Check("Массивы: сосед не сдвинул уже нарисованное", same && neighbourFirst.Count > 0,
+                  $"гор было {alone.Count}, стало {together.Count} — массив поехал от появления соседа");
         }
 
         /// <summary>
-        /// Номер мазка — не бухгалтерия, а часть рисунка: тот же мазок под другим номером даёт ДРУГИЕ
-        /// горы. Проверка делает это утверждение замеряемым, а не обещанием в комментарии, и ради неё
-        /// загрузка проекта (формат 19) обязана нести номера из файла, а не выдавать свои.
+        /// Маска из многоугольников клеток: заливка попадает внутрь, шов между соседними клетками не
+        /// оставляет щели, а сглаживание срезает угол мозаики.
         ///
-        /// Мутант, которого она валит: «номера при загрузке выдаются заново, по порядку» — он не
-        /// падает, ничего не сообщает и просто открывает сохранённый хребет другой формы.
+        /// Мутанты: заливка по правилу «строго внутри» с обеих сторон шва (щель в одну ячейку — а
+        /// она разрезала бы массив надвое); сглаживание, которое ничего не делает (порог «больше
+        /// нуля» вместо «больше половины») — тогда угол останется прямым.
         /// </summary>
-        static void StrokeIdIsPartOfTheDrawing()
+        static void PolygonMaskFillsAndSmooths()
         {
-            var settings = new MountainSettings { Radius = 22f };
-            var asDrawn = MountainGeometry.Build(Blob(Stroke(7, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
-            var renumbered = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+            // Два квадрата встык по x = 40: общий шов, общие вершины.
+            var left = new List<Vector2> { new(0, 0), new(40, 0), new(40, 40), new(0, 40) };
+            var right = new List<Vector2> { new(40, 0), new(80, 0), new(80, 40), new(40, 40) };
+            var mask = MountainMask.FromPolygons(new List<IReadOnlyList<Vector2>> { left, right }, 1f);
 
-            bool same = asDrawn.Count == renumbered.Count;
-            for (int i = 0; same && i < asDrawn.Count; i++)
-                if (Vector2.Distance(asDrawn[i].Apex, renumbered[i].Apex) > 1e-3f) same = false;
+            Check("Клетки: заливка попала внутрь", mask != null && Filled(mask, 20, 20) && Filled(mask, 60, 20),
+                  "середины клеток не залиты");
+            Check("Клетки: шов не оставил щели", mask != null && mask.Components().Count == 1,
+                  $"кусков {(mask == null ? -1 : mask.Components().Count)}, ждали 1");
 
-            Check("Номер мазка: перенумерованный мазок рисует другие горы", !same,
-                  "мазки с разными номерами дали один и тот же рисунок — значит зерно ни на что не влияет");
+            // Угол квадрата: до сглаживания залит, после — срезан.
+            bool cornerBefore = Filled(mask, 79f, 39f);
+            mask.Smooth(6);
+            bool cornerAfter = Filled(mask, 79f, 39f);
+            Check("Клетки: сглаживание срезает угол мозаики", cornerBefore && !cornerAfter,
+                  $"угол до {cornerBefore}, после {cornerAfter}");
+            Check("Клетки: сглаживание не съело середину", Filled(mask, 40f, 20f), "середина массы погасла");
+        }
+
+        static bool Filled(MountainMask mask, float wx, float wy)
+        {
+            if (mask == null) return false;
+            var g = mask.WorldToGrid(new Vector2(wx, wy));
+            return mask.At((int)MathF.Round(g.X), (int)MathF.Round(g.Y));
+        }
+
+        /// <summary>
+        /// Массивы — это связные куски по соседству клеток. Мутант: обход без проверки
+        /// принадлежности (тогда всё сольётся в один кусок) или без пометки посещённых (кусков
+        /// станет столько же, сколько клеток).
+        /// </summary>
+        static void MassifsSplitByCellNeighbourhood()
+        {
+            //  1—2—3   5—6 , клетка 4 равнина и связи через неё нет
+            var adjacency = new Dictionary<int, IReadOnlyList<int>>
+            {
+                [1] = new[] { 2 }, [2] = new[] { 1, 3 }, [3] = new[] { 2, 4 },
+                [4] = new[] { 3, 5 }, [5] = new[] { 4, 6 }, [6] = new[] { 5 },
+            };
+            var pieces = ReliefMassifs.Split(new[] { 1, 2, 3, 5, 6 },
+                                             id => adjacency.TryGetValue(id, out var n) ? n : null);
+            pieces.Sort((a, b) => b.Count.CompareTo(a.Count));
+            Check("Массивы: равнина посередине разделила надвое",
+                  pieces.Count == 2 && pieces[0].Count == 3 && pieces[1].Count == 2,
+                  $"кусков {pieces.Count} размерами {string.Join("+", pieces.ConvertAll(p => p.Count))}");
         }
 
         // ── §3 «Поле расстояний» ────────────────────────────────────────────────────────────────
