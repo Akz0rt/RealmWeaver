@@ -73,6 +73,74 @@ namespace WorldGen.Persistence
             Debug.Log(ok ? "Self-Test Painted Rivers: PASS" : "Self-Test Painted Rivers: FAIL");
         }
 
+        // Мутанты, которых валит этот тест: «Mountains не пишется в файл»; «не читается обратно»;
+        // «номера мазков выдаются заново при загрузке» — самый тихий из всех: зерно разброса пятна
+        // это хеш САМОГО СТАРОГО номера, поэтому перенумерованный хребет откроется другой формы, не
+        // сказав ни слова (заготовка нарочно держит номера не по порядку и с дырой, 7 перед 3);
+        // «радиус теряется» (массив открылся бы другой ширины); «флаг стирания теряется» в обе
+        // стороны (ластик стал бы горой или гора исчезла бы); «мазок из одной точки выбрасывается» —
+        // тычок кистью законный мазок; «файл без ключа Mountains падает или даёт null» — старые
+        // проекты обязаны открываться просто без гор.
+        [ContextMenu("Self-Test: Mountain Strokes Round-Trip")]
+        public void SelfTestMountainStrokesRoundTrip()
+        {
+            bool ok = true;
+            var genParams = new GenerationParams { Seed = 3, Width = 100f, Height = 100f };
+            var notes = new NotesDocument();
+            var strokes = new List<WorldGen.Generation.Mountains.MountainStroke>
+            {
+                new WorldGen.Generation.Mountains.MountainStroke
+                {
+                    Id = 7, Radius = 12.5f, Erase = false,
+                    Points = new List<System.Numerics.Vector2> { new(5f, 5f), new(20f, 30f), new(40f, 35f) }
+                },
+                new WorldGen.Generation.Mountains.MountainStroke
+                {
+                    // Стирающий, младше по номеру и из ОДНОЙ точки — тычок ластиком.
+                    Id = 3, Radius = 4f, Erase = true,
+                    Points = new List<System.Numerics.Vector2> { new(21f, 31f) }
+                }
+            };
+
+            string path = Path.Combine(Application.temporaryCachePath, "mountain_strokes_roundtrip.dndproj");
+            ProjectSerializer.Save(path, genParams, new List<VoronoiCell>(), new List<PoiData>(), notes,
+                new List<RegionLabelData>(), new List<RegionData>(), new List<InteriorData>(), null, strokes);
+            var result = ProjectSerializer.Load(path);
+            try { File.Delete(path); } catch { }
+
+            if (!result.Success || result.Mountains == null || result.Mountains.Count != 2)
+            { Debug.LogError($"FAIL mountains: загрузилось {(result.Mountains == null ? "null" : result.Mountains.Count.ToString())} мазков, ждали 2"); ok = false; }
+            else
+            {
+                var a = result.Mountains[0];
+                var b = result.Mountains[1];
+                if (a.Id != 7 || b.Id != 3)
+                { Debug.LogError($"FAIL mountains: номера открылись как {a.Id}/{b.Id}, ждали 7/3 — по самому старому номеру берётся зерно разброса, и перенумерованный хребет откроется другой формы"); ok = false; }
+                if (a.Points == null || a.Points.Count != 3
+                    || System.Numerics.Vector2.Distance(a.Points[1], new System.Numerics.Vector2(20f, 30f)) > 0.001f)
+                { Debug.LogError("FAIL mountains: точки мазка не пережили сохранение — массив открылся бы другой формы"); ok = false; }
+                if (b.Points == null || b.Points.Count != 1)
+                { Debug.LogError("FAIL mountains: мазок из одной точки (тычок кистью) потерялся — он такой же законный мазок, как протяжка"); ok = false; }
+                if (Mathf.Abs(a.Radius - 12.5f) > 0.001f || Mathf.Abs(b.Radius - 4f) > 0.001f)
+                { Debug.LogError($"FAIL mountains: радиусы открылись как {a.Radius}/{b.Radius}, ждали 12.5/4 — иначе массив выйдет другой ширины"); ok = false; }
+                if (a.Erase || !b.Erase)
+                { Debug.LogError($"FAIL mountains: флаги стирания открылись как {a.Erase}/{b.Erase}, ждали false/true — перепутанные, они превратят ластик в гору и наоборот"); ok = false; }
+            }
+
+            // Файл ПРОШЛОГО формата (ключа Mountains нет вовсе) обязан открываться — просто без гор.
+            string legacyJson =
+                "{ \"FormatVersion\": 18, \"GenerationParams\": { \"Seed\": 1, \"Width\": 10, \"Height\": 10 }, " +
+                "\"Cells\": [], \"Pois\": [] }";
+            string legacyPath = Path.Combine(Application.temporaryCachePath, "mountain_strokes_legacy.dndproj");
+            File.WriteAllText(legacyPath, legacyJson);
+            var legacy = ProjectSerializer.Load(legacyPath);
+            try { File.Delete(legacyPath); } catch { }
+            if (!legacy.Success || legacy.Mountains == null || legacy.Mountains.Count != 0)
+            { Debug.LogError("FAIL mountains: проект, сделанный до появления гор, должен открываться пустым списком мазков, а не падать и не давать null"); ok = false; }
+
+            Debug.Log(ok ? "Self-Test Mountain Strokes: PASS" : "Self-Test Mountain Strokes: FAIL");
+        }
+
         [ContextMenu("Self-Test: Project Round-Trip")]
         public void SelfTestRoundTrip()
         {

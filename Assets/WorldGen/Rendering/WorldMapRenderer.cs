@@ -296,7 +296,7 @@ namespace WorldGen.Rendering
             // Нарисованные реки стираются вместе со старым миром: их русла лежат в мировых
             // координатах, а материк под ними теперь совсем другой. Мазки гор — по той же причине.
             ClearPaintedRivers();
-            MountainLayer?.ClearStrokes();
+            ClearMountainStrokes();
             BuildMesh(cells);
             BuildRivers();
             BuildBorders();
@@ -342,7 +342,7 @@ namespace WorldGen.Rendering
             // над чужой картой, если в новом файле рек нет. С горами то же самое: их загрузка
             // придёт следующей задачей (формат 19), а снимать чужие надо уже сейчас.
             ClearPaintedRivers();
-            MountainLayer?.ClearStrokes();
+            ClearMountainStrokes();
             epicenters = new List<TemperatureEpicenter>();
             moistureEpicenters = new List<MoistureEpicenter>();
             lastGenParams = referenceParams;
@@ -1089,6 +1089,38 @@ namespace WorldGen.Rendering
         /// <summary>Слой гор на этом же объекте. null, если слой не повешен — кисть тогда молчит.</summary>
         public Mountains.MountainLayer MountainLayer
             => mountainLayer != null ? mountainLayer : (mountainLayer = GetComponent<Mountains.MountainLayer>());
+
+        /// <summary>Все мазки гор — для сохранения проекта. Пустой список, если слой не повешен:
+        /// компонент ставится в сцене руками, и «слоя нет» — обычное состояние, а не ошибка,
+        /// в котором сохранение обязано работать.</summary>
+        public IReadOnlyList<Generation.Mountains.MountainStroke> MountainStrokes
+        {
+            get
+            {
+                var layer = MountainLayer;
+                return layer != null
+                    ? layer.Strokes
+                    : (IReadOnlyList<Generation.Mountains.MountainStroke>)System.Array.Empty<Generation.Mountains.MountainStroke>();
+            }
+        }
+
+        /// <summary>Ставит мазки гор открываемого проекта. Зовётся ПОСЛЕ LoadFromCells: та снимает
+        /// горы предыдущего проекта, и обратный порядок оставил бы карту без только что
+        /// загруженных.</summary>
+        public void LoadMountainStrokes(IEnumerable<Generation.Mountains.MountainStroke> loaded)
+        {
+            landProbeGrid = null;   // суша теперь другая — снимок для запасного пути устарел
+            MountainLayer?.LoadStrokes(loaded);
+        }
+
+        /// <summary>Убирает все мазки гор (новая генерация мира, открытие проекта). Заодно роняет
+        /// снимок суши: материк сменился целиком, и кэш запасного пути от прежнего мира подрезал бы
+        /// новые горы по чужому берегу.</summary>
+        public void ClearMountainStrokes()
+        {
+            landProbeGrid = null;
+            MountainLayer?.ClearStrokes();
+        }
 
         public void BeginMountainStroke(float radius, bool erase)
         {

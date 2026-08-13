@@ -28,6 +28,7 @@ namespace MountainHarness
             BlobsAreTransitive();
             EraserDoesNotMerge();
             SeedComesFromOldestStroke();
+            StrokeIdIsPartOfTheDrawing();
             DistanceIsExactlyEuclidean();
             LevelsStepByTwoR();
             ShallowRingIsRejected();
@@ -161,6 +162,28 @@ namespace MountainHarness
 
             Check("Зерно: от старшего мазка", before == MountainBlob.Fnv(3), $"{before} вместо {MountainBlob.Fnv(3)}");
             Check("Зерно: дорисовка его не двигает", before == after, $"{before} → {after}");
+        }
+
+        /// <summary>
+        /// Номер мазка — не бухгалтерия, а часть рисунка: тот же мазок под другим номером даёт ДРУГИЕ
+        /// горы. Проверка делает это утверждение замеряемым, а не обещанием в комментарии, и ради неё
+        /// загрузка проекта (формат 19) обязана нести номера из файла, а не выдавать свои.
+        ///
+        /// Мутант, которого она валит: «номера при загрузке выдаются заново, по порядку» — он не
+        /// падает, ничего не сообщает и просто открывает сохранённый хребет другой формы.
+        /// </summary>
+        static void StrokeIdIsPartOfTheDrawing()
+        {
+            var settings = new MountainSettings { Radius = 22f };
+            var asDrawn = MountainGeometry.Build(Blob(Stroke(7, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+            var renumbered = MountainGeometry.Build(Blob(Stroke(1, 40f, new Vector2(0, 0), new Vector2(300, 40))), settings);
+
+            bool same = asDrawn.Count == renumbered.Count;
+            for (int i = 0; same && i < asDrawn.Count; i++)
+                if (Vector2.Distance(asDrawn[i].Apex, renumbered[i].Apex) > 1e-3f) same = false;
+
+            Check("Номер мазка: перенумерованный мазок рисует другие горы", !same,
+                  "мазки с разными номерами дали один и тот же рисунок — значит зерно ни на что не влияет");
         }
 
         // ── §3 «Поле расстояний» ────────────────────────────────────────────────────────────────

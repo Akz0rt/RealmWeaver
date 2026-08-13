@@ -121,6 +121,32 @@ namespace WorldGen.Rendering.Mountains
         {
             if (strokes.Count == 0) return;
             strokes.Clear();
+            nextStrokeId = 1;
+            Rebuild();
+        }
+
+        /// <summary>Заменяет все мазки разом (открытие проекта). Пустой список — стереть всё.
+        ///
+        /// НОМЕРА МАЗКОВ БЕРУТСЯ ИЗ ФАЙЛА и не перевыдаются. Это не аккуратность ради аккуратности:
+        /// зерно разброса пятна — хеш САМОГО СТАРОГО номера в нём (MountainBlob.Seed), поэтому
+        /// перенумеровать мазки при загрузке значит перетасовать звенья уже нарисованного хребта.
+        /// Ни падения, ни сообщения при этом не будет — просто открытый проект окажется не тем,
+        /// который сохраняли.
+        ///
+        /// Мазок из одной точки — это тычок кистью, он законный, и отбрасывать его по числу точек
+        /// (как это делает загрузка рек, где меньше двух точек русла не бывает) нельзя.</summary>
+        public void LoadStrokes(IEnumerable<MountainStroke> loaded)
+        {
+            strokes.Clear();
+            nextStrokeId = 1;
+            if (loaded != null)
+                foreach (var stroke in loaded)
+                {
+                    if (stroke == null || stroke.Points == null || stroke.Points.Count == 0) continue;
+                    if (stroke.Radius <= 0f) continue;
+                    strokes.Add(stroke);
+                    if (stroke.Id >= nextStrokeId) nextStrokeId = stroke.Id + 1;
+                }
             Rebuild();
         }
 
