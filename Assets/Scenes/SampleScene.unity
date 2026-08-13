@@ -1331,6 +1331,7 @@ MonoBehaviour:
   brushRadius: 42
   brushStep: 0.02
   strength: 0.6
+  riverWidth: 6
   selectedRegionId: -1
   repeatInterval: 0.05
   regionLakeClaimPercent: 30
@@ -1522,6 +1523,7 @@ GameObject:
   - component: {fileID: 1583692671}
   - component: {fileID: 1583692676}
   - component: {fileID: 1583692677}
+  - component: {fileID: 1583692678}
   m_Layer: 0
   m_Name: WorldMap
   m_TagString: Untagged
@@ -1605,28 +1607,6 @@ MonoBehaviour:
   smoothRegionBorders: 1
   borderRoundness: 1
   rasterLongSide: 2048
-  decorationConfig:
-    enabled: 0
-    mountainMinElevation: 0.72
-    hillMinElevation: 0.55
-    coldTemperature: 0.32
-    mountainGridStep: 26
-    hillGridStep: 30
-    pineGridStep: 12
-    autumnGridStep: 12
-    mesaGridStep: 34
-    mountainProbability: 0.55
-    hillProbability: 0.35
-    pineProbability: 0.66
-    autumnProbability: 0.62
-    mesaProbability: 0.18
-    mountainSize: 34
-    hillSize: 16
-    treeSize: 13
-    mesaSize: 14
-    globalScale: 1
-    sizeJitter: 0.25
-    maxInstances: 6000
   beachWidth: 35
   beachStrength: 0.365
   beachHardness: 1
@@ -1767,6 +1747,39 @@ MonoBehaviour:
   mapScreenController: {fileID: 587299942}
   selectRadius: 8
   dragThresholdPixels: 5
+--- !u!114 &1583692678
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1583692670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79c50346f0c7a7d4a93f427331e5fe7a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.Mountains.MountainLayer
+  mapRenderer: {fileID: 0}
+  mountainRadius: 10
+  linkLengthFactor: 1.6
+  lengthJitter: 0.06
+  anisotropy: 1.6
+  waist: 0.55
+  heightFactor: 2.2
+  stretch: 1.4
+  tiers: 3
+  edgeHeight: 0.55
+  layerY: 0.6
+  crestWidth: 0.35
+  toneSpan: 0
+  crestAlpha: 90
+  visible: 1
+  onlyOnLand: 1
+  maskSmoothing: 0.5
+  useMapPalette: 1
+  farColor: {r: 0.55, g: 0.59, b: 0.64, a: 1}
+  nearColor: {r: 0.16, g: 0.18, b: 0.22, a: 1}
+  inkColor: {r: 0.94, g: 0.93, b: 0.89, a: 0.35}
 --- !u!1 &1904317179
 GameObject:
   m_ObjectHideFlags: 0
