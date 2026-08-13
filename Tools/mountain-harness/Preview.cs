@@ -194,6 +194,86 @@ namespace MountainHarness
             }
         }
 
+        /// <summary>
+        /// Третий лист: ДМ подтвердил, что градация по СЛОЯМ массы (внешний / средний / внутренний,
+        /// §11) обязана остаться. Значит цветов два источника разом — слой массы и ярус горы, — и
+        /// вопрос лишь в том, сколько шкалы отдать каждому. Слой берёт себе полосу на шкале, ярус
+        /// гуляет внутри этой полосы.
+        ///
+        /// Массив нарочно с толстой головой и тонким хвостом: в голове помещаются все три слоя, в
+        /// хвосте — только внешний. Если полоса яруса шире зазора между слоями, «внутренний» хвоста
+        /// сравняется с «внешним» головы, и градация перестанет читаться. Это и проверяется глазом.
+        /// </summary>
+        public static void WriteTiers(string path)
+        {
+            var cards = new (string Title, float Spread, bool ByLevelOnly)[]
+            {
+                ("только ярус горы (как на листе)", 0f,    true),
+                ("только слой массы",               0f,    false),
+                ("слой + ярус, узко",               0.22f, false),
+                ("слой + ярус, шире",               0.40f, false),
+            };
+
+            for (int i = 0; i < cards.Length; i++)
+            {
+                var sb = new StringBuilder();
+                sb.Append("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 620' width='340' height='620'>");
+                sb.Append("<rect width='340' height='620' fill='#efe7d5'/>");
+                Label(sb, 14, 30, cards[i].Title);
+                TierMassif(sb, cards[i].Spread, cards[i].ByLevelOnly);
+                sb.Append("</svg>");
+                string file = path.Replace(".svg", $"-{i + 1}.svg");
+                File.WriteAllText(file, sb.ToString());
+                Console.WriteLine($"готово: {file} — {cards[i].Title}");
+            }
+        }
+
+        /// <summary>Массив с толстой головой (три слоя) и тонким хвостом (один).</summary>
+        static void TierMassif(StringBuilder sb, float spread, bool byLevelOnly)
+        {
+            var polys = CellsAlongPath(new[]
+            {
+                new Vector2(95, 570), new Vector2(150, 480), new Vector2(175, 390),
+                new Vector2(190, 320),
+            }, 28f);
+            polys.AddRange(CellsInDisc(new Vector2(190, 250), 62f));
+
+            var settings = new MountainSettings { Radius = 10f, HeightFactor = 2.2f };
+            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
+            if (mask == null) return;
+            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            MountainGeometry.BuildFromMask(mask, settings, out var links);
+
+            var shapes = Stack.BuildAll(links, settings, 6, Schedule.Sine, 0.5f, true);
+            int maxTier = 0;
+            foreach (var s in shapes) if (s.Tier > maxTier) maxTier = s.Tier;
+            Console.WriteLine($"  массив: гор {shapes.Count}, слоёв {maxTier + 1}");
+
+            foreach (var shape in shapes)
+                EmitStack(sb, shape, 0f, CanvasH, "none",
+                          byLevelOnly ? "slate" : "tier", spread, settings.Tiers);
+        }
+
+        static List<IReadOnlyList<Vector2>> CellsInDisc(Vector2 screenCentre, float radius)
+        {
+            const float step = 15f;
+            var centre = new Vector2(screenCentre.X, Flip(screenCentre.Y));
+            var polys = new List<IReadOnlyList<Vector2>>();
+            float h = step * 0.5f;
+            for (float x = (float)Math.Floor((centre.X - radius) / step) * step; x <= centre.X + radius; x += step)
+                for (float y = (float)Math.Floor((centre.Y - radius) / step) * step; y <= centre.Y + radius; y += step)
+                {
+                    var c = new Vector2(x, y);
+                    if ((c - centre).Length() > radius) continue;
+                    polys.Add(new List<Vector2>
+                    {
+                        new Vector2(c.X - h, c.Y - h), new Vector2(c.X + h, c.Y - h),
+                        new Vector2(c.X + h, c.Y + h), new Vector2(c.X - h, c.Y + h),
+                    });
+                }
+            return polys;
+        }
+
         static void SharpRidge(StringBuilder sb, float sharp, float height, bool apex)
         {
             var path = new[]
@@ -272,13 +352,13 @@ namespace MountainHarness
 
         /// <summary>Стопка на холст со сдвигом начала: экран = (ox + x, oy − y).</summary>
         static void EmitStack(StringBuilder sb, StackShape shape, float ox, float oy, string ink,
-                              string look = "slate")
+                              string look = "slate", float spread = 0f, int tierCount = 3)
         {
             int n = shape.Levels.Count;
             if (n == 0) return;
 
             // Подошва целиком — под ней ничего не просвечивает.
-            Fill(sb, shape.Levels[0], Paint(look, shape.Centre, 0f), ox, oy);
+            Fill(sb, shape.Levels[0], Paint(look, shape, 0f, spread, tierCount), ox, oy);
 
             // Между соседними ярусами — ПОЛОСА, а не вертикальная стенка. Вертикальная превращала
             // гору в катушку: у каждой ступени был отвес. Полоса же соединяет край нижнего яруса с
@@ -287,7 +367,7 @@ namespace MountainHarness
             // полоса сшивается «застёжкой» по номеру точки.
             for (int j = 1; j < n; j++)
             {
-                string fill = Paint(look, shape.Centre, n > 1 ? j / (float)(n - 1) : 0f);
+                string fill = Paint(look, shape, n > 1 ? j / (float)(n - 1) : 0f, spread, tierCount);
                 var lower = shape.Levels[j - 1];
                 var upper = shape.Levels[j];
                 int count = Math.Min(lower.Count, upper.Count);
@@ -415,14 +495,27 @@ namespace MountainHarness
         /// Притемнение обязательно: ровно цвет карты стирает внешнюю границу массы,
         /// и хребет перестаёт читаться объектом.
         /// </summary>
-        static string Paint(string look, Vector2 centre, float t)
+        static string Paint(string look, StackShape shape, float t, float spread, int tierCount)
         {
             if (look == "invert") return Tone(1f - t);
+
+            // «tier»: главный источник цвета — СЛОЙ массы (§11, внешний / средний / внутренний), а
+            // ярус горы лишь гуляет внутри отведённой слою полосы. Полоса шириной spread: 0 — цвет
+            // задаёт один слой и гора заливается ровно, больше нуля — внутри слоя ещё видно объём.
+            // Ширину надо держать меньше зазора между слоями, иначе внутренний ярус внешнего слоя
+            // сравняется с внешним ярусом среднего, и градация по слоям перестанет читаться.
+            if (look == "tier")
+            {
+                float band = MountainTierRamp.Mix(shape.Tier, tierCount, 1f);
+                float mix = Math.Min(1f, Math.Max(0f, band + spread * (t - 0.5f)));
+                return Tone(mix);
+            }
+
             if (look != "ground") return Tone(t);
 
             // Карточка из двух биомов: слева песок, справа лес. Настоящая проба спросит
             // цвет у карты (WorldMapRenderer.GetColorForCell), здесь он подделан по X.
-            float[] ground = centre.X < 150f ? new float[] { 205, 187, 146 } : new float[] { 141, 157, 112 };
+            float[] ground = shape.Centre.X < 150f ? new float[] { 205, 187, 146 } : new float[] { 141, 157, 112 };
             float[] rock = { 43, 53, 64 };
             const float k = 0.78f;   // нижний ярус — земля, притемнённая на пятую часть
             int r = (int)Math.Round(ground[0] * k + (rock[0] - ground[0] * k) * t);

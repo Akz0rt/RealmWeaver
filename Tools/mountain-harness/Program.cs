@@ -21,6 +21,7 @@ namespace MountainHarness
             if (mode == "axes") { Preview.WriteAxes("axes.svg"); return 0; }
             if (mode == "look") { Preview.WriteLook("look.svg"); return 0; }
             if (mode == "stack") { Preview.WriteStack("stack.svg"); return 0; }
+            if (mode == "tiers") { Preview.WriteTiers("tiers.svg"); return 0; }
             if (mode == "sharp") { Preview.WriteSharp("sharp.svg"); return 0; }
             if (mode == "profiles") { Preview.WriteProfiles("profiles.svg"); return 0; }
             if (mode == "cells") { Preview.WriteCells("cells.svg"); return 0; }
