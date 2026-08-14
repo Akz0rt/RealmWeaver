@@ -19,10 +19,10 @@ namespace MountainHarness
     /// </summary>
     static class PenPreview
     {
-        const float W = 1100f, H = 820f;
+        const float W = 760f, H = 760f;
 
         // Числа ДМ от 14 августа 2026.
-        const float PenWidth = 0.15f, PenTaper = 1.1f, PenAlpha = 0.61f;
+        const float PenWidth = 0.55f, PenTaper = 1.1f, PenAlpha = 0.95f;
         const float Grit = 0.88f, GritFall = 0.4f, Gully = 0.32f;
         const float Light = 160f, TierInk = 0.5f, TierContrast = 1f;
 
@@ -37,8 +37,9 @@ namespace MountainHarness
                 sb.Append($"<ellipse cx='{F(patch.C.X)}' cy='{F(Flip(patch.C.Y))}' ")
                   .Append($"rx='{F(patch.R.X)}' ry='{F(patch.R.Y)}' fill='{Hex(patch.Colour)}'/>");
 
-            Draw(sb, 26f, "гряда", Band(new Vector2(140, 620), new Vector2(560, 200), 55f));
-            Draw(sb, 26f, "массив", Disc(new Vector2(820, 300), 165f));
+            // Та же фикстура, что ДМ снимал в браузере («Горная страна»), и тот же радиус 10:
+            // сравнивать вид можно только на одной и той же форме и в одном масштабе.
+            Draw(sb, 10f, "горная страна", Country());
 
             sb.Append("</svg>");
             System.IO.File.WriteAllText(path, sb.ToString());
@@ -51,8 +52,9 @@ namespace MountainHarness
         static readonly int[] Ground0 = { 205, 187, 146 };
         static readonly Patch[] Patches =
         {
-            new Patch { C = new Vector2(300, 590), R = new Vector2(260, 190), Colour = new[] { 141, 157, 112 } },
-            new Patch { C = new Vector2(820, 260), R = new Vector2(250, 200), Colour = new[] { 159, 180, 166 } },
+            new Patch { C = new Vector2(215, 595), R = new Vector2(215, 165), Colour = new[] { 141, 157, 112 } },
+            new Patch { C = new Vector2(190, 175), R = new Vector2(190, 145), Colour = new[] { 159, 180, 166 } },
+            new Patch { C = new Vector2(730, 700), R = new Vector2(170, 125), Colour = new[] { 216, 214, 204 } },
         };
 
         /// <summary>Цвет земли под точкой — то же, что в приложении делает BuildGroundProbe.</summary>
@@ -167,7 +169,6 @@ namespace MountainHarness
         {
             int total = MountainInk.MarkCount(shape.FootArea, radius, Grit, density, out _);
             var light = LightVec();
-            float size = 0.045f * radius;
             int n = shape.Base.Length;
 
             for (int id = 1; id <= total; id++)
@@ -184,7 +185,7 @@ namespace MountainHarness
                 float u = Rand(shape.Seed, 211u, id);
                 p = new Vector2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
-                float s = size * (0.6f + Rand(shape.Seed, 307u, id));
+                float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
                 sb.Append("<polygon fill='rgba(26,22,18,").Append(F(PenAlpha)).Append(")' points='")
                   .Append(F(p.X - s)).Append(',').Append(F(Flip(p.Y - s * 0.6f))).Append(' ')
                   .Append(F(p.X + s)).Append(',').Append(F(Flip(p.Y - s * 0.6f))).Append(' ')
@@ -237,6 +238,22 @@ namespace MountainHarness
                 h = (h ^ (h >> 13)) * 1274126177u;
                 return ((h ^ (h >> 16)) >> 8) / 16777216f;
             }
+        }
+
+        /// <summary>Фикстура «Горная страна» — один в один из Export.cs, чтобы сравнивать с тем
+        /// самым снимком, который ДМ прислал.</summary>
+        static List<IReadOnlyList<Vector2>> Country()
+        {
+            var polys = Disc(new Vector2(250, 300), 72f);
+            polys.AddRange(Band(new Vector2(250, 300), new Vector2(430, 380), 26f));
+            polys.AddRange(Band(new Vector2(430, 380), new Vector2(560, 320), 26f));
+            polys.AddRange(Band(new Vector2(430, 380), new Vector2(470, 530), 30f));
+            polys.AddRange(Band(new Vector2(470, 530), new Vector2(620, 620), 30f));
+            polys.AddRange(Band(new Vector2(560, 320), new Vector2(670, 250), 22f));
+            polys.AddRange(Disc(new Vector2(700, 220), 56f));
+            polys.AddRange(Band(new Vector2(150, 620), new Vector2(230, 520), 24f));
+            polys.AddRange(Band(new Vector2(230, 520), new Vector2(250, 380), 24f));
+            return polys;
         }
 
         static List<IReadOnlyList<Vector2>> Band(Vector2 a, Vector2 b, float half)

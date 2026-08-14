@@ -257,7 +257,6 @@ namespace WorldGen.Rendering.Mountains
             int n = foot.Length;
             float y = style.LayerY;
             Color32 ink = style.InkAt(shape.Tier, shape.Depth);
-            float size = 0.045f * radius;   // метка в долях радиуса горы
 
             for (int id = 1; id <= total; id++)
             {
@@ -278,7 +277,7 @@ namespace WorldGen.Rendering.Mountains
                 Vec2 q = MountainTriangulation.Meridian(shape, j, r, profile);
                 p = new Vec2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
-                float s = size * (0.6f + Rand(shape.Seed, 307u, id));
+                float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
                 int start = data.Verts.Count;
                 data.Verts.Add(new Vector3(p.X - s, y, p.Y - s * 0.6f));
                 data.Verts.Add(new Vector3(p.X + s, y, p.Y - s * 0.6f));

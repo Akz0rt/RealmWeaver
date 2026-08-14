@@ -521,12 +521,12 @@ namespace WorldGen.Rendering
             // Тушь (§13). Всё ниже меняет только краску, поэтому идёт перекраской, а не пересчётом:
             // геометрия от этих чисел не зависит ни на йоту, а полный счёт большого массива стоит
             // полторы секунды — ползунок дёргался бы вместо того, чтобы ехать.
-            AddMountainKnob(t, "Жирность линии", 0f, 0.5f, 0.15f,
+            AddMountainKnob(t, "Жирность линии", 0f, 0.8f, 0.55f,
                             l => l.penWidth, (l, v) => l.penWidth = v,
                             v => v <= 0.001f ? "без линии" : $"{v:0.00} R",
                             repaintOnly: true);
 
-            AddMountainKnob(t, "Чернота", 0f, 1f, 0.61f,
+            AddMountainKnob(t, "Чернота", 0f, 1f, 0.95f,
                             l => l.penAlpha, (l, v) => l.penAlpha = v,
                             v => $"{Mathf.RoundToInt(v * 100f)}%",
                             repaintOnly: true);
