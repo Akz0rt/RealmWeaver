@@ -1,65 +1,113 @@
+using System;
 using UnityEngine;
 using WorldGen.Generation.Mountains;
 using WorldGen.Rendering.MapRaster;
+using Vec2 = System.Numerics.Vector2;
 
 namespace WorldGen.Rendering.Mountains
 {
     /// <summary>
-    /// Чем красить горы. Отдельно от геометрии нарочно: манера рисования будет меняться (сейчас
-    /// цвет по ярусу, дальше боковой свет, штриховка, другие вершины), а математика — нет.
+    /// Чем красить горы — манера «тушь» (§13 спеки).
     ///
-    /// Концы шкалы берутся ИЗ ПАЛИТРЫ КАРТЫ, а не из чисел прототипа. В прототипе они подобраны под
-    /// тёмный холст браузера и на карте читались бы как чужое тело; в палитре под горы уже есть своя
-    /// пара слотов — светлый и теневой. У прототипа в режиме «подсветить ярусы» краски и вовсе
-    /// разноцветные (бирюза, янтарь, лосось) — это отладочная подсветка, а не манера рисования.
+    /// Объём держит ЛИНИЯ, а не цвет. Тело заливается цветом карты ПОД НИМ, поэтому освещённый склон
+    /// остаётся нетронутым куском карты и гора вырастает из неё без шва; наружу выходит только
+    /// силуэт. Прежняя раскладка «ярус → цвет по шкале» ушла вместе с манерой заливки: цветов на
+    /// образце ДМ нет вовсе.
+    ///
+    /// Градация по слоям массы никуда не делась — она переехала из цвета в ГУСТОТУ: внутренние слои
+    /// получают жирнее линию и плотнее крошку. Требование ДМ «внешний / средний / внутренний должны
+    /// различаться» выполняется, просто на другом языке.
+    ///
+    /// Ни одного поля, которое ничего не делает: мёртвая настройка, которую видно, хуже
+    /// отсутствующей — по ней уводят ползунок в край, не понимая, отчего ничего не меняется.
     /// </summary>
     public struct MountainPaintStyle
     {
-        /// <summary>Светлый конец шкалы — внешний ярус массы.</summary>
-        public Color32 Far;
+        /// <summary>Цвет земли под точкой. null — карты нет (стенд, шип): тело красится ЗапаснойЦвет.</summary>
+        public Func<Vec2, Color32> Ground;
 
-        /// <summary>Тёмный конец — сердцевина.</summary>
-        public Color32 Near;
+        /// <summary>Чем крыть тело, если снимка карты нет.</summary>
+        public Color32 FallbackBody;
 
-        /// <summary>Сколько ярусов различаем. Столько же и красок на шкале.</summary>
-        public int TierCount;
-
-        /// <summary>Насколько ярусы расходятся по шкале: 1 — во всю (ядро тёмное), 0 — все ярусы
-        /// одного цвета, −1 — наоборот, ядро светлое.</summary>
-        public float TierContrast;
-
-        /// <summary>Заливка яруса. Единственное место, где ярус превращается в цвет.</summary>
-        public Color32 Fill(int tier)
-            => Color32.Lerp(Far, Near, MountainTierRamp.Mix(tier, TierCount, TierContrast));
-
-        /// <summary>Линия гребня. Обводится только он: дуга подошвы прочерчивала бы соседа поперёк
-        /// и массив рассыпался бы в чешую.</summary>
+        /// <summary>Краска туши.</summary>
         public Color32 Ink;
 
-        /// <summary>Толщина линии гребня в мировых единицах.</summary>
-        public float CrestWidth;
+        /// <summary>Чернота: доля непрозрачности линии, крошки и промоин.</summary>
+        public float PenAlpha;
+
+        /// <summary>Жирность линии у вершины, в мировых единицах.</summary>
+        public float PenWidth;
+
+        /// <summary>Сход линии на нет книзу: толщина = жирность·(1 − r)^сход. У ближнего края r = 1,
+        /// толщина ноль — подошва не обводится сама собой.</summary>
+        public float PenTaper;
+
+        /// <summary>Крошка в тени: сколько меток на единицу площади подошвы, в долях R².</summary>
+        public float Grit;
+
+        /// <summary>Насколько быстро крошка редеет вниз по склону.</summary>
+        public float GritFall;
+
+        /// <summary>Промоины: доля лучей освещённой стороны, вдоль которых идёт штрих.</summary>
+        public float Gully;
+
+        /// <summary>Откуда светит, в градусах. Одно направление на всю карту: разное освещение у
+        /// соседних гор рассыпает картинку.</summary>
+        public float LightAngle;
+
+        /// <summary>Насколько слой массы меняет густоту туши.</summary>
+        public float TierInk;
+
+        /// <summary>Сколько слоёв массы различаем и насколько они расходятся.</summary>
+        public int TierCount;
+        public float TierContrast;
+
+        /// <summary>Глубина: дальние горы бледнее. Гасит тушь ПОСЛЕДНИМ слоем, поэтому со слоями
+        /// массы не спорит. Считается от МИРОВОЙ координаты, а не от размаха нарисованного — иначе
+        /// новый хребет на другом конце карты молча перекрасил бы все прежние.</summary>
+        public float DepthTone;
+
+        /// <summary>Высота карты — мера для глубины.</summary>
+        public float MapHeight;
 
         /// <summary>Высота слоя над плоскостью карты.</summary>
         public float LayerY;
 
-        /// <summary>Стиль по палитре карты: MtnL — светлый горный тон, MtnS — теневой, снег — блик
-        /// на гребне (полупрозрачный, чтобы не спорить с заливкой). Средний ярус берётся с середины
-        /// этой пары: третьего слота под горы в палитре нет, и заводить его до того, как ДМ увидит
-        /// механическую середину, — гадание.</summary>
-        public static MountainPaintStyle FromPalette(MapPaletteTheme theme, float crestWidth, float layerY,
-                                                     int tierCount, float tierContrast, byte crestAlpha = 90)
+        /// <summary>Единичный вектор света в Site-координатах.</summary>
+        public Vec2 Light
         {
-            var ink = MapPalette.GetSlotColor(theme, PaletteSlot.Snow);
-            ink.a = crestAlpha;
+            get
+            {
+                float a = LightAngle * (float)Math.PI / 180f;
+                return new Vec2((float)Math.Cos(a), (float)Math.Sin(a));
+            }
+        }
+
+        /// <summary>Густота туши для слоя массы: множит и толщину линии, и плотность крошки.</summary>
+        public float Density(int tier) => MountainInk.Density(tier, TierCount, TierContrast, TierInk);
+
+        /// <summary>Гашение по глубине. depth — Y ближайшей точки подошвы в мировых единицах.</summary>
+        public float Haze(float depth) => MountainInk.Haze(depth, MapHeight, DepthTone);
+
+        /// <summary>Краска туши с учётом слоя массы и глубины.</summary>
+        public Color32 InkAt(int tier, float depth, float scale = 1f)
+        {
+            float a = PenAlpha * Haze(depth) * scale;
+            if (a < 0f) a = 0f; else if (a > 1f) a = 1f;
+            return new Color32(Ink.r, Ink.g, Ink.b, (byte)(a * 255f + 0.5f));
+        }
+
+        /// <summary>Стиль по палитре карты: тушь берётся от теневого горного тона, притемнённого до
+        /// почти чёрного, — так линия сидит в теме карты, а не приклеена поверх неё чужой краской.
+        /// Запасной цвет тела — светлый горный тон: он нужен только там, где карты нет вовсе.</summary>
+        public static MountainPaintStyle FromPalette(MapPaletteTheme theme)
+        {
+            Color32 shade = MapPalette.GetSlotColor(theme, PaletteSlot.MtnS);
+            const float k = 0.35f;
             return new MountainPaintStyle
             {
-                Far = MapPalette.GetSlotColor(theme, PaletteSlot.MtnL),
-                Near = MapPalette.GetSlotColor(theme, PaletteSlot.MtnS),
-                TierCount = tierCount,
-                TierContrast = tierContrast,
-                Ink = ink,
-                CrestWidth = crestWidth,
-                LayerY = layerY,
+                FallbackBody = MapPalette.GetSlotColor(theme, PaletteSlot.MtnL),
+                Ink = new Color32((byte)(shade.r * k), (byte)(shade.g * k), (byte)(shade.b * k), 255),
             };
         }
     }

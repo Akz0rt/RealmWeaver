@@ -5,7 +5,7 @@ using System.Numerics;
 namespace WorldGen.Generation.Mountains
 {
     /// <summary>
-    /// §10 «Горы над звеньями»: доля-гармошка — это план, вид сверху; гора строится над ней как
+    /// §10 «Гора как стопка ярусов»: доля-гармошка — это план, вид сверху; гора строится над ней как
     /// объём. Вся геометрия задана одним соглашением о взгляде: смотрим горизонтально, земля видна
     /// под углом, высота откладывается прямо вверх по экрану (у нас — по +Y в Site-координатах).
     ///
@@ -15,232 +15,307 @@ namespace WorldGen.Generation.Mountains
     /// вдоль оси заставляет подошвы соседей перекрываться: склоны пересекаются ВЫШЕ земли, и это
     /// перевал — цепь читается как гряда, а не как ряд кучек.
     ///
-    /// Порт `moundShape` из `docs/mountain-brush-step1.html` с двумя правками:
-    /// • ось Y перевёрнута (см. AxisLink) — высота прибавляется, ближняя дуга та, что ниже по Y;
-    /// • у свободного конца оси растягивать некуда: соседа с этой стороны нет, и растяжение только
-    ///   вылезает за нарисованный мазок (§14 «вылет за мазок»). Поэтому стороны растягиваются
-    ///   независимо, и крайнее звено растягивают только внутрь.
+    /// Ярус r — та же подошва, стянутая к середине звена в r раз и поднятая на H·lift(r). Здесь не
+    /// строится ни одного яруса: сразу считается ВНЕШНЯЯ ГРАНИЦА их объединения — см. Silhouette.
+    ///
+    /// Ушли вместе с прежним силуэтом: гребень и дуга подошвы, MakeMonotone, ClampUnderCrest,
+    /// показатель склона и весь класс самопересечений. Полоса между двумя ярусами сшивается зипом,
+    /// самопересечься ей нечем.
     /// </summary>
     public static class MoundBuilder
     {
-        /// <summary>Отсчётов на один склон.</summary>
-        const int SlopeSamples = 18;
-
-        /// <summary>Показатель склона по умолчанию — тот, что в §10. Живое значение приходит
-        /// настройкой: им и правится «остриё против взгляда сверху».</summary>
-        public const float DefaultSlopeExponent = 1.6f;
-
-        /// <summary>Доля полуразмаха подошвы, ближе которой к краю вершина не ставится: иначе у
-        /// косого звена вершина съезжает на самый угол и склон вырождается в вертикаль.</summary>
-        const float ApexInset = 0.15f;
-
-        /// <summary>Потолок на полудлину подошвы вдоль оси, в полуширинах горы. См. подробности в
-        /// Build: он держит юбку горы соразмерной её высоте, когда звено вышло длинным.</summary>
-        const float LobeCapFactor = 1.2f;
-
-        /// <summary>Зазор, на который подошву держат ниже гребня, в мировых единицах.</summary>
-        const float ClampGap = 1e-3f;
+        /// <summary>Сколько значений r перебирается при поиске границы. Двух десятков хватает: сама
+        /// граница потом уточняется параболой по лучшей тройке.</summary>
+        public const int ProfileSamples = 24;
 
         /// <summary>
         /// Гора над звеном. outline — замкнутый силуэт доли (LinkOutline.Build).
         /// stretchBack/stretchFwd — растяжение подошвы вдоль оси назад и вперёд (k из §10); у
         /// свободного конца ставится 1. minSpan — ширина подошвы, ниже которой горы нет.
+        /// profile — заранее посчитанная выборка кривой подъёма (одна на весь пересчёт).
         /// Возвращает null, если строить нечего.
         /// </summary>
         public static MountainShape Build(IReadOnlyList<Vector2> outline, AxisLink link,
                                           float heightFactor, float squash,
                                           float stretchBack, float stretchFwd, float minSpan,
-                                          float slopeExponent = DefaultSlopeExponent)
+                                          LiftSamples profile, float jag = 0f, float tolerance = 0.2f)
         {
             if (outline == null || outline.Count < 6 || link == null) return null;
+            if (profile == null || profile.Count < 2) return null;
 
             int n = outline.Count;
             Vector2 c = link.Mid, u = link.Tan;
             Vector2 across = new Vector2(-u.Y, u.X);
+            uint seed = SeedAt(c);
 
             // Подошва: вдоль оси — растяжение (каждая сторона своим множителем), поперёк — ничего,
             // поэтому ширина горы остаётся ровно той, что дало поле расстояний, и силуэт не теряет
             // связи с формой мазка. Затем всё сплющивается по вертикали относительно середины.
-            var along = new float[n];
-            var side = new float[n];
-            float longest = 0f;
+            var foot = new Vector2[n];
+            float minX = float.PositiveInfinity, maxX = float.NegativeInfinity;
+            float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
             for (int i = 0; i < n; i++)
             {
                 Vector2 d = outline[i] - c;
                 float a = d.X * u.X + d.Y * u.Y;
                 a *= a >= 0f ? stretchFwd : stretchBack;
-                along[i] = a;
-                side[i] = d.X * across.X + d.Y * across.Y;
-                float abs = Math.Abs(a);
-                if (abs > longest) longest = abs;
+                float t = d.X * across.X + d.Y * across.Y;
+
+                // Выщербина множит отступ, а не сдвигает точку: ярус стягивает подошву к середине
+                // звена ЦЕЛИКОМ, значит выщербина стягивается вместе с ним и вложенность цела.
+                float k = Jag(seed, i, n, jag);
+                Vector2 p = c + u * (a * k) + across * (t * k);
+                p = new Vector2(p.X, c.Y + (p.Y - c.Y) * squash);
+                foot[i] = p;
+
+                if (p.X < minX) minX = p.X;
+                if (p.X > maxX) maxX = p.X;
+                if (p.Y < minY) minY = p.Y;
+                if (p.Y > maxY) maxY = p.Y;
             }
 
-            // Потолок на длину подошвы вдоль оси. Без него длинное звено отращивает длинную юбку:
-            // подошва — это план, вид сверху, и у гряды, уходящей ВВЕРХ по картинке, вся её длина
-            // ложится вниз по экрану. Гора тогда превращается в приземистую «чешуйку» с рюшем
-            // вместо склонов — это и был изъян, найденный ДМ 2026-08-14.
-            //
-            // Мера — полуширина самой горы. При 1.2·w юбка выходит той же доли высоты, что у горы
-            // ПОПЕРЁК экрана (замер: ширина 22, высота 22, юбка 7), а горы поперёк потолка не
-            // замечают вовсе: растяжение даёт им 1.12·w, и перекрытие соседей, из которого выходят
-            // перевалы, остаётся нетронутым.
-            float cap = LobeCapFactor * link.MidW;
-            float shrink = longest > cap && cap > 0f ? cap / longest : 1f;
-
-            var baseline = new Vector2[n];
-            for (int i = 0; i < n; i++)
-            {
-                Vector2 p = c + u * (along[i] * shrink) + across * side[i];
-                baseline[i] = new Vector2(p.X, c.Y + (p.Y - c.Y) * squash);
-            }
-
-            int iLeft = 0, iRight = 0;
-            float nearest = float.PositiveInfinity;   // самая НИЗКАЯ точка подошвы — ближняя к зрителю
-            for (int i = 0; i < n; i++)
-            {
-                // При равном X берём НИЖНЮЮ точку: она и есть видимый край подошвы, а верхняя
-                // закрыта телом горы. Без этого выпрямление подошвы упиралось в свой же левый конец.
-                if (baseline[i].X < baseline[iLeft].X
-                    || (baseline[i].X == baseline[iLeft].X && baseline[i].Y < baseline[iLeft].Y)) iLeft = i;
-                if (baseline[i].X > baseline[iRight].X
-                    || (baseline[i].X == baseline[iRight].X && baseline[i].Y < baseline[iRight].Y)) iRight = i;
-                if (baseline[i].Y < nearest) nearest = baseline[i].Y;
-            }
-
-            Vector2 pl = baseline[iLeft], pr = baseline[iRight];
-            float span = pr.X - pl.X;
-            if (span < minSpan) return null;
-
-            // Силуэт распадается на две дуги между крайними точками. Ближняя — та, что ниже по
-            // экрану; дальняя не видна, её закрывает сама гора.
-            var arcA = Chain(baseline, iRight, iLeft);
-            var arcB = Chain(baseline, iLeft, iRight);
-            Reverse(arcB);
-            var front = AverageY(arcA) <= AverageY(arcB) ? arcA : arcB;
-            Reverse(front);   // обе дуги идут справа налево — разворачиваем в «слева направо»
-            front = MakeMonotone(front);
+            if (maxX - minX < minSpan) return null;
 
             float height = heightFactor * link.MidW * link.HeightJitter * link.TierScale;
-            float apexX = Math.Max(pl.X + span * ApexInset, Math.Min(pr.X - span * ApexInset, link.Mid.X));
-            var apex = new Vector2(apexX, link.Mid.Y + height);
 
-            var crest = new List<Vector2>(SlopeSamples * 2 + 1) { pl };
-            for (int i = 1; i <= SlopeSamples; i++)
+            var silhouette = new Vector2[n];
+            var silhouetteR = new float[n];
+            var normals = new Vector2[n];
+            for (int i = 0; i < n; i++)
             {
-                float t = i / (float)SlopeSamples;
-                float g = (float)Math.Pow(t, slopeExponent);
-                crest.Add(new Vector2(pl.X + (apex.X - pl.X) * t, pl.Y + (apex.Y - pl.Y) * g));
+                Vector2 d = foot[i] - c;
+                Vector2 normal = OutwardNormal(foot, i, c);
+                normals[i] = normal;
+                float r = BoundaryR(d, normal, height, profile);
+                silhouetteR[i] = r;
+                silhouette[i] = new Vector2(c.X + d.X * r,
+                                            c.Y + d.Y * r + height * profile.LiftAt(r));
             }
-            for (int i = 1; i <= SlopeSamples; i++)
-            {
-                float t = i / (float)SlopeSamples;
-                float g = (float)Math.Pow(1f - t, slopeExponent);
-                crest.Add(new Vector2(apex.X + (pr.X - apex.X) * t, pr.Y + (apex.Y - pr.Y) * g));
-            }
-
-            ClampUnderCrest(front, crest);
 
             return new MountainShape
             {
-                Crest = crest,
-                Front = front,
-                Apex = apex,
-                Depth = nearest,
+                LevelR = Levels(height, profile, tolerance),
+                Base = foot,
+                Normal = normals,
+                Centre = c,
+                Height = height,
+                Sharp = profile.Sharp,
+                Silhouette = silhouette,
+                SilhouetteR = silhouetteR,
+                Depth = minY,
                 Tier = link.Tier,
+                Seed = seed,
+                FootArea = Math.Max(1e-4f, (maxX - minX) * (maxY - minY)),
             };
         }
 
+
         /// <summary>
-        /// Выпрямляет ближнюю дугу подошвы: ход остаётся только СЛЕВА НАПРАВО, а заворот схлопывается
-        /// в свою нижнюю точку.
+        /// Сколько ярусов нужно заливке — и каких.
         ///
-        /// Зачем. У звена, которое одновременно изогнуто и идёт близко к вертикали, подошва
-        /// заворачивается назад по X. Силуэт (гребень + подошва) тогда сам себя пересекает, и в
-        /// заливке появляется ВЫКУС — угловатая дыра, сквозь которую видно карту. Это тот самый
-        /// «известный изъян», записанный в задаче 5 как безобидный: на мазках он и правда редок
-        /// (2 горы из 156), но маска приложения строится по многоугольникам КЛЕТОК, её контур
-        /// бугрист на своём шаге, оси от этого куда извилистее — и на ней самопересекается уже
-        /// 14 силуэтов из 115. Изъян нашёл ДМ 2026-08-14 по скриншотам.
+        /// Ярусы существуют затем, чтобы огибающая стопки вышла гладкой. Насколько она гладкая,
+        /// решает ровно одна величина: отклонение прямой полосы между двумя ярусами от настоящего
+        /// меридиана. А оно, что приятно, считается в одну строчку и НЕ ЗАВИСИТ ОТ ЛУЧА:
         ///
-        /// Почему заворот СХЛОПЫВАЕТСЯ, а не выбрасывается. Первая редакция просто выбрасывала
-        /// завернувшиеся точки — и вместе с ними уходил кусок низа горы: в подошве появлялся вырез,
-        /// который ДМ увидел на первом же скриншоте после правки. Теперь глубина подошвы цела:
-        /// текущая точка опускается до самой низкой в завороте. Нижняя, а не верхняя, потому что
-        /// подошва — это ВИДИМЫЙ низ горы: из двух уровней над одним X зритель видит нижний,
-        /// верхний закрыт телом самой горы.
+        ///     точка(r) = c + r·d + (0, H·lift(r))
+        ///
+        /// у середины отрезка [a, b] горизонтальная часть совпадает с серединой хорды тождественно
+        /// (она линейна по r), и разница остаётся только по вертикали: H·|lift(m) − (lift(a)+lift(b))/2|.
+        ///
+        /// Отсюда: делим пополам, пока отклонение не станет меньше допуска. У конуса меридиан
+        /// ПРЯМОЙ, отклонение нулевое, и хватает двух ярусов — подошвы и вершины. У купола нужен
+        /// десяток. Прежде число ярусов было ползунком на 18, и восемнадцать колец платились за
+        /// каждую гору независимо от того, нужны они или нет.
         /// </summary>
-        static List<Vector2> MakeMonotone(List<Vector2> chain)
+        public static float[] Levels(float height, LiftSamples profile, float tolerance)
         {
-            var result = new List<Vector2>(chain.Count);
-            foreach (var p in chain)
-            {
-                if (result.Count == 0) { result.Add(p); continue; }
+            var list = new List<float> { 1f };
+            Subdivide(list, 1f, MountainProfile.ApexRadius, height, profile,
+                      Math.Max(1e-4f, tolerance), 0);
+            list.Add(MountainProfile.ApexRadius);
+            return list.ToArray();
+        }
 
-                var last = result[result.Count - 1];
-                if (p.X > last.X) { result.Add(p); continue; }
-                if (result.Count == 1) continue;   // левый конец — общий с гребнем, его не трогаем
+        const int MaxLevelDepth = 6;
 
-                // Ход НАЗАД. Точку не выбрасываем — вместе с ней ушёл бы кусок низа горы, и в
-                // подошве появлялся вырез (это ДМ и увидел 2026-08-14 после первой редакции
-                // выпрямления). Вместо этого опускаем текущую точку до самой низкой в завороте:
-                // заворот схлопывается в одну точку, глубина подошвы цела, X больше не пятится.
-                if (p.Y < last.Y) result[result.Count - 1] = new Vector2(last.X, p.Y);
-            }
-            // Правый конец обязан остаться на месте: гребень приходит ровно в него, и потерянный
-            // конец разорвал бы силуэт. Левый неприкосновенен по той же причине — он и не теряется,
-            // первая точка кладётся безусловно и может только опуститься.
-            var tail = chain[chain.Count - 1];
-            if (result.Count == 0 || result[result.Count - 1] != tail) result.Add(tail);
-            return result.Count >= 2 ? result : chain;
+        static void Subdivide(List<float> list, float hi, float lo, float height,
+                              LiftSamples profile, float tolerance, int depth)
+        {
+            float mid = 0.5f * (hi + lo);
+            float chord = 0.5f * (profile.LiftAt(hi) + profile.LiftAt(lo));
+            float error = Math.Abs(height * (profile.LiftAt(mid) - chord));
+            if (error <= tolerance || depth >= MaxLevelDepth) return;
+
+            Subdivide(list, hi, mid, height, profile, tolerance, depth + 1);
+            list.Add(mid);
+            Subdivide(list, mid, lo, height, profile, tolerance, depth + 1);
         }
 
         /// <summary>
-        /// Прижимает подошву к гребню: видимый НИЗ горы не может оказаться выше её видимого ВЕРХА.
+        /// На каком r внешняя граница стопки касается луча i.
         ///
-        /// После выпрямления обе цепи идут слева направо и делят концы, поэтому пересечься они могут
-        /// только одним способом — если подошва где-то поднялась над гребнем. Случается это у самых
-        /// концов, где склон выходит из подножия почти горизонтально (показатель 1.6), а подошва там
-        /// же выгибается вверх. Оставшиеся после выпрямления самопересечения — ровно эти: 2 силуэта
-        /// из 115 на клеточной маске. Прижатие закрывает их все.
+        /// Ярус r кладёт точку в c + r·d + (0, H·lift(r)). Её вынос за край стопки меряется
+        /// проекцией на нормаль подошвы в этой точке:
+        ///
+        ///     g(r) = r·(d·n) + H·lift(r)·n_y
+        ///
+        /// Максимум g и есть граница. Это не приближение: производная g даёт
+        /// lift'(r) = −(d·n)/(H·n_y), а это в точности условие огибающей семейства ярусов
+        /// (∂Q/∂i × ∂Q/∂r = 0) — проверяется подстановкой n = (d'_y, −d'_x)/|d'|.
+        ///
+        /// У ближнего края n_y &lt; 0, второе слагаемое растёт с r, максимум всегда на r = 1 — граница
+        /// садится на саму подошву, и линия туши там нулевой толщины. Поэтому подошва не обводится
+        /// сама собой, без единой проверки: ровно то, чего требовал образец ДМ.
         /// </summary>
-        static void ClampUnderCrest(List<Vector2> front, List<Vector2> crest)
+        static float BoundaryR(Vector2 d, Vector2 normal, float height, LiftSamples profile)
         {
-            int j = 0;
-            for (int i = 1; i < front.Count - 1; i++)
+            float along = d.X * normal.X + d.Y * normal.Y;
+            float up = height * normal.Y;
+
+            int best = profile.Count - 1;          // r = 1: подошва, всегда допустимый ответ
+            float bestValue = float.NegativeInfinity;
+            for (int k = 0; k < profile.Count; k++)
             {
-                float x = front[i].X;
-                while (j + 2 < crest.Count && crest[j + 1].X < x) j++;
-                Vector2 a = crest[j], b = crest[j + 1];
-                float t = Math.Abs(b.X - a.X) < 1e-6f ? 0f : (x - a.X) / (b.X - a.X);
-                float top = a.Y + (b.Y - a.Y) * t;
-                // Строго НИЖЕ, а не вровень: точка ровно на гребне — это касание силуэта самого
-                // себя, а для сшивки оно не лучше пересечения.
-                if (front[i].Y > top - ClampGap) front[i] = new Vector2(x, top - ClampGap);
+                float value = profile.R[k] * along + profile.Lift[k] * up;
+                if (value > bestValue) { bestValue = value; best = k; }
+            }
+
+            // Уточнение параболой по лучшей тройке: без него граница ступенчато скачет между
+            // выборками, и на пологой горе это видно гранёностью силуэта.
+            if (best > 0 && best < profile.Count - 1)
+            {
+                float y0 = profile.R[best - 1] * along + profile.Lift[best - 1] * up;
+                float y1 = bestValue;
+                float y2 = profile.R[best + 1] * along + profile.Lift[best + 1] * up;
+                float denom = y0 - 2f * y1 + y2;
+                if (Math.Abs(denom) > 1e-9f)
+                {
+                    float shift = 0.5f * (y0 - y2) / denom;
+                    if (shift > -1f && shift < 1f)
+                    {
+                        float step = shift < 0f
+                            ? profile.R[best] - profile.R[best - 1]
+                            : profile.R[best + 1] - profile.R[best];
+                        return Clamp(profile.R[best] + shift * Math.Abs(step),
+                                     MountainProfile.ApexRadius, 1f);
+                    }
+                }
+            }
+            return profile.R[best];
+        }
+
+        /// <summary>Наружу глядящая нормаль подошвы в точке i. Направление сверяется с лучом из
+        /// середины звена: у доли-гармошки обход может оказаться любым, а нормаль внутрь дала бы
+        /// границу, вывернутую наизнанку.</summary>
+        static Vector2 OutwardNormal(Vector2[] loop, int i, Vector2 centre)
+        {
+            int n = loop.Length;
+            Vector2 a = loop[(i - 1 + n) % n], b = loop[(i + 1) % n];
+            Vector2 t = b - a;
+            if (t.LengthSquared() < 1e-12f) t = loop[i] - centre;
+            if (t.LengthSquared() < 1e-12f) return new Vector2(0f, 1f);
+
+            Vector2 normal = Vector2.Normalize(new Vector2(t.Y, -t.X));
+            Vector2 outward = loop[i] - centre;
+            if (normal.X * outward.X + normal.Y * outward.Y < 0f) normal = -normal;
+            return normal;
+        }
+
+        /// <summary>
+        /// Выщербина в точке i: множитель отступа от середины звена.
+        ///
+        /// Волна длиной в семь точек плюс мелкая дрожь. Чистый шум по каждой точке даёт не камень, а
+        /// мех — это видно сразу. Длина волны задана ЧИСЛОМ точек, а не долей кольца, и это не
+        /// описка: шаг выборки силуэта равен R/15, а длина звена растёт с R, поэтому точек на
+        /// кольцо выходит одинаково при любом радиусе (замерено 64 при R = 10 и 66 при R = 26).
+        /// Значит «зубчатость 0,03» означает одно и то же на мелких и крупных горах.
+        /// </summary>
+        public static float Jag(uint seed, int i, int count, float amount)
+        {
+            if (amount <= 0f || count <= 0) return 1f;
+
+            const float Wave = 7f;
+            float g = i / Wave;
+            int i0 = (int)Math.Floor(g);
+            float t = g - i0;
+            float a = Noise(seed, i0), b = Noise(seed, i0 + 1);
+            float f = t * t * (3f - 2f * t);
+            float wave = a + (b - a) * f - 0.5f;
+            float fine = Noise(seed ^ 0x9E3779B9u, i) - 0.5f;
+            float k = 1f + amount * (wave * 2.2f + fine * 0.5f);
+            return k < 0.15f ? 0.15f : k;
+        }
+
+        static float Noise(uint seed, int i)
+        {
+            unchecked
+            {
+                uint h = seed + (uint)i * 2246822519u;
+                h = (h ^ (h >> 13)) * 1274126177u;
+                return ((h ^ (h >> 16)) >> 8) / 16777216f;
             }
         }
 
-        /// <summary>Кусок замкнутого силуэта от индекса from до to по возрастанию индекса.</summary>
-        static List<Vector2> Chain(Vector2[] loop, int from, int to)
+        /// <summary>Зерно рисунка горы — от её МЕСТА на карте, а не от порядкового номера. Иначе
+        /// крошка пересеивается при каждой перерисовке и картинка дрожит, а соседний массив,
+        /// нарисованный позже, молча перетасовывает уже нарисованный.</summary>
+        public static uint SeedAt(Vector2 p)
         {
-            var result = new List<Vector2>();
-            int i = from;
-            while (true)
+            unchecked
             {
-                result.Add(loop[i]);
-                if (i == to) break;
-                i = (i + 1) % loop.Length;
+                uint x = (uint)(int)Math.Round(p.X * 8f);
+                uint y = (uint)(int)Math.Round(p.Y * 8f);
+                uint h = x * 374761393u + y * 668265263u;
+                h = (h ^ (h >> 13)) * 1274126177u;
+                return h ^ (h >> 16);
             }
-            return result;
         }
 
-        static void Reverse(List<Vector2> pts) => pts.Reverse();
+        static float Clamp(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
+    }
 
-        static float AverageY(List<Vector2> pts)
+    /// <summary>
+    /// Выборка кривой подъёма для одной остроты. Считается ОДИН раз на пересчёт и переиспользуется
+    /// всеми горами: сама кривая от горы не зависит, а Acos и Pow внутри неё стоят заметно дороже
+    /// умножения. Без этого поиск границы звал бы их под миллион раз за мазок.
+    /// </summary>
+    public sealed class LiftSamples
+    {
+        public readonly float Sharp;
+        public readonly float[] R;
+        public readonly float[] Lift;
+
+        public int Count => R.Length;
+
+        public LiftSamples(float sharp, int count)
         {
-            if (pts.Count == 0) return 0f;
-            float sum = 0f;
-            foreach (var p in pts) sum += p.Y;
-            return sum / pts.Count;
+            Sharp = sharp;
+            int n = Math.Max(2, count);
+            R = new float[n];
+            Lift = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                float t = i / (float)(n - 1);
+                float r = MountainProfile.ApexRadius + (1f - MountainProfile.ApexRadius) * t;
+                R[i] = r;
+                Lift[i] = MountainProfile.Lift(sharp, r);
+            }
+        }
+
+        /// <summary>Подъём в произвольной точке — по той же выборке, линейно между узлами. Считать
+        /// заново нельзя: уточнённое параболой r обязано лечь на ту же кривую, по которой искали
+        /// максимум, иначе точка съезжает с границы.</summary>
+        public float LiftAt(float r)
+        {
+            float lo = R[0], hi = R[Count - 1];
+            if (r <= lo) return Lift[0];
+            if (r >= hi) return Lift[Count - 1];
+
+            float t = (r - lo) / (hi - lo) * (Count - 1);
+            int i = (int)t;
+            if (i >= Count - 1) return Lift[Count - 1];
+            float f = t - i;
+            return Lift[i] + (Lift[i + 1] - Lift[i]) * f;
         }
     }
 }

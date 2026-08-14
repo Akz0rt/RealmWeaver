@@ -329,12 +329,11 @@ namespace MountainHarness
 
                     if (plans[c].Plan == null)
                     {
-                        var m = MoundBuilder.Build(outline, link, heights[r], 1f / 1.6f, 1.4f, 1.4f, 2f, 1.6f);
+                        var m = MoundBuilder.Build(outline, link, heights[r], 1f / 1.6f, 1.4f, 1.4f,
+                                                   2f, Prof(1f));
                         if (m == null) continue;
                         sb.Append("<polygon fill='").Append(Tone(0.6f)).Append("' points='");
-                        foreach (var q in m.Crest) sb.Append(F(ox + q.X)).Append(',').Append(F(oy - q.Y)).Append(' ');
-                        for (int i = m.Front.Count - 1; i >= 0; i--)
-                            sb.Append(F(ox + m.Front[i].X)).Append(',').Append(F(oy - m.Front[i].Y)).Append(' ');
+                        EmitLoop(sb, m, ox, oy, false);
                         sb.Append("'/>");
                         continue;
                     }
@@ -396,6 +395,16 @@ namespace MountainHarness
             sb.Append("'/>");
         }
 
+
+        /// <summary>Выборка кривой подъёма под остроту — одна на карточку.</summary>
+        static LiftSamples Prof(float sharp) => new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+
+        /// <summary>Граница горы точками SVG, снизу вверх по экрану уже перевёрнутая вызывающим.</summary>
+        static void EmitLoop(StringBuilder sb, MountainShape m, float ox, float oy, bool flip)
+        {
+            foreach (var q in m.Silhouette)
+                sb.Append(F(ox + q.X)).Append(',').Append(F(flip ? Flip(q.Y) : oy - q.Y)).Append(' ');
+        }
         /// <summary>Одна гора крупно: либо нынешний силуэт, либо стопка ярусов.</summary>
         static void StackMound(StringBuilder sb, Vector2 centre, Schedule? plan, float height,
                                int levels, string ink, string look)
@@ -529,19 +538,17 @@ namespace MountainHarness
                  .Append("' font-family='sans-serif' font-size='15' fill='#5a5348'>").Append(text).Append("</text>");
 
         /// <summary>Одна гора крупно — чтобы силуэт был виден без соседей.</summary>
-        static void OneMound(StringBuilder sb, Vector2 centre, float exponent)
+        static void OneMound(StringBuilder sb, Vector2 centre, float sharp)
         {
             var link = MakeLink(centre, new Vector2(1, 0), 46f, 30f);
             var outline = LinkOutline.Build(link, 0.55f, 2f);
-            var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 2f, exponent);
+            var m = MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, 1.4f, 1.4f, 2f, Prof(sharp));
             if (m == null) return;
             sb.Append("<polygon fill='#48626d' points='");
-            foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
-            for (int i = m.Front.Count - 1; i >= 0; i--)
-                sb.Append(F(m.Front[i].X)).Append(',').Append(F(Flip(m.Front[i].Y))).Append(' ');
+            EmitLoop(sb, m, 0f, 0f, true);
             sb.Append("'/>");
-            sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-opacity='0.55' stroke-width='2' points='");
-            foreach (var q in m.Crest) sb.Append(F(q.X)).Append(',').Append(F(Flip(q.Y))).Append(' ');
+            sb.Append("<polygon fill='none' stroke='#f0ece2' stroke-opacity='0.55' stroke-width='2' points='");
+            EmitLoop(sb, m, 0f, 0f, true);
             sb.Append("'/>");
         }
 
@@ -563,7 +570,7 @@ namespace MountainHarness
                     });
                 }
 
-            var settings = new MountainSettings { Radius = 10f, SlopeExponent = exponent, HeightFactor = height };
+            var settings = new MountainSettings { Radius = 10f, Sharp = exponent, HeightFactor = height };
             var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
             mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
             Paint(sb, MountainGeometry.BuildFromMask(mask, settings, out _));
@@ -705,12 +712,10 @@ namespace MountainHarness
             {
                 float t = MountainTierRamp.Mix(shape.Tier, 3, 1f);
                 sb.Append("<polygon fill='").Append(Tone(t)).Append("' points='");
-                foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
-                for (int i = shape.Front.Count - 1; i >= 0; i--)
-                    sb.Append(F(shape.Front[i].X)).Append(',').Append(F(Flip(shape.Front[i].Y))).Append(' ');
+                EmitLoop(sb, shape, 0f, 0f, true);
                 sb.Append("'/>");
-                sb.Append("<polyline fill='none' stroke='#f0ece2' stroke-opacity='0.4' stroke-width='1.2' points='");
-                foreach (var p in shape.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+                sb.Append("<polygon fill='none' stroke='#f0ece2' stroke-opacity='0.4' stroke-width='1.2' points='");
+                EmitLoop(sb, shape, 0f, 0f, true);
                 sb.Append("'/>");
             }
         }
@@ -844,7 +849,8 @@ namespace MountainHarness
                 if (outline == null) continue;
                 float back = (!closed && i == 0) ? 1f : Stretch;
                 float fwd = (!closed && i == links.Count - 1) ? 1f : Stretch;
-                var shape = MoundBuilder.Build(outline, links[i], HeightFactor, Squash, back, fwd, R * 0.1f);
+                var shape = MoundBuilder.Build(outline, links[i], HeightFactor, Squash, back, fwd,
+                                               R * 0.1f, Prof(0.66f));
                 if (shape != null) shapes.Add(shape);
             }
 
@@ -864,23 +870,15 @@ namespace MountainHarness
                 float t = (dMax - s.Depth) / span;
                 int g = (int)(150 - 90 * t);
                 sb.Append("<polygon fill='rgb(").Append(g - 20).Append(',').Append(g).Append(',').Append((int)(165 - 90 * t)).Append(")' points='");
-                foreach (var p in s.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
-                for (int i = s.Front.Count - 1; i >= 0; i--)
-                    sb.Append(F(s.Front[i].X)).Append(',').Append(F(Flip(s.Front[i].Y))).Append(' ');
+                EmitLoop(sb, s, 0f, 0f, true);
                 sb.Append("'/>");
 
-                sb.Append("<polyline fill='none' stroke='#f4f0e6' stroke-opacity='0.45' stroke-width='1.6' points='");
-                foreach (var p in s.Crest) sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+                sb.Append("<polygon fill='none' stroke='#f4f0e6' stroke-opacity='0.45' stroke-width='1.6' points='");
+                EmitLoop(sb, s, 0f, 0f, true);
                 sb.Append("'/>");
             }
 
-            int notMonotone = 0;
-            foreach (var s in shapes)
-            {
-                for (int i = 1; i < s.Front.Count; i++)
-                    if (s.Front[i].X < s.Front[i - 1].X - 1e-3f) { notMonotone++; break; }
-            }
-            Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}, немонотонных подошв {notMonotone}");
+            Console.WriteLine($"{title}: звеньев {links.Count}, гор {shapes.Count}");
         }
 
         // Site-координаты: +Y вверх по экрану. SVG: +Y вниз.

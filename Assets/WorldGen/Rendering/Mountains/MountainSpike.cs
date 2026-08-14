@@ -45,6 +45,8 @@ namespace WorldGen.Rendering.Mountains
         public float stretch = 1.4f;
         [Tooltip("a — сжатие по вертикали (угол взгляда на землю). Подошва сжимается в a раз.")]
         public float verticalSquash = 1.6f;
+        [Tooltip("Острота вершины: 0 — купол, 0.33 — синусоида, 0.66 — конус, 1 — шпиль.")]
+        [Range(0f, 1f)] public float sharp = 0.66f;
 
         [Header("Слой")]
         [Tooltip("Высота слоя над плоскостью карты. Берег 0.3, границы регионов 0.4, превью реки 0.45.")]
@@ -150,6 +152,7 @@ namespace WorldGen.Rendering.Mountains
             float sampleStep = Mathf.Max(0.1f, mountainRadius / 15f);
             float minSpan = mountainRadius * 0.1f;
 
+            var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
             for (int i = 0; i < links.Count; i++)
             {
                 var outline = LinkOutline.Build(links[i], waist, sampleStep);
@@ -158,7 +161,8 @@ namespace WorldGen.Rendering.Mountains
                 // вылезает за нарисованный мазок (§14 «вылет за мазок»).
                 float back = i == 0 ? 1f : stretch;
                 float forward = i == links.Count - 1 ? 1f : stretch;
-                var shape = MoundBuilder.Build(outline, links[i], heightFactor, squash, back, forward, minSpan);
+                var shape = MoundBuilder.Build(outline, links[i], heightFactor, squash, back, forward,
+                                               minSpan, profile);
                 if (shape != null) shapes.Add(shape);
             }
 
@@ -169,14 +173,18 @@ namespace WorldGen.Rendering.Mountains
             // рисования, а не про манеру.
             var style = new MountainPaintStyle
             {
-                Far = farColor, Near = nearColor, Ink = inkColor,
-                TierCount = 3, TierContrast = 1f,
-                CrestWidth = crestWidth, LayerY = layerY,
+                FallbackBody = farColor, Ink = inkColor,
+                TierCount = 3, TierContrast = 1f, TierInk = 0f,
+                PenWidth = crestWidth, PenTaper = 1.1f, PenAlpha = 0.61f,
+                Grit = 0.88f, GritFall = 0.4f, Gully = 0.32f, LightAngle = 160f,
+                LayerY = layerY,
             };
 
             var body = new GameObject("Горы");
             body.transform.SetParent(container, false);
-            body.AddComponent<MeshFilter>().sharedMesh = MountainMeshBuilder.Build(shapes, style);
+            var mesh = new Mesh();
+            MountainMeshBuilder.Build(mesh, shapes, style, profile, mountainRadius);
+            body.AddComponent<MeshFilter>().sharedMesh = mesh;
             body.AddComponent<MeshRenderer>().sharedMaterial = material;
 
             Debug.Log($"[Горы] Шип собран: звеньев {links.Count}, гор {shapes.Count}, R={mountainRadius}.");

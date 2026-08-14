@@ -151,6 +151,10 @@ namespace WorldGen.Generation.Mountains
             var shapes = new List<MountainShape>();
             if (links == null || settings == null) return shapes;
 
+            // Одна выборка кривой подъёма на весь пересчёт: она зависит только от остроты, а Acos и
+            // Pow внутри неё стоят дороже всего остального поиска границы вместе взятого.
+            var profile = settings.Profile();
+
             foreach (var link in links)
             {
                 var outline = LinkOutline.Build(link, settings.Waist, settings.SampleStep);
@@ -160,7 +164,7 @@ namespace WorldGen.Generation.Mountains
                 float back = link.FreeStart ? 1f : settings.Stretch;
                 float forward = link.FreeEnd ? 1f : settings.Stretch;
                 var shape = MoundBuilder.Build(outline, link, settings.HeightFactor, settings.Squash,
-                                               back, forward, settings.MinSpan, settings.SlopeExponent);
+                                               back, forward, settings.MinSpan, profile, settings.Jag);
                 if (shape != null) shapes.Add(shape);
             }
 

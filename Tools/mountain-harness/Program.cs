@@ -75,15 +75,18 @@ namespace MountainHarness
 
             WaistProfile();
             SharedWidthAtVertebra();
-            ChainsShareEnds();
-            MonotoneAlongGentleLink();
+            LiftDecreasesAtEverySharpness();
+            SilhouetteCoversEveryTier();
+            NearSideIsNotOutlined();
+            JagKeepsTiersNested();
             ApexHeight();
             FreeEndStretch();
-            LobeCapKeepsTheSkirtShort();
-            CurvedVerticalLinkKeepsAStraightFoot();
-            CellMaskSilhouettesAreSimple();
-            TriangulationCoversTheSilhouetteExactly();
+            LevelsFollowTheCurvature();
+            OutlineSitsOnTheBody();
+            BodyHasNoDegenerateTriangles();
             TierRampSpreadsTiers();
+            GritDensityFollowsAreaNotTiers();
+            InkRulesHoldAtTheEnds();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
@@ -205,7 +208,7 @@ namespace MountainHarness
         static List<Vector2> EastOf(List<MountainShape> shapes, float x)
         {
             var result = new List<Vector2>();
-            foreach (var shape in shapes) if (shape.Apex.X > x) result.Add(shape.Apex);
+            foreach (var shape in shapes) if (shape.Centre.X > x) result.Add(shape.Centre);
             result.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
             return result;
         }
@@ -357,44 +360,153 @@ namespace MountainHarness
 
         // ── §10 «Горы над звеньями» ─────────────────────────────────────────────────────────────
 
-        /// <summary>Гребень и ближняя дуга подошвы обязаны начинаться и кончаться в одних точках:
-        /// на них держится сшивка треугольников. Мутант: развернуть одну из цепей — концы разойдутся
-        /// на всю ширину подошвы.</summary>
-        static void ChainsShareEnds()
+        /// <summary>
+        /// Кривая подъёма убывает по r при ЛЮБОЙ остроте. На этом держится всё построение: ярусы
+        /// идут снизу вверх и не перескакивают друг через друга, а значит стопка не может выйти
+        /// вывернутой ни при каком положении ползунка. Это не пожелание к настройке, а свойство
+        /// того, что острота — смесь четырёх убывающих кривых.
+        ///
+        /// Мутант: подмешать к смеси возрастающую кривую (скажем, r вместо 1 - r) — падает сразу.
+        /// </summary>
+        static void LiftDecreasesAtEverySharpness()
         {
-            var shape = Mound(Horizontal(100f, 20f), 1.4f, 1.4f);
-            if (shape == null) { Fail("Цепи", "гора не построена"); return; }
-
-            bool left = (shape.Crest[0] - shape.Front[0]).Length() < 0.01f;
-            bool right = (shape.Crest[shape.Crest.Count - 1] - shape.Front[shape.Front.Count - 1]).Length() < 0.01f;
-            Check("Цепи: общий левый конец", left, $"{shape.Crest[0]} против {shape.Front[0]}");
-            Check("Цепи: общий правый конец", right, $"{shape.Crest[shape.Crest.Count - 1]} против {shape.Front[shape.Front.Count - 1]}");
+            bool ok = true;
+            float worst = 0f;
+            for (int s = 0; s <= 20; s++)
+            {
+                float sharp = s / 20f;
+                float previous = float.PositiveInfinity;
+                for (int k = 0; k <= 40; k++)
+                {
+                    float r = k / 40f;
+                    float lift = MountainProfile.Lift(sharp, r);
+                    if (lift > previous + 1e-5f) { ok = false; worst = Math.Max(worst, lift - previous); }
+                    previous = lift;
+                }
+            }
+            Check("Острота: подъём убывает по r при любой остроте", ok,
+                  $"нашёлся подъём выше предыдущего на {worst:0.####}");
         }
 
-        /// <summary>У пологого звена обе цепи монотонны по X — на этом стоит сшивка полосой в
-        /// MountainMeshBuilder. Мутант: выбрать дальнюю дугу вместо ближней — она пойдёт по X
-        /// в обратную сторону.</summary>
-        static void MonotoneAlongGentleLink()
+        /// <summary>
+        /// ГЛАВНАЯ проверка новой горы: посчитанная граница обязана накрывать ВСЕ ярусы. Ни одна
+        /// точка ни одного яруса не должна оказаться снаружи — иначе из-под силуэта торчали бы
+        /// куски, а линия туши шла бы не по краю.
+        ///
+        /// Это тот самый мутант, записанный в план после браузерного прототипа: там оба изъяна
+        /// («блюдца в воздухе», потом «катушка») прошли мимо инвариантов «радиус убывает» и
+        /// «подъём растёт» — оба выполнялись, а картинка была негодной. Здесь проверяется не
+        /// свойство расписания, а сама геометрия.
+        ///
+        /// Мутанты: искать максимум только на концах (r = 1 и r = ApexRadius) — на пологой горе
+        /// середина вылезет; считать проекцию на луч из середины вместо нормали подошвы — вылезет
+        /// на всём, что не круг.
+        /// </summary>
+        static void SilhouetteCoversEveryTier()
         {
-            var shape = Mound(Horizontal(100f, 20f), 1.4f, 1.4f);
-            if (shape == null) { Fail("Монотонность", "гора не построена"); return; }
-            Check("Монотонность: гребень по X", IsMonotone(shape.Crest), "гребень виляет по X");
-            Check("Монотонность: подошва по X", IsMonotone(shape.Front), "ближняя дуга виляет по X");
+            foreach (float sharp in new[] { 0f, 0.33f, 0.66f, 1f })
+            {
+                var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+                var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
+                if (shape == null) { Fail("Граница", "гора не построена"); continue; }
+
+                float worst = 0f;
+                for (int i = 0; i < shape.Base.Length; i++)
+                {
+                    float edge = Reach(shape, i, shape.SilhouetteR[i], profile);
+                    for (int k = 0; k <= 60; k++)
+                    {
+                        float r = MountainProfile.ApexRadius
+                                + (1f - MountainProfile.ApexRadius) * k / 60f;
+                        worst = Math.Max(worst, Reach(shape, i, r, profile) - edge);
+                    }
+                }
+                // Допуск — доля полуширины: граница ищется по выборке из двух десятков значений и
+                // уточняется параболой, точнее машинного нуля она быть не обязана.
+                Check($"Граница ({sharp:0.00}): ни один ярус не вылезает наружу", worst < 0.02f * 20f,
+                      $"вылет {worst:0.###} при полуширине 20");
+            }
         }
 
-        /// <summary>Вершина стоит ровно на h·w·разброс выше середины звена. Мутант: взять полуширину
-        /// на конце звена вместо середины — высота уедет в 0.55 раза.</summary>
+        /// <summary>
+        /// Ближний край не обводится. У точек, чья нормаль подошвы смотрит ВНИЗ по экрану, граница
+        /// обязана сидеть ровно на подошве (r = 1), а толщина линии там нулевая — контур обрывается
+        /// сам собой, без единой проверки «здесь не обводить». Это ровно то, чего требовал образец
+        /// ДМ: у нарисованной горы низа нет вовсе.
+        ///
+        /// Мутант: взять в поиске границы |n_y| вместо n_y — ближний край поднимется и обведётся.
+        /// </summary>
+        static void NearSideIsNotOutlined()
+        {
+            var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f);
+            if (shape == null) { Fail("Ближний край", "гора не построена"); return; }
+
+            int seen = 0;
+            bool ok = true;
+            for (int i = 0; i < shape.Base.Length; i++)
+            {
+                if (shape.Normal[i].Y > -0.3f) continue;   // берём заведомо ближние
+                seen++;
+                if (shape.SilhouetteR[i] < 0.999f) ok = false;
+                if (MountainInk.Taper(shape.SilhouetteR[i], 1.1f) > 1e-4f) ok = false;
+            }
+            Check("Ближний край: граница на подошве и линия нулевая", ok && seen > 3,
+                  $"проверено точек {seen}");
+        }
+
+        /// <summary>
+        /// Зубчатость сохраняет вложенность ярусов: она МНОЖИТ отступ от середины звена, а не
+        /// сдвигает точку, поэтому ярус стягивает выщербину вместе с собой.
+        ///
+        /// Мутант: прибавлять выщербину сдвигом — у верхних ярусов она перестанет уменьшаться, они
+        /// полезут из нижних, и вложенность порвётся.
+        /// </summary>
+        static void JagKeepsTiersNested()
+        {
+            var plain = Mound(Horizontal(32f, 20f), 1.9f, 1.9f);
+            var rough = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, 0.66f, 0.3f);
+            if (plain == null || rough == null) { Fail("Зубчатость", "гора не построена"); return; }
+
+            bool nested = true, moved = false;
+            for (int i = 0; i < rough.Base.Length; i++)
+            {
+                Vector2 d = rough.Base[i] - rough.Centre;
+                if (Vector2.Distance(rough.Base[i], plain.Base[i]) > 1e-3f) moved = true;
+                float outer = d.Length();
+                for (int k = 1; k <= 10; k++)
+                    if ((d * (k / 10f)).Length() > outer + 1e-4f) nested = false;
+            }
+            Check("Зубчатость: подошва действительно изменилась", moved, "выщербины не появилось");
+            Check("Зубчатость: ярусы остаются вложенными", nested, "верхний ярус вылез из нижнего");
+        }
+
+        /// <summary>
+        /// Макушка стоит там, где ей положено. Высота горы H = h·w·разброс, но САМАЯ ВЕРХНЯЯ точка
+        /// рисунка — не H: наверху сидит не точка, а кольцо радиуса ApexRadius, поднятое на
+        /// H·lift(ApexRadius). Проверяем именно это число — иначе проверка молча мирилась бы с
+        /// потерянным верхним кольцом.
+        ///
+        /// Мутант: взять полуширину на конце звена вместо середины — высота уедет в 0.55 раза.
+        /// </summary>
         static void ApexHeight()
         {
             var link = Horizontal(100f, 20f);
             link.HeightJitter = 1f;
             link.TierScale = 1f;
+            var profile = new LiftSamples(0.66f, MoundBuilder.ProfileSamples);
             var shape = Mound(link, 1.4f, 1.4f);
             if (shape == null) { Fail("Высота", "гора не построена"); return; }
 
-            float expected = 2.2f * 20f;
-            float actual = shape.Apex.Y - link.Mid.Y;
-            Check("Высота: H = h·w", Near(actual, expected, 0.01f), $"{actual:0.##} вместо {expected:0.##}");
+            float top = float.NegativeInfinity, footTop = float.NegativeInfinity;
+            foreach (var q in shape.Silhouette) top = Math.Max(top, q.Y);
+            foreach (var q in shape.Base) footTop = Math.Max(footTop, q.Y);
+
+            float height = 2.2f * 20f;
+            float expected = height * profile.LiftAt(MountainProfile.ApexRadius)
+                           + MountainProfile.ApexRadius * (footTop - link.Mid.Y);
+            float actual = top - link.Mid.Y;
+            Check("Высота: макушка на H·lift(вершина)", Near(actual, expected, 0.3f),
+                  $"{actual:0.##} вместо {expected:0.##}");
         }
 
         /// <summary>У свободного конца подошва НЕ растягивается: соседа с этой стороны нет, и
@@ -402,210 +514,274 @@ namespace MountainHarness
         /// одинаково — левый вылет станет равен правому.</summary>
         static void FreeEndStretch()
         {
-            // Звено берём соразмерное горе (длина ≈ 1.6·полуширины, как её режет §8), а не в пять
-            // раз длиннее: у длинного срабатывает потолок на подошву (LobeCapFactor), и проверка
-            // мерила бы уже его, а не растяжение.
+            // Звено берём соразмерное горе (длина ≈ 1.6·полуширины, как её режет §8). Потолка на
+            // подошву больше нет: он чинил юбку прежнего СИЛУЭТА, а силуэта того больше нет.
             var link = Horizontal(32f, 20f);
             var plain = Mound(link, 1f, 1f);
             var oneSided = Mound(link, 1f, 1.4f);
             if (plain == null || oneSided == null) { Fail("Растяжение", "гора не построена"); return; }
 
-            float leftPlain = link.Mid.X - plain.Crest[0].X;
-            float leftOne = link.Mid.X - oneSided.Crest[0].X;
-            float rightPlain = plain.Crest[plain.Crest.Count - 1].X - link.Mid.X;
-            float rightOne = oneSided.Crest[oneSided.Crest.Count - 1].X - link.Mid.X;
+            float leftPlain = link.Mid.X - MinX(plain.Base);
+            float leftOne = link.Mid.X - MinX(oneSided.Base);
+            float rightPlain = MaxX(plain.Base) - link.Mid.X;
+            float rightOne = MaxX(oneSided.Base) - link.Mid.X;
 
             Check("Растяжение: свободный конец не растянут", Near(leftOne, leftPlain, 0.01f), $"{leftOne:0.##} вместо {leftPlain:0.##}");
             Check("Растяжение: внутренний конец растянут в k", Near(rightOne, rightPlain * 1.4f, 0.01f), $"{rightOne:0.##} вместо {rightPlain * 1.4f:0.##}");
         }
 
-        /// <summary>
-        /// Потолок на длину подошвы: у звена, вышедшего много длиннее самой горы, юбка не растёт
-        /// вместе с ним. Подошва — это план, вид сверху, и на гряде, уходящей ВВЕРХ ПО КАРТИНКЕ, вся
-        /// её длина ложится вниз по экрану; без потолка гора превращается в приземистую чешуйку с
-        /// рюшем вместо склонов.
-        ///
-        /// Звено обязано быть ВЕРТИКАЛЬНЫМ, иначе проверка пуста: у горизонтального длина ложится
-        /// вбок и юбки не касается вовсе — там потолок нечему ловить (на этом первая редакция
-        /// проверки и попалась).
-        ///
-        /// Юбка длинного звена обязана упереться в потолок: 1.2·w сплющенные вдвое с небольшим.
-        /// Мутант — убрать потолок: юбка станет по полудлине звена, то есть впятеро больше.
-        /// </summary>
-        static void LobeCapKeepsTheSkirtShort()
-        {
-            const float w = 20f, squash = 1f / 1.6f;
-            var link = Vertical(200f, w);
-            var mound = Mound(link, 1f, 1f);
-            if (mound == null) { Fail("Потолок подошвы", "гора не построена"); return; }
+        // Проверка «потолок на длину подошвы» снята вместе с самим потолком (LobeCapFactor). Он
+        // чинил юбку прежнего СИЛУЭТА — полосы «гребень + дуга подошвы», которой больше нет. У
+        // стопки ярусов длинное звено даёт длинную низкую гору, и это правильный ответ, а не изъян:
+        // подошва так и так лежит планом, а граница теперь считается по всем ярусам разом.
 
-            float skirt = link.Mid.Y - mound.Depth;
-            float capped = 1.2f * w * squash;      // потолок LobeCapFactor, сплющенный
-            float uncapped = 100f * squash;        // полудлина звена, сплющенная — это без потолка
-            Check("Потолок подошвы: длинное вертикальное звено не отращивает юбку",
-                  Near(skirt, capped, 1.5f) && skirt < uncapped * 0.5f,
-                  $"юбка {skirt:0.##}, потолок ждали {capped:0.##}, без потолка было бы {uncapped:0.##}");
+        /// <summary>
+        /// Ярусов ровно столько, сколько нужно ГЛАДКОЙ огибающей, и ни одним больше.
+        ///
+        /// У конуса меридиан прямой: полоса между подошвой и вершиной ложится на него точно, и
+        /// двух ярусов достаточно. У купола он выгнут, и ярусов нужен десяток. В браузерном
+        /// прототипе число ярусов было ползунком на 18 — и восемнадцать колец платились за каждую
+        /// гору, нужны они или нет.
+        ///
+        /// Мутанты: сделать число ярусов постоянным (у конуса станет 18 вместо 2); убрать высоту из
+        /// оценки отклонения (низкие горы получат столько же ярусов, сколько высокие).
+        /// </summary>
+        static void LevelsFollowTheCurvature()
+        {
+            var cone = MoundBuilder.Levels(44f, new LiftSamples(0.66f, MoundBuilder.ProfileSamples), 0.2f);
+            var dome = MoundBuilder.Levels(44f, new LiftSamples(0f, MoundBuilder.ProfileSamples), 0.2f);
+            var low = MoundBuilder.Levels(4f, new LiftSamples(0f, MoundBuilder.ProfileSamples), 0.2f);
+
+            Check("Ярусы: конусу хватает двух", cone.Length == 2, $"ярусов {cone.Length}");
+            Check("Ярусы: куполу нужно больше", dome.Length >= 6, $"ярусов {dome.Length}");
+            Check("Ярусы: низкому куполу нужно меньше, чем высокому", low.Length < dome.Length,
+                  $"низкому {low.Length}, высокому {dome.Length}");
+
+            bool descending = true;
+            for (int i = 1; i < dome.Length; i++) if (dome[i] >= dome[i - 1]) descending = false;
+            Check("Ярусы: радиус строго убывает", descending, "ярусы идут не по порядку");
+            Check("Ярусы: крайние — подошва и вершина",
+                  Near(dome[0], 1f, 1e-5f) && Near(dome[dome.Length - 1], MountainProfile.ApexRadius, 1e-5f),
+                  $"{dome[0]:0.###} и {dome[dome.Length - 1]:0.###}");
         }
 
         /// <summary>
-        /// Изогнутое почти вертикальное звено — самая трудная фикстура: сырая подошва у него
-        /// заворачивается назад по X. ДО 2026-08-14 это считалось безобидным и держалось проверкой
-        /// «подошва завернулась»; ДМ показал скриншотами, что не безобидно — силуэт при этом сам
-        /// себя пересекает, и в горе появляется угловатый ВЫКУС, сквозь который видно карту.
-        /// Теперь подошва выпрямляется (MoundBuilder.MakeMonotone), и проверка требует обратного.
+        /// Линия туши лежит НА КРАЮ ТЕЛА, а не рядом с ним.
         ///
-        /// Мутант: не выпрямлять — подошва этой фикстуры завернётся, проверка упадёт.
+        /// Тело выложено ярусами, и его край — ломаная из хорд меридиана. Точка линии посчитана по
+        /// настоящему меридиану. Если ярусов набрать мало, край тела срежет угол, а линия останется
+        /// на месте — и между заливкой и обводкой появится щель, сквозь которую видно карту.
+        /// Проверка связывает два независимых расчёта: адаптивное разбиение и поиск границы.
+        ///
+        /// Мутант: не подразбивать вовсе (ярусы всегда {1, вершина}) — на куполе линия отойдёт от
+        /// края тела на добрую долю высоты.
         /// </summary>
-        static void CurvedVerticalLinkKeepsAStraightFoot()
+        static void OutlineSitsOnTheBody()
         {
-            // Звено-дуга у «бока» кольца: касательная почти вертикальна, сама дуга заметно изогнута.
-            var pts = new List<Vector2>();
-            for (int i = 0; i <= 8; i++)
+            foreach (float sharp in new[] { 0f, 0.33f, 0.66f, 1f })
             {
-                double a = Math.PI * (0.5 - 0.16 * i / 8.0);   // около верхней точки окружности
-                pts.Add(new Vector2(150f * (float)Math.Sin(a), 150f * (float)Math.Cos(a)));
-            }
-            var link = new AxisLink { Pts = pts, MidW = 20f };
-            for (int i = 0; i < pts.Count; i++) link.Ws.Add(20f);
-            link.Mid = pts[pts.Count / 2];
-            Vector2 dir = pts[pts.Count - 1] - pts[0];
-            link.Tan = Vector2.Normalize(dir);
+                var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+                var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
+                if (shape == null) { Fail("Линия на теле", "гора не построена"); continue; }
 
-            var shape = Mound(link, 1.4f, 1.4f);
-            if (shape == null) { Fail("Изогнутое вертикальное звено", "гора не построена"); return; }
-
-            var loop = new List<Vector2>(shape.Crest);
-            for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
-
-            Check("Изогнутое вертикальное звено: подошва идёт слева направо", IsMonotone(shape.Front),
-                  "подошва завернулась назад по X — в горе будет выкус");
-            Check("Изогнутое вертикальное звено: силуэт не пересекает сам себя", IsSimple(loop),
-                  "силуэт самопересекается");
-        }
-
-        /// <summary>
-        /// Силуэты на маске ПРИЛОЖЕНИЯ, а не на мазке. Маска здесь строится из многоугольников
-        /// клеток и сглаживается — ровно как в игре; её контур бугрист на шаге клетки (15 единиц
-        /// при горе 10), оси от этого куда извилистее, и подошвы заворачиваются вчетверо чаще.
-        /// Замер до выпрямления: самопересекались 14 силуэтов из 115, у 48 подошва завёрнута,
-        /// худшая ошибка площади 5.9 % — это и были «выкусы» на скриншотах ДМ. На мазке той же
-        /// толщины изъян почти не виден (1–2 из 156), поэтому фикстура обязана быть КЛЕТОЧНОЙ.
-        ///
-        /// Мутант: не выпрямлять подошву — счётчики вернутся к 14 и 48.
-        /// </summary>
-        static void CellMaskSilhouettesAreSimple()
-        {
-            var polys = new List<IReadOnlyList<Vector2>>();
-            var centre = new Vector2(300, 300);
-            for (float x = centre.X - 120f; x <= centre.X + 120f; x += 15f)
-                for (float y = centre.Y - 120f; y <= centre.Y + 120f; y += 15f)
+                float worst = 0f;
+                for (int i = 0; i < shape.Base.Length; i++)
                 {
-                    var q = new Vector2(x, y);
-                    if ((q - centre).Length() > 120f) continue;
-                    polys.Add(new List<Vector2>
+                    float r = shape.SilhouetteR[i];
+                    float best = float.PositiveInfinity;
+                    for (int j = 0; j + 1 < shape.LevelR.Length; j++)
                     {
-                        new Vector2(q.X - 7.5f, q.Y - 7.5f), new Vector2(q.X + 7.5f, q.Y - 7.5f),
-                        new Vector2(q.X + 7.5f, q.Y + 7.5f), new Vector2(q.X - 7.5f, q.Y + 7.5f),
-                    });
+                        float hi = shape.LevelR[j], lo = shape.LevelR[j + 1];
+                        if (r > hi + 1e-4f || r < lo - 1e-4f) continue;
+                        float u = Math.Abs(hi - lo) < 1e-6f ? 0f : (hi - r) / (hi - lo);
+                        Vector2 a = MountainTriangulation.Meridian(shape, i, hi, profile);
+                        Vector2 b = MountainTriangulation.Meridian(shape, i, lo, profile);
+                        Vector2 chord = a + (b - a) * u;
+                        best = Math.Min(best, Vector2.Distance(chord, shape.Silhouette[i]));
+                    }
+                    if (best < float.PositiveInfinity) worst = Math.Max(worst, best);
                 }
-
-            var settings = new MountainSettings { Radius = 10f };
-            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
-            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
-            var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
-            if (shapes.Count < 50) { Fail("Клеточная маска", $"гор всего {shapes.Count}"); return; }
-
-            int folded = 0, notSimple = 0;
-            foreach (var shape in shapes)
-            {
-                if (!IsMonotone(shape.Front)) folded++;
-                // Контур строим ТАК ЖЕ, как триангуляция: концы у цепей общие, и повторять их
-                // нельзя — иначе в контуре появляются нулевые отрезки и он «самопересекается» на
-                // ровном месте.
-                var loop = new List<Vector2>(shape.Crest);
-                for (int i = shape.Front.Count - 2; i >= 1; i--) loop.Add(shape.Front[i]);
-                if (!IsSimple(loop)) notSimple++;
+                Check($"Линия ({sharp:0.00}): лежит на краю тела", worst < 0.35f,
+                      $"отошла на {worst:0.###} при допуске подразбиения 0.2");
             }
-
-            Check("Клеточная маска: ни одна подошва не завернулась", folded == 0,
-                  $"завёрнутых {folded} из {shapes.Count}");
-            // Порог ЕДИНИЦА, и это честно измеренный остаток, а не запас «на всякий случай»: было
-            // 14 из 115, после выпрямления подошвы и прижатия её под гребень остался ровно один
-            // силуэт. Ноль сюда ставить нельзя — проверка покраснеет на ровном месте; поднимать
-            // выше единицы тоже нельзя — тогда возврат изъяна пройдёт незамеченным.
-            Check("Клеточная маска: самопересечений не больше одного", notSimple <= 1,
-                  $"самопересекающихся {notSimple} из {shapes.Count}");
         }
 
         /// <summary>
-        /// Триангуляция обязана выложить силуэт горы РОВНО один раз: без налезающих друг на друга
-        /// треугольников, без вылезающих за силуэт и без вывернутых. Фикстура — то самое изогнутое
-        /// почти вертикальное звено, у которого подошва заворачивается назад по X (проверка выше
-        /// как раз это и утверждает): сшивка «продвигай отставшего по X» на нём и ломалась.
+        /// Полоса между ярусами сшита ЗИПОМ, без сдвига. Каждый четырёхугольник полосы делится на
+        /// два треугольника, и оба обязаны быть обойдены в одну сторону: разные знаки площади
+        /// означают, что четырёхугольник перекручен — то есть верх полосы взят не у той точки.
+        /// Именно в этой сшивке жила половина прежних изъянов, когда цепи сшивались сравнением по X.
         ///
-        /// Два утверждения, и оба нужны. Сумма МОДУЛЕЙ площадей ловит перекрытие и вылет: лишний
-        /// треугольник добавляет площади. Модуль СУММЫ ловит вывернутый: он вычитается вместо того,
-        /// чтобы прибавляться. Одной суммы модулей мало — вывернутый треугольник она считает
-        /// добросовестным, а на экране его не видно вовсе (грани не отсекаются).
-        /// Мутант: вернуть сравнение по X вместо доли пройденной длины.
+        /// Веер яруса сюда НЕ входит намеренно. Доля-гармошка не всегда звёздная относительно
+        /// середины звена, и у веера часть треугольников честно ложится в другую сторону; на
+        /// картинке это не видно (отсечения граней нет, тело сплошного цвета), а вот проверку такое
+        /// требование сделало бы ложно-красной.
+        ///
+        /// Фикстура — кольцевой мазок: у кольца полно звеньев, изогнутых и близких к вертикали.
+        /// Мутант: сшивать полосу со сдвигом на одну точку — перекрутятся все четырёхугольники.
         /// </summary>
-        static void TriangulationCoversTheSilhouetteExactly()
+        static void BodyHasNoDegenerateTriangles()
         {
-            // Кольцевой мазок нарочно: у кольца полно звеньев, которые одновременно изогнуты и идут
-            // близко к вертикали, — то есть ровно тех, у кого подошва заворачивается назад по X.
             var ring = new List<Vector2>();
             for (int i = 0; i <= 72; i++)
             {
                 double a = i / 72.0 * Math.PI * 2.0;
                 ring.Add(new Vector2(300f + 130f * (float)Math.Cos(a), 300f + 130f * (float)Math.Sin(a)));
             }
-            var shapes = MountainGeometry.Build(Blob(Stroke(1, 30f, ring.ToArray())),
-                                                new MountainSettings { Radius = 22f });
-            if (shapes.Count < 8) { Fail("Триангуляция", $"гор всего {shapes.Count}"); return; }
+            // Острота — КУПОЛ, и это не вкусовщина. При конусе ярусов всего два, верхнее кольцо
+            // размером в двадцатую долю подошвы, и четырёхугольник полосы вырождается почти в
+            // треугольник — сшивка со сдвигом на нём почти ничего не меняет, и проверка зеленеет на
+            // мутанте. У купола ярусов десяток, полосы — настоящие трапеции, и сдвиг виден сразу.
+            var settings = new MountainSettings { Radius = 22f, Sharp = 0f };
+            var shapes = MountainGeometry.Build(Blob(Stroke(1, 30f, ring.ToArray())), settings);
+            if (shapes.Count < 8) { Fail("Тело", $"гор всего {shapes.Count}"); return; }
 
-            float worstOverlap = 0f, worstFlip = 0f;
-            int folded = 0;
-            bool simple = true;
+            var profile = settings.Profile();
+            var verts = new List<Vector2>();
+            var tris = new List<int>();
+            int twisted = 0, quads = 0, degenerate = 0, total = 0;
+
             foreach (var shape in shapes)
             {
-                if (!IsMonotone(shape.Front)) folded++;
+                MountainTriangulation.Fill(shape, profile, verts, tris);
+                MountainTriangulation.FillSize(shape, out int wantVerts, out int wantTris);
+                if (verts.Count != wantVerts || tris.Count != wantTris)
+                { Fail("Тело: обещанный размер не сошёлся", $"{verts.Count}/{wantVerts}, {tris.Count}/{wantTris}"); return; }
 
-                // Силуэт: гребень слева направо, следом подошва справа налево.
-                var loop = new List<Vector2>(shape.Crest);
-                for (int i = shape.Front.Count - 1; i >= 0; i--) loop.Add(shape.Front[i]);
-                float silhouette = Math.Abs(SignedArea(loop));
-                if (silhouette <= 0f) continue;
-                if (!IsSimple(loop)) simple = false;
-
-                var verts = new List<Vector2>(shape.Crest);
-                verts.AddRange(shape.Front);
-                int[] tris = MountainTriangulation.Fill(shape);
-
-                float sum = 0f, absSum = 0f;
-                for (int i = 0; i + 2 < tris.Length; i += 3)
+                int n = shape.Base.Length, levels = shape.LevelR.Length, at = 0;
+                for (int j = 0; j < levels; j++)
                 {
-                    float area = SignedArea(new List<Vector2>
-                        { verts[tris[i]], verts[tris[i + 1]], verts[tris[i + 2]] });
-                    sum += area;
-                    absSum += Math.Abs(area);
-                }
+                    at += n * 3;                                   // веер яруса — пропускаем
+                    if (j + 1 >= levels) break;
+                    for (int k = 0; k < n; k++)                    // четырёхугольники полосы
+                    {
+                        float a1 = Area(verts, tris, at + k * 6);
+                        float a2 = Area(verts, tris, at + k * 6 + 3);
+                        int i2 = (k + 1) % n;
+                        int lo = j * (n + 1), up = (j + 1) * (n + 1);
+                        Vector2 p0 = verts[lo + 1 + k], p1 = verts[lo + 1 + i2];
+                        Vector2 u1 = verts[up + 1 + i2], u0 = verts[up + 1 + k];
+                        quads++;
 
-                worstOverlap = Math.Max(worstOverlap, Math.Abs(absSum - silhouette) / silhouette);
-                worstFlip = Math.Max(worstFlip, Math.Abs(Math.Abs(sum) - silhouette) / silhouette);
+                        // Покрытие ТОЧКАМИ, а не сравнение площадей. Четырёхугольник полосы —
+                        // трапеция, а у трапеции ОБЕ диагонали делят её на половины одинаковой
+                        // суммарной площади. Поэтому сшивка со сдвигом на одну точку даёт два
+                        // треугольника, которые налезают друг на друга и оставляют дыру, а сумма
+                        // площадей при этом сходится копейка в копейку — первые две редакции этой
+                        // проверки на таком мутанте зеленели.
+                        //
+                        // Берём середины четырёх долек, на которые обе диагонали делят трапецию:
+                        // каждая обязана быть накрыта РОВНО одним из двух треугольников.
+                        // Выродившийся четырёхугольник пропускаем: у него пробная точка садится
+                        // ровно на общую диагональ, попадает в оба треугольника разом и читается
+                        // нахлёстом. На честном коде такой ровно один из восемнадцати тысяч.
+                        float quadArea = Math.Abs(SignedArea(new List<Vector2> { p0, p1, u1, u0 }));
+                        if (quadArea < 1e-4f) continue;
+
+                        Vector2 m = (p0 + p1 + u1 + u0) * 0.25f;
+                        var probes = new[]
+                        {
+                            (p0 + p1 + m) / 3f, (p1 + u1 + m) / 3f,
+                            (u1 + u0 + m) / 3f, (u0 + p0 + m) / 3f,
+                        };
+                        foreach (var probe in probes)
+                        {
+                            int hits = 0;
+                            if (Inside(probe, verts, tris, at + k * 6)) hits++;
+                            if (Inside(probe, verts, tris, at + k * 6 + 3)) hits++;
+                            if (hits != 1) { twisted++; break; }
+                        }
+
+                        if (Math.Abs(a1) < 1e-6f) degenerate++;
+                        if (Math.Abs(a2) < 1e-6f) degenerate++;
+                        total += 2;
+                    }
+                    at += n * 6;
+                }
             }
 
-            // Прежде здесь стояло «фикстура трудная — подошвы заворачиваются». С 2026-08-14 подошвы
-            // выпрямляются на выходе из MoundBuilder, поэтому трудность фикстуры держится иначе: у
-            // кольца заведомо есть звенья, изогнутые и близкие к вертикали, — это те самые, на
-            // которых сшивка полосой и врала.
-            Check("Триангуляция: фикстура трудная — подошвы выпрямлены все до одной", folded == 0,
-                  $"завернувшихся подошв {folded} из {shapes.Count}");
-            Check("Триангуляция: силуэт горы простой", simple,
-                  "силуэт сам себя пересекает — на этом отрезание ушей уже не стоит");
-            Check("Триангуляция: треугольники не налезают и не вылезают", worstOverlap < 0.001f,
-                  $"худший перебор площади {worstOverlap * 100f:0.###} %");
-            Check("Триангуляция: ни один треугольник не вывернут", worstFlip < 0.001f,
-                  $"худший недобор площади {worstFlip * 100f:0.###} %");
+            Check("Тело: два треугольника накрывают четырёхугольник полосы ровно один раз",
+                  twisted == 0, $"с дырой или нахлёстом {twisted} из {quads}");
+            Check("Тело: вырожденных треугольников почти нет", degenerate * 100 < total,
+                  $"вырожденных {degenerate} из {total}");
+        }
+
+        /// <summary>Лежит ли точка внутри треугольника, записанного в tris с позиции at.</summary>
+        static bool Inside(Vector2 p, List<Vector2> verts, List<int> tris, int at)
+        {
+            Vector2 a = verts[tris[at]], b = verts[tris[at + 1]], c = verts[tris[at + 2]];
+            float d1 = Cross(a, b, p), d2 = Cross(b, c, p), d3 = Cross(c, a, p);
+            bool negative = d1 < 0f || d2 < 0f || d3 < 0f;
+            bool positive = d1 > 0f || d2 > 0f || d3 > 0f;
+            return !(negative && positive);
+        }
+
+        static float Cross(Vector2 a, Vector2 b, Vector2 p)
+            => (b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X);
+
+        static float Area(List<Vector2> verts, List<int> tris, int at)
+            => SignedArea(new List<Vector2>
+                { verts[tris[at]], verts[tris[at + 1]], verts[tris[at + 2]] });
+
+        // ── §13 «Тушь» ──────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Плотность крошки считается от ПЛОЩАДИ подошвы, в долях R², и ни от чего больше.
+        ///
+        /// В браузерном прототипе она цеплялась за число ярусов, и это была настоящая ловушка:
+        /// подняв «ярусы» ради гладкого силуэта, ДМ разом затемнил бы всю картину и не понял бы,
+        /// отчего. Здесь проверяется и то, что вдвое большая гора получает вчетверо больше меток
+        /// (площадь), и то, что вдвое больший радиус при той же горе не меняет счёт (доли R²).
+        ///
+        /// Мутанты: считать метки на гору, а не на площадь; забыть поделить на R².
+        /// </summary>
+        static void GritDensityFollowsAreaNotTiers()
+        {
+            int small = MountainInk.MarkCount(100f, 10f, 0.88f, 1f, out _);
+            int big = MountainInk.MarkCount(400f, 10f, 0.88f, 1f, out _);
+            int scaled = MountainInk.MarkCount(400f, 20f, 0.88f, 1f, out _);
+
+            Check("Крошка: вчетверо большая площадь — вчетверо больше меток",
+                  Math.Abs(big - small * 4) <= 2, $"{small} и {big}");
+            Check("Крошка: тот же рисунок при вдвое большем радиусе",
+                  Math.Abs(scaled - small) <= 2, $"{small} и {scaled}");
+
+            int capped = MountainInk.MarkCount(1e6f, 10f, 2f, 1f, out bool hit);
+            Check("Крошка: потолок есть и он не молчит", hit && capped == MountainInk.GritCap,
+                  $"меток {capped}, признак {hit}");
+        }
+
+        /// <summary>
+        /// Два правила туши на концах шкалы. У подошвы (r = 1) толщина линии РОВНО ноль при любом
+        /// показателе схода — на этом держится «подошва не обводится», и никакой отдельной проверки
+        /// «здесь не рисовать» в коде нет. У вершины (r = 0) толщина полная.
+        ///
+        /// И тень: метка ложится там, куда свет не попадает. Сторона считается по нормали подошвы,
+        /// а не по положению относительно середины, — иначе у изогнутого звена тень легла бы поперёк.
+        ///
+        /// Мутант: заменить (1 − r)^p на (1 − r^p) — на подошве получится ноль только при p = 1, а
+        /// при 1.1 линия у подошвы станет ненулевой, и контур замкнётся.
+        /// </summary>
+        static void InkRulesHoldAtTheEnds()
+        {
+            bool zeroAtFoot = true, fullAtApex = true;
+            foreach (float p in new[] { 0.3f, 1f, 1.1f, 4f })
+            {
+                if (MountainInk.Taper(1f, p) > 1e-6f) zeroAtFoot = false;
+                if (Math.Abs(MountainInk.Taper(0f, p) - 1f) > 1e-6f) fullAtApex = false;
+            }
+            Check("Тушь: у подошвы линия нулевая при любом сходе", zeroAtFoot, "подошва обвелась");
+            Check("Тушь: у вершины линия полная при любом сходе", fullAtApex, "вершина недообведена");
+
+            var light = new Vector2(-1f, 0f);
+            Check("Тушь: тень на стороне, отвёрнутой от света",
+                  MountainInk.Shade(new Vector2(1f, 0f), light) > 0.9f
+                  && MountainInk.Shade(new Vector2(-1f, 0f), light) < -0.9f,
+                  "сторона тени определена наоборот");
+
+            Check("Тушь: крошка жмётся к гребню при большом «редеет вниз»",
+                  MountainInk.MarkR(0.5f, 3f) < MountainInk.MarkR(0.5f, 0f),
+                  "показатель ничего не меняет");
         }
 
         /// <summary>
@@ -1450,17 +1626,17 @@ namespace MountainHarness
         /// </summary>
         static void PainterOrderIsFarToNear()
         {
-            var near = new MountainShape { Depth = 10f, Tier = 0, Apex = new Vector2(1, 0) };
-            var far = new MountainShape { Depth = 30f, Tier = 0, Apex = new Vector2(2, 0) };
-            var deep = new MountainShape { Depth = 10f, Tier = 2, Apex = new Vector2(3, 0) };
+            var near = new MountainShape { Depth = 10f, Tier = 0, Centre = new Vector2(1, 0) };
+            var far = new MountainShape { Depth = 30f, Tier = 0, Centre = new Vector2(2, 0) };
+            var deep = new MountainShape { Depth = 10f, Tier = 2, Centre = new Vector2(3, 0) };
             var shapes = new List<MountainShape> { near, far, deep };
 
             MountainGeometry.SortForPainting(shapes);
             Check("Маляр: дальняя гора первая", ReferenceEquals(shapes[0], far),
-                  $"первой легла гора с вершиной {shapes[0].Apex.X}");
+                  $"первой легла гора с серединой {shapes[0].Centre.X}");
             Check("Маляр: при равной глубине глубокий ярус дальше",
                   ReferenceEquals(shapes[1], deep) && ReferenceEquals(shapes[2], near),
-                  $"порядок {shapes[1].Apex.X} → {shapes[2].Apex.X}, ждали 3 → 1");
+                  $"порядок {shapes[1].Centre.X} → {shapes[2].Centre.X}, ждали 3 → 1");
         }
 
         /// <summary>
@@ -1482,7 +1658,7 @@ namespace MountainHarness
             Check("Конвейер: из мазка выросли горы", first.Count >= 3, $"гор {first.Count}");
             bool same = first.Count == second.Count;
             for (int i = 0; same && i < first.Count; i++)
-                if (Vector2.Distance(first[i].Apex, second[i].Apex) > 1e-4f ||
+                if (Vector2.Distance(first[i].Silhouette[0], second[i].Silhouette[0]) > 1e-4f ||
                     !Near(first[i].Depth, second[i].Depth, 1e-4f)) same = false;
             Check("Конвейер: два прогона дают тот же рисунок", same, "горы разъехались между прогонами");
         }
@@ -1666,11 +1842,36 @@ namespace MountainHarness
             return link;
         }
 
-        static MountainShape Mound(AxisLink link, float back, float fwd)
+        static MountainShape Mound(AxisLink link, float back, float fwd, float sharp = 0.66f,
+                                   float jag = 0f)
         {
             var outline = LinkOutline.Build(link, 0.55f, link.MidW / 15f);
             return outline == null ? null
-                 : MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, back, fwd, link.MidW * 0.1f);
+                 : MoundBuilder.Build(outline, link, 2.2f, 1f / 1.6f, back, fwd, link.MidW * 0.1f,
+                                      new LiftSamples(sharp, MoundBuilder.ProfileSamples), jag);
+        }
+
+        /// <summary>Вынос точки за край горы по лучу i: та самая величина, максимум которой и есть
+        /// граница. По ней проверяется, что ни один ярус за границу не выходит.</summary>
+        static float Reach(MountainShape shape, int i, float r, LiftSamples profile)
+        {
+            var n = shape.Normal[i];
+            Vector2 d = shape.Base[i] - shape.Centre;
+            return r * (d.X * n.X + d.Y * n.Y) + shape.Height * profile.LiftAt(r) * n.Y;
+        }
+
+        static float MinX(Vector2[] pts)
+        {
+            float v = float.PositiveInfinity;
+            foreach (var p in pts) if (p.X < v) v = p.X;
+            return v;
+        }
+
+        static float MaxX(Vector2[] pts)
+        {
+            float v = float.NegativeInfinity;
+            foreach (var p in pts) if (p.X > v) v = p.X;
+            return v;
         }
 
         static bool IsMonotone(List<Vector2> pts)

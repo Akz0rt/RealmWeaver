@@ -5,121 +5,113 @@ using System.Numerics;
 namespace WorldGen.Generation.Mountains
 {
     /// <summary>
-    /// Тело горы, разложенное на треугольники. Живёт в чистом слое, а не в сборке меша, по одной
-    /// причине: это математика, и её обязан проверять стенд. Рендер только перекладывает индексы.
+    /// Тело горы в треугольники.
     ///
-    /// Здесь стояла сшивка полосой: идём по гребню и по ближней дуге подошвы сразу, всякий раз
-    /// продвигая ту цепь, что отстала. Дёшево и почти всегда верно — но НЕ всегда, и это замерено.
-    /// На кольцевом мазке (тридцать гор) полоса кладёт треугольники, вылезающие за силуэт: перебор
-    /// площади до 12 % у отдельной горы. Причина не в том, что подошва заворачивается назад по
-    /// горизонтали, как считалось в разборе: сам силуэт всегда простой, самопересечений в нём нет, —
-    /// а в том, что у сильно невыпуклой фигуры диагональ между цепями может выйти наружу. Мерить
-    /// отставание горизонтальной координатой или долей пройденной длины одинаково не помогает:
-    /// у обоих правил находится своя гора, на которой они врут.
+    /// Раньше здесь сшивались две цепи — гребень и ближняя дуга подошвы, — и половина файла уходила
+    /// на случаи, когда дуга заворачивалась назад и полоса пересекала сама себя. Ни цепей, ни
+    /// заворотов больше нет: тело выкладывается ярусами.
     ///
-    /// Поэтому — обычное отрезание ушей. Оно точно триангулирует любой простой многоугольник, стоит
-    /// на нашем размере (полсотни точек на гору) сущие пустяки и не опирается ни на какие свойства
-    /// формы. Проверка стенда требует от него ровной площади: сумма модулей площадей треугольников
-    /// обязана совпасть с площадью силуэта — то есть ни перекрытий, ни вылетов, ни вывернутых.
+    /// На ярус приходится веер (его собственный круг) и полоса до соседнего яруса. Полоса сшивается
+    /// ЗИПОМ по номеру точки — кольца получены из одной и той же подошвы, значит точек у них поровну
+    /// и соответствие однозначно. Самопересечься такой полосе нечем, и весь класс прежних изъянов —
+    /// чешуя, угловатые прикусы, зазубрина снизу — стал невозможен по построению.
+    ///
+    /// Ярусов ровно столько, сколько нужно гладкой огибающей (MoundBuilder.Levels): у конуса два,
+    /// у купола около десятка. Восемнадцать колец на каждую гору, как было в браузерном прототипе,
+    /// в меше стоили бы миллионов треугольников.
     /// </summary>
     public static class MountainTriangulation
     {
+        /// <summary>Точка яруса r на луче i.</summary>
+        public static Vector2 Meridian(MountainShape shape, int index, float r, LiftSamples profile)
+        {
+            Vector2 c = shape.Centre;
+            Vector2 d = shape.Base[index] - c;
+            return new Vector2(c.X + d.X * r, c.Y + d.Y * r + shape.Height * profile.LiftAt(r));
+        }
+
         /// <summary>
-        /// Треугольники тела горы. Индексы указывают в объединённый список «сначала все точки
-        /// гребня, следом все точки подошвы» — рендер ровно в таком порядке их и складывает.
+        /// Раскладка тела: вершины и треугольники.
+        ///
+        /// Вершины идут ярусами: сперва центр яруса, потом его кольцо, потом следующий ярус. Так
+        /// вызывающему остаётся только перевести точки в свои координаты и спросить цвет земли — а
+        /// раскладка, в которой можно ошибиться, лежит здесь, где её проверяет стенд.
         /// </summary>
-        public static int[] Fill(MountainShape shape)
+        public static void Fill(MountainShape shape, LiftSamples profile,
+                                List<Vector2> verts, List<int> tris)
         {
-            if (shape == null) return Array.Empty<int>();
-            var crest = shape.Crest;
-            var front = shape.Front;
-            if (crest == null || front == null || crest.Count < 2 || front.Count < 2)
-                return Array.Empty<int>();
+            verts.Clear();
+            tris.Clear();
+            if (shape?.Base == null || shape.LevelR == null || shape.LevelR.Length < 2) return;
 
-            // Силуэт: гребень слева направо, следом подошва справа налево. Концы у цепей общие, и
-            // повторять их в контуре нельзя — совпадающие подряд точки ушей не дают.
-            var loop = new List<Vector2>(crest.Count + front.Count);
-            var origin = new List<int>(crest.Count + front.Count);
-            for (int i = 0; i < crest.Count; i++) { loop.Add(crest[i]); origin.Add(i); }
-            for (int i = front.Count - 2; i >= 1; i--) { loop.Add(front[i]); origin.Add(crest.Count + i); }
-            if (loop.Count < 3) return Array.Empty<int>();
+            int n = shape.Base.Length;
+            int levels = shape.LevelR.Length;
+            int stride = n + 1;                       // центр яруса плюс его кольцо
 
-            // Обход выравниваем против часовой стрелки: дальше всё проверяется знаком площади.
-            if (SignedArea(loop) < 0f)
+            for (int j = 0; j < levels; j++)
             {
-                loop.Reverse();
-                origin.Reverse();
-            }
-
-            var tris = new List<int>((loop.Count - 2) * 3);
-            var alive = new List<int>(loop.Count);
-            for (int i = 0; i < loop.Count; i++) alive.Add(i);
-
-            int guard = alive.Count * alive.Count + 8;
-            int cursor = 0;
-            while (alive.Count > 3 && guard-- > 0)
-            {
-                int n = alive.Count;
-                int prev = alive[(cursor + n - 1) % n];
-                int here = alive[cursor % n];
-                int next = alive[(cursor + 1) % n];
-
-                if (IsEar(loop, alive, prev, here, next))
+                float r = shape.LevelR[j];
+                float lift = shape.Height * profile.LiftAt(r);
+                verts.Add(new Vector2(shape.Centre.X, shape.Centre.Y + lift));
+                for (int i = 0; i < n; i++)
                 {
-                    Emit(tris, origin, loop, prev, here, next);
-                    alive.RemoveAt(cursor % n);
-                    cursor = cursor % alive.Count;
-                    continue;
+                    Vector2 d = shape.Base[i] - shape.Centre;
+                    verts.Add(new Vector2(shape.Centre.X + d.X * r, shape.Centre.Y + d.Y * r + lift));
                 }
-                cursor = (cursor + 1) % n;
             }
 
-            // Сторож на случай, если ушей не нашлось вовсе (например, точки легли на одну прямую):
-            // остаток закрываем веером. Лучше слегка неверный низ горы, чем повисший цикл.
-            for (int i = 1; i + 1 < alive.Count; i++)
-                Emit(tris, origin, loop, alive[0], alive[i], alive[i + 1]);
-
-            return tris.ToArray();
-        }
-
-        /// <summary>Кладёт треугольник, пропуская вырожденные: нулевой площади они всё равно не
-        /// рисуют, а в меше это мусор, который потом ищи глазами.</summary>
-        static void Emit(List<int> tris, List<int> origin, List<Vector2> loop, int a, int b, int c)
-        {
-            if (Math.Abs(Cross(loop[a], loop[b], loop[c])) * 0.5f <= 1e-5f) return;
-            tris.Add(origin[a]); tris.Add(origin[b]); tris.Add(origin[c]);
-        }
-
-        /// <summary>Ухо — выпуклая вершина, в чей треугольник не попала ни одна другая вершина.</summary>
-        static bool IsEar(List<Vector2> loop, List<int> alive, int prev, int here, int next)
-        {
-            Vector2 a = loop[prev], b = loop[here], c = loop[next];
-            float area = Cross(a, b, c);
-            if (area <= 1e-9f) return false;   // вершина вогнутая или вырожденная
-
-            foreach (int index in alive)
+            for (int j = 0; j < levels; j++)
             {
-                if (index == prev || index == here || index == next) continue;
-                if (Inside(a, b, c, loop[index])) return false;
+                int b = j * stride;
+                for (int i = 0; i < n; i++)           // веер яруса
+                {
+                    tris.Add(b);
+                    tris.Add(b + 1 + i);
+                    tris.Add(b + 1 + (i + 1) % n);
+                }
+                if (j + 1 >= levels) continue;
+
+                int u = (j + 1) * stride;             // полоса до следующего яруса
+                for (int i = 0; i < n; i++)
+                {
+                    int i2 = (i + 1) % n;
+                    tris.Add(b + 1 + i); tris.Add(b + 1 + i2); tris.Add(u + 1 + i2);
+                    tris.Add(b + 1 + i); tris.Add(u + 1 + i2); tris.Add(u + 1 + i);
+                }
             }
-            return true;
         }
 
-        static bool Inside(Vector2 a, Vector2 b, Vector2 c, Vector2 p)
-            => Cross(a, b, p) >= 0f && Cross(b, c, p) >= 0f && Cross(c, a, p) >= 0f;
-
-        static float Cross(Vector2 a, Vector2 b, Vector2 c)
-            => (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
-
-        static float SignedArea(List<Vector2> loop)
+        /// <summary>Сколько вершин и треугольников выйдет у тела — чтобы можно было отвести буфер
+        /// заранее и не растить списки на каждую гору.</summary>
+        public static void FillSize(MountainShape shape, out int verts, out int tris)
         {
-            float area = 0f;
-            for (int i = 0; i < loop.Count; i++)
-            {
-                Vector2 a = loop[i], b = loop[(i + 1) % loop.Count];
-                area += a.X * b.Y - b.X * a.Y;
-            }
-            return area * 0.5f;
+            verts = tris = 0;
+            if (shape?.Base == null || shape.LevelR == null || shape.LevelR.Length < 2) return;
+            int n = shape.Base.Length, levels = shape.LevelR.Length;
+            verts = levels * (n + 1);
+            tris = (levels * n + (levels - 1) * n * 2) * 3;
+        }
+
+        /// <summary>Длина штриха линии в точке границы: половина расстояния между соседними точками
+        /// того же яруса, с небольшим нахлёстом. Штрихи обязаны перекрываться — иначе линия
+        /// рассыпается в пунктир.</summary>
+        public const float DashOverlap = 1.25f;
+
+        /// <summary>Направление и длина штриха линии на луче i. Касательная берётся по СВОЕМУ ярусу
+        /// (r точки границы), а не по подошве: у вершины кольцо мельче, и штрих обязан быть короче,
+        /// иначе он вылезает за гору.</summary>
+        public static void Dash(MountainShape shape, int i, LiftSamples profile,
+                                out Vector2 dir, out float half)
+        {
+            int n = shape.Base.Length;
+            float r = shape.SilhouetteR[i];
+            Vector2 a = Meridian(shape, (i - 1 + n) % n, r, profile);
+            Vector2 b = Meridian(shape, (i + 1) % n, r, profile);
+            Vector2 d = b - a;
+            float len = d.Length();
+            if (len < 1e-6f) { dir = new Vector2(1f, 0f); half = 0f; return; }
+            dir = d / len;
+            half = len * 0.5f * DashOverlap;
         }
     }
 }
