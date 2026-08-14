@@ -18,7 +18,21 @@ namespace WorldGen.Rendering.Mountains
     {
         public readonly List<Vector3> Verts = new List<Vector3>();
         public readonly List<Color32> Colors = new List<Color32>();
+
+        /// <summary>Треугольники тел — они пишут глубину и не красят.</summary>
         public readonly List<int> Tris = new List<int>();
+
+        /// <summary>Треугольники туши. Копятся отдельно и приписываются в конец: ВСЕ тела обязаны
+        /// лечь раньше любой линии, иначе перекрытие по глубине не сработает — глубина задним
+        /// числом уже нарисованное не стирает.</summary>
+        public readonly List<int> InkTris = new List<int>();
+
+        /// <summary>Сшивает: сперва все тела, следом вся тушь.</summary>
+        public void Seal()
+        {
+            Tris.AddRange(InkTris);
+            InkTris.Clear();
+        }
 
         /// <summary>Сколько чего вышло — чтобы можно было честно сказать ДМ, во что обошёлся рисунок.</summary>
         public int Mountains;
@@ -30,6 +44,7 @@ namespace WorldGen.Rendering.Mountains
             Verts.Clear();
             Colors.Clear();
             Tris.Clear();
+            InkTris.Clear();
             Mountains = 0;
             GritMarks = 0;
             GritCapped = false;

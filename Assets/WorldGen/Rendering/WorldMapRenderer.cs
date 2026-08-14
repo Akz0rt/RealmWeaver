@@ -1085,8 +1085,6 @@ namespace WorldGen.Rendering
         Mountains.MountainLayer mountainLayer;
         bool[] landProbeGrid;   // запасной путь BuildLandProbe: снимок суши в своей сетке
 
-        Color32[] groundProbeGrid;          // BuildGroundProbe: снимок цвета земли в той же сетке
-        MapPaletteTheme groundProbeTheme;   // с какой палитрой снят: смена темы снимок обесценивает
 
         /// <summary>Высота, в которую кисть гор поднимает клетку. Внутри полосы «горы» (0.5…0.75),
         /// но не в «вершинах»: вершины пусть остаются тем, что ДМ поднял отдельно кистью рельефа.</summary>
@@ -1107,7 +1105,6 @@ namespace WorldGen.Rendering
         public void ReliefChanged()
         {
             landProbeGrid = null;
-            groundProbeGrid = null;
             MountainLayer?.RebuildSoon();
         }
 
@@ -1153,7 +1150,6 @@ namespace WorldGen.Rendering
         public void LandChanged()
         {
             landProbeGrid = null;
-            groundProbeGrid = null;
             // Кэш массивов в слое держится на отпечатке настроек, а признак суши — снимок, который
             // с настройками не сравнить. Поэтому про смену воды слою говорим отдельно: иначе он
             // достал бы из кэша хребет, посчитанный по прежнему берегу.
@@ -1207,51 +1203,6 @@ namespace WorldGen.Rendering
                 int x = (int)(p.X / cw);
                 int y = (int)(p.Y / ch);
                 if (x < 0 || y < 0 || x >= Side || y >= Side) return false;
-                return grid[y * Side + x];
-            };
-        }
-
-        /// <summary>
-        /// Цвет земли под точкой — для гор, которые «растут из карты» (§13 спеки).
-        ///
-        /// Тело горы красится цветом карты ПОД НЕЙ, поэтому освещённый склон остаётся нетронутым
-        /// куском карты и гора вырастает из неё без шва. Один цвет на всю гору не годится: гора на
-        /// границе биомов красится бледной заплатой поперёк границы — это было видно на первых же
-        /// снимках браузерного превью. Спрашивается в КАЖДОЙ вершине тела.
-        ///
-        /// Отдаём чистую функцию по снимку, а не запрос к живой карте: считают из фонового потока.
-        /// Снимок стоит 147 тысяч поисков ближайшей клетки, а зовут его на каждый пересчёт слоя —
-        /// без кэша ползунок «Размер гор» задёргался бы. Держится до правки рельефа, воды или
-        /// палитры; тему сверяем отдельно, потому что смена палитры через ReliefChanged не идёт.
-        /// </summary>
-        public System.Func<System.Numerics.Vector2, Color32> BuildGroundProbe()
-        {
-            const int Side = 384;
-            var lookup = nearestLookup;
-            if (lookup == null) return null;
-
-            float cw = mapWidth / Side, ch = mapHeight / Side;
-            var grid = groundProbeGrid;
-            if (grid == null || groundProbeTheme != paletteTheme)
-            {
-                grid = new Color32[Side * Side];
-                for (int y = 0; y < Side; y++)
-                {
-                    for (int x = 0; x < Side; x++)
-                    {
-                        var cell = lookup.FindNearest(new System.Numerics.Vector2((x + 0.5f) * cw, (y + 0.5f) * ch));
-                        grid[y * Side + x] = cell != null ? (Color32)GetColorForCell(cell) : new Color32(128, 128, 128, 255);
-                    }
-                }
-                groundProbeGrid = grid;
-                groundProbeTheme = paletteTheme;
-            }
-            return p =>
-            {
-                int x = (int)(p.X / cw);
-                int y = (int)(p.Y / ch);
-                if (x < 0) x = 0; else if (x >= Side) x = Side - 1;
-                if (y < 0) y = 0; else if (y >= Side) y = Side - 1;
                 return grid[y * Side + x];
             };
         }

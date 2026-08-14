@@ -19,6 +19,13 @@ namespace WorldGen.Rendering.Mountains
     /// </summary>
     public static class MountainMeshBuilder
     {
+        /// <summary>
+        /// На сколько поднимается каждая следующая гора. Волосок: пятьсот гор дают четверть
+        /// десятой мировой единицы — на виде сверху это неразличимо, а глубине хватает, чтобы
+        /// различить порядок.
+        /// </summary>
+        public const float DepthStep = 5e-4f;
+
         /// <summary>Отсчётов вдоль промоины.</summary>
         const int GullySteps = 4;
 
@@ -43,18 +50,26 @@ namespace WorldGen.Rendering.Mountains
             var scratchVerts = new List<Vec2>();
             var scratchTris = new List<int>();
 
+            // Каждая следующая гора кладётся на волосок ВЫШЕ предыдущей. Порядок маляра остаётся
+            // тем же (дальние раньше), но теперь он записан не только в очерёдности, а в самой
+            // глубине — и линия дальней горы отсекается телом ближней, где бы её ни подали.
+            int index = 0;
             foreach (var shape in shapes)
             {
                 if (shape?.Silhouette == null || shape.Silhouette.Length < 3) continue;
                 if (shape.LevelR == null || shape.LevelR.Length < 2) continue;
                 data.Mountains++;
 
+                float y = style.LayerY + index * DepthStep;
+                index++;
+
                 float density = style.Density(shape.Tier);
-                AddBody(data, shape, style, profile, scratchVerts, scratchTris);
-                AddGrit(data, shape, style, profile, light, density, radius);
-                AddGullies(data, shape, style, profile, light);
-                AddOutline(data, shape, style, profile, density);
+                AddBody(data, shape, y, profile, scratchVerts, scratchTris);
+                AddGrit(data, shape, style, y, profile, light, density, radius);
+                AddGullies(data, shape, style, y, profile, light);
+                AddOutline(data, shape, style, y, profile, density);
             }
+            data.Seal();
         }
 
         /// <summary>Заливка массивов в меш. ЕДИНСТВЕННОЕ, что обязано идти на главном потоке.</summary>
@@ -86,45 +101,36 @@ namespace WorldGen.Rendering.Mountains
 
         /// <summary>
         /// Тело — ярусы: у каждого свой веер и полоса до соседнего. Раскладку даёт чистый слой
-        /// (MountainTriangulation.Fill), здесь остаётся перевести точки в мировые и спросить цвет.
+        /// (MountainTriangulation.Fill), здесь остаётся перевести точки в мировые.
         ///
-        /// Цвет спрашивается В КАЖДОЙ ВЕРШИНЕ, а не один раз на гору: гора на границе биомов иначе
-        /// красится бледной заплатой поперёк границы — это было видно на первых же снимках
-        /// браузерного превью. У края шва нет ни при каком раскладе, потому что там гора кроет
-        /// ровно тот цвет, что кроет.
+        /// Тело НЕ КРАСИТ КАРТУ. Оно кладётся прозрачным и нужно ровно затем, чтобы записать
+        /// глубину: линия дальней горы отсекается телом ближней. Так «окно в карту» становится
+        /// точным — сквозь гору видна ровно та карта, что нарисована, со всем её сглаживанием,
+        /// зерном и виньеткой.
+        ///
+        /// Красить тело цветом клетки (BuildGroundProbe) оказалось нельзя, и это стоило двух
+        /// заходов: цвет клетки — плоское число, а карта на экране получается из него со
+        /// сглаживанием между клетками и наложениями. На снежной палитре расхождение вышло таким,
+        /// что горы легли белыми лоскутами поверх серо-голубой карты.
         /// </summary>
-        static void AddBody(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
+        static void AddBody(MountainMeshData data, MountainShape shape, float y,
                             LiftSamples profile, List<Vec2> scratchVerts, List<int> scratchTris)
         {
             MountainTriangulation.Fill(shape, profile, scratchVerts, scratchTris);
             if (scratchTris.Count == 0) return;
 
-            float y = style.LayerY;
             int start = data.Verts.Count;
             for (int i = 0; i < scratchVerts.Count; i++)
             {
                 Vec2 p = scratchVerts[i];
                 data.Verts.Add(new Vector3(p.X, y, p.Y));
-                data.Colors.Add(GroundAt(style, p));
+                data.Colors.Add(Invisible);
             }
             for (int i = 0; i < scratchTris.Count; i++) data.Tris.Add(start + scratchTris[i]);
         }
 
-        /// <summary>
-        /// Цвет земли под точкой — и обязательно НЕПРОЗРАЧНЫЙ.
-        ///
-        /// Цвет клетки приходит с непрозрачностью биома, а она бывает меньше единицы; шейдер слоя
-        /// смешивает по альфе, и тело горы вышло полупрозрачным — сквозь гору просвечивали клетки,
-        /// деревья и соседние горы. Гора обязана карту ЗАКРЫВАТЬ: на этом держится и порядок маляра
-        /// (ближняя закрывает дальнюю), и весь замысел «тело — окно в карту», где окно показывает
-        /// карту, а не смешивается с ней.
-        /// </summary>
-        static Color32 GroundAt(in MountainPaintStyle style, Vec2 p)
-        {
-            Color32 c = style.Ground != null ? style.Ground(p) : style.FallbackBody;
-            c.a = 255;
-            return c;
-        }
+        /// <summary>Прозрачная краска тела: карту не трогает, глубину пишет.</summary>
+        static readonly Color32 Invisible = new Color32(0, 0, 0, 0);
 
         // ── линия ───────────────────────────────────────────────────────────────────────────────
 
@@ -143,13 +149,12 @@ namespace WorldGen.Rendering.Mountains
         /// «а здесь не обводить» в коде нет и не нужно.
         /// </summary>
         static void AddOutline(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                               LiftSamples profile, float density)
+                               float y, LiftSamples profile, float density)
         {
             if (style.PenWidth <= 0f || style.PenAlpha <= 0f) return;
 
             var loop = shape.Silhouette;
             var rs = shape.SilhouetteR;
-            float y = style.LayerY;
             Color32 ink = style.InkAt(shape.Tier, shape.Depth);
 
             for (int i = 0; i < loop.Length; i++)
@@ -170,11 +175,11 @@ namespace WorldGen.Rendering.Mountains
                 data.Verts.Add(new Vector3(p.X + along.X - side.X, y, p.Y + along.Y - side.Y));
                 data.Verts.Add(new Vector3(p.X + along.X + side.X, y, p.Y + along.Y + side.Y));
                 for (int k = 0; k < 4; k++) data.Colors.Add(ink);
-                data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
-                data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
+                data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
+                data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
             }
 
-            AddSlopes(data, shape, style, profile, density, ink);
+            AddSlopes(data, shape, style, y, profile, density, ink);
         }
 
         /// <summary>
@@ -189,7 +194,7 @@ namespace WorldGen.Rendering.Mountains
         /// У купола скачков нет — цикл не делает ничего, и правило само выключается.
         /// </summary>
         static void AddSlopes(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                              LiftSamples profile, float density, Color32 ink)
+                              float y, LiftSamples profile, float density, Color32 ink)
         {
             int n = shape.SilhouetteR.Length;
             for (int i = 0; i < n; i++)
@@ -208,7 +213,7 @@ namespace WorldGen.Rendering.Mountains
                     float r = hi + (lo - hi) * step / SlopeSteps;
                     Vec2 next = MountainTriangulation.Meridian(shape, edge, r, profile);
                     float half = 0.5f * style.PenWidth * MountainInk.Taper(r, style.PenTaper) * density;
-                    AddTaperedSegment(data, prev, next, prevHalf, half, style.LayerY, ink);
+                    AddTaperedSegment(data, prev, next, prevHalf, half, y, ink);
                     prev = next;
                     prevHalf = half;
                 }
@@ -230,8 +235,8 @@ namespace WorldGen.Rendering.Mountains
             data.Verts.Add(new Vector3(b.X - nrm.X * halfB, y, b.Y - nrm.Y * halfB));
             data.Verts.Add(new Vector3(b.X + nrm.X * halfB, y, b.Y + nrm.Y * halfB));
             for (int k = 0; k < 4; k++) data.Colors.Add(color);
-            data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
-            data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
+            data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
+            data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
         }
 
         static Vec2 Normal(Vec2 a, Vec2 b)
@@ -257,7 +262,7 @@ namespace WorldGen.Rendering.Mountains
         /// рисунка, и на ней эта разница решает.
         /// </summary>
         static void AddGrit(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                            LiftSamples profile, Vec2 light, float density, float radius)
+                            float y, LiftSamples profile, Vec2 light, float density, float radius)
         {
             if (style.PenAlpha <= 0f) return;
 
@@ -268,7 +273,6 @@ namespace WorldGen.Rendering.Mountains
             var foot = shape.Base;
             var normals = shape.Normal;
             int n = foot.Length;
-            float y = style.LayerY;
             Color32 ink = style.InkAt(shape.Tier, shape.Depth);
 
             for (int id = 1; id <= total; id++)
@@ -300,8 +304,8 @@ namespace WorldGen.Rendering.Mountains
                 data.Verts.Add(new Vector3(p.X - hw, y, p.Y + hh));
                 data.Verts.Add(new Vector3(p.X + hw, y, p.Y + hh));
                 for (int k = 0; k < 4; k++) data.Colors.Add(ink);
-                data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
-                data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
+                data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
+                data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
                 data.GritMarks++;
             }
         }
@@ -311,13 +315,12 @@ namespace WorldGen.Rendering.Mountains
         /// <summary>Редкие тонкие штрихи по освещённому склону. Идут по меридиану — по одному и тому
         /// же лучу через несколько значений r, — поэтому сами ложатся вдоль ската.</summary>
         static void AddGullies(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                               LiftSamples profile, Vec2 light)
+                               float y, LiftSamples profile, Vec2 light)
         {
             if (style.Gully <= 0f || style.PenAlpha <= 0f || style.PenWidth <= 0f) return;
 
             var normals = shape.Normal;
             int n = normals.Length;
-            float y = style.LayerY;
             Color32 ink = style.InkAt(shape.Tier, shape.Depth, 0.6f);
             float half = 0.5f * Math.Max(0.02f, style.PenWidth * 0.16f);
 
@@ -354,8 +357,8 @@ namespace WorldGen.Rendering.Mountains
             data.Verts.Add(new Vector3(b.X - nrm.X, y, b.Y - nrm.Y));
             data.Verts.Add(new Vector3(b.X + nrm.X, y, b.Y + nrm.Y));
             for (int k = 0; k < 4; k++) data.Colors.Add(color);
-            data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
-            data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
+            data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
+            data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
         }
 
         // ── лента следа кисти ───────────────────────────────────────────────────────────────────
@@ -379,6 +382,7 @@ namespace WorldGen.Rendering.Mountains
             float half = width * 0.5f;
             for (int i = 0; i + 1 < line.Count; i++)
                 AddSegment(data, line[i], line[i + 1], half, yHeight, color);
+            data.Seal();
             Upload(mesh, data);
         }
 

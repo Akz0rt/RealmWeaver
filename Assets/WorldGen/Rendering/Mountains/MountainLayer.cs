@@ -99,9 +99,9 @@ namespace WorldGen.Rendering.Mountains
         [Range(0f, 1.5f)] public float maskSmoothing = 0.5f;
 
         [Header("Цвет")]
-        [Tooltip("Брать краску туши из палитры карты (теневой горный тон, притемнённый). Снять — красить своим цветом ниже.")]
+        [Tooltip("Тушь почти чёрная, как на образце. Снять — красить своим цветом ниже.")]
         public bool useMapPalette = true;
-        [Tooltip("Своя краска туши, если палитра не используется.")]
+        [Tooltip("Своя краска туши.")]
         public Color inkColor = new Color(0.10f, 0.086f, 0.07f, 1f);
 
         const string ContainerName = "СлойГор";
@@ -373,11 +373,10 @@ namespace WorldGen.Rendering.Mountains
         MountainPaintStyle Style()
         {
             var renderer = Renderer();
-            var style = useMapPalette
-                ? MountainPaintStyle.FromPalette(Theme())
-                : new MountainPaintStyle { Ink = inkColor, FallbackBody = new Color32(120, 124, 128, 255) };
-
-            style.Ground = renderer != null ? renderer.BuildGroundProbe() : null;
+            var style = new MountainPaintStyle
+            {
+                Ink = useMapPalette ? MountainPaintStyle.DefaultInk : (Color32)inkColor,
+            };
             style.PenAlpha = penAlpha;
             style.PenWidth = penWidth * Mathf.Max(0.01f, mountainRadius);
             style.PenTaper = penTaper;
