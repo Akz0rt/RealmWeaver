@@ -30,7 +30,7 @@ namespace MountainHarness
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
             if (mode == "cost") { Cost.Report(); return 0; }
-            if (mode == "pen") { PenPreview.Write("pen.svg"); return 0; }
+            if (mode == "pen") { PenPreview.Write("pen.svg", args.Length > 1 ? float.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture) : 1f); return 0; }
 
             MaskMeasuresToSegment();
             EraserSubtracts();

@@ -110,8 +110,21 @@ namespace WorldGen.Rendering.Mountains
             for (int i = 0; i < scratchTris.Count; i++) data.Tris.Add(start + scratchTris[i]);
         }
 
+        /// <summary>
+        /// Цвет земли под точкой — и обязательно НЕПРОЗРАЧНЫЙ.
+        ///
+        /// Цвет клетки приходит с непрозрачностью биома, а она бывает меньше единицы; шейдер слоя
+        /// смешивает по альфе, и тело горы вышло полупрозрачным — сквозь гору просвечивали клетки,
+        /// деревья и соседние горы. Гора обязана карту ЗАКРЫВАТЬ: на этом держится и порядок маляра
+        /// (ближняя закрывает дальнюю), и весь замысел «тело — окно в карту», где окно показывает
+        /// карту, а не смешивается с ней.
+        /// </summary>
         static Color32 GroundAt(in MountainPaintStyle style, Vec2 p)
-            => style.Ground != null ? style.Ground(p) : style.FallbackBody;
+        {
+            Color32 c = style.Ground != null ? style.Ground(p) : style.FallbackBody;
+            c.a = 255;
+            return c;
+        }
 
         // ── линия ───────────────────────────────────────────────────────────────────────────────
 
@@ -277,13 +290,18 @@ namespace WorldGen.Rendering.Mountains
                 Vec2 q = MountainTriangulation.Meridian(shape, j, r, profile);
                 p = new Vec2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
+                // Прямоугольник, а не треугольник: вблизи треугольник читается треугольником, а
+                // не зерном, и кроет вдвое меньше площади при той же ширине.
                 float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
+                float hw = s * 0.5f, hh = s * 0.35f;
                 int start = data.Verts.Count;
-                data.Verts.Add(new Vector3(p.X - s, y, p.Y - s * 0.6f));
-                data.Verts.Add(new Vector3(p.X + s, y, p.Y - s * 0.6f));
-                data.Verts.Add(new Vector3(p.X, y, p.Y + s * 0.8f));
-                data.Colors.Add(ink); data.Colors.Add(ink); data.Colors.Add(ink);
-                data.Tris.Add(start); data.Tris.Add(start + 1); data.Tris.Add(start + 2);
+                data.Verts.Add(new Vector3(p.X - hw, y, p.Y - hh));
+                data.Verts.Add(new Vector3(p.X + hw, y, p.Y - hh));
+                data.Verts.Add(new Vector3(p.X - hw, y, p.Y + hh));
+                data.Verts.Add(new Vector3(p.X + hw, y, p.Y + hh));
+                for (int k = 0; k < 4; k++) data.Colors.Add(ink);
+                data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
+                data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
                 data.GritMarks++;
             }
         }
@@ -308,8 +326,9 @@ namespace WorldGen.Rendering.Mountains
                 if (normals[i].X * light.X + normals[i].Y * light.Y <= 0.25f) continue;
                 if (Rand(shape.Seed, 613u, i) > style.Gully * 0.3f) continue;
 
-                float top = 0.25f + Rand(shape.Seed, 71u, i) * 0.35f;
-                float bottom = Math.Min(0.95f, top + 0.3f + Rand(shape.Seed, 89u, i) * 0.3f);
+                MountainInk.Gully(Rand(shape.Seed, 71u, i), Rand(shape.Seed, 89u, i),
+                                  out float top, out float length);
+                float bottom = Math.Min(0.95f, top + length);
 
                 Vec2 prev = MountainTriangulation.Meridian(shape, i, top, profile);
                 for (int step = 1; step <= GullySteps; step++)

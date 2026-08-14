@@ -26,12 +26,21 @@ namespace MountainHarness
         const float Grit = 0.88f, GritFall = 0.4f, Gully = 0.32f;
         const float Light = 160f, TierInk = 0.5f, TierContrast = 1f;
 
-        public static void Write(string path)
+        /// <summary>
+        /// zoom — сколько пикселей приходится на мировую единицу. Ради него всё и написано заново:
+        /// браузерное превью всегда показывало один и тот же масштаб, а в приложении есть камера, и
+        /// вблизи та же крошка из зерна становится квадратами. Проверять вид надо на ТОМ масштабе,
+        /// на котором ДМ смотрит, иначе замер сходится, а картинки расходятся.
+        /// </summary>
+        public static void Write(string path, float zoom = 1f)
         {
+            float side = W / Math.Max(0.01f, zoom);
+            float x0 = (W - side) * 0.55f, y0 = (H - side) * 0.45f;
+
             var sb = new StringBuilder();
             sb.Append($"<svg xmlns='http://www.w3.org/2000/svg' width='{F(W)}' height='{F(H)}' ")
-              .Append($"viewBox='0 0 {F(W)} {F(H)}'>");
-            sb.Append($"<rect width='100%' height='100%' fill='{Hex(Ground0)}'/>");
+              .Append($"viewBox='{F(x0)} {F(y0)} {F(side)} {F(side)}'>");
+            sb.Append($"<rect x='{F(x0)}' y='{F(y0)}' width='{F(side)}' height='{F(side)}' fill='{Hex(Ground0)}'/>");
             // Пятна биомов — видно, как тело берёт цвет карты и как граница проходит сквозь гору.
             foreach (var patch in Patches)
                 sb.Append($"<ellipse cx='{F(patch.C.X)}' cy='{F(Flip(patch.C.Y))}' ")
@@ -186,10 +195,9 @@ namespace MountainHarness
                 p = new Vector2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
                 float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
-                sb.Append("<polygon fill='rgba(26,22,18,").Append(F(PenAlpha)).Append(")' points='")
-                  .Append(F(p.X - s)).Append(',').Append(F(Flip(p.Y - s * 0.6f))).Append(' ')
-                  .Append(F(p.X + s)).Append(',').Append(F(Flip(p.Y - s * 0.6f))).Append(' ')
-                  .Append(F(p.X)).Append(',').Append(F(Flip(p.Y + s * 0.8f))).Append("'/>");
+                sb.Append("<rect fill='rgba(26,22,18,").Append(F(PenAlpha)).Append(")' ")
+                  .Append("x='").Append(F(p.X - s * 0.5f)).Append("' y='").Append(F(Flip(p.Y) - s * 0.35f))
+                  .Append("' width='").Append(F(s)).Append("' height='").Append(F(s * 0.7f)).Append("'/>");
             }
         }
 
@@ -202,8 +210,9 @@ namespace MountainHarness
                 if (shape.Normal[i].X * light.X + shape.Normal[i].Y * light.Y <= 0.25f) continue;
                 if (Rand(shape.Seed, 613u, i) > Gully * 0.3f) continue;
 
-                float top = 0.25f + Rand(shape.Seed, 71u, i) * 0.35f;
-                float bottom = Math.Min(0.95f, top + 0.3f + Rand(shape.Seed, 89u, i) * 0.3f);
+                MountainInk.Gully(Rand(shape.Seed, 71u, i), Rand(shape.Seed, 89u, i),
+                                  out float top, out float length);
+                float bottom = Math.Min(0.95f, top + length);
                 sb.Append("<polyline fill='none' stroke='rgba(26,22,18,0.37)' stroke-width='1' points='");
                 for (int step = 0; step <= 4; step++)
                 {
