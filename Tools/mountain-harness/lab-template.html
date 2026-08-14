@@ -247,7 +247,7 @@
       <div class="hint">Одно направление на всю карту: иначе соседние горы освещены по-разному и
         картинка рассыпается.</div>
     </div>
-    <div class="row">
+    <div class="row" id="row-bodyTint">
       <label><span>Тело светлее земли</span><span class="val" id="v-bodyTint"></span></label>
       <input type="range" id="bodyTint" min="-0.25" max="0.25" step="0.01">
       <div class="hint">0 — тело в точности цвет карты под горой, и освещённый склон остаётся
@@ -641,6 +641,10 @@ function drawPen(shape, s) {
     ctx.clip(body);
     ctx.drawImage(floorCv, 0, 0);
     ctx.restore();
+    // «Тело светлее земли» сквозь окно НЕ проходит и не должно: окно на то и окно, что даёт в
+    // точности карту. Поэтому при включённом окне этот ползунок спрятан и в строчку настроек не
+    // попадает — мёртвая настройка, которую видно, хуже отсутствующей: по ней уводят ползунок в
+    // край, не понимая, отчего ничего не меняется, и число едет ко мне уже неверным.
   } else {
     ctx.fillStyle = s.floor ? bodyColour(shape, s) : '#efe7d5';
     ctx.fill(body);
@@ -766,12 +770,12 @@ for (const f of DATA.fixtures)
 
 // ── состояние ──────────────────────────────────────────────────────────────────────────────
 const DEFAULTS = {
-  fixture: 0, manner: 'pen', sharp: 0.66, height: 2.2, levels: 18, apex: true, web: 0.7, webW: 0.72,
-  waist: 0.55, stretch: 1.4, aniso: 1.6,
-  palette: 'invert', spread: 0.52, contrast: 0.85, earth: 0.78, depthTone: 0.18,
+  fixture: 0, manner: 'pen', sharp: 0.66, height: 2.2, levels: 18, apex: true, web: 0, webW: 0.72,
+  waist: 0.95, stretch: 1.9, aniso: 1.6,
+  palette: 'invert', spread: 0.52, contrast: 1, earth: 0.78, depthTone: 0,
   ink: 'all', inkA: 0.12, floor: true, axes: false,
-  penW: 4.5, penTaper: 1.6, penA: 0.92, jag: 0.12, grit: 0.55, gritFall: 2.6, gully: 0.45,
-  light: 160, bodyTint: 0, tierInk: 0.35, window: true,
+  penW: 4, penTaper: 1.1, penA: 0.61, jag: 0.03, grit: 0.88, gritFall: 0.4, gully: 0.32,
+  light: 160, bodyTint: -0.25, tierInk: 0.5, window: true,
 };
 const PLASTER = { manner: 'fill', sharp: 0.66, height: 2.2, levels: 6, apex: true, web: 0.7 };
 // При туши ярусов нужно много: они больше не видны цветом, зато их лесенка вылезает на силуэте.
@@ -780,6 +784,7 @@ const state = Object.assign({}, DEFAULTS);
 const PRESETS = {
   'Тушь': {},
   'Тушь пожирнее': { penW: 6.5, penA: 1, grit: 0.75, jag: 0.16 },
+  'С перепонкой': { web: 0.7 },
   'Только линия': { grit: 0, gully: 0, jag: 0.08 },
   'Замкнутый контур': { penTaper: 0.3 },
   'Заливкой (вчерашнее)': PLASTER,
@@ -923,7 +928,8 @@ function updatePrompt() {
                  'крошка ' + fmt(state.grit, 2) + ' и редеет вниз ' + fmt(state.gritFall, 1),
                  'промоины ' + fmt(state.gully, 2),
                  'свет ' + state.light + '°',
-                 'тело светлее земли ' + fmt(state.bodyTint, 2),
+                 (state.window ? 'тело — окно в карту'
+                               : 'тело одним цветом, светлее земли ' + fmt(state.bodyTint, 2)),
                  'слои густотой туши ' + fmt(state.tierInk, 2),
                  'контраст слоёв ' + fmt(state.contrast, 2),
                  state.depthTone === 0 ? 'без глубины' : 'глубина ' + fmt(state.depthTone, 2)];
@@ -984,6 +990,7 @@ function syncLabels() {
   // работающий. Кроме контраста слоёв и глубины — эти два в манере туши работают, просто густотой.
   const pen = state.manner === 'pen';
   document.getElementById('grp-pen').style.display = pen ? '' : 'none';
+  document.getElementById('row-bodyTint').style.display = state.window ? 'none' : '';
   document.getElementById('grp-outline').style.display = pen ? 'none' : '';
   for (const id of ['row-palette', 'row-spread'])
     document.getElementById(id).style.display = pen ? 'none' : '';
