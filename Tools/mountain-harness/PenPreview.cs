@@ -31,18 +31,43 @@ namespace MountainHarness
             var sb = new StringBuilder();
             sb.Append($"<svg xmlns='http://www.w3.org/2000/svg' width='{F(W)}' height='{F(H)}' ")
               .Append($"viewBox='0 0 {F(W)} {F(H)}'>");
-            sb.Append("<rect width='100%' height='100%' fill='#cdbb92'/>");
+            sb.Append($"<rect width='100%' height='100%' fill='{Hex(Ground0)}'/>");
             // Пятна биомов — видно, как тело берёт цвет карты и как граница проходит сквозь гору.
-            sb.Append("<ellipse cx='300' cy='230' rx='260' ry='190' fill='#8d9d70'/>");
-            sb.Append("<ellipse cx='820' cy='560' rx='250' ry='200' fill='#9fb4a6'/>");
+            foreach (var patch in Patches)
+                sb.Append($"<ellipse cx='{F(patch.C.X)}' cy='{F(Flip(patch.C.Y))}' ")
+                  .Append($"rx='{F(patch.R.X)}' ry='{F(patch.R.Y)}' fill='{Hex(patch.Colour)}'/>");
 
-            Draw(sb, 20f, "гряда", Band(new Vector2(120, 560), new Vector2(520, 180), 40f));
-            Draw(sb, 20f, "массив", Disc(new Vector2(800, 300), 150f));
+            Draw(sb, 26f, "гряда", Band(new Vector2(140, 620), new Vector2(560, 200), 55f));
+            Draw(sb, 26f, "массив", Disc(new Vector2(820, 300), 165f));
 
             sb.Append("</svg>");
             System.IO.File.WriteAllText(path, sb.ToString());
             Console.WriteLine($"готово: {path}");
         }
+
+        /// <summary>Пятна биомов: и фон рисуют, и служат «снимком карты» для тела горы.</summary>
+        struct Patch { public Vector2 C, R; public int[] Colour; }
+
+        static readonly int[] Ground0 = { 205, 187, 146 };
+        static readonly Patch[] Patches =
+        {
+            new Patch { C = new Vector2(300, 590), R = new Vector2(260, 190), Colour = new[] { 141, 157, 112 } },
+            new Patch { C = new Vector2(820, 260), R = new Vector2(250, 200), Colour = new[] { 159, 180, 166 } },
+        };
+
+        /// <summary>Цвет земли под точкой — то же, что в приложении делает BuildGroundProbe.</summary>
+        static int[] Ground(Vector2 p)
+        {
+            for (int i = Patches.Length - 1; i >= 0; i--)
+            {
+                float dx = (p.X - Patches[i].C.X) / Patches[i].R.X;
+                float dy = (p.Y - Patches[i].C.Y) / Patches[i].R.Y;
+                if (dx * dx + dy * dy <= 1f) return Patches[i].Colour;
+            }
+            return Ground0;
+        }
+
+        static string Hex(int[] c) => $"#{c[0]:x2}{c[1]:x2}{c[2]:x2}";
 
         static void Draw(StringBuilder sb, float radius, string title,
                          List<IReadOnlyList<Vector2>> polys)
@@ -67,15 +92,22 @@ namespace MountainHarness
             Console.WriteLine($"  {title}: гор {shapes.Count}");
         }
 
-        /// <summary>Тело — та же раскладка, что уходит в меш. Цвет тела здесь один: снимка карты у
-        /// стенда нет, а вопрос картинки — линия, а не заливка.</summary>
+        /// <summary>
+        /// Тело — та же раскладка, что уходит в меш, и КРАСИТСЯ ЦВЕТОМ ЗЕМЛИ, как в приложении.
+        ///
+        /// Первая редакция этой картинки красила тело одним кремовым цветом — снимка карты у стенда
+        /// не было. Из-за этого юбка горы выпирала бледным пятном, которого в приложении нет вовсе,
+        /// и картинка честно не походила на превью. Проверять вид по картинке, нарисованной не теми
+        /// красками, — то же самое, что проверять её не теми числами.
+        /// </summary>
         static void Body(StringBuilder sb, MountainShape shape, LiftSamples profile,
                          List<Vector2> verts, List<int> tris)
         {
             MountainTriangulation.Fill(shape, profile, verts, tris);
             for (int i = 0; i + 2 < tris.Count; i += 3)
             {
-                sb.Append("<polygon fill='#c6bb8e' points='");
+                var centre = (verts[tris[i]] + verts[tris[i + 1]] + verts[tris[i + 2]]) / 3f;
+                sb.Append($"<polygon fill='{Hex(Ground(centre))}' points='");
                 for (int k = 0; k < 3; k++)
                 {
                     var p = verts[tris[i + k]];
