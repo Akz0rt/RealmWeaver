@@ -1764,9 +1764,9 @@ MonoBehaviour:
   linkLengthFactor: 1.6
   lengthJitter: 0.06
   anisotropy: 1.6
-  waist: 0.55
+  waist: 0.95
   heightFactor: 2.2
-  stretch: 1.4
+  stretch: 1.9
   tiers: 3
   edgeHeight: 0.55
   layerY: 0.6
