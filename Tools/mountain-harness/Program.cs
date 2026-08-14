@@ -29,6 +29,8 @@ namespace MountainHarness
             if (mode == "app") { Preview.WriteAppLike("app.svg"); return 0; }
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
+            if (mode == "cost") { Cost.Report(); return 0; }
+            if (mode == "pen") { PenPreview.Write("pen.svg"); return 0; }
 
             MaskMeasuresToSegment();
             EraserSubtracts();
@@ -87,6 +89,7 @@ namespace MountainHarness
             TierRampSpreadsTiers();
             GritDensityFollowsAreaNotTiers();
             InkRulesHoldAtTheEnds();
+            SlopeIsOutlinedOnlyWhenTheBoundaryJumps();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
@@ -1661,6 +1664,44 @@ namespace MountainHarness
                 if (Vector2.Distance(first[i].Silhouette[0], second[i].Silhouette[0]) > 1e-4f ||
                     !Near(first[i].Depth, second[i].Depth, 1e-4f)) same = false;
             Check("Конвейер: два прогона дают тот же рисунок", same, "горы разъехались между прогонами");
+        }
+
+        /// <summary>
+        /// Склон обводится ровно там, где надо, и только там.
+        ///
+        /// У КОНУСА подъём линеен, максимум выноса всегда на конце, и у соседних лучей граница
+        /// скачет между подошвой и вершиной. На месте скачка проходит склон, точек границы там нет
+        /// вовсе, и без отдельного правила он остался бы голым — так и вышло на первом снимке
+        /// переноса: вершины обведены, бока чистые.
+        ///
+        /// Скачков ровно два — по одному на каждый бок, и у купола столько же: переход между
+        /// «максимум на конце» и «максимум внутри» разрывен у обоих. Больше двух означало бы, что
+        /// линия рассыпалась штрихами внутри горы.
+        ///
+        /// Мутанты: убрать порог (сработает почти на каждом луче); поднять порог до единицы (склоны
+        /// снова останутся голыми).
+        /// </summary>
+        static void SlopeIsOutlinedOnlyWhenTheBoundaryJumps()
+        {
+            var cone = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, 0.66f);
+            var dome = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, 0f);
+            if (cone == null || dome == null) { Fail("Склон", "гора не построена"); return; }
+
+            int coneJumps = 0, domeJumps = 0;
+            for (int i = 0; i < cone.SilhouetteR.Length; i++)
+                if (MountainTriangulation.Jump(cone, i) >= MountainTriangulation.JumpThreshold) coneJumps++;
+            for (int i = 0; i < dome.SilhouetteR.Length; i++)
+                if (MountainTriangulation.Jump(dome, i) >= MountainTriangulation.JumpThreshold) domeJumps++;
+
+            // РОВНО два, и это измеренное число, а не запас: скачок приходится на каждый из двух
+            // боков горы — там, где граница уходит с подошвы на вершину. Ноль означал бы голые
+            // склоны (так и вышло на первом снимке переноса), а много — что линия рассыпалась
+            // штрихами внутри горы. Одинаково у конуса и у купола: переход между «максимум на
+            // конце» и «максимум внутри» разрывен у обоих.
+            Check("Склон: у конуса ровно два скачка — по одному на бок", coneJumps == 2,
+                  $"скачков {coneJumps} на {cone.SilhouetteR.Length} лучей");
+            Check("Склон: у купола столько же", domeJumps == 2,
+                  $"скачков {domeJumps} на {dome.SilhouetteR.Length} лучей");
         }
 
         /// <summary>Во сколько раз самое длинное звено длиннее самого короткого.</summary>

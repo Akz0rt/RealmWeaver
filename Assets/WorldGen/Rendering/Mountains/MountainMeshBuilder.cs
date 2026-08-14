@@ -22,6 +22,9 @@ namespace WorldGen.Rendering.Mountains
         /// <summary>Отсчётов вдоль промоины.</summary>
         const int GullySteps = 4;
 
+        /// <summary>Отсчётов вдоль склона на скачке границы.</summary>
+        const int SlopeSteps = 6;
+
         /// <summary>
         /// Горы → массивы меша. Чистый счёт: ни одного обращения к живому движку, поэтому зовётся
         /// из фонового потока. Порядок подачи — тот, в котором пришёл список (сортировку делает
@@ -157,6 +160,65 @@ namespace WorldGen.Rendering.Mountains
                 data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
                 data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
             }
+
+            AddSlopes(data, shape, style, profile, density, ink);
+        }
+
+        /// <summary>
+        /// Обводка СКЛОНА — там, где граница скачет между соседними лучами.
+        ///
+        /// У конуса максимум выноса всегда на конце (подъём линеен), поэтому у одного луча граница
+        /// сидит на подошве, у соседнего — уже на вершине, а между ними проходит склон, на котором
+        /// точек границы нет вовсе. Без этого вершины обведены, а бока голые — так и вышло на
+        /// первом снимке переноса. Ведём линию по меридиану того луча, на котором скачок, с той же
+        /// толщиной по (1 − r)^сход: у подошвы ноль, у вершины полная.
+        ///
+        /// У купола скачков нет — цикл не делает ничего, и правило само выключается.
+        /// </summary>
+        static void AddSlopes(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
+                              LiftSamples profile, float density, Color32 ink)
+        {
+            int n = shape.SilhouetteR.Length;
+            for (int i = 0; i < n; i++)
+            {
+                if (MountainTriangulation.Jump(shape, i) < MountainTriangulation.JumpThreshold) continue;
+
+                int j = (i + 1) % n;
+                float ra = shape.SilhouetteR[i], rb = shape.SilhouetteR[j];
+                float hi = Math.Max(ra, rb), lo = Math.Min(ra, rb);
+                int edge = ra > rb ? i : j;          // ведём по лучу, с которого граница уходит вверх
+
+                Vec2 prev = MountainTriangulation.Meridian(shape, edge, hi, profile);
+                float prevHalf = 0.5f * style.PenWidth * MountainInk.Taper(hi, style.PenTaper) * density;
+                for (int step = 1; step <= SlopeSteps; step++)
+                {
+                    float r = hi + (lo - hi) * step / SlopeSteps;
+                    Vec2 next = MountainTriangulation.Meridian(shape, edge, r, profile);
+                    float half = 0.5f * style.PenWidth * MountainInk.Taper(r, style.PenTaper) * density;
+                    AddTaperedSegment(data, prev, next, prevHalf, half, style.LayerY, ink);
+                    prev = next;
+                    prevHalf = half;
+                }
+            }
+        }
+
+        /// <summary>Отрезок ленты с разной толщиной на концах — линия обязана худеть к подошве.</summary>
+        static void AddTaperedSegment(MountainMeshData data, Vec2 a, Vec2 b, float halfA, float halfB,
+                                      float y, Color32 color)
+        {
+            Vec2 d = b - a;
+            if (d.LengthSquared() < 1e-10f) return;
+            d = Vec2.Normalize(d);
+            Vec2 nrm = new Vec2(-d.Y, d.X);
+
+            int start = data.Verts.Count;
+            data.Verts.Add(new Vector3(a.X - nrm.X * halfA, y, a.Y - nrm.Y * halfA));
+            data.Verts.Add(new Vector3(a.X + nrm.X * halfA, y, a.Y + nrm.Y * halfA));
+            data.Verts.Add(new Vector3(b.X - nrm.X * halfB, y, b.Y - nrm.Y * halfB));
+            data.Verts.Add(new Vector3(b.X + nrm.X * halfB, y, b.Y + nrm.Y * halfB));
+            for (int k = 0; k < 4; k++) data.Colors.Add(color);
+            data.Tris.Add(start); data.Tris.Add(start + 2); data.Tris.Add(start + 1);
+            data.Tris.Add(start + 1); data.Tris.Add(start + 2); data.Tris.Add(start + 3);
         }
 
         static Vec2 Normal(Vec2 a, Vec2 b)

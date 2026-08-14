@@ -491,18 +491,59 @@ namespace WorldGen.Rendering
                             l => l.maskSmoothing, (l, v) => l.maskSmoothing = v,
                             v => v <= 0.001f ? "нет" : $"{v:0.0} R");
 
-            // Раскраска по ярусам (решение ДМ 2026-08-14): внешнему слою один цвет, среднему другой,
-            // внутреннему третий. «Ярусов» меняет и ГЕОМЕТРИЮ — по ярусам раздаётся высота, — поэтому
-            // требует полного пересчёта, а контраст только перекрашивает готовое.
-            AddMountainKnob(t, "Ярусов", 1f, 4f, 3f,
+            // Острота вершины (§10): купол → синусоида → конус → шпиль. Заменила прежний показатель
+            // склона. Ползунка «ярусов горы» рядом НЕТ и не будет: сколько их нужно, решает кривизна
+            // самой кривой подъёма, и выбирать тут нечего — у конуса меридиан прямой и хватает двух,
+            // у купола нужен десяток. Это число не вкуса, а точности.
+            AddMountainKnob(t, "Острота", 0f, 1f, 0.66f,
+                            l => l.sharp, (l, v) => l.sharp = v,
+                            v => v < 0.17f ? "купол" : v < 0.5f ? "синусоида"
+                               : v < 0.83f ? "конус" : "шпиль");
+
+            AddMountainKnob(t, "Зубчатость", 0f, 0.3f, 0.03f,
+                            l => l.jag, (l, v) => l.jag = v,
+                            v => v <= 0.001f ? "ровно" : $"{v:0.00}");
+
+            // Слои массы (§11): край, середина, ядро. В манере туши они задают не цвет, а ГУСТОТУ —
+            // внутренние слои жирнее линией и плотнее крошкой. «Слоёв» меняет и геометрию (по слоям
+            // раздаётся высота), поэтому требует пересчёта; контраст только перекрашивает готовое.
+            AddMountainKnob(t, "Слоёв массы", 1f, 4f, 3f,
                             l => l.tiers, (l, v) => l.tiers = Mathf.RoundToInt(v),
                             v => $"{Mathf.RoundToInt(v)}");
 
-            AddMountainKnob(t, "Контраст ярусов", -1f, 1f, 1f,
+            AddMountainKnob(t, "Контраст слоёв", -1f, 1f, 1f,
                             l => l.tierContrast, (l, v) => l.tierContrast = v,
                             v => Mathf.Abs(v) <= 0.02f ? "ровно"
-                               : v > 0f ? $"ядро темнее {Mathf.RoundToInt(v * 100f)}%"
-                                        : $"ядро светлее {Mathf.RoundToInt(-v * 100f)}%",
+                               : v > 0f ? $"ядро гуще {Mathf.RoundToInt(v * 100f)}%"
+                                        : $"ядро реже {Mathf.RoundToInt(-v * 100f)}%",
+                            repaintOnly: true);
+
+            // Тушь (§13). Всё ниже меняет только краску, поэтому идёт перекраской, а не пересчётом:
+            // геометрия от этих чисел не зависит ни на йоту, а полный счёт большого массива стоит
+            // полторы секунды — ползунок дёргался бы вместо того, чтобы ехать.
+            AddMountainKnob(t, "Жирность линии", 0f, 0.5f, 0.15f,
+                            l => l.penWidth, (l, v) => l.penWidth = v,
+                            v => v <= 0.001f ? "без линии" : $"{v:0.00} R",
+                            repaintOnly: true);
+
+            AddMountainKnob(t, "Чернота", 0f, 1f, 0.61f,
+                            l => l.penAlpha, (l, v) => l.penAlpha = v,
+                            v => $"{Mathf.RoundToInt(v * 100f)}%",
+                            repaintOnly: true);
+
+            AddMountainKnob(t, "Крошка", 0f, 2f, 0.88f,
+                            l => l.grit, (l, v) => l.grit = v,
+                            v => v <= 0.001f ? "нет" : $"{v:0.00}",
+                            repaintOnly: true);
+
+            AddMountainKnob(t, "Промоины", 0f, 1f, 0.32f,
+                            l => l.gully, (l, v) => l.gully = v,
+                            v => v <= 0.001f ? "нет" : $"{v:0.00}",
+                            repaintOnly: true);
+
+            AddMountainKnob(t, "Свет", 0f, 360f, 160f,
+                            l => l.lightAngle, (l, v) => l.lightAngle = v,
+                            v => $"{Mathf.RoundToInt(v)}°",
                             repaintOnly: true);
 
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>

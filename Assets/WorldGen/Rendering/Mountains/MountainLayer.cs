@@ -113,6 +113,7 @@ namespace WorldGen.Rendering.Mountains
         Task<Batch> pending;
         int generation;
         int pendingGeneration;
+        bool queued;                 // правка пришла, пока считали: пересчитать сразу после
         float rebuildAt = -1f;
 
         // Кэш посчитанных массивов: ключ — набор клеток куска. Пересчитывается только изменившееся.
@@ -208,6 +209,19 @@ namespace WorldGen.Rendering.Mountains
             EnsureContainer();
             generation++;
 
+            // Один пересчёт за раз. Без этого каждая правка запускала свою фоновую задачу, старые
+            // продолжали считать уже никому не нужный ответ, и на большом массиве (замер: полторы
+            // секунды на четыреста шестьдесят гор) их набиралось столько, что они занимали все ядра
+            // — приложение начинало заикаться именно тогда, когда ДМ ведёт кисть. Теперь опоздавшая
+            // правка просто помечает «надо ещё раз», и следующий счёт стартует по завершении
+            // текущего, уже по свежему снимку.
+            if (Application.isPlaying && pending != null) { queued = true; return; }
+            queued = false;
+            StartCompute();
+        }
+
+        void StartCompute()
+        {
             var snapshot = SnapshotMassifs();
             var settings = BuildSettings();
             var style = Style();
@@ -260,9 +274,10 @@ namespace WorldGen.Rendering.Mountains
                 Debug.LogError($"[Горы] Счёт слоя сорвался: {finished.Exception?.GetBaseException()}");
                 return;
             }
-            if (finished.IsCanceled || pendingGeneration != generation) return;
+            if (!finished.IsCanceled && pendingGeneration == generation) Apply(finished.Result);
 
-            Apply(finished.Result);
+            // Правки, пришедшие пока считали, ждали своей очереди — теперь их черёд.
+            if (queued) { queued = false; StartCompute(); }
         }
 
         /// <summary>
