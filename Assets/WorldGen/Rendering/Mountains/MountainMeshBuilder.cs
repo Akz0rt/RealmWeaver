@@ -161,6 +161,7 @@ namespace WorldGen.Rendering.Mountains
             {
                 float half = 0.5f * style.PenWidth * MountainInk.Taper(rs[i], style.PenTaper) * density;
                 if (half < 1e-3f) continue;
+                if (!MountainInk.Grounded(style.OnLand, shape, i, rs[i])) continue;
 
                 MountainTriangulation.Dash(shape, i, profile, out Vec2 dir, out float reach);
                 if (reach <= 0f) continue;
@@ -208,14 +209,22 @@ namespace WorldGen.Rendering.Mountains
 
                 Vec2 prev = MountainTriangulation.Meridian(shape, edge, hi, profile);
                 float prevHalf = 0.5f * style.PenWidth * MountainInk.Taper(hi, style.PenTaper) * density;
+                bool prevDry = MountainInk.Grounded(style.OnLand, shape, edge, hi);
                 for (int step = 1; step <= SlopeSteps; step++)
                 {
                     float r = hi + (lo - hi) * step / SlopeSteps;
                     Vec2 next = MountainTriangulation.Meridian(shape, edge, r, profile);
                     float half = 0.5f * style.PenWidth * MountainInk.Taper(r, style.PenTaper) * density;
-                    AddTaperedSegment(data, prev, next, prevHalf, half, y, ink);
+                    bool dry = MountainInk.Grounded(style.OnLand, shape, edge, r);
+
+                    // Кусок кладём, только если СУХИ ОБА конца, но конец двигаем всегда: иначе
+                    // следующий протянулся бы через всю воду одним длинным отрезком. Обход идёт от
+                    // подошвы к вершине, поэтому обрывать цикл нельзя — за юбкой, заехавшей в озеро,
+                    // дальше идёт совершенно сухой склон.
+                    if (dry && prevDry) AddTaperedSegment(data, prev, next, prevHalf, half, y, ink);
                     prev = next;
                     prevHalf = half;
+                    prevDry = dry;
                 }
             }
         }
@@ -286,6 +295,7 @@ namespace WorldGen.Rendering.Mountains
 
                 // Ярус тянем со смещением вверх: степень и есть «крошка редеет вниз».
                 float r = MountainInk.MarkR(Rand(shape.Seed, 3u, id), style.GritFall);
+                if (!MountainInk.Grounded(style.OnLand, shape, i, r)) continue;
                 Vec2 p = MountainTriangulation.Meridian(shape, i, r, profile);
 
                 // Разброс вдоль кольца, чтобы метки не выстраивались по лучам.
@@ -332,6 +342,10 @@ namespace WorldGen.Rendering.Mountains
                 MountainInk.Gully(Rand(shape.Seed, 71u, i), Rand(shape.Seed, 89u, i),
                                   out float top, out float length);
                 float bottom = Math.Min(0.95f, top + length);
+
+                // Промоина идёт наружу по склону, поэтому спрашиваем про её ДАЛЬНИЙ конец: если он
+                // уже в воде, вся промоина лежит на юбке, которой на земле нет.
+                if (!MountainInk.Grounded(style.OnLand, shape, i, bottom)) continue;
 
                 Vec2 prev = MountainTriangulation.Meridian(shape, i, top, profile);
                 for (int step = 1; step <= GullySteps; step++)

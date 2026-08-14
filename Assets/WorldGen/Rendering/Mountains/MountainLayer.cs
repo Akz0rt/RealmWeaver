@@ -375,7 +375,9 @@ namespace WorldGen.Rendering.Mountains
             var renderer = Renderer();
             var style = new MountainPaintStyle
             {
-                Ink = useMapPalette ? MountainPaintStyle.DefaultInk : (Color32)inkColor,
+                Ink = MountainPaintStyle.ForVertex(
+                          useMapPalette ? MountainPaintStyle.DefaultInk : (Color32)inkColor),
+                OnLand = onlyOnLand ? renderer?.BuildLandProbe() : null,
             };
             style.PenAlpha = penAlpha;
             style.PenWidth = penWidth * Mathf.Max(0.01f, mountainRadius);

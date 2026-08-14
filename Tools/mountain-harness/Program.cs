@@ -90,6 +90,7 @@ namespace MountainHarness
             GritDensityFollowsAreaNotTiers();
             InkRulesHoldAtTheEnds();
             SlopeIsOutlinedOnlyWhenTheBoundaryJumps();
+            InkAsksAboutTheFootNotTheDrawnPlace();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
             return failures == 0 ? 0 : 1;
@@ -1702,6 +1703,56 @@ namespace MountainHarness
                   $"скачков {coneJumps} на {cone.SilhouetteR.Length} лучей");
             Check("Склон: у купола столько же", domeJumps == 2,
                   $"скачков {domeJumps} на {dome.SilhouetteR.Length} лучей");
+        }
+
+        /// <summary>
+        /// Тушь спрашивает про ПОДОШВУ, а не про нарисованное место.
+        ///
+        /// Мутант, ради которого проверка написана: спросить про Meridian вместо Foot. Он выглядит
+        /// естественнее — «не рисуй там, где вода» — и молча срезает макушки всем прибрежным горам:
+        /// вершина НАРИСОВАНА над водой, которая лежит позади горы, хотя стоит гора на суше.
+        ///
+        /// Фикстура выстроена так, чтобы правильное и неправильное правило РАЗОШЛИСЬ: берег проходит
+        /// выше горы по экрану, вершина поднята за него подъёмом, а юбка до него не достаёт. Тогда
+        /// по подошве вершина суха, а по нарисованному месту — в воде.
+        /// </summary>
+        static void InkAsksAboutTheFootNotTheDrawnPlace()
+        {
+            var cone = Mound(Horizontal(32f, 20f), 2.2f, 1.9f, 0.66f);
+            if (cone == null) { Fail("Тушь и вода", "гора не построена"); return; }
+
+            var profile = new LiftSamples(cone.Sharp, MoundBuilder.ProfileSamples);
+
+            // Луч, у которого подошва идёт вверх по экрану сильнее всех, — на нём разница видна.
+            int up = 0;
+            for (int i = 1; i < cone.Base.Length; i++)
+                if (cone.Base[i].Y > cone.Base[up].Y) up = i;
+
+            // Берег режет подошву пополам: середина юбки уже в воде, а середина горы ещё на суше.
+            float footTop = cone.Base[up].Y;                                   // край подошвы
+            float apexDrawn = MountainTriangulation.Meridian(cone, up, MountainProfile.ApexRadius, profile).Y;
+            float shore = cone.Centre.Y + 0.5f * (footTop - cone.Centre.Y);
+            Func<Vector2, bool> land = p => p.Y <= shore;
+
+            Check("Тушь и вода: фикстура вообще разделяет два правила",
+                  footTop > shore && apexDrawn > shore && cone.Centre.Y <= shore,
+                  $"подошва {footTop:0.0}, берег {shore:0.0}, нарисованная вершина {apexDrawn:0.0}");
+
+            // Вершина: подошва суха → метку кладём, хотя нарисована она над водой.
+            Check("Тушь и вода: вершина прибрежной горы не срезается",
+                  MountainInk.Grounded(land, cone, up, MountainProfile.ApexRadius),
+                  "макушка отброшена — правило спрашивает про нарисованное место");
+
+            // Юбка на том же луче за берегом: подошва в воде → метки нет.
+            float wet = 1f;
+            bool wetFootIsWet = MountainTriangulation.Foot(cone, up, wet).Y > shore;
+            Check("Тушь и вода: юбка, заехавшая за берег, отброшена",
+                  wetFootIsWet && !MountainInk.Grounded(land, cone, up, wet),
+                  $"подошва луча на r=1: {MountainTriangulation.Foot(cone, up, wet).Y:0.0}, берег {shore:0.0}");
+
+            Check("Тушь и вода: без снимка суши не отбрасывается ничего",
+                  MountainInk.Grounded(null, cone, up, wet),
+                  "без карты стенд обязан рисовать всё");
         }
 
         /// <summary>Во сколько раз самое длинное звено длиннее самого короткого.</summary>
