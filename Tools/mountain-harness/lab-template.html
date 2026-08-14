@@ -102,6 +102,14 @@
   </div>
 
   <div class="group">
+    <h2>Манера</h2>
+    <div class="row"><div class="seg" id="manner"></div></div>
+    <div class="hint">«Заливка» — объём держит цвет. «Тушь» — объём держит линия: тело заливается
+      цветом карты под горой, и наружу выходит только силуэт. Стопка ярусов при туши никуда не
+      девается, но становится невидимым каркасом — она решает, где пройти линии и куда лечь крошке.</div>
+  </div>
+
+  <div class="group">
     <h2>Форма горы</h2>
     <div class="row">
       <label><span>Острота</span><span class="val" id="v-sharp"></span></label>
@@ -115,7 +123,7 @@
     </div>
     <div class="row">
       <label><span>Ярусов</span><span class="val" id="v-levels"></span></label>
-      <input type="range" id="levels" min="2" max="12" step="1">
+      <input type="range" id="levels" min="2" max="28" step="1">
     </div>
     <div class="row">
       <label class="check"><input type="checkbox" id="apex"><span>Вершина в точку</span></label>
@@ -158,12 +166,12 @@
     </div>
   </div>
 
-  <div class="group">
+  <div class="group" id="grp-colour">
     <h2>Цвет</h2>
-    <div class="row">
+    <div class="row" id="row-palette">
       <div class="seg" id="palette"></div>
     </div>
-    <div class="row">
+    <div class="row" id="row-spread">
       <label><span>Полоса яруса</span><span class="val" id="v-spread"></span></label>
       <input type="range" id="spread" min="0" max="0.7" step="0.01">
       <div class="hint">Слой массы задаёт цвет, ярус горы гуляет внутри этой полосы. Шире зазора между слоями — градация по слоям пропадёт.</div>
@@ -186,12 +194,77 @@
     </div>
   </div>
 
-  <div class="group">
+  <div class="group" id="grp-outline">
     <h2>Обводка</h2>
     <div class="row"><div class="seg" id="ink"></div></div>
     <div class="row">
       <label><span>Заметность</span><span class="val" id="v-inkA"></span></label>
       <input type="range" id="inkA" min="0" max="1" step="0.02">
+    </div>
+  </div>
+
+  <div class="group" id="grp-pen">
+    <h2>Тушь</h2>
+    <div class="row">
+      <label><span>Жирность линии</span><span class="val" id="v-penW"></span></label>
+      <input type="range" id="penW" min="0" max="9" step="0.2">
+      <div class="hint">Толщина у самой вершины. Ниже линия утончается сама.</div>
+    </div>
+    <div class="row">
+      <label><span>Сход на нет</span><span class="val" id="v-penTaper"></span></label>
+      <input type="range" id="penTaper" min="0.3" max="4" step="0.1">
+      <div class="hint">Насколько быстро линия худеет книзу. У нижнего яруса она нулевая всегда:
+        на образце подошва не обведена вовсе, контур просто обрывается. Замкни его — и гора
+        мгновенно станет наклейкой.</div>
+    </div>
+    <div class="row">
+      <label><span>Чернота</span><span class="val" id="v-penA"></span></label>
+      <input type="range" id="penA" min="0.15" max="1" step="0.02">
+    </div>
+    <div class="row">
+      <label><span>Зубчатость гребня</span><span class="val" id="v-jag"></span></label>
+      <input type="range" id="jag" min="0" max="0.3" step="0.01">
+      <div class="hint">Выщербины на линии. Зерно берётся от места на карте, поэтому рисунок не
+        дрожит, когда крутишь соседний ползунок, и повторится в приложении тем же.</div>
+    </div>
+    <div class="row">
+      <label><span>Крошка в тени</span><span class="val" id="v-grit"></span></label>
+      <input type="range" id="grit" min="0" max="1" step="0.02">
+      <div class="hint">Зернистая штриховка на теневой стороне.</div>
+    </div>
+    <div class="row">
+      <label><span>Крошка редеет вниз</span><span class="val" id="v-gritFall"></span></label>
+      <input type="range" id="gritFall" min="0" max="3" step="0.1">
+    </div>
+    <div class="row">
+      <label><span>Промоины</span><span class="val" id="v-gully"></span></label>
+      <input type="range" id="gully" min="0" max="1" step="0.02">
+      <div class="hint">Редкие тонкие штрихи по освещённому склону. Больше — их больше и они заметнее.</div>
+    </div>
+    <div class="row">
+      <label><span>Свет</span><span class="val" id="v-light"></span></label>
+      <input type="range" id="light" min="0" max="350" step="10">
+      <div class="hint">Одно направление на всю карту: иначе соседние горы освещены по-разному и
+        картинка рассыпается.</div>
+    </div>
+    <div class="row">
+      <label><span>Тело светлее земли</span><span class="val" id="v-bodyTint"></span></label>
+      <input type="range" id="bodyTint" min="-0.25" max="0.25" step="0.01">
+      <div class="hint">0 — тело в точности цвет карты под горой, и освещённый склон остаётся
+        нетронутым куском карты. Гора вырастает из неё без шва.</div>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="window"><span>Тело — окно в карту</span></label>
+      <div class="hint">Под гору подставляется сам пол, пиксель в пиксель: шва нет никогда, даже
+        когда гора стоит на границе двух биомов. Снимешь — тело красится одним цветом, взятым в
+        середине горы, и на границе биомов вылезает бледная заплата.</div>
+    </div>
+    <div class="row">
+      <label><span>Слои густотой туши</span><span class="val" id="v-tierInk"></span></label>
+      <input type="range" id="tierInk" min="0" max="0.8" step="0.02">
+      <div class="hint">Градация по слоям массы (внешний / средний / внутренний) здесь живёт не
+        цветом, а густотой: внутренние слои жирнее линией и плотнее крошкой. Направление задаёт
+        «Контраст слоёв» из группы «Цвет», а «Глубина» там же гасит тушь у дальних гор.</div>
     </div>
   </div>
 
@@ -229,6 +302,37 @@ const ANCHORS = [
 ];
 const ANCHOR_NAMES = ['купол', 'синусоида', 'конус', 'шпиль'];
 const APEX_R = 0.05;
+
+// ── зерно ──────────────────────────────────────────────────────────────────────────────────
+// Всё случайное в туши берётся отсюда, и семя всегда считается от МЕСТА НА КАРТЕ. Иначе выщербины
+// и крошка пересеиваются на каждом движении любого ползунка — картинка дрожит, — а в приложении
+// повторить их будет нечем. То же правило, по которому зерно оси берут от её положения.
+function hash01(a, b, c) {
+  let h = Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(c | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Выщербины на гребне. Волна длиной в несколько точек, поверх неё мелкая дрожь: чистый шум по
+// каждой точке даёт не камень, а мех.
+function jagAt(s0, s1, i, amount) {
+  if (amount <= 0) return 1;
+  const g = i / 7, i0 = Math.floor(g), t = g - i0;
+  const a = hash01(s0, s1, i0), b = hash01(s0, s1, i0 + 1);
+  const f = t * t * (3 - 2 * t);
+  const wave = a + (b - a) * f - 0.5;
+  const fine = hash01(s0, s1 + 31, i) - 0.5;
+  return 1 + amount * (wave * 2.2 + fine * 0.5);
+}
+
+function seedOf(link) {
+  return [Math.round(link.m[0] * 7), Math.round(link.m[1] * 7)];
+}
+
+function lightVec(s) {
+  const a = s.light * Math.PI / 180;
+  return [Math.cos(a), Math.sin(a)];
+}
 
 function lift(sharp, r) {
   r = Math.min(1, Math.max(0, r));
@@ -328,25 +432,33 @@ function webOf(link, s) {
     ww[k] = w[lo] + (w[lo + 1] - w[lo]) * t;
   }
 
+  const [sd0, sd1] = seedOf(link);
+  const jag = s.manner === 'pen' ? s.jag : 0;
+  const jf = new Float32Array(n + 1);
+  for (let k = 0; k <= n; k++) jf[k] = jagAt(sd0, sd1 + 5, k, jag);
+
   const rings = [];
-  let depth = Infinity;
+  let depth = Infinity, mx = 0, my = 0;
   for (let j = 0; j < s.levels; j++) {
     const r = (s.levels - j) / s.levels;
     const ring = new Float32Array((n + 1) * 4);
     for (let k = 0; k <= n; k++) {
-      const h = ww[k] * wide * r;
+      const h = ww[k] * wide * r * jf[k];
       const up = tall * ww[k] * lift(s.sharp, r);
       const ox = nx[k] * h, oy = ny[k] * h * squash;
       ring[2 * k] = px[k] + ox;             ring[2 * k + 1] = py[k] + oy + up;
       const m = (n + 1) + k, src = n - k;
-      const bx = nx[src] * ww[src] * wide * r, by = ny[src] * ww[src] * wide * r * squash;
+      const bw = ww[src] * wide * r * jf[src];
+      const bx = nx[src] * bw, by = ny[src] * bw * squash;
       ring[2 * m] = px[src] - bx;
       ring[2 * m + 1] = py[src] - by + tall * ww[src] * lift(s.sharp, r);
+      if (j === 0) { mx += px[k]; my += py[k]; }
       if (j === 0) depth = Math.min(depth, ring[2 * k + 1], ring[2 * m + 1]);
     }
     rings.push(ring);
   }
-  return { rings, depth, tier: link.tier, ground: link.ground, web: true };
+  return { rings, depth, tier: link.tier, ground: link.ground, web: true,
+           cx: mx / (n + 1), cy: my / (n + 1), sd0, sd1 };
 }
 
 // ── стопка ярусов (порт Stack) ─────────────────────────────────────────────────────────────
@@ -373,18 +485,27 @@ function stackOf(out, link, s) {
 
   const height = s.height * link.mw * link.hj * link.ts;
   const rings = s.apex ? s.levels + 1 : s.levels;
+
+  // Выщербина умножает ОТСТУП от центра, а не сдвигает точку: значит она масштабируется вместе с
+  // ярусом и вложенность ярусов сохраняется. Иначе верхний ярус вылезал бы из нижнего сбоку.
+  const [sd0, sd1] = seedOf(link);
+  const jag = s.manner === 'pen' ? s.jag : 0;
+  const jf = new Float32Array(n);
+  for (let i = 0; i < n; i++) jf[i] = jagAt(sd0, sd1, i, jag);
+
   const list = [];
   for (let j = 0; j < rings; j++) {
     const r = j < s.levels ? (s.levels - j) / s.levels : APEX_R;
     const up = height * lift(s.sharp, r);
     const ring = new Float32Array(n * 2);
     for (let i = 0; i < n; i++) {
-      ring[2 * i] = cx + (base[2 * i] - cx) * r;
-      ring[2 * i + 1] = cy + (base[2 * i + 1] - cy) * r + up;
+      const q = r * jf[i];
+      ring[2 * i] = cx + (base[2 * i] - cx) * q;
+      ring[2 * i + 1] = cy + (base[2 * i + 1] - cy) * q + up;
     }
     list.push(ring);
   }
-  return { rings: list, depth, tier: link.tier, ground: link.ground };
+  return { rings: list, depth, tier: link.tier, ground: link.ground, cx, cy, sd0, sd1 };
 }
 
 // ── краски ─────────────────────────────────────────────────────────────────────────────────
@@ -426,6 +547,178 @@ function colourOf(shape, levelT, s) {
   return 'rgb(' + Math.round(c[0] * k) + ',' + Math.round(c[1] * k) + ',' + Math.round(c[2] * k) + ')';
 }
 
+// ── тушь ───────────────────────────────────────────────────────────────────────────────────
+// Объём держит линия, а не цвет. Тело заливается цветом карты под горой, поэтому освещённый склон
+// остаётся нетронутым куском карты — гора вырастает из неё без шва. Наружу выходит только силуэт:
+// линии внутренних ярусов тонут в этой заливке.
+//
+// Градация по слоям массы здесь живёт ГУСТОТОЙ, а не цветом: на образце цвета нет вовсе, но
+// требование «внешний / средний / внутренний должны различаться» никуда не делось — оно просто
+// переехало на другой язык. Направление задаёт тот же «контраст слоёв».
+const PEN = [26, 22, 18];
+
+function inkDens(shape, s) {
+  const band = tierMix(shape.tier, s.tiers, s.contrast);
+  return Math.max(0.15, 1 + s.tierInk * (band - 0.5) * 2);
+}
+
+function inkStyle(shape, s, mul) {
+  const a = Math.min(1, Math.max(0, s.penA * haze(shape.depth, s) * mul));
+  return 'rgba(' + PEN[0] + ',' + PEN[1] + ',' + PEN[2] + ',' + a.toFixed(3) + ')';
+}
+
+function bodyColour(shape, s) {
+  const g = shape.ground, k = 1 + s.bodyTint;
+  return 'rgb(' + Math.round(Math.min(255, g[0] * k)) + ',' + Math.round(Math.min(255, g[1] * k)) +
+         ',' + Math.round(Math.min(255, g[2] * k)) + ')';
+}
+
+// У перепонки обводятся только две длинные стороны, а торцы — нет: там она стыкуется со следующим
+// звеном, и замкнутая линия прочертила бы поперёк хребта ребро на каждом стыке.
+function sidesPath(path, r) {
+  const half = r.length / 4;
+  for (let side = 0; side < 2; side++) {
+    const from = side * half;
+    path.moveTo(r[2 * from], DATA.canvasH - r[2 * from + 1]);
+    for (let i = 1; i < half; i++) {
+      const idx = from + i;
+      path.lineTo(r[2 * idx], DATA.canvasH - r[2 * idx + 1]);
+    }
+  }
+}
+
+function drawPen(shape, s) {
+  const rings = shape.rings, n = rings.length;
+  const dens = inkDens(shape, s);
+  const last = Math.max(1, n - 1);
+
+  // 1. Линия по каждому ярусу: вверху жирная, книзу сходит на нет. У нижнего яруса её нет вовсе —
+  //    поэтому подошва не обведена и контур обрывается, как на образце.
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = inkStyle(shape, s, 1);
+  for (let j = 1; j < n; j++) {
+    const w = s.penW * Math.pow(j / last, s.penTaper) * dens;
+    if (w < 0.12) continue;
+    const p = new Path2D();
+    if (shape.web) sidesPath(p, rings[j]); else ring(p, rings[j]);
+    ctx.lineWidth = w * 2;   // заливка съедает внутреннюю половину, наружу выходит ровно w
+    ctx.stroke(p);
+  }
+
+  // 2. Тело поверх линий — одним путём и одной заливкой.
+  const body = new Path2D();
+  ring(body, rings[0]);
+  for (let j = 1; j < n; j++) {
+    // Полоса между ярусами — ОДНИМ замкнутым контуром: вперёд по нижнему кольцу, назад по
+    // верхнему. Четырёхугольниками по отдельности это два десятка подпутей на полосу и под
+    // четыре сотни на гору — растеризатор на них и уходил.
+    const lo = rings[j - 1], hi = rings[j], count = lo.length / 2;
+    body.moveTo(lo[0], DATA.canvasH - lo[1]);
+    for (let k = 1; k < count; k++) body.lineTo(lo[2 * k], DATA.canvasH - lo[2 * k + 1]);
+    for (let k = count - 1; k >= 0; k--) body.lineTo(hi[2 * k], DATA.canvasH - hi[2 * k + 1]);
+    body.closePath();
+    ring(body, hi);
+  }
+  // Тело — окно в карту: под гору подставляется сам пол, пиксель в пиксель. Тогда шва нет вообще
+  // никогда, даже когда гора стоит на границе двух биомов. Одним цветом, взятым в середине горы,
+  // такая гора красится бледной заплатой поперёк границы — это и было видно на первых снимках.
+  //
+  // В приложении окна нет, но есть равносильное: цвет земли спрашивается в КАЖДОЙ вершине меша
+  // (шаг 4 плана, BuildGroundProbe), а не один раз на гору. Здесь окно показывает, как это будет
+  // выглядеть; галочка снята — видно, как выглядит дешёвый вариант с одним цветом.
+  if (s.window && s.floor) {
+    ctx.save();
+    ctx.clip(body);
+    ctx.drawImage(floorCv, 0, 0);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = s.floor ? bodyColour(shape, s) : '#efe7d5';
+    ctx.fill(body);
+  }
+
+  // Подрезать по телу не нужно: и крошка, и промоины рождаются МЕЖДУ соседними ярусами, то есть
+  // внутри тела по построению. Подрезка тут стоила бы дороже всей остальной отрисовки вместе.
+  drawGrit(shape, s, dens);
+  drawGully(shape, s);
+}
+
+// Крошка: зернистая штриховка теневой стороны, густо у гребня и редеет вниз. Сторона считается по
+// НИЖНЕМУ ярусу — он единственный не поднят (подъём при r=1 нулевой у всех кривых остроты), и его
+// отступ от центра — честная нормаль в плоскости земли, не задранная вверх высотой яруса.
+function drawGrit(shape, s, dens) {
+  const rings = shape.rings, n = rings.length;
+  if (s.grit <= 0.001 || n < 2) return;
+  const r0 = rings[0], count = r0.length / 2;
+
+  // Меток кладём по ПЛОЩАДИ горы на экране, а не по числу ярусов. Иначе плотность крошки тайно
+  // цепляется за ползунок «ярусов»: подняв его ради гладкого силуэта, ты бы разом затемнил всю
+  // картинку и не понял, отчего. Заодно это разом обрубает и цену: работа не растёт с ярусами.
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (let k = 0; k < count; k++) {
+    const x = r0[2 * k], y = r0[2 * k + 1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const area = Math.max(1, (x1 - x0) * (y1 - y0));
+  const total = Math.min(2200, Math.round(s.grit * dens * area / 9));
+  if (total < 1) return;
+
+  const [lx, ly] = lightVec(s);
+  const path = new Path2D();
+  const sd0 = shape.sd0, sd1 = shape.sd1;
+  for (let id = 1; id <= total; id++) {
+    // Ярус тянем со смещением вверх: степень и есть «крошка редеет вниз».
+    const jr = Math.pow(hash01(sd0, sd1 + 3, id), 1 / (s.gritFall + 1));
+    const j = Math.min(n - 1, 1 + Math.floor(jr * (n - 1)));
+    const k = Math.min(count - 1, Math.floor(hash01(sd0, sd1 + 7, id) * count));
+    const ox = r0[2 * k] - shape.cx, oy = r0[2 * k + 1] - shape.cy;
+    const len = Math.hypot(ox, oy) || 1;
+    const shade = -(ox * lx + oy * ly) / len;
+    if (shade <= 0.05) continue;
+    if (hash01(sd0, sd1 + 11, id) > Math.min(1, shade * 1.6)) continue;
+
+    const lo = rings[j - 1], hi = rings[j], k2 = (k + 1) % count;
+    const u = hash01(sd0, sd1 + 211, id), t = hash01(sd0, sd1 + 101, id);
+    const ax = lo[2 * k] + (lo[2 * k2] - lo[2 * k]) * u;
+    const ay = lo[2 * k + 1] + (lo[2 * k2 + 1] - lo[2 * k + 1]) * u;
+    const bx = hi[2 * k] + (hi[2 * k2] - hi[2 * k]) * u;
+    const by = hi[2 * k + 1] + (hi[2 * k2 + 1] - hi[2 * k + 1]) * u;
+    const x = ax + (bx - ax) * t, y = ay + (by - ay) * t;
+    const sz = 0.9 + hash01(sd0, sd1 + 307, id) * 1.7;
+    path.rect(x - sz / 2, DATA.canvasH - y - sz / 2, sz, sz * 0.7);
+  }
+  ctx.fillStyle = inkStyle(shape, s, 1);
+  ctx.fill(path);
+}
+
+// Промоины: редкие тонкие штрихи вниз по освещённому склону. Идут по одному индексу через
+// несколько ярусов, поэтому сами ложатся вдоль ската.
+function drawGully(shape, s) {
+  const rings = shape.rings, n = rings.length;
+  if (s.gully <= 0.001 || shape.web || n < 3) return;
+  const count = rings[0].length / 2;
+  const [lx, ly] = lightVec(s);
+  const path = new Path2D();
+  let any = false;
+  for (let k = 0; k < count; k++) {
+    const ox = rings[0][2 * k] - shape.cx, oy = rings[0][2 * k + 1] - shape.cy;
+    const len = Math.hypot(ox, oy) || 1;
+    if ((ox * lx + oy * ly) / len <= 0.25) continue;
+    if (hash01(shape.sd0, shape.sd1 + 613, k) > s.gully * 0.3) continue;
+    const top = Math.max(2, Math.round((n - 1) * (0.5 + hash01(shape.sd0, shape.sd1 + 71, k) * 0.4)));
+    const bot = Math.max(0, top - 2 - Math.round(hash01(shape.sd0, shape.sd1 + 89, k) * 2));
+    path.moveTo(rings[top][2 * k], DATA.canvasH - rings[top][2 * k + 1]);
+    for (let j = top - 1; j >= bot; j--)
+      path.lineTo(rings[j][2 * k], DATA.canvasH - rings[j][2 * k + 1]);
+    any = true;
+  }
+  if (!any) return;
+  ctx.strokeStyle = inkStyle(shape, s, 0.6);
+  ctx.lineWidth = Math.max(0.7, s.penW * 0.16);
+  ctx.stroke(path);
+}
+
 // ── пол ────────────────────────────────────────────────────────────────────────────────────
 // Пятна биомов, чтобы было видно, как горы берут цвет земли. Рисуется и на холст, и на
 // невидимую копию — с неё спрашивается цвет под каждой горой (один раз при загрузке).
@@ -464,26 +757,31 @@ for (const f of DATA.fixtures)
 
 // ── состояние ──────────────────────────────────────────────────────────────────────────────
 const DEFAULTS = {
-  fixture: 0, sharp: 0.66, height: 2.2, levels: 6, apex: true, web: 0.7, webW: 0.72,
+  fixture: 0, manner: 'pen', sharp: 0.66, height: 2.2, levels: 18, apex: true, web: 0.7, webW: 0.72,
   waist: 0.55, stretch: 1.4, aniso: 1.6,
   palette: 'invert', spread: 0.52, contrast: 0.85, earth: 0.78, depthTone: 0.18,
   ink: 'all', inkA: 0.12, floor: true, axes: false,
+  penW: 4.5, penTaper: 1.6, penA: 0.92, jag: 0.12, grit: 0.55, gritFall: 2.6, gully: 0.45,
+  light: 160, bodyTint: 0, tierInk: 0.35, window: true,
 };
+const PLASTER = { manner: 'fill', sharp: 0.66, height: 2.2, levels: 6, apex: true, web: 0.7 };
+// При туши ярусов нужно много: они больше не видны цветом, зато их лесенка вылезает на силуэте.
 const state = Object.assign({}, DEFAULTS);
 
 const PRESETS = {
-  'Твой выбор': {},
-  'Как сейчас': { sharp: 1, height: 2.2, levels: 2, apex: true, spread: 0, ink: 'top', web: 0, palette: 'slate', contrast: 1, depthTone: 0 },
-  'Без перепонки': { web: 0 },
-  'Без глубины цветом': { depthTone: 0 },
-  'Пологие холмы': { sharp: 0.18, height: 1.3, levels: 5, spread: 0.35 },
-  'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, spread: 0.3, web: 0.6 },
-  'Растут из карты': { palette: 'ground', earth: 0.78, spread: 0.45, floor: true },
-  'Ступени рельефа': { levels: 4, sharp: 0.4, ink: 'all', inkA: 0.4, spread: 0.5 },
+  'Тушь': {},
+  'Тушь пожирнее': { penW: 6.5, penA: 1, grit: 0.75, jag: 0.16 },
+  'Только линия': { grit: 0, gully: 0, jag: 0.08 },
+  'Замкнутый контур': { penTaper: 0.3 },
+  'Заливкой (вчерашнее)': PLASTER,
+  'Как было в начале': Object.assign({}, PLASTER, { sharp: 1, levels: 2, spread: 0, ink: 'top', web: 0, palette: 'slate', contrast: 1, depthTone: 0 }),
+  'Пологие холмы': { sharp: 0.18, height: 1.3, levels: 5 },
+  'Острый хребет': { sharp: 0.88, height: 2.8, levels: 7, web: 0.6 },
 };
 
 const SEGS = {
   fixture: DATA.fixtures.map((f, i) => [i, f.name]),
+  manner: [['fill', 'Заливка'], ['pen', 'Тушь']],
   palette: [['slate', 'Сланец'], ['invert', 'Светлые макушки'], ['ground', 'От карты']],
   ink: [['none', 'Нет'], ['top', 'Макушка'], ['all', 'Каждый ярус']],
 };
@@ -527,6 +825,7 @@ function draw() {
   else { ctx.fillStyle = '#efe7d5'; ctx.fillRect(0, 0, W, H); }
 
   for (const shape of shapes) {
+    if (s.manner === 'pen') { drawPen(shape, s); continue; }
     const rings = shape.rings, n = rings.length;
 
     let p = new Path2D(); ring(p, rings[0]);
@@ -606,16 +905,38 @@ function updatePrompt() {
   const ink = { none: 'без обводки', top: 'обводка макушки', all: 'обводка каждого яруса' }[state.ink];
   const inkPart = state.ink === 'none' ? ink : ink + ' с заметностью ' + fmt(state.inkA, 2);
 
+  let tail;
+  if (state.manner === 'pen') {
+    const pen = ['жирность линии ' + fmt(state.penW, 1),
+                 'сход на нет ' + fmt(state.penTaper, 1),
+                 'чернота ' + fmt(state.penA, 2),
+                 'зубчатость ' + fmt(state.jag, 2),
+                 'крошка ' + fmt(state.grit, 2) + ' и редеет вниз ' + fmt(state.gritFall, 1),
+                 'промоины ' + fmt(state.gully, 2),
+                 'свет ' + state.light + '°',
+                 'тело светлее земли ' + fmt(state.bodyTint, 2),
+                 'слои густотой туши ' + fmt(state.tierInk, 2),
+                 'контраст слоёв ' + fmt(state.contrast, 2),
+                 state.depthTone === 0 ? 'без глубины' : 'глубина ' + fmt(state.depthTone, 2)];
+    tail = 'Манера — тушь: ' + pen.join(', ') + '.';
+  } else {
+    tail = 'Манера — заливка. Цвет: ' + colour.join(', ') + '. ' +
+           inkPart.charAt(0).toUpperCase() + inkPart.slice(1) + '.';
+  }
+
   document.getElementById('prompt').textContent =
-    'Поставь горам такой вид: ' + parts.join(', ') + '. Цвет: ' + colour.join(', ') + '. ' +
-    inkPart.charAt(0).toUpperCase() + inkPart.slice(1) + '.';
+    'Поставь горам такой вид: ' + parts.join(', ') + '. ' + tail;
 
   document.getElementById('meta').textContent =
     'гор в кадре: ' + lastCount + ' · пересчёт и отрисовка: ' + lastMs.toFixed(1) + ' мс · фикстура: ' +
     DATA.fixtures[state.fixture].name;
 }
 
-// ── связывание ─────────────────────────────────────────────────────────────────────────────
+// ── связывание ──
+const KNOBS = ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread',
+               'contrast', 'earth', 'depthTone', 'inkA', 'penW', 'penTaper', 'penA', 'jag', 'grit',
+               'gritFall', 'gully', 'light', 'bodyTint', 'tierInk'];
+// ───────────────────────────────────────────────────────────────────────────────────────
 let queued = false;
 function updateAll() {
   if (queued) return;
@@ -638,22 +959,42 @@ function syncLabels() {
   document.getElementById('v-depthTone').textContent = state.depthTone === 0 ? 'нет' : fmt(state.depthTone, 2);
   document.getElementById('v-earth').textContent = fmt(state.earth, 2);
   document.getElementById('v-inkA').textContent = fmt(state.inkA, 2);
-  document.getElementById('row-earth').style.display = state.palette === 'ground' ? '' : 'none';
+  document.getElementById('v-penW').textContent = state.penW === 0 ? 'нет линии' : fmt(state.penW, 1) + ' пикс.';
+  document.getElementById('v-penTaper').textContent = fmt(state.penTaper, 1);
+  document.getElementById('v-penA').textContent = fmt(state.penA, 2);
+  document.getElementById('v-jag').textContent = state.jag === 0 ? 'ровно' : fmt(state.jag, 2);
+  document.getElementById('v-grit').textContent = state.grit === 0 ? 'нет' : fmt(state.grit, 2);
+  document.getElementById('v-gritFall').textContent = fmt(state.gritFall, 1);
+  document.getElementById('v-gully').textContent = state.gully === 0 ? 'нет' : fmt(state.gully, 2);
+  document.getElementById('v-light').textContent = state.light + '°';
+  document.getElementById('v-bodyTint').textContent =
+    state.bodyTint === 0 ? 'в точности карта' : (state.bodyTint > 0 ? '+' : '') + fmt(state.bodyTint, 2);
+  document.getElementById('v-tierInk').textContent = state.tierInk === 0 ? 'без разницы' : fmt(state.tierInk, 2);
+
+  // При туши краску и обводку прятать: они ничего не решают, а оставленный ползунок читается как
+  // работающий. Кроме контраста слоёв и глубины — эти два в манере туши работают, просто густотой.
+  const pen = state.manner === 'pen';
+  document.getElementById('grp-pen').style.display = pen ? '' : 'none';
+  document.getElementById('grp-outline').style.display = pen ? 'none' : '';
+  for (const id of ['row-palette', 'row-spread'])
+    document.getElementById(id).style.display = pen ? 'none' : '';
+  document.getElementById('row-earth').style.display =
+    !pen && state.palette === 'ground' ? '' : 'none';
   for (const key of Object.keys(SEGS))
     for (const b of document.getElementById(key).children)
       b.setAttribute('aria-pressed', String(b.dataset.value == state[key]));
-  for (const key of ['apex', 'floor', 'axes']) document.getElementById(key).checked = state[key];
-  for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'depthTone', 'inkA'])
+  for (const key of ['apex', 'floor', 'axes', 'window']) document.getElementById(key).checked = state[key];
+  for (const key of KNOBS)
     document.getElementById(key).value = state[key];
 }
 
-for (const key of ['sharp', 'web', 'webW', 'height', 'levels', 'waist', 'stretch', 'aniso', 'spread', 'contrast', 'earth', 'depthTone', 'inkA'])
+for (const key of KNOBS)
   document.getElementById(key).addEventListener('input', e => {
     state[key] = parseFloat(e.target.value);
     updateAll();
   });
 
-for (const key of ['apex', 'floor', 'axes'])
+for (const key of ['apex', 'floor', 'axes', 'window'])
   document.getElementById(key).addEventListener('change', e => { state[key] = e.target.checked; updateAll(); });
 
 for (const [key, options] of Object.entries(SEGS)) {
@@ -686,6 +1027,17 @@ document.getElementById('copy').addEventListener('click', async e => {
   b.textContent = 'Скопировано';
   setTimeout(() => { b.textContent = was; }, 1200);
 });
+
+// Настройки можно задать прямо в адресе: …#fixture=3&penW=5&grit=0.4. Так я снимаю карточки для
+// сравнения одной и той же страницей, а тебе это даёт ссылку на конкретный вид.
+if (location.hash.length > 1)
+  for (const pair of location.hash.slice(1).split('&')) {
+    const [key, raw] = pair.split('=');
+    if (!(key in DEFAULTS) || raw === undefined) continue;
+    const v = decodeURIComponent(raw);
+    state[key] = typeof DEFAULTS[key] === 'number' ? Number(v)
+               : typeof DEFAULTS[key] === 'boolean' ? (v === '1' || v === 'true') : v;
+  }
 
 updateAll();
 </script>

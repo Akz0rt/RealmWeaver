@@ -36,18 +36,24 @@ namespace MountainHarness
             Fixture(sb, "Массив с хвостом", HeadAndTail(), false);
             sb.Append(',');
             Fixture(sb, "Горная страна", Country(), false);
+            sb.Append(',');
+            // Тот же хребет, но радиусом крупнее: в манере туши размер горы решает всё. В мелкую
+            // гору не помещается ни жирная линия, ни крошка — цепь мелких вершин читается не
+            // хребтом, а бахромой. В приложении это тот же ползунок радиуса.
+            Fixture(sb, "Крупные горы", Ridge(), false, 26f);
 
             sb.Append("]}");
             File.WriteAllText(path, sb.ToString());
             Console.WriteLine($"готово: {path} ({sb.Length / 1024} КБ)");
         }
 
-        static void Fixture(StringBuilder sb, string name, List<IReadOnlyList<Vector2>> polys, bool first)
+        static void Fixture(StringBuilder sb, string name, List<IReadOnlyList<Vector2>> polys, bool first,
+                            float radius = 10f)
         {
-            var settings = new MountainSettings { Radius = 10f };
-            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
+            var settings = new MountainSettings { Radius = radius };
+            var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(radius, radius));
             if (mask == null) return;
-            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            mask.Smooth((int)Math.Round(0.5f * radius / mask.Cell));
             MountainGeometry.BuildFromMask(mask, settings, out var links);
 
             int maxTier = 0;
