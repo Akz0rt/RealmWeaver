@@ -92,6 +92,7 @@ namespace MountainHarness
             TierRampSpreadsTiers();
             GritDensityFollowsAreaNotTiers();
             InkRulesHoldAtTheEnds();
+            SlopesAreEquallyThickOnATiltedRidge();
             GritStaysInFullShadow();
             InkAsksAboutTheFootNotTheDrawnPlace();
 
@@ -561,12 +562,14 @@ namespace MountainHarness
         {
             var line = new List<Vector2>();
             var radii = new List<float>();
+            var rise = new List<float>();
             foreach (float sharp in new[] { 0f, 0.66f, 1f })
             {
                 var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
                 var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
                 if (shape == null) { Fail("Низ", "гора не построена"); continue; }
                 MountainOutline.Build(shape, profile, line, radii);
+                MountainOutline.Heights(line, rise);
                 if (line.Count < 4) { Fail("Низ", "ломаная пустая"); continue; }
 
                 int last = radii.Count - 1;
@@ -578,16 +581,108 @@ namespace MountainHarness
                 bool inside = false;
                 for (int i = 0; i < radii.Count; i++)
                 {
-                    bool draw = MountainInk.HalfWidth(radii[i], shape, 10f, 1f) > 0f;
+                    bool draw = MountainInk.HalfWidth(rise[i], shape, 10f, 1f) > 0f;
                     if (draw && !inside) runs++;
                     inside = draw;
                 }
                 Check($"Низ ({sharp:0.00}): линия — один связный кусок", runs == 1, $"кусков {runs}");
                 Check($"Низ ({sharp:0.00}): на самих краях линии нет",
-                      MountainInk.HalfWidth(radii[0], shape, 10f, 1f) <= 0f
-                      && MountainInk.HalfWidth(radii[last], shape, 10f, 1f) <= 0f,
+                      MountainInk.HalfWidth(rise[0], shape, 10f, 1f) <= 0f
+                      && MountainInk.HalfWidth(rise[last], shape, 10f, 1f) <= 0f,
                       "край обвёлся");
             }
+        }
+
+        /// <summary>
+        /// На НАКЛОННОЙ гряде линия обязана быть одинаковой на обоих склонах.
+        ///
+        /// Гора рисуется приподнятой, а подошва наклонного звена повёрнута. Из-за этого «ярус, на
+        /// котором достигнут верх» с одной стороны горы мал, а с другой велик, — и толщина, взятая
+        /// ОТ ЯРУСА, делала один склон ниточкой, а другой чёрным клином. Вся гряда клонилась набок;
+        /// ДМ назвал это «криво». Толщина берётся от ПОДЪЁМА точки (MountainOutline.Heights), а он
+        /// про косину подошвы ничего не знает.
+        ///
+        /// Фикстура наклонная НАМЕРЕННО: на горизонтальном звене подошва симметрична, и оба правила
+        /// дают одно и то же — проверка была бы пустой. Поэтому здесь ДВЕ проверки: первая говорит,
+        /// что подъём на равной высоте одинаков (это и есть правило), вторая — что ЯРУС на той же
+        /// паре точек РАЗНЫЙ, то есть фикстура и правда различает два правила, а не согласна с
+        /// обоими.
+        ///
+        /// Мутант: считать подъём от яруса (rise := 1 − r) — первая проверка падает.
+        /// </summary>
+        static void SlopesAreEquallyThickOnATiltedRidge()
+        {
+            var shape = Mound(Tilted(35f, 34f, 20f), 1.9f, 1.9f);
+            if (shape == null) { Fail("Наклон", "гора не построена"); return; }
+
+            var profile = new LiftSamples(0.66f, MoundBuilder.ProfileSamples);
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            var rise = new List<float>();
+            MountainOutline.Build(shape, profile, line, radii);
+            MountainOutline.Heights(line, rise);
+
+            int top = 0;
+            for (int i = 1; i < line.Count; i++) if (line[i].Y > line[top].Y) top = i;
+
+            float lo = Math.Max(line[0].Y, line[line.Count - 1].Y);
+            float hi = line[top].Y;
+
+            float worstRise = 0f, worstTier = 0f;
+            int seen = 0;
+            for (int k = 1; k < 9; k++)
+            {
+                float y = lo + (hi - lo) * k / 9f;
+                if (!AtHeight(line, rise, radii, 0, top, y, out float riseA, out float tierA)) continue;
+                if (!AtHeight(line, rise, radii, top, line.Count - 1, y, out float riseB, out float tierB))
+                    continue;
+                seen++;
+                worstRise = Math.Max(worstRise, Math.Abs(riseA - riseB));
+                worstTier = Math.Max(worstTier, Math.Abs(tierA - tierB));
+            }
+
+            Check("Наклон: на равной высоте склоны одинаковой толщины",
+                  seen >= 5 && worstRise < 0.02f,
+                  $"подъём расходится на {worstRise:0.###} на {seen} высотах");
+            // Фикстура обязана различать два правила — иначе первая проверка ничего не стоит.
+            Check("Наклон: ярус на той же паре точек РАЗНЫЙ (фикстура различает правила)",
+                  seen >= 5 && worstTier > 0.15f,
+                  $"ярус расходится всего на {worstTier:0.###}");
+        }
+
+        /// <summary>Подъём и ярус там, где склон [from, to] пересекает высоту y.</summary>
+        static bool AtHeight(List<Vector2> line, List<float> rise, List<float> radii,
+                             int from, int to, float y, out float atRise, out float atTier)
+        {
+            atRise = atTier = 0f;
+            for (int i = from; i < to; i++)
+            {
+                float a = line[i].Y - y, b = line[i + 1].Y - y;
+                if (a * b > 0f) continue;
+                float dy = line[i + 1].Y - line[i].Y;
+                float t = Math.Abs(dy) < 1e-6f ? 0f : (y - line[i].Y) / dy;
+                atRise = rise[i] + (rise[i + 1] - rise[i]) * t;
+                atTier = radii[i] + (radii[i + 1] - radii[i]) * t;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Звено под углом к горизонту — для проверок, где косина подошвы и есть предмет.</summary>
+        static AxisLink Tilted(float degrees, float length, float halfWidth)
+        {
+            double a = degrees * Math.PI / 180.0;
+            var dir = new Vector2((float)Math.Cos(a), (float)Math.Sin(a));
+            var mid = new Vector2(200f, 200f);
+            var link = new AxisLink
+            {
+                Pts = new List<Vector2> { mid - dir * (length * 0.5f), mid + dir * (length * 0.5f) },
+                Mid = mid,
+                Tan = dir,
+                MidW = halfWidth,
+            };
+            for (int i = 0; i < 2; i++) link.Ws.Add(halfWidth);
+            return link;
         }
 
         /// <summary>
@@ -871,10 +966,18 @@ namespace MountainHarness
                         // Берём середины четырёх долек, на которые обе диагонали делят трапецию:
                         // каждая обязана быть накрыта РОВНО одним из двух треугольников.
                         // Выродившийся четырёхугольник пропускаем: у него пробная точка садится
-                        // ровно на общую диагональ, попадает в оба треугольника разом и читается
-                        // нахлёстом. На честном коде такой ровно один из восемнадцати тысяч.
+                        // ровно на общую диагональ и читается то нахлёстом, то дырой.
+                        //
+                        // Мера вырождения — ТОЛЩИНА (площадь на длинную сторону), и притом в долях
+                        // самой горы, а не в мировых единицах. Прежний порог был по площади и
+                        // абсолютный: стоило уменьшить гору с R = 10 до 7, как площади упали вдвое,
+                        // и осколок толщиной в полторы тысячных единицы прошёл сквозь порог и
+                        // объявился дырой. Толще тысячной доли высоты горы — считаем честным
+                        // четырёхугольником; тоньше — это отрезок, и щупать его нечем.
                         float quadArea = Math.Abs(SignedArea(new List<Vector2> { p0, p1, u1, u0 }));
-                        if (quadArea < 1e-4f) continue;
+                        float longest = Math.Max(Math.Max(Vector2.Distance(p0, p1), Vector2.Distance(u0, u1)),
+                                                 Math.Max(Vector2.Distance(p0, u0), Vector2.Distance(p1, u1)));
+                        if (longest < 1e-6f || quadArea / longest < 1e-3f * shape.Height) continue;
 
                         Vector2 m = (p0 + p1 + u1 + u0) * 0.25f;
                         var probes = new[]
@@ -957,16 +1060,16 @@ namespace MountainHarness
         /// И тень: метка ложится там, куда свет не попадает. Сторона считается по нормали подошвы,
         /// а не по положению относительно середины, — иначе у изогнутого звена тень легла бы поперёк.
         ///
-        /// Мутант: заменить (1 − r)^p на (1 − r^p) — на подошве получится ноль только при p = 1, а
-        /// при 1.1 линия у подошвы станет ненулевой, и контур замкнётся.
+        /// Считается от ПОДЪЁМА точки на контуре (0 у концов, 1 на вершине), а не от яруса: ярус у
+        /// наклонной гряды косой, и от него гора выходила однобокой.
         /// </summary>
         static void InkRulesHoldAtTheEnds()
         {
             bool zeroAtFoot = true, fullAtApex = true;
             foreach (float p in new[] { 0.3f, 1f, 1.1f, 4f })
             {
-                if (MountainInk.Taper(1f, p) > 1e-6f) zeroAtFoot = false;
-                if (Math.Abs(MountainInk.Taper(0f, p) - 1f) > 1e-6f) fullAtApex = false;
+                if (MountainInk.Taper(0f, p) > 1e-6f) zeroAtFoot = false;
+                if (Math.Abs(MountainInk.Taper(1f, p) - 1f) > 1e-6f) fullAtApex = false;
             }
             Check("Тушь: у подошвы линия нулевая при любом сходе", zeroAtFoot, "подошва обвелась");
             Check("Тушь: у вершины линия полная при любом сходе", fullAtApex, "вершина недообведена");

@@ -268,7 +268,7 @@ namespace WorldGen.Rendering.Mountains
                     var mask = MountainMask.FromPolygons(massif.Polygons, cell);
                     if (mask != null)
                     {
-                        mask.Smooth(Mathf.RoundToInt(MountainSettings.MaskSmoothing * settings.Radius / mask.Cell));
+                        mask.Smooth(Mathf.RoundToInt(MountainSettings.MaskSmoothing / mask.Cell));
                         // Подрезка по суше — ПОСЛЕ сглаживания: иначе сглаживание вернуло бы массу
                         // за кромку воды, и хребет снова полез бы в море.
                         if (settings.IsLand != null) mask.ClipToLand(settings.IsLand);

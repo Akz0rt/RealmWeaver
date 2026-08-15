@@ -39,7 +39,7 @@ namespace MountainHarness
             var watch = Stopwatch.StartNew();
             var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(10f, 10f));
             if (mask == null) { Console.WriteLine($"  {name}: маска не построена"); return; }
-            mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
+            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing / mask.Cell));
             var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
 
             var profile = settings.Profile();
@@ -47,6 +47,7 @@ namespace MountainHarness
             bool capped = false;
             var line = new System.Collections.Generic.List<System.Numerics.Vector2>();
             var radii = new System.Collections.Generic.List<float>();
+            var rise = new System.Collections.Generic.List<float>();
             foreach (var shape in shapes)
             {
                 MountainTriangulation.FillSize(shape, out int bodyVerts, out int bodyTris);
@@ -56,9 +57,10 @@ namespace MountainHarness
                 // Контур: одна лента вдоль ломаной — по две вершины и два треугольника на звено.
                 float density = MountainInk.Density(shape.Tier, MountainSettings.Tiers);
                 MountainOutline.Build(shape, profile, line, radii);
+                MountainOutline.Heights(line, rise);
                 int drawn = 0;
-                for (int i = 0; i < radii.Count; i++)
-                    if (MountainInk.HalfWidth(radii[i], shape, settings.Radius, density) > 0f) drawn++;
+                for (int i = 0; i < rise.Count; i++)
+                    if (MountainInk.HalfWidth(rise[i], shape, settings.Radius, density) > 0f) drawn++;
                 verts += drawn * 2;
                 tris += Math.Max(0, drawn - 1) * 2;
 

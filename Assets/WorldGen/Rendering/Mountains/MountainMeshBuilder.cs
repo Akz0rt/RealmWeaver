@@ -52,6 +52,7 @@ namespace WorldGen.Rendering.Mountains
             var scratchTris = new List<int>();
             var line = new List<Vec2>();
             var radii = new List<float>();
+            var rise = new List<float>();
 
             // Каждая следующая гора кладётся на волосок ВЫШЕ предыдущей. Порядок маляра остаётся
             // тем же (дальние раньше), но теперь он записан не только в очерёдности, а в самой
@@ -70,7 +71,8 @@ namespace WorldGen.Rendering.Mountains
                 AddBody(data, shape, y, profile, scratchVerts, scratchTris);
                 AddGrit(data, shape, style, y, profile, light, density, radius);
                 MountainOutline.Build(shape, profile, line, radii);
-                AddOutline(data, shape, style, y, profile, line, radii, density, radius);
+                MountainOutline.Heights(line, rise);
+                AddOutline(data, shape, style, y, profile, line, radii, rise, density, radius);
             }
             data.Seal();
         }
@@ -155,7 +157,7 @@ namespace WorldGen.Rendering.Mountains
         /// </summary>
         static void AddOutline(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
                                float y, LiftSamples profile, List<Vec2> line, List<float> radii,
-                               float density, float radius)
+                               List<float> rise, float density, float radius)
         {
             int count = line.Count;
             if (count < 2) return;
@@ -164,7 +166,7 @@ namespace WorldGen.Rendering.Mountains
             int prev = -1;                       // номер верхней вершины предыдущей поставленной точки
             for (int k = 0; k < count; k++)
             {
-                float half = MountainInk.HalfWidth(radii[k], shape, radius, density);
+                float half = MountainInk.HalfWidth(rise[k], shape, radius, density);
                 if (half <= 0f || !Grounded(style, shape, profile, line[k], radii[k])) { prev = -1; continue; }
 
                 Vec2 dir = Chord(line, k);

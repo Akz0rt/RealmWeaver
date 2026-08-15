@@ -48,7 +48,7 @@ namespace MountainHarness
 
             // Та же фикстура, что ДМ снимал в браузере («Горная страна»), и тот же радиус 10:
             // сравнивать вид можно только на одной и той же форме и в одном масштабе.
-            Draw(sb, 10f, "горная страна", Country());
+            Draw(sb, new MountainSettings().Radius, "горная страна", Country());
 
             sb.Append("</svg>");
             System.IO.File.WriteAllText(path, sb.ToString());
@@ -67,24 +67,27 @@ namespace MountainHarness
         {
             float x0 = Arg(args, 1, 0f), x1 = Arg(args, 2, 1000f);
             float y0 = Arg(args, 3, 0f), y1 = Arg(args, 4, 1000f);
-            var settings = new MountainSettings { Radius = 10f };
-            var mask = MountainMask.FromPolygons(Country(), MountainMask.ChooseCell(10f, 10f));
-            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing * 10f / mask.Cell));
+            var settings = new MountainSettings();
+            float radius = settings.Radius;
+            var mask = MountainMask.FromPolygons(Country(), MountainMask.ChooseCell(radius, radius));
+            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing / mask.Cell));
             var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
             var profile = settings.Profile();
             var line = new List<Vector2>();
             var radii = new List<float>();
+            var rise = new List<float>();
             foreach (var s in shapes)
             {
                 if (s.Centre.X < x0 || s.Centre.X > x1 || s.Centre.Y < y0 || s.Centre.Y > y1) continue;
                 float mnx = float.MaxValue, mxx = float.MinValue;
                 foreach (var p in s.Base) { if (p.X < mnx) mnx = p.X; if (p.X > mxx) mxx = p.X; }
                 MountainOutline.Build(s, profile, line, radii);
+                MountainOutline.Heights(line, rise);
                 float density = MountainInk.Density(s.Tier, MountainSettings.Tiers);
                 int drawn = 0; float wide = 0f;
-                for (int i = 0; i < radii.Count; i++)
+                for (int i = 0; i < rise.Count; i++)
                 {
-                    float h = MountainInk.HalfWidth(radii[i], s, 10f, density);
+                    float h = MountainInk.HalfWidth(rise[i], s, radius, density);
                     if (h > 0f) { drawn++; if (2f * h > wide) wide = 2f * h; }
                 }
                 float lx0 = float.MaxValue, lx1 = float.MinValue;
@@ -129,7 +132,7 @@ namespace MountainHarness
             var settings = new MountainSettings { Radius = radius };
             var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(radius, radius));
             if (mask == null) return;
-            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing * radius / mask.Cell));
+            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing / mask.Cell));
             var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
             var profile = settings.Profile();
 
@@ -137,6 +140,7 @@ namespace MountainHarness
             var tris = new List<int>();
             var line = new List<Vector2>();
             var radii = new List<float>();
+            var rise = new List<float>();
             int marks = 0;
 
             foreach (var shape in shapes)
@@ -145,7 +149,8 @@ namespace MountainHarness
                 Body(sb, shape, profile, verts, tris);
                 marks += GritMarks(sb, shape, profile, radius, density);
                 MountainOutline.Build(shape, profile, line, radii);
-                Outline(sb, shape, line, radii, radius, density);
+                MountainOutline.Heights(line, rise);
+                Outline(sb, shape, line, rise, radius, density);
             }
             Console.WriteLine($"  {title}: гор {shapes.Count}, меток крошки {marks}");
         }
@@ -173,47 +178,47 @@ namespace MountainHarness
         /// Контур — ОДНА лента переменной толщины вдоль ломаной. Рвётся она только там, где толщина
         /// упала ниже пола (у самого низа горы): это и есть «низа нет», а не разрыв.
         /// </summary>
-        static void Outline(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> radii,
+        static void Outline(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> rise,
                             float radius, float density)
         {
             int i = 0;
             while (i < line.Count)
             {
-                if (MountainInk.HalfWidth(radii[i], shape, radius, density) <= 0f) { i++; continue; }
+                if (MountainInk.HalfWidth(rise[i], shape, radius, density) <= 0f) { i++; continue; }
                 int j = i;
-                while (j + 1 < line.Count && MountainInk.HalfWidth(radii[j + 1], shape, radius, density) > 0f) j++;
-                if (j > i) Ribbon(sb, shape, line, radii, i, j, radius, density);
+                while (j + 1 < line.Count && MountainInk.HalfWidth(rise[j + 1], shape, radius, density) > 0f) j++;
+                if (j > i) Ribbon(sb, shape, line, rise, i, j, radius, density);
                 i = j + 1;
             }
         }
 
         /// <summary>Лента: сверху идём слева направо, снизу возвращаемся — один многоугольник,
         /// который в меше станет полосой треугольников.</summary>
-        static void Ribbon(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> radii,
+        static void Ribbon(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> rise,
                            int from, int to, float radius, float density)
         {
             sb.Append($"<polygon fill='{Hex(InkRgb)}' points='");
             for (int k = from; k <= to; k++)
             {
-                var p = Offset(shape, line, k, from, to, +1f, radii[k], radius, density);
+                var p = Offset(shape, line, k, from, to, +1f, rise[k], radius, density);
                 sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
             }
             for (int k = to; k >= from; k--)
             {
-                var p = Offset(shape, line, k, from, to, -1f, radii[k], radius, density);
+                var p = Offset(shape, line, k, from, to, -1f, rise[k], radius, density);
                 sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
             }
             sb.Append("'/>");
         }
 
         static Vector2 Offset(MountainShape shape, List<Vector2> line, int k, int from, int to, float side,
-                              float r, float radius, float density)
+                              float rise, float radius, float density)
         {
             Vector2 a = line[Math.Max(from, k - 1)], b = line[Math.Min(to, k + 1)];
             Vector2 d = b - a;
             if (d.LengthSquared() < 1e-10f) d = new Vector2(1f, 0f); else d = Vector2.Normalize(d);
             Vector2 nrm = new Vector2(-d.Y, d.X);
-            return line[k] + nrm * (side * MountainInk.HalfWidth(r, shape, radius, density));
+            return line[k] + nrm * (side * MountainInk.HalfWidth(rise, shape, radius, density));
         }
 
         /// <summary>Крошка: только полная тень, порогом, а не вероятностью.</summary>
