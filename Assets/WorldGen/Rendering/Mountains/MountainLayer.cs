@@ -406,12 +406,6 @@ namespace WorldGen.Rendering.Mountains
             return filter;
         }
 
-        MapPaletteTheme Theme()
-        {
-            var renderer = Renderer();
-            return renderer != null ? renderer.paletteTheme : MapPaletteTheme.ColdTwilight;
-        }
-
         WorldMapRenderer Renderer()
         {
             if (mapRenderer == null) mapRenderer = GetComponent<WorldMapRenderer>();
