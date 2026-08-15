@@ -251,7 +251,7 @@ namespace MountainHarness
 
             foreach (var shape in shapes)
                 EmitStack(sb, shape, 0f, CanvasH, "none",
-                          byLevelOnly ? "slate" : "tier", spread, settings.Tiers);
+                          byLevelOnly ? "slate" : "tier", spread, MountainSettings.Tiers);
         }
 
         static List<IReadOnlyList<Vector2>> CellsInDisc(Vector2 screenCentre, float radius)
@@ -402,7 +402,10 @@ namespace MountainHarness
         /// <summary>Граница горы точками SVG, снизу вверх по экрану уже перевёрнутая вызывающим.</summary>
         static void EmitLoop(StringBuilder sb, MountainShape m, float ox, float oy, bool flip)
         {
-            foreach (var q in m.Silhouette)
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            MountainOutline.Build(m, Prof(m.Sharp), line, radii);
+            foreach (var q in line)
                 sb.Append(F(ox + q.X)).Append(',').Append(F(flip ? Flip(q.Y) : oy - q.Y)).Append(' ');
         }
         /// <summary>Одна гора крупно: либо нынешний силуэт, либо стопка ярусов.</summary>

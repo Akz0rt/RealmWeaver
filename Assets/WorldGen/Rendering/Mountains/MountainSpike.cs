@@ -174,9 +174,7 @@ namespace WorldGen.Rendering.Mountains
             var style = new MountainPaintStyle
             {
                 Ink = MountainPaintStyle.ForVertex(inkColor),
-                TierCount = 3, TierContrast = 1f, TierInk = 0f,
-                PenWidth = crestWidth, PenTaper = 1.1f, PenAlpha = 0.61f,
-                Grit = 0.88f, GritFall = 0.4f, Gully = 0.32f, LightAngle = 160f,
+                TierCount = MountainSettings.Tiers,
                 LayerY = layerY,
             };
 

@@ -1760,26 +1760,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldGen.Rendering.Mountains.MountainLayer
   mapRenderer: {fileID: 0}
-  mountainRadius: 10
-  linkLengthFactor: 1.6
-  lengthJitter: 0.06
-  anisotropy: 1.6
-  waist: 0.95
-  heightFactor: 2.2
-  stretch: 1.9
-  tiers: 3
-  edgeHeight: 0.55
   layerY: 0.6
-  crestWidth: 0.35
-  toneSpan: 0
-  crestAlpha: 90
   visible: 1
   onlyOnLand: 1
-  maskSmoothing: 0.5
-  useMapPalette: 1
-  farColor: {r: 0.55, g: 0.59, b: 0.64, a: 1}
-  nearColor: {r: 0.16, g: 0.18, b: 0.22, a: 1}
-  inkColor: {r: 0.94, g: 0.93, b: 0.89, a: 0.35}
 --- !u!1 &1904317179
 GameObject:
   m_ObjectHideFlags: 0

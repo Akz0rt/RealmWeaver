@@ -60,7 +60,7 @@ namespace MountainHarness
             foreach (var link in links) if (link.Tier > maxTier) maxTier = link.Tier;
             Console.WriteLine($"{name}: звеньев {links.Count}, слоёв {maxTier + 1}");
 
-            sb.Append("{\"name\":\"").Append(name).Append("\",\"tiers\":").Append(settings.Tiers)
+            sb.Append("{\"name\":\"").Append(name).Append("\",\"tiers\":").Append(MountainSettings.Tiers)
               .Append(",\"sampleStep\":").Append(N(settings.SampleStep))
               .Append(",\"links\":[");
 

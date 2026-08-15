@@ -40,54 +40,6 @@ namespace WorldGen.Rendering.Mountains
         [Tooltip("Если не назначено — ищется на этом же объекте.")]
         public WorldMapRenderer mapRenderer;
 
-        [Header("Размер (§15 спеки)")]
-        [Tooltip("R — радиус горы в мировых единицах карты. Задаёт и шаг слоёв 2R, и предельную полуширину массы. В манере туши горы должны быть КРУПНЫМИ: в мелкую не помещается ни жирная линия, ни крошка, и цепь вершин читается бахромой.")]
-        public float mountainRadius = 10f;
-        [Tooltip("T — целевая длина звена, в долях R.")]
-        public float linkLengthFactor = 1.6f;
-        [Tooltip("Разброс длин звеньев: 0.06 — шесть процентов.")]
-        [Range(0f, 0.3f)] public float lengthJitter = 0.06f;
-        [Tooltip("a — угол взгляда на землю: во столько раз вертикаль «дороже» при нарезке и во столько же сплющена подошва.")]
-        public float anisotropy = 1.6f;
-
-        [Header("Форма")]
-        [Tooltip("t — талия на позвонке: доля полной полуширины на стыке звеньев.")]
-        [Range(0.1f, 1f)] public float waist = 0.95f;
-        [Tooltip("h — множитель высоты: H = h·w, где w — полуширина в середине звена.")]
-        public float heightFactor = 2.2f;
-        [Tooltip("k — растяжение подошвы вдоль оси. Больше — выше перевалы, плотнее массив.")]
-        public float stretch = 1.9f;
-        [Tooltip("Острота вершины: 0 — купол, 0.33 — синусоида, 0.66 — конус, 1 — шпиль.")]
-        [Range(0f, 1f)] public float sharp = 0.66f;
-        [Tooltip("Зубчатость гребня: выщербины на линии.")]
-        [Range(0f, 0.3f)] public float jag = 0.03f;
-        [Tooltip("Сколько слоёв массы различаем: слой 0 — гряда по краю массива.")]
-        [Range(1, 4)] public int tiers = 3;
-        [Tooltip("Высота горы у края массива как доля высоты в сердцевине.")]
-        [Range(0.2f, 1f)] public float edgeHeight = 0.55f;
-
-        [Header("Тушь (§13 спеки)")]
-        [Tooltip("Жирность линии у вершины, в долях R.")]
-        [Range(0f, 0.8f)] public float penWidth = 0.55f;
-        [Tooltip("Сход линии на нет книзу. У подошвы толщина нулевая всегда — контур обрывается сам.")]
-        [Range(0.3f, 4f)] public float penTaper = 1.1f;
-        [Tooltip("Чернота линии, крошки и промоин.")]
-        [Range(0f, 1f)] public float penAlpha = 0.95f;
-        [Tooltip("Крошка в тени: зернистая штриховка теневой стороны.")]
-        [Range(0f, 2f)] public float grit = 0.88f;
-        [Tooltip("Насколько быстро крошка редеет вниз по склону.")]
-        [Range(0f, 3f)] public float gritFall = 0.4f;
-        [Tooltip("Промоины: редкие тонкие штрихи по освещённому склону.")]
-        [Range(0f, 1f)] public float gully = 0.32f;
-        [Tooltip("Откуда светит, в градусах. Одно направление на всю карту.")]
-        [Range(0f, 360f)] public float lightAngle = 160f;
-        [Tooltip("Насколько слой массы меняет густоту туши: внутренние слои жирнее линией и плотнее крошкой.")]
-        [Range(0f, 0.8f)] public float tierInk = 0.5f;
-        [Tooltip("Направление градации по слоям массы: 1 — сердцевина гуще, −1 — наоборот.")]
-        [Range(-1f, 1f)] public float tierContrast = 1f;
-        [Tooltip("Глубина: дальние горы бледнее. 0 — выключено (выбор ДМ).")]
-        [Range(0f, 0.5f)] public float depthTone = 0f;
-
         [Header("Слой")]
         [Tooltip("Высота слоя над плоскостью карты. Берег 0.3, границы регионов 0.4, превью реки 0.45.")]
         public float layerY = 0.6f;
@@ -95,14 +47,19 @@ namespace WorldGen.Rendering.Mountains
         public bool visible = true;
         [Tooltip("Горы только по суше (решение ДМ). Снять — можно рисовать и по воде.")]
         public bool onlyOnLand = true;
-        [Tooltip("Сглаживание контура массива, в радиусах горы. Клетки карты стоят через 15 единиц, а гора — 10, поэтому без сглаживания контур выходит мозаикой. 0 — не сглаживать.")]
-        [Range(0f, 1.5f)] public float maskSmoothing = 0.5f;
 
-        [Header("Цвет")]
-        [Tooltip("Тушь почти чёрная, как на образце. Снять — красить своим цветом ниже.")]
-        public bool useMapPalette = true;
-        [Tooltip("Своя краска туши.")]
-        public Color inkColor = new Color(0.10f, 0.086f, 0.07f, 1f);
+        // ЧИСЕЛ ВИДА ЗДЕСЬ БОЛЬШЕ НЕТ — ни полей, ни ползунков (решение ДМ 15 августа 2026).
+        //
+        // Размер горы, высота, острота, зубчатость, сглаживание контура, жирность линии, чернота,
+        // крошка, свет — всё это постоянные: геометрические в MountainSettings, числа туши в
+        // MountainInk. Причина не в чистоте, а в двух подряд заходах ДМ со снимками: вид на карте
+        // расходился с выбранным в превью, и оба раза виновата была не формула, а ЧИСЛО, лежавшее в
+        // сцене. Поле, которое видно, рано или поздно оказывается сдвинутым; поле, которого нет,
+        // сдвинуть нечем.
+        //
+        // Мёртвые ключи прежних полей (mountainRadius, penWidth, sharp, crestWidth, inkColor и
+        // прочие) Unity при загрузке сцены просто пропустит — но из SampleScene.unity они вычищены,
+        // чтобы никто не принял их за действующие.
 
         const string ContainerName = "СлойГор";
 
@@ -232,14 +189,14 @@ namespace WorldGen.Rendering.Mountains
             var snapshot = SnapshotMassifs();
             var settings = BuildSettings();
             var style = Style();
-            string signature = GeometrySignature(settings);
+            string signature = GeometrySignature();
             if (signature != cacheSignature) { cache.Clear(); cacheSignature = signature; }
             var known = new Dictionary<ulong, List<MountainShape>>(cache);
 
             if (!Application.isPlaying)
             {
                 pending = null;
-                Apply(Compute(snapshot, settings, style, maskSmoothing, known, new MountainMeshData()));
+                Apply(Compute(snapshot, settings, style, known, new MountainMeshData()));
                 return;
             }
 
@@ -247,7 +204,7 @@ namespace WorldGen.Rendering.Mountains
             // Буфер меша в фоне — СВОЙ, а не общий: пока считается новый ответ, старый ещё может
             // заливаться в меш на главном потоке, и общий список порвался бы посередине.
             var buffer = new MountainMeshData();
-            pending = Task.Run(() => Compute(snapshot, settings, style, maskSmoothing, known, buffer));
+            pending = Task.Run(() => Compute(snapshot, settings, style, known, buffer));
         }
 
         /// <summary>Просит пересчёт «попозже». Нужен ползункам: ДМ ведёт ползунок, значение меняется
@@ -293,8 +250,7 @@ namespace WorldGen.Rendering.Mountains
         /// списки: они обычные структуры.
         /// </summary>
         static Batch Compute(List<Massif> massifs, MountainSettings settings, MountainPaintStyle style,
-                             float smoothing, Dictionary<ulong, List<MountainShape>> known,
-                             MountainMeshData buffer)
+                             Dictionary<ulong, List<MountainShape>> known, MountainMeshData buffer)
         {
             var shapes = new List<MountainShape>();
             var fresh = new Dictionary<ulong, List<MountainShape>>(massifs.Count);
@@ -312,7 +268,7 @@ namespace WorldGen.Rendering.Mountains
                     var mask = MountainMask.FromPolygons(massif.Polygons, cell);
                     if (mask != null)
                     {
-                        mask.Smooth(Mathf.RoundToInt(Mathf.Max(0f, smoothing) * settings.Radius / mask.Cell));
+                        mask.Smooth(Mathf.RoundToInt(MountainSettings.MaskSmoothing * settings.Radius / mask.Cell));
                         // Подрезка по суше — ПОСЛЕ сглаживания: иначе сглаживание вернуло бы массу
                         // за кромку воды, и хребет снова полез бы в море.
                         if (settings.IsLand != null) mask.ClipToLand(settings.IsLand);
@@ -370,47 +326,19 @@ namespace WorldGen.Rendering.Mountains
                  + $"крошки {data.GritMarks}{(data.GritCapped ? " (упёрлась в потолок)" : "")}";
         }
 
-        MountainPaintStyle Style()
+        MountainPaintStyle Style() => new MountainPaintStyle
         {
-            var renderer = Renderer();
-            var style = new MountainPaintStyle
-            {
-                Ink = MountainPaintStyle.ForVertex(
-                          useMapPalette ? MountainPaintStyle.DefaultInk : (Color32)inkColor),
-                OnLand = onlyOnLand ? renderer?.BuildLandProbe() : null,
-            };
-            style.PenAlpha = penAlpha;
-            style.PenWidth = penWidth * Mathf.Max(0.01f, mountainRadius);
-            style.PenTaper = penTaper;
-            style.Grit = grit;
-            style.GritFall = gritFall;
-            style.Gully = gully;
-            style.LightAngle = lightAngle;
-            style.TierInk = tierInk;
-            style.TierCount = tiers;
-            style.TierContrast = tierContrast;
-            style.DepthTone = depthTone;
-            style.MapHeight = renderer != null ? renderer.mapHeight : 1f;
-            style.LayerY = layerY;
-            return style;
-        }
+            Ink = MountainPaintStyle.ForVertex(MountainPaintStyle.DefaultInk),
+            OnLand = onlyOnLand ? Renderer()?.BuildLandProbe() : null,
+            TierCount = MountainSettings.Tiers,
+            LayerY = layerY,
+        };
 
         /// <summary>Настройки для одного пересчёта. Признак суши берётся СНИМКОМ здесь, на главном
         /// потоке: считать будут в фоне, а спрашивать живую карту оттуда нельзя.</summary>
         MountainSettings BuildSettings() => new MountainSettings
         {
             IsLand = onlyOnLand ? Renderer()?.BuildLandProbe() : null,
-            Radius = Mathf.Max(0.01f, mountainRadius),
-            LinkFactor = linkLengthFactor,
-            LengthJitter = lengthJitter,
-            Anisotropy = anisotropy,
-            Waist = waist,
-            HeightFactor = heightFactor,
-            Stretch = stretch,
-            Sharp = sharp,
-            Jag = jag,
-            Tiers = tiers,
-            EdgeHeight = edgeHeight,
         };
 
         /// <summary>
@@ -423,10 +351,7 @@ namespace WorldGen.Rendering.Mountains
         /// через LandChanged, который роняет снимок и просит пересчёт, а вот КЭШ он не роняет.
         /// Поэтому воду учитываем отдельным номером снимка.
         /// </summary>
-        string GeometrySignature(MountainSettings s)
-            => $"{s.Radius}|{s.LinkFactor}|{s.LengthJitter}|{s.Anisotropy}|{s.Waist}|{s.HeightFactor}"
-             + $"|{s.Stretch}|{s.Sharp}|{s.Jag}|{s.Tiers}|{s.EdgeHeight}|{maskSmoothing}|{onlyOnLand}"
-             + $"|{LandStamp()}";
+        string GeometrySignature() => $"{onlyOnLand}|{LandStamp()}";
 
         /// <summary>Номер снимка суши. Меняется вместе с водой, поэтому кэш массивов от неё зависит
         /// честно, без сравнения самих снимков.</summary>

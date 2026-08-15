@@ -30,6 +30,7 @@ namespace MountainHarness
             if (mode == "massif") { Preview.WriteMassif("massif.svg"); return 0; }
             if (mode == "time") { TimeThinning(); return 0; }
             if (mode == "cost") { Cost.Report(); return 0; }
+            if (mode == "probe") { PenPreview.Probe(args); return 0; }
             if (mode == "pen") { PenPreview.Write("pen.svg", args.Length > 1 ? float.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture) : 1f); return 0; }
 
             MaskMeasuresToSegment();
@@ -78,8 +79,10 @@ namespace MountainHarness
             WaistProfile();
             SharedWidthAtVertebra();
             LiftDecreasesAtEverySharpness();
-            SilhouetteCoversEveryTier();
-            NearSideIsNotOutlined();
+            OutlineIsAFunctionOfX();
+            OutlineCoversEveryTier();
+            OutlineKeepsTheApex();
+            OutlineHasNoBottom();
             JagKeepsTiersNested();
             ApexHeight();
             FreeEndStretch();
@@ -89,7 +92,7 @@ namespace MountainHarness
             TierRampSpreadsTiers();
             GritDensityFollowsAreaNotTiers();
             InkRulesHoldAtTheEnds();
-            SlopeIsOutlinedOnlyWhenTheBoundaryJumps();
+            GritStaysInFullShadow();
             InkAsksAboutTheFootNotTheDrawnPlace();
 
             Console.WriteLine(failures == 0 ? "NO ERRORS" : $"{failures} ERROR(S)");
@@ -392,71 +395,233 @@ namespace MountainHarness
                   $"нашёлся подъём выше предыдущего на {worst:0.####}");
         }
 
+        // ── §13 «Контур»: одна ломаная, однозначная по x ────────────────────────────────────────
+
         /// <summary>
-        /// ГЛАВНАЯ проверка новой горы: посчитанная граница обязана накрывать ВСЕ ярусы. Ни одна
-        /// точка ни одного яруса не должна оказаться снаружи — иначе из-под силуэта торчали бы
-        /// куски, а линия туши шла бы не по краю.
+        /// Контур — ФУНКЦИЯ от x: точки идут строго слева направо, и двух значений в одной точке не
+        /// бывает. Отсюда даром берётся то, ради чего всё и переписано: самопересечься такой ломаной
+        /// нечем, обход задан сам собой, и линию можно вести одной лентой.
         ///
-        /// Это тот самый мутант, записанный в план после браузерного прототипа: там оба изъяна
-        /// («блюдца в воздухе», потом «катушка») прошли мимо инвариантов «радиус убывает» и
-        /// «подъём растёт» — оба выполнялись, а картинка была негодной. Здесь проверяется не
-        /// свойство расписания, а сама геометрия.
+        /// Прежняя граница искалась ПО ЛУЧАМ, и у конуса максимум сидел на конце — либо на подошве,
+        /// либо на вершине, — перескакивая между ними у соседних лучей. Ломаная по тем точкам давала
+        /// 68 самопересечений из 115 на маске приложения; отсюда и пошли короткие штрихи вместо
+        /// линии, и вся рванина, которую ДМ увидел на карте.
         ///
-        /// Мутанты: искать максимум только на концах (r = 1 и r = ApexRadius) — на пологой горе
-        /// середина вылезет; считать проекцию на луч из середины вместо нормали подошвы — вылезет
-        /// на всём, что не круг.
+        /// Мутанты: выдавать точки в порядке лучей (порядок сломается на первом же боку); брать не
+        /// максимум по ярусам, а первый попавшийся (x останется монотонным, зато провалится
+        /// следующая проверка — потому их две, а не одна).
         /// </summary>
-        static void SilhouetteCoversEveryTier()
+        static void OutlineIsAFunctionOfX()
         {
+            var line = new List<Vector2>();
+            var radii = new List<float>();
             foreach (float sharp in new[] { 0f, 0.33f, 0.66f, 1f })
             {
                 var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
                 var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
-                if (shape == null) { Fail("Граница", "гора не построена"); continue; }
+                if (shape == null) { Fail("Контур", "гора не построена"); continue; }
+                MountainOutline.Build(shape, profile, line, radii);
+
+                bool rising = line.Count > 8;
+                for (int i = 1; i < line.Count; i++)
+                    if (line[i].X <= line[i - 1].X) rising = false;
+
+                int crossings = Crossings(line);
+                Check($"Контур ({sharp:0.00}): строго слева направо", rising, $"точек {line.Count}");
+                Check($"Контур ({sharp:0.00}): самопересечений нет", crossings == 0,
+                      $"самопересечений {crossings}");
+            }
+        }
+
+        /// <summary>Сколько раз ломаная пересекает сама себя. Считается честно, парами звеньев:
+        /// «однозначна по x» и «не пересекается» — разные утверждения, и второе стоит проверить
+        /// отдельно, а не выводить из первого.</summary>
+        static int Crossings(List<Vector2> line)
+        {
+            int count = 0;
+            for (int i = 0; i + 1 < line.Count; i++)
+                for (int j = i + 2; j + 1 < line.Count; j++)
+                    if (SegmentsCross(line[i], line[i + 1], line[j], line[j + 1])) count++;
+            return count;
+        }
+
+        static bool SegmentsCross(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            float d1 = Side(c, d, a), d2 = Side(c, d, b), d3 = Side(a, b, c), d4 = Side(a, b, d);
+            return ((d1 > 0f) != (d2 > 0f)) && ((d3 > 0f) != (d4 > 0f));
+        }
+
+        /// <summary>
+        /// Контур накрывает КАЖДЫЙ ярус: ни одно кольцо стопки не выходит над линией.
+        ///
+        /// Это и есть определение внешней границы, и проверять его надо перебором, а не повторением
+        /// той же формулы: берём ярусы подряд и смотрим, что верх каждого лежит не выше контура над
+        /// тем же x.
+        ///
+        /// Мутант, ради которого написано: забыть в максимуме слагаемое подъёма H·lift(r) — контур
+        /// схлопнется на подошву, и над ним встанет вся гора. Второй: искать максимум только на
+        /// концах (r = 1 и r = вершина) — на пологом куполе вылезет середина.
+        /// </summary>
+        static void OutlineCoversEveryTier()
+        {
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            foreach (float sharp in new[] { 0f, 0.33f, 0.66f, 1f })
+            {
+                var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+                var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
+                if (shape == null) { Fail("Контур", "гора не построена"); continue; }
+                MountainOutline.Build(shape, profile, line, radii);
+                if (line.Count < 4) { Fail("Контур", "ломаная пустая"); continue; }
 
                 float worst = 0f;
-                for (int i = 0; i < shape.Base.Length; i++)
+                for (int k = 0; k <= 40; k++)
                 {
-                    float edge = Reach(shape, i, shape.SilhouetteR[i], profile);
-                    for (int k = 0; k <= 60; k++)
+                    float r = MountainProfile.ApexRadius
+                            + (1f - MountainProfile.ApexRadius) * k / 40f;
+                    for (int i = 0; i < shape.Base.Length; i++)
                     {
-                        float r = MountainProfile.ApexRadius
-                                + (1f - MountainProfile.ApexRadius) * k / 60f;
-                        worst = Math.Max(worst, Reach(shape, i, r, profile) - edge);
+                        Vector2 q = MountainTriangulation.Meridian(shape, i, r, profile);
+                        float top = OutlineAt(line, q.X);
+                        if (float.IsNaN(top)) continue;
+                        worst = Math.Max(worst, q.Y - top);
                     }
                 }
-                // Допуск — доля полуширины: граница ищется по выборке из двух десятков значений и
-                // уточняется параболой, точнее машинного нуля она быть не обязана.
-                Check($"Граница ({sharp:0.00}): ни один ярус не вылезает наружу", worst < 0.02f * 20f,
+                // Допуск — доля полуширины: контур считается по сетке из двух десятков ярусов и
+                // полусотни отсчётов по x, точнее машинного нуля он быть не обязан.
+                Check($"Контур ({sharp:0.00}): ни один ярус не выходит наружу", worst < 0.02f * 20f,
                       $"вылет {worst:0.###} при полуширине 20");
             }
         }
 
+        /// <summary>Высота контура над точкой x. NaN — контур туда не дотягивается.</summary>
+        static float OutlineAt(List<Vector2> line, float x)
+        {
+            if (line.Count < 2 || x < line[0].X || x > line[line.Count - 1].X) return float.NaN;
+            for (int i = 1; i < line.Count; i++)
+            {
+                if (line[i].X < x) continue;
+                float dx = line[i].X - line[i - 1].X;
+                if (dx <= 1e-9f) return line[i].Y;
+                return line[i - 1].Y + (line[i].Y - line[i - 1].Y) * (x - line[i - 1].X) / dx;
+            }
+            return line[line.Count - 1].Y;
+        }
+
         /// <summary>
-        /// Ближний край не обводится. У точек, чья нормаль подошвы смотрит ВНИЗ по экрану, граница
-        /// обязана сидеть ровно на подошве (r = 1), а толщина линии там нулевая — контур обрывается
-        /// сам собой, без единой проверки «здесь не обводить». Это ровно то, чего требовал образец
-        /// ДМ: у нарисованной горы низа нет вовсе.
+        /// Вершина не срезана в площадку.
         ///
-        /// Мутант: взять в поиске границы |n_y| вместо n_y — ближний край поднимется и обведётся.
+        /// Верхний ярус в двадцать раз мельче подошвы, а отсчёты контура идут по x примерно через
+        /// R/8 — равномерной сеткой в него не попасть. Поэтому в выборку НАСИЛЬНО кладётся вершина
+        /// каждого яруса. Мутант — выбросить эти точки: у конуса макушка станет плоской, и на карте
+        /// гора будет читаться срезанной.
         /// </summary>
-        static void NearSideIsNotOutlined()
+        static void OutlineKeepsTheApex()
+        {
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            foreach (float sharp in new[] { 0.66f, 1f })
+            {
+                var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+                var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
+                if (shape == null) { Fail("Вершина", "гора не построена"); continue; }
+                MountainOutline.Build(shape, profile, line, radii);
+
+                float top = float.NegativeInfinity, apex = 1f;
+                for (int i = 0; i < line.Count; i++)
+                    if (line[i].Y > top) { top = line[i].Y; apex = radii[i]; }
+
+                float want = shape.Centre.Y + shape.Height * profile.LiftAt(MountainProfile.ApexRadius);
+                Check($"Вершина ({sharp:0.00}): контур доходит до макушки",
+                      top >= want - 0.05f * shape.Height,
+                      $"не хватило {want - top:0.##} при высоте {shape.Height:0.#}");
+                Check($"Вершина ({sharp:0.00}): в макушке стоит верхний ярус",
+                      apex <= MountainProfile.ApexRadius + 1e-3f, $"ярус {apex:0.###}");
+            }
+        }
+
+        /// <summary>
+        /// НИЗА У КОНТУРА НЕТ — то, чего требовал образец ДМ.
+        ///
+        /// На обоих краях контура верх достигается на самой подошве (r = 1), а толщина линии там
+        /// (1 − r)^сход ровно ноль. Значит линия обрывается САМА, без единой проверки «здесь не
+        /// обводить». И рисуемая часть — ОДИН связный кусок: разорвись она посередине, контур
+        /// рассыпался бы на штрихи, ради ухода от которых всё и переписывалось.
+        ///
+        /// Мутанты (оба проверены подстановкой): постоянная толщина вместо схода — край обведётся,
+        /// и проверка это ловит; убрать пол толщины — вернутся подпиксельные хвосты, и «на самих
+        /// краях линии нет» падает.
+        ///
+        /// А вот мутант «заменить (1 − r)^p на (1 − r^p)», записанный тут прежде, ВЫЖИВАЕТ, и запись
+        /// была просто неверной: 1 − 1^p равно нулю при любом p, то есть на подошве обе записи дают
+        /// одно и то же. Разница между ними — форма схода в середине склона, и её эта проверка не
+        /// стережёт (да и не должна: форму выбирает глаз, а не инвариант).
+        /// </summary>
+        static void OutlineHasNoBottom()
+        {
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            foreach (float sharp in new[] { 0f, 0.66f, 1f })
+            {
+                var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
+                var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
+                if (shape == null) { Fail("Низ", "гора не построена"); continue; }
+                MountainOutline.Build(shape, profile, line, radii);
+                if (line.Count < 4) { Fail("Низ", "ломаная пустая"); continue; }
+
+                int last = radii.Count - 1;
+                Check($"Низ ({sharp:0.00}): по краям граница сидит на подошве",
+                      radii[0] > 0.999f && radii[last] > 0.999f,
+                      $"края {radii[0]:0.###} и {radii[last]:0.###}");
+
+                int runs = 0;
+                bool inside = false;
+                for (int i = 0; i < radii.Count; i++)
+                {
+                    bool draw = MountainInk.HalfWidth(radii[i], shape, 10f, 1f) > 0f;
+                    if (draw && !inside) runs++;
+                    inside = draw;
+                }
+                Check($"Низ ({sharp:0.00}): линия — один связный кусок", runs == 1, $"кусков {runs}");
+                Check($"Низ ({sharp:0.00}): на самих краях линии нет",
+                      MountainInk.HalfWidth(radii[0], shape, 10f, 1f) <= 0f
+                      && MountainInk.HalfWidth(radii[last], shape, 10f, 1f) <= 0f,
+                      "край обвёлся");
+            }
+        }
+
+        /// <summary>
+        /// Крошка ложится ТОЛЬКО в полную тень.
+        ///
+        /// Порог, а не вероятность. Прежде метка ставилась с вероятностью, растущей от освещённости,
+        /// и одиночные зёрна сеялись по всей горе — в том числе по освещённому склону, где на
+        /// образце ДМ чистая бумага. ДМ назвал это грязью.
+        ///
+        /// Мутант: вернуть вероятностный отбор (min(1, тень·1.6)) — метки появятся на лучах с тенью
+        /// 0.1, и проверка их найдёт. Второй: сравнивать со светом без знака — тень окажется с обеих
+        /// сторон разом, и «на свету» лучей не останется вовсе.
+        /// </summary>
+        static void GritStaysInFullShadow()
         {
             var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f);
-            if (shape == null) { Fail("Ближний край", "гора не построена"); return; }
+            if (shape == null) { Fail("Крошка", "гора не построена"); return; }
 
-            int seen = 0;
-            bool ok = true;
-            for (int i = 0; i < shape.Base.Length; i++)
+            var light = MountainInk.Light;
+            int lit = 0, shaded = 0;
+            bool below = false;
+            for (int i = 0; i < shape.Normal.Length; i++)
             {
-                if (shape.Normal[i].Y > -0.3f) continue;   // берём заведомо ближние
-                seen++;
-                if (shape.SilhouetteR[i] < 0.999f) ok = false;
-                if (MountainInk.Taper(shape.SilhouetteR[i], 1.1f) > 1e-4f) ok = false;
+                if (!MountainInk.InShadow(shape.Normal[i], light)) { lit++; continue; }
+                shaded++;
+                if (MountainInk.Shade(shape.Normal[i], light) < MountainInk.ShadeThreshold) below = true;
             }
-            Check("Ближний край: граница на подошве и линия нулевая", ok && seen > 3,
-                  $"проверено точек {seen}");
+            Check("Крошка: зерно только там, где тень не ниже порога", !below,
+                  "метка попала на светлый луч");
+            Check("Крошка: тень — часть горы, а не вся и не ничто", shaded > 4 && lit > shaded / 2,
+                  $"в тени лучей {shaded}, на свету {lit}");
         }
+
+
 
         /// <summary>
         /// Зубчатость сохраняет вложенность ярусов: она МНОЖИТ отступ от середины звена, а не
@@ -501,8 +666,11 @@ namespace MountainHarness
             var shape = Mound(link, 1.4f, 1.4f);
             if (shape == null) { Fail("Высота", "гора не построена"); return; }
 
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            MountainOutline.Build(shape, profile, line, radii);
             float top = float.NegativeInfinity, footTop = float.NegativeInfinity;
-            foreach (var q in shape.Silhouette) top = Math.Max(top, q.Y);
+            foreach (var q in line) top = Math.Max(top, q.Y);
             foreach (var q in shape.Base) footTop = Math.Max(footTop, q.Y);
 
             float height = 2.2f * 20f;
@@ -570,44 +738,70 @@ namespace MountainHarness
         }
 
         /// <summary>
-        /// Линия туши лежит НА КРАЮ ТЕЛА, а не рядом с ним.
+        /// Линия лежит НА КРАЮ ТЕЛА, а не над ним и не под ним.
         ///
-        /// Тело выложено ярусами, и его край — ломаная из хорд меридиана. Точка линии посчитана по
-        /// настоящему меридиану. Если ярусов набрать мало, край тела срежет угол, а линия останется
-        /// на месте — и между заливкой и обводкой появится щель, сквозь которую видно карту.
-        /// Проверка связывает два независимых расчёта: адаптивное разбиение и поиск границы.
+        /// Тело выложено ярусами, и его край — ломаная из хорд меридиана; контур же посчитан по
+        /// настоящей огибающей. Наберись ярусов мало — край тела срежет угол, контур останется на
+        /// месте, и между заливкой и обводкой появится щель, сквозь которую видно карту. Проверка
+        /// связывает два независимых расчёта: адаптивное разбиение (MoundBuilder.Levels) и поиск
+        /// границы по x (MountainOutline).
         ///
-        /// Мутант: не подразбивать вовсе (ярусы всегда {1, вершина}) — на куполе линия отойдёт от
-        /// края тела на добрую долю высоты.
+        /// Мутант: не подразбивать вовсе (ярусы всегда {1, вершина}) — на куполе тело просядет под
+        /// линию на добрую долю высоты.
         /// </summary>
         static void OutlineSitsOnTheBody()
         {
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            var verts = new List<Vector2>();
+            var tris = new List<int>();
             foreach (float sharp in new[] { 0f, 0.33f, 0.66f, 1f })
             {
                 var profile = new LiftSamples(sharp, MoundBuilder.ProfileSamples);
                 var shape = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, sharp);
                 if (shape == null) { Fail("Линия на теле", "гора не построена"); continue; }
+                MountainOutline.Build(shape, profile, line, radii);
 
+                MountainTriangulation.Fill(shape, profile, verts, tris);
                 float worst = 0f;
-                for (int i = 0; i < shape.Base.Length; i++)
-                {
-                    float r = shape.SilhouetteR[i];
-                    float best = float.PositiveInfinity;
-                    for (int j = 0; j + 1 < shape.LevelR.Length; j++)
-                    {
-                        float hi = shape.LevelR[j], lo = shape.LevelR[j + 1];
-                        if (r > hi + 1e-4f || r < lo - 1e-4f) continue;
-                        float u = Math.Abs(hi - lo) < 1e-6f ? 0f : (hi - r) / (hi - lo);
-                        Vector2 a = MountainTriangulation.Meridian(shape, i, hi, profile);
-                        Vector2 b = MountainTriangulation.Meridian(shape, i, lo, profile);
-                        Vector2 chord = a + (b - a) * u;
-                        best = Math.Min(best, Vector2.Distance(chord, shape.Silhouette[i]));
-                    }
-                    if (best < float.PositiveInfinity) worst = Math.Max(worst, best);
-                }
-                Check($"Линия ({sharp:0.00}): лежит на краю тела", worst < 0.35f,
-                      $"отошла на {worst:0.###} при допуске подразбиения 0.2");
+                for (int k = 0; k < line.Count; k++)
+                    worst = Math.Max(worst, DistanceToBody(verts, tris, line[k]));
+                Check($"Линия ({sharp:0.00}): лежит на теле", worst < 0.35f,
+                      $"отошла на {worst:0.###} при допуске подразбиения {MountainOutline.Tolerance}");
             }
+        }
+
+        /// <summary>
+        /// Насколько точка контура отошла от ЗАЛИВКИ. Ноль — точка внутри тела.
+        ///
+        /// Меряем по настоящим треугольникам (MountainTriangulation.Fill), а не по хордам вдоль
+        /// лучей. Первая редакция мерила по хордам — и нашла не то: точка контура почти всегда лежит
+        /// МЕЖДУ двумя лучами, поэтому до ближайшего меридиана всегда полшага по кольцу (замер: 0.65
+        /// при шаге лучей 1.3). Тело же между лучами сплошное, никакой щели там нет. Проверка ловила
+        /// частоту лучей, а не то, ради чего написана.
+        /// </summary>
+        static float DistanceToBody(List<Vector2> verts, List<int> tris, Vector2 p)
+        {
+            float best = float.PositiveInfinity;
+            for (int at = 0; at + 2 < tris.Count; at += 3)
+            {
+                if (Inside(p, verts, tris, at)) return 0f;
+                Vector2 a = verts[tris[at]], b = verts[tris[at + 1]], c = verts[tris[at + 2]];
+                best = Math.Min(best, PointToSegment(p, a, b));
+                best = Math.Min(best, PointToSegment(p, b, c));
+                best = Math.Min(best, PointToSegment(p, c, a));
+            }
+            return best == float.PositiveInfinity ? 0f : best;
+        }
+
+        static float PointToSegment(Vector2 p, Vector2 a, Vector2 b)
+        {
+            Vector2 d = b - a;
+            float len2 = d.LengthSquared();
+            if (len2 < 1e-12f) return Vector2.Distance(p, a);
+            float t = Vector2.Dot(p - a, d) / len2;
+            t = t < 0f ? 0f : (t > 1f ? 1f : t);
+            return Vector2.Distance(p, a + d * t);
         }
 
         /// <summary>
@@ -741,16 +935,16 @@ namespace MountainHarness
         /// </summary>
         static void GritDensityFollowsAreaNotTiers()
         {
-            int small = MountainInk.MarkCount(100f, 10f, 0.88f, 1f, out _);
-            int big = MountainInk.MarkCount(400f, 10f, 0.88f, 1f, out _);
-            int scaled = MountainInk.MarkCount(400f, 20f, 0.88f, 1f, out _);
+            int small = MountainInk.MarkCount(100f, 10f, 1f, out _);
+            int big = MountainInk.MarkCount(400f, 10f, 1f, out _);
+            int scaled = MountainInk.MarkCount(400f, 20f, 1f, out _);
 
             Check("Крошка: вчетверо большая площадь — вчетверо больше меток",
                   Math.Abs(big - small * 4) <= 2, $"{small} и {big}");
             Check("Крошка: тот же рисунок при вдвое большем радиусе",
                   Math.Abs(scaled - small) <= 2, $"{small} и {scaled}");
 
-            int capped = MountainInk.MarkCount(1e6f, 10f, 2f, 1f, out bool hit);
+            int capped = MountainInk.MarkCount(1e6f, 10f, 1f, out bool hit);
             Check("Крошка: потолок есть и он не молчит", hit && capped == MountainInk.GritCap,
                   $"меток {capped}, признак {hit}");
         }
@@ -1585,7 +1779,7 @@ namespace MountainHarness
         /// </summary>
         static void TiersFollowDepthBands()
         {
-            var settings = new MountainSettings { Radius = 10f, Tiers = 3, EdgeHeight = 0.55f };
+            var settings = new MountainSettings { Radius = 10f, EdgeHeight = 0.55f };
             var links = new List<AxisLink>
             {
                 new AxisLink { MidDepth = 5f },     // слой 0
@@ -1610,7 +1804,7 @@ namespace MountainHarness
         /// </summary>
         static void TierHeightIsNormalizedToThisBlob()
         {
-            var settings = new MountainSettings { Radius = 10f, Tiers = 3, EdgeHeight = 0.55f };
+            var settings = new MountainSettings { Radius = 10f, EdgeHeight = 0.55f };
             var links = new List<AxisLink>
             {
                 new AxisLink { MidDepth = 5f },
@@ -1662,48 +1856,11 @@ namespace MountainHarness
             Check("Конвейер: из мазка выросли горы", first.Count >= 3, $"гор {first.Count}");
             bool same = first.Count == second.Count;
             for (int i = 0; same && i < first.Count; i++)
-                if (Vector2.Distance(first[i].Silhouette[0], second[i].Silhouette[0]) > 1e-4f ||
+                if (Vector2.Distance(first[i].Base[0], second[i].Base[0]) > 1e-4f ||
                     !Near(first[i].Depth, second[i].Depth, 1e-4f)) same = false;
             Check("Конвейер: два прогона дают тот же рисунок", same, "горы разъехались между прогонами");
         }
 
-        /// <summary>
-        /// Склон обводится ровно там, где надо, и только там.
-        ///
-        /// У КОНУСА подъём линеен, максимум выноса всегда на конце, и у соседних лучей граница
-        /// скачет между подошвой и вершиной. На месте скачка проходит склон, точек границы там нет
-        /// вовсе, и без отдельного правила он остался бы голым — так и вышло на первом снимке
-        /// переноса: вершины обведены, бока чистые.
-        ///
-        /// Скачков ровно два — по одному на каждый бок, и у купола столько же: переход между
-        /// «максимум на конце» и «максимум внутри» разрывен у обоих. Больше двух означало бы, что
-        /// линия рассыпалась штрихами внутри горы.
-        ///
-        /// Мутанты: убрать порог (сработает почти на каждом луче); поднять порог до единицы (склоны
-        /// снова останутся голыми).
-        /// </summary>
-        static void SlopeIsOutlinedOnlyWhenTheBoundaryJumps()
-        {
-            var cone = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, 0.66f);
-            var dome = Mound(Horizontal(32f, 20f), 1.9f, 1.9f, 0f);
-            if (cone == null || dome == null) { Fail("Склон", "гора не построена"); return; }
-
-            int coneJumps = 0, domeJumps = 0;
-            for (int i = 0; i < cone.SilhouetteR.Length; i++)
-                if (MountainTriangulation.Jump(cone, i) >= MountainTriangulation.JumpThreshold) coneJumps++;
-            for (int i = 0; i < dome.SilhouetteR.Length; i++)
-                if (MountainTriangulation.Jump(dome, i) >= MountainTriangulation.JumpThreshold) domeJumps++;
-
-            // РОВНО два, и это измеренное число, а не запас: скачок приходится на каждый из двух
-            // боков горы — там, где граница уходит с подошвы на вершину. Ноль означал бы голые
-            // склоны (так и вышло на первом снимке переноса), а много — что линия рассыпалась
-            // штрихами внутри горы. Одинаково у конуса и у купола: переход между «максимум на
-            // конце» и «максимум внутри» разрывен у обоих.
-            Check("Склон: у конуса ровно два скачка — по одному на бок", coneJumps == 2,
-                  $"скачков {coneJumps} на {cone.SilhouetteR.Length} лучей");
-            Check("Склон: у купола столько же", domeJumps == 2,
-                  $"скачков {domeJumps} на {dome.SilhouetteR.Length} лучей");
-        }
 
         /// <summary>
         /// Тушь спрашивает про ПОДОШВУ, а не про нарисованное место.

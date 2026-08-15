@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 using WorldGen.Generation.Mountains;
@@ -8,12 +7,20 @@ namespace WorldGen.Rendering.Mountains
 {
     /// <summary>
     /// Собирает все горы массива в ОДИН меш, в котором треугольники уже уложены в порядке маляра:
-    /// дальние вперёд, ближние следом. Ни глубина, ни сортировка Unity в этом не участвуют — их
-    /// заменяет порядок подачи (см. MountainPaint.shader: ZWrite Off, ZTest Always).
+    /// дальние вперёд, ближние следом.
     ///
-    /// Порядок внутри одной горы: тело → крошка → промоины → линия. Тело кладётся первым, потому что
-    /// оно обязано закрыть тушь ДАЛЬНЕЙ горы; линия последней, потому что она обязана остаться
-    /// поверх собственной крошки.
+    /// Порядок внутри одной горы: тело → крошка → контур. Тело первым, потому что оно обязано
+    /// закрыть тушь ДАЛЬНЕЙ горы; контур последним, потому что он обязан остаться поверх собственной
+    /// крошки.
+    ///
+    /// Манера здесь ровно из трёх частей, и лишнего нет ни одной:
+    ///   • КОНТУР — одна непрерывная лента вдоль ломаной (MountainOutline), жирная у вершины,
+    ///     сходящая на нет книзу. Прежняя редакция клала вместо неё короткие штрихи в точках
+    ///     границы плюс отдельную обводку склона на скачке — оттуда на карте были рваный контур и
+    ///     чёрные клинья у вершин.
+    ///   • КРОШКА — только в полной тени, порогом, а не вероятностью.
+    ///   • Освещённый склон — ЧИСТАЯ БУМАГА. Промоины сняты: они шли как раз по свету и на образце
+    ///     ДМ их нет.
     ///
     /// Собирается В ФОНЕ (см. MountainMeshData). На главном потоке остаётся только заливка в Mesh.
     /// </summary>
@@ -25,12 +32,6 @@ namespace WorldGen.Rendering.Mountains
         /// различить порядок.
         /// </summary>
         public const float DepthStep = 5e-4f;
-
-        /// <summary>Отсчётов вдоль промоины.</summary>
-        const int GullySteps = 4;
-
-        /// <summary>Отсчётов вдоль склона на скачке границы.</summary>
-        const int SlopeSteps = 6;
 
         /// <summary>
         /// Горы → массивы меша. Чистый счёт: ни одного обращения к живому движку, поэтому зовётся
@@ -44,11 +45,13 @@ namespace WorldGen.Rendering.Mountains
             data.Clear();
             if (shapes == null || shapes.Count == 0 || profile == null) return;
 
-            Vec2 light = style.Light;
+            Vec2 light = MountainInk.Light;
             // Буферы раскладки заводятся ОДИН раз на весь массив, а не на гору: гор сотни, и
             // отдельный список на каждую — это сотни выбросов в мусор за один пересчёт.
             var scratchVerts = new List<Vec2>();
             var scratchTris = new List<int>();
+            var line = new List<Vec2>();
+            var radii = new List<float>();
 
             // Каждая следующая гора кладётся на волосок ВЫШЕ предыдущей. Порядок маляра остаётся
             // тем же (дальние раньше), но теперь он записан не только в очерёдности, а в самой
@@ -56,7 +59,7 @@ namespace WorldGen.Rendering.Mountains
             int index = 0;
             foreach (var shape in shapes)
             {
-                if (shape?.Silhouette == null || shape.Silhouette.Length < 3) continue;
+                if (shape?.Base == null || shape.Base.Length < 3) continue;
                 if (shape.LevelR == null || shape.LevelR.Length < 2) continue;
                 data.Mountains++;
 
@@ -66,8 +69,8 @@ namespace WorldGen.Rendering.Mountains
                 float density = style.Density(shape.Tier);
                 AddBody(data, shape, y, profile, scratchVerts, scratchTris);
                 AddGrit(data, shape, style, y, profile, light, density, radius);
-                AddGullies(data, shape, style, y, profile, light);
-                AddOutline(data, shape, style, y, profile, density);
+                MountainOutline.Build(shape, profile, line, radii);
+                AddOutline(data, shape, style, y, profile, line, radii, density, radius);
             }
             data.Seal();
         }
@@ -132,169 +135,109 @@ namespace WorldGen.Rendering.Mountains
         /// <summary>Прозрачная краска тела: карту не трогает, глубину пишет.</summary>
         static readonly Color32 Invisible = new Color32(0, 0, 0, 0);
 
-        // ── линия ───────────────────────────────────────────────────────────────────────────────
+        // ── контур ──────────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Линия туши: короткие штрихи в точках внешней границы.
+        /// Контур — ОДНА лента переменной толщины вдоль ломаной, полосой треугольников.
         ///
-        /// Почему штрихи, а не лента вдоль границы. Точка границы на луче — это тот ярус, который на
-        /// этом луче торчит дальше всех. У КОНУСА подъём линеен, и максимум всегда сидит на конце:
-        /// либо на подошве, либо на вершине. У соседних лучей он скачет между ними, и ломаная,
-        /// проведённая по этим точкам подряд, выходит клубком — стенд насчитал 68 самопересечений
-        /// из 115 на маске приложения. Штрихи от порядка обхода не зависят вовсе: каждый лежит по
-        /// касательной к СВОЕМУ ярусу и перекрывается с соседями, а вместе они читаются линией.
+        /// Разрывается она ровно в одном случае: когда толщина упала ниже пола (MountainInk.PenFloor)
+        /// — то есть у самого низа горы, где граница садится на подошву. Это и есть «низа нет вовсе»
+        /// с образца ДМ, а не разрыв линии. Внутри же горы линия непрерывна по построению: точки идут
+        /// слева направо, каждое звено сшито со следующим общими вершинами.
         ///
-        /// Толщина — жирность·(1 − r)^сход. У ближнего края r = 1, толщина ноль: подошва не
-        /// обводится сама собой, и контур обрывается — ровно как на образце ДМ. Ни одной проверки
-        /// «а здесь не обводить» в коде нет и не нужно.
+        /// Направление ленты берётся ХОРДОЙ через соседей, а не отрезком: у вершины поворот резкий, и
+        /// на отрезке лента дала бы залом. Краска непрозрачна, поэтому нахлёст на повороте не темнеет
+        /// и шва не видно.
+        ///
+        /// Подрезка по суше — по МЕСТУ НА ЗЕМЛЕ под точкой контура: точка нарисована приподнятой на
+        /// H·lift(r), и спрашивать про нарисованное место значило бы срезать макушку прибрежной горы,
+        /// за которой лежит вода.
         /// </summary>
         static void AddOutline(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                               float y, LiftSamples profile, float density)
+                               float y, LiftSamples profile, List<Vec2> line, List<float> radii,
+                               float density, float radius)
         {
-            if (style.PenWidth <= 0f || style.PenAlpha <= 0f) return;
+            int count = line.Count;
+            if (count < 2) return;
+            Color32 ink = style.Ink;
 
-            var loop = shape.Silhouette;
-            var rs = shape.SilhouetteR;
-            Color32 ink = style.InkAt(shape.Tier, shape.Depth);
-
-            for (int i = 0; i < loop.Length; i++)
+            int prev = -1;                       // номер верхней вершины предыдущей поставленной точки
+            for (int k = 0; k < count; k++)
             {
-                float half = 0.5f * style.PenWidth * MountainInk.Taper(rs[i], style.PenTaper) * density;
-                if (half < 1e-3f) continue;
-                if (!MountainInk.Grounded(style.OnLand, shape, i, rs[i])) continue;
+                float half = MountainInk.HalfWidth(radii[k], shape, radius, density);
+                if (half <= 0f || !Grounded(style, shape, profile, line[k], radii[k])) { prev = -1; continue; }
 
-                MountainTriangulation.Dash(shape, i, profile, out Vec2 dir, out float reach);
-                if (reach <= 0f) continue;
+                Vec2 dir = Chord(line, k);
+                Vec2 nrm = new Vec2(-dir.Y, dir.X) * half;
+                Vec2 p = line[k];
 
-                Vec2 side = new Vec2(-dir.Y, dir.X) * half;
-                Vec2 along = dir * reach;
-                Vec2 p = loop[i];
+                int at = data.Verts.Count;
+                data.Verts.Add(new Vector3(p.X - nrm.X, y, p.Y - nrm.Y));
+                data.Verts.Add(new Vector3(p.X + nrm.X, y, p.Y + nrm.Y));
+                data.Colors.Add(ink);
+                data.Colors.Add(ink);
 
-                int start = data.Verts.Count;
-                data.Verts.Add(new Vector3(p.X - along.X - side.X, y, p.Y - along.Y - side.Y));
-                data.Verts.Add(new Vector3(p.X - along.X + side.X, y, p.Y - along.Y + side.Y));
-                data.Verts.Add(new Vector3(p.X + along.X - side.X, y, p.Y + along.Y - side.Y));
-                data.Verts.Add(new Vector3(p.X + along.X + side.X, y, p.Y + along.Y + side.Y));
-                for (int k = 0; k < 4; k++) data.Colors.Add(ink);
-                data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
-                data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
-            }
-
-            AddSlopes(data, shape, style, y, profile, density, ink);
-        }
-
-        /// <summary>
-        /// Обводка СКЛОНА — там, где граница скачет между соседними лучами.
-        ///
-        /// У конуса максимум выноса всегда на конце (подъём линеен), поэтому у одного луча граница
-        /// сидит на подошве, у соседнего — уже на вершине, а между ними проходит склон, на котором
-        /// точек границы нет вовсе. Без этого вершины обведены, а бока голые — так и вышло на
-        /// первом снимке переноса. Ведём линию по меридиану того луча, на котором скачок, с той же
-        /// толщиной по (1 − r)^сход: у подошвы ноль, у вершины полная.
-        ///
-        /// У купола скачков нет — цикл не делает ничего, и правило само выключается.
-        /// </summary>
-        static void AddSlopes(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                              float y, LiftSamples profile, float density, Color32 ink)
-        {
-            int n = shape.SilhouetteR.Length;
-            for (int i = 0; i < n; i++)
-            {
-                if (MountainTriangulation.Jump(shape, i) < MountainTriangulation.JumpThreshold) continue;
-
-                int j = (i + 1) % n;
-                float ra = shape.SilhouetteR[i], rb = shape.SilhouetteR[j];
-                float hi = Math.Max(ra, rb), lo = Math.Min(ra, rb);
-                int edge = ra > rb ? i : j;          // ведём по лучу, с которого граница уходит вверх
-
-                Vec2 prev = MountainTriangulation.Meridian(shape, edge, hi, profile);
-                float prevHalf = 0.5f * style.PenWidth * MountainInk.Taper(hi, style.PenTaper) * density;
-                bool prevDry = MountainInk.Grounded(style.OnLand, shape, edge, hi);
-                for (int step = 1; step <= SlopeSteps; step++)
+                if (prev >= 0)
                 {
-                    float r = hi + (lo - hi) * step / SlopeSteps;
-                    Vec2 next = MountainTriangulation.Meridian(shape, edge, r, profile);
-                    float half = 0.5f * style.PenWidth * MountainInk.Taper(r, style.PenTaper) * density;
-                    bool dry = MountainInk.Grounded(style.OnLand, shape, edge, r);
-
-                    // Кусок кладём, только если СУХИ ОБА конца, но конец двигаем всегда: иначе
-                    // следующий протянулся бы через всю воду одним длинным отрезком. Обход идёт от
-                    // подошвы к вершине, поэтому обрывать цикл нельзя — за юбкой, заехавшей в озеро,
-                    // дальше идёт совершенно сухой склон.
-                    if (dry && prevDry) AddTaperedSegment(data, prev, next, prevHalf, half, y, ink);
-                    prev = next;
-                    prevHalf = half;
-                    prevDry = dry;
+                    data.InkTris.Add(prev); data.InkTris.Add(at); data.InkTris.Add(prev + 1);
+                    data.InkTris.Add(prev + 1); data.InkTris.Add(at); data.InkTris.Add(at + 1);
                 }
+                prev = at;
             }
         }
 
-        /// <summary>Отрезок ленты с разной толщиной на концах — линия обязана худеть к подошве.</summary>
-        static void AddTaperedSegment(MountainMeshData data, Vec2 a, Vec2 b, float halfA, float halfB,
-                                      float y, Color32 color)
+        /// <summary>Направление ленты в точке: хорда через соседей. У края берётся то, что есть.</summary>
+        static Vec2 Chord(List<Vec2> line, int k)
         {
+            Vec2 a = line[k > 0 ? k - 1 : k];
+            Vec2 b = line[k + 1 < line.Count ? k + 1 : k];
             Vec2 d = b - a;
-            if (d.LengthSquared() < 1e-10f) return;
-            d = Vec2.Normalize(d);
-            Vec2 nrm = new Vec2(-d.Y, d.X);
-
-            int start = data.Verts.Count;
-            data.Verts.Add(new Vector3(a.X - nrm.X * halfA, y, a.Y - nrm.Y * halfA));
-            data.Verts.Add(new Vector3(a.X + nrm.X * halfA, y, a.Y + nrm.Y * halfA));
-            data.Verts.Add(new Vector3(b.X - nrm.X * halfB, y, b.Y - nrm.Y * halfB));
-            data.Verts.Add(new Vector3(b.X + nrm.X * halfB, y, b.Y + nrm.Y * halfB));
-            for (int k = 0; k < 4; k++) data.Colors.Add(color);
-            data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
-            data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
+            if (d.LengthSquared() < 1e-10f) return new Vec2(1f, 0f);
+            return Vec2.Normalize(d);
         }
 
-        static Vec2 Normal(Vec2 a, Vec2 b)
+        /// <summary>Стоит ли эта точка контура на суше. Место на земле = нарисованное минус подъём
+        /// того яруса, на котором точка достигнута.</summary>
+        static bool Grounded(in MountainPaintStyle style, MountainShape shape, LiftSamples profile,
+                             Vec2 point, float r)
         {
-            Vec2 d = b - a;
-            if (d.LengthSquared() < 1e-10f) return new Vec2(0f, 1f);
-            d = Vec2.Normalize(d);
-            return new Vec2(-d.Y, d.X);
+            if (style.OnLand == null) return true;
+            return style.OnLand(new Vec2(point.X, point.Y - shape.Height * profile.LiftAt(r)));
         }
 
         // ── крошка ──────────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Зернистая штриховка теневой стороны: густо у гребня, редеет вниз по склону.
+        /// Зернистая штриховка ПОЛНОЙ ТЕНИ, и только её.
         ///
-        /// Меток кладём по ПЛОЩАДИ подошвы, а не по числу ярусов (которых тут и нет вовсе) и не по
-        /// горе. В браузере это было ошибкой, найденной на ходу: плотность цеплялась за ползунок
-        /// «ярусов», и, подняв его ради гладкого силуэта, ДМ разом затемнил бы всю картину, не поняв,
-        /// отчего. Площадь мерится в R², поэтому мелкие и крупные горы выглядят одинаково.
+        /// Порог, а не вероятность (MountainInk.InShadow). Прежде метка ставилась с вероятностью,
+        /// растущей от освещённости, и одиночные зёрна сеялись по всей горе — включая освещённую
+        /// сторону, где на образце ДМ чистая бумага. Полутонов между «в тени» и «на свету» на
+        /// образце нет, значит и в правиле их быть не должно.
         ///
-        /// Каждая метка — ТРЕУГОЛЬНИК, а не четырёхугольник: на своём размере он читается той же
-        /// точкой, а вершин и индексов стоит вдвое меньше. Крошка — самая многочисленная часть
-        /// рисунка, и на ней эта разница решает.
+        /// Меток кладём по ПЛОЩАДИ подошвы, в долях R², — мелкие и крупные горы выглядят одинаково.
+        /// Каждая метка — прямоугольник: треугольник той же ширины кроет вдвое меньше и вблизи
+        /// читается треугольником, а не зерном.
         /// </summary>
         static void AddGrit(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
                             float y, LiftSamples profile, Vec2 light, float density, float radius)
         {
-            if (style.PenAlpha <= 0f) return;
-
-            int total = MountainInk.MarkCount(shape.FootArea, radius, style.Grit, density, out bool capped);
+            int total = MountainInk.MarkCount(shape.FootArea, radius, density, out bool capped);
             if (capped) data.GritCapped = true;
             if (total <= 0) return;
 
-            var foot = shape.Base;
             var normals = shape.Normal;
-            int n = foot.Length;
-            Color32 ink = style.InkAt(shape.Tier, shape.Depth);
+            int n = shape.Base.Length;
+            Color32 ink = style.Ink;
 
             for (int id = 1; id <= total; id++)
             {
                 int i = (int)(Rand(shape.Seed, 7u, id) * n);
                 if (i >= n) i = n - 1;
-
-                float shade = MountainInk.Shade(normals[i], light);
-                if (shade <= 0.05f) continue;
-                if (Rand(shape.Seed, 11u, id) > Math.Min(1f, shade * 1.6f)) continue;
+                if (!MountainInk.InShadow(normals[i], light)) continue;
 
                 // Ярус тянем со смещением вверх: степень и есть «крошка редеет вниз».
-                float r = MountainInk.MarkR(Rand(shape.Seed, 3u, id), style.GritFall);
+                float r = MountainInk.MarkR(Rand(shape.Seed, 3u, id), MountainInk.GritFall);
                 if (!MountainInk.Grounded(style.OnLand, shape, i, r)) continue;
                 Vec2 p = MountainTriangulation.Meridian(shape, i, r, profile);
 
@@ -304,8 +247,6 @@ namespace WorldGen.Rendering.Mountains
                 Vec2 q = MountainTriangulation.Meridian(shape, j, r, profile);
                 p = new Vec2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
-                // Прямоугольник, а не треугольник: вблизи треугольник читается треугольником, а
-                // не зерном, и кроет вдвое меньше площади при той же ширине.
                 float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
                 float hw = s * 0.5f, hh = s * 0.35f;
                 int start = data.Verts.Count;
@@ -318,61 +259,6 @@ namespace WorldGen.Rendering.Mountains
                 data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
                 data.GritMarks++;
             }
-        }
-
-        // ── промоины ────────────────────────────────────────────────────────────────────────────
-
-        /// <summary>Редкие тонкие штрихи по освещённому склону. Идут по меридиану — по одному и тому
-        /// же лучу через несколько значений r, — поэтому сами ложатся вдоль ската.</summary>
-        static void AddGullies(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
-                               float y, LiftSamples profile, Vec2 light)
-        {
-            if (style.Gully <= 0f || style.PenAlpha <= 0f || style.PenWidth <= 0f) return;
-
-            var normals = shape.Normal;
-            int n = normals.Length;
-            Color32 ink = style.InkAt(shape.Tier, shape.Depth, 0.6f);
-            float half = 0.5f * Math.Max(0.02f, style.PenWidth * 0.16f);
-
-            for (int i = 0; i < n; i++)
-            {
-                if (normals[i].X * light.X + normals[i].Y * light.Y <= 0.25f) continue;
-                if (Rand(shape.Seed, 613u, i) > style.Gully * 0.3f) continue;
-
-                MountainInk.Gully(Rand(shape.Seed, 71u, i), Rand(shape.Seed, 89u, i),
-                                  out float top, out float length);
-                float bottom = Math.Min(0.95f, top + length);
-
-                // Промоина идёт наружу по склону, поэтому спрашиваем про её ДАЛЬНИЙ конец: если он
-                // уже в воде, вся промоина лежит на юбке, которой на земле нет.
-                if (!MountainInk.Grounded(style.OnLand, shape, i, bottom)) continue;
-
-                Vec2 prev = MountainTriangulation.Meridian(shape, i, top, profile);
-                for (int step = 1; step <= GullySteps; step++)
-                {
-                    float r = top + (bottom - top) * step / GullySteps;
-                    Vec2 next = MountainTriangulation.Meridian(shape, i, r, profile);
-                    AddSegment(data, prev, next, half, y, ink);
-                    prev = next;
-                }
-            }
-        }
-
-        static void AddSegment(MountainMeshData data, Vec2 a, Vec2 b, float half, float y, Color32 color)
-        {
-            Vec2 d = b - a;
-            if (d.LengthSquared() < 1e-10f) return;
-            d = Vec2.Normalize(d);
-            Vec2 nrm = new Vec2(-d.Y, d.X) * half;
-
-            int start = data.Verts.Count;
-            data.Verts.Add(new Vector3(a.X - nrm.X, y, a.Y - nrm.Y));
-            data.Verts.Add(new Vector3(a.X + nrm.X, y, a.Y + nrm.Y));
-            data.Verts.Add(new Vector3(b.X - nrm.X, y, b.Y - nrm.Y));
-            data.Verts.Add(new Vector3(b.X + nrm.X, y, b.Y + nrm.Y));
-            for (int k = 0; k < 4; k++) data.Colors.Add(color);
-            data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
-            data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
         }
 
         // ── лента следа кисти ───────────────────────────────────────────────────────────────────
@@ -398,6 +284,23 @@ namespace WorldGen.Rendering.Mountains
                 AddSegment(data, line[i], line[i + 1], half, yHeight, color);
             data.Seal();
             Upload(mesh, data);
+        }
+
+        static void AddSegment(MountainMeshData data, Vec2 a, Vec2 b, float half, float y, Color32 color)
+        {
+            Vec2 d = b - a;
+            if (d.LengthSquared() < 1e-10f) return;
+            d = Vec2.Normalize(d);
+            Vec2 nrm = new Vec2(-d.Y, d.X) * half;
+
+            int start = data.Verts.Count;
+            data.Verts.Add(new Vector3(a.X - nrm.X, y, a.Y - nrm.Y));
+            data.Verts.Add(new Vector3(a.X + nrm.X, y, a.Y + nrm.Y));
+            data.Verts.Add(new Vector3(b.X - nrm.X, y, b.Y - nrm.Y));
+            data.Verts.Add(new Vector3(b.X + nrm.X, y, b.Y + nrm.Y));
+            for (int k = 0; k < 4; k++) data.Colors.Add(color);
+            data.InkTris.Add(start); data.InkTris.Add(start + 2); data.InkTris.Add(start + 1);
+            data.InkTris.Add(start + 1); data.InkTris.Add(start + 2); data.InkTris.Add(start + 3);
         }
 
         // ── зерно ───────────────────────────────────────────────────────────────────────────────

@@ -48,22 +48,10 @@ namespace WorldGen.Rendering
         Text sizeLabel;              // подпись слайдера размера: «Размер» / «Ширина реки»
         GameObject strengthGroupGO;
         GameObject shapeRowGO;       // строка «Форма» — реке не нужна
-        /// <summary>
-        /// Ползунки гор. Панель их только ПОКАЗЫВАЕТ: число живёт в слое, а не здесь. Держим
-        /// списком, потому что всем им нужно одно и то же — прятаться вне инструмента «Горы» и
-        /// подтягиваться из слоя при заходе в него.
-        /// </summary>
-        class MountainKnob
-        {
-            public GameObject Group;
-            public Slider Slider;
-            public Text Value;
-            public System.Func<Mountains.MountainLayer, float> Get;
-            public System.Action<Mountains.MountainLayer, float> Set;
-            public System.Func<float, string> Format;
-        }
-
-        readonly List<MountainKnob> mountainKnobs = new List<MountainKnob>();
+        // Ползунков вида у гор больше НЕТ (решение ДМ 15 августа 2026). Размер горы, высота,
+        // острота, зубчатость, сглаживание, жирность линии, чернота, крошка, промоины, свет,
+        // слои массы — всё это постоянные в MountainSettings и MountainInk, откалиброванные по
+        // превью. Кисть гор задаёт РЕЛЬЕФ, а как рельеф выглядит — не настройка инструмента.
 
         // Biome palette (contextual, shown only in Brush mode with target = Biome)
         GameObject biomePaletteRoot;
@@ -176,9 +164,6 @@ namespace WorldGen.Rendering
             // Форма отпечатка реке не нужна: русло идёт по клетке под курсором, а не по площади.
             // Горам нужна: с 2026-08-14 кисть гор — обычная кисть по клеткам, только пишет высоту.
             if (shapeRowGO != null) shapeRowGO.SetActive(!isRiver);
-            foreach (var knob in mountainKnobs)
-                if (knob.Group != null) knob.Group.SetActive(isMountain);
-            SyncMountainKnobs(isMountain);
             SyncSizeSliderTo(target);
 
             UpdateBiomePaletteVisibility();
@@ -222,57 +207,6 @@ namespace WorldGen.Rendering
             sizeSlider.value = Mathf.Clamp(want, sizeSlider.minValue, sizeSlider.maxValue);
         }
 
-        /// <summary>Слой гор, если он есть. Ползунки без него молчат — и панель, и слой должны
-        /// пережить сцену, где слоя не повесили.</summary>
-        Mountains.MountainLayer Layer() => mapRenderer != null ? mapRenderer.MountainLayer : null;
-
-        /// <summary>Подтягивает ползунки гор из слоя: числа живут там, панель их только показывает.
-        /// Иначе после перезахода в инструмент ползунок молча вернул бы своё начальное значение и
-        /// затёр им подобранное.</summary>
-        void SyncMountainKnobs(bool isMountain)
-        {
-            if (!isMountain) return;
-            var layer = Layer();
-            if (layer == null) return;
-            foreach (var knob in mountainKnobs)
-            {
-                if (knob.Slider == null) continue;
-                float v = Mathf.Clamp(knob.Get(layer), knob.Slider.minValue, knob.Slider.maxValue);
-                knob.Slider.SetValueWithoutNotify(v);
-                // Подпись пишем сами: значение поставлено без уведомления, и колбэк её не тронул.
-                if (knob.Value != null) knob.Value.text = knob.Format(v);
-            }
-        }
-
-        /// <summary>
-        /// Ползунок, чьё число живёт в слое гор. Начальное значение берётся ИЗ СЛОЯ, а не из
-        /// константы: BuildLabeledSlider поднимает свой колбэк сразу при сборке, и с константой
-        /// панель затирала бы то, что выставлено в инспекторе, ещё до первого показа.
-        /// </summary>
-        /// <param name="repaintOnly">Число красит, но не двигает геометрию — тогда меш собирается
-        /// заново из уже посчитанного рисунка, а не считается с нуля. Полный счёт большого массива
-        /// стоит четверть секунды, и ползунок цвета на нём дёргался бы вместо того, чтобы ехать.</param>
-        void AddMountainKnob(Transform t, string label, float min, float max, float fallback,
-                             System.Func<Mountains.MountainLayer, float> get,
-                             System.Action<Mountains.MountainLayer, float> set,
-                             System.Func<float, string> format, bool repaintOnly = false)
-        {
-            var layer = Layer();
-            float def = layer != null ? Mathf.Clamp(get(layer), min, max) : fallback;
-
-            var knob = new MountainKnob { Get = get, Set = set, Format = format };
-            BuildLabeledSlider(t, label, min, max, def, out knob.Slider, out knob.Value, out knob.Group,
-                               isPercent: false, v =>
-            {
-                var live = Layer();
-                if (live == null) return;
-                set(live, v);
-                // Пересчёт отложенный: ДМ ведёт ползунок, значение меняется на каждый пиксель, а
-                // полный счёт слоя стоит десятки миллисекунд.
-                if (repaintOnly) live.Repaint(); else live.RebuildSoon();
-            }, format);
-            mountainKnobs.Add(knob);
-        }
 
         void OnModeChanged(BrushMode mode)
         {
@@ -473,78 +407,9 @@ namespace WorldGen.Rendering
                 else brushController.brushRadius = v;
             });
 
-            // «Размер» и «Размер гор» — разные вещи: первый задаёт ширину мазка (сколько земли
-            // занял массив), второй — величину ОДНОЙ горы. Дальше идут числа самого рисунка, они
-            // уехали сюда из инспектора слоя (задача 10): крутить их надо, глядя на карту.
-            AddMountainKnob(t, "Размер гор", 3f, 40f, 10f,
-                            l => l.mountainRadius, (l, v) => l.mountainRadius = v,
-                            v => $"{Mathf.RoundToInt(v)} px");
-
-            AddMountainKnob(t, "Высота гор", 1f, 4f, 2.2f,
-                            l => l.heightFactor, (l, v) => l.heightFactor = v,
-                            v => $"×{v:0.0}");
-
-            // Сглаживание контура: клетки карты стоят через 15 единиц, а гора — 10, поэтому без
-            // него край массива выходит мозаикой. Мера — в радиусах горы, чтобы не переставлять её
-            // следом за «Размером гор».
-            AddMountainKnob(t, "Сглаживание", 0f, 1.5f, 0.5f,
-                            l => l.maskSmoothing, (l, v) => l.maskSmoothing = v,
-                            v => v <= 0.001f ? "нет" : $"{v:0.0} R");
-
-            // Острота вершины (§10): купол → синусоида → конус → шпиль. Заменила прежний показатель
-            // склона. Ползунка «ярусов горы» рядом НЕТ и не будет: сколько их нужно, решает кривизна
-            // самой кривой подъёма, и выбирать тут нечего — у конуса меридиан прямой и хватает двух,
-            // у купола нужен десяток. Это число не вкуса, а точности.
-            AddMountainKnob(t, "Острота", 0f, 1f, 0.66f,
-                            l => l.sharp, (l, v) => l.sharp = v,
-                            v => v < 0.17f ? "купол" : v < 0.5f ? "синусоида"
-                               : v < 0.83f ? "конус" : "шпиль");
-
-            AddMountainKnob(t, "Зубчатость", 0f, 0.3f, 0.03f,
-                            l => l.jag, (l, v) => l.jag = v,
-                            v => v <= 0.001f ? "ровно" : $"{v:0.00}");
-
-            // Слои массы (§11): край, середина, ядро. В манере туши они задают не цвет, а ГУСТОТУ —
-            // внутренние слои жирнее линией и плотнее крошкой. «Слоёв» меняет и геометрию (по слоям
-            // раздаётся высота), поэтому требует пересчёта; контраст только перекрашивает готовое.
-            AddMountainKnob(t, "Слоёв массы", 1f, 4f, 3f,
-                            l => l.tiers, (l, v) => l.tiers = Mathf.RoundToInt(v),
-                            v => $"{Mathf.RoundToInt(v)}");
-
-            AddMountainKnob(t, "Контраст слоёв", -1f, 1f, 1f,
-                            l => l.tierContrast, (l, v) => l.tierContrast = v,
-                            v => Mathf.Abs(v) <= 0.02f ? "ровно"
-                               : v > 0f ? $"ядро гуще {Mathf.RoundToInt(v * 100f)}%"
-                                        : $"ядро реже {Mathf.RoundToInt(-v * 100f)}%",
-                            repaintOnly: true);
-
-            // Тушь (§13). Всё ниже меняет только краску, поэтому идёт перекраской, а не пересчётом:
-            // геометрия от этих чисел не зависит ни на йоту, а полный счёт большого массива стоит
-            // полторы секунды — ползунок дёргался бы вместо того, чтобы ехать.
-            AddMountainKnob(t, "Жирность линии", 0f, 0.8f, 0.55f,
-                            l => l.penWidth, (l, v) => l.penWidth = v,
-                            v => v <= 0.001f ? "без линии" : $"{v:0.00} R",
-                            repaintOnly: true);
-
-            AddMountainKnob(t, "Чернота", 0f, 1f, 0.95f,
-                            l => l.penAlpha, (l, v) => l.penAlpha = v,
-                            v => $"{Mathf.RoundToInt(v * 100f)}%",
-                            repaintOnly: true);
-
-            AddMountainKnob(t, "Крошка", 0f, 2f, 0.88f,
-                            l => l.grit, (l, v) => l.grit = v,
-                            v => v <= 0.001f ? "нет" : $"{v:0.00}",
-                            repaintOnly: true);
-
-            AddMountainKnob(t, "Промоины", 0f, 1f, 0.32f,
-                            l => l.gully, (l, v) => l.gully = v,
-                            v => v <= 0.001f ? "нет" : $"{v:0.00}",
-                            repaintOnly: true);
-
-            AddMountainKnob(t, "Свет", 0f, 360f, 160f,
-                            l => l.lightAngle, (l, v) => l.lightAngle = v,
-                            v => $"{Mathf.RoundToInt(v)}°",
-                            repaintOnly: true);
+            // Числа вида гор сюда НЕ выносятся, и в инспекторе слоя их тоже нет: они постоянные.
+            // Пока каждое было ползунком, вид на карте зависел от того, что случайно записано в
+            // сцене, — и дважды подряд расходился с превью, которое ДМ одобрил.
 
             BuildLabeledSlider(t, "Сила", 0f, 1f, 0.6f, out strengthSlider, out strengthValue, out strengthGroupGO, isPercent: true, v =>
             {

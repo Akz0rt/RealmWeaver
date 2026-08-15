@@ -16,7 +16,8 @@ namespace WorldGen.Generation.Mountains
     /// перевал — цепь читается как гряда, а не как ряд кучек.
     ///
     /// Ярус r — та же подошва, стянутая к середине звена в r раз и поднятая на H·lift(r). Здесь не
-    /// строится ни одного яруса: сразу считается ВНЕШНЯЯ ГРАНИЦА их объединения — см. Silhouette.
+    /// строится ни одного яруса: заливка берёт столько, сколько нужно гладкой огибающей (Levels),
+    /// а внешнюю границу для линии считает MountainOutline — по x и одной ломаной.
     ///
     /// Ушли вместе с прежним силуэтом: гребень и дуга подошвы, MakeMonotone, ClampUnderCrest,
     /// показатель склона и весь класс самопересечений. Полоса между двумя ярусами сшивается зипом,
@@ -78,19 +79,10 @@ namespace WorldGen.Generation.Mountains
 
             float height = heightFactor * link.MidW * link.HeightJitter * link.TierScale;
 
-            var silhouette = new Vector2[n];
-            var silhouetteR = new float[n];
+            // Нормали подошвы нужны крошке: по ним решается, какая сторона в тени. Внешняя граница
+            // отсюда ушла — её считает MountainOutline, по x, и одной ломаной.
             var normals = new Vector2[n];
-            for (int i = 0; i < n; i++)
-            {
-                Vector2 d = foot[i] - c;
-                Vector2 normal = OutwardNormal(foot, i, c);
-                normals[i] = normal;
-                float r = BoundaryR(d, normal, height, profile);
-                silhouetteR[i] = r;
-                silhouette[i] = new Vector2(c.X + d.X * r,
-                                            c.Y + d.Y * r + height * profile.LiftAt(r));
-            }
+            for (int i = 0; i < n; i++) normals[i] = OutwardNormal(foot, i, c);
 
             return new MountainShape
             {
@@ -100,8 +92,7 @@ namespace WorldGen.Generation.Mountains
                 Centre = c,
                 Height = height,
                 Sharp = profile.Sharp,
-                Silhouette = silhouette,
-                SilhouetteR = silhouetteR,
+                SpanX = maxX - minX,
                 Depth = minY,
                 Tier = link.Tier,
                 Seed = seed,
@@ -149,59 +140,6 @@ namespace WorldGen.Generation.Mountains
             Subdivide(list, hi, mid, height, profile, tolerance, depth + 1);
             list.Add(mid);
             Subdivide(list, mid, lo, height, profile, tolerance, depth + 1);
-        }
-
-        /// <summary>
-        /// На каком r внешняя граница стопки касается луча i.
-        ///
-        /// Ярус r кладёт точку в c + r·d + (0, H·lift(r)). Её вынос за край стопки меряется
-        /// проекцией на нормаль подошвы в этой точке:
-        ///
-        ///     g(r) = r·(d·n) + H·lift(r)·n_y
-        ///
-        /// Максимум g и есть граница. Это не приближение: производная g даёт
-        /// lift'(r) = −(d·n)/(H·n_y), а это в точности условие огибающей семейства ярусов
-        /// (∂Q/∂i × ∂Q/∂r = 0) — проверяется подстановкой n = (d'_y, −d'_x)/|d'|.
-        ///
-        /// У ближнего края n_y &lt; 0, второе слагаемое растёт с r, максимум всегда на r = 1 — граница
-        /// садится на саму подошву, и линия туши там нулевой толщины. Поэтому подошва не обводится
-        /// сама собой, без единой проверки: ровно то, чего требовал образец ДМ.
-        /// </summary>
-        static float BoundaryR(Vector2 d, Vector2 normal, float height, LiftSamples profile)
-        {
-            float along = d.X * normal.X + d.Y * normal.Y;
-            float up = height * normal.Y;
-
-            int best = profile.Count - 1;          // r = 1: подошва, всегда допустимый ответ
-            float bestValue = float.NegativeInfinity;
-            for (int k = 0; k < profile.Count; k++)
-            {
-                float value = profile.R[k] * along + profile.Lift[k] * up;
-                if (value > bestValue) { bestValue = value; best = k; }
-            }
-
-            // Уточнение параболой по лучшей тройке: без него граница ступенчато скачет между
-            // выборками, и на пологой горе это видно гранёностью силуэта.
-            if (best > 0 && best < profile.Count - 1)
-            {
-                float y0 = profile.R[best - 1] * along + profile.Lift[best - 1] * up;
-                float y1 = bestValue;
-                float y2 = profile.R[best + 1] * along + profile.Lift[best + 1] * up;
-                float denom = y0 - 2f * y1 + y2;
-                if (Math.Abs(denom) > 1e-9f)
-                {
-                    float shift = 0.5f * (y0 - y2) / denom;
-                    if (shift > -1f && shift < 1f)
-                    {
-                        float step = shift < 0f
-                            ? profile.R[best] - profile.R[best - 1]
-                            : profile.R[best + 1] - profile.R[best];
-                        return Clamp(profile.R[best] + shift * Math.Abs(step),
-                                     MountainProfile.ApexRadius, 1f);
-                    }
-                }
-            }
-            return profile.R[best];
         }
 
         /// <summary>Наружу глядящая нормаль подошвы в точке i. Направление сверяется с лучом из

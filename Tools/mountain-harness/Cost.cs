@@ -41,36 +41,38 @@ namespace MountainHarness
             if (mask == null) { Console.WriteLine($"  {name}: маска не построена"); return; }
             mask.Smooth((int)Math.Round(0.5f * 10f / mask.Cell));
             var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
-            watch.Stop();
 
             var profile = settings.Profile();
             long verts = 0, tris = 0, marks = 0;
             bool capped = false;
+            var line = new System.Collections.Generic.List<System.Numerics.Vector2>();
+            var radii = new System.Collections.Generic.List<float>();
             foreach (var shape in shapes)
             {
                 MountainTriangulation.FillSize(shape, out int bodyVerts, out int bodyTris);
                 verts += bodyVerts;
                 tris += bodyTris / 3;
 
-                // Линия: по штриху на луч, штрих — четырёхугольник.
-                int line = 0;
-                for (int i = 0; i < shape.SilhouetteR.Length; i++)
-                    if (MountainInk.Taper(shape.SilhouetteR[i], 1.1f) > 1e-3f) line++;
-                verts += line * 4;
-                tris += line * 2;
+                // Контур: одна лента вдоль ломаной — по две вершины и два треугольника на звено.
+                float density = MountainInk.Density(shape.Tier, MountainSettings.Tiers);
+                MountainOutline.Build(shape, profile, line, radii);
+                int drawn = 0;
+                for (int i = 0; i < radii.Count; i++)
+                    if (MountainInk.HalfWidth(radii[i], shape, settings.Radius, density) > 0f) drawn++;
+                verts += drawn * 2;
+                tris += Math.Max(0, drawn - 1) * 2;
 
-                // Крошка: треугольник на метку. Промоины: четыре звена по четырёхугольнику.
-                float density = MountainInk.Density(shape.Tier, settings.Tiers, 1f, 0.5f);
-                int grit = MountainInk.MarkCount(shape.FootArea, settings.Radius, 0.88f, density, out bool hit);
+                // Крошка: четырёхугольник на метку. Промоин больше нет вовсе.
+                int grit = MountainInk.MarkCount(shape.FootArea, settings.Radius, density, out bool hit);
                 capped |= hit;
                 marks += grit;
-                verts += grit * 3;
-                tris += grit;
-
-                int gully = (int)(shape.Base.Length * 0.32f * 0.3f + 0.5f);
-                verts += gully * 4 * 4;
-                tris += gully * 4 * 2;
+                verts += grit * 4;
+                tris += grit * 2;
             }
+            // Секундомер закрывается ЗДЕСЬ, а не после геометрии: контур считается по горе, и его
+            // цена — такая же часть «не зависает ли», как и поле расстояний. Первая редакция мерила
+            // только геометрию и молчала о половине работы.
+            watch.Stop();
 
             Console.WriteLine($"  {name,-18} {shapes.Count,5} {verts,8} {tris,14} {watch.ElapsedMilliseconds,10}"
                             + (capped ? "   (крошка упёрлась в потолок)" : ""));

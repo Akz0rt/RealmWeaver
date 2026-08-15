@@ -108,49 +108,5 @@ namespace WorldGen.Generation.Mountains
             tris = (levels * n + (levels - 1) * n * 2) * 3;
         }
 
-        /// <summary>
-        /// Насколько велик скачок границы между соседними лучами.
-        ///
-        /// Зачем это нужно. У КОНУСА подъём линеен, и вынос яруса за край растёт (или падает) по r
-        /// строго — значит максимум всегда сидит на конце: либо на подошве, либо на вершине. У
-        /// соседних лучей он скачет между ними, и на месте скачка проходит СКЛОН: прямая от точки
-        /// подошвы до вершины. Точек границы там нет вовсе — они на концах, — и склон остался бы
-        /// необведённым. Это и было видно на первом же снимке переноса: вершины обведены, а бока
-        /// голые.
-        ///
-        /// У купола скачка нет: максимум едет по r плавно, и склон обводится обычными штрихами.
-        /// Поэтому правило одно и включается само там, где нужно.
-        /// </summary>
-        public static float Jump(MountainShape shape, int i)
-        {
-            int n = shape.SilhouetteR.Length;
-            return Math.Abs(shape.SilhouetteR[i] - shape.SilhouetteR[(i + 1) % n]);
-        }
-
-        /// <summary>Порог, выше которого разрыв границы считается скачком и обводится по меридиану.
-        /// Ниже — соседние точки и так рядом, штрихи перекрываются сами.</summary>
-        public const float JumpThreshold = 0.15f;
-
-        /// <summary>Длина штриха линии в точке границы: половина расстояния между соседними точками
-        /// того же яруса, с небольшим нахлёстом. Штрихи обязаны перекрываться — иначе линия
-        /// рассыпается в пунктир.</summary>
-        public const float DashOverlap = 1.25f;
-
-        /// <summary>Направление и длина штриха линии на луче i. Касательная берётся по СВОЕМУ ярусу
-        /// (r точки границы), а не по подошве: у вершины кольцо мельче, и штрих обязан быть короче,
-        /// иначе он вылезает за гору.</summary>
-        public static void Dash(MountainShape shape, int i, LiftSamples profile,
-                                out Vector2 dir, out float half)
-        {
-            int n = shape.Base.Length;
-            float r = shape.SilhouetteR[i];
-            Vector2 a = Meridian(shape, (i - 1 + n) % n, r, profile);
-            Vector2 b = Meridian(shape, (i + 1) % n, r, profile);
-            Vector2 d = b - a;
-            float len = d.Length();
-            if (len < 1e-6f) { dir = new Vector2(1f, 0f); half = 0f; return; }
-            dir = d / len;
-            half = len * 0.5f * DashOverlap;
-        }
     }
 }

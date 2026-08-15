@@ -8,31 +8,30 @@ using WorldGen.Generation.Mountains;
 namespace MountainHarness
 {
     /// <summary>
-    /// Рисует горы ТЕМИ ЖЕ правилами, что и меш приложения: тело ярусами, линия штрихами, крошка в
-    /// тени, промоины на свету. Слой Rendering стенду не виден, но все решения, в которых можно
-    /// ошибиться, вынесены в чистый слой (MountainInk, MountainTriangulation) — значит картинку
-    /// можно собрать и здесь, и она будет той же.
+    /// Рисует горы ТЕМИ ЖЕ правилами, что и меш приложения: тело ярусами (окно в карту), один
+    /// непрерывный контур, крошка в полной тени. Слой Rendering стенду не виден, но все решения, в
+    /// которых можно ошибиться, вынесены в чистый слой (MountainInk, MountainOutline) — значит
+    /// картинку можно собрать и здесь, и она будет той же.
     ///
     /// Нужна ровно затем, чтобы посмотреть глазами до того, как ДМ откроет Unity. Компилятор
     /// говорит, что код собирается; проверки говорят, что числа сходятся; а похоже ли это на
     /// нарисованную гору — не скажет ни тот, ни другой.
+    ///
+    /// ПОРЯДОК РИСОВАНИЯ здесь — не «все тела, потом вся тушь», а по горе: тело, крошка, контур,
+    /// следующая гора. Это и есть то, что в приложении делает глубина: тело ближней горы закрывает
+    /// тушь дальней. Горы приходят уже отсортированными (MountainGeometry.SortForPainting).
     /// </summary>
     static class PenPreview
     {
         const float W = 760f, H = 760f;
 
-        // Числа ДМ от 14 августа 2026.
-        const float PenWidth = 0.55f, PenTaper = 1.1f, PenAlpha = 0.95f;
-        const float Grit = 0.88f, GritFall = 0.4f, Gully = 0.32f;
-        const float Light = 160f, TierInk = 0.5f, TierContrast = 1f;
-
         /// <summary>
         /// zoom — сколько пикселей приходится на мировую единицу. Ради него всё и написано заново:
         /// браузерное превью всегда показывало один и тот же масштаб, а в приложении есть камера, и
         /// вблизи та же крошка из зерна становится квадратами. Проверять вид надо на ТОМ масштабе,
-        /// на котором ДМ смотрит, иначе замер сходится, а картинки расходятся.
+        /// на котором ДМ смотрит: у превью это 0.91 px на единицу, у снимка ДМ — около 1.
         /// </summary>
-        public static void Write(string path, float zoom = 1f)
+        public static void Write(string path, float zoom = 0.91f)
         {
             float side = W / Math.Max(0.01f, zoom);
             float x0 = (W - side) * 0.55f, y0 = (H - side) * 0.45f;
@@ -41,7 +40,8 @@ namespace MountainHarness
             sb.Append($"<svg xmlns='http://www.w3.org/2000/svg' width='{F(W)}' height='{F(H)}' ")
               .Append($"viewBox='{F(x0)} {F(y0)} {F(side)} {F(side)}'>");
             sb.Append($"<rect x='{F(x0)}' y='{F(y0)}' width='{F(side)}' height='{F(side)}' fill='{Hex(Ground0)}'/>");
-            // Пятна биомов — видно, как тело берёт цвет карты и как граница проходит сквозь гору.
+            // Пятна биомов — видно, как тело оказывается окном в карту и как граница биома проходит
+            // сквозь гору.
             foreach (var patch in Patches)
                 sb.Append($"<ellipse cx='{F(patch.C.X)}' cy='{F(Flip(patch.C.Y))}' ")
                   .Append($"rx='{F(patch.R.X)}' ry='{F(patch.R.Y)}' fill='{Hex(patch.Colour)}'/>");
@@ -52,13 +52,55 @@ namespace MountainHarness
 
             sb.Append("</svg>");
             System.IO.File.WriteAllText(path, sb.ToString());
-            Console.WriteLine($"готово: {path}");
+            Console.WriteLine($"готово: {path} (масштаб {zoom:0.00} px на единицу)");
+        }
+
+        /// <summary>
+        /// Разбор: печатает числа гор в заданном куске мира — ширину подошвы, высоту, длину контура и
+        /// самую толстую линию. Аргументы: x0 x1 y0 y1.
+        ///
+        /// Нужен, когда картинка врёт, а глазомер не говорит, чем именно. Им найдено, что «частокол»
+        /// на одном из отрезков — не манера, а геометрия: горы там стоят в трёх единицах друг от
+        /// друга при ширине подошвы в двадцать три.
+        /// </summary>
+        public static void Probe(string[] args)
+        {
+            float x0 = Arg(args, 1, 0f), x1 = Arg(args, 2, 1000f);
+            float y0 = Arg(args, 3, 0f), y1 = Arg(args, 4, 1000f);
+            var settings = new MountainSettings { Radius = 10f };
+            var mask = MountainMask.FromPolygons(Country(), MountainMask.ChooseCell(10f, 10f));
+            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing * 10f / mask.Cell));
+            var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
+            var profile = settings.Profile();
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            foreach (var s in shapes)
+            {
+                if (s.Centre.X < x0 || s.Centre.X > x1 || s.Centre.Y < y0 || s.Centre.Y > y1) continue;
+                float mnx = float.MaxValue, mxx = float.MinValue;
+                foreach (var p in s.Base) { if (p.X < mnx) mnx = p.X; if (p.X > mxx) mxx = p.X; }
+                MountainOutline.Build(s, profile, line, radii);
+                float density = MountainInk.Density(s.Tier, MountainSettings.Tiers);
+                int drawn = 0; float wide = 0f;
+                for (int i = 0; i < radii.Count; i++)
+                {
+                    float h = MountainInk.HalfWidth(radii[i], s, 10f, density);
+                    if (h > 0f) { drawn++; if (2f * h > wide) wide = 2f * h; }
+                }
+                float lx0 = float.MaxValue, lx1 = float.MinValue;
+                for (int i = 0; i < line.Count; i++)
+                { if (radii[i] < 0.99f) { if (line[i].X < lx0) lx0 = line[i].X; if (line[i].X > lx1) lx1 = line[i].X; } }
+                Console.WriteLine($"  ярус {s.Tier} центр ({s.Centre.X:0},{s.Centre.Y:0}) ширина подошвы {mxx - mnx:0.0} " +
+                                  $"высота {s.Height:0.0} точек {line.Count} рисуем {drawn} самая толстая {wide:0.0} " +
+                                  $"контур по x {lx1 - lx0:0.0}");
+            }
         }
 
         /// <summary>Пятна биомов: и фон рисуют, и служат «снимком карты» для тела горы.</summary>
         struct Patch { public Vector2 C, R; public int[] Colour; }
 
         static readonly int[] Ground0 = { 205, 187, 146 };
+        static readonly int[] InkRgb = { 26, 22, 18 };
         static readonly Patch[] Patches =
         {
             new Patch { C = new Vector2(215, 595), R = new Vector2(215, 165), Colour = new[] { 141, 157, 112 } },
@@ -66,7 +108,8 @@ namespace MountainHarness
             new Patch { C = new Vector2(730, 700), R = new Vector2(170, 125), Colour = new[] { 216, 214, 204 } },
         };
 
-        /// <summary>Цвет земли под точкой — то же, что в приложении делает BuildGroundProbe.</summary>
+        /// <summary>Цвет земли под точкой. В приложении тело кладётся прозрачным и только пишет
+        /// глубину — то есть показывает ровно эту краску; здесь мы её просто рисуем.</summary>
         static int[] Ground(Vector2 p)
         {
             for (int i = Patches.Length - 1; i >= 0; i--)
@@ -86,31 +129,29 @@ namespace MountainHarness
             var settings = new MountainSettings { Radius = radius };
             var mask = MountainMask.FromPolygons(polys, MountainMask.ChooseCell(radius, radius));
             if (mask == null) return;
-            mask.Smooth((int)Math.Round(0.5f * radius / mask.Cell));
+            mask.Smooth((int)Math.Round(MountainSettings.MaskSmoothing * radius / mask.Cell));
             var shapes = MountainGeometry.BuildFromMask(mask, settings, out _);
             var profile = settings.Profile();
 
             var verts = new List<Vector2>();
             var tris = new List<int>();
+            var line = new List<Vector2>();
+            var radii = new List<float>();
+            int marks = 0;
+
             foreach (var shape in shapes)
             {
-                float density = MountainInk.Density(shape.Tier, settings.Tiers, TierContrast, TierInk);
+                float density = MountainInk.Density(shape.Tier, MountainSettings.Tiers);
                 Body(sb, shape, profile, verts, tris);
-                GritMarks(sb, shape, profile, radius, density);
-                Gullies(sb, shape, profile);
-                Outline(sb, shape, profile, radius, density);
+                marks += GritMarks(sb, shape, profile, radius, density);
+                MountainOutline.Build(shape, profile, line, radii);
+                Outline(sb, shape, line, radii, radius, density);
             }
-            Console.WriteLine($"  {title}: гор {shapes.Count}");
+            Console.WriteLine($"  {title}: гор {shapes.Count}, меток крошки {marks}");
         }
 
-        /// <summary>
-        /// Тело — та же раскладка, что уходит в меш, и КРАСИТСЯ ЦВЕТОМ ЗЕМЛИ, как в приложении.
-        ///
-        /// Первая редакция этой картинки красила тело одним кремовым цветом — снимка карты у стенда
-        /// не было. Из-за этого юбка горы выпирала бледным пятном, которого в приложении нет вовсе,
-        /// и картинка честно не походила на превью. Проверять вид по картинке, нарисованной не теми
-        /// красками, — то же самое, что проверять её не теми числами.
-        /// </summary>
+        /// <summary>Тело — та же раскладка, что уходит в меш, и та же краска, что была бы видна
+        /// сквозь него.</summary>
         static void Body(StringBuilder sb, MountainShape shape, LiftSamples profile,
                          List<Vector2> verts, List<int> tris)
         {
@@ -128,115 +169,81 @@ namespace MountainHarness
             }
         }
 
-        /// <summary>Линия — короткие штрихи в точках границы, по касательной к своему ярусу.</summary>
-        static void Outline(StringBuilder sb, MountainShape shape, LiftSamples profile,
+        /// <summary>
+        /// Контур — ОДНА лента переменной толщины вдоль ломаной. Рвётся она только там, где толщина
+        /// упала ниже пола (у самого низа горы): это и есть «низа нет», а не разрыв.
+        /// </summary>
+        static void Outline(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> radii,
                             float radius, float density)
         {
-            for (int i = 0; i < shape.Silhouette.Length; i++)
+            int i = 0;
+            while (i < line.Count)
             {
-                float half = 0.5f * PenWidth * radius
-                           * MountainInk.Taper(shape.SilhouetteR[i], PenTaper) * density;
-                if (half < 1e-3f) continue;
-
-                MountainTriangulation.Dash(shape, i, profile, out Vector2 dir, out float reach);
-                if (reach <= 0f) continue;
-
-                Vector2 side = new Vector2(-dir.Y, dir.X) * half;
-                Vector2 along = dir * reach;
-                Vector2 p = shape.Silhouette[i];
-                Quad(sb, p - along - side, p - along + side, p + along + side, p + along - side, PenAlpha);
-            }
-
-            // Обводка склона на скачке границы — то же правило, что в меше.
-            int n = shape.SilhouetteR.Length;
-            for (int i = 0; i < n; i++)
-            {
-                if (MountainTriangulation.Jump(shape, i) < MountainTriangulation.JumpThreshold) continue;
-                int j = (i + 1) % n;
-                float ra = shape.SilhouetteR[i], rb = shape.SilhouetteR[j];
-                float hi = Math.Max(ra, rb), lo = Math.Min(ra, rb);
-                int edge = ra > rb ? i : j;
-
-                var prev = MountainTriangulation.Meridian(shape, edge, hi, profile);
-                float prevHalf = 0.5f * PenWidth * radius * MountainInk.Taper(hi, PenTaper) * density;
-                for (int step = 1; step <= 6; step++)
-                {
-                    float r = hi + (lo - hi) * step / 6f;
-                    var next = MountainTriangulation.Meridian(shape, edge, r, profile);
-                    float half = 0.5f * PenWidth * radius * MountainInk.Taper(r, PenTaper) * density;
-                    var d = Vector2.Normalize(next - prev);
-                    var nr = new Vector2(-d.Y, d.X);
-                    Quad(sb, prev - nr * prevHalf, prev + nr * prevHalf,
-                             next + nr * half, next - nr * half, PenAlpha);
-                    prev = next; prevHalf = half;
-                }
+                if (MountainInk.HalfWidth(radii[i], shape, radius, density) <= 0f) { i++; continue; }
+                int j = i;
+                while (j + 1 < line.Count && MountainInk.HalfWidth(radii[j + 1], shape, radius, density) > 0f) j++;
+                if (j > i) Ribbon(sb, shape, line, radii, i, j, radius, density);
+                i = j + 1;
             }
         }
 
-        static void GritMarks(StringBuilder sb, MountainShape shape, LiftSamples profile,
-                              float radius, float density)
+        /// <summary>Лента: сверху идём слева направо, снизу возвращаемся — один многоугольник,
+        /// который в меше станет полосой треугольников.</summary>
+        static void Ribbon(StringBuilder sb, MountainShape shape, List<Vector2> line, List<float> radii,
+                           int from, int to, float radius, float density)
         {
-            int total = MountainInk.MarkCount(shape.FootArea, radius, Grit, density, out _);
-            var light = LightVec();
+            sb.Append($"<polygon fill='{Hex(InkRgb)}' points='");
+            for (int k = from; k <= to; k++)
+            {
+                var p = Offset(shape, line, k, from, to, +1f, radii[k], radius, density);
+                sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+            }
+            for (int k = to; k >= from; k--)
+            {
+                var p = Offset(shape, line, k, from, to, -1f, radii[k], radius, density);
+                sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
+            }
+            sb.Append("'/>");
+        }
+
+        static Vector2 Offset(MountainShape shape, List<Vector2> line, int k, int from, int to, float side,
+                              float r, float radius, float density)
+        {
+            Vector2 a = line[Math.Max(from, k - 1)], b = line[Math.Min(to, k + 1)];
+            Vector2 d = b - a;
+            if (d.LengthSquared() < 1e-10f) d = new Vector2(1f, 0f); else d = Vector2.Normalize(d);
+            Vector2 nrm = new Vector2(-d.Y, d.X);
+            return line[k] + nrm * (side * MountainInk.HalfWidth(r, shape, radius, density));
+        }
+
+        /// <summary>Крошка: только полная тень, порогом, а не вероятностью.</summary>
+        static int GritMarks(StringBuilder sb, MountainShape shape, LiftSamples profile,
+                             float radius, float density)
+        {
+            int total = MountainInk.MarkCount(shape.FootArea, radius, density, out _);
+            var light = MountainInk.Light;
             int n = shape.Base.Length;
+            int drawn = 0;
 
             for (int id = 1; id <= total; id++)
             {
                 int i = (int)(Rand(shape.Seed, 7u, id) * n);
                 if (i >= n) i = n - 1;
-                if (MountainInk.Shade(shape.Normal[i], light) <= 0.05f) continue;
-                if (Rand(shape.Seed, 11u, id) > Math.Min(1f, MountainInk.Shade(shape.Normal[i], light) * 1.6f))
-                    continue;
+                if (!MountainInk.InShadow(shape.Normal[i], light)) continue;
 
-                float r = MountainInk.MarkR(Rand(shape.Seed, 3u, id), GritFall);
+                float r = MountainInk.MarkR(Rand(shape.Seed, 3u, id), MountainInk.GritFall);
                 var p = MountainTriangulation.Meridian(shape, i, r, profile);
                 var q = MountainTriangulation.Meridian(shape, (i + 1) % n, r, profile);
                 float u = Rand(shape.Seed, 211u, id);
                 p = new Vector2(p.X + (q.X - p.X) * u, p.Y + (q.Y - p.Y) * u);
 
                 float s = MountainInk.MarkSize(radius, Rand(shape.Seed, 307u, id));
-                sb.Append("<rect fill='rgba(26,22,18,").Append(F(PenAlpha)).Append(")' ")
+                sb.Append($"<rect fill='{Hex(InkRgb)}' ")
                   .Append("x='").Append(F(p.X - s * 0.5f)).Append("' y='").Append(F(Flip(p.Y) - s * 0.35f))
                   .Append("' width='").Append(F(s)).Append("' height='").Append(F(s * 0.7f)).Append("'/>");
+                drawn++;
             }
-        }
-
-        static void Gullies(StringBuilder sb, MountainShape shape, LiftSamples profile)
-        {
-            var light = LightVec();
-            int n = shape.Normal.Length;
-            for (int i = 0; i < n; i++)
-            {
-                if (shape.Normal[i].X * light.X + shape.Normal[i].Y * light.Y <= 0.25f) continue;
-                if (Rand(shape.Seed, 613u, i) > Gully * 0.3f) continue;
-
-                MountainInk.Gully(Rand(shape.Seed, 71u, i), Rand(shape.Seed, 89u, i),
-                                  out float top, out float length);
-                float bottom = Math.Min(0.95f, top + length);
-                sb.Append("<polyline fill='none' stroke='rgba(26,22,18,0.37)' stroke-width='1' points='");
-                for (int step = 0; step <= 4; step++)
-                {
-                    float r = top + (bottom - top) * step / 4f;
-                    var p = MountainTriangulation.Meridian(shape, i, r, profile);
-                    sb.Append(F(p.X)).Append(',').Append(F(Flip(p.Y))).Append(' ');
-                }
-                sb.Append("'/>");
-            }
-        }
-
-        static void Quad(StringBuilder sb, Vector2 a, Vector2 b, Vector2 c, Vector2 d, float alpha)
-        {
-            sb.Append("<polygon fill='rgba(26,22,18,").Append(F(alpha)).Append(")' points='")
-              .Append(F(a.X)).Append(',').Append(F(Flip(a.Y))).Append(' ')
-              .Append(F(b.X)).Append(',').Append(F(Flip(b.Y))).Append(' ')
-              .Append(F(c.X)).Append(',').Append(F(Flip(c.Y))).Append(' ')
-              .Append(F(d.X)).Append(',').Append(F(Flip(d.Y))).Append("'/>");
-        }
-
-        static Vector2 LightVec()
-        {
-            float a = Light * (float)Math.PI / 180f;
-            return new Vector2((float)Math.Cos(a), (float)Math.Sin(a));
+            return drawn;
         }
 
         static float Rand(uint seed, uint salt, int id)
@@ -295,6 +302,11 @@ namespace MountainHarness
             new Vector2(c.X - 7.5f, c.Y - 7.5f), new Vector2(c.X + 7.5f, c.Y - 7.5f),
             new Vector2(c.X + 7.5f, c.Y + 7.5f), new Vector2(c.X - 7.5f, c.Y + 7.5f),
         };
+
+        static float Arg(string[] args, int at, float fallback)
+            => args != null && args.Length > at
+               && float.TryParse(args[at], System.Globalization.NumberStyles.Float,
+                                 CultureInfo.InvariantCulture, out float v) ? v : fallback;
 
         static float Flip(float y) => H - y;
 

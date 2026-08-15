@@ -132,7 +132,7 @@ namespace WorldGen.Generation.Mountains
             if (links == null || settings == null) return;
 
             int maxTier = 0;
-            int limit = Math.Max(1, settings.Tiers) - 1;
+            int limit = Math.Max(1, MountainSettings.Tiers) - 1;
             foreach (var link in links)
             {
                 int tier = (int)Math.Floor(Math.Max(0f, link.MidDepth) / settings.TierBand);
