@@ -3444,15 +3444,22 @@ namespace WorldGen.Rendering
                 gpuRenderer.BuildAll(cells, nearestLookup, texWidth, texHeight, mapWidth, mapHeight, paletteTheme, corners);
                 gpuRenderer.SetLayers(showBiomeLayer, showReliefLayer, showCoastlineLayer);
                 gpuRenderer.SetBeachParams(beachWidth, beachStrength, beachHardness, beachColor);
-                return;
+            }
+            else
+            {
+                var config = BuildRasterConfig();
+                var oldTexture = rasterTexture;
+                rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, corners, displayMode, config, out rasterBuffers);
+                if (oldTexture != null) Destroy(oldTexture);
+                EnsureRasterMaterial();
+                rasterMaterial.mainTexture = rasterTexture;
             }
 
-            var config = BuildRasterConfig();
-            var oldTexture = rasterTexture;
-            rasterTexture = MapRasterizer.Bake(cells, cellById, nearestLookup, corners, displayMode, config, out rasterBuffers);
-            if (oldTexture != null) Destroy(oldTexture);
-            EnsureRasterMaterial();
-            rasterMaterial.mainTexture = rasterTexture;
+            // Тело горы залито тонами ПАЛИТРЫ, а применяется палитра именно здесь. Высота клеток от
+            // смены палитры не меняется, пересчёта гор никто не просит — без этой строчки горы
+            // остались бы в тонах прежней палитры до первой правки рельефа. Перекраска идёт только
+            // при настоящей смене палитры: перепечка бывает и от смены режима показа.
+            MountainLayer?.RepaintIfPaletteChanged();
         }
 
         void RebakeRegion(IEnumerable<VoronoiCell> touchedCells)
