@@ -104,6 +104,13 @@ namespace MountainHarness
 
         static readonly int[] Ground0 = { 205, 187, 146 };
         static readonly int[] InkRgb = { 26, 22, 18 };
+
+        /// <summary>Концы шкалы заливки — горные тона палитры карты (MtnL и MtnS темы ColdTwilight,
+        /// см. MapPalette). Списаны числами: палитра живёт в слое Rendering, а он стенду не виден.
+        /// Разойдутся они только если ДМ перекрасит палитру, и тогда разойдётся лишь оттенок, а не
+        /// правило — само правило одно на обоих (MountainFill).</summary>
+        static readonly int[] FillLight = { 140, 150, 164 };
+        static readonly int[] FillDark = { 40, 46, 56 };
         static readonly Patch[] Patches =
         {
             new Patch { C = new Vector2(215, 595), R = new Vector2(215, 165), Colour = new[] { 141, 157, 112 } },
@@ -111,8 +118,18 @@ namespace MountainHarness
             new Patch { C = new Vector2(730, 700), R = new Vector2(170, 125), Colour = new[] { 216, 214, 204 } },
         };
 
-        /// <summary>Цвет земли под точкой. В приложении тело кладётся прозрачным и только пишет
-        /// глубину — то есть показывает ровно эту краску; здесь мы её просто рисуем.</summary>
+        /// <summary>Краска заливки по тону — то же смешение, что делает MountainPaintStyle.Fill.
+        /// Перевода в линейное пространство здесь нет и быть не должно: SVG показывает sRGB, а
+        /// перевод в приложении ровно тем и занят, чтобы на экране вышла та же краска.</summary>
+        static int[] Paint(float tone) => new int[]
+        {
+            MountainFill.Blend((byte)FillLight[0], (byte)FillDark[0], tone),
+            MountainFill.Blend((byte)FillLight[1], (byte)FillDark[1], tone),
+            MountainFill.Blend((byte)FillLight[2], (byte)FillDark[2], tone),
+        };
+
+        /// <summary>Цвет земли под точкой — фон карты. Телу горы он больше не нужен: с 17 августа
+        /// тело залито тонами палитры, а не показывает карту насквозь. Оставлен для фона.</summary>
         static int[] Ground(Vector2 p)
         {
             for (int i = Patches.Length - 1; i >= 0; i--)
@@ -138,6 +155,7 @@ namespace MountainHarness
 
             var verts = new List<Vector2>();
             var tris = new List<int>();
+            var tones = new List<float>();
             var line = new List<Vector2>();
             var radii = new List<float>();
             var rise = new List<float>();
@@ -146,7 +164,7 @@ namespace MountainHarness
             foreach (var shape in shapes)
             {
                 float density = MountainInk.Density(shape.Tier, MountainSettings.Tiers);
-                Body(sb, shape, profile, verts, tris);
+                Body(sb, shape, profile, verts, tris, tones);
                 marks += GritMarks(sb, shape, profile, radius, density);
                 MountainOutline.Build(shape, profile, line, radii);
                 MountainOutline.Heights(line, rise);
@@ -155,16 +173,24 @@ namespace MountainHarness
             Console.WriteLine($"  {title}: гор {shapes.Count}, меток крошки {marks}");
         }
 
-        /// <summary>Тело — та же раскладка, что уходит в меш, и та же краска, что была бы видна
-        /// сквозь него.</summary>
+        /// <summary>
+        /// Тело — та же раскладка и ТО ЖЕ ПРАВИЛО ТОНА, что уходит в меш (MountainFill через
+        /// MountainTriangulation.FillTones).
+        ///
+        /// Одно расхождение с приложением есть, и оно известное: в меше цвет задан вершинам, и
+        /// видеокарта растягивает его по треугольнику, а в SVG треугольник заливается ОДНИМ тоном —
+        /// средним по трём вершинам. На десятке ярусов разницы не видно, но если ярусов у горы
+        /// окажется два-три, стенд покажет ступеньки там, где приложение даст гладкий переход.
+        /// </summary>
         static void Body(StringBuilder sb, MountainShape shape, LiftSamples profile,
-                         List<Vector2> verts, List<int> tris)
+                         List<Vector2> verts, List<int> tris, List<float> tones)
         {
             MountainTriangulation.Fill(shape, profile, verts, tris);
+            MountainTriangulation.FillTones(shape, profile, MountainSettings.Tiers, tones);
             for (int i = 0; i + 2 < tris.Count; i += 3)
             {
-                var centre = (verts[tris[i]] + verts[tris[i + 1]] + verts[tris[i + 2]]) / 3f;
-                sb.Append($"<polygon fill='{Hex(Ground(centre))}' points='");
+                float tone = (tones[tris[i]] + tones[tris[i + 1]] + tones[tris[i + 2]]) / 3f;
+                sb.Append($"<polygon fill='{Hex(Paint(tone))}' points='");
                 for (int k = 0; k < 3; k++)
                 {
                     var p = verts[tris[i + k]];

@@ -26,28 +26,32 @@ os.makedirs(HERE, exist_ok=True)
 CHROME = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
 INK = os.path.join(ROOT, 'Assets', 'WorldGen', 'Generation', 'Mountains', 'MountainInk.cs')
 SET = os.path.join(ROOT, 'Assets', 'WorldGen', 'Generation', 'Mountains', 'MountainSettings.cs')
+FILL = os.path.join(ROOT, 'Assets', 'WorldGen', 'Generation', 'Mountains', 'MountainFill.cs')
 
 ZOOM = '1.3'
 
 # imya -> {konstanta: znachenie}
 VARIANTS = [
-    ('I sharp0.66 h2.2', {'PenWidth': '0.20', 'Radius': '7'}),
-    ('J sharp0.85 h2.2', {'PenWidth': '0.20', 'Radius': '7', 'Sharp': '0.85'}),
-    ('K sharp0.66 h2.8', {'PenWidth': '0.20', 'Radius': '7', 'HeightFactor': '2.8'}),
-    ('L sharp0.85 h2.8', {'PenWidth': '0.20', 'Radius': '7', 'Sharp': '0.85', 'HeightFactor': '2.8'}),
+    ('A zalivka vo vsyu shkalu', {'ToneSpan': '1.0'}),
+    ('B razmah 0.6', {'ToneSpan': '0.6'}),
+    ('C razmah 0.6, bez gradienta', {'ToneSpan': '0.6', 'Gradient': '0.0'}),
+    ('D razmah 0.35', {'ToneSpan': '0.35'}),
 ]
 
 INK_KEYS = {'PenWidth', 'PenTaper', 'Grit', 'GritFall', 'ShadeThreshold'}
+FILL_KEYS = {'BandWidth', 'TierContrast', 'Gradient', 'ToneSpan'}
 
 
 def patch(values):
-    for path, keys in ((INK, INK_KEYS), (SET, None)):
+    # Ключ ищется в своём файле; в MountainSettings уходит всё, чей дом не назван, — там живёт
+    # геометрия (Radius, Sharp, HeightFactor).
+    for path, keys in ((INK, INK_KEYS), (FILL, FILL_KEYS), (SET, None)):
         src = io.open(path, encoding='utf-8').read()
         out = src
         for k, v in values.items():
             if keys is not None and k not in keys:
                 continue
-            if keys is None and k in INK_KEYS:
+            if keys is None and (k in INK_KEYS or k in FILL_KEYS):
                 continue
             out = re.sub(r'(public (?:const )?float %s = )[0-9.]+f;' % k, r'\g<1>%sf;' % v, out)
         io.open(path, 'w', encoding='utf-8').write(out)
@@ -55,12 +59,12 @@ def patch(values):
 
 
 def snapshot():
-    return io.open(INK, encoding='utf-8').read(), io.open(SET, encoding='utf-8').read()
+    return tuple(io.open(p, encoding='utf-8').read() for p in (INK, SET, FILL))
 
 
 def restore(state):
-    io.open(INK, 'w', encoding='utf-8').write(state[0])
-    io.open(SET, 'w', encoding='utf-8').write(state[1])
+    for p, text in zip((INK, SET, FILL), state):
+        io.open(p, 'w', encoding='utf-8').write(text)
 
 
 base = snapshot()

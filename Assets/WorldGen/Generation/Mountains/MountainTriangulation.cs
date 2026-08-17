@@ -97,6 +97,33 @@ namespace WorldGen.Generation.Mountains
             }
         }
 
+        /// <summary>
+        /// ТОН КАЖДОЙ ВЕРШИНЫ ТЕЛА — доля вдоль шкалы «светлый → тёмный» (см. MountainFill).
+        ///
+        /// Живёт вплотную к Fill и повторяет её обход один в один: порядок вершин знает ровно один
+        /// файл, и добавить ярус, забыв про краску, здесь нельзя. Считать тон на стороне рендера
+        /// значило бы вывести наружу и шаг раскладки (центр плюс кольцо), и правило цвета — а
+        /// Rendering не проверяет никто, кроме компилятора.
+        ///
+        /// Тон постоянен ВНУТРИ ЯРУСА: подъём у центра кольца и у самого кольца один и тот же.
+        /// Отсюда же берётся дешевизна — краску достаточно перевести в цвет один раз на ярус, а не
+        /// на каждую из сотен тысяч вершин (перевод в линейное пространство стоит трёх Pow).
+        /// Градиент между ярусами дорисовывает видеокарта, растягивая цвет по треугольнику.
+        /// </summary>
+        public static void FillTones(MountainShape shape, LiftSamples profile, int tierCount,
+                                     List<float> tones)
+        {
+            tones.Clear();
+            if (shape?.Base == null || shape.LevelR == null || shape.LevelR.Length < 2) return;
+
+            int n = shape.Base.Length;
+            for (int j = 0; j < shape.LevelR.Length; j++)
+            {
+                float tone = MountainFill.Tone(shape.Tier, tierCount, profile.LiftAt(shape.LevelR[j]));
+                for (int i = 0; i <= n; i++) tones.Add(tone);      // центр яруса плюс его кольцо
+            }
+        }
+
         /// <summary>Сколько вершин и треугольников выйдет у тела — чтобы можно было отвести буфер
         /// заранее и не растить списки на каждую гору.</summary>
         public static void FillSize(MountainShape shape, out int verts, out int tris)

@@ -326,9 +326,20 @@ namespace WorldGen.Rendering.Mountains
                  + $"крошки {data.GritMarks}{(data.GritCapped ? " (упёрлась в потолок)" : "")}";
         }
 
+        /// <summary>
+        /// Стиль на один пересчёт. Собирается на ГЛАВНОМ потоке, и это существенно: и краски палитры,
+        /// и признак линейного пространства — вопросы к живому движку, а раскладка идёт в фоне.
+        ///
+        /// Заливка берёт горные тона ПАЛИТРЫ КАРТЫ (MtnL светлый, MtnS теневой), поэтому горы
+        /// остаются в тон своей карте на любой из палитр. Тушь, наоборот, от палитры не зависит
+        /// вовсе — у неё своя чернота (см. MountainPaintStyle.DefaultInk).
+        /// </summary>
         MountainPaintStyle Style() => new MountainPaintStyle
         {
             Ink = MountainPaintStyle.ForVertex(MountainPaintStyle.DefaultInk),
+            FillLight = MapPalette.GetSlotColor(Theme(), PaletteSlot.MtnL),
+            FillDark = MapPalette.GetSlotColor(Theme(), PaletteSlot.MtnS),
+            LinearVertex = MountainPaintStyle.IsLinear,
             OnLand = onlyOnLand ? Renderer()?.BuildLandProbe() : null,
             TierCount = MountainSettings.Tiers,
             LayerY = layerY,
@@ -404,6 +415,14 @@ namespace WorldGen.Rendering.Mountains
             filter.sharedMesh = new Mesh { name = name, hideFlags = HideFlags.DontSave };
             go.AddComponent<MeshRenderer>().sharedMaterial = material;
             return filter;
+        }
+
+        /// <summary>Палитра карты — из неё заливка берёт свои два конца шкалы. Пока карты нет,
+        /// годится любая: гор без карты всё равно не бывает.</summary>
+        MapPaletteTheme Theme()
+        {
+            var renderer = Renderer();
+            return renderer != null ? renderer.paletteTheme : MapPaletteTheme.ColdTwilight;
         }
 
         WorldMapRenderer Renderer()

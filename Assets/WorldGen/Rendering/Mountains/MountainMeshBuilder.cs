@@ -50,6 +50,7 @@ namespace WorldGen.Rendering.Mountains
             // отдельный список на каждую — это сотни выбросов в мусор за один пересчёт.
             var scratchVerts = new List<Vec2>();
             var scratchTris = new List<int>();
+            var scratchTones = new List<float>();
             var line = new List<Vec2>();
             var radii = new List<float>();
             var rise = new List<float>();
@@ -68,7 +69,7 @@ namespace WorldGen.Rendering.Mountains
                 index++;
 
                 float density = style.Density(shape.Tier);
-                AddBody(data, shape, y, profile, scratchVerts, scratchTris);
+                AddBody(data, shape, style, y, profile, scratchVerts, scratchTris, scratchTones);
                 AddGrit(data, shape, style, y, profile, light, density, radius);
                 MountainOutline.Build(shape, profile, line, radii);
                 MountainOutline.Heights(line, rise);
@@ -108,34 +109,47 @@ namespace WorldGen.Rendering.Mountains
         /// Тело — ярусы: у каждого свой веер и полоса до соседнего. Раскладку даёт чистый слой
         /// (MountainTriangulation.Fill), здесь остаётся перевести точки в мировые.
         ///
-        /// Тело НЕ КРАСИТ КАРТУ. Оно кладётся прозрачным и нужно ровно затем, чтобы записать
-        /// глубину: линия дальней горы отсекается телом ближней. Так «окно в карту» становится
-        /// точным — сквозь гору видна ровно та карта, что нарисована, со всем её сглаживанием,
-        /// зерном и виньеткой.
+        /// Тело ЗАЛИТО тонами палитры (решение ДМ 17 августа 2026): слой массы выбирает полосу на
+        /// шкале «светлый → тёмный», ярус горы гуляет внутри полосы, отчего гора выходит с
+        /// градиентом от тёмной подошвы к светлой вершине. Правило — MountainFill, тон на вершину
+        /// раздаёт MountainTriangulation.FillTones, здесь остаётся перевести тон в краску.
         ///
-        /// Красить тело цветом клетки (BuildGroundProbe) оказалось нельзя, и это стоило двух
-        /// заходов: цвет клетки — плоское число, а карта на экране получается из него со
-        /// сглаживанием между клетками и наложениями. На снежной палитре расхождение вышло таким,
-        /// что горы легли белыми лоскутами поверх серо-голубой карты.
+        /// Краска НЕПРОЗРАЧНА, и это не мелочь: горы вдоль гряды лежат внахлёст по многу штук, и
+        /// любая прозрачность складывалась бы на стыках в грязь. Непрозрачной краске к тому же
+        /// хватает уже написанного шейдера — тело пишет глубину, ближняя гора кладётся поверх
+        /// дальней, каждая точка красится ровно один раз.
+        ///
+        /// До 17 августа тело клалось ПРОЗРАЧНЫМ и только писало глубину («окно в карту»). Это была
+        /// не прихоть, а лечение: до того тело красили цветом клетки (BuildGroundProbe), а карта на
+        /// экране получается из него со сглаживанием, зерном и виньеткой, и на снежной палитре горы
+        /// легли белыми лоскутами. Заливка тонами ПАЛИТРЫ этой болезни не наследует — она не
+        /// пытается совпасть с картой под собой, а честно её закрывает.
+        ///
+        /// Тон постоянен внутри яруса, поэтому краска считается один раз на ярус, а не на вершину:
+        /// перевод в линейное пространство стоит трёх Pow, а вершин у большой карты сотни тысяч.
         /// </summary>
-        static void AddBody(MountainMeshData data, MountainShape shape, float y,
-                            LiftSamples profile, List<Vec2> scratchVerts, List<int> scratchTris)
+        static void AddBody(MountainMeshData data, MountainShape shape, in MountainPaintStyle style,
+                            float y, LiftSamples profile, List<Vec2> scratchVerts, List<int> scratchTris,
+                            List<float> scratchTones)
         {
             MountainTriangulation.Fill(shape, profile, scratchVerts, scratchTris);
             if (scratchTris.Count == 0) return;
+            MountainTriangulation.FillTones(shape, profile, style.TierCount, scratchTones);
 
             int start = data.Verts.Count;
+            float lastTone = float.NaN;
+            Color32 paint = default;
             for (int i = 0; i < scratchVerts.Count; i++)
             {
                 Vec2 p = scratchVerts[i];
                 data.Verts.Add(new Vector3(p.X, y, p.Y));
-                data.Colors.Add(Invisible);
+
+                float tone = i < scratchTones.Count ? scratchTones[i] : 0f;
+                if (tone != lastTone) { lastTone = tone; paint = style.Fill(tone); }
+                data.Colors.Add(paint);
             }
             for (int i = 0; i < scratchTris.Count; i++) data.Tris.Add(start + scratchTris[i]);
         }
-
-        /// <summary>Прозрачная краска тела: карту не трогает, глубину пишет.</summary>
-        static readonly Color32 Invisible = new Color32(0, 0, 0, 0);
 
         // ── контур ──────────────────────────────────────────────────────────────────────────────
 

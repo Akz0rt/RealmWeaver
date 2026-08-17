@@ -90,6 +90,7 @@ namespace MountainHarness
             OutlineSitsOnTheBody();
             BodyHasNoDegenerateTriangles();
             TierRampSpreadsTiers();
+            FillNestsTheMountainInsideItsLayer();
             GritDensityFollowsAreaNotTiers();
             InkRulesHoldAtTheEnds();
             SlopesAreEquallyThickOnATiltedRidge();
@@ -1127,6 +1128,78 @@ namespace MountainHarness
                   Near(MountainTierRamp.Mix(9, 3, 1f), 1f, 1e-4f)
                   && Near(MountainTierRamp.Mix(-4, 3, 1f), 0f, 1e-4f),
                   $"{MountainTierRamp.Mix(9, 3, 1f):0.###} / {MountainTierRamp.Mix(-4, 3, 1f):0.###}");
+        }
+
+        /// <summary>
+        /// Заливка тела (решение ДМ 2026-08-17): слой массы берёт ПОЛОСУ на шкале, ярус самой горы
+        /// гуляет ВНУТРИ полосы. Проверяется вложение — то есть что одно не съедает другое.
+        ///
+        /// Мутанты, ради которых написано:
+        /// — полоса шире зазора (BandWidth ≥ 1): самая тёмная гора внешнего слоя совпадает по тону с
+        ///   самой светлой горой среднего, и градация по слоям пропадает при неизменных красках;
+        /// — брать долю слоя как есть, без сжатия шкалы: вершина внешнего слоя уезжает за светлый
+        ///   конец, её обрезает, и у горы выходит плоская макушка одного тона;
+        /// — считать градиент от МИРОВОЙ высоты, а не от подъёма внутри своей горы: низкие горы
+        ///   выходят поголовно тёмными (то же самое различие, что у высоты и у слоя — §11 против §10).
+        /// </summary>
+        static void FillNestsTheMountainInsideItsLayer()
+        {
+            const int count = MountainSettings.Tiers;
+
+            // Полоса слоя = что заливка даёт от подошвы до вершины ОДНОЙ горы этого слоя.
+            float outerDark = MountainFill.Tone(0, count, 0f), outerLight = MountainFill.Tone(0, count, 1f);
+            float midDark = MountainFill.Tone(1, count, 0f), midLight = MountainFill.Tone(1, count, 1f);
+            float coreDark = MountainFill.Tone(2, count, 0f), coreLight = MountainFill.Tone(2, count, 1f);
+
+            Check("Заливка: вершина светлее подошвы у каждого слоя",
+                  outerLight < outerDark && midLight < midDark && coreLight < coreDark,
+                  $"внешний {outerLight:0.###}<{outerDark:0.###}, средний {midLight:0.###}<{midDark:0.###}," +
+                  $" ядро {coreLight:0.###}<{coreDark:0.###}");
+
+            // Полосы не смыкаются: самая тёмная точка слоя светлее самой светлой точки следующего.
+            Check("Заливка: полосы слоёв не налезают друг на друга",
+                  outerDark < midLight && midDark < coreLight,
+                  $"внешний до {outerDark:0.###}, средний от {midLight:0.###} до {midDark:0.###}," +
+                  $" ядро от {coreLight:0.###}");
+
+            Check("Заливка: тон не выходит за шкалу",
+                  outerLight >= 0f && coreDark <= 1f,
+                  $"светлее светлого {outerLight:0.###}, темнее тёмного {coreDark:0.###}");
+
+            // Мутант «взять ближайшую краску вместо смеси»: середина шкалы даст 0 или 255.
+            Check("Заливка: краски смешиваются, а не выбираются",
+                  Math.Abs(MountainFill.Blend(0, 255, 0.5f) - 128) <= 1
+                  && MountainFill.Blend(20, 200, 0f) == 20 && MountainFill.Blend(20, 200, 1f) == 200,
+                  $"{MountainFill.Blend(0, 255, 0.5f)} / {MountainFill.Blend(20, 200, 0f)}" +
+                  $" / {MountainFill.Blend(20, 200, 1f)}");
+
+            // Настоящая гора, а не одна формула: тон раздаётся по той же раскладке, что и вершины.
+            var shape = Mound(Horizontal(60f, 22f), 0.9f, 1.1f, 0.85f);
+            var profile = new MountainSettings().Profile();
+            var verts = new List<Vector2>();
+            var tris = new List<int>();
+            var tones = new List<float>();
+            MountainTriangulation.Fill(shape, profile, verts, tris);
+            MountainTriangulation.FillTones(shape, profile, count, tones);
+
+            // Мутант «обойти кольцо без центра» (i < n вместо i <= n): краски сдвинутся на вершину и
+            // поедут по всему мешу, а гора при этом останется на месте — глазом это ловится не сразу.
+            Check("Заливка: тон есть у каждой вершины тела",
+                  tones.Count == verts.Count && verts.Count > 0,
+                  $"вершин {verts.Count}, тонов {tones.Count}");
+
+            // Мутант «брать радиус яруса вместо подъёма»: у подошвы r = 1, у вершины r мал, и
+            // градиент переворачивается — вершина станет самой тёмной точкой горы.
+            int lowest = 0, highest = 0;
+            for (int i = 0; i < verts.Count; i++)
+            {
+                if (verts[i].Y < verts[lowest].Y) lowest = i;
+                if (verts[i].Y > verts[highest].Y) highest = i;
+            }
+            Check("Заливка: на самой горе подошва темнее вершины",
+                  tones.Count == verts.Count && tones[lowest] > tones[highest],
+                  $"низ {(tones.Count == verts.Count ? tones[lowest] : -1f):0.###}," +
+                  $" верх {(tones.Count == verts.Count ? tones[highest] : -1f):0.###}");
         }
 
         /// <summary>Площадь замкнутого многоугольника со знаком (формула шнурков).</summary>

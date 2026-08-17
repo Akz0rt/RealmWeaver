@@ -28,6 +28,19 @@ namespace WorldGen.Rendering.Mountains
         /// Linear, а краску вершины шейдер отдаёт как есть, без перевода.</summary>
         public Color32 Ink;
 
+        /// <summary>Светлый конец шкалы заливки — горный тон палитры карты (MtnL), как он записан в
+        /// палитре, БЕЗ перевода в линейное пространство: смешивать надо в том же пространстве, в
+        /// каком краски выбирали глазами, а переводить — уже смесь (см. Fill).</summary>
+        public Color32 FillLight;
+
+        /// <summary>Тёмный конец шкалы заливки — теневой горный тон палитры (MtnS).</summary>
+        public Color32 FillDark;
+
+        /// <summary>Линейное ли пространство у проекта. Спрошено на ГЛАВНОМ потоке при сборке стиля:
+        /// сама раскладка идёт в фоне, а QualitySettings — живой движок. Забыть про перевод значит
+        /// получить заливку светлее задуманной ровно так же, как однажды вышло с тушью.</summary>
+        public bool LinearVertex;
+
         /// <summary>Суша ли под точкой. null — не спрашивать (стенд, шип). Задаётся тем же снимком,
         /// каким маска обрезается по суше, — иначе рисунок и его обрезка разъедутся.</summary>
         public System.Func<Vec2, bool> OnLand;
@@ -41,6 +54,20 @@ namespace WorldGen.Rendering.Mountains
 
         /// <summary>Густота туши для слоя массы: множит и толщину линии, и плотность крошки.</summary>
         public float Density(int tier) => MountainInk.Density(tier, TierCount);
+
+        /// <summary>
+        /// Краска тела по тону: 0 — светлый конец шкалы, 1 — тёмный. Тон считает чистый слой
+        /// (MountainFill), здесь остаётся смешать две краски палитры и перевести смесь в то
+        /// пространство, в каком её ждёт шейдер.
+        ///
+        /// Зовётся ИЗ ФОНА, поэтому про активное пространство не спрашивает — оно снято заранее в
+        /// LinearVertex. Стоит трёх Pow, и звать её на каждую вершину было бы дорого: тон постоянен
+        /// внутри яруса, и раскладка отдаёт вершины ярусами подряд (см. MountainTriangulation).
+        /// </summary>
+        public Color32 Fill(float tone) => ToVertex(new Color32(
+            MountainFill.Blend(FillLight.r, FillDark.r, tone),
+            MountainFill.Blend(FillLight.g, FillDark.g, tone),
+            MountainFill.Blend(FillLight.b, FillDark.b, tone), 255), LinearVertex);
 
         /// <summary>
         /// Краска туши — ПОЧТИ ЧЁРНАЯ, и от палитры карты она не зависит.
@@ -73,9 +100,16 @@ namespace WorldGen.Rendering.Mountains
         /// QualitySettings — живой движок. Поэтому перевод делается здесь, при сборке стиля, а не
         /// при раскладке, которую зовут из фона.
         /// </summary>
-        public static Color32 ForVertex(Color32 c)
+        public static Color32 ForVertex(Color32 c) => ToVertex(c, IsLinear);
+
+        /// <summary>Линейное ли сейчас пространство. Спрашивать это МОЖНО ТОЛЬКО с главного потока —
+        /// потому оно и снимается в LinearVertex один раз на сборку стиля.</summary>
+        public static bool IsLinear => QualitySettings.activeColorSpace == ColorSpace.Linear;
+
+        /// <summary>Тот же перевод, но пространство сказано снаружи: годится для фона.</summary>
+        public static Color32 ToVertex(Color32 c, bool linear)
         {
-            if (QualitySettings.activeColorSpace != ColorSpace.Linear) return c;
+            if (!linear) return c;
             Color lin = ((Color)c).linear;
             return new Color32((byte)(lin.r * 255f + 0.5f), (byte)(lin.g * 255f + 0.5f),
                                (byte)(lin.b * 255f + 0.5f), c.a);

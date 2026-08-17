@@ -171,9 +171,16 @@ namespace WorldGen.Rendering.Mountains
             // Ярусы шип не раздаёт: горы у него построены руками, без поля глубины, и все выходят
             // нулевого яруса — то есть одного, внешнего цвета. Шипу этого хватает, он про порядок
             // рисования, а не про манеру.
+            // Краски заливки шип берёт из палитры по умолчанию: своей карты у него нет, а без них
+            // тело залилось бы чёрным — краска по умолчанию у структуры нулевая.
             var style = new MountainPaintStyle
             {
                 Ink = MountainPaintStyle.ForVertex(inkColor),
+                FillLight = MapRaster.MapPalette.GetSlotColor(MapRaster.MapPaletteTheme.ColdTwilight,
+                                                              MapRaster.PaletteSlot.MtnL),
+                FillDark = MapRaster.MapPalette.GetSlotColor(MapRaster.MapPaletteTheme.ColdTwilight,
+                                                             MapRaster.PaletteSlot.MtnS),
+                LinearVertex = MountainPaintStyle.IsLinear,
                 TierCount = MountainSettings.Tiers,
                 LayerY = layerY,
             };
