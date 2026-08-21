@@ -76,6 +76,7 @@ namespace WorldGen.Rendering.Mountains
         readonly MountainMeshData meshData = new MountainMeshData();
         Task<Batch> pending;
         bool queued;                 // правка пришла, пока считали: пересчитать сразу после
+        MapPaletteTheme computingTheme;   // палитра, с которой ушёл в фон текущий счёт
         float rebuildAt = -1f;
 
         // Кэш посчитанных массивов: ключ — набор клеток куска. Пересчитывается только изменившееся.
@@ -195,6 +196,10 @@ namespace WorldGen.Rendering.Mountains
             var snapshot = SnapshotMassifs();
             var settings = BuildSettings();
             var style = Style();
+            // Какой палитрой красим ИМЕННО этот счёт. Нужно потому, что краски уезжают в фон вместе
+            // со стилем, а палитру ДМ волен сменить, пока считается: без этого слой доложил бы, что
+            // покрашен новой палитрой, будучи покрашен старой (см. Apply).
+            computingTheme = Theme();
             string signature = GeometrySignature();
             if (signature != cacheSignature) { cache.Clear(); cacheSignature = signature; }
             var known = new Dictionary<ulong, List<MountainShape>>(cache);
@@ -312,6 +317,14 @@ namespace WorldGen.Rendering.Mountains
             EnsureContainer();
             if (body == null) return;
             MountainMeshBuilder.Upload(body.sharedMesh, batch.Data);
+
+            // Пришедший из фона рисунок покрашен палитрой, какая была на СТАРТЕ счёта. Говорим об
+            // этом честно и тут же спрашиваем, не сменилась ли она за это время: смена палитры
+            // перекрашивает по lastShapes, и без этих двух строк ответ, приехавший следом, вернул бы
+            // прежние тона — да ещё и уверил бы слой, что всё в порядке. Окно было и раньше, но
+            // узкое; со счётом под кистью оно открыто почти всё время мазка.
+            paintedWith = computingTheme;
+            RepaintIfPaletteChanged();
         }
 
         /// <summary>
