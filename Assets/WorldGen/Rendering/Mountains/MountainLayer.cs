@@ -117,10 +117,12 @@ namespace WorldGen.Rendering.Mountains
             var cells = renderer != null ? renderer.Cells : null;
             if (cells == null || cells.Count == 0) return result;
 
-            var byId = new Dictionary<int, WorldGen.Generation.VoronoiCell>(cells.Count);
-            foreach (var cell in cells) byId[cell.Id] = cell;
-
-            var mountainIds = new List<int>();
+            // Карту «номер → клетка» НЕ строим свою: она уже есть у рендера и живёт ровно столько
+            // же (cellById пересчитывается вместе с клетками). Свой словарь на двадцать тысяч
+            // клеток заводился на КАЖДЫЙ счёт, а под кистью счёт идёт непрерывно — это был чистый
+            // мусор на главном потоке, то есть заминки.
+            var mountainIds = scratchMountainIds;
+            mountainIds.Clear();
             foreach (var cell in cells)
             {
                 if (cell.EffectiveIsOcean || cell.EffectiveIsLake) continue;
@@ -130,14 +132,14 @@ namespace WorldGen.Rendering.Mountains
             }
             if (mountainIds.Count == 0) return result;
 
-            foreach (var piece in ReliefMassifs.Split(mountainIds, id =>
-                         byId.TryGetValue(id, out var c) ? c.NeighborIds : null))
+            foreach (var piece in ReliefMassifs.Split(mountainIds, id => renderer.GetCellById(id)?.NeighborIds))
             {
                 var polygons = new List<IReadOnlyList<Vec2>>(piece.Count);
                 ulong key = 1469598103934665603ul;
                 foreach (int id in piece)
                 {
-                    if (!byId.TryGetValue(id, out var cell)) continue;
+                    var cell = renderer.GetCellById(id);
+                    if (cell == null) continue;
                     polygons.Add(cell.Polygon);
                     key ^= Mix((ulong)id);   // XOR — свёртка не зависит от порядка обхода
                 }
@@ -207,15 +209,43 @@ namespace WorldGen.Rendering.Mountains
             if (!Application.isPlaying)
             {
                 pending = null;
-                Apply(Compute(snapshot, settings, style, known, new MountainMeshData()));
+                Apply(Compute(snapshot, settings, style, known, NextBuffer()));
                 return;
             }
 
-            // Буфер меша в фоне — СВОЙ, а не общий: пока считается новый ответ, старый ещё может
-            // заливаться в меш на главном потоке, и общий список порвался бы посередине.
-            var buffer = new MountainMeshData();
+            var buffer = NextBuffer();
             pending = Task.Run(() => Compute(snapshot, settings, style, known, buffer));
         }
+
+        /// <summary>
+        /// Буфер под массивы меша для очередного счёта. Их ДВА, и они чередуются.
+        ///
+        /// Раньше здесь стояло `new MountainMeshData()` на каждый счёт — и это сводило на нет всю
+        /// бережливость самого класса («Clear вместо new», см. его же комментарий). Списки у большой
+        /// карты вырастают в десятки мегабайт, а за один мазок счётов набегают десятки: получалась
+        /// прямая дорога к сборке мусора посреди мазка, то есть к тем самым заминкам. Замер на
+        /// стране 480×480: пять раскладок в переиспользуемые списки — 180 мс и ни одной сборки
+        /// мусора, в свежие — 305 мс и три сборки нулевого поколения.
+        ///
+        /// Почему два, а не один. Один был бы безопасен и сегодня: заливка в меш идёт синхронно
+        /// внутри Apply, и следующий счёт стартует уже после неё. Но это совпадение, а не правило, —
+        /// сделай кто-нибудь заливку отложенной, и общий список порвался бы посередине. Второй
+        /// буфер стоит ничего и снимает вопрос.
+        /// </summary>
+        MountainMeshData NextBuffer()
+        {
+            bufferFlip = !bufferFlip;
+            var buffer = bufferFlip ? bufferA : bufferB;
+            return buffer;
+        }
+
+        readonly MountainMeshData bufferA = new MountainMeshData();
+        readonly MountainMeshData bufferB = new MountainMeshData();
+        bool bufferFlip;
+
+        /// <summary>Список горных клеток. Переиспользуется по той же причине, что и буферы меша:
+        /// он живёт ровно до конца снимка, а заводился на каждый счёт.</summary>
+        readonly List<int> scratchMountainIds = new List<int>();
 
         /// <summary>Просит пересчёт «попозже». Нужен ползункам: ДМ ведёт ползунок, значение меняется
         /// на каждый пиксель, а полный пересчёт стоит десятки миллисекунд — считать столько раз
@@ -461,7 +491,11 @@ namespace WorldGen.Rendering.Mountains
             var go = new GameObject(name) { hideFlags = HideFlags.DontSave };
             go.transform.SetParent(container, false);
             var filter = go.AddComponent<MeshFilter>();
-            filter.sharedMesh = new Mesh { name = name, hideFlags = HideFlags.DontSave };
+            var mesh = new Mesh { name = name, hideFlags = HideFlags.DontSave };
+            // Меш переписывается по многу раз в секунду, пока ДМ ведёт кисть, — просим у движка
+            // буфер под частую перезапись, иначе он каждый раз заводит новый.
+            mesh.MarkDynamic();
+            filter.sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterial = material;
             return filter;
         }

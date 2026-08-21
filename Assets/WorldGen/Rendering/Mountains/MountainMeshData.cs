@@ -34,6 +34,34 @@ namespace WorldGen.Rendering.Mountains
             InkTris.Clear();
         }
 
+        /// <summary>
+        /// Габаритная коробка рисунка. Считается ЗДЕСЬ, в фоне, ровно затем, чтобы её не считал
+        /// Mesh на главном потоке.
+        ///
+        /// Unity иначе обходит все вершины дважды: один раз внутри SetTriangles (он по умолчанию
+        /// пересчитывает границы) и второй раз в RecalculateBounds. У большой карты это триста
+        /// тысяч вершин, пройденных дважды на каждом обновлении показа под кистью, — то есть
+        /// заминка ровно в тот момент, когда ДМ ведёт кисть. Один проход в фоне стоит около
+        /// миллисекунды и на главном потоке не стоит ничего.
+        /// </summary>
+        public Vector3 BoundsMin, BoundsMax;
+
+        public void ComputeBounds()
+        {
+            if (Verts.Count == 0) { BoundsMin = BoundsMax = Vector3.zero; return; }
+            var min = Verts[0];
+            var max = Verts[0];
+            for (int i = 1; i < Verts.Count; i++)
+            {
+                var v = Verts[i];
+                if (v.x < min.x) min.x = v.x; else if (v.x > max.x) max.x = v.x;
+                if (v.y < min.y) min.y = v.y; else if (v.y > max.y) max.y = v.y;
+                if (v.z < min.z) min.z = v.z; else if (v.z > max.z) max.z = v.z;
+            }
+            BoundsMin = min;
+            BoundsMax = max;
+        }
+
         /// <summary>Сколько чего вышло — чтобы можно было честно сказать ДМ, во что обошёлся рисунок.</summary>
         public int Mountains;
         public int GritMarks;
@@ -45,6 +73,7 @@ namespace WorldGen.Rendering.Mountains
             Colors.Clear();
             Tris.Clear();
             InkTris.Clear();
+            BoundsMin = BoundsMax = Vector3.zero;
             Mountains = 0;
             GritMarks = 0;
             GritCapped = false;

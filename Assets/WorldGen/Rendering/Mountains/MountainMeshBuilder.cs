@@ -76,9 +76,18 @@ namespace WorldGen.Rendering.Mountains
                 AddOutline(data, shape, style, y, profile, line, radii, rise, density, radius);
             }
             data.Seal();
+            data.ComputeBounds();
         }
 
-        /// <summary>Заливка массивов в меш. ЕДИНСТВЕННОЕ, что обязано идти на главном потоке.</summary>
+        /// <summary>
+        /// Заливка массивов в меш. ЕДИНСТВЕННОЕ, что обязано идти на главном потоке, — и потому
+        /// здесь не делается ни одной работы, которую можно было сделать в фоне.
+        ///
+        /// Габариты берутся готовыми (MountainMeshData.ComputeBounds). Прежняя редакция обходила
+        /// все вершины ДВАЖДЫ: SetTriangles по умолчанию пересчитывает границы, и следом это же
+        /// делал RecalculateBounds. На трёхстах тысячах вершин, да на каждом обновлении показа под
+        /// кистью, — это и была заметная заминка.
+        /// </summary>
         public static void Upload(Mesh mesh, MountainMeshData data)
         {
             if (mesh == null) return;
@@ -90,8 +99,9 @@ namespace WorldGen.Rendering.Mountains
                 : UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.SetVertices(data.Verts);
             mesh.SetColors(data.Colors);
-            mesh.SetTriangles(data.Tris, 0);
-            mesh.RecalculateBounds();
+            mesh.SetTriangles(data.Tris, 0, calculateBounds: false);
+            mesh.bounds = new Bounds((data.BoundsMin + data.BoundsMax) * 0.5f,
+                                     data.BoundsMax - data.BoundsMin);
         }
 
         /// <summary>Всё разом — для одноразовых вызовов, где фон не нужен (шип, стенд).</summary>
@@ -299,6 +309,7 @@ namespace WorldGen.Rendering.Mountains
             for (int i = 0; i + 1 < line.Count; i++)
                 AddSegment(data, line[i], line[i + 1], half, yHeight, color);
             data.Seal();
+            data.ComputeBounds();   // Upload габариты больше не считает — их обязан посчитать тот, кто собрал
             Upload(mesh, data);
         }
 
