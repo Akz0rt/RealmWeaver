@@ -58,6 +58,7 @@ namespace MountainHarness
             CoverageCutEndsAreNotExtended();
             RingStrokeKeepsClosedAxis();
             MaskBorderIsAlwaysBackground();
+            SkeletonByFrontMatchesPlainSweep();
             AxesAreReproducible();
             ErasedGapSplitsAxesToo();
             MountainsStayOnLand();
@@ -2220,6 +2221,186 @@ namespace MountainHarness
             return count;
         }
 
+
+        // ── скелет: быстрый обход обязан совпадать с медленным ──────────────────────────────────
+
+        /// <summary>
+        /// Skeleton.Thin считает по ФРОНТУ: проверяет только те ячейки, у которых кто-то из соседей
+        /// умер за два последних полупрохода. Выигрыш большой (у массива размером со страну — с
+        /// 2544 мс до сотен), но правильным он будет ровно тогда, когда ответ совпадает с
+        /// прямолинейным обходом ПОБАЙТОВО.
+        ///
+        /// Совпадение проверяется, а не предполагается, по одной причине: выше по течению от
+        /// скелета стоит зерно осей (MountainGeometry.AxisSeed), и любое расхождение молча
+        /// перетасовало бы уже принятый ДМ рисунок — не сломав ни одной другой проверки.
+        ///
+        /// Фикстуры подобраны так, чтобы различать ИМЕННО правило переноса. Мутант, ради которого
+        /// они выбраны: носить запачканную ячейку не два полупрохода, а один («active = dirtyNow»
+        /// без dirtyPrev). Тогда ячейка, у которой сосед умер, успевает пройти лишь одну половину
+        /// правила по новому окружению — и на плотных фигурах (круг, кольцо) ответ расходится.
+        /// </summary>
+        static void SkeletonByFrontMatchesPlainSweep()
+        {
+            var cases = new (string name, MountainMask mask)[]
+            {
+                ("круг", Round(new Vector2(200, 200), 90f)),
+                ("узкая полоса", StrokeMask(14f, Stroke(1, 14f, new Vector2(40, 200), new Vector2(360, 200)))),
+                ("кольцо с дырой", Ring(new Vector2(200, 200), 95f, 45f)),
+                ("шип на боку", StrokeMask(12f,
+                    Stroke(1, 60f, new Vector2(60, 200), new Vector2(340, 200)),
+                    Stroke(2, 12f, new Vector2(200, 200), new Vector2(200, 300)))),
+                ("масса на кромке", TouchingTheEdge(Round(new Vector2(200, 200), 90f))),
+            };
+
+            foreach (var (name, mask) in cases)
+            {
+                if (mask == null) { Check($"Скелет ({name}): фикстура построилась", false, "маска пуста"); continue; }
+                var fast = Skeleton.Thin(mask);
+                var slow = ThinPlainSweep(mask);
+
+                int diff = 0;
+                for (int i = 0; i < fast.Length; i++) if (fast[i] != slow[i]) diff++;
+
+                // Фикстура обязана что-то утоньшать, иначе совпадение ничего не значит.
+                int aliveBefore = 0, aliveAfter = 0;
+                for (int i = 0; i < mask.Cells.Length; i++) if (mask.Cells[i] != 0) aliveBefore++;
+                for (int i = 0; i < slow.Length; i++) if (slow[i] != 0) aliveAfter++;
+
+                Check($"Скелет ({name}): фронт совпал со сплошным обходом", diff == 0,
+                      $"разошлись в {diff} ячейках");
+                Check($"Скелет ({name}): фикстура правда утоньшается", aliveBefore > aliveAfter * 3,
+                      $"было {aliveBefore}, осталось {aliveAfter} — утоньшать почти нечего");
+            }
+        }
+
+        /// <summary>
+        /// Zhang–Suen «в лоб»: каждый полупроход перебирает ВСЕ живые ячейки. Копия той редакции,
+        /// что стояла в Skeleton.Thin до перехода на фронт (21 августа 2026). Живёт в стенде, а не в
+        /// приложении, ровно затем, чтобы было с чем сверять.
+        /// </summary>
+        static byte[] ThinPlainSweep(MountainMask mask)
+        {
+            int w = mask.W, h = mask.H;
+            var img = (byte[])mask.Cells.Clone();
+
+            var active = new List<int>();
+            for (int y = 1; y < h - 1; y++)
+                for (int x = 1; x < w - 1; x++)
+                    if (img[y * w + x] != 0) active.Add(y * w + x);
+
+            var kill = new List<int>();
+            var next = new List<int>();
+            var p = new int[8];
+            int[] rdx = { 0, 1, 1, 1, 0, -1, -1, -1 };
+            int[] rdy = { -1, -1, 0, 1, 1, 1, 0, -1 };
+            var offset = new int[8];
+            for (int k = 0; k < 8; k++) offset[k] = rdy[k] * w + rdx[k];
+
+            bool changed = true;
+            int guard = 0;
+            while (changed && guard++ < 600)
+            {
+                changed = false;
+                for (int step = 0; step < 2; step++)
+                {
+                    kill.Clear();
+                    next.Clear();
+                    foreach (int idx in active)
+                    {
+                        if (img[idx] == 0) continue;
+                        next.Add(idx);
+
+                        int b = 0;
+                        for (int k = 0; k < 8; k++) { p[k] = img[idx + offset[k]]; b += p[k]; }
+                        if (b < 2 || b > 6) continue;
+
+                        int a = 0;
+                        for (int k = 0; k < 8; k++) if (p[k] == 0 && p[(k + 1) % 8] == 1) a++;
+                        if (a != 1) continue;
+
+                        int north = p[0], east = p[2], south = p[4], west = p[6];
+                        if (step == 0)
+                        {
+                            if (north != 0 && east != 0 && south != 0) continue;
+                            if (east != 0 && south != 0 && west != 0) continue;
+                        }
+                        else
+                        {
+                            if (north != 0 && east != 0 && west != 0) continue;
+                            if (north != 0 && south != 0 && west != 0) continue;
+                        }
+                        kill.Add(idx);
+                    }
+
+                    var swap = active; active = next; next = swap;
+                    if (kill.Count > 0)
+                    {
+                        changed = true;
+                        foreach (int i in kill) img[i] = 0;
+                    }
+                }
+            }
+            return img;
+        }
+
+        /// <summary>
+        /// Дорисовывает массу ПО САМОЙ КРОМКЕ сетки. Случай не выдуманный: маска строится с полем в
+        /// шесть ячеек, но сглаживание (MountainMask.Smooth) раздувает массу, и на мелком шаге она
+        /// до края достаёт. Кромку не трогает ни та, ни другая редакция утоньшения — у краевой
+        /// ячейки нет полного кольца соседей; ошибкой было бы втянуть её во фронт, убить и полезть
+        /// за её соседом за пределы массива. Ровно на этом первая редакция фронта и упала.
+        /// </summary>
+        static MountainMask TouchingTheEdge(MountainMask mask)
+        {
+            int w = mask.W, h = mask.H;
+            for (int x = 0; x < w; x++) { mask.Cells[x] = 1; mask.Cells[(h - 1) * w + x] = 1; }
+            for (int y = 0; y < h; y++) { mask.Cells[y * w] = 1; mask.Cells[y * w + w - 1] = 1; }
+            // И полоса рядом с кромкой — чтобы у краевых ячеек были живые внутренние соседи,
+            // иначе фронт до края просто не дошёл бы и проверка ничего не различала.
+            for (int x = 0; x < w; x++) { mask.Cells[w + x] = 1; mask.Cells[(h - 2) * w + x] = 1; }
+            for (int y = 0; y < h; y++) { mask.Cells[y * w + 1] = 1; mask.Cells[y * w + w - 2] = 1; }
+            return mask;
+        }
+
+        static MountainMask StrokeMask(float brush, params MountainStroke[] strokes)
+            => MountainMask.Build(Blob(strokes), MountainMask.ChooseCell(22f, brush));
+
+        /// <summary>Круглая масса из клеток — фигура, у которой почти вся площадь лежит глубоко
+        /// внутри: ровно та, на которой сплошной обход и разорялся.</summary>
+        static MountainMask Round(Vector2 centre, float radius)
+        {
+            var polys = new List<IReadOnlyList<Vector2>>();
+            for (float x = -radius; x <= radius; x += 15f)
+                for (float y = -radius; y <= radius; y += 15f)
+                {
+                    var q = new Vector2(centre.X + x, centre.Y + y);
+                    if ((q - centre).Length() > radius) continue;
+                    polys.Add(Square(q, 7.5f));
+                }
+            return MountainMask.FromPolygons(polys, MountainMask.ChooseCell(22f, 22f));
+        }
+
+        /// <summary>Кольцо: та же масса с вырезанной серединой. Дыра нужна затем, что от неё
+        /// утоньшение идёт с ДВУХ сторон навстречу — там правило переноса и напрягается.</summary>
+        static MountainMask Ring(Vector2 centre, float outer, float inner)
+        {
+            var polys = new List<IReadOnlyList<Vector2>>();
+            for (float x = -outer; x <= outer; x += 15f)
+                for (float y = -outer; y <= outer; y += 15f)
+                {
+                    var q = new Vector2(centre.X + x, centre.Y + y);
+                    float d = (q - centre).Length();
+                    if (d > outer || d < inner) continue;
+                    polys.Add(Square(q, 7.5f));
+                }
+            return MountainMask.FromPolygons(polys, MountainMask.ChooseCell(22f, 22f));
+        }
+
+        static IReadOnlyList<Vector2> Square(Vector2 c, float half) => new List<Vector2>
+        {
+            new Vector2(c.X - half, c.Y - half), new Vector2(c.X + half, c.Y - half),
+            new Vector2(c.X + half, c.Y + half), new Vector2(c.X - half, c.Y + half),
+        };
 
         static MountainStroke Stroke(int id, float radius, params Vector2[] points)
         {
