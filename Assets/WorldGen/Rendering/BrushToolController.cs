@@ -167,9 +167,14 @@ namespace WorldGen.Rendering
                 regionStrokeLakeCells.Clear();
                 waterStrokeCells.Clear();
                 mapRenderer.EndBrushStroke();
-                // Рисунок гор — производное от рельефа, поэтому пересчитывается на ОТПУСКАНИИ и
-                // только у тех кистей, что рельеф меняют. Считать его на каждое движение нельзя:
-                // полный проход стоит десятки миллисекунд, а на крупном массиве сотни.
+                // Рисунок гор — производное от рельефа, поэтому пересчитывается у тех кистей, что
+                // рельеф меняют.
+                //
+                // У КИСТИ ГОР этот пересчёт — не первый: она показывает рисунок и по ходу мазка
+                // (см. ReliefChangedLive выше). Здесь он всё равно нужен, и по двум разным поводам:
+                // последняя правка могла попасть в уже идущий счёт и ждать своей очереди, а снимок
+                // суши роняет только ReliefChanged — кисти воды без него горы остались бы стоять в
+                // залитом море.
                 if (activeTool == BrushTool.Mountain || activeTool == BrushTool.Elevation
                     || activeTool == BrushTool.Water)
                     mapRenderer.ReliefChanged();
@@ -247,8 +252,15 @@ namespace WorldGen.Rendering
                 // Кисть гор — это кисть РЕЛЬЕФА: она поднимает клетки в горную полосу, а рисунок по
                 // ним построит слой гор. Ластик — та же кисть наоборот, опускает обратно в равнину.
                 bool make = !IsMountainEraseMode;
-                foreach (var cell in affected) mapRenderer.BrushSetMountain(cell, make);
+                bool drawingChanged = false;
+                // |= , а не ||= : «или» с коротким замыканием бросило бы красить остальные клетки,
+                // как только первая сказала «поменялось».
+                foreach (var cell in affected) drawingChanged |= mapRenderer.BrushSetMountain(cell, make);
                 mapRenderer.RebakeAffectedCells(affected);
+                // Показ прямо под кистью: ДМ видит рисунок, не отпуская кнопки. Просим ТОЛЬКО когда
+                // клетка вошла в горную полосу или вышла из неё, — идя по своему же следу, кисть
+                // рисунка не меняет, и считать там нечего. Частые просьбы слой схлопывает сам.
+                if (drawingChanged) mapRenderer.ReliefChangedLive();
                 return;
             }
 

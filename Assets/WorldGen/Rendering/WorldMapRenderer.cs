@@ -1080,7 +1080,8 @@ namespace WorldGen.Rendering
         // горы по клеткам, у которых высота дотянула до горной. Это решение ДМ 2026-08-14 —
         // «кисть задаёт рельеф, а горы декорация рельефа, а не наоборот». Поэтому здесь нет ни
         // накопления мазка, ни его отмены: правка клеток откатывается тем же BrushUndoManager, что
-        // и у кисти рельефа, а слой пересчитывается на отпускании кисти.
+        // и у кисти рельефа, а слой пересчитывается по ходу мазка и ещё раз на отпускании
+        // (ReliefChangedLive и ReliefChanged соответственно).
 
         Mountains.MountainLayer mountainLayer;
         bool[] landProbeGrid;   // запасной путь BuildLandProbe: снимок суши в своей сетке
@@ -1109,6 +1110,27 @@ namespace WorldGen.Rendering
         }
 
         /// <summary>
+        /// Рельеф правят ПРЯМО СЕЙЧАС, не отпуская кисти, и ДМ должен видеть то, что получится,
+        /// когда он её отпустит (решение ДМ 21 августа 2026).
+        ///
+        /// Отличий от ReliefChanged ровно два, и оба намеренные.
+        ///   • Без отсрочки. RebuildSoon отодвигает срок на каждый вызов — пока кисть идёт, срок
+        ///     отодвигается бесконечно, и до отпускания не считается НИЧЕГО. Для ползунка это
+        ///     правильно (ждём, пока замрёт), для кисти — ровно наоборот.
+        ///   • Снимок суши не роняем. Кисть гор воду не трогает вовсе (BrushSetMountain разворачивает
+        ///     на первой же водяной клетке), а пересбор снимка стоит ста сорока семи тысяч поисков
+        ///     ближайшей клетки — на каждое движение мыши это недопустимо.
+        ///
+        /// Дороговизна самого счёта здесь не страшна: слой считает в фоне и держит один счёт за раз,
+        /// поэтому частые просьбы схлопываются сами, а показ обновляется с той частотой, какую
+        /// счёт вытягивает. Замер стенда: гряда 120×30 — 69 мс, хребет 300×60 — 258 мс.
+        /// </summary>
+        public void ReliefChangedLive()
+        {
+            MountainLayer?.Rebuild();
+        }
+
+        /// <summary>
         /// Кисть гор правит ВЫСОТУ клетки — той же дорогой, что кисть рельефа, и с той же отменой.
         ///
         /// make = true поднимает клетку в горную полосу, false опускает обратно в равнину. Обе
@@ -1117,20 +1139,31 @@ namespace WorldGen.Rendering
         ///
         /// Стирающая ставит высоту ЯВНО ниже порога, а не снимает override: под мазком мог лежать
         /// сгенерированный хребет, и «вернуть как было» вернуло бы гору.
+        ///
+        /// Возвращает НЕ «поменялась ли высота», а «поменялся ли РИСУНОК»: клетка вошла в горную
+        /// полосу или вышла из неё. Разница существенная — слою гор высота сама по себе не видна,
+        /// он читает с клетки ровно одно «дотянула ли до MountainElevation». Проведя кистью по уже
+        /// нарисованному хребту, ДМ поднимет высоту с 0.6 до 0.7, но рисунок от этого тот же, и
+        /// затевать ради него пересчёт незачем — а показ под кистью иначе считал бы вхолостую всё
+        /// время, пока кисть идёт по своему же следу.
         /// </summary>
-        public void BrushSetMountain(VoronoiCell cell, bool make)
+        public bool BrushSetMountain(VoronoiCell cell, bool make)
         {
-            if (cells == null || cell == null) return;
-            if (cell.EffectiveIsOcean || cell.EffectiveIsLake) return;   // горы идут только по суше
+            if (cells == null || cell == null) return false;
+            if (cell.EffectiveIsOcean || cell.EffectiveIsLake) return false;   // горы идут только по суше
 
             float current = cell.EffectiveElevation;
             float target = make
                 ? Mathf.Max(current, mountainPaintElevation)
                 : Mathf.Min(current, mountainErasedElevation);
-            if (Mathf.Approximately(target, current)) return;
+            if (Mathf.Approximately(target, current)) return false;
 
+            bool wasMountain = current >= Mountains.MountainLayer.MountainElevation;
             brushUndo.RecordBeforeChange(cell);
             CellOverrideService.ApplyElevationOverride(new[] { cell }, target, beachElevationThreshold);
+            // Спрашиваем клетку ПОСЛЕ правки, а не сравниваем с target: высоту кладёт чужой код, и
+            // он вправе её подровнять. Что там вышло на самом деле, знает только сама клетка.
+            return (cell.EffectiveElevation >= Mountains.MountainLayer.MountainElevation) != wasMountain;
         }
 
         /// <summary>
